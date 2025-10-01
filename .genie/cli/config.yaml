@@ -27,7 +27,6 @@ executors:
       sandbox: workspace-write
       profile: null
       includePlanTool: false
-      search: false
       skipGitRepoCheck: false
       json: false
       experimentalJson: true
@@ -38,14 +37,12 @@ executors:
       additionalArgs: []                     # extra CLI flags forwarded to `npx ... exec`
       images: []                             # image paths forwarded via repeated -i flags
     resume:
-      includePlanTool: false
-      search: false
       last: false
       additionalArgs: []                     # extra CLI flags forwarded to `npx ... exec resume`
   claude:
     binary: claude                           # Claude CLI binary
     packageSpec: null                        # Claude installed separately, not via npx
-    sessionExtractionDelayMs: 1000           # Claude session ID extraction delay
+    sessionExtractionDelayMs: 2000           # Claude session ID extraction delay
     exec:
       model: sonnet                          # default Claude model
       permissionMode: default                # default, acceptEdits, bypassPermissions, plan
@@ -114,5 +111,5 @@ executionModes:
 background:
   enabled: true
   detach: true
-  pollIntervalMs: 1500
-  sessionExtractionDelayMs: 2000            # fallback used by all executors when their override is null
+  pollIntervalMs: 3000
+  sessionExtractionDelayMs: 4000            # fallback used by all executors when their override is null

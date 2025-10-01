@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Executor } from './types';
 
+export type { Executor } from './types';
 export const DEFAULT_EXECUTOR_KEY = 'codex';
 
 export function loadExecutors(): Record<string, Executor> {

@@ -19,8 +19,6 @@ yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
 dist/
-!.genie/cli/dist/
-!.genie/cli/dist/**
 build/
 .npm
 .yarn
@@ -184,3 +182,5 @@ docs/elevenlabs/*.html
 docs/ag-ui/*.html
 !docs/**/*.txt
 !docs/**/*.md
+.genie/cli/snapshots/
+!.genie/cli/snapshots/archived/

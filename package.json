@@ -2,6 +2,7 @@
   "name": "automagik-genie-cli",
   "private": true,
   "scripts": {
+    "build": "pnpm run build:genie",
     "build:genie": "tsc -p .genie/cli/tsconfig.json",
     "test:genie": "pnpm run build:genie && node tests/genie-cli.test.js && tests/identity-smoke.sh"
   },

@@ -73,10 +73,10 @@ function simpleTable(title: string, rows: RunRow[]): ViewNode {
       {
         type: 'table' as const,
         columns: [
-          { key: 'agent', label: 'Agent' },
-          { key: 'status', label: 'Status' },
-          { key: 'sessionId', label: 'Session' },
-          { key: 'updated', label: 'Updated' }
+          { key: 'agent', label: 'Agent', noTruncate: true },
+          { key: 'status', label: 'Status', width: 10 },
+          { key: 'sessionId', label: 'Session', width: 36, noTruncate: true },
+          { key: 'updated', label: 'Updated', width: 8 }
         ],
         rows: rows.map((row) => ({
           agent: row.agent,
@@ -90,16 +90,5 @@ function simpleTable(title: string, rows: RunRow[]): ViewNode {
 }
 
 function decorateStatus(status: string): string {
-  const normalized = status.toLowerCase();
-  const prefix = statusEmoji(normalized);
-  return prefix ? `${prefix} ${status}` : status;
-}
-
-function statusEmoji(status: string): string {
-  if (status.startsWith('running')) return '🟢';
-  if (status.startsWith('pending')) return '🟠';
-  if (status.startsWith('completed')) return '✅';
-  if (status.startsWith('failed')) return '❌';
-  if (status.startsWith('stopped')) return '🔚';
-  return '⌛️';
+  return status;
 }
