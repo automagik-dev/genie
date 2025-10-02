@@ -1,11 +1,0 @@
-▸ Launching utilities/thinkdeep in background...
-⠋ Waiting for session ID... (0s)⠙ Waiting for session ID... (0s)⠹ Waiting for session ID... (0s)⠸ Waiting for session ID... (1s)⠼ Waiting for session ID... (1s)⠴ Waiting for session ID... (1s)⠦ Waiting for session ID... (1s)⠧ Waiting for session ID... (2s)⠇ Waiting for session ID... (2s)⠏ Waiting for session ID... (2s)⠋ Waiting for session ID... (2s)⠙ Waiting for session ID... (3s)⠹ Waiting for session ID... (3s)⠸ Waiting for session ID... (3s)⠼ Waiting for session ID... (3s)⠴ Waiting for session ID... (4s)⠦ Waiting for session ID... (4s)⠧ Waiting for session ID... (4s)⠇ Waiting for session ID... (4s)⠏ Waiting for session ID... (5s)⠋ Waiting for session ID... (5s)⠙ Waiting for session ID... (5s)⠹ Waiting for session ID... (5s)⠸ Waiting for session ID... (6s)⠼ Waiting for session ID... (6s)⠴ Waiting for session ID... (6s)⠦ Waiting for session ID... (6s)⠧ Waiting for session ID... (7s)⠇ Waiting for session ID... (7s)⠏ Waiting for session ID... (7s)⠋ Waiting for session ID... (7s)⠙ Waiting for session ID... (8s)⠹ Waiting for session ID... (8s)⠸ Waiting for session ID... (8s)⠼ Waiting for session ID... (8s)⠴ Waiting for session ID... (9s)⠦ Waiting for session ID... (9s)⠧ Waiting for session ID... (9s)⠇ Waiting for session ID... (9s)⠏ Waiting for session ID... (10s)⠋ Waiting for session ID... (10s)⠙ Waiting for session ID... (10s)⠹ Waiting for session ID... (10s)⠸ Waiting for session ID... (11s)[K▸ Session ID: 0199981e-5d92-71a2-96d0-187848797a5f
-
-  View output:
-    ./genie view 0199981e-5d92-71a2-96d0-187848797a5f
-
-  Continue conversation:
-    ./genie resume 0199981e-5d92-71a2-96d0-187848797a5f "<your message>"
-
-  Stop session:
-    ./genie stop 0199981e-5d92-71a2-96d0-187848797a5f

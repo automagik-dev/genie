@@ -1,16 +1,70 @@
 {
-  "name": "automagik-genie-cli",
-  "private": true,
+  "name": "automagik-genie",
+  "version": "0.1.0",
+  "description": "Self-evolving AI agent orchestration framework with Model Context Protocol support",
+  "main": ".genie/cli/dist/genie.js",
+  "bin": {
+    "genie": ".genie/cli/dist/genie-cli.js"
+  },
+  "files": [
+    ".genie/cli/dist/**/*",
+    ".genie/mcp/dist/**/*",
+    ".genie/mcp/src/**/*",
+    ".genie/agents/**/*.md",
+    ".genie/product/**/*.md",
+    ".genie/standards/**/*.md",
+    ".genie/guides/**/*.md",
+    "genie",
+    "README.md",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
   "scripts": {
-    "build": "pnpm run build:genie",
+    "build": "pnpm run build:genie && pnpm run build:mcp",
     "build:genie": "tsc -p .genie/cli/tsconfig.json",
-    "test:genie": "pnpm run build:genie && node tests/genie-cli.test.js && tests/identity-smoke.sh"
+    "build:mcp": "tsc -p .genie/mcp/tsconfig.json",
+    "start:mcp": "node .genie/mcp/dist/server.js",
+    "start:mcp:stdio": "MCP_TRANSPORT=stdio node .genie/mcp/dist/server.js",
+    "start:mcp:http": "MCP_TRANSPORT=httpStream node .genie/mcp/dist/server.js",
+    "test:genie": "pnpm run build:genie && node tests/genie-cli.test.js && tests/identity-smoke.sh",
+    "test:session-service": "pnpm run build:genie && node tests/session-service.test.js",
+    "test:all": "pnpm run test:genie && pnpm run test:session-service",
+    "postinstall": "node scripts/postinstall.js || true",
+    "prepublishOnly": "pnpm run build && pnpm run test:all"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestration",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "codex",
+    "automation",
+    "self-evolving"
+  ],
+  "author": "Automagik Genie Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/automagik-genie/genie.git"
+  },
+  "bugs": {
+    "url": "https://github.com/automagik-genie/genie/issues"
+  },
+  "homepage": "https://github.com/automagik-genie/genie#readme",
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.2",
+    "commander": "^12.1.0",
+    "fastmcp": "^3.18.0",
     "gradient-string": "^2.0.2",
     "ink": "^5.0.1",
     "react": "^18.3.1",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

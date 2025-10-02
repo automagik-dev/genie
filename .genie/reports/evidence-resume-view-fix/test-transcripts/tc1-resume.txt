@@ -1,11 +1,0 @@
-▸ Launching utilities/thinkdeep in background...
-[K▸ Session ID: 0199981e-5d92-71a2-96d0-187848797a5f
-
-  View output:
-    ./genie view 0199981e-5d92-71a2-96d0-187848797a5f
-
-  Continue conversation:
-    ./genie resume 0199981e-5d92-71a2-96d0-187848797a5f "<your message>"
-
-  Stop session:
-    ./genie stop 0199981e-5d92-71a2-96d0-187848797a5f

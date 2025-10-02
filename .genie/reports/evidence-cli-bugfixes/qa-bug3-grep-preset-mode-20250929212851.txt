@@ -1,4 +1,0 @@
-AGENTS.md:184:      <trigger>Bug #3 discovered: Documentation suggested `--preset` or `--mode` CLI flags that don't exist and shouldn't exist.</trigger>
-AGENTS.md:185:      <correction>Execution modes (sandbox, model, reasoning) are configured per-agent in YAML frontmatter only, never via CLI flags. Remove all documentation references to `--preset` or `--mode` CLI flags. Each agent declares its own settings like @.genie/agents/utilities/prompt.md does.</correction>
-AGENTS.md:186:      <validation>Documentation contains no references to `--preset` or `--mode` CLI flags; all execution configuration examples show YAML frontmatter.</validation>
-.genie/cli/docs/CLI-DESIGN.md:33:- ✅ Deprecated flags removed (`--preset`, `--background`, `--executor`, `--lines`, `--json`, `--style`)

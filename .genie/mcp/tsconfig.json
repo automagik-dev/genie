@@ -1,20 +1,19 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "Node16",
-    "rootDir": "src",
-    "outDir": "dist",
+    "module": "CommonJS",
+    "outDir": "./dist",
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": false,
-    "jsx": "react-jsx",
-    "moduleResolution": "node16",
-    "types": ["node"]
+    "moduleResolution": "node",
+    "types": ["node"],
+    "lib": ["ES2020"]
   },
-  "include": [
-    "src/**/*"
-  ]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
