@@ -43,6 +43,7 @@ export interface TableColumn {
   label: string;
   align?: 'left' | 'right' | 'center';
   width?: number;
+  noTruncate?: boolean;
 }
 
 export interface TableNode {

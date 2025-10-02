@@ -185,4 +185,5 @@ docs/elevenlabs/*.html
 docs/ag-ui/*.html
 !docs/**/*.txt
 !docs/**/*.md
-.cache/
+.genie/cli/snapshots/
+!.genie/cli/snapshots/archived/

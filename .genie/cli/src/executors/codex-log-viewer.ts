@@ -2,6 +2,7 @@ import fs from 'fs';
 import { SessionStore, saveSessions } from '../session-store';
 import { ViewEnvelope, ViewStyle, LogLine, Tone } from '../view';
 import { buildChatView, ChatMessage } from '../views/chat';
+import { sliceForLatest, sliceForRecent, summarizeCodexMetrics, CodexMetrics } from './transcript-utils';
 
 export interface RenderOptions {
   entry: Record<string, any>;
@@ -374,33 +375,6 @@ function extractMetrics(jsonl: Array<Record<string, any>>): Array<{ label: strin
   }
 
   return metrics;
-}
-
-/**
- * Slice messages to show only the latest assistant message (and optional preceding reasoning).
- * Used for --live mode.
- */
-function sliceForLatest(messages: ChatMessage[]): ChatMessage[] {
-  if (messages.length === 0) return [];
-
-  // Find the last assistant message
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant') {
-      lastAssistantIdx = i;
-      break;
-    }
-  }
-
-  if (lastAssistantIdx === -1) return [];
-
-  // Include preceding reasoning if it's immediately before the assistant message
-  let startIdx = lastAssistantIdx;
-  if (lastAssistantIdx > 0 && messages[lastAssistantIdx - 1].role === 'reasoning') {
-    startIdx = lastAssistantIdx - 1;
-  }
-
-  return messages.slice(startIdx);
 }
 
 export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
