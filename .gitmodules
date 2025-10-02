@@ -1,6 +1,0 @@
-# Git submodules for external reference implementations
-# Add your project-specific references here
-# Example:
-# [submodule "vendors/your-reference-repo"]
-#   path = vendors/your-reference-repo
-#   url = https://github.com/example/your-reference-repo
