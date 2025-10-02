@@ -1,8 +1,0 @@
-
-> build
-> pnpm run build:genie
-
-
-> automagik-genie-cli@ build:genie /home/namastex/workspace/automagik-genie
-> tsc -p .genie/cli/tsconfig.json
-

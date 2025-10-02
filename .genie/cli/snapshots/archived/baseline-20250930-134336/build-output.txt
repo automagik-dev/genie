@@ -1,7 +1,0 @@
-npm error Missing script: "build"
-npm error
-npm error To see a list of scripts, run:
-npm error   npm run
-npm error Log files were not written due to an error writing to the directory: /home/namastex/.npm/_logs
-npm error You can rerun the command with `--loglevel=verbose` to see the logs in your terminal
-Exit code: 1
