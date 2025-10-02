@@ -1,6 +1,6 @@
 ---
 name: tracer
-description: Tracer subgeny to propose instrumentation (signals, probes) and expected outputs for observability.
+description: Propose instrumentation and observability signals for systems
 color: violet
 genie:
   executor: codex

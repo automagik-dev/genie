@@ -24,6 +24,31 @@ Provide reusable planning, wishing, forging, review, and commit workflows with e
 - CLI runner: `./genie`
 - Node/TS + Rust friendly; works in any repo (domain-agnostic)
 
+## CLI Architecture
+
+The Genie CLI has been refactored into a highly modular architecture for maximum maintainability:
+
+### Modularization Achievement
+- **Before**: Single monolithic file with 2,105 lines
+- **After**: Clean orchestrator with 143 lines (93% reduction)
+- **Impact**: Enhanced maintainability, testability, and extensibility
+
+### Architecture Layers
+1. **Orchestration Layer** (`genie.ts`) - Thin entry point that routes commands
+2. **Command Layer** (`commands/`) - Isolated command implementations
+3. **Library Layer** (`lib/`) - Shared utilities and configuration
+4. **Executor Layer** (`executors/`) - Pluggable backend adapters
+5. **View Layer** (`views/`) - Output rendering and formatting
+6. **Infrastructure** (`background-manager.ts`, `session-store.ts`) - Process and state management
+
+### Key Benefits
+- **Clear separation of concerns** - Each module has a single responsibility
+- **Easy to extend** - Add new commands by creating a file in `commands/`
+- **Testable in isolation** - Modules can be unit tested independently
+- **Pluggable executors** - Support for different backend engines (Codex, etc.)
+
+For detailed documentation, see [.genie/cli/README.md](.genie/cli/README.md)
+
 ## Documentation
 
 - [Mission](.genie/product/mission.md) - Template repo goals and non-destructive guardrails

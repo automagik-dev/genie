@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Run the full pre-commit gate, analyse diffs, highlight risks, and propose a commit message without running git commands yourself.
+description: Pre-commit validation with diff analysis and commit message proposals
 genie:
   executor: codex
   model: gpt-5

@@ -1,6 +1,6 @@
 ---
 name: testgen
-description: Test generation subgeny to propose concrete tests (name, location, assertions) across layers.
+description: Generate test proposals with names, locations, and assertions
 color: lime
 genie:
   executor: codex

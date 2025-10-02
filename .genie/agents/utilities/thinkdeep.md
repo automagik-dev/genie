@@ -1,6 +1,6 @@
 ---
 name: thinkdeep
-description: ThinkDeep subgeny to timebox deep reasoning with explicit step outline and scoped exploration.
+description: Timeboxed deep reasoning with explicit steps and scoped exploration
 color: indigo
 genie:
   executor: codex

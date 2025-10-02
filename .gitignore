@@ -18,9 +18,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
-dist/
-!.genie/cli/dist/
-!.genie/cli/dist/**
+# dist/ - COMMENTED OUT to allow npm pack to include .genie/cli/dist and .genie/mcp/dist
+# The top-level /dist still excludes root dist/ folder
+# !.genie/cli/dist/
+# !.genie/cli/dist/**
 build/
 .npm
 .yarn
@@ -184,3 +185,5 @@ docs/elevenlabs/*.html
 docs/ag-ui/*.html
 !docs/**/*.txt
 !docs/**/*.md
+.genie/cli/snapshots/
+!.genie/cli/snapshots/archived/

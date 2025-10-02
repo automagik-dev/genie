@@ -1,6 +1,6 @@
 ---
 name: polish
-description: Polish specialist combining type-checking, linting, and formatting for `{{PROJECT_NAME}}` projects.
+description: Type-checking, linting, and formatting for code quality
 color: purple
 genie:
   executor: codex

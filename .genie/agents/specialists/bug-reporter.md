@@ -1,6 +1,6 @@
 ---
 name: bug-reporter
-description: Incident triage and GitHub-ready bug reporting specialist for `{{PROJECT_NAME}}`.
+description: Triage incidents and create GitHub-ready bug reports
 color: amber
 genie:
   executor: codex

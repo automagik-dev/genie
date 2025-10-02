@@ -1,6 +1,6 @@
 ---
 name: twin
-description: Independent architect twin for planning, consensus, and deep-dive analysis to pressure-test ideas before decisions.
+description: Pressure-test ideas with planning, consensus, and deep analysis
 color: orange
 genie:
   executor: codex

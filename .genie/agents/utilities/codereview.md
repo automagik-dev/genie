@@ -1,6 +1,6 @@
 ---
 name: codereview
-description: Structured code review subgeny for diffs/files with severity-tagged findings and actionable recommendations.
+description: Code review with severity-tagged findings and recommendations
 color: magenta
 genie:
   executor: codex

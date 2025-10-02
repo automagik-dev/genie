@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: Refactor planning subgeny for staged refactor plans with risks and verification.
+description: Plan staged refactors with risk assessment and verification
 color: brown
 genie:
   executor: codex

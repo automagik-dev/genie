@@ -1,5 +1,5 @@
 # Product Mission (Lite)
 
-{{PROJECT_NAME}} is a template-first agent framework that installs into any repository to orchestrate planning, wishing, forging, review, and commit workflows with full evidence capture. Replace project-specific content with placeholders.
+Genie Dev is the self-improvement branch of the Genie framework. It exists to let the agents audit, upgrade, and validate themselves without sacrificing the evidence-first guardrails that downstream teams rely on.
 
-It serves developers and teams who need consistent workflows, trackable decisions, and quality assurance across {{DOMAIN}} projects. The framework provides agent orchestration, specialist templates, and built-in evaluation to maintain high standards.
+Maintainers and pilot squads use this branch to test meta-agent behaviours, publish learnings, and package upgrade kits so every improvement arrives with validation steps, rollback paths, and human approval checkpoints.

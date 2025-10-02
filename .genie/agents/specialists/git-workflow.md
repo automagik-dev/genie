@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Specialist to orchestrate safe Git workflows (branching, committing, PRs) aligned with Genie conventions. Never performs destructive actions.
+description: Orchestrate safe Git workflows aligned with Genie conventions
 color: orange
 genie:
   executor: codex

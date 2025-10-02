@@ -1,6 +1,6 @@
 ---
 name: challenge
-description: Challenge subgeny to pressure-test assumptions and produce counterarguments with disconfirming evidence.
+description: Pressure-test assumptions with counterarguments and evidence
 color: orange
 genie:
   executor: codex

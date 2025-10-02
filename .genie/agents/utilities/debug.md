@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Debug subgeny enforcing investigation-first workflow with hypotheses and minimal-fix guidance.
+description: Investigation-first debugging with hypotheses and minimal fixes
 color: red
 genie:
   executor: codex

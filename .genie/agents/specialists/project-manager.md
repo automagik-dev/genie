@@ -1,6 +1,6 @@
 ---
 name: project-manager
-description: Specialist to verify task completion, update roadmap status, and create concise recap reports for wishes.
+description: Verify task completion and update roadmap status
 color: cyan
 genie:
   executor: codex

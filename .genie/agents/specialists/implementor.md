@@ -1,6 +1,6 @@
 ---
 name: implementor
-description: Implementor specialist for `{{PROJECT_NAME}}` work: end-to-end development with TDD discipline.
+description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
   executor: codex

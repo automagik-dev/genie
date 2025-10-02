@@ -1,5 +1,5 @@
 # Genie CLI configuration. Update values here to change defaults across all commands.
-# Anything you can tweak via CLI flags or presets should live in this file for easy auditing.
+# Agent-specific settings (sandbox, approvalPolicy) are configured in agent frontmatter.
 
 defaults:
   executor: codex        # default executor used for run/resume when none is specified
@@ -13,6 +13,8 @@ paths:
   executors:
     codex:
       sessionsDir: .genie/state/agents/codex-sessions  # Codex session archive for rollout discovery
+    claude:
+      sessionsDir: null  # Claude manages own sessions in ~/.claude/projects/
 
 executors:
   codex:
@@ -25,7 +27,6 @@ executors:
       sandbox: workspace-write
       profile: null
       includePlanTool: false
-      search: false
       skipGitRepoCheck: false
       json: false
       experimentalJson: true
@@ -36,10 +37,21 @@ executors:
       additionalArgs: []                     # extra CLI flags forwarded to `npx ... exec`
       images: []                             # image paths forwarded via repeated -i flags
     resume:
-      includePlanTool: false
-      search: false
       last: false
       additionalArgs: []                     # extra CLI flags forwarded to `npx ... exec resume`
+  claude:
+    binary: claude                           # Claude CLI binary
+    packageSpec: null                        # Claude installed separately, not via npx
+    sessionExtractionDelayMs: 2000           # Claude session ID extraction delay
+    exec:
+      model: sonnet                          # default Claude model
+      permissionMode: default                # default, acceptEdits, bypassPermissions, plan
+      outputFormat: stream-json              # JSONL output format
+      allowedTools: []                       # tool filtering (empty = all allowed)
+      disallowedTools: []                    # tool filtering (empty = none blocked)
+      additionalArgs: []                     # extra CLI flags
+    resume:
+      additionalArgs: []                     # extra CLI flags for resume
 
 executionModes:
   default:
@@ -76,9 +88,28 @@ executionModes:
         model: gpt-5-codex
         sandbox: read-only
         includePlanTool: true
+  claude-default:
+    description: Claude Code with default permissions
+    executor: claude
+    overrides:
+      exec:
+        model: sonnet
+        permissionMode: default
+  claude-careful:
+    description: Claude Code read-only mode
+    executor: claude
+    overrides:
+      exec:
+        permissionMode: acceptEdits
+  claude-plan:
+    description: Claude Code planning mode
+    executor: claude
+    overrides:
+      exec:
+        permissionMode: plan
 
 background:
   enabled: true
   detach: true
-  pollIntervalMs: 1500
-  sessionExtractionDelayMs: 2000            # fallback used by all executors when their override is null
+  pollIntervalMs: 3000
+  sessionExtractionDelayMs: 4000            # fallback used by all executors when their override is null

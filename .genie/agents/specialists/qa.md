@@ -1,6 +1,6 @@
 ---
 name: qa
-description: QA specialist for `{{PROJECT_NAME}}`-style end-to-end and manual validation of wishes and deliveries.
+description: End-to-end and manual validation of wishes and deliveries
 color: blue
 genie:
   executor: codex

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { Transform } from 'stream';
 import { Executor, ExecutorCommand, ExecutorDefaults } from './types';
 import * as logViewer from './codex-log-viewer';
 
@@ -8,7 +9,7 @@ const CODEX_PACKAGE_SPEC = '@namastexlabs/codex@0.43.0-alpha.5';
 const defaults: ExecutorDefaults = {
   binary: 'npx',
   packageSpec: CODEX_PACKAGE_SPEC,
-  sessionsDir: '.genie/state/agents/codex-sessions',
+  sessionsDir: path.join(process.env.HOME || process.env.USERPROFILE || '~', '.codex', 'sessions'),
   exec: {
     fullAuto: true,
     model: 'gpt-5-codex',
@@ -112,29 +113,47 @@ function extractSessionId({ startTime, paths = {} }: { startTime?: number; paths
   if (!sessionsDir) return null;
   const date = new Date(startTime ?? 0);
   if (Number.isNaN(date.getTime())) return null;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const dayDir = path.join(sessionsDir, String(year), month, day);
-  if (!fs.existsSync(dayDir)) return null;
 
-  const files = fs
-    .readdirSync(dayDir)
-    .filter((file: string) => file.startsWith('rollout-') && file.endsWith('.jsonl'))
-    .map((file: string) => {
-      const fullPath = path.join(dayDir, file);
-      const stat = fs.statSync(fullPath);
-      return { name: file, path: fullPath, mtime: stat.mtimeMs };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
+  // Helper to check a specific date directory
+  const checkDirectory = (targetDate: Date): string | null => {
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+    const dayDir = path.join(sessionsDir, String(year), month, day);
+    if (!fs.existsSync(dayDir)) return null;
 
-  for (const file of files) {
-    if (Math.abs(file.mtime - (startTime ?? 0)) < 60000) {
-      const match = file.name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-      if (match) return match[1];
+    const files = fs
+      .readdirSync(dayDir)
+      .filter((file: string) => file.startsWith('rollout-') && file.endsWith('.jsonl'))
+      .map((file: string) => {
+        const fullPath = path.join(dayDir, file);
+        const stat = fs.statSync(fullPath);
+        return { name: file, path: fullPath, mtime: stat.mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    // Expand time window from 60s to 120s to catch slower API calls
+    for (const file of files) {
+      if (Math.abs(file.mtime - (startTime ?? 0)) < 120000) {
+        const match = file.name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        if (match) return match[1];
+      }
     }
-  }
-  return null;
+    return null;
+  };
+
+  // Try the date from startTime first
+  let result = checkDirectory(date);
+  if (result) return result;
+
+  // Try yesterday (in case of timezone differences or day rollover during startup)
+  const yesterday = new Date(date.getTime() - 24 * 60 * 60 * 1000);
+  result = checkDirectory(yesterday);
+  if (result) return result;
+
+  // Try tomorrow (in case of timezone differences)
+  const tomorrow = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  return checkDirectory(tomorrow);
 }
 
 function getSessionExtractionDelay({ config = {}, defaultDelay }: { config?: Record<string, any>; defaultDelay: number }): number {
@@ -142,6 +161,65 @@ function getSessionExtractionDelay({ config = {}, defaultDelay }: { config?: Rec
     return config.sessionExtractionDelayMs;
   }
   return defaultDelay;
+}
+
+function locateSessionFile({ sessionId, startTime, sessionsDir }: { sessionId: string; startTime: number; sessionsDir: string }): string | null {
+  if (!sessionId || !sessionsDir) return null;
+
+  const date = new Date(startTime);
+  if (Number.isNaN(date.getTime())) return null;
+
+  // Helper to check a specific date directory
+  const checkDirectory = (targetDate: Date): string | null => {
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+
+    const dayDir = path.join(sessionsDir, String(year), month, day);
+    if (!fs.existsSync(dayDir)) return null;
+
+    // Try exact match first
+    const exactPattern = new RegExp(`rollout-.*-${sessionId}\\.jsonl$`, 'i');
+    const files = fs.readdirSync(dayDir);
+
+    for (const file of files) {
+      if (exactPattern.test(file)) {
+        return path.join(dayDir, file);
+      }
+    }
+
+    // Fuzzy matching with ±5min window
+    const fuzzyFiles = files
+      .filter((file: string) => file.startsWith('rollout-') && file.endsWith('.jsonl'))
+      .map((file: string) => {
+        const fullPath = path.join(dayDir, file);
+        const stat = fs.statSync(fullPath);
+        return { name: file, path: fullPath, mtime: stat.mtimeMs };
+      })
+      .filter((file) => Math.abs(file.mtime - startTime) < 300000);
+
+    for (const file of fuzzyFiles) {
+      const match = file.name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (match && match[1].toLowerCase() === sessionId.toLowerCase()) {
+        return file.path;
+      }
+    }
+
+    return null;
+  };
+
+  // Try the date from startTime first
+  let result = checkDirectory(date);
+  if (result) return result;
+
+  // Try yesterday (in case of timezone differences)
+  const yesterday = new Date(date.getTime() - 24 * 60 * 60 * 1000);
+  result = checkDirectory(yesterday);
+  if (result) return result;
+
+  // Try tomorrow (in case of timezone differences)
+  const tomorrow = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  return checkDirectory(tomorrow);
 }
 
 function mergeExecConfig(execConfig: Record<string, any> = {}) {
@@ -201,6 +279,111 @@ function collectExecOptions(execConfig: Record<string, any>) {
   return options;
 }
 
+/**
+ * Attempt to locate session file by session ID alone
+ * Searches ~/.codex/sessions/ directory tree for matching files
+ * Used for orphaned session recovery when sessions.json is missing entries
+ */
+function tryLocateSessionFileBySessionId(
+  sessionId: string,
+  sessionsDir: string
+): string | null {
+  if (!sessionId || !sessionsDir || !fs.existsSync(sessionsDir)) {
+    return null;
+  }
+
+  // Search pattern: look in recent date directories (today, yesterday, day before)
+  const now = new Date();
+  const searchDates = [0, -1, -2].map(offset => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + offset);
+    return d;
+  });
+
+  for (const date of searchDates) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const dayDir = path.join(sessionsDir, String(year), month, day);
+
+    if (!fs.existsSync(dayDir)) continue;
+
+    const files = fs.readdirSync(dayDir);
+    const pattern = new RegExp(`-${sessionId}\\.jsonl$`, 'i');
+
+    for (const file of files) {
+      if (pattern.test(file)) {
+        return path.join(dayDir, file);
+      }
+    }
+  }
+
+  return null;
+}
+
+function createOutputFilter(destination: NodeJS.WritableStream): NodeJS.ReadWriteStream {
+  return new Transform({
+    transform(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void) {
+      const text = chunk.toString('utf8');
+      const lines = text.split('\n');
+      const output: string[] = [];
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('{')) {
+          output.push(line);
+          continue;
+        }
+
+        try {
+          const event = JSON.parse(trimmed);
+          const type = event.type;
+
+          if (type === 'session.created') {
+            const minimal = JSON.stringify({
+              type: 'session.created',
+              session_id: event.session_id
+            });
+            output.push(minimal);
+          } else if (type === 'item.completed' && event.item) {
+            const item = event.item;
+
+            if (item.item_type === 'reasoning' && item.text) {
+              output.push(`\n[reasoning] ${item.text}`);
+            } else if (item.item_type === 'command_execution') {
+              output.push(`[command] ${item.command}`);
+              if (item.aggregated_output && item.status === 'completed') {
+                const outputLines = item.aggregated_output.split('\n').slice(0, 10).join('\n');
+                output.push(`[output] ${outputLines}${item.aggregated_output.split('\n').length > 10 ? '\n...' : ''}`);
+              }
+            } else if (item.item_type === 'assistant_message' && item.text) {
+              output.push(`\n[assistant] ${item.text}`);
+            }
+          } else if (type === 'turn.completed' && event.usage) {
+            const summary = JSON.stringify({
+              type: 'turn.completed',
+              tokens: {
+                input: event.usage.input_tokens || 0,
+                cached: event.usage.cached_input_tokens || 0,
+                output: event.usage.output_tokens || 0
+              }
+            });
+            output.push(summary);
+          }
+          // Drop turn.started, item.started, and other verbose events
+        } catch {
+          output.push(line);
+        }
+      }
+
+      const filtered = output.join('\n') + '\n';
+      this.push(filtered);
+      destination.write(filtered);
+      callback();
+    }
+  });
+}
+
 const codexExecutor: Executor = {
   defaults,
   buildRunCommand,
@@ -208,6 +391,9 @@ const codexExecutor: Executor = {
   resolvePaths,
   extractSessionId,
   getSessionExtractionDelay,
+  locateSessionFile,
+  tryLocateSessionFileBySessionId,
+  createOutputFilter,
   logViewer
 };
 

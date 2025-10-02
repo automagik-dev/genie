@@ -1,7 +1,0 @@
-# API REFERENCE
-
-## Docs
-
-- [Introduction](https://elevenlabs.io/docs/api-reference/introduction.mdx): Welcome to the ElevenLabs API reference.
-- [Authentication](https://elevenlabs.io/docs/api-reference/authentication.mdx)
-- [Streaming](https://elevenlabs.io/docs/api-reference/streaming.mdx)

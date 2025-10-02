@@ -82,11 +82,18 @@ Instead of using one-shot Task tools, use the CLI for full conversations:
 
 ## Configuration
 
-The agent CLI uses presets for different scenarios:
-- **default** - Standard execution mode
-- **careful** - Read-only, careful execution
-- **fast** - Quick execution mode
-- **debug** - Debug mode with search enabled
+Agents configure their execution environment via two independent settings in YAML frontmatter:
+
+### Sandbox (File System Access)
+- **read-only** - Read files only (analysis, review agents)
+- **workspace-write** - Read/write in workspace (default, implementation agents)
+- **danger-full-access** - Full system access (rare, externally sandboxed only)
+
+### Approval Policy (Human Interaction)
+- **never** - No approvals (fully automated)
+- **on-failure** - Ask when commands fail (default)
+- **on-request** - Ask for risky operations (interactive)
+- **untrusted** - Ask for everything (high-security)
 
 ### Agent Front Matter Reference
 

@@ -1,7 +1,6 @@
 ---
 name: tests
-description: Testing specialist responsible for authoring new coverage and repairing failing test suites across
-  the repo for `{{PROJECT_NAME}}` projects.
+description: Author new tests and repair failing test suites across all layers
 color: lime
 genie:
   executor: codex

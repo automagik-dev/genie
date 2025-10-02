@@ -1,6 +1,6 @@
 ---
 name: secaudit
-description: Security audit subgeny for posture, risks, mitigations, and quick hardening steps.
+description: Security audit with risk assessment and hardening recommendations
 color: red
 genie:
   executor: codex

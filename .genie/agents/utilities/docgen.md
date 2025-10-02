@@ -1,6 +1,6 @@
 ---
 name: docgen
-description: Documentation generation subgeny to produce outlines and draft bullets for target audiences.
+description: Generate documentation outlines and drafts for target audiences
 color: gray
 genie:
   executor: codex

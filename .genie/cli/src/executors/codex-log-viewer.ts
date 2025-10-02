@@ -1,6 +1,8 @@
 import fs from 'fs';
 import { SessionStore, saveSessions } from '../session-store';
-import { ViewEnvelope, ViewStyle, LogLine } from '../view';
+import { ViewEnvelope, ViewStyle, LogLine, Tone } from '../view';
+import { buildChatView, ChatMessage } from '../views/chat';
+import { sliceForLatest, sliceForRecent, summarizeCodexMetrics, CodexMetrics } from './transcript-utils';
 
 export interface RenderOptions {
   entry: Record<string, any>;
@@ -54,113 +56,229 @@ export function extractSessionIdFromContent(content: string | string[]): string 
   return null;
 }
 
-export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
-  const { render, parsed, paths, store, save, formatPathRelative, style } = ctx;
-  const { entry, jsonl, raw } = render;
-  const lastN = parsed.options.lines && parsed.options.lines > 0 ? parsed.options.lines : 60;
-
-  let meta = jsonl.find((item) => item.provider && item.model) || {};
-  const promptEntry = jsonl.find((item) => typeof item.prompt === 'string');
-  const prompt = promptEntry?.prompt || '';
-
-  const byCall = new Map<string, { cmd?: string; cwd?: string; mcp?: { server?: string; tool?: string } }>();
-  const execs: Array<{ cmd: string; exit: number | null | undefined; dur?: { secs: number; nanos?: number } }> = [];
-  const mcp: Array<{ server: string; tool: string; secs: number }> = [];
-  const patches = { add: 0, update: 0, move: 0, delete: 0 };
-  const errorObjects: Array<Record<string, any>> = [];
-  const streamErrors: string[] = [];
-  const reasoningItems: string[] = [];
-  const assistantMessages: string[] & { _buffer?: Map<string, string> } = [] as any;
-  const toolItems: Array<{ id: string | null; role: string; text: string }> = [];
-  type TokenInfo = { input_tokens?: number; output_tokens?: number; total_tokens?: number };
-  let tokenInfo: TokenInfo | null = null;
-  let rateLimits: any = null;
-  let sessionIdFromEvents: string | null = null;
+/**
+ * Parse Codex JSONL events into ChatMessage[] for conversation view.
+ * Extracts all message types: reasoning, tool calls, assistant messages.
+ */
+function parseConversation(jsonl: Array<Record<string, any>>): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  const responseBuffers = new Map<string, string>();
 
   jsonl.forEach((event) => {
-    if (!meta.model && event.model && event.provider) {
-      meta = {
-        ...meta,
-        model: event.model,
-        provider: event.provider,
-        sandbox: event.sandbox,
-        workdir: event.workdir
-      };
-    }
-
     const envelope = event && typeof event === 'object' ? event : {};
-    const explicitType = envelope.type;
 
-    if (explicitType === 'error') {
-      const message = envelope.message || envelope.text || JSON.stringify(envelope);
-      streamErrors.push(message);
-      return;
+    // Handle both wrapped format from genie.ts and raw format
+    // Wrapped: { timestamp, type: 'response_item', payload: {...} }
+    // Raw: { type, item: {...} }
+    const actualEvent = envelope.payload || envelope;
+    const explicitType = actualEvent.type;
+    const wrapperType = envelope.type;
+
+    // Handle genie.ts wrapped events (agent_message, reasoning, user_message)
+    if (wrapperType === 'response_item' || wrapperType === 'agent_message' || wrapperType === 'reasoning' || wrapperType === 'user_message') {
+      if (wrapperType === 'agent_message' || (explicitType === 'message' && actualEvent.role === 'assistant')) {
+        const content = actualEvent.content;
+        if (Array.isArray(content)) {
+          const textParts: string[] = [];
+          content.forEach((part: any) => {
+            if (part.type === 'output_text' && part.text) {
+              textParts.push(part.text);
+            } else if (part.type === 'input_text' && part.text) {
+              textParts.push(part.text);
+            } else if (typeof part.text === 'string') {
+              textParts.push(part.text);
+            }
+          });
+          if (textParts.length > 0) {
+            messages.push({
+              role: 'assistant',
+              title: 'Assistant',
+              body: textParts
+            });
+          }
+        }
+        return;
+      }
+
+      if (wrapperType === 'reasoning') {
+        const content = actualEvent.content;
+        if (Array.isArray(content)) {
+          const textParts: string[] = [];
+          content.forEach((part: any) => {
+            if (part.type === 'text' && part.text) {
+              textParts.push(part.text);
+            } else if (typeof part.text === 'string') {
+              textParts.push(part.text);
+            }
+          });
+          if (textParts.length > 0) {
+            messages.push({
+              role: 'reasoning',
+              title: 'Reasoning',
+              body: textParts
+            });
+          }
+        }
+        return;
+      }
+
+      if (wrapperType === 'user_message' || (explicitType === 'message' && actualEvent.role === 'user')) {
+        const content = actualEvent.content;
+        if (Array.isArray(content)) {
+          const textParts: string[] = [];
+          content.forEach((part: any) => {
+            if (part.type === 'input_text' && part.text) {
+              textParts.push(part.text);
+            } else if (typeof part.text === 'string') {
+              textParts.push(part.text);
+            }
+          });
+          if (textParts.length > 0) {
+            messages.push({
+              role: 'action',
+              title: 'User',
+              body: textParts
+            });
+          }
+        }
+        return;
+      }
     }
 
+    // Handle raw item.completed events (Codex format from raw log)
     if (explicitType === 'item.completed') {
-      const item = envelope.item || {};
-      const text = typeof item.text === 'string' ? item.text : '';
+      const item = actualEvent.item || {};
+      const text = typeof item.text === 'string' ? item.text.trim() : '';
+
       switch (item.item_type) {
         case 'assistant_message':
-          if (text) assistantMessages.push(text.trim());
+          if (text) {
+            messages.push({
+              role: 'assistant',
+              title: 'Assistant',
+              body: [text]
+            });
+          }
           break;
         case 'reasoning':
-          if (text) reasoningItems.push(text.trim());
+          if (text) {
+            messages.push({
+              role: 'reasoning',
+              title: 'Reasoning',
+              body: [text]
+            });
+          }
           break;
         case 'tool_call':
+          if (text || item.id) {
+            messages.push({
+              role: 'tool',
+              title: `Tool Call${item.id ? ` (${item.id})` : ''}`,
+              body: [text || JSON.stringify(item)]
+            });
+          }
+          break;
         case 'tool_result':
-          toolItems.push({
-            id: item.id || null,
-            role: item.item_type,
-            text: text || JSON.stringify(item)
-          });
+          if (text || item.id) {
+            messages.push({
+              role: 'tool',
+              title: `Tool Result${item.id ? ` (${item.id})` : ''}`,
+              body: [text || JSON.stringify(item)]
+            });
+          }
           break;
         default:
-          if (text) reasoningItems.push(`${item.item_type || 'item'}: ${text.trim()}`);
+          if (text) {
+            messages.push({
+              role: 'reasoning',
+              title: item.item_type || 'Item',
+              body: [text]
+            });
+          }
       }
       return;
     }
 
-    const payload = (envelope as any).msg || envelope;
+    // Handle streaming response events
+    const payload = (actualEvent as any).msg || actualEvent;
     const type = payload && payload.type;
-    const info = (envelope as any).info || payload.info;
-    const rate = (envelope as any).rate_limits || payload.rate_limits;
 
-    if (type === 'session.created') {
-      const found = payload.session_id || payload.sessionId || (payload.session && (payload.session.id || payload.session.session_id || payload.session.sessionId));
-      if (found) sessionIdFromEvents = sessionIdFromEvents || found;
-      if (payload.model || payload.provider || payload.sandbox || (payload.session && payload.session.model)) {
-        meta = {
-          ...meta,
-          ...(payload.session || {}),
-          ...(typeof payload.metadata === 'object' ? payload.metadata : {})
-        };
-        if (payload.model) meta.model = payload.model;
-        if (payload.provider) meta.provider = payload.provider;
-        if (payload.sandbox) meta.sandbox = payload.sandbox;
-        if (payload.workdir) meta.workdir = payload.workdir;
-        if (payload.session && payload.session.model && !meta.model) meta.model = payload.session.model;
-        if (payload.session && payload.session.provider && !meta.provider) meta.provider = payload.session.provider;
+    if (type === 'response.output_text.delta') {
+      const responseId = (actualEvent as any).response_id || payload.response_id;
+      if (responseId) {
+        const delta = (actualEvent as any).delta || payload.delta || '';
+        const prev = responseBuffers.get(responseId) || '';
+        responseBuffers.set(responseId, prev + delta);
       }
-      return;
+    } else if (type === 'response.output_text.completed' || type === 'response.completed') {
+      const responseId = (actualEvent as any).response_id || payload.response_id;
+      if (responseId && responseBuffers.has(responseId)) {
+        const text = responseBuffers.get(responseId)?.trim();
+        if (text) {
+          messages.push({
+            role: 'assistant',
+            title: 'Assistant',
+            body: [text]
+          });
+        }
+        responseBuffers.delete(responseId);
+      }
     }
+  });
+
+  // Flush any remaining buffered responses
+  responseBuffers.forEach((text) => {
+    const cleaned = text.trim();
+    if (cleaned) {
+      messages.push({
+        role: 'assistant',
+        title: 'Assistant',
+        body: [cleaned]
+      });
+    }
+  });
+
+  return messages;
+}
+
+/**
+ * Extract metrics from Codex JSONL events and format for header meta items.
+ * Follows Metrics Summarization Specification from wish.
+ */
+function extractMetrics(jsonl: Array<Record<string, any>>): Array<{ label: string; value: string; tone?: Tone }> {
+  const metrics: Array<{ label: string; value: string; tone?: Tone }> = [];
+
+  const byCall = new Map<string, { cmd?: string; mcp?: { server?: string; tool?: string } }>();
+  const execs: Array<{ exit: number | null | undefined }> = [];
+  const mcp: Array<{ server: string; tool: string }> = [];
+  const patches = { add: 0, update: 0, move: 0, delete: 0 };
+  let tokenInfo: { input_tokens?: number; output_tokens?: number; total_tokens?: number } | null = null;
+  let rateLimits: any = null;
+
+  jsonl.forEach((event) => {
+    const envelope = event && typeof event === 'object' ? event : {};
+    // Handle both wrapped format from genie.ts and raw format
+    const actualEvent = envelope.payload || envelope;
+    const payload = (actualEvent as any).msg || actualEvent;
+    const type = payload && payload.type;
+    const rate = (actualEvent as any).rate_limits || payload.rate_limits;
 
     switch (type) {
       case 'exec_command_begin':
-        byCall.set(payload.call_id, { cmd: (payload.command || []).join(' '), cwd: payload.cwd });
+        byCall.set(payload.call_id, { cmd: (payload.command || []).join(' ') });
         break;
       case 'exec_command_end': {
-        const rec = byCall.get(payload.call_id) || {};
-        execs.push({ cmd: rec.cmd || '(unknown)', exit: payload.exit_code, dur: payload.duration });
-        break; }
+        execs.push({ exit: payload.exit_code });
+        break;
+      }
       case 'mcp_tool_call_begin':
         byCall.set(payload.call_id, { mcp: { server: payload.invocation?.server, tool: payload.invocation?.tool } });
         break;
       case 'mcp_tool_call_end': {
         const rec = byCall.get(payload.call_id) || { mcp: {} };
-        const d = payload.duration || {};
-        mcp.push({ server: rec.mcp?.server || '?', tool: rec.mcp?.tool || '?', secs: d.secs || 0 });
-        break; }
+        mcp.push({ server: rec.mcp?.server || '?', tool: rec.mcp?.tool || '?' });
+        break;
+      }
       case 'patch_apply_begin': {
         const changes = payload.changes || {};
         Object.values(changes).forEach((chg: any) => {
@@ -171,11 +289,14 @@ export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
           }
           if (chg.delete) patches.delete += 1;
         });
-        break; }
+        break;
+      }
       case 'token_count': {
+        const info = (envelope as any).info || payload.info;
         if (info?.total_token_usage) tokenInfo = info.total_token_usage;
         if (rate) rateLimits = rate;
-        break; }
+        break;
+      }
       case 'token.usage': {
         if (payload.input_tokens || payload.output_tokens || payload.total_tokens) {
           tokenInfo = {
@@ -184,7 +305,8 @@ export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
             total_tokens: payload.total_tokens || ((payload.input_tokens || 0) + (payload.output_tokens || 0))
           };
         }
-        break; }
+        break;
+      }
       case 'response.usage': {
         const usage = (envelope as any).usage || payload.usage || payload;
         if (usage) {
@@ -194,43 +316,82 @@ export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
             total_tokens: usage.total_tokens || usage.usage || ((usage.input_tokens || 0) + (usage.output_tokens || 0))
           };
         }
-        break; }
-      case 'response.output_text.delta': {
-        const responseId = (envelope as any).response_id || payload.response_id;
-        if (!responseId) break;
-        const delta = (envelope as any).delta || payload.delta || '';
-        if (!delta) break;
-        if (!assistantMessages._buffer) assistantMessages._buffer = new Map();
-        const buffer = assistantMessages._buffer;
-        const prev = buffer.get(responseId) || '';
-        buffer.set(responseId, prev + delta);
-        break; }
-      case 'response.output_text.completed': {
-        const responseId = (envelope as any).response_id || payload.response_id;
-        if (responseId && assistantMessages._buffer?.has(responseId)) {
-          const text = assistantMessages._buffer.get(responseId)?.trim();
-          if (text) assistantMessages.push(text);
-          assistantMessages._buffer.delete(responseId);
-        }
-        break; }
-      case 'response.completed': {
-        if (assistantMessages._buffer) {
-          const values = Array.from(assistantMessages._buffer.values());
-          values.forEach((val) => {
-            const cleaned = (val || '').trim();
-            if (cleaned) assistantMessages.push(cleaned);
-          });
-          assistantMessages._buffer.clear();
-        }
-        break; }
-      case 'response.refusal.delta': {
-        const delta = (envelope as any).delta || payload.delta;
-        if (delta) reasoningItems.push(`refusal: ${delta}`);
-        break; }
-      default: {
-        const s = JSON.stringify(payload || envelope);
-        if (/error/i.test(s)) errorObjects.push(payload);
+        break;
       }
+    }
+  });
+
+  // Tokens metric
+  if (tokenInfo) {
+    const info: { input_tokens?: number; output_tokens?: number; total_tokens?: number } = tokenInfo;
+    const inp = info.input_tokens ?? 0;
+    const out = info.output_tokens ?? 0;
+    const total = info.total_tokens ?? (inp + out);
+    metrics.push({ label: 'Tokens', value: `in:${inp} out:${out} total:${total}` });
+  }
+
+  // MCP Calls metric (aggregate, top 2 servers)
+  if (mcp.length > 0) {
+    const serverCounts = new Map<string, number>();
+    mcp.forEach((call) => {
+      serverCounts.set(call.server, (serverCounts.get(call.server) || 0) + 1);
+    });
+    const topServers = Array.from(serverCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 2);
+    const topServerStr = topServers.map(([srv, cnt]) => `${srv}:${cnt}`).join(' ');
+    const moreCount = serverCounts.size > 2 ? ` +${serverCounts.size - 2} more` : '';
+    metrics.push({ label: 'MCP Calls', value: `${mcp.length} calls (${topServerStr}${moreCount})` });
+  }
+
+  // Patches metric
+  if (patches.add || patches.update || patches.move || patches.delete) {
+    metrics.push({
+      label: 'Patches',
+      value: `add:${patches.add} update:${patches.update} move:${patches.move} delete:${patches.delete}`
+    });
+  }
+
+  // Exec Commands metric
+  if (execs.length > 0) {
+    const okCount = execs.filter((e) => e.exit === 0).length;
+    const errCount = execs.filter((e) => e.exit !== 0 && e.exit != null).length;
+    metrics.push({
+      label: 'Execs',
+      value: `${execs.length} commands (${okCount} ok, ${errCount} err)`,
+      tone: errCount > 0 ? 'warning' : undefined
+    });
+  }
+
+  // Rate Limits metric
+  if (rateLimits?.primary) {
+    const usedPercent = rateLimits.primary.used_percent || 0;
+    const resetSecs = rateLimits.primary.resets_in_seconds || 0;
+    metrics.push({
+      label: 'Rate Limit',
+      value: `${usedPercent}% used, resets in ${resetSecs}s`,
+      tone: usedPercent > 80 ? 'warning' : undefined
+    });
+  }
+
+  return metrics;
+}
+
+export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
+  const { render, parsed, paths, store, save } = ctx;
+  const { entry, jsonl } = render;
+
+  // Extract session ID from events if needed
+  let sessionIdFromEvents: string | null = null;
+  jsonl.forEach((event) => {
+    const envelope = event && typeof event === 'object' ? event : {};
+    // Handle both wrapped format from genie.ts and raw format
+    const actualEvent = envelope.payload || envelope;
+    const payload = (actualEvent as any).msg || actualEvent;
+    const type = payload && payload.type;
+    if (type === 'session.created') {
+      const found = payload.session_id || payload.sessionId || (payload.session && (payload.session.id || payload.session.session_id || payload.session.sessionId));
+      if (found) sessionIdFromEvents = sessionIdFromEvents || found;
     }
   });
 
@@ -239,185 +400,37 @@ export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
     save(paths, store);
   }
 
-  if (assistantMessages._buffer) {
-    const bufferValues = Array.from(assistantMessages._buffer.values() || []);
-    bufferValues.forEach((val) => {
-      const cleaned = (val || '').trim();
-      if (cleaned) assistantMessages.push(cleaned);
-    });
-    assistantMessages._buffer.clear();
-    delete assistantMessages._buffer;
+  // Parse conversation from JSONL events
+  let allMessages = parseConversation(jsonl);
+
+  // Determine slicing based on mode
+  let messages: ChatMessage[];
+  let showFull = false;
+
+  if (parsed.options.full) {
+    // Full mode: show all messages
+    messages = allMessages;
+    showFull = true;
+  } else if (parsed.options.live) {
+    // Live mode: show latest assistant message (+ optional preceding reasoning)
+    messages = sliceForLatest(allMessages);
+  } else {
+    // Default mode: show last 5 messages
+    messages = allMessages.slice(-5);
   }
 
-  const finalAssistantMessages = assistantMessages.filter((msg) => typeof msg === 'string' && msg.trim().length);
+  // Extract metrics for header
+  const metrics = extractMetrics(jsonl);
 
-  const okCount = execs.filter((e) => e.exit === 0).length;
-  const errCount = execs.filter((e) => e.exit !== 0 && e.exit != null).length;
-
-  const tailLines = raw.split(/\r?\n/).slice(-lastN);
-  const logLines: LogLine[] = tailLines.map((line) => ({
-    text: `  ${line}`,
-    tone: classifyTone(line)
-  }));
-
-  const tokensItem = tokenInfo
-    ? (() => {
-        const info = tokenInfo as TokenInfo;
-        return { label: 'Tokens', value: `in:${info.input_tokens ?? 0} out:${info.output_tokens ?? 0} total:${info.total_tokens ?? 0}` };
-      })()
-    : null;
-
-  return {
-    style,
-    title: `${entry.agent} session overview`,
-    body: {
-      type: 'layout',
-      direction: 'column',
-      gap: 1,
-      children: [
-        { type: 'heading', level: 1, text: entry.agent, accent: 'primary' },
-        {
-          type: 'keyValue',
-          columns: 1,
-          items: [
-            { label: 'Session', value: entry.sessionId || 'n/a', tone: entry.sessionId ? 'success' : 'muted' },
-            { label: 'Log', value: formatPathRelative(entry.logFile, paths.baseDir) }
-          ]
-        },
-        metaSection(meta),
-        prompt
-          ? {
-              type: 'layout',
-              direction: 'column',
-              children: [
-                { type: 'heading', level: 2, text: 'Prompt', accent: 'secondary' },
-                { type: 'text', text: prompt, wrap: true, tone: 'muted' }
-              ]
-            }
-          : null,
-        reasoningItems.length
-          ? listSection('Reasoning', reasoningItems.slice(-5))
-          : null,
-        finalAssistantMessages.length
-          ? listSection('Assistant', finalAssistantMessages.slice(-3))
-          : null,
-        toolItems.length
-          ? listSection('Tool Items', toolItems.slice(-5).map((item) =>
-              `${item.role}${item.id ? `(${item.id})` : ''}: ${truncate(item.text, 160)}`
-            ))
-          : null,
-        mcp.length
-          ? listSection('MCP', mcp.slice(-5).map((call) => `${call.server}:${call.tool} ${call.secs}s`))
-          : null,
-        patches.add || patches.update || patches.move || patches.delete
-          ? {
-              type: 'text',
-              text: `Patches → add:${patches.add} update:${patches.update} move:${patches.move} delete:${patches.delete}`,
-              tone: 'muted'
-            }
-          : null,
-        execs.length
-          ? listSection(
-              `Execs (last ${Math.min(3, execs.length)})`,
-              execs.slice(-3).map((cmd) => {
-                const ms = cmd.dur ? cmd.dur.secs * 1000 + Math.round((cmd.dur.nanos || 0) / 1e6) : null;
-                return `${cmd.exit === 0 ? 'OK ' : 'ERR'} ${cmd.cmd} (${ms ?? '?'} ms)`;
-              })
-            )
-          : null,
-        errorObjects.length
-          ? listSection('Errors', errorObjects.slice(-5).map((item) => truncate(JSON.stringify(item), 160)))
-          : null,
-        streamErrors.length
-          ? listSection('Stream Errors', streamErrors.slice(-5).map((item) => truncate(item, 160)))
-          : null,
-        {
-          type: 'keyValue',
-          columns: 1,
-          items: compact([
-            { label: 'MCP', value: String(mcp.length) },
-            { label: 'Execs', value: `total:${execs.length} ok:${okCount} err:${errCount}` },
-            patches.add || patches.update || patches.move || patches.delete
-              ? { label: 'Patches', value: `add:${patches.add} update:${patches.update} move:${patches.move} delete:${patches.delete}` }
-              : null,
-            finalAssistantMessages.length
-              ? { label: 'Assistant', value: String(finalAssistantMessages.length) }
-              : null,
-            reasoningItems.length
-              ? { label: 'Reasoning', value: String(reasoningItems.length) }
-              : null,
-            toolItems.length
-              ? { label: 'Tool Items', value: String(toolItems.length) }
-              : null,
-            tokensItem,
-            rateLimits?.primary
-              ? { label: 'RateLimit', value: `used:${rateLimits.primary.used_percent || 0}% reset:${rateLimits.primary.resets_in_seconds || 0}s` }
-              : null
-          ])
-        },
-        { type: 'heading', level: 2, text: `Raw Tail (${lastN} lines)`, accent: 'muted' },
-        { type: 'log', lines: logLines }
-      ].filter(Boolean) as any
-    },
-    meta: {
-      sessionId: entry.sessionId,
-      logFile: formatPathRelative(entry.logFile, paths.baseDir),
-      prompt,
-      reasoningItems,
-      assistantMessages: finalAssistantMessages,
-      toolItems,
-      mcp,
-      patches,
-      execs,
-      errors: errorObjects,
-      streamErrors,
-      tokenInfo,
-      rateLimits,
-      tailLines
-    }
-  };
-}
-
-function metaSection(meta: Record<string, any>) {
-  const rows = compact([
-    meta.model ? { label: 'Model', value: meta.model } : null,
-    meta.provider ? { label: 'Provider', value: meta.provider } : null,
-    meta.sandbox ? { label: 'Sandbox', value: meta.sandbox } : null,
-    meta.workdir ? { label: 'Workdir', value: meta.workdir } : null
-  ]);
-  if (!rows.length) return null;
-  return {
-    type: 'keyValue' as const,
-    columns: 1 as const,
-    items: rows
-  };
-}
-
-function listSection(title: string, items: string[]) {
-  return {
-    type: 'layout' as const,
-    direction: 'column' as const,
-    children: [
-      { type: 'heading', level: 2, text: title, accent: 'secondary' },
-      { type: 'list', items }
-    ]
-  };
-}
-
-function classifyTone(line: string) {
-  const upper = line.toUpperCase();
-  if (upper.includes('ERROR')) return 'danger';
-  if (upper.includes('WARN')) return 'warning';
-  return 'default';
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 1) + '…';
-}
-
-function compact<T>(items: Array<T | null | undefined>): T[] {
-  return items.filter((item): item is T => Boolean(item));
+  // Build and return conversation view
+  return buildChatView({
+    agent: entry.agent,
+    sessionId: entry.sessionId || null,
+    status: null,
+    messages,
+    meta: metrics,
+    showFull
+  });
 }
 
 export default {

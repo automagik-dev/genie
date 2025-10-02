@@ -11,7 +11,8 @@
     "resolveJsonModule": true,
     "declaration": false,
     "jsx": "react-jsx",
-    "moduleResolution": "node16"
+    "moduleResolution": "node16",
+    "types": ["node"]
   },
   "include": [
     "src/**/*"

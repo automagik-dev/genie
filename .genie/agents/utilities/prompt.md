@@ -1,6 +1,6 @@
 ---
 name: prompt
-description: Advanced prompting guidance for {{PROJECT_NAME}} agents.
+description: Advanced prompting guidance and prompt refinement
 genie:
   executor: codex
   model: gpt-5

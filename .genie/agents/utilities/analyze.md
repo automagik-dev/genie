@@ -1,6 +1,6 @@
 ---
 name: analyze
-description: Structural/system analysis subgeny for dependency maps, hotspots, coupling, and simplification opportunities.
+description: Analyze structure, dependencies, and simplification opportunities
 color: navy
 genie:
   executor: codex

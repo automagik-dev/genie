@@ -4,6 +4,7 @@ import EventEmitter from 'events';
 export const INTERNAL_BACKGROUND_ENV = 'GENIE_AGENT_BACKGROUND_RUNNER';
 export const INTERNAL_START_TIME_ENV = 'GENIE_AGENT_START_TIME';
 export const INTERNAL_LOG_PATH_ENV = 'GENIE_AGENT_LOG_FILE';
+export const INTERNAL_BACKGROUND_MARKER_ENV = 'GENIE_INTERNAL_BACKGROUND';
 
 export interface BackgroundLaunchOptions {
   rawArgs?: string[];
@@ -60,6 +61,7 @@ export class BackgroundManager extends EventEmitter {
       ...process.env,
       ...extraEnv,
       [INTERNAL_BACKGROUND_ENV]: '1',
+      [INTERNAL_BACKGROUND_MARKER_ENV]: '1',
       [INTERNAL_START_TIME_ENV]: String(startTime),
       [INTERNAL_LOG_PATH_ENV]: logFile ?? ''
     };

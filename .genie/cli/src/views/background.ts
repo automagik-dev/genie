@@ -21,6 +21,9 @@ export interface RunCompletionParams {
   outcome: 'success' | 'warning' | 'failure';
   sessionId?: string | null;
   executorKey?: string;
+  model?: string | null;
+  permissionMode?: string | null;
+  sandbox?: string | null;
   mode?: string | null;
   background?: boolean | null;
   exitCode?: number | null;
@@ -158,27 +161,41 @@ export function buildRunCompletionView(params: RunCompletionParams): ViewEnvelop
         ? `${params.agentName} completed with warnings`
         : `${params.agentName} failed`;
 
-  const metaBadges = compact<ViewNode>([
-    { type: 'badge', text: formatOutcomeBadge(params.outcome), tone },
-    params.sessionId
-      ? { type: 'badge', text: formatSessionBadge(params.sessionId), tone: 'success' }
-      : { type: 'badge', text: 'Session pending', tone: 'muted' },
-    params.mode ? { type: 'badge', text: `Mode ${params.mode}`, tone: 'info' } : null,
-    params.executorKey ? { type: 'badge', text: `Executor ${params.executorKey}`, tone: 'info' } : null
-  ]);
+  const metaItems: Array<{ label: string; value: string; tone?: Tone }> = [];
 
-  const metaItems: Array<{ label: string; value: string; tone?: Tone }> = compact([
-    params.sessionId ? { label: 'Session', value: params.sessionId, tone: 'success' } : null,
-    params.executorKey ? { label: 'Executor', value: params.executorKey } : null,
-    params.mode ? { label: 'Execution mode', value: params.mode } : null,
-    params.background === true
-      ? { label: 'Background', value: 'detached' }
-      : params.background === false
-        ? { label: 'Background', value: 'attached', tone: 'warning' }
-        : null,
-    params.exitCode !== undefined && params.exitCode !== null ? { label: 'Exit code', value: String(params.exitCode) } : null,
-    params.durationMs ? { label: 'Runtime', value: `${(params.durationMs / 1000).toFixed(1)}s` } : null
-  ]);
+  // Only show stats for attached mode (not background)
+  if (params.background === false) {
+    if (params.sessionId) {
+      metaItems.push({ label: 'Resume', value: `./genie resume ${params.sessionId} "continue"` });
+    }
+
+    // Executor and model on same line
+    const executorInfo: string[] = [];
+    if (params.executorKey) executorInfo.push(params.executorKey);
+    if (params.model) executorInfo.push(params.model);
+    if (executorInfo.length) {
+      metaItems.push({ label: 'Executor', value: executorInfo.join(' / ') });
+    }
+
+    // Executor-specific settings
+    // Claude: show permission mode (if meaningful)
+    // Codex: show sandbox + approval policy
+    if (params.executorKey === 'codex') {
+      if (params.sandbox) {
+        metaItems.push({ label: 'Sandbox', value: params.sandbox });
+      }
+      // Could add approval-policy here if we pass it
+    } else if (params.executorKey === 'claude') {
+      // Skip permission mode if it's "default" (not meaningful)
+      if (params.permissionMode && params.permissionMode !== 'default') {
+        metaItems.push({ label: 'Permission', value: params.permissionMode });
+      }
+    }
+
+    if (params.durationMs) {
+      metaItems.push({ label: 'Runtime', value: `${(params.durationMs / 1000).toFixed(1)}s` });
+    }
+  }
 
   const notesCallout = params.extraNotes && params.extraNotes.length
     ? {
@@ -196,23 +213,13 @@ export function buildRunCompletionView(params: RunCompletionParams): ViewEnvelop
     body: {
       type: 'layout',
       direction: 'column',
-      gap: 1,
+      gap: 0,
       children: [
-        { type: 'heading', level: 1, text: title, accent: params.outcome === 'failure' ? 'muted' : 'secondary' },
-        metaBadges.length
-          ? {
-              type: 'layout' as const,
-              direction: 'row',
-              gap: 1,
-              children: metaBadges
-            }
-          : null,
-        { type: 'divider', variant: 'solid', accent: 'muted' },
-        {
-          type: 'keyValue',
+        metaItems.length ? {
+          type: 'keyValue' as const,
           columns: 1,
           items: metaItems
-        },
+        } : null,
         notesCallout
       ].filter(Boolean) as ViewNode[]
     }

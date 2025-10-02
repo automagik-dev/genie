@@ -1,6 +1,6 @@
 ---
 name: genie-qa
-description: QA specialist for Genie CLI end-to-end validation of commands, workflows, layouts, and user experience scenarios.
+description: End-to-end validation of Genie CLI commands and workflows
 color: purple
 genie:
   executor: codex
