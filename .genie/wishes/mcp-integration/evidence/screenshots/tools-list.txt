@@ -1,0 +1,135 @@
+# MCP Tools List
+
+**Total Tools:** 6
+
+
+## 1. list_agents
+
+**Description:** List all available Genie agents with their capabilities and descriptions. Use this first to discover which agents can help with your task.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+
+## 2. list_sessions
+
+**Description:** List active and recent Genie agent sessions. Shows session IDs, agents, status, and timing. Use this to find sessions to resume or view.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}
+```
+
+
+## 3. run
+
+**Description:** Start a new Genie agent session. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "agent": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent",
+    "prompt"
+  ],
+  "additionalProperties": false
+}
+```
+
+
+## 4. resume
+
+**Description:** Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "prompt"
+  ],
+  "additionalProperties": false
+}
+```
+
+
+## 5. view
+
+**Description:** View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    },
+    "full": {
+      "default": false,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "sessionId",
+    "full"
+  ],
+  "additionalProperties": false
+}
+```
+
+
+## 6. stop
+
+**Description:** Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.
+
+**Input Schema:**
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sessionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "additionalProperties": false
+}
+```
+

@@ -1,0 +1,78 @@
+# list_agents Tool Execution
+
+**Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "list_agents",
+    "arguments": {}
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "result": {
+    "content": [
+      {
+        "text": "Found 34 available agents:\n\n**core:**\n  • forge - Break wishes into execution groups with task files and validation hooks\n  • plan - Turn raw ideas into roadmap-ready wishes with product context\n  • review - Validate wish delivery by consolidating evidence and rerunning checks\n  • test-claude - Test agent for Claude executor validation\n  • wish - Convert ideas into roadmap-aligned wishes with spec contracts\n\n**qa:**\n  • qa/claude-parameter-test (claude-parameter-test) - Comprehensive Claude executor parameter validation\n  • qa/codex-parameter-test (codex-parameter-test) - Comprehensive Codex executor parameter validation\n\n**specialists:**\n  • specialists/bug-reporter (bug-reporter) - Triage incidents and create GitHub-ready bug reports\n  • specialists/genie-qa (genie-qa) - End-to-end validation of Genie CLI commands and workflows\n  • specialists/git-workflow (git-workflow) - Orchestrate safe Git workflows aligned with Genie conventions\n  • specialists/implementor (implementor) - End-to-end feature implementation with TDD discipline\n  • specialists/learn (learn) - Meta-learning agent for surgical documentation updates\n  • specialists/polish (polish) - Type-checking, linting, and formatting for code quality\n  • specialists/project-manager (project-manager) - Verify task completion and update roadmap status\n  • specialists/qa (qa) - End-to-end and manual validation of wishes and deliveries\n  • specialists/self-learn (self-learn) - Record violations and propagate behavioral lessons across agents\n  • specialists/sleepy (sleepy) - Autonomous wish coordinator with Twin Genie validation\n  • specialists/tests (tests) - Author new tests and repair failing test suites across all layers\n\n**utilities:**\n  • utilities/analyze (analyze) - Analyze structure, dependencies, and simplification opportunities\n  • utilities/challenge (challenge) - Pressure-test assumptions with counterarguments and evidence\n  • utilities/codereview (codereview) - Code review with severity-tagged findings and recommendations\n  • utilities/commit (commit) - Pre-commit validation with diff analysis and commit message proposals\n  • utilities/consensus (consensus) - Structure multiple perspectives and synthesize recommendations\n  • utilities/debug (debug) - Investigation-first debugging with hypotheses and minimal fixes\n  • utilities/docgen (docgen) - Generate documentation outlines and drafts for target audiences\n  • utilities/identity-check (identity-check) - Verify append_user_instructions_file wiring for testing\n  • utilities/install (install) - Install Genie template and CLI setup for new projects\n  • utilities/prompt (prompt) - Advanced prompting guidance and prompt refinement\n  • utilities/refactor (refactor) - Plan staged refactors with risk assessment and verification\n  • utilities/secaudit (secaudit) - Security audit with risk assessment and hardening recommendations\n  • utilities/testgen (testgen) - Generate test proposals with names, locations, and assertions\n  • utilities/thinkdeep (thinkdeep) - Timeboxed deep reasoning with explicit steps and scoped exploration\n  • utilities/tracer (tracer) - Propose instrumentation and observability signals for systems\n  • utilities/twin (twin) - Pressure-test ideas with planning, consensus, and deep analysis\n\n\nUse the \"run\" tool with an agent id and prompt to start an agent session.",
+        "type": "text"
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 3
+}
+```
+
+**Output:**
+Found 34 available agents:
+
+**core:**
+  • forge - Break wishes into execution groups with task files and validation hooks
+  • plan - Turn raw ideas into roadmap-ready wishes with product context
+  • review - Validate wish delivery by consolidating evidence and rerunning checks
+  • test-claude - Test agent for Claude executor validation
+  • wish - Convert ideas into roadmap-aligned wishes with spec contracts
+
+**qa:**
+  • qa/claude-parameter-test (claude-parameter-test) - Comprehensive Claude executor parameter validation
+  • qa/codex-parameter-test (codex-parameter-test) - Comprehensive Codex executor parameter validation
+
+**specialists:**
+  • specialists/bug-reporter (bug-reporter) - Triage incidents and create GitHub-ready bug reports
+  • specialists/genie-qa (genie-qa) - End-to-end validation of Genie CLI commands and workflows
+  • specialists/git-workflow (git-workflow) - Orchestrate safe Git workflows aligned with Genie conventions
+  • specialists/implementor (implementor) - End-to-end feature implementation with TDD discipline
+  • specialists/learn (learn) - Meta-learning agent for surgical documentation updates
+  • specialists/polish (polish) - Type-checking, linting, and formatting for code quality
+  • specialists/project-manager (project-manager) - Verify task completion and update roadmap status
+  • specialists/qa (qa) - End-to-end and manual validation of wishes and deliveries
+  • specialists/self-learn (self-learn) - Record violations and propagate behavioral lessons across agents
+  • specialists/sleepy (sleepy) - Autonomous wish coordinator with Twin Genie validation
+  • specialists/tests (tests) - Author new tests and repair failing test suites across all layers
+
+**utilities:**
+  • utilities/analyze (analyze) - Analyze structure, dependencies, and simplification opportunities
+  • utilities/challenge (challenge) - Pressure-test assumptions with counterarguments and evidence
+  • utilities/codereview (codereview) - Code review with severity-tagged findings and recommendations
+  • utilities/commit (commit) - Pre-commit validation with diff analysis and commit message proposals
+  • utilities/consensus (consensus) - Structure multiple perspectives and synthesize recommendations
+  • utilities/debug (debug) - Investigation-first debugging with hypotheses and minimal fixes
+  • utilities/docgen (docgen) - Generate documentation outlines and drafts for target audiences
+  • utilities/identity-check (identity-check) - Verify append_user_instructions_file wiring for testing
+  • utilities/install (install) - Install Genie template and CLI setup for new projects
+  • utilities/prompt (prompt) - Advanced prompting guidance and prompt refinement
+  • utilities/refactor (refactor) - Plan staged refactors with risk assessment and verification
+  • utilities/secaudit (secaudit) - Security audit with risk assessment and hardening recommendations
+  • utilities/testgen (testgen) - Generate test proposals with names, locations, and assertions
+  • utilities/thinkdeep (thinkdeep) - Timeboxed deep reasoning with explicit steps and scoped exploration
+  • utilities/tracer (tracer) - Propose instrumentation and observability signals for systems
+  • utilities/twin (twin) - Pressure-test ideas with planning, consensus, and deep analysis
+
+
+Use the "run" tool with an agent id and prompt to start an agent session.
