@@ -21,31 +21,25 @@ Provide reusable planning, wishing, forging, review, and commit workflows with e
 
 ## Technical Stack
 
-- CLI runner: `./genie`
+- MCP Server: Genie agents accessible via `mcp__genie__*` tools
 - Node/TS + Rust friendly; works in any repo (domain-agnostic)
 
-## CLI Architecture
+## MCP Architecture
 
-The Genie CLI has been refactored into a highly modular architecture for maximum maintainability:
+Genie is exposed as an MCP (Model Context Protocol) server with the following tools:
 
-### Modularization Achievement
-- **Before**: Single monolithic file with 2,105 lines
-- **After**: Clean orchestrator with 143 lines (93% reduction)
-- **Impact**: Enhanced maintainability, testability, and extensibility
-
-### Architecture Layers
-1. **Orchestration Layer** (`genie.ts`) - Thin entry point that routes commands
-2. **Command Layer** (`commands/`) - Isolated command implementations
-3. **Library Layer** (`lib/`) - Shared utilities and configuration
-4. **Executor Layer** (`executors/`) - Pluggable backend adapters
-5. **View Layer** (`views/`) - Output rendering and formatting
-6. **Infrastructure** (`background-manager.ts`, `session-store.ts`) - Process and state management
+### Available MCP Tools
+- `mcp__genie__run` - Start a new agent session
+- `mcp__genie__view` - View session transcript
+- `mcp__genie__resume` - Continue an existing session
+- `mcp__genie__list_sessions` - List all sessions
+- `mcp__genie__list_agents` - List available agents
+- `mcp__genie__stop` - Stop a running session
 
 ### Key Benefits
-- **Clear separation of concerns** - Each module has a single responsibility
-- **Easy to extend** - Add new commands by creating a file in `commands/`
-- **Testable in isolation** - Modules can be unit tested independently
-- **Pluggable executors** - Support for different backend engines (Codex, etc.)
+- **Integrated with Claude Code** - Use Genie directly in your AI workflow
+- **Session management** - Persistent conversations with agents
+- **Pluggable executors** - Support for different backend engines (Codex, Claude, etc.)
 
 For detailed documentation, see [.genie/cli/README.md](.genie/cli/README.md)
 
@@ -68,9 +62,9 @@ Phase 1: Template sweep in progress (neutralizing project-specific content).
 - `.claude/commands/`
 - `AGENTS.md`
 
-2) Run the CLI:
-- `./genie --help`
-- `./genie run plan "[Discovery] Load @.genie/product/mission.md and @.genie/product/roadmap.md. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers." --no-background`
+2) Use MCP tools to run agents:
+- List available agents: `mcp__genie__list_agents`
+- Start a planning session: `mcp__genie__run` with agent `plan`
 
 3) Customize `.genie/product/*` (mission, roadmap, environment) and start your first wish.
 
@@ -80,7 +74,7 @@ Phase 1: Template sweep in progress (neutralizing project-specific content).
 .genie/product/      # Mission, roadmap, environment
 .genie/agents/       # Entrypoints at root, shared utilities/, repo-specific specialists/
 .genie/wishes/       # Wish blueprints and status logs
- .genie/state/        # CLI-managed session data (inspect via ./genie commands)
+.genie/state/        # Session data (inspect via mcp__genie__list_sessions and mcp__genie__view)
 vendors/             # External reference repos
 AGENTS.md            # Framework overview & guardrails
 CLAUDE.md            # AI assistant guidelines
@@ -100,40 +94,38 @@ Orchestration-first. Evidence-first. Human-approved. Domain-agnostic templates t
 
 ## Quick Start Examples
 
-Plan → Wish → Forge → Review:
-```bash
+Plan → Wish → Forge → Review workflow using MCP tools:
+
+```
+# List available agents
+mcp__genie__list_agents
+
 # Plan: off-roadmap feature
-./genie run plan "[Discovery] mission @.genie/product/mission.md, roadmap @.genie/product/roadmap.md. [Implementation] Assess 'user-notes' scope + risks; prepare wish brief. [Verification] Wish readiness + blockers."
+mcp__genie__run with agent="plan" and prompt="[Discovery] mission @.genie/product/mission.md, roadmap @.genie/product/roadmap.md. [Implementation] Assess 'user-notes' scope + risks; prepare wish brief. [Verification] Wish readiness + blockers."
 
 # Wish: create the contract
-./genie run wish "slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
+mcp__genie__run with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
 
 # Forge: break into execution groups
-./genie run forge "[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Execution groups + commands. [Verification] Validation hooks + evidence paths."
+mcp__genie__run with agent="forge" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Execution groups + commands. [Verification] Validation hooks + evidence paths."
 
 # Review: replay validations and produce QA verdict
-./genie run review "[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Replay checks. [Verification] QA verdict + follow-ups."
+mcp__genie__run with agent="review" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Replay checks. [Verification] QA verdict + follow-ups."
 
 # Resume a planning session
-./genie list sessions
-./genie view RUN-1234 --full
-./genie resume RUN-1234 "Follow-up: address risk #2 with options + trade-offs."
-```
-
-CLI Help:
-```bash
-./genie --help
-./genie run --help
+mcp__genie__list_sessions
+mcp__genie__view with sessionId="<session-id>" and full=true
+mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 ```
 
 ### Conversations & Resume
-`resume` enables an actual, continuous conversation with agents and is how you continue multi‑turn tasks.
+The `mcp__genie__resume` tool enables continuous conversation with agents for multi-turn tasks.
 
-- Start a session: `./genie run <agent> "<prompt>"`
-- Resume the same session: `./genie resume <sessionId> "<next prompt>"`
-- Inspect context so far: `./genie view <sessionId> --full`
-- Discover session ids: `./genie list sessions`
+- Start a session: `mcp__genie__run` with agent and prompt
+- Resume the session: `mcp__genie__resume` with sessionId and prompt
+- Inspect context: `mcp__genie__view` with sessionId and full=true
+- Discover sessions: `mcp__genie__list_sessions`
 
 Tips
 - Use one session per wish/feature/bug to keep transcripts focused.
-- Prefer `resume` for follow‑ups; start a new `run` when scope changes significantly and reference the prior session.
+- Prefer `resume` for follow-ups; start a new `run` when scope changes significantly and reference the prior session.

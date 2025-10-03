@@ -19,21 +19,21 @@ GENIE is a self-contained framework for managing AI agent conversations, wishes,
 
 ## Quick Start
 
-### Using the Agent CLI
+### Using MCP Tools
 
 Start a conversation with any agent:
-```bash
-./genie run template-implementor "implement authentication"
+```
+mcp__genie__run with agent="template-implementor" and prompt="implement authentication"
 ```
 
 Continue the conversation:
-```bash
-./genie resume <sessionId> "add OAuth support"
+```
+mcp__genie__resume with sessionId="<session-id>" and prompt="add OAuth support"
 ```
 
 List active sessions:
-```bash
-./genie list sessions
+```
+mcp__genie__list_sessions
 ```
 
 ### Available Agents
@@ -53,14 +53,14 @@ List active sessions:
 
 ### For AI Agents (Claude, etc.)
 
-Instead of using one-shot Task tools, use the CLI for full conversations:
+Instead of using one-shot Task tools, use MCP for full conversations:
 
-```bash
+```
 # Start implementing a wish
-./genie run template-implementor "@.genie/wishes/auth-wish.md implement Group A"
+mcp__genie__run with agent="template-implementor" and prompt="@.genie/wishes/auth-wish.md implement Group A"
 
 # Continue with error handling
-./genie resume <sessionId> "tests failing, debug the issue"
+mcp__genie__resume with sessionId="<session-id>" and prompt="tests failing, debug the issue"
 ```
 
 ## Conventions
