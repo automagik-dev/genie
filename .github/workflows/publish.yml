@@ -3,6 +3,12 @@ name: Publish to NPM
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g., v2.0.0)"
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -10,6 +16,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -22,25 +30,35 @@ jobs:
         with:
           version: 10.18.0
 
-      - name: Extract version from tag
-        id: version
+      - name: Determine tag ref
+        id: tagref
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION=${{ github.event.inputs.tag }}
+            REF=refs/tags/$VERSION
+          else
+            REF="$GITHUB_REF"
+            VERSION=${REF#refs/tags/v}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "ref=$REF" >> $GITHUB_OUTPUT
+          echo "Resolved version $VERSION from $REF"
+
+      - name: Fetch tag ref
+        if: github.event_name == 'workflow_dispatch'
+        run: git fetch --tags origin ${{ steps.tagref.outputs.ref }}:${{ steps.tagref.outputs.ref }}
 
       - name: Verify package.json version matches tag
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION=${{ steps.version.outputs.VERSION }}
+          TAG_VERSION=${{ steps.tagref.outputs.version }}
           echo "Package version: $PACKAGE_VERSION"
           echo "Tag version: $TAG_VERSION"
           if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
             echo "❌ Version mismatch between package.json and tag"
             exit 1
-          else
-            echo "✅ Versions match"
           fi
+          echo "✅ Versions match"
 
       - name: Validate version sequence
         run: |
@@ -82,12 +100,23 @@ jobs:
         run: |
           GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
 
+      - name: Check if version already published
+        id: npm_version
+        run: |
+          if npm view automagik-genie@${{ steps.tagref.outputs.version }} version >/dev/null 2>&1; then
+            echo "exists=1" >> $GITHUB_OUTPUT
+            echo "Version already exists on npm, skipping publish"
+          else
+            echo "exists=0" >> $GITHUB_OUTPUT
+          fi
+
       - name: Publish to NPM
+        if: steps.npm_version.outputs.exists == '0'
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Success notification
         run: |
-          echo "🎉 Published automagik-genie@${{ steps.version.outputs.VERSION }} to NPM"
+          echo "🎉 Published automagik-genie@${{ steps.tagref.outputs.version }} to NPM"
           echo "📦 https://www.npmjs.com/package/automagik-genie"
