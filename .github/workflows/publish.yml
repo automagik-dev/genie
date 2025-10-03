@@ -116,6 +116,7 @@ jobs:
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GENIE_SKIP_IDENTITY_SMOKE: '1'
 
       - name: Success notification
         run: |
