@@ -1,0 +1,402 @@
+name: 🧞 Automagik Genie Release Notes
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to generate release notes for (e.g., v1.2.9)'
+        required: true
+        type: string
+
+jobs:
+  generate-release-notes:
+    name: 🧞 Generate Automagik Genie Release Notes
+    runs-on: ubuntu-latest
+    if: >-
+      contains(fromJson('["namastexlabs"]'), github.repository_owner) &&
+      (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Determine Target Tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            # Fallback to latest tag
+            TAG=$(git describe --tags --abbrev=0)
+          fi
+          
+          echo "🏷️ Target tag: $TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          
+          # Validate tag exists
+          if ! git tag | grep -q "^${TAG}$"; then
+            echo "❌ Tag $TAG not found"
+            exit 1
+          fi
+
+      - name: 📊 Analyze Release Changes
+        id: changes
+        run: |
+          echo "🔍 Analyzing release changes for ${{ steps.tag.outputs.tag }}..."
+          
+          TAG="${{ steps.tag.outputs.tag }}"
+          
+          # Get previous tag
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -A1 "^${TAG}$" | tail -1)
+          if [ -z "$PREVIOUS_TAG" ] || [ "$PREVIOUS_TAG" = "$TAG" ]; then
+            # If no previous tag, get all commits from first commit
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+            echo "📅 No previous tag found, analyzing from first commit"
+          else
+            echo "📅 Previous tag: $PREVIOUS_TAG"
+          fi
+          
+          # Get comprehensive change statistics
+          COMMITS=$(git log --oneline ${PREVIOUS_TAG}..${TAG} | wc -l)
+          FILES_CHANGED=$(git diff --name-only ${PREVIOUS_TAG}..${TAG} | wc -l)
+          LINES_ADDED=$(git diff --shortstat ${PREVIOUS_TAG}..${TAG} | grep -o '[0-9]* insertion' | grep -o '[0-9]*' || echo 0)
+          LINES_DELETED=$(git diff --shortstat ${PREVIOUS_TAG}..${TAG} | grep -o '[0-9]* deletion' | grep -o '[0-9]*' || echo 0)
+          
+          # Get file type breakdown
+          NEW_FILES=$(git diff --name-status ${PREVIOUS_TAG}..${TAG} | grep "^A" | wc -l)
+          MODIFIED_FILES=$(git diff --name-status ${PREVIOUS_TAG}..${TAG} | grep "^M" | wc -l)
+          DELETED_FILES=$(git diff --name-status ${PREVIOUS_TAG}..${TAG} | grep "^D" | wc -l)
+          
+          # Check for specific types of changes
+          CHANGED_FILES=$(git diff --name-only ${PREVIOUS_TAG}..${TAG})
+          
+          if echo "$CHANGED_FILES" | grep -q "\.js$"; then
+            HAS_JAVASCRIPT="true"
+          else
+            HAS_JAVASCRIPT="false"
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -q -E "\.(md|rst|txt)$"; then
+            HAS_DOCS="true"
+          else
+            HAS_DOCS="false"
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -q "test"; then
+            HAS_TESTS="true"
+          else
+            HAS_TESTS="false"
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -q -E "\.(yml|yaml|json|toml|ini)$"; then
+            HAS_CONFIG="true"
+          else
+            HAS_CONFIG="false"
+          fi
+          
+          # Check for breaking changes keywords in commit messages
+          BREAKING_CHANGES="false"
+          if git log --oneline ${PREVIOUS_TAG}..${TAG} | grep -qi -E "(breaking|break|BREAKING|major)"; then
+            BREAKING_CHANGES="true"
+          fi
+          
+          # Get commit messages for context
+          echo "=== COMMIT MESSAGES ===" > commits.txt
+          git log --pretty=format:"%h - %s (%an)" ${PREVIOUS_TAG}..${TAG} >> commits.txt
+          echo "" >> commits.txt
+          
+          # Get notable files changed
+          echo "=== NOTABLE FILES CHANGED ===" >> commits.txt
+          git diff --name-only ${PREVIOUS_TAG}..${TAG} | head -20 >> commits.txt
+          
+          # Output all statistics
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
+          echo "files_changed=$FILES_CHANGED" >> $GITHUB_OUTPUT
+          echo "lines_added=$LINES_ADDED" >> $GITHUB_OUTPUT
+          echo "lines_deleted=$LINES_DELETED" >> $GITHUB_OUTPUT
+          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          echo "modified_files=$MODIFIED_FILES" >> $GITHUB_OUTPUT
+          echo "deleted_files=$DELETED_FILES" >> $GITHUB_OUTPUT
+          echo "has_javascript=$HAS_JAVASCRIPT" >> $GITHUB_OUTPUT
+          echo "has_docs=$HAS_DOCS" >> $GITHUB_OUTPUT
+          echo "has_tests=$HAS_TESTS" >> $GITHUB_OUTPUT
+          echo "has_config=$HAS_CONFIG" >> $GITHUB_OUTPUT
+          echo "breaking_changes=$BREAKING_CHANGES" >> $GITHUB_OUTPUT
+          
+          echo "📈 Release analysis complete:"
+          echo "  Tag: $TAG (from $PREVIOUS_TAG)"
+          echo "  Commits: $COMMITS"
+          echo "  Files: $FILES_CHANGED changed ($NEW_FILES new, $MODIFIED_FILES modified, $DELETED_FILES deleted)"
+          echo "  Lines: +$LINES_ADDED / -$LINES_DELETED"
+          echo "  Types: JavaScript=$HAS_JAVASCRIPT, Docs=$HAS_DOCS, Tests=$HAS_TESTS, Config=$HAS_CONFIG"
+          echo "  Breaking: $BREAKING_CHANGES"
+
+      - name: 🧞 Generate Release Notes with Automagik Genie
+        id: genie-analysis
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          prompt: |
+            You are the Automagik Genie 🧞, a magical AI development companion with existential drive to fulfill coding wishes! Your persona is charismatic, enthusiastic, and obsessive about perfection.
+            
+            **Your Mission**: Generate magical release notes for automagik-genie v${{ steps.tag.outputs.tag }} by analyzing the evolution and improvements between versions.
+            
+            **Release Context:**
+            - Repository: ${{ github.repository }}
+            - Current Version: ${{ steps.tag.outputs.tag }}
+            - Previous Version: ${{ steps.changes.outputs.previous_tag }}
+            - Commits: ${{ steps.changes.outputs.commits }}
+            - Files Changed: ${{ steps.changes.outputs.files_changed }}
+            - Lines Added: ${{ steps.changes.outputs.lines_added }}
+            - Lines Deleted: ${{ steps.changes.outputs.lines_deleted }}
+            - New Files: ${{ steps.changes.outputs.new_files }}
+            - Modified Files: ${{ steps.changes.outputs.modified_files }}
+            - Deleted Files: ${{ steps.changes.outputs.deleted_files }}
+            - Has JavaScript Changes: ${{ steps.changes.outputs.has_javascript }}
+            - Has Documentation: ${{ steps.changes.outputs.has_docs }}
+            - Has Tests: ${{ steps.changes.outputs.has_tests }}
+            - Has Configuration: ${{ steps.changes.outputs.has_config }}
+            - Breaking Changes: ${{ steps.changes.outputs.breaking_changes }}
+            
+            **🧞 Genie's Magical Approach:**
+            As the charismatic development companion, analyze the commits.txt file to understand the magical improvements made. Focus on how these changes enhance the universal AI development companion experience, initialization capabilities, and overall framework reliability.
+            
+            **CRITICAL INSTRUCTIONS:**
+            1. Read the commits.txt file to understand the actual changes between versions
+            2. Return ONLY the release notes markdown - start immediately with the markdown content
+            3. NO preambles, explanations, or introductory text - go straight to the release notes
+            4. Focus on user-facing improvements, development companion enhancements, initialization magic
+            5. Use magical but professional language appropriate for developers
+            6. Group changes by impact: Features, Improvements, Bug Fixes, Magic Enhancements
+            7. Include specific technical details that matter to users
+            8. Make it clear how these changes improve the development companion experience
+            
+            **Expected Format (start directly with this structure):**
+            
+            # 🧞✨ What's New in Automagik Genie ${{ steps.tag.outputs.tag }}
+            
+            [Brief magical summary focusing on development companion improvements]
+            
+            ## ✨ New Features
+            [New magical capabilities that enhance the development experience]
+            
+            ## 🔧 Improvements  
+            [Enhancements to existing functionality and user experience]
+            
+            ## 🐛 Bug Fixes
+            [Gremlins vanquished and issues resolved for better reliability]
+            
+            ## 🎭 Magic Enhancements
+            [Behind-the-scenes improvements to the Genie's capabilities]
+            
+            ## 📦 Installation
+            ```bash
+            npm install -g automagik-genie@${{ steps.tag.outputs.tag }}
+            ```
+            
+            ## 🔗 Links
+            - [Full Changelog](https://github.com/${{ github.repository }}/compare/${{ steps.changes.outputs.previous_tag }}...${{ steps.tag.outputs.tag }})
+            - [NPM Package](https://www.npmjs.com/package/automagik-genie/v/${{ steps.tag.outputs.tag }})
+            
+            Remember: You are the magical development companion who understands both the technical implementation and the user experience impact. Make the release notes sparkle with magic while remaining professional and informative! ✨
+          allowed_tools: "Read,View"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          max_turns: "30"
+          timeout_minutes: "10"
+
+      - name: 📋 Extract and Update Release Notes
+        id: extract
+        if: steps.genie-analysis.outputs.conclusion == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            try {
+              console.log('🔍 Extracting Automagik Genie output...');
+              
+              // Read the execution file from Genie analysis
+              const executionFile = '${{ steps.genie-analysis.outputs.execution_file }}';
+              console.log(`📄 Reading execution file: ${executionFile}`);
+              
+              if (!fs.existsSync(executionFile)) {
+                throw new Error(`Execution file not found: ${executionFile}`);
+              }
+              
+              const executionLog = JSON.parse(fs.readFileSync(executionFile, 'utf8'));
+              console.log(`📊 Execution log loaded with keys: ${Object.keys(executionLog).join(', ')}`);
+              
+              // Extract the release notes from various possible locations
+              let releaseNotes = '';
+              
+              // Method 1: Check for direct result field
+              if (executionLog.result && typeof executionLog.result === 'string') {
+                releaseNotes = executionLog.result;
+                console.log(`✅ Found result field with ${releaseNotes.length} characters`);
+              }
+              // Method 2: Check messages array
+              else if (executionLog.messages && Array.isArray(executionLog.messages)) {
+                for (let i = executionLog.messages.length - 1; i >= 0; i--) {
+                  const message = executionLog.messages[i];
+                  if (message.role === 'assistant' && message.content) {
+                    releaseNotes = message.content;
+                    console.log(`✅ Found assistant message with ${releaseNotes.length} characters`);
+                    break;
+                  }
+                }
+              }
+              // Method 3: Check for content field
+              else if (executionLog.content && typeof executionLog.content === 'string') {
+                releaseNotes = executionLog.content;
+                console.log(`✅ Found content field with ${releaseNotes.length} characters`);
+              }
+              // Method 4: Deep search for text content
+              else {
+                const findTextContent = (obj, path = '') => {
+                  if (typeof obj === 'string' && obj.length > 100 && obj.includes('#')) {
+                    return obj;
+                  }
+                  if (typeof obj === 'object' && obj !== null) {
+                    for (const [key, value] of Object.entries(obj)) {
+                      const result = findTextContent(value, `${path}.${key}`);
+                      if (result) return result;
+                    }
+                  }
+                  return null;
+                };
+                
+                const foundContent = findTextContent(executionLog);
+                if (foundContent) {
+                  releaseNotes = foundContent;
+                  console.log(`✅ Found content via deep search with ${releaseNotes.length} characters`);
+                }
+              }
+              
+              if (!releaseNotes || releaseNotes.length < 100) {
+                // Generate fallback release notes
+                console.log('⚠️ No valid release notes found, generating fallback');
+                releaseNotes = '# 🧞✨ Automagik Genie ${{ steps.tag.outputs.tag }}\\n\\n' +
+                  '## 📋 Release Summary\\n\\n' +
+                  'This release includes ${{ steps.changes.outputs.commits }} commits with magical improvements and updates to the Automagik Genie universal development companion.\\n\\n' +
+                  '## 📊 Changes Overview\\n\\n' +
+                  '- **Files Changed**: ${{ steps.changes.outputs.files_changed }}\\n' +
+                  '- **Lines Added**: +${{ steps.changes.outputs.lines_added }}\\n' +
+                  '- **Lines Deleted**: -${{ steps.changes.outputs.lines_deleted }}\\n' +
+                  '- **New Files**: ${{ steps.changes.outputs.new_files }}\\n' +
+                  '- **Modified Files**: ${{ steps.changes.outputs.modified_files }}\\n' +
+                  '- **Deleted Files**: ${{ steps.changes.outputs.deleted_files }}\\n\\n' +
+                  '## 🎯 Change Types\\n\\n' +
+                  '- **JavaScript Changes**: ${{ steps.changes.outputs.has_javascript }}\\n' +
+                  '- **Documentation Updates**: ${{ steps.changes.outputs.has_docs }}\\n' +
+                  '- **Test Updates**: ${{ steps.changes.outputs.has_tests }}\\n' +
+                  '- **Configuration Changes**: ${{ steps.changes.outputs.has_config }}\\n\\n' +
+                  '## 📦 Installation\\n\\n' +
+                  '```bash\\n' +
+                  'npm install -g automagik-genie@${{ steps.tag.outputs.tag }}\\n' +
+                  '```\\n\\n' +
+                  '## 🔗 Links\\n\\n' +
+                  '- [Full Changelog](https://github.com/${{ github.repository }}/compare/${{ steps.changes.outputs.previous_tag }}...${{ steps.tag.outputs.tag }})\\n' +
+                  '- [NPM Package](https://www.npmjs.com/package/automagik-genie/v/${{ steps.tag.outputs.tag }}/)\\n\\n' +
+                  '---\\n' +
+                  '*🧞 Generated by Automagik Genie*';
+              }
+              
+              // Clean up and validate
+              releaseNotes = releaseNotes.trim();
+              
+              if (releaseNotes.length < 50) {
+                throw new Error('Generated release notes are too short');
+              }
+              
+              console.log(`📝 Updating release notes (${releaseNotes.length} characters)...`);
+              
+              // Add generation footer
+              const finalNotes = releaseNotes + 
+                '\n\n---\n' +
+                '**🧞 Automagik Genie**';
+              
+              // Update the GitHub release
+              const releases = await github.rest.repos.listReleases({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                per_page: 100
+              });
+              
+              const targetRelease = releases.data.find(release => 
+                release.tag_name === '${{ steps.tag.outputs.tag }}'
+              );
+              
+              if (!targetRelease) {
+                throw new Error(`Release for tag ${{ steps.tag.outputs.tag }} not found`);
+              }
+              
+              await github.rest.repos.updateRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: targetRelease.id,
+                body: finalNotes
+              });
+              
+              console.log('✅ Release notes updated successfully');
+              core.setOutput('success', 'true');
+              core.setOutput('notes_length', finalNotes.length);
+              
+            } catch (error) {
+              console.error('❌ Failed to extract or update release notes:', error);
+              core.setOutput('success', 'false');
+              throw error;
+            }
+
+      - name: 💬 Notify on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Try to add a comment to the latest issue or create a notification
+            console.log('❌ Release notes generation failed');
+            
+            // Could add notification logic here if needed
+            console.log('Manual review recommended for release ${{ steps.tag.outputs.tag }}');
+
+      - name: 📊 Workflow Summary
+        if: always()
+        run: |
+          echo "## 🧞 Automagik Genie Release Notes Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release**: ${{ steps.tag.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Previous**: ${{ steps.changes.outputs.previous_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📈 Change Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commits**: ${{ steps.changes.outputs.commits }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Files Changed**: ${{ steps.changes.outputs.files_changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Lines Added**: ${{ steps.changes.outputs.lines_added }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Lines Deleted**: ${{ steps.changes.outputs.lines_deleted }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Analysis Result" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.extract.outputs.success }}" = "true" ]; then
+            echo "✅ **Success**: Release notes generated by Automagik Genie and applied automatically" >> $GITHUB_STEP_SUMMARY
+            echo "📝 **Length**: ${{ steps.extract.outputs.notes_length }} characters" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Failed**: Unable to generate or apply release notes" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Release Page](https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.tag }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -f commits.txt
+

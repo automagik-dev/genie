@@ -1,0 +1,71 @@
+name: Validate Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify CLI basic commands
+        run: |
+          echo "=== Testing CLI Help ==="
+          node bin/automagik-genie.js --help
+
+          echo "=== Testing CLI Version ==="
+          node bin/automagik-genie.js --version
+
+      - name: Run tests
+        run: pnpm run test:genie
+
+      - name: Smoke test init/update/rollback
+        run: |
+          set -euo pipefail
+          TMP_DIR=$(mktemp -d)
+          pushd "$TMP_DIR"
+          node $GITHUB_WORKSPACE/bin/automagik-genie.js init --provider codex --yes
+          node $GITHUB_WORKSPACE/bin/automagik-genie.js update --dry-run
+          node $GITHUB_WORKSPACE/bin/automagik-genie.js rollback --list || true
+          popd
+          rm -rf "$TMP_DIR"
+
+      - name: Validate package.json structure
+        run: |
+          node -e "
+            const pkg = require('./package.json');
+            const required = ['name', 'version', 'bin', 'files', 'keywords'];
+            const missing = required.filter((key) => !pkg[key]);
+            if (missing.length) {
+              console.error('Missing required fields:', missing);
+              process.exit(1);
+            }
+            console.log('✅ package.json structure looks good');
+          "
+
+      - name: Check CLI file permissions
+        run: |
+          ls -la bin/automagik-genie.js
+          test -x bin/automagik-genie.js && echo "✅ CLI file is executable"

@@ -1,0 +1,92 @@
+name: Publish to NPM
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Verify package.json version matches tag
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${{ steps.version.outputs.VERSION }}
+          echo "Package version: $PACKAGE_VERSION"
+          echo "Tag version: $TAG_VERSION"
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "❌ Version mismatch between package.json and tag"
+            exit 1
+          else
+            echo "✅ Versions match"
+          fi
+
+      - name: Validate version sequence
+        run: |
+          node -e "
+            const { execSync } = require('child_process');
+            const pkg = require('./package.json');
+            const currentVersion = pkg.version;
+            const tags = execSync('git tag -l --sort=-version:refname').toString().trim().split('\n');
+            const otherTags = tags.filter(t => t && t.startsWith('v') && t !== 'v' + currentVersion);
+            if (otherTags.length === 0) {
+              console.log('First release - no sequence validation needed');
+              process.exit(0);
+            }
+            const latestTag = otherTags[0].replace('v', '');
+            const parse = (v) => v.split('.').map(Number);
+            const [cMaj, cMin, cPat] = parse(currentVersion);
+            const [lMaj, lMin, lPat] = parse(latestTag);
+            const validPatch = cMaj === lMaj && cMin === lMin && cPat === lPat + 1;
+            const validMinor = cMaj === lMaj && cMin === lMin + 1 && cPat === 0;
+            const validMajor = cMaj === lMaj + 1 && cMin === 0 && cPat === 0;
+            if (!validPatch && !validMinor && !validMajor) {
+              console.error('Invalid version bump sequence');
+              process.exit(1);
+            }
+            console.log('Version sequence looks good');
+          "
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify package contents
+        run: |
+          echo "=== package.json excerpt ==="
+          cat package.json | grep -A5 -B5 version
+          echo "=== npm pack (dry run) ==="
+          npm pack --dry-run
+
+      - name: Run tests
+        run: pnpm run test:genie
+
+      - name: Publish to NPM
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Success notification
+        run: |
+          echo "🎉 Published automagik-genie@${{ steps.version.outputs.VERSION }} to NPM"
+          echo "📦 https://www.npmjs.com/package/automagik-genie"
