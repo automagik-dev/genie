@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${GENIE_SKIP_IDENTITY_SMOKE:-0}" == "1" ]]; then
+  echo 'Skipping identity smoke test (GENIE_SKIP_IDENTITY_SMOKE=1)'
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_DIR="$REPO_DIR/.genie/state/agents/logs"

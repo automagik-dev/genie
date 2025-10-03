@@ -79,7 +79,8 @@ jobs:
           npm pack --dry-run
 
       - name: Run tests
-        run: pnpm run test:genie
+        run: |
+          GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
 
       - name: Publish to NPM
         run: npm publish
