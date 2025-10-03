@@ -21,7 +21,7 @@ import {
   buildViewHelpView,
   buildStopHelpView
 } from './views/help';
-import { buildErrorView, buildWarningView } from './views/common';
+import { buildErrorView, buildInfoView, buildWarningView } from './views/common';
 import { emitView } from './lib/view-helpers';
 import { runChat } from './commands/run';
 import { runContinue } from './commands/resume';
@@ -29,6 +29,12 @@ import { runList } from './commands/list';
 import { runView } from './commands/view';
 import { runStop } from './commands/stop';
 import { runHelp } from './commands/help';
+import { runInit } from './commands/init';
+import { runUpdate } from './commands/update';
+import { runRollback } from './commands/rollback';
+import { runStatus } from './commands/status';
+import { runCleanup } from './commands/cleanup';
+import { runStatusline } from './commands/statusline';
 import {
   INTERNAL_BACKGROUND_MARKER_ENV,
   INTERNAL_BACKGROUND_ENV,
@@ -84,6 +90,45 @@ async function main(): Promise<void> {
           return;
         }
         await runChat(parsed, config, paths);
+        break;
+      case 'init':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie init', [
+            'Usage: genie init [--provider <codex|claude>] [--yes]',
+            'Copies the packaged .genie templates into the current workspace, backs up any existing configuration, and records provider defaults.'
+          ]), parsed.options);
+          return;
+        }
+        await runInit(parsed, config, paths);
+        break;
+      case 'update':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie update', [
+            'Usage: genie update [--dry-run] [--force]',
+            'Bakes template changes into the workspace after creating a backup snapshot.'
+          ]), parsed.options);
+          return;
+        }
+        await runUpdate(parsed, config, paths);
+        break;
+      case 'rollback':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie rollback', [
+            'Usage: genie rollback [--list] [--id <backupId>] [--latest]',
+            'Restores a previous snapshot stored under .genie/backups.'
+          ]), parsed.options);
+          return;
+        }
+        await runRollback(parsed, config, paths);
+        break;
+      case 'status':
+        await runStatus(parsed, config, paths);
+        break;
+      case 'cleanup':
+        await runCleanup(parsed, config, paths);
+        break;
+      case 'statusline':
+        await runStatusline(parsed, config, paths);
         break;
       case 'resume':
         if (parsed.options.requestHelp) {

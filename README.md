@@ -24,9 +24,43 @@ Provide reusable planning, wishing, forging, review, and commit workflows with e
 - MCP Server: Genie agents accessible via `mcp__genie__*` tools
 - Node/TS + Rust friendly; works in any repo (domain-agnostic)
 
-## MCP Architecture
+## MCP & CLI Architecture
 
-Genie is exposed as an MCP (Model Context Protocol) server with the following tools:
+Genie ships as both a Model Context Protocol (MCP) server and a local CLI. The CLI is
+primarily used to bootstrap and maintain the `.genie/` workspace, while the MCP tools
+power agent execution inside editors.
+
+### Bootstrap Commands
+
+1. Initialise the current project:
+
+   ```bash
+   npx automagik-genie init --provider codex
+   ```
+
+   This copies the packaged `.genie` templates, creates backups of any existing
+   `.genie`/`.claude` folders, and records your provider defaults.
+
+2. Apply template updates later on:
+
+   ```bash
+   npx automagik-genie update --dry-run
+   npx automagik-genie update
+   ```
+
+3. Restore a previous snapshot if needed:
+
+   ```bash
+   npx automagik-genie rollback --list
+   npx automagik-genie rollback --latest
+   ```
+
+4. Access agent orchestration and the MCP server via `genie`:
+
+   ```bash
+   genie run plan "[Discovery] mission @.genie/product/mission.md"
+   genie mcp --transport stdio
+   ```
 
 ### Available MCP Tools
 - `mcp__genie__run` - Start a new agent session

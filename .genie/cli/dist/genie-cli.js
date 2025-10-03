@@ -34,6 +34,58 @@ program
     }
     execGenie(args);
 });
+// Init command
+program
+    .command('init')
+    .description('Initialize Genie configuration in the current workspace')
+    .option('--provider <provider>', 'Choose provider (codex or claude)')
+    .option('-y, --yes', 'Accept defaults without prompting')
+    .action((options) => {
+    const args = ['init'];
+    if (options.provider) {
+        args.push('--provider', options.provider);
+    }
+    if (options.yes) {
+        args.push('--yes');
+    }
+    execGenie(args);
+});
+// Update command
+program
+    .command('update')
+    .description('Update Genie templates in this workspace')
+    .option('--dry-run', 'Show changes without applying them')
+    .option('-f, --force', 'Apply updates even when no changes detected')
+    .action((options) => {
+    const args = ['update'];
+    if (options.dryRun) {
+        args.push('--dry-run');
+    }
+    if (options.force) {
+        args.push('--force');
+    }
+    execGenie(args);
+});
+// Rollback command
+program
+    .command('rollback')
+    .description('Restore a previous Genie backup snapshot')
+    .option('--list', 'List available backups')
+    .option('--latest', 'Restore the most recent backup')
+    .option('--id <backupId>', 'Restore a specific backup by ID')
+    .action((options) => {
+    const args = ['rollback'];
+    if (options.list) {
+        args.push('--list');
+    }
+    if (options.latest) {
+        args.push('--latest');
+    }
+    if (options.id) {
+        args.push('--id', options.id);
+    }
+    execGenie(args);
+});
 // Resume command
 program
     .command('resume <sessionId> <prompt>')
@@ -72,6 +124,27 @@ program
     .description('Stop a running session')
     .action((sessionId) => {
     execGenie(['stop', sessionId]);
+});
+// Status command
+program
+    .command('status')
+    .description('Deprecated status shim (see migration guide)')
+    .action(() => {
+    execGenie(['status']);
+});
+// Cleanup command
+program
+    .command('cleanup')
+    .description('Deprecated cleanup shim (see migration guide)')
+    .action(() => {
+    execGenie(['cleanup']);
+});
+// Statusline command
+program
+    .command('statusline')
+    .description('Emit statusline output (deprecated)')
+    .action(() => {
+    execGenie(['statusline']);
 });
 // MCP command
 program

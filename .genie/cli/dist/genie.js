@@ -17,6 +17,12 @@ const list_1 = require("./commands/list");
 const view_2 = require("./commands/view");
 const stop_1 = require("./commands/stop");
 const help_2 = require("./commands/help");
+const init_1 = require("./commands/init");
+const update_1 = require("./commands/update");
+const rollback_1 = require("./commands/rollback");
+const status_1 = require("./commands/status");
+const cleanup_1 = require("./commands/cleanup");
+const statusline_1 = require("./commands/statusline");
 const background_manager_1 = require("./background-manager");
 void main();
 async function main() {
@@ -62,6 +68,45 @@ async function main() {
                     return;
                 }
                 await (0, run_1.runChat)(parsed, config, paths);
+                break;
+            case 'init':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie init', [
+                        'Usage: genie init [--provider <codex|claude>] [--yes]',
+                        'Copies the packaged .genie templates into the current workspace, backs up any existing configuration, and records provider defaults.'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, init_1.runInit)(parsed, config, paths);
+                break;
+            case 'update':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie update', [
+                        'Usage: genie update [--dry-run] [--force]',
+                        'Bakes template changes into the workspace after creating a backup snapshot.'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, update_1.runUpdate)(parsed, config, paths);
+                break;
+            case 'rollback':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie rollback', [
+                        'Usage: genie rollback [--list] [--id <backupId>] [--latest]',
+                        'Restores a previous snapshot stored under .genie/backups.'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, rollback_1.runRollback)(parsed, config, paths);
+                break;
+            case 'status':
+                await (0, status_1.runStatus)(parsed, config, paths);
+                break;
+            case 'cleanup':
+                await (0, cleanup_1.runCleanup)(parsed, config, paths);
+                break;
+            case 'statusline':
+                await (0, statusline_1.runStatusline)(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {
