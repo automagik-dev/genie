@@ -2,6 +2,11 @@
 
 ## [2.0.0] - 2025-10-03
 
+### Breaking
+- CLI rewritten in TypeScript with a new command palette. Legacy Node-based scripts and `.claude` bootstrap entry points have been removed.
+- Genie now manages the `.genie/` workspace instead of `.claude/`; running `npx automagik-genie init` migrates the old layout.
+- Requires Node.js 18+ and ships with pnpm-based tooling.
+
 ### Added
 - Restored full CLI workflow with `init`, `update`, and `rollback` commands rebuilt in TypeScript.
 - Automatic migration from legacy `.claude` directories into the new `.genie` workspace structure.
