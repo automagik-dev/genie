@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/namastexlabs/automagik-genie/actions"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/namastexlabs/automagik-genie/test.yml?branch=genie-2.0&style=flat-square" /></a>
-  <a href="https://github.com/namastexlabs/automagik-genie/blob/genie-2.0/LICENSE"><img alt="License" src="https://img.shields.io/github/license/namastexlabs/automagik-genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://github.com/namastexlabs/automagik-genie/actions/workflows/validate.yml"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/namastexlabs/automagik-genie/validate.yml?branch=main&style=flat-square" /></a>
+  <a href="https://github.com/namastexlabs/automagik-genie/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/namastexlabs/automagik-genie?style=flat-square&color=00D9FF" /></a>
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
