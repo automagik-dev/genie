@@ -209,3 +209,5 @@ Automagik Genie is released under the MIT License. See [LICENSE](LICENSE) for de
 ---
 
 **Automagik Genie** – the faster, safer way to keep AI agents in sync with your repositories.
+
+<a href="https://deepwiki.com/namastexlabs/automagik-genie"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
