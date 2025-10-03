@@ -34,8 +34,9 @@ jobs:
         id: tagref
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.tag }}
-            REF=refs/tags/$VERSION
+            RAW=${{ github.event.inputs.tag }}
+            VERSION=${RAW#v}
+            REF=refs/tags/v$VERSION
           else
             REF="$GITHUB_REF"
             VERSION=${REF#refs/tags/v}
