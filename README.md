@@ -1,165 +1,211 @@
-# Genie Template Repository
+<p align="center">
+  <img src=".github/assets/genie-logo.png" alt="Automagik Genie Logo" width="400">
+</p>
+<h2 align="center">The Universal AI Development Companion</h2>
 
-Genie agent templates and CLI orchestration that can be installed into any repository. Replace project specifics with placeholders and use `.genie/agents/install.md` to bootstrap into your target codebase.
+<p align="center">
+  <strong>🎯 Initialise, update, and orchestrate AI agents across any codebase</strong><br>
+  Ship the Genie toolkit in minutes, keep it patched with smart updates, and command projects through MCP-integrated agents
+</p>
 
-## Vision
+<p align="center">
+  <a href="https://github.com/namastexlabs/automagik-genie/actions"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/namastexlabs/automagik-genie/test.yml?branch=genie-2.0&style=flat-square" /></a>
+  <a href="https://github.com/namastexlabs/automagik-genie/blob/genie-2.0/LICENSE"><img alt="License" src="https://img.shields.io/github/license/namastexlabs/automagik-genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
+</p>
 
-Provide reusable planning, wishing, forging, review, and commit workflows with evidence-first prompts and a consistent CLI, independent of domain.
+<p align="center">
+  <a href="#-key-features">Features</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-mcp-integration">MCP Integration</a> •
+  <a href="#-roadmap">Roadmap</a> •
+  <a href="#-development">Development</a> •
+  <a href="#-contributing">Contributing</a>
+</p>
 
-## What’s Included
+---
 
-- Unified prompts for plan, wish, forge, review, commit
-- Specialist agents (bug-reporter, git-workflow, implementor, polish, project-manager, qa, self-learn, tests)
-- CLI wrappers in `.claude/commands/` that @include agents
-- Workspace-managed sessions and logs under `.genie/state/`
+## 🚀 What is Automagik Genie?
 
-## Core Features
+**Automagik Genie** is the glue between your AI agents and your repositories. It ships a ready-to-run `.genie/` workspace, keeps it in sync with upstream templates, and exposes a battle-tested CLI + MCP server so any agent can work in your project with context.
 
-- Evidence-first orchestration (Discovery → Implementation → Verification)
-- Guardrails (no destructive actions without approval)
-- Template placeholders: `{{PROJECT_NAME}}`, `{{DOMAIN}}`, `{{TECH_STACK}}`, `{{APIS}}`, `{{METRICS}}`
+### 🎭 Why Traditional Bootstrapping Fails
 
-## Technical Stack
+- **Manual setup drift** – each repo receives a slightly different `.claude` folder
+- **No update path** – templates go stale, breaking downstream agents
+- **Scattered backups** – figuring out what changed between runs is painful
+- **Agent isolation** – MCP tooling cannot rely on a consistent project schema
 
-- MCP Server: Genie agents accessible via `mcp__genie__*` tools
-- Node/TS + Rust friendly; works in any repo (domain-agnostic)
+### ✅ The Genie Approach
 
-## MCP & CLI Architecture
+- **One-command initialise** – `npx automagik-genie init` migrates legacy `.claude`, writes provider preferences, and snapshots the workspace
+- **Smart updates** – `npx automagik-genie update` diff-checks templates, creates recoverable backups, and applies only what changed
+- **Automatic rollbacks** – `npx automagik-genie rollback` restores any prior snapshot in seconds
+- **MCP-native** – the CLI and the MCP server share the same state, so agents always see the latest project context
 
-Genie ships as both a Model Context Protocol (MCP) server and a local CLI. The CLI is
-primarily used to bootstrap and maintain the `.genie/` workspace, while the MCP tools
-power agent execution inside editors.
+---
 
-### Bootstrap Commands
+## 🌟 Key Features
 
-1. Initialise the current project:
+- **🧞 CLI bootstrap commands** – `init`, `update`, `rollback`, `statusline`, and compatibility shims for `status`/`cleanup`
+- **📦 Template migration** – automatic conversion of historical `.claude` setups into the unified `.genie` layout
+- **🔐 Provider memory** – stores Codex/Claude preference in `.genie/state/provider.json` and respects env overrides
+- **💾 Version tracking** – `.genie/state/version.json` records install vs. update timestamps for diagnostics
+- **🛟 Snapshot backups** – every command saves `.genie/backups/<timestamp>` (and `.claude` if present) before changing files
+- **🤖 MCP server** – expose Genie agents to Claude Code, Cursor, Gemini CLI, Roo Code, and any generic MCP client
+- **📋 Ink-powered UI** – rich terminal output for help, diffs, warnings, and summary panels
 
-   ```bash
-   npx automagik-genie init --provider codex
-   ```
+---
 
-   This copies the packaged `.genie` templates, creates backups of any existing
-   `.genie`/`.claude` folders, and records your provider defaults.
+## 🧭 How Genie Fits in the Automagik Suite
 
-2. Apply template updates later on:
+```mermaid
+flowchart LR
+    subgraph Workspace
+      Repo[Your Repository]
+      GenieFolder[.genie/ structure]
+    end
 
-   ```bash
-   npx automagik-genie update --dry-run
-   npx automagik-genie update
-   ```
+    InitCLI[automagik-genie init] --> GenieFolder
+    UpdateCLI[automagik-genie update] --> GenieFolder
+    RollbackCLI[automagik-genie rollback] --> GenieFolder
 
-3. Restore a previous snapshot if needed:
+    GenieFolder --> MCPServer[Genie MCP Server]
+    MCPServer --> Hive[Automagik Hive]
+    MCPServer --> Spark[Automagik Spark]
+    MCPServer --> Forge[Automagik Forge]
 
-   ```bash
-   npx automagik-genie rollback --list
-   npx automagik-genie rollback --latest
-   ```
+    GenieFolder --> Agents[Genie Agents & Prompts]
+```
 
-4. Access agent orchestration and the MCP server via `genie`:
+Genie is the canonical source of prompts, agents, and project metadata. Other Automagik products (Hive, Spark, Forge, Omni) rely on Genie to keep repository context predictable.
 
-   ```bash
-   genie run plan "[Discovery] mission @.genie/product/mission.md"
-   genie mcp --transport stdio
-   ```
+---
+
+## 📦 Quick Start
+
+### Prerequisites
+
+- **Node.js 18+** (tested with pnpm 10+)
+- **Git** for snapshot creation
+- (Optional) **pnpm** if you plan to run tests locally: `corepack enable`
+
+### One-Time Installation
+
+```bash
+# Initialise Genie in your repository
+npx automagik-genie init --provider codex
+
+# Show planned updates without applying them
+npx automagik-genie update --dry-run
+
+# Apply template changes and create a backup
+npx automagik-genie update
+
+# Restore the most recent backup if needed
+npx automagik-genie rollback --latest
+```
+
+### CLI Help at a Glance
+
+```bash
+npx automagik-genie            # Shows the command palette
+npx automagik-genie init --help
+npx automagik-genie update --help
+npx automagik-genie rollback --help
+```
+
+After running `init` you'll have:
+
+- `.genie/agents/` – prompt, specialist, and utility agents
+- `.genie/product/` – mission, roadmap, environment docs
+- `.genie/state/` – provider, version, provider-status state
+- `.genie/backups/<timestamp>/` – snapshots of previous states
+
+---
+
+## 📡 MCP Integration
+
+Genie ships with a FastMCP server so any MCP-compatible coding agent can orchestrate Genie workflows.
+
+### Typical Workflow
+
+1. Initialise Genie in your repo (`npx automagik-genie init`)
+2. Launch the MCP server via `genie mcp -t stdio`
+3. Configure your tool of choice (Claude Code, Cursor, Gemini CLI, Roo Code, etc.) with the MCP command `npx automagik-genie mcp -t stdio`
+4. Run Genie agents (`plan`, `wish`, `forge`, `review`, etc.) from within your editor or terminal
 
 ### Available MCP Tools
-- `mcp__genie__run` - Start a new agent session
-- `mcp__genie__view` - View session transcript
-- `mcp__genie__resume` - Continue an existing session
-- `mcp__genie__list_sessions` - List all sessions
-- `mcp__genie__list_agents` - List available agents
-- `mcp__genie__stop` - Stop a running session
 
-### Key Benefits
-- **Integrated with Claude Code** - Use Genie directly in your AI workflow
-- **Session management** - Persistent conversations with agents
-- **Pluggable executors** - Support for different backend engines (Codex, Claude, etc.)
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `mcp__genie__run` | Start a new Genie agent session | "Run plan with mission + roadmap context" |
+| `mcp__genie__resume` | Continue a previous session | "Resume session RUN-1234 with follow-up prompt" |
+| `mcp__genie__list_agents` | List available agents | "Show all specialists" |
+| `mcp__genie__list_sessions` | Inspect active/archived sessions | "Which sessions ran today?" |
+| `mcp__genie__view` | Fetch a transcript (full or tail) | "Fetch transcript for RUN-1234" |
+| `mcp__genie__stop` | Halt a running session | "Stop RUN-5678" |
 
-For detailed documentation, see [.genie/cli/README.md](.genie/cli/README.md)
+### Claude Code Configuration
 
-## Documentation
-
-- [Mission](.genie/product/mission.md) - Template repo goals and non-destructive guardrails
-- [Technical Stack](.genie/product/tech-stack.md) - CLI + agent architecture
-- [Roadmap](.genie/product/roadmap.md) - Template development phases
-- [Environment Config](.genie/product/environment.md) - Config keys and placeholders
-- [Getting Started](.genie/guides/getting-started.md) - Install this Genie into any repo
-
-## Current Status
-
-Phase 1: Template sweep in progress (neutralizing project-specific content).
-
-## Install (into an existing repo)
-
-1) Copy these from this template into your repo:
-- `.genie/` (all)
-- `.claude/commands/`
-- `AGENTS.md`
-
-2) Use MCP tools to run agents:
-- List available agents: `mcp__genie__list_agents`
-- Start a planning session: `mcp__genie__run` with agent `plan`
-
-3) Customize `.genie/product/*` (mission, roadmap, environment) and start your first wish.
-
-## Repository Structure
-
-```
-.genie/product/      # Mission, roadmap, environment
-.genie/agents/       # Entrypoints at root, shared utilities/, repo-specific specialists/
-.genie/wishes/       # Wish blueprints and status logs
-.genie/state/        # Session data (inspect via mcp__genie__list_sessions and mcp__genie__view)
-vendors/             # External reference repos
-AGENTS.md            # Framework overview & guardrails
-CLAUDE.md            # AI assistant guidelines
+```json
+{
+  "mcpServers": {
+    "automagik-genie": {
+      "command": "npx",
+      "args": ["automagik-genie", "mcp", "-t", "stdio"]
+    }
+  }
+}
 ```
 
-## Submodules (Optional)
+Other MCP clients (Cursor, Roo, Gemini CLI, Cline) follow the same pattern—just change the command/args if you need HTTP or SSE transports.
 
-See `vendors/README.md` for managing external references if needed for your project.
+---
 
-## Notes
+## 🧪 Development
 
-- This is a domain-agnostic template. Replace placeholders with your project specifics after installation.
-
-## Philosophy
-
-Orchestration-first. Evidence-first. Human-approved. Domain-agnostic templates that install cleanly anywhere.
-
-## Quick Start Examples
-
-Plan → Wish → Forge → Review workflow using MCP tools:
-
-```
-# List available agents
-mcp__genie__list_agents
-
-# Plan: off-roadmap feature
-mcp__genie__run with agent="plan" and prompt="[Discovery] mission @.genie/product/mission.md, roadmap @.genie/product/roadmap.md. [Implementation] Assess 'user-notes' scope + risks; prepare wish brief. [Verification] Wish readiness + blockers."
-
-# Wish: create the contract
-mcp__genie__run with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
-
-# Forge: break into execution groups
-mcp__genie__run with agent="forge" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Execution groups + commands. [Verification] Validation hooks + evidence paths."
-
-# Review: replay validations and produce QA verdict
-mcp__genie__run with agent="review" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Replay checks. [Verification] QA verdict + follow-ups."
-
-# Resume a planning session
-mcp__genie__list_sessions
-mcp__genie__view with sessionId="<session-id>" and full=true
-mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
+```bash
+pnpm install             # Install dependencies
+pnpm run build:genie      # Compile the TypeScript CLI
+pnpm run test:genie       # Run CLI + smoke tests
 ```
 
-### Conversations & Resume
-The `mcp__genie__resume` tool enables continuous conversation with agents for multi-turn tasks.
+All CLI code lives under `.genie/cli/src/`. Rebuild (`pnpm run build:genie`) before committing so `.genie/cli/dist/**/*` stays in sync for npm consumers.
 
-- Start a session: `mcp__genie__run` with agent and prompt
-- Resume the session: `mcp__genie__resume` with sessionId and prompt
-- Inspect context: `mcp__genie__view` with sessionId and full=true
-- Discover sessions: `mcp__genie__list_sessions`
+---
 
-Tips
-- Use one session per wish/feature/bug to keep transcripts focused.
-- Prefer `resume` for follow-ups; start a new `run` when scope changes significantly and reference the prior session.
+## 🗺️ Roadmap
+
+### Completed ✅
+- Reinstated bootstrap commands (`init`, `update`, `rollback`)
+- Automatic migration from legacy `.claude` directories
+- Provider/Version state tracking and backup snapshots
+- MCP server parity with the agent CLI
+
+### Next Up 🚀
+- Rich diff previews during `update`
+- Extended provider health checks and auto-detection
+- JSON output mode for CI integrations
+- Replacement flows for deprecated `status` / `cleanup`
+
+---
+
+## 🤝 Contributing
+
+We love contributions! Before you start:
+
+1. Read the [CONTRIBUTING guidelines](CONTRIBUTING.md) for philosophy and standards
+2. Open an issue to align on intent
+3. Follow Conventional Commits (`feat: ...`, `fix: ...`, etc.) and co-author with 🧞
+4. Run `pnpm run test:genie` and rebuild the dist bundle before submitting
+
+---
+
+## 📄 License
+
+Automagik Genie is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+**Automagik Genie** – the faster, safer way to keep AI agents in sync with your repositories.
