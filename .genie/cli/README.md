@@ -1,8 +1,8 @@
 # GENIE CLI Architecture
 
-This directory hosts the runtime wrapper that powers `./genie` commands. The CLI is responsible for
+This directory hosts the runtime wrapper that powers the Genie MCP server. The server is responsible for
 routing user requests, launching Codex (via `npx -y @namastexlabs/codex@0.43.0-alpha.5` or other executors), tracking background runs, and exposing
-tooling for inspection.
+tooling for inspection via MCP tools.
 
 ## Module Map
 

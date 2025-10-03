@@ -1,7 +1,7 @@
 # GENIE Agents Documentation
 
 ## Overview
-This directory contains agent definitions that power the GENIE CLI's intelligent orchestration capabilities. Agents are organized as:
+This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP. Agents are organized as:
 
 - **Entrypoints** – the four workflow phases (`plan.md`, `wish.md`, `forge.md`, `review.md`) stored at the root of this folder.
 - **Utilities** (`utilities/`) – reusable helpers (twin, analyze, debug, commit workflow, prompt, etc.).
@@ -188,8 +188,8 @@ include_plan_tool: true       # uses planning notes for context staging
 
 ## Running Agents with Custom Parameters
 
-### Via CLI Flags
-Configure these settings in the agent's frontmatter instead:
+### Via Frontmatter Configuration
+Configure these settings in the agent's frontmatter:
 ```yaml
 ---
 genie:
@@ -201,7 +201,7 @@ genie:
 ---
 ```
 
-Then run: `./genie run <agent> "<prompt>"`
+Then run via MCP: `mcp__genie__run` with agent and prompt parameters
 
 ### Via Execution Modes
 Optional convenience modes defined in `config.yaml`:
@@ -233,15 +233,15 @@ meta:
 ## Background Execution
 
 Agents run in background by default:
-```bash
+```
 # Starts in background, returns immediately
-./genie run implementor "Implement feature"
+mcp__genie__run with agent="implementor" and prompt="Implement feature"
 
 # Check status
-./genie list sessions
+mcp__genie__list_sessions
 
 # View output
-./genie view <sessionId>
+mcp__genie__view with sessionId="<session-id>" and full=true
 ```
 
 ## Agent Routing Map
@@ -295,7 +295,7 @@ Check priority order:
 ### Performance issues?
 - Lower reasoning effort for simple tasks
 - Use `low` as default, increase only when needed
-- Monitor with `./genie view` for token usage
+- Monitor with `mcp__genie__view` for token usage
 
 ### Permission errors?
 - Check sandbox mode matches task requirements
@@ -443,8 +443,8 @@ To convert a Codex agent to Claude:
    - `read-only` → `acceptEdits`
    - `workspace-write` → `default`
    - `danger-full-access` → `bypassPermissions`
-4. Remove `reasoningEffort` (Claude-specific feature not exposed via CLI)
-5. Test with `./genie run <agent> "test prompt"`
+4. Remove `reasoningEffort` (Claude-specific feature not exposed)
+5. Test with `mcp__genie__run` with agent and prompt parameters
 
 **Example Migration:**
 
@@ -469,11 +469,11 @@ genie:
 
 Both executors create sessions that can be resumed and viewed:
 
-```bash
-./genie run my-agent "start task"
-./genie list sessions
-./genie resume <sessionId> "continue task"
-./genie view <sessionId>  # View transcript
+```
+mcp__genie__run with agent="my-agent" and prompt="start task"
+mcp__genie__list_sessions
+mcp__genie__resume with sessionId="<session-id>" and prompt="continue task"
+mcp__genie__view with sessionId="<session-id>" and full=true  # View transcript
 ```
 
 **Note:** Claude's `--resume` creates a new session ID that links to the previous conversation. Context is preserved, but session IDs differ per resume (by design).

@@ -27,18 +27,18 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/standards/` – coding rules, naming, language-specific style guides
 - `.genie/instructions/` – legacy Agent OS playbooks retained for reference
 - `.genie/guides/` – getting-started docs, onboarding
-- `.genie/state/` – CLI-managed data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `./genie list sessions` or `./genie view <sessionId>` rather than manual edits.
+- `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
 - `.genie/wishes/` – active wish contracts (`<slug>-wish.md`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/utilities/` – reusable helpers (twin, analyze, debug, commit workflow, prompt, etc.)
 - `.genie/agents/specialists/` – delivery/QA/learning specialists
-- `./genie` – CLI runner for agent conversations
+- **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
 ## Workflow Summary
-1. **/plan** – single-entry agent for product mode. Loads mission/roadmap/standards, gathers context via `@` references, requests background personas via CLI, and decides if item is wish-ready.
+1. **/plan** – single-entry agent for product mode. Loads mission/roadmap/standards, gathers context via `@` references, requests background personas via MCP, and decides if item is wish-ready.
 2. **/wish** – creates `.genie/wishes/<slug>-wish.md`, embedding context ledger, execution groups, inline `<spec_contract>`, branch/tracker strategy, and blocker protocol.
 3. **/forge** – surfaces execution groups, evidence expectations, validation hooks, and pointers back to the wish for tracker updates (capture the plan summary inside the wish).
-4. **Implementation** – humans/agents follow forge plan, storing evidence exactly where the wish specifies (no default folders). Specialist agents run via `./genie run <specialist-agent> "..."`. Tailor the files in `.genie/agents/specialists/` during installation.
+4. **Implementation** – humans/agents follow forge plan, storing evidence exactly where the wish specifies (no default folders). Specialist agents run via `mcp__genie__run` with agent and prompt parameters. Tailor the files in `.genie/agents/specialists/` during installation.
 5. **/review** (optional) – aggregates QA artefacts, replays validation commands, and writes a review summary back into the wish (create a dedicated section or file path if needed).
 6. **/commit** – groups diffs, recommends commit message/checklist, and outputs a commit advisory (log highlights inside the wish or PR draft).
 7. **Git workflow** – Branch names typically `feat/<wish-slug>`; alternatives logged in the wish. PRs reference the wish and forge plan, and reuse tracker IDs recorded in the wish itself. Update roadmap status after merge.
@@ -47,7 +47,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - Wishes must declare where artefacts live; there is no default `qa/` directory. Capture metrics inline in the wish (e.g., tables under a **Metrics** section) or in clearly named companion files.
 - Every wish must complete the **Evidence Checklist** block in @.genie/agents/wish.md before implementation begins, spelling out validation commands, artefact locations, and approval checkpoints.
 - External tracker IDs live in the wish markdown (for example a **Tracking** section with `Forge task: FORGE-123`).
-- Background agent outputs are summarised in the wish context ledger; raw logs can be viewed with `./genie view <sessionId>`.
+- Background agent outputs are summarised in the wish context ledger; raw logs can be viewed with `mcp__genie__view` with sessionId parameter.
 
 ## Testing & Evaluation
 - Evaluation tooling is optional. If a project adds its own evaluator specialist, `/review` or `/plan` can reference it; otherwise, evaluation steps default to manual validation.
@@ -79,35 +79,35 @@ A common snippet:
 2. Update the wish status log and notify stakeholders.
 3. Resume only after guidance is updated.
 
-## CLI Quick Reference
-```bash
-# Helper
-./genie --help
+## MCP Quick Reference
+```
+# List available agents
+mcp__genie__list_agents
 
 # Start a Genie Flow (built-in agents)
-./genie run plan "[Discovery] … [Implementation] … [Verification] …"
+mcp__genie__run with agent="plan" and prompt="[Discovery] … [Implementation] … [Verification] …"
 
 # Start a Core/Specialized Agent
-./genie run forge "[Discovery] … [Implementation] … [Verification] …"
+mcp__genie__run with agent="forge" and prompt="[Discovery] … [Implementation] … [Verification] …"
 
-# Inspect runs and view logs (friendly)
-./genie list sessions
-./genie view <sessionId> --full
+# Inspect runs and view logs
+mcp__genie__list_sessions
+mcp__genie__view with sessionId="<session-id>" and full=true
 
 # Continue a specific run by session id
-./genie resume <sessionId> "Follow-up …"
+mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up …"
 
 # Stop a session
-./genie stop <sessionId>
+mcp__genie__stop with sessionId="<session-id>"
 ```
 
 ### Conversations & Resume
-`resume` enables an actual, continuous conversation with agents and is how you continue multi‑turn tasks.
+`mcp__genie__resume` enables continuous conversation with agents for multi-turn tasks.
 
-- Start a session: `./genie run <agent> "<prompt>"`
-- Resume the same session: `./genie resume <sessionId> "<next prompt>"`
-- Inspect context so far: `./genie view <sessionId> --full`
-- Discover session ids: `./genie list sessions`
+- Start a session: `mcp__genie__run` with agent and prompt
+- Resume the session: `mcp__genie__resume` with sessionId and prompt
+- Inspect context: `mcp__genie__view` with sessionId and full=true
+- Discover sessions: `mcp__genie__list_sessions`
 
 Guidance:
 - Treat each session as a thread with memory; use `resume` for follow‑ups instead of starting new `run`s.
@@ -126,11 +126,11 @@ Genie can handle small, interactive requests without entering Plan → Wish when
 
 If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug reports that need tracking should route through the **bug-reporter** specialist so evidence is captured and filed as an issue.
 
-## Subagents & Twin via CLI
-- Start subagent: `./genie run <agent> "<prompt>"`
-- Resume session: `./genie resume <sessionId> "<prompt>"`
-- List sessions: `./genie list sessions`
-- Stop session: `./genie stop <sessionId>`
+## Subagents & Twin via MCP
+- Start subagent: `mcp__genie__run` with agent and prompt parameters
+- Resume session: `mcp__genie__resume` with sessionId and prompt parameters
+- List sessions: `mcp__genie__list_sessions`
+- Stop session: `mcp__genie__stop` with sessionId parameter
 
 Twin prompt patterns (run through any agent, typically `plan`):
 - Twin Planning: "Act as an independent architect. Pressure-test this plan. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."
@@ -148,8 +148,8 @@ Use the `self-learn` agent to record violations and propagate corrections across
 - ✅ New guardrail needs to be enforced across all agents
 
 **How to Invoke:**
-```bash
-./genie run self-learn "Violation: [description]
+```
+mcp__genie__run with agent="self-learn" and prompt="Violation: [description]
 Evidence: [logs/diffs/screenshots]
 Impact: [which agents/docs affected]
 Correction: [what should happen instead]
@@ -162,8 +162,8 @@ Validation: [how to verify fix]"
 - ❌ Recording speculative rules without evidence
 
 **Example:**
-```bash
-./genie run self-learn "Violation: forge agent created task descriptions with hundreds of lines instead of using @-references.
+```
+mcp__genie__run with agent="self-learn" and prompt="Violation: forge agent created task descriptions with hundreds of lines instead of using @-references.
 
 Evidence: @.genie/wishes/view-fix/forge-output.md shows 200+ line descriptions
 
@@ -225,9 +225,9 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
       <validation>Documentation contains no references to `--preset` or `--mode` CLI flags; all execution configuration examples show YAML frontmatter.</validation>
     </entry>
     <entry date="2025-09-29" violation_type="WORKFLOW" severity="MEDIUM">
-      <trigger>User called `/wish` directly in chat, expecting Claude to act as wish agent immediately, not dispatch to ./genie CLI.</trigger>
-      <correction>Distinguish between two invocation methods: (1) `/wish` slash command = Claude acts as the agent directly using subagents; (2) `./genie run wish` = dispatch to Codex executor via CLI. For daily work, user prefers slash commands (Claude). For multi-LLM perspective, user uses ./genie (Codex).</correction>
-      <validation>When user types `/command`, act as that agent directly; when they type `./genie run`, acknowledge they're dispatching to external executor.</validation>
+      <trigger>User called `/wish` directly in chat, expecting Claude to act as wish agent immediately, not dispatch to MCP.</trigger>
+      <correction>Distinguish between two invocation methods: (1) `/wish` slash command = Claude acts as the agent directly using subagents; (2) `mcp__genie__run` with agent="wish" = dispatch to Codex executor via MCP. For daily work, user prefers slash commands (Claude). For multi-LLM perspective, user uses MCP genie tools (Codex).</correction>
+      <validation>When user types `/command`, act as that agent directly; when they use `mcp__genie__run`, acknowledge they're dispatching to external executor.</validation>
     </entry>
     <entry date="2025-09-30" violation_type="POLLING" severity="MEDIUM">
       <trigger>Polling background sessions with short sleep intervals, leading to impatient behavior and user directive to slow down.</trigger>
@@ -391,11 +391,11 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Test strategy: scope, layering, rollback/monitoring concerns.
 - Retrospective: extract wins/misses/lessons for future work.
 
-### How To Run (CLI)
-- Start: `./genie run twin "Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."`
-- Resume: `./genie resume <sessionId> "Follow-up: address risk #2 with options + trade-offs."`
-- Sessions: reuse the same agent name; the CLI persists session id automatically and can be viewed with `./genie list sessions`.
-- Logs: check full transcript with `./genie view <sessionId>`.
+### How To Run (MCP)
+- Start: `mcp__genie__run` with agent="twin" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."
+- Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
+- Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
+- Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
 ### Modes (quick reference)
 - planning, consensus, deep-dive, debug, socratic, debate, risk-audit, design-review, test-strategy, compliance, retrospective.

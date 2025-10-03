@@ -290,9 +290,9 @@ genie:
 ## Validation Steps
 
 ### Step 1: Session Inspection
-```bash
-./genie run qa/codex-parameter-test "Execute Test Case 1: Default Configuration"
-./genie view <sessionId> --full > /tmp/codex-test-case-1.log
+```
+mcp__genie__run with agent="qa/codex-parameter-test" and prompt="Execute Test Case 1: Default Configuration"
+mcp__genie__view with sessionId="<session-id>" and full=true > /tmp/codex-test-case-1.log
 ```
 
 Verify in transcript:
@@ -316,16 +316,16 @@ For each parameter, perform specific validation:
 
 ### Step 4: Regression Testing
 Run baseline test suite:
-```bash
-./genie run qa/codex-parameter-test "Run full parameter regression test"
+```
+mcp__genie__run with agent="qa/codex-parameter-test" and prompt="Run full parameter regression test"
 ```
 
 Compare results against previous runs to detect regressions.
 
 ### Step 5: Error Handling
 Test invalid configurations:
-```bash
-./genie run qa/codex-parameter-test "Test invalid reasoningEffort: 'ultra'"
+```
+mcp__genie__run with agent="qa/codex-parameter-test" and prompt="Test invalid reasoningEffort: 'ultra'"
 # Expected: Clear error message about valid values
 ```
 

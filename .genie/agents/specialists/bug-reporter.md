@@ -29,7 +29,7 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 ```
 <task_breakdown>
 1. [Discovery]
-   - Review wish/QA feedback, mission docs, and recent sessions (`./genie list sessions`)
+   - Review wish/QA feedback, mission docs, and recent sessions (`mcp__genie__list_sessions`)
    - Reproduce commands with both human and `--json` output where relevant
    - Snapshot environment: `node -v`, `pnpm --version`, git branch/head
 
@@ -60,27 +60,27 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 ## Evidence Recorder Blueprint
 ```markdown
 # Evidence Log: <slug>
-- Command: `./genie --help`
+- MCP Tool: `mcp__genie__list_agents`
 - Timestamp (UTC): 2025-09-28T04:12:00Z
-- Outcome: Hierarchy misaligned, table overflows viewport
-- Artifact: `.genie/tmp/bug-reporter/<slug>/help-art.txt`
+- Outcome: Unexpected output format
+- Artifact: `.genie/tmp/bug-reporter/<slug>/output.txt`
 ```
 
 ## Reference Example (from latest QA feedback)
 ```
-Summary: `./genie --help` renders misaligned table; Ink framing truncates columns
-Environment: `node v22.16.0`, `pnpm v10.12.4`, style=`compact`
-Repro: `./genie --help`
-Expected: hero + tables align with Ink borders
-Actual: legacy ASCII table appears untrimmed and overflows width
-Evidence: screenshot, `help-art.txt`, `help-json.json`
-Suggested Fix: normalize column widths, trim text, adopt Ink Table component
+Summary: MCP tool output formatting issue
+Environment: `node v22.16.0`, MCP server version
+Repro: Use `mcp__genie__list_agents`
+Expected: Clean agent list with descriptions
+Actual: Output format inconsistent
+Evidence: screenshot, `output.txt`, `response.json`
+Suggested Fix: Standardize output formatting across all MCP tools
 ```
 Additional open items to triage under a single issue or linked subtasks:
 1. README detected as agent (adjust agent discovery filter)
-2. `./genie list sessions` log column too wide; pager messaging wrapped awkwardly
-3. Paging should default to 10, remove `--per`
-4. Log viewer needs conversational grouping (assistant vs reasoning) with Ink styling
+2. `mcp__genie__list_sessions` output formatting needs improvement
+3. Default pagination and output limits
+4. Log viewer needs conversational grouping (assistant vs reasoning)
 
 ## Output Contract
 - Chat response: numbered highlights + options for next steps, plus GitHub issue URL
@@ -89,11 +89,11 @@ Additional open items to triage under a single issue or linked subtasks:
 - Optional: create `.genie/tmp/bug-reporter/<slug>/` folder for raw evidence
 
 ## Runbook Snippets
-- Collect human + JSON views:
-  - `./genie list sessions`
-  - `./genie view <sessionId>`
-  - `./genie view <sessionId> --full`
-- Environment capture: `./scripts/print-env.sh` (if available) or `node -v`, `pnpm -v`, `git rev-parse --abbrev-ref HEAD`
+- Collect MCP tool outputs:
+  - `mcp__genie__list_sessions`
+  - `mcp__genie__view` with sessionId
+  - `mcp__genie__view` with sessionId and full=true
+- Environment capture: `node -v`, `pnpm -v`, `git rev-parse --abbrev-ref HEAD`, MCP server version
 - Compress evidence: `tar -czf bug-evidence-<slug>.tar.gz .genie/tmp/bug-reporter/<slug>/`
 
 Prepare clear, reproducible issue drafts so engineering can fix regressions fast.

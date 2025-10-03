@@ -28,22 +28,22 @@ Tests all Claude executor parameters including:
 ## Running QA Tests
 
 ### Full Parameter Test (Codex)
-```bash
-./genie run qa/codex-parameter-test "Test all Codex parameters"
-./genie view <sessionId> --full
+```
+mcp__genie__run with agent="qa/codex-parameter-test" and prompt="Test all Codex parameters"
+mcp__genie__view with sessionId="<session-id>" and full=true
 ```
 
 ### Full Parameter Test (Claude)
-```bash
-./genie run qa/claude-parameter-test "Test all Claude parameters"
-./genie view <sessionId> --full
+```
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="Test all Claude parameters"
+mcp__genie__view with sessionId="<session-id>" and full=true
 ```
 
 ### Targeted Parameter Tests
-```bash
+```
 # Test specific parameter category
-./genie run qa/codex-parameter-test "Test only reasoningEffort: low, medium, high"
-./genie run qa/claude-parameter-test "Test only permissionMode variations"
+mcp__genie__run with agent="qa/codex-parameter-test" and prompt="Test only reasoningEffort: low, medium, high"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="Test only permissionMode variations"
 ```
 
 ## Expected Outcomes

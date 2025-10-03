@@ -58,10 +58,9 @@ Validate Genie CLI from the user's perspective. Execute CLI workflows, capture r
 Goal: Understand the CLI structure and expected behaviors before testing.
 
 Method:
-- Read CLI help via `./genie --help` and command-specific help
-- Review agent catalog via `./genie list agents`
-- Check existing sessions via `./genie list sessions`
-- Examine CLI source structure via @.genie/cli/dist/views/ for layout validation
+- Review agent catalog via `mcp__genie__list_agents`
+- Check existing sessions via `mcp__genie__list_sessions`
+- Examine MCP server structure via @.genie/mcp/src/ for validation
 
 Early stop criteria:
 - You can describe the CLI command structure and identify validation checkpoints.
@@ -73,54 +72,38 @@ Escalate once:
 </context_gathering>
 ```
 
-## CLI Command Test Matrix
-```bash
-# Core help and navigation
-./genie
-./genie --help
-./genie help
-./genie help run
-./genie help list
-./genie help resume
-./genie help view
-./genie help stop
-
+## MCP Tool Test Matrix
+```
 # Agent operations
-./genie list agents
-./genie run plan "test planning prompt"
-./genie run specialists/qa "test qa prompt"
-./genie run utilities/twin "test twin prompt"
+mcp__genie__list_agents
+mcp__genie__run with agent="plan" and prompt="test planning prompt"
+mcp__genie__run with agent="specialists/qa" and prompt="test qa prompt"
+mcp__genie__run with agent="utilities/twin" and prompt="test twin prompt"
 
 # Session management
-./genie list sessions
-./genie resume <sessionId> "follow-up prompt"
-./genie view <sessionId>
-./genie view <sessionId> --full
-./genie stop <sessionId>
+mcp__genie__list_sessions
+mcp__genie__resume with sessionId="<session-id>" and prompt="follow-up prompt"
+mcp__genie__view with sessionId="<session-id>"
+mcp__genie__view with sessionId="<session-id>" and full=true
+mcp__genie__stop with sessionId="<session-id>"
 
 # Error scenarios
-./genie invalid-command
-./genie run
-./genie run nonexistent-agent "test"
-./genie resume invalid-session "test"
-./genie view nonexistent-session
-./genie stop invalid-session
+mcp__genie__run with agent="nonexistent-agent" and prompt="test"
+mcp__genie__resume with sessionId="invalid-session" and prompt="test"
+mcp__genie__view with sessionId="nonexistent-session"
+mcp__genie__stop with sessionId="invalid-session"
 ```
 Document expected output snippets (success messages, error codes) so humans can replay the flow.
 
 ## Layout Validation Commands
-```bash
-# Test compact spacing implementation (gap: 0)
-./genie list agents > layout-agents.txt
-./genie list sessions > layout-sessions.txt
-./genie --help > layout-help.txt
+```
+# Test MCP tool output formatting
+mcp__genie__list_agents > layout-agents.txt
+mcp__genie__list_sessions > layout-sessions.txt
 
-# Test table formatting and badge placement
-./genie list agents | head -50 > layout-agent-tables.txt
-./genie list sessions | head -30 > layout-session-tables.txt
-
-# Test text wrapping in narrow terminals
-COLUMNS=80 ./genie list agents > layout-narrow.txt
+# Validate agent catalog structure
+mcp__genie__list_agents (inspect first 50 entries)
+mcp__genie__list_sessions (inspect first 30 sessions)
 ```
 
 ## Done Report Structure
@@ -137,17 +120,16 @@ COLUMNS=80 ./genie list agents > layout-narrow.txt
 ## Test Scenarios & Results
 | Command | Status | Evidence Location |
 |---------|--------|------------------|
-| ./genie --help | ✅ Pass | cmd-help-main.txt |
-| ./genie list agents | ✅ Pass | cmd-list-agents.txt |
-| ./genie run invalid | ❌ Fail | error-invalid-agent.txt |
-| Layout spacing | ✅ Pass | layout-validation.txt |
+| mcp__genie__list_agents | ✅ Pass | cmd-list-agents.txt |
+| mcp__genie__run (invalid agent) | ❌ Fail | error-invalid-agent.txt |
+| Output formatting | ✅ Pass | layout-validation.txt |
 
 ## Bugs Found
-**[HIGH] ./genie --help shows unknown command error**
-- Reproduction: Run `./genie --help`
-- Expected: Main help panel
-- Actual: "Unknown command: --help" error
-- Evidence: error-help-flag.txt
+**[HIGH] MCP tool error handling**
+- Reproduction: Use mcp__genie__run with nonexistent agent
+- Expected: Clear error message with available agents
+- Actual: Generic error
+- Evidence: error-invalid-agent.txt
 
 ## Layout Validation Results
 - ✅ gap: 0 implemented across all views

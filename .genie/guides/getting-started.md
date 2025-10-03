@@ -36,20 +36,20 @@ Load the variables into your shell when working locally:
 set -a && source .env && set +a
 ```
 
-## 4. Verify the CLI
+## 4. Verify MCP Tools
 
-```bash
-./genie --help
-./genie run plan "[Discovery] quick repo scan [Implementation] outline wish [Verification] list next steps"
+```
+mcp__genie__list_agents
+mcp__genie__run with agent="plan" and prompt="[Discovery] quick repo scan [Implementation] outline wish [Verification] list next steps"
 ```
 
 ## 5. Start Your First Wish
 
 Use the plan → wish → forge flow. Store evidence under `.genie/wishes/<slug>/` as your project requires (no defaults).
 
-```bash
+```
 mkdir -p .genie/wishes/sample
-./genie run wish "Create a wish for onboarding Genie template to {{PROJECT_NAME}}."
+mcp__genie__run with agent="wish" and prompt="Create a wish for onboarding Genie template to {{PROJECT_NAME}}."
 ```
 
 ## 6. Project Context

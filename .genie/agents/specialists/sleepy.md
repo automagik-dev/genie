@@ -189,8 +189,8 @@ for cycle in $(seq 1 $MAX_CYCLES); do
 
   echo "   ⏰ Waking at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  # Check status (via MCP, browser, or genie list)
-  if ./genie list sessions | grep -q "01999b7c"; then
+  # Check status (via MCP or browser)
+  if mcp__genie__list_sessions shows session "01999b7c" as running; then
     echo "   ⏳ Task still running..."
   else
     echo "   ✅ Task completed!"
@@ -600,7 +600,7 @@ spawn_subagent() {
   echo "🚀 Spawning $agent for $task_id..."
 
   # Ultra-minimal prompt
-  ./genie run "$agent" "@.genie/wishes/${wish_slug}-wish.md
+  mcp__genie__run with agent="$agent" and prompt="@.genie/wishes/${wish_slug}-wish.md
 @${task_file}
 
 Execute this task. Report evidence at:
@@ -608,8 +608,8 @@ ${evidence_path}
 
 Keep context minimal. Focus on deliverables."
 
-  # Capture session ID
-  session_id=$(./genie list sessions | grep "$agent" | head -1 | awk '{print $1}')
+  # Capture session ID from MCP response
+  session_id=$(get_session_id_from_mcp_response)
   echo "$session_id"
 }
 ```
@@ -620,8 +620,8 @@ Keep context minimal. Focus on deliverables."
 check_subagent_status() {
   local session_id="$1"
 
-  # Use genie view to check status (minimal output)
-  status=$(./genie view "$session_id" | grep -i "status:" | awk '{print $2}')
+  # Use MCP view to check status (minimal output)
+  status=$(mcp__genie__view with sessionId="$session_id" | grep -i "status:" | awk '{print $2}')
   echo "$status"
 }
 ```

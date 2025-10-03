@@ -213,9 +213,9 @@ genie:
 ## Validation Steps
 
 ### Step 1: Session Inspection
-```bash
-./genie run qa/claude-parameter-test "Execute Test Case 1: Default Configuration"
-./genie view <sessionId> --full > /tmp/claude-test-case-1.log
+```
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="Execute Test Case 1: Default Configuration"
+mcp__genie__view with sessionId="<session-id>" and full=true > /tmp/claude-test-case-1.log
 ```
 
 Verify in transcript:
@@ -226,8 +226,8 @@ Verify in transcript:
 
 ### Step 2: Parameter Value Confirmation
 Check session for configured parameters:
-```bash
-./genie view <sessionId> | grep -A 10 "executor: claude"
+```
+mcp__genie__view with sessionId="<session-id>" | grep -A 10 "executor: claude"
 ```
 
 ### Step 3: Behavioral Validation
@@ -238,47 +238,47 @@ For each parameter, perform specific validation:
 - `disallowedTools: ["Bash(rm:*)"]` → rm commands rejected
 
 ### Step 4: Tool Filtering Tests
-```bash
+```
 # Test allowedTools
-./genie run qa/claude-parameter-test "allowedTools test: Try to use Write tool"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="allowedTools test: Try to use Write tool"
 # Expected: Tool blocked or not available
 
 # Test disallowedTools
-./genie run qa/claude-parameter-test "disallowedTools test: Try rm command"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="disallowedTools test: Try rm command"
 # Expected: Command rejected with clear error
 ```
 
 ### Step 5: Permission Mode Tests
-```bash
+```
 # Test acceptEdits mode
-./genie run qa/claude-parameter-test "permissionMode: acceptEdits - Try to edit file"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="permissionMode: acceptEdits - Try to edit file"
 # Expected: Approval prompt before write
 
 # Test bypassPermissions mode
-./genie run qa/claude-parameter-test "permissionMode: bypassPermissions - Full access test"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="permissionMode: bypassPermissions - Full access test"
 # Expected: No approval prompts, full access granted
 ```
 
 ### Step 6: Model Comparison Test
-```bash
+```
 # Run identical prompt across all models
 for model in haiku sonnet opus; do
-  ./genie run qa/claude-parameter-test "Model: $model - Explain recursion in detail"
+  mcp__genie__run with agent="qa/claude-parameter-test" and prompt="Model: $model - Explain recursion in detail"
 done
 
 # Compare response quality, length, speed
 ```
 
 ### Step 7: Resume Parameter Tests
-```bash
+```
 # Start session
-./genie run qa/claude-parameter-test "Initial message"
+mcp__genie__run with agent="qa/claude-parameter-test" and prompt="Initial message"
 
 # Resume with additional args
-./genie resume <sessionId> "Follow-up message"
+mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up message"
 
 # Verify resume behavior
-./genie view <sessionId> --full
+mcp__genie__view with sessionId="<session-id>" and full=true
 ```
 
 ## Expected Behavior

@@ -11,7 +11,7 @@ genie:
 # /wish – Genie Wish Architect
 
 ## Role & Output Contract
-You are the **Genie Wish Architect**. Running `/wish` starts an interactive session that consumes the planning brief, captures any remaining context, and produces a single markdown document at `.genie/wishes/<feature-slug>-wish.md`. Do **not** run shell/git commands; coordinate the flow, request background persona results via `./genie`, and document everything inside the wish.
+You are the **Genie Wish Architect**. Running `/wish` starts an interactive session that consumes the planning brief, captures any remaining context, and produces a single markdown document at `.genie/wishes/<feature-slug>-wish.md`. Do **not** run shell/git commands; coordinate the flow, request background persona results via MCP genie tools, and document everything inside the wish.
 
 [SUCCESS CRITERIA]
 ✅ Wish saved with the template below, including an inline `<spec_contract>` tied to a roadmap item ID
@@ -127,7 +127,7 @@ Checklist:
 | --- | --- | --- | --- |
 | Planning brief | doc | Key findings | entire wish |
 | @path/to/file | repo | Insight | wish, docs |
-| ./genie run <agent> "…" | background | Output summary | wish, roadmap |
+| mcp__genie__run agent="..." | background | Output summary | wish, roadmap |
 
 ## Discovery Summary
 - **Primary analyst:** {Human/Agent}

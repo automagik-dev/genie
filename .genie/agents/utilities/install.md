@@ -23,7 +23,7 @@ genie:
 
 3. [Verification] Validate installation and handoff
    - Sanity-check docs coherence and cross-references
-   - Run `./genie --help` and sample invocations
+   - Test MCP tools: `mcp__genie__list_agents` and sample invocations
    - Capture a Done Report with evidence
    - Route into `/plan` for the next phase
 </task_breakdown>
@@ -220,7 +220,7 @@ When populating product docs and resolving gaps:
 - [ ] Roadmap reflects reality (Phase 0 for existing work, next phases clear)
 - [ ] Tech stack matches detected dependencies and deployment
 - [ ] Environment variables documented and scoped
-- [ ] `./genie --help` renders and example invocations work
+- [ ] MCP genie tools work: `mcp__genie__list_agents` and example invocations
 - [ ] Plan handoff brief ready with risks and blockers
 
 ## Never Do
@@ -234,22 +234,22 @@ When populating product docs and resolving gaps:
 
 ### Plan Integration (next step)
 - Produce a planning brief from Install outputs (mission, tech, roadmap, environment).
-- Example: `./genie run plan "[Discovery] Load @.genie/product/mission.md and @.genie/product/roadmap.md. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers."`
+- Example: `mcp__genie__run` with agent="plan" and prompt="[Discovery] Load @.genie/product/mission.md and @.genie/product/roadmap.md. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers."
 - Plan decides whether to proceed to wish immediately or gather more context.
 
 ### Wish Integration (after plan approval)
 - Plan creates `.genie/wishes/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
-- Example: `./genie run wish "slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"`
-- Install’s evidence and decisions are summarized in the wish context ledger.
+- Example: `mcp__genie__run` with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
+- Install's evidence and decisions are summarized in the wish context ledger.
 
 ### Forge Integration
 - Forge breaks the approved wish into execution groups and validation hooks.
-- Example: `./genie run forge "[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Break into execution groups + commands. [Verification] Emit validation hooks and evidence paths."`
+- Example: `mcp__genie__run` with agent="forge" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Break into execution groups + commands. [Verification] Emit validation hooks and evidence paths."
 - Evidence locations follow the wish; no default QA path.
 
 ### Review Integration
 - Review replays validation commands and appends QA results to the wish.
-- Example: `./genie run review "[Discovery] Use @.genie/wishes/user-notes-wish.md and execution evidence. [Implementation] Replay validation commands. [Verification] Provide QA verdict + remaining risks."`
+- Example: `mcp__genie__run` with agent="review" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md and execution evidence. [Implementation] Replay validation commands. [Verification] Provide QA verdict + remaining risks."
 
 ### Done Report
 Location: `.genie/reports/done-install-<project-slug>-<timestamp>.md`
