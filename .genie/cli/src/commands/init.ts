@@ -9,6 +9,7 @@ import { buildErrorView, buildInfoView } from '../views/common';
 import {
   getPackageRoot,
   getTemplateGeniePath,
+  getTemplateClaudePath,
   getTemplateRelativeBlacklist,
   resolveTargetGeniePath,
   resolveWorkspaceProviderPath,
@@ -72,6 +73,7 @@ export async function runInit(
     const cwd = process.cwd();
     const packageRoot = getPackageRoot();
     const templateGenie = getTemplateGeniePath();
+    const templateClaude = getTemplateClaudePath();
     const targetGenie = resolveTargetGeniePath(cwd);
 
     const templateExists = await pathExists(templateGenie);
@@ -108,6 +110,10 @@ export async function runInit(
     }
 
     await copyTemplateGenie(templateGenie, targetGenie);
+
+    if (await pathExists(templateClaude)) {
+      await copyTemplateClaude(templateClaude, claudeDir);
+    }
 
     if (stagedBackupDir) {
       const finalBackupsDir = path.join(backupsRoot, backupId);
@@ -193,6 +199,11 @@ async function copyTemplateGenie(templateGenie: string, targetGenie: string): Pr
       return true;
     }
   });
+}
+
+async function copyTemplateClaude(templateClaude: string, targetClaude: string): Promise<void> {
+  await ensureDir(path.dirname(targetClaude));
+  await copyDirectory(templateClaude, targetClaude);
 }
 
 async function resolveProviderChoice(flags: InitFlags): Promise<string> {

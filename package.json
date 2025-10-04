@@ -20,6 +20,7 @@
     ".genie/product/**/*.md",
     ".genie/standards/**/*.md",
     ".genie/guides/**/*.md",
+    "templates/.claude/**/*",
     "bin/automagik-genie.js",
     "bin/update.js",
     "bin/rollback.js",

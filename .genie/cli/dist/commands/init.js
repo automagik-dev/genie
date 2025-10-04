@@ -35,6 +35,7 @@ async function runInit(parsed, _config, _paths) {
         const cwd = process.cwd();
         const packageRoot = (0, paths_1.getPackageRoot)();
         const templateGenie = (0, paths_1.getTemplateGeniePath)();
+        const templateClaude = (0, paths_1.getTemplateClaudePath)();
         const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
         const templateExists = await (0, fs_utils_1.pathExists)(templateGenie);
         if (!templateExists) {
@@ -66,6 +67,9 @@ async function runInit(parsed, _config, _paths) {
             await (0, fs_utils_1.ensureDir)(path_1.default.dirname(backupsRoot));
         }
         await copyTemplateGenie(templateGenie, targetGenie);
+        if (await (0, fs_utils_1.pathExists)(templateClaude)) {
+            await copyTemplateClaude(templateClaude, claudeDir);
+        }
         if (stagedBackupDir) {
             const finalBackupsDir = path_1.default.join(backupsRoot, backupId);
             await (0, fs_utils_1.ensureDir)(backupsRoot);
@@ -148,6 +152,10 @@ async function copyTemplateGenie(templateGenie, targetGenie) {
             return true;
         }
     });
+}
+async function copyTemplateClaude(templateClaude, targetClaude) {
+    await (0, fs_utils_1.ensureDir)(path_1.default.dirname(targetClaude));
+    await (0, fs_utils_1.copyDirectory)(templateClaude, targetClaude);
 }
 async function resolveProviderChoice(flags) {
     if (flags.provider) {

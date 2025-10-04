@@ -8,6 +8,10 @@ export function getTemplateGeniePath(): string {
   return path.join(getPackageRoot(), '.genie');
 }
 
+export function getTemplateClaudePath(): string {
+  return path.join(getPackageRoot(), 'templates', '.claude');
+}
+
 export function getTemplateRelativeBlacklist(): Set<string> {
   return new Set(['cli', 'mcp', 'state', 'backups']);
 }
