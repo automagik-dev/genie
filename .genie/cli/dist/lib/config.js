@@ -84,6 +84,22 @@ const BASE_CONFIG = {
     }
 };
 const CONFIG_PATH = path_1.default.join(path_1.default.dirname(__dirname), 'config.yaml');
+const PROVIDER_EXECUTOR = {
+    codex: 'codex',
+    claude: 'claude'
+};
+const PROVIDER_MODEL = {
+    codex: 'gpt-5-codex',
+    claude: 'sonnet-4.5'
+};
+const DEFAULT_MODE_DESCRIPTION = {
+    codex: 'Workspace-write automation with GPT-5 Codex.',
+    claude: 'Workspace automation with Claude Sonnet 4.5.'
+};
+const CLAUDE_EXEC_MODEL = {
+    codex: 'sonnet',
+    claude: 'sonnet-4.5'
+};
 const startupWarnings = [];
 function recordStartupWarning(message) {
     startupWarnings.push(message);
@@ -137,6 +153,10 @@ function loadConfig() {
     else {
         config.__configPath = CONFIG_PATH;
     }
+    const provider = loadWorkspaceProvider();
+    if (provider) {
+        applyProviderOverrides(config, provider);
+    }
     return config;
 }
 function resolvePaths(paths) {
@@ -159,5 +179,49 @@ function prepareDirectories(paths) {
 function applyDefaults(options, defaults) {
     if (!options.backgroundExplicit) {
         options.background = Boolean(defaults?.background);
+    }
+}
+function loadWorkspaceProvider() {
+    try {
+        const providerPath = path_1.default.join(process.cwd(), '.genie', 'state', 'provider.json');
+        if (!fs_1.default.existsSync(providerPath)) {
+            return null;
+        }
+        const raw = fs_1.default.readFileSync(providerPath, 'utf8');
+        if (!raw.trim().length)
+            return null;
+        const parsed = JSON.parse(raw);
+        const value = parsed?.provider;
+        if (typeof value !== 'string')
+            return null;
+        const normalized = value.toLowerCase();
+        if (normalized.startsWith('claude'))
+            return 'claude';
+        return 'codex';
+    }
+    catch {
+        return null;
+    }
+}
+function applyProviderOverrides(config, provider) {
+    const normalized = provider === 'claude' ? 'claude' : 'codex';
+    const executor = PROVIDER_EXECUTOR[normalized];
+    const model = PROVIDER_MODEL[normalized];
+    if (!config.defaults)
+        config.defaults = {};
+    config.defaults.executor = executor;
+    const executionModes = (config.executionModes = config.executionModes || {});
+    const defaultMode = (executionModes.default = executionModes.default || {});
+    defaultMode.description = DEFAULT_MODE_DESCRIPTION[normalized];
+    defaultMode.executor = executor;
+    defaultMode.overrides = defaultMode.overrides || {};
+    defaultMode.overrides.exec = defaultMode.overrides.exec || {};
+    defaultMode.overrides.exec.model = model;
+    if (config.executors && config.executors.codex) {
+        config.executors.codex.exec = config.executors.codex.exec || {};
+    }
+    if (config.executors && config.executors.claude) {
+        config.executors.claude.exec = config.executors.claude.exec || {};
+        config.executors.claude.exec.model = CLAUDE_EXEC_MODEL[normalized];
     }
 }

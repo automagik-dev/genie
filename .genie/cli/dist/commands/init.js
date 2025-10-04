@@ -7,11 +7,28 @@ exports.runInit = runInit;
 const path_1 = __importDefault(require("path"));
 const fs_1 = require("fs");
 const readline_1 = __importDefault(require("readline"));
+const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
+const PROVIDER_EXECUTOR = {
+    codex: 'codex',
+    claude: 'claude'
+};
+const PROVIDER_MODEL = {
+    codex: 'gpt-5-codex',
+    claude: 'sonnet-4.5'
+};
+const DEFAULT_MODE_DESCRIPTION = {
+    codex: 'Workspace-write automation with GPT-5 Codex.',
+    claude: 'Workspace automation with Claude Sonnet 4.5.'
+};
+const CLAUDE_EXEC_MODEL = {
+    codex: 'sonnet',
+    claude: 'sonnet-4.5'
+};
 async function runInit(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
@@ -74,6 +91,7 @@ async function runInit(parsed, _config, _paths) {
         await writeProviderState(cwd, provider);
         await writeVersionState(cwd, backupId, claudeExists);
         await initializeProviderStatus(cwd);
+        await applyProviderDefaults(targetGenie, provider);
         const summary = {
             provider,
             backupId,
@@ -220,4 +238,104 @@ function buildInitSummaryView(summary) {
         `📚 Template source: ${summary.templateSource}`
     ];
     return (0, common_1.buildInfoView)('Genie initialization complete', messages);
+}
+async function applyProviderDefaults(genieRoot, provider) {
+    const executor = PROVIDER_EXECUTOR[provider] ?? 'codex';
+    const model = PROVIDER_MODEL[provider] ?? 'gpt-5-codex';
+    await Promise.all([
+        updateConfigForProvider(genieRoot, provider, executor, model),
+        updateAgentsForProvider(genieRoot, executor, model)
+    ]);
+}
+async function updateConfigForProvider(genieRoot, provider, executor, model) {
+    const configPath = path_1.default.join(genieRoot, 'cli', 'config.yaml');
+    const exists = await fs_1.promises
+        .access(configPath)
+        .then(() => true)
+        .catch(() => false);
+    if (!exists) {
+        return;
+    }
+    const original = await fs_1.promises.readFile(configPath, 'utf8');
+    let updated = original;
+    updated = replaceFirst(updated, /(defaults:\s*\n\s*executor:\s*)([^\s#]+)/, `$1${executor}`);
+    updated = replaceFirst(updated, /(executionModes:\s*\n  default:\s*\n(?:(?: {4}.+\n)+?))/, // capture default block
+    (match) => {
+        let block = match;
+        block = replaceFirst(block, /(    description:\s*)(.*)/, `$1${DEFAULT_MODE_DESCRIPTION[provider] ?? DEFAULT_MODE_DESCRIPTION.codex}`);
+        block = replaceFirst(block, /(    executor:\s*)([^\s#]+)/, `$1${executor}`);
+        block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${model}`);
+        return block;
+    });
+    updated = replaceFirst(updated, /(  claude:\s*\n(?:(?: {4}.+\n)+?))/, (match) => {
+        let block = match;
+        block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${CLAUDE_EXEC_MODEL[provider] ?? CLAUDE_EXEC_MODEL.codex}`);
+        return block;
+    });
+    if (updated !== original) {
+        await fs_1.promises.writeFile(configPath, updated, 'utf8');
+    }
+}
+async function updateAgentsForProvider(genieRoot, executor, model) {
+    const agentsDir = path_1.default.join(genieRoot, 'agents');
+    const files = await collectAgentFiles(agentsDir);
+    await Promise.all(files.map(async (file) => {
+        const original = await fs_1.promises.readFile(file, 'utf8');
+        if (!original.startsWith('---'))
+            return;
+        const end = original.indexOf('\n---', 3);
+        if (end === -1)
+            return;
+        const frontMatterContent = original.slice(4, end);
+        let data;
+        try {
+            data = yaml_1.default.parse(frontMatterContent) || {};
+        }
+        catch {
+            return; // skip files with invalid front matter
+        }
+        if (!data || typeof data !== 'object')
+            return;
+        if (!data.genie || typeof data.genie !== 'object') {
+            data.genie = {};
+        }
+        const genieMeta = data.genie;
+        genieMeta.executor = executor;
+        genieMeta.model = model;
+        const nextFrontMatter = yaml_1.default.stringify(data, { indent: 2 }).trimEnd();
+        const nextContent = `---\n${nextFrontMatter}\n---${original.slice(end + 4)}`;
+        if (nextContent !== original) {
+            await fs_1.promises.writeFile(file, nextContent, 'utf8');
+        }
+    }));
+}
+async function collectAgentFiles(dir) {
+    const entries = await fs_1.promises.readdir(dir, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+        const fullPath = path_1.default.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            const nested = await collectAgentFiles(fullPath);
+            files.push(...nested);
+            continue;
+        }
+        if (!entry.isFile())
+            continue;
+        if (!entry.name.endsWith('.md'))
+            continue;
+        if (entry.name.toLowerCase() === 'README.md'.toLowerCase())
+            continue;
+        files.push(fullPath);
+    }
+    return files;
+}
+function replaceFirst(source, pattern, replacement) {
+    if (typeof replacement === 'function') {
+        const match = source.match(pattern);
+        if (!match)
+            return source;
+        const replaced = replacement(match[0]);
+        return source.slice(0, match.index ?? 0) + replaced + source.slice((match.index ?? 0) + match[0].length);
+    }
+    return source.replace(pattern, replacement);
 }
