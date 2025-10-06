@@ -212,3 +212,5 @@ Session tips:
 - Prefer stable ids like `plan-<slug>-YYYYMMDD` so related runs remain linked.
 - When resuming, restate context deltas since last turn and append a "Planning Brief Update" with new ASM/DEC/RISK entries.
 - Keep the Context Ledger cumulative; do not overwrite prior entries—append with timestamps when helpful.
+
+@.genie/agents/custom/planning.md

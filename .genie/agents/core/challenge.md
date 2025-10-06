@@ -55,3 +55,5 @@ Experiments: [e1, e2]
 Verdict: <uphold|revise|reject> (confidence: <low|med|high>)
 Reasoning: <justification>
 ```
+
+@.genie/agents/custom/challenge.md

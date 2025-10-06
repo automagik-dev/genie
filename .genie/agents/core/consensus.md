@@ -183,3 +183,5 @@ Verdict: <one sentence>
 Confidence: <1-10> + brief justification
 KeyTakeaways: [k1, k2, k3]
 ```
+
+@.genie/agents/custom/consensus.md

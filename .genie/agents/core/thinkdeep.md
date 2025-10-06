@@ -43,3 +43,5 @@ Insights: [i1]
 Risks: [r1]
 Verdict: <what changed or confirmed> (confidence: <low|med|high>)
 ```
+
+@.genie/agents/custom/thinkdeep.md

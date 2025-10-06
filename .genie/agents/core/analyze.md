@@ -152,3 +152,5 @@ Deliver: dependency map, hotspots, coupling, simplification ideas
 Refactors: [ {target, change, expected_impact, risk} ]
 Verdict: <direction> (confidence: <low|med|high>)
 ```
+
+@.genie/agents/custom/analyze.md

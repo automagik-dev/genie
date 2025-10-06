@@ -84,3 +84,5 @@ Hypotheses: [ {name, confidence, evidence, minimal_fix, regression_check} ]
 Experiments: [exp1]
 Verdict: <fix direction> (confidence: <low|med|high>)
 ```
+
+@.genie/agents/custom/debug.md
