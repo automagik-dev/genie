@@ -154,128 +154,122 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 **Updated all `.claude/` aliases to new directory structure:**
 
 ### Commands Updated:
-- Core agents: `plan`, `wish`, `forge`, `review`, `install`, `prompt`, `learn`, `debug` → `@.genie/agents/core/`
-- Specialist: `commit` → `@.genie/agents/specialists/`
+- Core agents: `plan`, `wish`, `forge`, `review`, `install`, `prompt`, `learn` (→ `meta-learn`), `debug` → `@.genie/agents/core/`
+- Specialist: `commit`/`git-workflow` (→ `git-lifecycle`) → `@.genie/agents/specialists/`
 - Genie-only: `genie-qa` → `@.genie/agents/qa/`
 - **Renamed:** `sleepy.md` → `vibe.md` pointing to `@.genie/agents/core/vibe.md`
 
 ### Agents Updated:
 - Core agents: All thinking utilities → `@.genie/agents/core/`
-- Specialists: All 13 template agents → `@.genie/agents/specialists/`
+- Specialists: Template agents retained for customization → `@.genie/agents/specialists/`
 - Genie-only: `genie-qa` → `@.genie/agents/qa/`
 - **Renamed:** `sleepy.md` → `vibe.md`
-- **Deleted:** `project-manager.md`, `self-learn.md` (already deleted from source)
+- **Retiring:** `self-learn.md` absorbed into unified meta-learning agent during Group B
 
 ## Execution Groups
 
-### Group A – Agent Inventory & Categorization
-- **Goal:** Catalog all 36 agents and categorize as core vs template
+### Group A – Twin Prompt Consolidation
+- **Goal:** Remove duplicate instructions by delegating Twin modes to specialist prompts via `@` references.
 - **Surfaces:**
-  - @.genie/agents/plan.md
-  - @.genie/agents/wish.md
-  - @.genie/agents/forge.md
-  - @.genie/agents/review.md
-  - @.genie/agents/specialists/ (8 agents)
-  - @.genie/agents/utilities/ (15 agents)
-  - @.genie/agents/qa/ (test agents)
+  - @.genie/agents/core/twin.md
+  - @.genie/agents/specialists/refactor.md
+  - @.genie/agents/specialists/testgen.md
+  - @.genie/agents/specialists/secaudit.md
+  - @.genie/agents/specialists/tracer.md
+  - @.genie/agents/specialists/docgen.md
 - **Deliverables:**
-  - Categorization matrix (agent name, type, rationale, destination)
-  - Core agents list (stays in npm package)
-  - Template agents list (goes to templates/)
-- **Evidence:** `.genie/wishes/core-template-separation/agent-categorization.md`
-- **Suggested personas:** `analyze`, `codereview`
+  - Updated twin prompt where each mode links to the canonical specialist file
+  - Pruned inline twin guidance replaced by concise summaries
+  - AGENTS.md routing table updated to note Twin delegation pattern
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-a/twin-consolidation.md` with before/after excerpts
+- **Suggested personas:** `analyze`, `twin`
 - **External tracker:** TBD
 
-### Group B – Template Directory Restructure
-- **Goal:** Build complete `templates/` directory with all user-facing scaffolding
+### Group B – Meta-Learning Unification
+- **Goal:** Merge learn/self-learn behaviours into a single meta-learning agent while preserving violation logging.
 - **Surfaces:**
-  - @templates/ (existing)
-  - @.genie/standards/
-  - @.genie/product/
-  - @.genie/guides/
-  - @.genie/instructions/ (assess if needed in templates)
+  - @.genie/agents/core/learn.md
+  - @.genie/agents/core/self-learn.md
+  - @.claude/commands/learn.md
+  - @.claude/commands/self-learn.md
+  - @AGENTS.md §behavioral_learnings
 - **Deliverables:**
-  - `templates/.genie/agents/specialists/` (all customizable agents)
-  - `templates/.genie/agents/utilities/` (commit, codereview, refactor, etc.)
-  - `templates/.genie/standards/` (best-practices, naming, tech-stack templates)
-  - `templates/.genie/product/` (mission, roadmap, tech-stack, environment templates)
-  - `templates/.genie/guides/` (getting-started, onboarding)
-  - `templates/.genie/state/` (sessions.json placeholder)
-  - `templates/.claude/commands/` (user-facing slash commands)
-  - `templates/.claude/agents/` (Task tool aliases)
-- **Evidence:** Directory structure diff (before/after), file list
-- **Suggested personas:** `implementor`, `refactor`
-- **External tracker:** TBD
-
-### Group C – Init Script & MCP Updates
-- **Goal:** Update install.md and MCP server to handle core/template separation
-- **Surfaces:**
-  - @.genie/agents/utilities/install.md
-  - @.genie/mcp/ (MCP server source)
-  - Package build/distribution scripts
-- **Deliverables:**
-  - Modified install.md logic: copy only `templates/*` to user project
-  - MCP agent resolution order: user .genie/agents/ → core (npm package)
-  - Updated package.json build scripts (if needed)
-  - Init command includes MCP config instruction
-- **Evidence:**
-  - Init run in clean directory (screenshot/log)
-  - Agent resolution test (core agent accessible, template agent customizable)
-  - MCP server response time benchmark
+  - New unified agent file (e.g., `.genie/agents/core/meta-learn.md`)
+  - Command wrappers updated to point at the unified agent
+  - Done Report template updated to cover both teaching and violation flows
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-b/meta-learn-merge.md` capturing diffs and command smoke
 - **Suggested personas:** `implementor`, `tests`
 - **External tracker:** TBD
 
-### Group D – Documentation & Migration
-- **Goal:** Update all framework docs and provide migration guide
+### Group C – Specialist Catalog Rationalization
+- **Goal:** De-duplicate specialist prompts and merge overlapping git workflow guidance.
+- **Surfaces:**
+  - @.genie/agents/specialists/git-workflow.md
+  - @.genie/agents/specialists/commit.md
+  - @.genie/agents/specialists/docgen.md
+  - @.genie/agents/specialists/refactor.md
+  - @.genie/agents/specialists/secaudit.md
+  - @.genie/agents/specialists/testgen.md
+  - @.genie/agents/specialists/tracer.md
+- **Deliverables:**
+  - Consolidated git lifecycle specialist covering branch, validation, and commit messaging
+  - Removal of/refactor for specialist prompts now served via Twin references
+  - Updated `.claude/commands/` includes to match new catalog
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-c/specialist-catalog.md` with agent list diff + CLI `genie agents list`
+- **Suggested personas:** `implementor`, `codereview`
+- **External tracker:** TBD
+
+### Group D – Documentation & Validation
+- **Goal:** Document the new architecture and prove no regressions in agent discovery.
 - **Surfaces:**
   - @AGENTS.md
+  - @.genie/agents/README.md
+  - @.genie/guides/migration-core-template.md (new)
   - @.claude/README.md
-  - @CLAUDE.md (if applicable)
-  - @README.md
+  - @.genie/wishes/core-template-separation/qa/
 - **Deliverables:**
-  - AGENTS.md updated with core vs template distinction
-  - .claude/README.md architecture section rewritten
-  - Migration guide at `.genie/guides/migration-core-template.md`
-  - Updated getting-started guide referencing new structure
-- **Evidence:** Doc diff, migration guide walkthrough
-- **Suggested personas:** `docgen`, `polish`
+  - Updated docs describing core vs template split and Vibe naming convention
+  - Migration guide detailing steps for existing installs
+  - Recorded validation commands (agent inventory before/after, twin mode smoke tests)
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-d/docs-and-validation.md` + captured command outputs
+- **Suggested personas:** `docgen`, `qa`
 - **External tracker:** TBD
 
 ## Verification Plan
 
 **Validation Steps:**
 
-1. **Template Copy Test:**
+1. **Twin Delegation Smoke:**
    ```bash
-   cd /tmp && mkdir test-project && cd test-project
-   npx automagik-genie init
-   # Verify templates/.genie/agents/specialists/ copied
-   # Verify core agents (plan, wish, forge, review) NOT copied
-   ls -la .genie/agents/
-   ls -la .claude/commands/
+   pnpm exec genie agents show core/twin --mode refactor --json | rg '@.genie/agents/specialists/refactor.md'
+   pnpm exec genie agents show core/twin --mode testgen --json | rg '@.genie/agents/specialists/testgen.md'
    ```
 
-2. **Core Agent Resolution Test:**
+2. **Meta-Learn Command Check:**
    ```bash
-   cd /tmp/test-project
-   # Add MCP config to .claude/settings.json
-   # Verify /plan command works (loads core agent from npm package)
-   # Verify template agents accessible (e.g., implementor)
+   claude /learn "Violation: placeholder
+   Evidence: placeholder
+   Correction: placeholder
+   Validation: placeholder
+   Target: @AGENTS.md"
+   claude /meta-learn --dry-run
    ```
 
-3. **Customization Test:**
+3. **Specialist Catalog Regression:**
    ```bash
-   cd /tmp/test-project
-   echo "# Custom note" >> .genie/agents/specialists/implementor.md
-   # Verify modified template agent used
-   # Verify core agents unaffected
+   pnpm exec genie agents list > .genie/wishes/core-template-separation/qa/agents-after.txt
+   rg "git-lifecycle" -n .claude/commands
+   rg "git-workflow" -n .claude/commands  # should be absent post-merge
    ```
 
-4. **Migration Test:**
+4. **Documentation Consistency:**
    ```bash
-   # Clone existing Genie-enabled project
-   # Run migration steps from guide
-   # Verify workflows still function
+   mdspell AGENTS.md .genie/agents/README.md .genie/guides/migration-core-template.md
+   ```
+
+5. **Vibe Naming Guardrail:**
+   ```bash
+   rg -n "sleepy" .genie/agents .claude/commands
    ```
 
 **Evidence Storage:** `.genie/wishes/core-template-separation/qa/`
@@ -432,33 +426,32 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## <spec_contract>
 
 **Scope:**
-- Categorize all 36 agents as core (npm package) or template (copied during init)
-- Build complete `templates/` directory structure with agents, standards, product scaffolding, guides
-- Update `install.md` to copy only `templates/*` to user projects
-- Ensure MCP server loads core agents from npm package automatically
-- Update AGENTS.md, .claude/README.md, and create migration guide
-- Verify init works in clean environment, core agents accessible, template agents customizable
+- Update twin prompt to delegate specialist behaviours via `@.genie/agents/specialists/*` references
+- Merge learn/self-learn flows into a single meta-learning agent and command wrapper
+- Consolidate specialist catalog (git lifecycle merge, retire prompts now served by Twin)
+- Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
+- Preserve Vibe naming across code and docs while removing legacy “sleepy” references
 
 **Out of Scope:**
-- Automated MCP config installation (planned for next version)
-- Template versioning/update propagation system
-- Migration automation tool (manual guide sufficient for now)
-- Changes to core agent logic (only file moves/renames)
+- New feature development beyond agent/document consolidation
+- Automated migration tooling for downstream projects
+- Changing behaviour of surviving specialist prompts (beyond re-routing and clarity edits)
+- Publishing updated npm package (handled separately after verification)
 
 **Success Metrics:**
-- Init completes in <5 seconds
-- Core agents resolve in <100ms
-- Zero breaking changes to existing workflows
-- Migration guide enables existing users to upgrade without data loss
-- Template structure mirrors user project conventions exactly
+- Twin refactor/testgen/secaudit/testgen modes resolve via specialist references (verified by CLI smoke)
+- Meta-learning agent passes both teaching and violation sample prompts without errors
+- `pnpm exec genie agents list` shows merged git lifecycle specialist and no retired prompts
+- Documentation updates approved with no TODO placeholders and spell-check clean
+- Repository contains zero references to `sleepy` outside historical logs
 
 **External Tasks:**
 - Forge execution group IDs (TBD after `/forge`)
 
 **Dependencies:**
-- MCP server agent discovery implementation
-- npm package build/distribution pipeline
-- Existing `.genie/agents/` content preserved during transition
+- Stable specialist prompts retained for delegation (implementor/tests/qa/polish/bug-reporter/codereview)
+- CLI wrappers in `.claude/commands/`
+- Agent registry tests for `genie agents list`
 
 </spec_contract>
 
@@ -471,9 +464,9 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## Status Log
 
 - [2025-10-06 13:00Z] Wish created (planning brief approved)
-- [Pending] Agent categorization completed
-- [Pending] Template structure built
-- [Pending] Init script updated
-- [Pending] Documentation updated
-- [Pending] All validation tests passed
+- [Pending] Twin prompt delegates to specialists (Group A)
+- [Pending] Meta-learning agent merged and wrappers updated (Group B)
+- [Pending] Specialist catalog consolidation applied (Group C)
+- [Pending] Documentation + migration evidence captured (Group D)
+- [Pending] Validation checklist complete
 - [Pending] Human approval for merge
