@@ -1,2 +1,0 @@
-# Genie Compliance – Project Configuration
-- Customize this mode for the generated project if needed.
