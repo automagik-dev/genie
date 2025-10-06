@@ -392,7 +392,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Retrospective: extract wins/misses/lessons for future work.
 
 ### Mode Usage
-Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/agents/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
+Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/agents/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
 
 **Available modes:**
 - `planning` – pressure-test plans, map phases, uncover risks
@@ -417,14 +417,14 @@ Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: pla
 > Tip: add repo-specific guidance in `.genie/agents/custom/<mode>.md`; no edits should be made to the core files.
 
 ### How To Run (MCP)
-- Start: `mcp__genie__run` with agent="genie" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
+- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
 ### Modes (quick reference)
 - planning, consensus, deep-dive, debug, socratic, debate, risk-audit, design-review, test-strategy, compliance, retrospective.
-- Full prompt templates live in `@.genie/agents/core/orchestrator.md`.
+- Full prompt templates live in `@.genie/agents/orchestrator.md`.
 - Project-specific adjustments belong in `.genie/agents/custom/<mode>.md`; the core prompt auto-loads them.
 
 ### Outputs & Evidence
@@ -433,7 +433,7 @@ Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: pla
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/core/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/core/refactor.md`). Customize them only by editing `.genie/agents/custom/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the core prompt (`@.genie/agents/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/core/refactor.md`). Customize them only by editing `.genie/agents/custom/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

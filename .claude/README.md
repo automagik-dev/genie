@@ -94,7 +94,7 @@ Access via: `mcp__genie__run` OR Task tool
     ├── testgen.md
     ├── thinkdeep.md
     ├── tracer.md
-    └── genie.md
+    └── orchestrator.md
 
 .claude/commands/            # Interactive slash commands
 ├── plan.md → @.genie/agents/plan.md
@@ -113,7 +113,7 @@ Access via: `mcp__genie__run` OR Task tool
 ├── commit.md → @.genie/agents/core/commit.md
 ├── precommit.md → @.genie/agents/core/commit.md
 ├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── genie.md → @.genie/agents/core/orchestrator.md
+├── orchestrator.md → @.genie/agents/orchestrator.md
 ├── analyze.md → @.genie/agents/utilities/analyze.md
 ├── debug.md → @.genie/agents/utilities/debug.md
 ├── thinkdeep.md → @.genie/agents/utilities/thinkdeep.md
@@ -262,7 +262,7 @@ mcp__genie__run with agent="genie" and prompt="Mode: design-review. Component: p
 # Test strategy
 mcp__genie__run with agent="genie" and prompt="Mode: test-strategy. Feature: password reset flow"
 
-# See @.genie/agents/core/orchestrator.md for all modes
+# See @.genie/agents/orchestrator.md for all modes
 ```
 
 ---

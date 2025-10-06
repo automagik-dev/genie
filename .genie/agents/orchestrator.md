@@ -1,5 +1,5 @@
 ---
-name: genie
+name: orchestrator
 description: Pressure-test ideas with planning, consensus, and deep analysis
 color: orange
 genie:
