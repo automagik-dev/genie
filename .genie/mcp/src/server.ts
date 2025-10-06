@@ -20,13 +20,25 @@ import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
+const WORKSPACE_ROOT = path.resolve(__dirname, '../../..');
+
+interface CliInvocation {
+  command: string;
+  args: string[];
+}
+
+interface CliResult {
+  stdout: string;
+  stderr: string;
+  commandLine: string;
+}
 
 // Helper: List available agents from .genie/agents directory
 function listAgents(): Array<{ id: string; name: string; description?: string; folder?: string }> {
@@ -217,22 +229,17 @@ server.addTool({
     prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.')
   }),
   execute: async (args) => {
-    const cliPath = path.resolve(__dirname, '../../../genie');
-    const escapedPrompt = args.prompt.replace(/"/g, '\\"');
-    const command = `"${cliPath}" run ${args.agent} "${escapedPrompt}"`;
-
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: path.resolve(__dirname, '../../..'),
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-        timeout: 120000 // 2 minutes
-      });
-
+      const cliArgs = ['run', args.agent];
+      if (args.prompt?.length) {
+        cliArgs.push(args.prompt);
+      }
+      const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
       const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
       return `Started agent session:\nAgent: ${args.agent}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
     } catch (error: any) {
-      return `Failed to start agent session:\n${error.message}\n\nCommand: ${command}`;
+      return formatCliFailure('start agent session', error);
     }
   }
 });
@@ -246,22 +253,17 @@ server.addTool({
     prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
   }),
   execute: async (args) => {
-    const cliPath = path.resolve(__dirname, '../../../genie');
-    const escapedPrompt = args.prompt.replace(/"/g, '\\"');
-    const command = `"${cliPath}" resume ${args.sessionId} "${escapedPrompt}"`;
-
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: path.resolve(__dirname, '../../..'),
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-        timeout: 120000 // 2 minutes
-      });
-
+      const cliArgs = ['resume', args.sessionId];
+      if (args.prompt?.length) {
+        cliArgs.push(args.prompt);
+      }
+      const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
       const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
       return `Resumed session ${args.sessionId}:\n\n${output}`;
     } catch (error: any) {
-      return `Failed to resume session:\n${error.message}\n\nCommand: ${command}`;
+      return formatCliFailure('resume session', error);
     }
   }
 });
@@ -275,22 +277,17 @@ server.addTool({
     full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
   }),
   execute: async (args) => {
-    const cliPath = path.resolve(__dirname, '../../../genie');
-    const fullFlag = args.full ? ' --full' : '';
-    const command = `"${cliPath}" view ${args.sessionId}${fullFlag}`;
-
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: path.resolve(__dirname, '../../..'),
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-        timeout: 30000 // 30 seconds
-      });
-
+      const cliArgs = ['view', args.sessionId];
+      if (args.full) {
+        cliArgs.push('--full');
+      }
+      const { stdout, stderr } = await runCliCommand(cliArgs, 30000);
       const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
       return `Session ${args.sessionId} transcript:\n\n${output}`;
     } catch (error: any) {
-      return `Failed to view session:\n${error.message}\n\nCommand: ${command}`;
+      return formatCliFailure('view session', error);
     }
   }
 });
@@ -303,21 +300,13 @@ server.addTool({
     sessionId: z.string().describe('Session ID to stop (get from list_sessions tool)')
   }),
   execute: async (args) => {
-    const cliPath = path.resolve(__dirname, '../../../genie');
-    const command = `"${cliPath}" stop ${args.sessionId}`;
-
     try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: path.resolve(__dirname, '../../..'),
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-        timeout: 30000 // 30 seconds
-      });
-
+      const { stdout, stderr } = await runCliCommand(['stop', args.sessionId], 30000);
       const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
       return `Stopped session ${args.sessionId}:\n\n${output}`;
     } catch (error: any) {
-      return `Failed to stop session:\n${error.message}\n\nCommand: ${command}`;
+      return formatCliFailure('stop session', error);
     }
   }
 });
@@ -729,4 +718,74 @@ if (TRANSPORT === 'stdio') {
   console.error(`❌ Unknown transport type: ${TRANSPORT}`);
   console.error('Valid options: stdio (default), httpStream, http');
   process.exit(1);
+}
+function resolveCliInvocation(): CliInvocation {
+  const distEntry = path.join(WORKSPACE_ROOT, '.genie/cli/dist/genie-cli.js');
+  if (fs.existsSync(distEntry)) {
+    return { command: process.execPath, args: [distEntry] };
+  }
+
+  const localScript = path.join(WORKSPACE_ROOT, 'genie');
+  if (fs.existsSync(localScript)) {
+    return { command: localScript, args: [] };
+  }
+
+  return { command: 'npx', args: ['automagik-genie'] };
+}
+
+function quoteArg(value: string): string {
+  if (!value.length) return '""';
+  if (/^[A-Za-z0-9._\-\/]+$/.test(value)) return value;
+  return '"' + value.replace(/"/g, '\\"') + '"';
+}
+
+function normalizeOutput(data: string | Buffer | undefined): string {
+  if (data === undefined || data === null) return '';
+  return typeof data === 'string' ? data : data.toString('utf8');
+}
+
+async function runCliCommand(subArgs: string[], timeoutMs = 120000): Promise<CliResult> {
+  const invocation = resolveCliInvocation();
+  const execArgs = [...invocation.args, ...subArgs];
+  const commandLine = [invocation.command, ...execArgs.map(quoteArg)].join(' ');
+  const options: ExecFileOptions = {
+    cwd: WORKSPACE_ROOT,
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: timeoutMs
+  };
+
+  try {
+    const { stdout, stderr } = await execFileAsync(invocation.command, execArgs, options);
+    return {
+      stdout: normalizeOutput(stdout),
+      stderr: normalizeOutput(stderr),
+      commandLine
+    };
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & { stdout?: string | Buffer; stderr?: string | Buffer };
+    const wrapped = new Error(err.message || 'CLI execution failed');
+    (wrapped as any).stdout = normalizeOutput(err.stdout);
+    (wrapped as any).stderr = normalizeOutput(err.stderr);
+    (wrapped as any).commandLine = commandLine;
+    throw wrapped;
+  }
+}
+
+function formatCliFailure(action: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const stdout = error && typeof error === 'object' ? (error as any).stdout : '';
+  const stderr = error && typeof error === 'object' ? (error as any).stderr : '';
+  const commandLine = error && typeof error === 'object' ? (error as any).commandLine : '';
+
+  const sections: string[] = [`Failed to ${action}:`, message];
+  if (stdout) {
+    sections.push(`Stdout:\n${stdout}`);
+  }
+  if (stderr) {
+    sections.push(`Stderr:\n${stderr}`);
+  }
+  if (commandLine) {
+    sections.push(`Command: ${commandLine}`);
+  }
+  return sections.join('\n\n');
 }

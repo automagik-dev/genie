@@ -1,0 +1,1 @@
+@.genie/agents/specialists/genie-qa.md

@@ -2,12 +2,14 @@ import path from 'path';
 import fs from 'fs';
 import { promises as fsp } from 'fs';
 import readline from 'readline';
+import YAML from 'yaml';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import {
   getPackageRoot,
   getTemplateGeniePath,
+  getTemplateClaudePath,
   getTemplateRelativeBlacklist,
   resolveTargetGeniePath,
   resolveWorkspaceProviderPath,
@@ -41,6 +43,26 @@ interface InitSummary {
   target: string;
 }
 
+const PROVIDER_EXECUTOR: Record<string, string> = {
+  codex: 'codex',
+  claude: 'claude'
+};
+
+const PROVIDER_MODEL: Record<string, string> = {
+  codex: 'gpt-5-codex',
+  claude: 'sonnet-4.5'
+};
+
+const DEFAULT_MODE_DESCRIPTION: Record<string, string> = {
+  codex: 'Workspace-write automation with GPT-5 Codex.',
+  claude: 'Workspace automation with Claude Sonnet 4.5.'
+};
+
+const CLAUDE_EXEC_MODEL: Record<string, string> = {
+  codex: 'sonnet',
+  claude: 'sonnet-4.5'
+};
+
 export async function runInit(
   parsed: ParsedCommand,
   _config: GenieConfig,
@@ -51,6 +73,7 @@ export async function runInit(
     const cwd = process.cwd();
     const packageRoot = getPackageRoot();
     const templateGenie = getTemplateGeniePath();
+    const templateClaude = getTemplateClaudePath();
     const targetGenie = resolveTargetGeniePath(cwd);
 
     const templateExists = await pathExists(templateGenie);
@@ -88,6 +111,10 @@ export async function runInit(
 
     await copyTemplateGenie(templateGenie, targetGenie);
 
+    if (await pathExists(templateClaude)) {
+      await copyTemplateClaude(templateClaude, claudeDir);
+    }
+
     if (stagedBackupDir) {
       const finalBackupsDir = path.join(backupsRoot, backupId);
       await ensureDir(backupsRoot);
@@ -113,6 +140,7 @@ export async function runInit(
     await writeProviderState(cwd, provider);
     await writeVersionState(cwd, backupId, claudeExists);
     await initializeProviderStatus(cwd);
+    await applyProviderDefaults(targetGenie, provider);
 
     const summary: InitSummary = {
       provider,
@@ -171,6 +199,11 @@ async function copyTemplateGenie(templateGenie: string, targetGenie: string): Pr
       return true;
     }
   });
+}
+
+async function copyTemplateClaude(templateClaude: string, targetClaude: string): Promise<void> {
+  await ensureDir(path.dirname(targetClaude));
+  await copyDirectory(templateClaude, targetClaude);
 }
 
 async function resolveProviderChoice(flags: InitFlags): Promise<string> {
@@ -269,4 +302,131 @@ function buildInitSummaryView(summary: InitSummary) {
     `📚 Template source: ${summary.templateSource}`
   ];
   return buildInfoView('Genie initialization complete', messages);
+}
+
+async function applyProviderDefaults(genieRoot: string, provider: string): Promise<void> {
+  const executor = PROVIDER_EXECUTOR[provider] ?? 'codex';
+  const model = PROVIDER_MODEL[provider] ?? 'gpt-5-codex';
+  await Promise.all([
+    updateConfigForProvider(genieRoot, provider, executor, model),
+    updateAgentsForProvider(genieRoot, executor, model)
+  ]);
+}
+
+async function updateConfigForProvider(
+  genieRoot: string,
+  provider: string,
+  executor: string,
+  model: string
+): Promise<void> {
+  const configPath = path.join(genieRoot, 'cli', 'config.yaml');
+  const exists = await fsp
+    .access(configPath)
+    .then(() => true)
+    .catch(() => false);
+
+  if (!exists) {
+    return;
+  }
+
+  const original = await fsp.readFile(configPath, 'utf8');
+  let updated = original;
+
+  updated = replaceFirst(updated, /(defaults:\s*\n\s*executor:\s*)([^\s#]+)/, `$1${executor}`);
+
+  updated = replaceFirst(
+    updated,
+    /(executionModes:\s*\n  default:\s*\n(?:(?: {4}.+\n)+?))/, // capture default block
+    (match) => {
+      let block = match;
+      block = replaceFirst(block, /(    description:\s*)(.*)/, `$1${DEFAULT_MODE_DESCRIPTION[provider] ?? DEFAULT_MODE_DESCRIPTION.codex}`);
+      block = replaceFirst(block, /(    executor:\s*)([^\s#]+)/, `$1${executor}`);
+      block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${model}`);
+      return block;
+    }
+  );
+
+  updated = replaceFirst(
+    updated,
+    /(  claude:\s*\n(?:(?: {4}.+\n)+?))/,
+    (match) => {
+      let block = match;
+      block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${CLAUDE_EXEC_MODEL[provider] ?? CLAUDE_EXEC_MODEL.codex}`);
+      return block;
+    }
+  );
+
+  if (updated !== original) {
+    await fsp.writeFile(configPath, updated, 'utf8');
+  }
+}
+
+async function updateAgentsForProvider(genieRoot: string, executor: string, model: string): Promise<void> {
+  const agentsDir = path.join(genieRoot, 'agents');
+  const files = await collectAgentFiles(agentsDir);
+
+  await Promise.all(
+    files.map(async (file) => {
+      const original = await fsp.readFile(file, 'utf8');
+      if (!original.startsWith('---')) return;
+
+      const end = original.indexOf('\n---', 3);
+      if (end === -1) return;
+
+      const frontMatterContent = original.slice(4, end);
+      let data: any;
+
+      try {
+        data = YAML.parse(frontMatterContent) || {};
+      } catch {
+        return; // skip files with invalid front matter
+      }
+
+      if (!data || typeof data !== 'object') return;
+      if (!data.genie || typeof data.genie !== 'object') {
+        data.genie = {};
+      }
+
+      const genieMeta = data.genie as Record<string, unknown>;
+      genieMeta.executor = executor;
+      genieMeta.model = model;
+
+      const nextFrontMatter = YAML.stringify(data, { indent: 2 }).trimEnd();
+      const nextContent = `---\n${nextFrontMatter}\n---${original.slice(end + 4)}`;
+
+      if (nextContent !== original) {
+        await fsp.writeFile(file, nextContent, 'utf8');
+      }
+    })
+  );
+}
+
+async function collectAgentFiles(dir: string): Promise<string[]> {
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await collectAgentFiles(fullPath);
+      files.push(...nested);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith('.md')) continue;
+    if (entry.name.toLowerCase() === 'README.md'.toLowerCase()) continue;
+    files.push(fullPath);
+  }
+
+  return files;
+}
+
+function replaceFirst(source: string, pattern: RegExp, replacement: string | ((match: string) => string)): string {
+  if (typeof replacement === 'function') {
+    const match = source.match(pattern);
+    if (!match) return source;
+    const replaced = replacement(match[0]);
+    return source.slice(0, match.index ?? 0) + replaced + source.slice((match.index ?? 0) + match[0].length);
+  }
+  return source.replace(pattern, replacement);
 }

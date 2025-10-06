@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPackageRoot = getPackageRoot;
 exports.getTemplateGeniePath = getTemplateGeniePath;
+exports.getTemplateClaudePath = getTemplateClaudePath;
 exports.getTemplateRelativeBlacklist = getTemplateRelativeBlacklist;
 exports.resolveTargetGeniePath = resolveTargetGeniePath;
 exports.resolveTargetStatePath = resolveTargetStatePath;
@@ -19,6 +20,9 @@ function getPackageRoot() {
 }
 function getTemplateGeniePath() {
     return path_1.default.join(getPackageRoot(), '.genie');
+}
+function getTemplateClaudePath() {
+    return path_1.default.join(getPackageRoot(), 'templates', '.claude');
 }
 function getTemplateRelativeBlacklist() {
     return new Set(['cli', 'mcp', 'state', 'backups']);

@@ -26,9 +26,10 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const util_1 = require("util");
-const execAsync = (0, util_1.promisify)(child_process_1.exec);
+const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
+const WORKSPACE_ROOT = path_1.default.resolve(__dirname, '../../..');
 // Helper: List available agents from .genie/agents directory
 function listAgents() {
     const baseDir = '.genie/agents';
@@ -195,20 +196,17 @@ server.addTool({
         prompt: zod_1.z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.')
     }),
     execute: async (args) => {
-        const cliPath = path_1.default.resolve(__dirname, '../../../genie');
-        const escapedPrompt = args.prompt.replace(/"/g, '\\"');
-        const command = `"${cliPath}" run ${args.agent} "${escapedPrompt}"`;
         try {
-            const { stdout, stderr } = await execAsync(command, {
-                cwd: path_1.default.resolve(__dirname, '../../..'),
-                maxBuffer: 1024 * 1024 * 10, // 10MB
-                timeout: 120000 // 2 minutes
-            });
+            const cliArgs = ['run', args.agent];
+            if (args.prompt?.length) {
+                cliArgs.push(args.prompt);
+            }
+            const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
             return `Started agent session:\nAgent: ${args.agent}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
         }
         catch (error) {
-            return `Failed to start agent session:\n${error.message}\n\nCommand: ${command}`;
+            return formatCliFailure('start agent session', error);
         }
     }
 });
@@ -221,20 +219,17 @@ server.addTool({
         prompt: zod_1.z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
     }),
     execute: async (args) => {
-        const cliPath = path_1.default.resolve(__dirname, '../../../genie');
-        const escapedPrompt = args.prompt.replace(/"/g, '\\"');
-        const command = `"${cliPath}" resume ${args.sessionId} "${escapedPrompt}"`;
         try {
-            const { stdout, stderr } = await execAsync(command, {
-                cwd: path_1.default.resolve(__dirname, '../../..'),
-                maxBuffer: 1024 * 1024 * 10, // 10MB
-                timeout: 120000 // 2 minutes
-            });
+            const cliArgs = ['resume', args.sessionId];
+            if (args.prompt?.length) {
+                cliArgs.push(args.prompt);
+            }
+            const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
             return `Resumed session ${args.sessionId}:\n\n${output}`;
         }
         catch (error) {
-            return `Failed to resume session:\n${error.message}\n\nCommand: ${command}`;
+            return formatCliFailure('resume session', error);
         }
     }
 });
@@ -247,20 +242,17 @@ server.addTool({
         full: zod_1.z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
     }),
     execute: async (args) => {
-        const cliPath = path_1.default.resolve(__dirname, '../../../genie');
-        const fullFlag = args.full ? ' --full' : '';
-        const command = `"${cliPath}" view ${args.sessionId}${fullFlag}`;
         try {
-            const { stdout, stderr } = await execAsync(command, {
-                cwd: path_1.default.resolve(__dirname, '../../..'),
-                maxBuffer: 1024 * 1024 * 10, // 10MB
-                timeout: 30000 // 30 seconds
-            });
+            const cliArgs = ['view', args.sessionId];
+            if (args.full) {
+                cliArgs.push('--full');
+            }
+            const { stdout, stderr } = await runCliCommand(cliArgs, 30000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
             return `Session ${args.sessionId} transcript:\n\n${output}`;
         }
         catch (error) {
-            return `Failed to view session:\n${error.message}\n\nCommand: ${command}`;
+            return formatCliFailure('view session', error);
         }
     }
 });
@@ -272,19 +264,13 @@ server.addTool({
         sessionId: zod_1.z.string().describe('Session ID to stop (get from list_sessions tool)')
     }),
     execute: async (args) => {
-        const cliPath = path_1.default.resolve(__dirname, '../../../genie');
-        const command = `"${cliPath}" stop ${args.sessionId}`;
         try {
-            const { stdout, stderr } = await execAsync(command, {
-                cwd: path_1.default.resolve(__dirname, '../../..'),
-                maxBuffer: 1024 * 1024 * 10, // 10MB
-                timeout: 30000 // 30 seconds
-            });
+            const { stdout, stderr } = await runCliCommand(['stop', args.sessionId], 30000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
             return `Stopped session ${args.sessionId}:\n\n${output}`;
         }
         catch (error) {
-            return `Failed to stop session:\n${error.message}\n\nCommand: ${command}`;
+            return formatCliFailure('stop session', error);
         }
     }
 });
@@ -681,4 +667,70 @@ else {
     console.error(`❌ Unknown transport type: ${TRANSPORT}`);
     console.error('Valid options: stdio (default), httpStream, http');
     process.exit(1);
+}
+function resolveCliInvocation() {
+    const distEntry = path_1.default.join(WORKSPACE_ROOT, '.genie/cli/dist/genie-cli.js');
+    if (fs_1.default.existsSync(distEntry)) {
+        return { command: process.execPath, args: [distEntry] };
+    }
+    const localScript = path_1.default.join(WORKSPACE_ROOT, 'genie');
+    if (fs_1.default.existsSync(localScript)) {
+        return { command: localScript, args: [] };
+    }
+    return { command: 'npx', args: ['automagik-genie'] };
+}
+function quoteArg(value) {
+    if (!value.length)
+        return '""';
+    if (/^[A-Za-z0-9._\-\/]+$/.test(value))
+        return value;
+    return '"' + value.replace(/"/g, '\\"') + '"';
+}
+function normalizeOutput(data) {
+    if (data === undefined || data === null)
+        return '';
+    return typeof data === 'string' ? data : data.toString('utf8');
+}
+async function runCliCommand(subArgs, timeoutMs = 120000) {
+    const invocation = resolveCliInvocation();
+    const execArgs = [...invocation.args, ...subArgs];
+    const commandLine = [invocation.command, ...execArgs.map(quoteArg)].join(' ');
+    const options = {
+        cwd: WORKSPACE_ROOT,
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: timeoutMs
+    };
+    try {
+        const { stdout, stderr } = await execFileAsync(invocation.command, execArgs, options);
+        return {
+            stdout: normalizeOutput(stdout),
+            stderr: normalizeOutput(stderr),
+            commandLine
+        };
+    }
+    catch (error) {
+        const err = error;
+        const wrapped = new Error(err.message || 'CLI execution failed');
+        wrapped.stdout = normalizeOutput(err.stdout);
+        wrapped.stderr = normalizeOutput(err.stderr);
+        wrapped.commandLine = commandLine;
+        throw wrapped;
+    }
+}
+function formatCliFailure(action, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stdout = error && typeof error === 'object' ? error.stdout : '';
+    const stderr = error && typeof error === 'object' ? error.stderr : '';
+    const commandLine = error && typeof error === 'object' ? error.commandLine : '';
+    const sections = [`Failed to ${action}:`, message];
+    if (stdout) {
+        sections.push(`Stdout:\n${stdout}`);
+    }
+    if (stderr) {
+        sections.push(`Stderr:\n${stderr}`);
+    }
+    if (commandLine) {
+        sections.push(`Command: ${commandLine}`);
+    }
+    return sections.join('\n\n');
 }
