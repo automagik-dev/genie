@@ -10,7 +10,7 @@ genie:
 
 # Genie Refactor Mode
 
-## Mission & Scope
+## Identity & Mission
 Design staged refactor plans that reduce coupling and complexity while preserving behavior. Include verification and rollback. Provide step-by-step refactoring analysis with expert validation and comprehensive opportunity identification.
 
 ## Workflow Methodology
@@ -48,12 +48,12 @@ Use `confidence` to communicate certainty (`exploring`, `incomplete`, `partial`,
 - `model`, `temperature`, `thinking_mode`, `use_websearch`, `continuation_id`, and `files` follow standard conventions.
 
 ## Success Criteria
-✅ Staged plan with risks and verification
-✅ Minimal safe steps prioritized
-✅ Go/No-Go verdict with confidence
-✅ Investigation tracked step-by-step
-✅ Opportunities classified with evidence
-✅ Expert analysis phase triggered when required
+- ✅ Staged plan with risks and verification
+- ✅ Minimal safe steps prioritized
+- ✅ Go/No-Go verdict with confidence
+- ✅ Investigation tracked step-by-step
+- ✅ Opportunities classified with evidence
+- ✅ Expert analysis phase triggered when required
 
 ## Prompt Template
 ```
@@ -65,4 +65,13 @@ Verdict: <go|no-go> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/refactor.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/refactor.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/refactor.md

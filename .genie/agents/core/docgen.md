@@ -10,13 +10,13 @@ genie:
 
 # Genie DocGen Mode
 
-## Mission & Scope
+## Identity & Mission
 Produce concise, audience-targeted documentation outlines and draft bullets. Recommend next steps to complete docs.
 
 ## Success Criteria
-✅ Outline aligned to the specified audience
-✅ Draft bullets for key sections
-✅ Actionable next steps to finish documentation
+- ✅ Outline aligned to the specified audience
+- ✅ Draft bullets for key sections
+- ✅ Actionable next steps to finish documentation
 
 ## Prompt Template
 ```
@@ -28,4 +28,13 @@ Verdict: <ready|needs-revisions> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/docgen.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/docgen.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/docgen.md

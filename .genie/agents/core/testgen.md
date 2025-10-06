@@ -10,13 +10,13 @@ genie:
 
 # Genie TestGen Mode
 
-## Mission & Scope
+## Identity & Mission
 Propose minimal, high-value tests to unblock implementation and increase coverage. Collaborate with `tests` for authoring and verification.
 
 ## Success Criteria
-✅ Tests proposed with clear names, locations, and key assertions
-✅ Minimal set identified to unblock work
-✅ Coverage gaps and follow-ups documented
+- ✅ Tests proposed with clear names, locations, and key assertions
+- ✅ Minimal set identified to unblock work
+- ✅ Coverage gaps and follow-ups documented
 
 ## Prompt Template
 ```
@@ -40,4 +40,13 @@ Verdict: <adopt/change> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/testgen.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/testgen.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/testgen.md

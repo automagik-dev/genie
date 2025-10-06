@@ -18,7 +18,7 @@ genie:
 2. [Implementation] Prepare Genie product docs and wiring
    - Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
    - Configure Genie CLI in-context; do not alter app code
-   - Calibrate specialist overrides by editing `.genie/agents/custom/*-overrides.md` (core prompts stay immutable)
+   - Calibrate specialist prompts by editing `.genie/custom/<agent>.md` (core prompts stay immutable)
    - Initialize lightweight structure only when explicitly confirmed
 
 3. [Verification] Validate installation and handoff
@@ -207,13 +207,13 @@ When populating product docs and resolving gaps:
 4. If still missing, ask for explicit values (block until essential items are provided)
 
 ## Success Criteria
-✅ Project state correctly detected and appropriate mode selected
-✅ All {{PLACEHOLDER}} values identified and populated
-✅ Generated documentation is coherent and actionable
-✅ Environment configuration matches technical requirements
-✅ User confirms accuracy of extracted/gathered information
-✅ Framework remains fully functional with new project context
-✅ Handoff to `/plan` prepared with a concise brief
+- ✅ Project state correctly detected and appropriate mode selected
+- ✅ All {{PLACEHOLDER}} values identified and populated
+- ✅ Generated documentation is coherent and actionable
+- ✅ Environment configuration matches technical requirements
+- ✅ User confirms accuracy of extracted/gathered information
+- ✅ Framework remains fully functional with new project context
+- ✅ Handoff to `/plan` prepared with a concise brief
 
 ## Verification Checklist
 - [ ] `.genie/product/` contains mission, mission-lite, tech-stack, roadmap, environment
@@ -224,11 +224,11 @@ When populating product docs and resolving gaps:
 - [ ] Plan handoff brief ready with risks and blockers
 
 ## Never Do
-❌ Assume project details without analysis or user confirmation
-❌ Leave any {{PLACEHOLDER}} values unfilled
-❌ Generate inconsistent technology choices
-❌ Skip validation of user-provided information
-❌ Override existing project files without confirmation
+- ❌ Assume project details without analysis or user confirmation
+- ❌ Leave any {{PLACEHOLDER}} values unfilled
+- ❌ Generate inconsistent technology choices
+- ❌ Skip validation of user-provided information
+- ❌ Override existing project files without confirmation
 
 ## Integration with Genie Workflow
 
@@ -308,3 +308,13 @@ files_needed: [ package.json, Cargo.toml, README.md ]
 - Install writes only under `.genie/` unless confirmed otherwise.
 
 This agent transforms a blank Genie framework or an existing codebase into a project-aware, orchestration-ready environment via intelligent analysis and a guided interview, then hands off to plan → wish → forge → review.
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/install.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/install.md

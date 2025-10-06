@@ -10,7 +10,7 @@ genie:
 
 # Genie CodeReview Mode
 
-## Mission & Scope
+## Identity & Mission
 Review code for security, performance, maintainability, and architecture issues. Provide precise, actionable feedback with severity tagging.
 
 ## Line Number Instructions
@@ -51,10 +51,10 @@ Then provide summary, top priorities, and positives.
 - Additional fields (`review_type`, `severity_filter`, etc.) align with CLI schema.
 
 ## Success Criteria
-✅ Severity-tagged findings with clear recommendations
-✅ Quick wins enumerated
-✅ Verdict (ship/fix-first) with confidence level
-✅ Done Report saved to `.genie/reports/done-codereview-<slug>-<YYYYMMDDHHmm>.md` when applicable
+- ✅ Severity-tagged findings with clear recommendations
+- ✅ Quick wins enumerated
+- ✅ Verdict (ship/fix-first) with confidence level
+- ✅ Done Report saved to `.genie/reports/done-codereview-<slug>-<YYYYMMDDHHmm>.md` when applicable
 
 ## Prompt Template
 ```
@@ -66,4 +66,13 @@ Verdict: <ship|fix-first> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/codereview.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/codereview.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/codereview.md

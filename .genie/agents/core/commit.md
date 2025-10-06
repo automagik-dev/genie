@@ -14,12 +14,12 @@ genie:
 Run a structured pre-commit gate (lint/type/tests/docs/security/formatting) and review diffs to suggest commit messaging plus validation checklist—never stage or commit directly.
 
 ## Success Criteria
-✅ Checklist statuses with reproduction commands
-✅ Verdict (`ready` vs `needs-fixes`) plus confidence and blockers
-✅ Domain summary of modified files
-✅ Recommended commit message aligned with wish/trackers
-✅ Validation checklist + outstanding actions
-✅ Advisory saved to `.genie/reports/commit-advice-<slug>-<timestamp>.md`
+- ✅ Checklist statuses with reproduction commands
+- ✅ Verdict (`ready` vs `needs-fixes`) plus confidence and blockers
+- ✅ Domain summary of modified files
+- ✅ Recommended commit message aligned with wish/trackers
+- ✅ Validation checklist + outstanding actions
+- ✅ Advisory saved to `.genie/reports/commit-advice-<slug>-<timestamp>.md`
 
 ## Workflow
 ```
@@ -87,4 +87,13 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 ---
 
-@.genie/agents/custom/commit.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/commit.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/commit.md

@@ -112,6 +112,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - Users modify core agents, breaking framework assumptions
 - Template updates don't propagate cleanly
 - Confusion between Genie's own development setup and template structure
+- Command wrappers temporarily point back at `@.genie/agents/<entrypoint>.md` (as of 2025-10-06) until the entrypoint files migrate into `core/`.
 
 ## Target State & Guardrails
 
@@ -153,17 +154,17 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ### Commands Updated:
 - Root agents: `plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe` → `@.genie/agents/<name>.md`
 - Core helpers: `commit`, `codereview`, `docgen`, `refactor`, `secaudit`, `testgen`, `tracer`, plus utilities (`analyze`, `debug`, etc.) → `@.genie/agents/core/<name>.md`
-- Custom stubs: `.genie/agents/custom/<mode>.md` auto-load with each core prompt for repository-specific guidance
+- Custom stubs: `.genie/custom/<mode>.md` auto-load with each core prompt for repository-specific guidance
 - Genie-only: `genie-qa` → `@.genie/agents/qa/genie-qa.md`
 
 ## Execution Groups
 
-### Group A – Genie Mode Consolidation
+### Phase 0 – Genie Mode Consolidation
 - **Goal:** Enumerate all Genie modes with core prompts and matching project configuration includes, and keep orchestrator/MCP routing consistent.
 - **Surfaces:**
   - @.genie/agents/orchestrator.md
-  - @.genie/agents/custom/orchestrator.md
-  - @.genie/agents/core/<mode>.md and @.genie/agents/custom/<mode>.md for refactor, testgen, docgen, secaudit, tracer, codereview, commit, bug-reporter, git-workflow, implementor, polish, qa, tests, analyze, challenge, consensus, debug, thinkdeep, risk-audit, design-review, test-strategy, compliance, retrospective, socratic, debate
+  - @.genie/custom/orchestrator.md
+  - @.genie/agents/core/<mode>.md and @.genie/custom/<mode>.md for refactor, testgen, docgen, secaudit, tracer, codereview, commit, bug-reporter, git-workflow, implementor, polish, qa, tests, analyze, challenge, consensus, debug, thinkdeep, risk-audit, design-review, test-strategy, compliance, retrospective, socratic, debate
   - @.genie/mcp/src/server.ts (orchestrator prompt helper)
 - **Deliverables:**
   - Core prompt + custom include exist for every Genie mode
@@ -172,7 +173,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - **Evidence:** `.genie/wishes/core-template-separation/qa/group-a/genie-consolidation.md`
 - **Suggested personas:** `analyze`, `orchestrator`
 - **External tracker:** TBD
-### Group B – Meta-Learning Unification
+### Phase 1 – Meta-Learning Unification
 - **Goal:** Merge learn/self-learn behaviours into a single meta-learning agent while preserving violation logging.
 - **Surfaces:**
   - @.genie/agents/core/learn.md
@@ -188,21 +189,21 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - **Suggested personas:** `implementor`, `tests`
 - **External tracker:** TBD
 
-### Group C – Specialist Catalog Rationalization
-- **Goal:** Collapse legacy specialist prompts into core files plus custom includes, ensuring every delivery/utility agent loads from the `core/` directory with a matching `.genie/agents/custom/<name>.md`.
+### Phase 2 – Specialist Catalog Rationalization
+- **Goal:** Collapse legacy specialist prompts into core files plus custom includes, ensuring every delivery/utility agent loads from the `core/` directory with a matching `.genie/custom/<name>.md`.
 - **Surfaces:**
   - Core delivery/utility prompts: @.genie/agents/core/bug-reporter.md, git-workflow.md, implementor.md, polish.md, qa.md, tests.md, docgen.md, refactor.md, secaudit.md, testgen.md, tracer.md, codereview.md, commit.md
-  - Custom configuration files: @.genie/agents/custom/<name>.md for the same set
+  - Custom configuration files: @.genie/custom/<name>.md for the same set
   - `.claude/` aliases referencing these prompts
 - **Deliverables:**
-  - All delivery/utility prompts live under `.genie/agents/core/` with project customization in `.genie/agents/custom/`
+  - All delivery/utility prompts live under `.genie/agents/core/` with project customization in `.genie/custom/`
   - `.claude/` wrappers and template copies point to the new core paths
   - Agent resolver/AGENTS.md documentation reflects the flattened structure
 - **Evidence:** `.genie/wishes/core-template-separation/qa/group-c/specialist-catalog.md` with agent inventory diff + CLI `genie agents list`
 - **Suggested personas:** `implementor`, `codereview`
 - **External tracker:** TBD
 
-### Group D – Documentation & Validation
+### Phase 3 – Documentation & Validation
 - **Goal:** Document the new architecture and prove no regressions in agent discovery.
 - **Surfaces:**
   - @AGENTS.md
@@ -453,3 +454,12 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - [Pending] Documentation + migration evidence captured (Group D)
 - [Pending] Validation checklist complete
 - [Pending] Human approval for merge
+- [2025-10-06 14:45Z] Slash command includes retargeted to `.genie/agents/<name>.md` to restore `/plan`, `/wish`, `/forge`, `/review`, `/vibe`.
+
+## Review Findings – 2025-10-06
+
+- **Broken command includes (resolved 2025-10-06):** `.claude/commands/plan.md:7`, `wish.md:7`, `forge.md:7`, `review.md:7`, and `vibe.md:7` now point back to `@.genie/agents/<name>.md`, restoring the slash commands while the core/template move is still in flight.
+- **Specialists not split:** `@.genie/agents/core/implementor.md`, `tests.md`, and other delivery prompts are still under `core/` because `specialists/` has not been established; no templates exist under `templates/` yet, so nothing is copied for downstream projects.
+- **Meta-learn merge outstanding:** `@.genie/agents/core/self-learn.md` still exists alongside the new `learn.md` persona, meaning the unified meta-learning flow has not been delivered.
+- **Documentation drift:** `AGENTS.md:8` and `@.genie/agents/README.md:5` still describe the legacy layout (entrypoints at the directory root) without warning about the in-progress separation.
+- **Templates directory empty:** `templates/` contains no scaffolded content, so the init flow still lacks the promised template separation.

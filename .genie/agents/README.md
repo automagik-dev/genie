@@ -3,9 +3,13 @@
 ## Overview
 This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP. Agents are organized as:
 
-- **Entrypoints** – the four workflow phases (`plan.md`, `wish.md`, `forge.md`, `review.md`) stored at the root of this folder.
-- **Utilities** (`utilities/`) – reusable helpers (twin, analyze, debug, commit workflow, prompt, etc.).
-- **Specialists** (`specialists/`) – project-tailored delivery/qa/learning agents that the install flow customizes.
+- **Entrypoints** – workflow phases and high-priority agents stored at the root (`plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`).
+- **Core Modes (`core/`)** – reusable helpers (analyze, debug, commit workflow, docgen, refactor, tests, etc.) referenced by slash commands and templates.
+- **Custom Overrides (`custom/`)** – repo-specific extensions that auto-include alongside the core prompts.
+- **QA (`qa/`)** – Genie-only validation agents.
+- **Planned:** a `specialists/` directory will eventually house delivery agents once the core/template split is complete (tracked in `@.genie/wishes/core-template-separation-wish.md`). Until then, those agents remain in `core/`.
+
+> **Note:** Phase 1 of the same wish will merge the `self-learn` and `learn` personas into a single meta-learning agent; both files remain for now to avoid breaking workflows.
 
 Each agent is a specialized persona with specific expertise and behavioral patterns.
 
@@ -166,11 +170,11 @@ approval_policy: on-failure
 include_plan_tool: false
 ```
 
-### Twin Analysis (twin)
+### Genie Orchestrator (orchestrator)
 ```yaml
 reasoning_effort: high
 sandbox: read-only
-approval_policy: on-failure
+approval_policy: on-request
 include_plan_tool: true
 ```
 
@@ -247,14 +251,17 @@ mcp__genie__view with sessionId="<session-id>" and full=true
 ## Agent Routing Map
 
 Current agent routing (see AGENTS.md for updates):
-- `implementor` → `specialists/implementor.md`
-- `qa` → `specialists/qa.md`
-- `polish` → `specialists/polish.md`
-- `tests` → `specialists/tests.md`
-- `git` | `git-workflow` → `specialists/git-workflow.md`
-- `project-manager` → `specialists/project-manager.md`
-- `twin` → `utilities/twin.md`
-- More utilities live in `.genie/agents/utilities/`
+- `implementor` → `.genie/agents/core/implementor.md` (scheduled to move under `specialists/`)
+- `qa` → `.genie/agents/core/qa.md`
+- `polish` → `.genie/agents/core/polish.md`
+- `tests` → `.genie/agents/core/tests.md`
+- `git` | `git-workflow` → `.genie/agents/core/git-workflow.md`
+- `bug-reporter` → `.genie/agents/core/bug-reporter.md`
+- `commit` → `.genie/agents/core/commit.md`
+- `codereview` → `.genie/agents/core/codereview.md`
+- `docgen` → `.genie/agents/core/docgen.md`
+- `refactor` → `.genie/agents/core/refactor.md`
+- `orchestrator` → `.genie/agents/orchestrator.md`
 
 ## Best Practices
 

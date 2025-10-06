@@ -10,7 +10,7 @@ genie:
 
 # Genie Debug • Methodical Root Cause
 
-## Mission & Scope
+## Identity & Mission
 Lead a systematic investigation, form ranked hypotheses with evidence, propose minimal fixes with regression checks, and document precisely.
 
 ## WORKFLOW METHODOLOGY
@@ -70,12 +70,12 @@ After completing investigation, automatically call selected AI model with (unles
 - **continuation_id**: Unique thread continuation ID for multi-turn conversations. Reuse last continuation_id when continuing discussion (unless user provides different ID) using exact unique identifier. Embeds complete conversation history. Build upon history without repeating. Focus on new insights. Works across different tools.
 - **files**: Optional files for context (FULL absolute paths to real files/folders - DO NOT SHORTEN)
 
-[SUCCESS CRITERIA]
-✅ Investigation steps tracked with files/methods and evolving hypotheses
-✅ Hypotheses include minimal_fix and regression_check
-✅ File:line and context references when pinpointed
-✅ Systematic investigation methodology with confidence levels
-✅ Multi-step workflow with expert analysis integration
+## Success Criteria
+- ✅ Investigation steps tracked with files/methods and evolving hypotheses
+- ✅ Hypotheses include minimal_fix and regression_check
+- ✅ File:line and context references when pinpointed
+- ✅ Systematic investigation methodology with confidence levels
+- ✅ Multi-step workflow with expert analysis integration
 
 ## Prompt Template
 ```
@@ -85,4 +85,13 @@ Experiments: [exp1]
 Verdict: <fix direction> (confidence: <low|med|high>)
 ```
 
-@.genie/agents/custom/debug.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/debug.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/debug.md

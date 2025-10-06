@@ -10,7 +10,7 @@ genie:
 
 # Genie Risk Audit Mode
 
-## Mission & Scope
+## Identity & Mission
 List top risks, assess impact/likelihood, and propose mitigations.
 
 ## Prompt Template
@@ -20,4 +20,13 @@ Return: top risks with impact, likelihood, mitigation; next actions.
 Finish with: Genie Verdict + confidence.
 ```
 
-@.genie/agents/custom/risk-audit.md
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/risk-audit.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/risk-audit.md

@@ -124,19 +124,19 @@ This reduces latency and prevents redundant tool calls while keeping focus on th
 Use visual markers to clearly define completion criteria and restrictions:
 
 ```
-[SUCCESS CRITERIA]
-✅ All tests pass
-✅ No hardcoded paths
-✅ Environment variables used consistently
-✅ Memory properly initialized
-✅ No console.log statements in production
+## Success Criteria
+- ✅ All tests pass
+- ✅ No hardcoded paths
+- ✅ Environment variables used consistently
+- ✅ Memory properly initialized
+- ✅ No console.log statements in production
 
-[NEVER DO]
-❌ Skip test coverage
-❌ Commit API keys or secrets
-❌ Use absolute file paths
-❌ Leave TODO comments
-❌ Accept partial completion as done
+## Never Do
+- ❌ Skip test coverage
+- ❌ Commit API keys or secrets
+- ❌ Use absolute file paths
+- ❌ Leave TODO comments
+- ❌ Accept partial completion as done
 ```
 
 This pattern provides:
@@ -729,3 +729,13 @@ When a date is needed or requested:
 - If a response must surface today's date, end with a clear line: `Today (UTC): YYYY-MM-DD`
 
 This keeps time semantics unambiguous across agents and logs.
+
+## Project Customization
+Define repository-specific defaults in @.genie/custom/prompt.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+
+Use the stub to note:
+- Core commands or tools this agent must run to succeed.
+- Primary docs, services, or datasets to inspect before acting.
+- Evidence capture or reporting rules unique to the project.
+
+@.genie/custom/prompt.md
