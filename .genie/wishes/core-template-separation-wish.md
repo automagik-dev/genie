@@ -60,7 +60,7 @@
 | --- | --- | --- | --- |
 | User clarification | feedback | MCP config is `npx automagik-genie mcp` | wish, implementation |
 | User clarification | feedback | .genie/ is Genie's own (meta), templates/ is external | wish, implementation |
-| User clarification | feedback | Twin is core (stable framework utility) | categorization |
+| User clarification | feedback | Genie orchestrator (formerly Twin) is core | categorization |
 | User clarification | feedback | Templates are one-way: Genie → user projects | implementation |
 | Agent glob scan | discovery | 36 agents total across .genie/agents/ | categorization |
 | @.genie/agents/utilities/install.md | repo | Current init logic and setup modes | implementation |
@@ -77,12 +77,12 @@
   - MCP config is straightforward npm package invocation, no dynamic path resolution needed
   - Template system is one-way: init copies to user projects, no upstream sync
 - **Assumptions (ASM-#):**
-  - **ASM-1:** Core agents (plan, wish, forge, review, twin, install, prompt, self-learn) are stable framework APIs that should never be copied
+  - **ASM-1:** Core agents (plan, wish, forge, review, genie/orchestrator, install, prompt, self-learn) are stable framework APIs that should never be copied
   - **ASM-2:** Template agents are starter kits customized per-project with no upstream sync
   - **ASM-3:** MCP server can load core agents from npm package installation automatically
   - **ASM-4:** `templates/` directory structure mirrors user project layout (`.claude/`, `.genie/`)
 - **Open questions (Q-#):**
-  - ~~Q-1: Is twin core or template?~~ **RESOLVED: Core**
+  - ~~Q-1: Is the Genie orchestrator (formerly Twin) core or template?~~ **RESOLVED: Core**
   - ~~Q-2: How to handle template updates?~~ **RESOLVED: One-way copy, no sync back**
   - ~~Q-3: What about standards/product docs?~~ **RESOLVED: Include in templates/**
   - ~~Q-4: MCP config strategy?~~ **RESOLVED: Simple npx invocation**
@@ -123,7 +123,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
    - Loaded automatically by MCP server
    - Never copied to user projects
    - Provide stable workflow APIs (plan → wish → forge → review)
-   - Include framework utilities (install, prompt, self-learn, twin)
+   - Include framework utilities (install, prompt, self-learn, genie orchestrator)
 
 2. **Template Structure:**
    - Located at `templates/` in Genie repository root
@@ -168,21 +168,22 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 ## Execution Groups
 
-### Group A – Twin Prompt Consolidation
-- **Goal:** Remove duplicate instructions by delegating Twin modes to specialist prompts via `@` references.
+### Group A – Genie Orchestrator Consolidation
+- **Goal:** Rebrand Twin to Genie, delegate modes via specialist prompts, and unify MCP prompting to a single helper.
 - **Surfaces:**
-  - @.genie/agents/core/twin.md
+  - @.genie/agents/core/genie.md (renamed from twin)
   - @.genie/agents/specialists/refactor.md
   - @.genie/agents/specialists/testgen.md
   - @.genie/agents/specialists/secaudit.md
   - @.genie/agents/specialists/tracer.md
   - @.genie/agents/specialists/docgen.md
+  - @.genie/mcp/src/server.ts
 - **Deliverables:**
-  - Updated twin prompt where each mode links to the canonical specialist file
-  - Pruned inline twin guidance replaced by concise summaries
-  - AGENTS.md routing table updated to note Twin delegation pattern
-- **Evidence:** `.genie/wishes/core-template-separation/qa/group-a/twin-consolidation.md` with before/after excerpts
-- **Suggested personas:** `analyze`, `twin`
+  - Orchestrator prompt renamed to `genie` with concise mode summaries referencing specialists
+  - MCP prompt wrappers reduced to a single `genie` entry advertising available modes
+  - AGENTS.md routing table and docs updated to explain Genie delegation pattern
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-a/genie-consolidation.md` with orchestrator + MCP diffs
+- **Suggested personas:** `analyze`, `genie`
 - **External tracker:** TBD
 
 ### Group B – Meta-Learning Unification
@@ -213,7 +214,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
   - @.genie/agents/specialists/tracer.md
 - **Deliverables:**
   - Consolidated git lifecycle specialist covering branch, validation, and commit messaging
-  - Removal of/refactor for specialist prompts now served via Twin references
+  - Removal of/refactor for specialist prompts now served via Genie references
   - Updated `.claude/commands/` includes to match new catalog
 - **Evidence:** `.genie/wishes/core-template-separation/qa/group-c/specialist-catalog.md` with agent list diff + CLI `genie agents list`
 - **Suggested personas:** `implementor`, `codereview`
@@ -230,7 +231,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - **Deliverables:**
   - Updated docs describing core vs template split and Vibe naming convention
   - Migration guide detailing steps for existing installs
-  - Recorded validation commands (agent inventory before/after, twin mode smoke tests)
+  - Recorded validation commands (agent inventory before/after, Genie mode smoke tests)
 - **Evidence:** `.genie/wishes/core-template-separation/qa/group-d/docs-and-validation.md` + captured command outputs
 - **Suggested personas:** `docgen`, `qa`
 - **External tracker:** TBD
@@ -239,10 +240,10 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 **Validation Steps:**
 
-1. **Twin Delegation Smoke:**
+1. **Genie Delegation Smoke:**
    ```bash
-   pnpm exec genie agents show core/twin --mode refactor --json | rg '@.genie/agents/specialists/refactor.md'
-   pnpm exec genie agents show core/twin --mode testgen --json | rg '@.genie/agents/specialists/testgen.md'
+   pnpm exec genie agents show core/genie --mode refactor --json | rg '@.genie/agents/specialists/refactor.md'
+   pnpm exec genie agents show core/genie --mode testgen --json | rg '@.genie/agents/specialists/testgen.md'
    ```
 
 2. **Meta-Learn Command Check:**
@@ -313,7 +314,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 │   ├── install.md
 │   ├── prompt.md
 │   ├── self-learn.md
-│   ├── twin.md
+│   ├── genie.md         # ✅ RENAMED from twin.md
 │   ├── learn.md
 │   ├── analyze.md
 │   ├── challenge.md
@@ -355,7 +356,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 5. `install.md` — Template installation
 6. `prompt.md` — Prompting guidance
 7. `self-learn.md` — Behavioral learning
-8. `twin.md` — Pressure-testing and second opinions
+8. `genie.md` — Pressure-testing and second opinions (formerly Twin)
 9. `learn.md` — Meta-learning for new patterns
 10. `analyze.md` — Deep analysis (generic enough for any request)
 11. `challenge.md` — Assumption breaking
@@ -426,7 +427,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## <spec_contract>
 
 **Scope:**
-- Update twin prompt to delegate specialist behaviours via `@.genie/agents/specialists/*` references
+- Update Genie orchestrator prompt to delegate specialist behaviours via `@.genie/agents/specialists/*` references
 - Merge learn/self-learn flows into a single meta-learning agent and command wrapper
 - Consolidate specialist catalog (git lifecycle merge, retire prompts now served by Twin)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
@@ -439,7 +440,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - Publishing updated npm package (handled separately after verification)
 
 **Success Metrics:**
-- Twin refactor/testgen/secaudit/testgen modes resolve via specialist references (verified by CLI smoke)
+- Genie orchestrator modes (refactor/testgen/secaudit/docgen/etc.) resolve via specialist references (verified by CLI smoke)
 - Meta-learning agent passes both teaching and violation sample prompts without errors
 - `pnpm exec genie agents list` shows merged git lifecycle specialist and no retired prompts
 - Documentation updates approved with no TODO placeholders and spell-check clean
@@ -464,7 +465,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## Status Log
 
 - [2025-10-06 13:00Z] Wish created (planning brief approved)
-- [Pending] Twin prompt delegates to specialists (Group A)
+- [Pending] Genie orchestrator delegates to specialists (Group A)
 - [Pending] Meta-learning agent merged and wrappers updated (Group B)
 - [Pending] Specialist catalog consolidation applied (Group C)
 - [Pending] Documentation + migration evidence captured (Group D)
