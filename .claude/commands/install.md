@@ -1,2 +1,2 @@
-@.genie/agents/utilities/install.md
+@.genie/agents/core/install.md
 

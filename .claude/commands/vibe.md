@@ -1,6 +1,6 @@
 ---
-name: sleepy
+name: vibe
 description: Autonomous wish coordinator with Twin Genie validation
 ---
 
-@.genie/agents/specialists/sleepy.md
+@.genie/agents/core/vibe.md

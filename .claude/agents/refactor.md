@@ -4,4 +4,4 @@ description: Code refactoring and restructuring agent
 model: inherit
 ---
 
-@.genie/agents/utilities/refactor.md
+@.genie/agents/specialists/refactor.md

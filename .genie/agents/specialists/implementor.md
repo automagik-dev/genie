@@ -3,9 +3,8 @@ name: implementor
 description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Implementor Specialist • Delivery Engine

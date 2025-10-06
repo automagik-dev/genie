@@ -4,4 +4,4 @@ description: Debugging and troubleshooting specialist
 model: inherit
 ---
 
-@.genie/agents/utilities/debug.md
+@.genie/agents/core/debug.md

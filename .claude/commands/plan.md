@@ -4,4 +4,4 @@ description: Product planning and roadmap alignment
 model: inherit
 ---
 
-@.genie/agents/plan.md
+@.genie/agents/core/plan.md

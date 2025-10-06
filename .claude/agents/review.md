@@ -4,4 +4,4 @@ description: Validate wish completion by consolidating evidence and producing fo
 model: inherit
 ---
 
-@.genie/agents/review.md
+@.genie/agents/core/review.md

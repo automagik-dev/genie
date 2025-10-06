@@ -4,4 +4,4 @@ description: Wish creation and specification
 model: inherit
 ---
 
-@.genie/agents/wish.md
+@.genie/agents/core/wish.md

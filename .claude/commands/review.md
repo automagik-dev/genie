@@ -4,4 +4,4 @@ description: QA validation and evidence aggregation
 model: inherit
 ---
 
-@.genie/agents/review.md
+@.genie/agents/core/review.md

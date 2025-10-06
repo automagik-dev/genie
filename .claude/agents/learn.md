@@ -2,4 +2,4 @@
 name: learn
 ---
 
-@.genie/agents/specialists/learn.md
+@.genie/agents/core/learn.md

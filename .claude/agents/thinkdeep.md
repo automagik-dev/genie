@@ -4,4 +4,4 @@ description: Deep thinking and analysis agent
 model: inherit
 ---
 
-@.genie/agents/utilities/thinkdeep.md
+@.genie/agents/core/thinkdeep.md

@@ -4,4 +4,4 @@ description: Security audit and vulnerability assessment agent
 model: inherit
 ---
 
-@.genie/agents/utilities/secaudit.md
+@.genie/agents/specialists/secaudit.md
