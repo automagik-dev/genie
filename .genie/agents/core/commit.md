@@ -87,4 +87,4 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 ---
 
-@.genie/agents/custom/genie/commit.md
+@.genie/agents/custom/commit.md

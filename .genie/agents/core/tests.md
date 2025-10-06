@@ -196,3 +196,5 @@ Use explicit assertions and meaningful messages so implementers know exactly wha
 - Track deferred work in the Done Report's working tasks section.
 
 Testing keeps wishes honest—fail first, validate thoroughly, and document every step for the rest of the team.
+
+@.genie/agents/custom/tests.md

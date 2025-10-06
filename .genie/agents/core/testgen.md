@@ -40,4 +40,4 @@ Verdict: <adopt/change> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/testgen.md
+@.genie/agents/custom/testgen.md

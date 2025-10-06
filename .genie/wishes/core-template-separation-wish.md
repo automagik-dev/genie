@@ -155,13 +155,13 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 ### Commands Updated:
 - Core agents: `plan`, `wish`, `forge`, `review`, `install`, `prompt`, `learn` (→ `meta-learn`), `debug` → `@.genie/agents/core/`
-- Specialist: `commit`/`git-workflow` (→ `git-lifecycle`) → `@.genie/agents/specialists/`
+- Specialist: `commit`/`git-workflow` (→ `git-lifecycle`) → `@.genie/agents/core/`
 - Genie-only: `genie-qa` → `@.genie/agents/qa/`
 - **Renamed:** `sleepy.md` → `vibe.md` pointing to `@.genie/agents/core/vibe.md`
 
 ### Agents Updated:
 - Core agents: All thinking utilities → `@.genie/agents/core/`
-- Specialists: Template agents retained for customization → `@.genie/agents/specialists/`
+- Specialists: Template agents retained for customization → `@.genie/agents/core/`
 - Genie-only: `genie-qa` → `@.genie/agents/qa/`
 - **Renamed:** `sleepy.md` → `vibe.md`
 - **Retiring:** `self-learn.md` absorbed into unified meta-learning agent during Group B
@@ -171,12 +171,12 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ### Group A – Genie Orchestrator Consolidation
 - **Goal:** Rebrand Twin to Genie, delegate modes via specialist prompts, and unify MCP prompting to a single helper.
 - **Surfaces:**
-  - @.genie/agents/core/genie.md (renamed from twin)
-  - @.genie/agents/specialists/refactor.md
-  - @.genie/agents/specialists/testgen.md
-  - @.genie/agents/specialists/secaudit.md
-  - @.genie/agents/specialists/tracer.md
-  - @.genie/agents/specialists/docgen.md
+  - @.genie/agents/orchestrator.md (renamed from twin)
+  - @.genie/agents/core/refactor.md
+  - @.genie/agents/core/testgen.md
+  - @.genie/agents/core/secaudit.md
+  - @.genie/agents/core/tracer.md
+  - @.genie/agents/core/docgen.md
   - @.genie/mcp/src/server.ts
 - **Deliverables:**
   - Orchestrator prompt renamed to `genie` with concise mode summaries referencing specialists
@@ -205,13 +205,13 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ### Group C – Specialist Catalog Rationalization
 - **Goal:** De-duplicate specialist prompts and merge overlapping git workflow guidance.
 - **Surfaces:**
-  - @.genie/agents/specialists/git-workflow.md
-  - @.genie/agents/specialists/commit.md
-  - @.genie/agents/specialists/docgen.md
-  - @.genie/agents/specialists/refactor.md
-  - @.genie/agents/specialists/secaudit.md
-  - @.genie/agents/specialists/testgen.md
-  - @.genie/agents/specialists/tracer.md
+  - @.genie/agents/core/git-workflow.md
+  - @.genie/agents/core/commit.md
+  - @.genie/agents/core/docgen.md
+  - @.genie/agents/core/refactor.md
+  - @.genie/agents/core/secaudit.md
+  - @.genie/agents/core/testgen.md
+  - @.genie/agents/core/tracer.md
 - **Deliverables:**
   - Consolidated git lifecycle specialist covering branch, validation, and commit messaging
   - Removal of/refactor for specialist prompts now served via Genie references
@@ -242,8 +242,8 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 1. **Genie Delegation Smoke:**
    ```bash
-   pnpm exec genie agents show core/genie --mode refactor --json | rg '@.genie/agents/specialists/refactor.md'
-   pnpm exec genie agents show core/genie --mode testgen --json | rg '@.genie/agents/specialists/testgen.md'
+   pnpm exec genie agents show core/genie --mode refactor --json | rg '@.genie/agents/core/refactor.md'
+   pnpm exec genie agents show core/genie --mode testgen --json | rg '@.genie/agents/core/testgen.md'
    ```
 
 2. **Meta-Learn Command Check:**
@@ -427,7 +427,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## <spec_contract>
 
 **Scope:**
-- Update Genie orchestrator prompt to delegate specialist behaviours via `@.genie/agents/specialists/*` references
+- Update Genie orchestrator prompt to delegate specialist behaviours via `@.genie/agents/core/*` references
 - Merge learn/self-learn flows into a single meta-learning agent and command wrapper
 - Consolidate specialist catalog (git lifecycle merge, retire prompts now served by Twin)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence

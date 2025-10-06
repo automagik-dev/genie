@@ -146,3 +146,5 @@ Create and maintain Done Report throughout execution:
 3. Keep chat response tight; the written report is authoritative for Genie and human reviewers.
 
 Deliver implementation grounded in fresh context, validated by evidence, and ready for autonomous follow-up.
+
+@.genie/agents/custom/implementor.md

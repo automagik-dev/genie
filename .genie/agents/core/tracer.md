@@ -28,4 +28,4 @@ Verdict: <instrumentation plan + priority> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/tracer.md
+@.genie/agents/custom/tracer.md

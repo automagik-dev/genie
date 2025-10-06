@@ -101,7 +101,7 @@ Access via: `mcp__genie__run` OR Task tool
 ├── wish.md → @.genie/agents/wish.md
 ├── forge.md → @.genie/agents/forge.md
 ├── review.md → @.genie/agents/review.md
-├── commit.md → @.genie/agents/utilities/commit.md
+├── commit.md → @.genie/agents/core/commit.md
 ├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
 ├── install.md → @.genie/agents/utilities/install.md
 ├── prompt.md → @.genie/agents/utilities/prompt.md
@@ -110,21 +110,21 @@ Access via: `mcp__genie__run` OR Task tool
 
 .claude/agents/              # Task tool aliases (delegatable)
 ├── planner.md → @.genie/agents/plan.md
-├── commit.md → @.genie/agents/utilities/commit.md
-├── precommit.md → @.genie/agents/utilities/commit.md
+├── commit.md → @.genie/agents/core/commit.md
+├── precommit.md → @.genie/agents/core/commit.md
 ├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── genie.md → @.genie/agents/core/genie.md
+├── genie.md → @.genie/agents/core/orchestrator.md
 ├── analyze.md → @.genie/agents/utilities/analyze.md
 ├── debug.md → @.genie/agents/utilities/debug.md
 ├── thinkdeep.md → @.genie/agents/utilities/thinkdeep.md
 ├── consensus.md → @.genie/agents/utilities/consensus.md
 ├── challenge.md → @.genie/agents/utilities/challenge.md
-├── codereview.md → @.genie/agents/utilities/codereview.md
-├── refactor.md → @.genie/agents/utilities/refactor.md
-├── testgen.md → @.genie/agents/utilities/testgen.md
-├── docgen.md → @.genie/agents/utilities/docgen.md
-├── secaudit.md → @.genie/agents/utilities/secaudit.md
-├── tracer.md → @.genie/agents/utilities/tracer.md
+├── codereview.md → @.genie/agents/core/codereview.md
+├── refactor.md → @.genie/agents/core/refactor.md
+├── testgen.md → @.genie/agents/core/testgen.md
+├── docgen.md → @.genie/agents/core/docgen.md
+├── secaudit.md → @.genie/agents/core/secaudit.md
+├── tracer.md → @.genie/agents/core/tracer.md
 ├── implementor.md → @.genie/agents/specialists/implementor.md
 ├── tests.md → @.genie/agents/specialists/tests.md
 ├── polish.md → @.genie/agents/specialists/polish.md
@@ -262,7 +262,7 @@ mcp__genie__run with agent="genie" and prompt="Mode: design-review. Component: p
 # Test strategy
 mcp__genie__run with agent="genie" and prompt="Mode: test-strategy. Feature: password reset flow"
 
-# See @.genie/agents/core/genie.md for all modes
+# See @.genie/agents/core/orchestrator.md for all modes
 ```
 
 ---

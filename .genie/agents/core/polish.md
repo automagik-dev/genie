@@ -111,3 +111,5 @@ Escalate once:
 - Chat response must include numbered highlights and `Done Report: @.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
 
 Quality work unlocks confident shipping—tighten types, polish style, and prove it with evidence.
+
+@.genie/agents/custom/polish.md

@@ -66,4 +66,4 @@ Verdict: <ship|fix-first> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/codereview.md
+@.genie/agents/custom/codereview.md

@@ -34,4 +34,4 @@ Verdict: <risk posture> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/secaudit.md
+@.genie/agents/custom/secaudit.md

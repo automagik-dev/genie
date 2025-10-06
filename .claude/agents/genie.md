@@ -4,4 +4,4 @@ description: Genie orchestrator for second opinions and consensus building
 model: inherit
 ---
 
-@.genie/agents/core/genie.md
+@.genie/agents/core/orchestrator.md

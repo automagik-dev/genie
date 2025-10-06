@@ -65,4 +65,4 @@ Verdict: <go|no-go> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/refactor.md
+@.genie/agents/custom/refactor.md

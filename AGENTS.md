@@ -31,14 +31,14 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/wishes/` – active wish contracts (`<slug>-wish.md`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
-- `.genie/agents/specialists/` – delivery/QA/learning specialists
+- `.genie/agents/custom/` – project-specific overrides for specialists and Genie modes
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
 ## Workflow Summary
 1. **/plan** – single-entry agent for product mode. Loads mission/roadmap/standards, gathers context via `@` references, requests background personas via MCP, and decides if item is wish-ready.
 2. **/wish** – creates `.genie/wishes/<slug>-wish.md`, embedding context ledger, execution groups, inline `<spec_contract>`, branch/tracker strategy, and blocker protocol.
 3. **/forge** – surfaces execution groups, evidence expectations, validation hooks, and pointers back to the wish for tracker updates (capture the plan summary inside the wish).
-4. **Implementation** – humans/agents follow forge plan, storing evidence exactly where the wish specifies (no default folders). Specialist agents run via `mcp__genie__run` with agent and prompt parameters. Tailor the files in `.genie/agents/specialists/` during installation.
+4. **Implementation** – humans/agents follow forge plan, storing evidence exactly where the wish specifies (no default folders). Specialist agents run via `mcp__genie__run` with agent and prompt parameters. Tailor the files in `.genie/agents/custom/` during installation.
 5. **/review** (optional) – aggregates QA artefacts, replays validation commands, and writes a review summary back into the wish (create a dedicated section or file path if needed).
 6. **/commit** – groups diffs, recommends commit message/checklist, and outputs a commit advisory (log highlights inside the wish or PR draft).
 7. **Git workflow** – Branch names typically `feat/<wish-slug>`; alternatives logged in the wish. PRs reference the wish and forge plan, and reuse tracker IDs recorded in the wish itself. Update roadmap status after merge.
@@ -231,7 +231,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
     </entry>
     <entry date="2025-09-30" violation_type="POLLING" severity="MEDIUM">
       <trigger>Polling background sessions with short sleep intervals, leading to impatient behavior and user directive to slow down.</trigger>
-      <correction>Increase sleep duration between consecutive session status checks to avoid rapid-fire polling; default to longer waits unless urgency is documented. Exception: Vibe mode autonomous execution uses 20-minute baseline per @.genie/agents/core/vibe.md protocol.</correction>
+      <correction>Increase sleep duration between consecutive session status checks to avoid rapid-fire polling; default to longer waits unless urgency is documented. Exception: Vibe mode autonomous execution uses 20-minute baseline per @.genie/agents/vibe.md protocol.</correction>
       <validation>Future monitoring loops record waits of at least 60 seconds for general polling, 20 minutes (1200 seconds) for vibe mode autonomous execution, with evidence captured in session logs.</validation>
     </entry>
     <entry date="2025-09-30" violation_type="TWIN_VALIDATION" severity="CRITICAL">
@@ -424,7 +424,7 @@ Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: pla
 
 ### Modes (quick reference)
 - planning, consensus, deep-dive, debug, socratic, debate, risk-audit, design-review, test-strategy, compliance, retrospective.
-- Full prompt templates live in `@.genie/agents/core/genie.md`.
+- Full prompt templates live in `@.genie/agents/core/orchestrator.md`.
 - Project-specific adjustments belong in `.genie/agents/custom/<mode>.md`; the core prompt auto-loads them.
 
 ### Outputs & Evidence
@@ -433,7 +433,7 @@ Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: pla
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/core/genie.md`) and the specialized mode files (e.g., `@.genie/agents/core/genie-refactor.md`). Customize them only by editing `.genie/agents/custom/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the core prompt (`@.genie/agents/core/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/core/refactor.md`). Customize them only by editing `.genie/agents/custom/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

@@ -111,3 +111,5 @@ Document expected output snippets (success messages, error codes) so humans can 
 - Final chat reply must include numbered highlights and the Done Report reference
 
 QA protects the experience—test deliberately, record everything, and surface risks early.
+
+@.genie/agents/custom/qa.md

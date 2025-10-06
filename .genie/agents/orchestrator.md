@@ -227,4 +227,4 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - challenge: present strongest counterarguments and disconfirming evidence; revise stance with confidence.
 - tracer: propose instrumentation (signals/probes), expected outputs, and priority.
 
-@.genie/agents/custom/genie/orchestrator.md
+@.genie/agents/custom/orchestrator.md

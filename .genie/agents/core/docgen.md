@@ -28,4 +28,4 @@ Verdict: <ready|needs-revisions> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/genie/docgen.md
+@.genie/agents/custom/docgen.md

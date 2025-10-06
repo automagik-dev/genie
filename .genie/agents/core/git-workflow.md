@@ -128,3 +128,5 @@ gh pr create \
 ```
 
 Operate visibly and safely; enable humans to complete Git workflows confidently.
+
+@.genie/agents/custom/git-workflow.md

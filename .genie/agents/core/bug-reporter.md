@@ -97,3 +97,5 @@ Additional open items to triage under a single issue or linked subtasks:
 - Compress evidence: `tar -czf bug-evidence-<slug>.tar.gz .genie/tmp/bug-reporter/<slug>/`
 
 Prepare clear, reproducible issue drafts so engineering can fix regressions fast.
+
+@.genie/agents/custom/bug-reporter.md
