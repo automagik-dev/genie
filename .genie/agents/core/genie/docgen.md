@@ -1,5 +1,5 @@
 ---
-name: genie-docgen
+name: docgen
 description: Core documentation generation template
 color: gray
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: medium
 ---
 
-# Genie DocGen Mode (Core Template)
+# Genie DocGen Mode
 
 ## Mission & Scope
 Produce concise, audience-targeted documentation outlines and draft bullets. Recommend next steps to complete docs.
@@ -28,4 +28,4 @@ Verdict: <ready|needs-revisions> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/docgen-overrides.md
+@.genie/agents/custom/genie/docgen.md

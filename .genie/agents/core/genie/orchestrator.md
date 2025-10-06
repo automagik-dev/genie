@@ -32,13 +32,13 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - risk-audit — list top risks with impact/likelihood and mitigations
 - design-review — review architecture for coupling/scalability/simplification opportunities
 - test-strategy — outline tests needed: unit, integration, E2E, manual, monitoring, rollback
-- testgen — propose concrete tests with names, locations, and assertions (`@.genie/agents/specialists/testgen.md`)
-- refactor — staged plan with risks (`@.genie/agents/core/genie-refactor.md` + @.genie/agents/specialists/refactor.md)
-- secaudit — security posture assessment (`@.genie/agents/core/genie-secaudit.md` + @.genie/agents/specialists/secaudit.md)
-- docgen — documentation outline creation (`@.genie/agents/core/genie-docgen.md` + @.genie/agents/specialists/docgen.md)
-- tracer — instrumentation roadmap (`@.genie/agents/core/genie-tracer.md` + @.genie/agents/specialists/tracer.md)
-- codereview — severity-tagged feedback (`@.genie/agents/core/genie-codereview.md` + @.genie/agents/specialists/codereview.md)
-- precommit — validation checklist (`@.genie/agents/core/genie-commit.md` + @.genie/agents/specialists/commit.md)
+- testgen — propose concrete tests with names, locations, and assertions (loads `.genie/agents/custom/testgen.md`)
+- refactor — staged plan with risks (`@.genie/agents/core/refactor.md` + `.genie/agents/custom/refactor.md`)
+- secaudit — security posture assessment (`@.genie/agents/core/secaudit.md` + `.genie/agents/custom/secaudit.md`)
+- docgen — documentation outline creation (`@.genie/agents/core/docgen.md` + `.genie/agents/custom/docgen.md`)
+- tracer — instrumentation roadmap (`@.genie/agents/core/tracer.md` + `.genie/agents/custom/tracer.md`)
+- codereview — severity-tagged feedback (`@.genie/agents/core/codereview.md` + `.genie/agents/custom/codereview.md`)
+- precommit — validation checklist (`@.genie/agents/core/commit.md` + `.genie/agents/custom/commit.md`)
 - compliance — map obligations, controls, evidence, and sign-off stakeholders
 - retrospective — evaluate completed work: wins, misses, lessons, actions
 
@@ -226,3 +226,5 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - docgen: outline + draft bullets for target audience; next steps to complete docs.
 - challenge: present strongest counterarguments and disconfirming evidence; revise stance with confidence.
 - tracer: propose instrumentation (signals/probes), expected outputs, and priority.
+
+@.genie/agents/custom/genie/orchestrator.md

@@ -1,5 +1,5 @@
 ---
-name: genie-secaudit
+name: secaudit
 description: Core security audit template
 color: red
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: high
 ---
 
-# Genie SecAudit Mode (Core Template)
+# Genie SecAudit Mode
 
 ## Mission & Scope
 Assess security posture for a scoped feature/service, list risks with impact/likelihood, and propose actionable mitigations.
@@ -34,4 +34,4 @@ Verdict: <risk posture> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/secaudit-overrides.md
+@.genie/agents/custom/genie/secaudit.md

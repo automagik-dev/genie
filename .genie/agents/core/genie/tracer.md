@@ -1,5 +1,5 @@
 ---
-name: genie-tracer
+name: tracer
 description: Core instrumentation planning template
 color: violet
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: high
 ---
 
-# Genie Tracer Mode (Core Template)
+# Genie Tracer Mode
 
 ## Mission & Scope
 Propose minimal instrumentation to illuminate execution paths and side effects. Prioritize probes, expected outputs, and rollout sequencing.
@@ -28,4 +28,4 @@ Verdict: <instrumentation plan + priority> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/tracer-overrides.md
+@.genie/agents/custom/genie/tracer.md

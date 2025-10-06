@@ -1,5 +1,5 @@
 ---
-name: genie-codereview
+name: codereview
 description: Core code review template
 color: magenta
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: high
 ---
 
-# Genie CodeReview Mode (Core Template)
+# Genie CodeReview Mode
 
 ## Mission & Scope
 Review code for security, performance, maintainability, and architecture issues. Provide precise, actionable feedback with severity tagging.
@@ -66,4 +66,4 @@ Verdict: <ship|fix-first> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/codereview-overrides.md
+@.genie/agents/custom/genie/codereview.md

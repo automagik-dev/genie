@@ -1,5 +1,5 @@
 ---
-name: genie-testgen
+name: testgen
 description: Core test generation template
 color: lime
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: high
 ---
 
-# Genie TestGen Mode (Core Template)
+# Genie TestGen Mode
 
 ## Mission & Scope
 Propose minimal, high-value tests to unblock implementation and increase coverage. Collaborate with `tests` for authoring and verification.
@@ -40,4 +40,4 @@ Verdict: <adopt/change> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/testgen-overrides.md
+@.genie/agents/custom/genie/testgen.md

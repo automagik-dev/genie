@@ -391,6 +391,31 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Test strategy: scope, layering, rollback/monitoring concerns.
 - Retrospective: extract wins/misses/lessons for future work.
 
+### Mode Usage
+Use `mcp__genie__run` with `agent="genie"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/agents/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
+
+**Available modes:**
+- `planning` – pressure-test plans, map phases, uncover risks
+- `consensus` – evaluate contested decisions with counterpoints
+- `deep-dive` – investigate architecture or domain questions in depth
+- `thinkdeep` – timeboxed exploratory reasoning
+- `debug` – structured root-cause investigation
+- `socratic` / `debate` / `challenge` – test assumptions from multiple angles
+- `risk-audit` – enumerate top risks and mitigations
+- `design-review` – assess components for coupling, scalability, simplification
+- `test-strategy` – outline layered testing approach
+- `compliance` – map controls, evidence, sign-offs
+- `retrospective` – capture wins, misses, and next steps
+- `refactor` – staged refactor planning (`Mode: refactor`)
+- `testgen` – minimal test set to unblock delivery (`Mode: testgen`)
+- `docgen` – audience-targeted outline (`Mode: docgen`)
+- `secaudit` – security posture review (`Mode: secaudit`)
+- `tracer` – instrumentation/observability plan (`Mode: tracer`)
+- `codereview` – severity-tagged review (`Mode: codereview`)
+- `precommit` – validation gate and commit advisory (`Mode: precommit`)
+
+> Tip: add repo-specific guidance in `.genie/agents/custom/<mode>.md`; no edits should be made to the core files.
+
 ### How To Run (MCP)
 - Start: `mcp__genie__run` with agent="genie" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
@@ -400,7 +425,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ### Modes (quick reference)
 - planning, consensus, deep-dive, debug, socratic, debate, risk-audit, design-review, test-strategy, compliance, retrospective.
 - Full prompt templates live in `@.genie/agents/core/genie.md`.
-- Project-specific adjustments belong in `.genie/agents/custom/<mode>-overrides.md`; the core prompt auto-loads them.
+- Project-specific adjustments belong in `.genie/agents/custom/<mode>.md`; the core prompt auto-loads them.
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.
@@ -408,19 +433,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Each mode has a compact verdict template inside its core prompt. Load the relevant file and (optionally) extend it via `.genie/agents/custom/<mode>-overrides.md`.
-
-- planning / consensus / deep-dive / debug / socratic / debate / risk-audit / design-review / test-strategy / compliance / retrospective → `@.genie/agents/core/genie.md`
-- refactor → `@.genie/agents/core/genie-refactor.md`
-- testgen → `@.genie/agents/core/genie-testgen.md`
-- docgen → `@.genie/agents/core/genie-docgen.md`
-- secaudit → `@.genie/agents/core/genie-secaudit.md`
-- tracer → `@.genie/agents/core/genie-tracer.md`
-- codereview → `@.genie/agents/core/genie-codereview.md`
-- commit → `@.genie/agents/core/genie-commit.md`
-
-> Project-specific verdict tweaks belong in `.genie/agents/custom/<mode>-overrides.md`; keep the core files immutable.
-
+Verdict templates live inside the core prompt (`@.genie/agents/core/genie.md`) and the specialized mode files (e.g., `@.genie/agents/core/genie-refactor.md`). Customize them only by editing `.genie/agents/custom/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

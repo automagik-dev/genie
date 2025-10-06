@@ -1,5 +1,5 @@
 ---
-name: genie-refactor
+name: refactor
 description: Core refactor planning template
 color: brown
 genie:
@@ -8,7 +8,7 @@ genie:
   reasoningEffort: high
 ---
 
-# Genie Refactor Mode (Core Template)
+# Genie Refactor Mode
 
 ## Mission & Scope
 Design staged refactor plans that reduce coupling and complexity while preserving behavior. Include verification and rollback. Provide step-by-step refactoring analysis with expert validation and comprehensive opportunity identification.
@@ -65,4 +65,4 @@ Verdict: <go|no-go> (confidence: <low|med|high>)
 
 ---
 
-@.genie/agents/custom/refactor-overrides.md
+@.genie/agents/custom/genie/refactor.md

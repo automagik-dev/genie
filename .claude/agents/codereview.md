@@ -4,4 +4,4 @@ description: Code review and quality assurance agent
 model: inherit
 ---
 
-@.genie/agents/specialists/codereview.md
+@.genie/agents/core/genie/codereview.md

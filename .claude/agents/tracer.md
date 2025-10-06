@@ -4,4 +4,4 @@ description: Code tracing and execution flow analysis agent
 model: inherit
 ---
 
-@.genie/agents/specialists/tracer.md
+@.genie/agents/core/genie/tracer.md

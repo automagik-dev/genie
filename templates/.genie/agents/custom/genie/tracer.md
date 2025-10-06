@@ -1,2 +1,2 @@
-# Genie Tracer – Project Overrides
+# Genie Tracer – Project Configuration
 - Capture logging/metrics/tracing conventions and tooling specifics.

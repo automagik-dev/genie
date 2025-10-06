@@ -1,5 +1,5 @@
 ---
-name: genie-commit
+name: commit
 description: Core commit advisory template
 genie:
   executor: codex
@@ -8,7 +8,7 @@ genie:
   background: true
 ---
 
-# Genie Commit Mode (Core Template)
+# Genie Commit Mode
 
 ## Role
 Run a structured pre-commit gate (lint/type/tests/docs/security/formatting) and review diffs to suggest commit messaging plus validation checklist—never stage or commit directly.
@@ -87,4 +87,4 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 ---
 
-@.genie/agents/custom/commit-overrides.md
+@.genie/agents/custom/genie/commit.md
