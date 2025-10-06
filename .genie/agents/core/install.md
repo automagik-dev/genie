@@ -18,7 +18,7 @@ genie:
 2. [Implementation] Prepare Genie product docs and wiring
    - Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
    - Configure Genie CLI in-context; do not alter app code
-   - Calibrate specialists in `.genie/agents/specialists/*.md` as needed
+   - Calibrate specialist overrides by editing `.genie/agents/custom/*-overrides.md` (core prompts stay immutable)
    - Initialize lightweight structure only when explicitly confirmed
 
 3. [Verification] Validate installation and handoff

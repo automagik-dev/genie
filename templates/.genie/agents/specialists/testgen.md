@@ -1,11 +1,9 @@
 ---
 name: testgen
 description: Generate test proposals with names, locations, and assertions
-color: lime
-genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
 ---
 
 @.genie/agents/core/genie-testgen.md
+
+## Project Context Adaptations
+- (List frameworks, fixtures, datasets, or coverage targets for this project.)

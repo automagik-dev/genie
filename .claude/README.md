@@ -12,7 +12,7 @@ Access via: `/command`
 - `/review` — QA validation dialogue
 - `/install` — Framework installation
 - `/prompt` — Prompt refinement helper
-- `/sleepy` — Autonomous wish coordinator with Twin Genie
+- `/sleepy` — Autonomous wish coordinator with Genie validation
 - `/learn` — Meta-learning for framework improvements
 
 ### Both Command & Agent (Dual-Purpose)
@@ -28,12 +28,12 @@ Best invoked via `mcp__genie__run` or spawned by other agents.
 Access via: `mcp__genie__run` OR Task tool
 
 #### Strategic Deep-Dive
-- `twin` — Pressure-testing, second opinions, consensus building
+- `genie` — Pressure-testing, second opinions, consensus building
 - `analyze` — System architecture audit
 - `thinkdeep` — Extended reasoning
 - `debug` — Root cause investigation
-- `consensus` — Decision facilitation (also callable via twin)
-- `challenge` — Assumption breaking (also callable via twin)
+- `consensus` — Decision facilitation (also callable via genie)
+- `challenge` — Assumption breaking (also callable via genie)
 
 #### Tactical Utilities
 - `codereview` — Diff/file review
@@ -94,7 +94,7 @@ Access via: `mcp__genie__run` OR Task tool
     ├── testgen.md
     ├── thinkdeep.md
     ├── tracer.md
-    └── twin.md
+    └── genie.md
 
 .claude/commands/            # Interactive slash commands
 ├── plan.md → @.genie/agents/plan.md
@@ -113,7 +113,7 @@ Access via: `mcp__genie__run` OR Task tool
 ├── commit.md → @.genie/agents/utilities/commit.md
 ├── precommit.md → @.genie/agents/utilities/commit.md
 ├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── twin.md → @.genie/agents/utilities/twin.md
+├── genie.md → @.genie/agents/core/genie.md
 ├── analyze.md → @.genie/agents/utilities/analyze.md
 ├── debug.md → @.genie/agents/utilities/debug.md
 ├── thinkdeep.md → @.genie/agents/utilities/thinkdeep.md
@@ -164,7 +164,7 @@ Use MCP tools for background agents:
 
 ```
 # Strategic deep-dive
-mcp__genie__run with agent="twin" and prompt="Mode: planning. Objective: ..."
+mcp__genie__run with agent="genie" and prompt="Mode: planning. Objective: ..."
 mcp__genie__run with agent="planner" and prompt="Background: analyze roadmap gaps..."
 mcp__genie__run with agent="analyze" and prompt="Scope: src/services. Deliver: dependency map..."
 mcp__genie__run with agent="debug" and prompt="Bug: auth failing. Hypotheses: ..."
@@ -233,36 +233,36 @@ mcp__genie__resume with sessionId="<session-id>" and prompt="Address blocker: mi
 
 ---
 
-## Twin Modes Reference
+## Genie Modes Reference
 
-`twin` consolidates multiple analysis patterns into a single versatile agent:
+`genie` consolidates multiple analysis patterns into a single versatile agent:
 
 ```
 # Planning & pressure-testing
-mcp__genie__run with agent="twin" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/auth-wish.md"
+mcp__genie__run with agent="genie" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/auth-wish.md"
 
 # Consensus & decision-making
-mcp__genie__run with agent="twin" and prompt="Mode: consensus. Decision: use PostgreSQL vs MongoDB"
+mcp__genie__run with agent="genie" and prompt="Mode: consensus. Decision: use PostgreSQL vs MongoDB"
 
 # Challenge assumptions
-mcp__genie__run with agent="twin" and prompt="Mode: challenge. Assumption: users prefer email over SMS"
+mcp__genie__run with agent="genie" and prompt="Mode: challenge. Assumption: users prefer email over SMS"
 
 # Deep investigation
-mcp__genie__run with agent="twin" and prompt="Mode: deep-dive. Topic: authentication flow dependencies"
+mcp__genie__run with agent="genie" and prompt="Mode: deep-dive. Topic: authentication flow dependencies"
 
 # Debug with hypotheses
-mcp__genie__run with agent="twin" and prompt="Mode: debug. Bug: login fails intermittently"
+mcp__genie__run with agent="genie" and prompt="Mode: debug. Bug: login fails intermittently"
 
 # Risk assessment
-mcp__genie__run with agent="twin" and prompt="Mode: risk-audit. Initiative: migrate to microservices"
+mcp__genie__run with agent="genie" and prompt="Mode: risk-audit. Initiative: migrate to microservices"
 
 # Design review
-mcp__genie__run with agent="twin" and prompt="Mode: design-review. Component: payment service"
+mcp__genie__run with agent="genie" and prompt="Mode: design-review. Component: payment service"
 
 # Test strategy
-mcp__genie__run with agent="twin" and prompt="Mode: test-strategy. Feature: password reset flow"
+mcp__genie__run with agent="genie" and prompt="Mode: test-strategy. Feature: password reset flow"
 
-# See @.genie/agents/utilities/twin.md for all modes
+# See @.genie/agents/core/genie.md for all modes
 ```
 
 ---
@@ -273,7 +273,7 @@ mcp__genie__run with agent="twin" and prompt="Mode: test-strategy. Feature: pass
 |----------|--------|------------------|------------|
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
-| **Strategic** | twin, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
+| **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
 | **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Specific utilities | Human or specialists |
 | **Delivery** | implementor, tests, polish, qa, bug-reporter | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager, self-learn | System operations | Agents or workflows |

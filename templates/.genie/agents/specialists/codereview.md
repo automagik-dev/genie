@@ -1,11 +1,9 @@
 ---
 name: codereview
 description: Code review with severity-tagged findings and recommendations
-color: magenta
-genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
 ---
 
 @.genie/agents/core/genie-codereview.md
+
+## Project Context Adaptations
+- (Add project-specific standards, focus areas, or reviewer checklists.)

@@ -21,7 +21,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 ## Meta-Agent Instrumentation
 - **Done Reports:** `.genie/reports/` captures experiment evidence and upgrade readiness
 - **Learning Ledger:** `.genie/instructions/*` houses behavioural overrides promoted from experiments
-- **Twin Support:** `.genie/agents/utilities/twin.md` powers second-opinion audits before adopting risky changes
+- **Genie Orchestrator:** `.genie/agents/core/genie.md` powers second-opinion audits before adopting risky changes
 
 ## Toolchain Integrations
 - **Version Control:** Git-driven; branch `genie-dev` serves as the experimental lane

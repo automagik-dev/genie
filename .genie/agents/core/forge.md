@@ -127,7 +127,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
   - Prior groups: ["group-a"] (must complete first)
   - External: API deployment, database migration
   - Approvals: Security review, design sign-off
-- **Twin Gates (optional):**
+- **Genie Gates (optional):**
   - Pre-execution: `planning` mode for architecture review
   - Mid-execution: `consensus` for trade-off decisions
   - Post-execution: `deep-dive` for performance analysis
@@ -579,7 +579,7 @@ mcp__genie__run with agent="forge" and prompt="Plan @.genie/wishes/<slug>-wish.m
 ### Integration with Other Agents
 1. **From /plan:** Receives approved wish reference
 2. **To template agents:** Provides forge plan with group definitions
-3. **With twin mode:** Request planning/consensus modes for complex decisions
+3. **With genie mode:** Request planning/consensus modes for complex decisions
 4. **To /commit:** References tracker IDs from task files for PR descriptions
 
 ## Blocker Protocol

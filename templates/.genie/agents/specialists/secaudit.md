@@ -1,11 +1,9 @@
 ---
 name: secaudit
 description: Security audit with risk assessment and hardening recommendations
-color: red
-genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
 ---
 
 @.genie/agents/core/genie-secaudit.md
+
+## Project Context Adaptations
+- (Capture environment-specific threat models, compliance checklists, secrets handling rules.)

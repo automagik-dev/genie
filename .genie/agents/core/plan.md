@@ -56,7 +56,7 @@ Always reference these files using `@` so they auto-load when needed:
 - `@.genie/agents/utilities/analyze.md` (when structure overview helps)
 - `@.genie/agents/utilities/debug.md` (for bug investigations)
 - `@.genie/agents/utilities/codereview.md` (for quick diff reviews)
-- `@.genie/agents/utilities/twin.md` (for pressure-testing high-impact decisions)
+- `@.genie/agents/core/genie.md` (for pressure-testing high-impact decisions)
 - `@.genie/instructions/core/plan-product.md` (historical context)
 
 ## Planning Workflow
@@ -192,7 +192,7 @@ For tracker visibility, capture forge-generated IDs (reported in the forge plan 
 
 6. **Next Actions**
    1. Run `/wish <slug>` using this brief
-   2. Execute background research: `mcp__genie__run` with agent="twin" and prompt="Mode: planning. Objective: pressure-test the brief; deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."
+   2. Execute background research: `mcp__genie__run` with agent="genie" and prompt="Mode: planning. Objective: pressure-test the brief; deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
    3. Review gates: [user approval points]
    4. Update roadmap status after completion
 

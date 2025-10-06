@@ -1,11 +1,9 @@
 ---
 name: commit
 description: Pre-commit validation with diff analysis and commit message proposals
-genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: minimal
-  background: true
 ---
 
 @.genie/agents/core/genie-commit.md
+
+## Project Context Adaptations
+- (List repo-specific validation commands, changelog requirements, or branch policies here.)

@@ -30,7 +30,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
 - `.genie/wishes/` – active wish contracts (`<slug>-wish.md`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
-- `.genie/agents/utilities/` – reusable helpers (twin, analyze, debug, commit workflow, prompt, etc.)
+- `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
 - `.genie/agents/specialists/` – delivery/QA/learning specialists
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
@@ -126,15 +126,15 @@ Genie can handle small, interactive requests without entering Plan → Wish when
 
 If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug reports that need tracking should route through the **bug-reporter** specialist so evidence is captured and filed as an issue.
 
-## Subagents & Twin via MCP
+## Subagents & Genie via MCP
 - Start subagent: `mcp__genie__run` with agent and prompt parameters
 - Resume session: `mcp__genie__resume` with sessionId and prompt parameters
 - List sessions: `mcp__genie__list_sessions`
 - Stop session: `mcp__genie__stop` with sessionId parameter
 
-Twin prompt patterns (run through any agent, typically `plan`):
-- Twin Planning: "Act as an independent architect. Pressure-test this plan. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."
-- Consensus Loop: "Challenge my conclusion. Provide counterpoints, evidence, and a recommendation. Finish with Twin Verdict + confidence."
+Genie prompt patterns (run through any agent, typically `plan`):
+- Genie Planning: "Act as an independent architect. Pressure-test this plan. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
+- Consensus Loop: "Challenge my conclusion. Provide counterpoints, evidence, and a recommendation. Finish with Genie Verdict + confidence."
 - Focused Deep-Dive: "Investigate <topic>. Provide findings, affected files, follow-ups."
 
 ## Self-Learn & Behavioral Corrections
@@ -231,18 +231,18 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
     </entry>
     <entry date="2025-09-30" violation_type="POLLING" severity="MEDIUM">
       <trigger>Polling background sessions with short sleep intervals, leading to impatient behavior and user directive to slow down.</trigger>
-      <correction>Increase sleep duration between consecutive session status checks to avoid rapid-fire polling; default to longer waits unless urgency is documented. Exception: Sleepy mode autonomous execution uses 20-minute baseline per @.genie/agents/specialists/sleepy.md protocol.</correction>
-      <validation>Future monitoring loops record waits of at least 60 seconds for general polling, 20 minutes (1200 seconds) for sleepy mode autonomous execution, with evidence captured in session logs.</validation>
+      <correction>Increase sleep duration between consecutive session status checks to avoid rapid-fire polling; default to longer waits unless urgency is documented. Exception: Vibe mode autonomous execution uses 20-minute baseline per @.genie/agents/core/vibe.md protocol.</correction>
+      <validation>Future monitoring loops record waits of at least 60 seconds for general polling, 20 minutes (1200 seconds) for vibe mode autonomous execution, with evidence captured in session logs.</validation>
     </entry>
     <entry date="2025-09-30" violation_type="TWIN_VALIDATION" severity="CRITICAL">
-      <trigger>Sleepy mode dry run executed without Twin Genie validation at any checkpoint (task creation, execution start, merge approval).</trigger>
-      <correction>MANDATORY: Start Twin session before any autonomous work. Consult Twin before: creating forge tasks, starting task execution, merging completed work, moving to next group. Twin provides verdict + confidence level for all major decisions. Twin can block dangerous actions. Twin session ID must be logged in state file.</correction>
-      <validation>All future Sleepy runs show Twin session ID in state file, Twin verdicts logged for each major decision, no merge without explicit Twin approval with evidence captured in learning reports.</validation>
+      <trigger>Vibe mode dry run executed without Genie validation at any checkpoint (task creation, execution start, merge approval).</trigger>
+      <correction>MANDATORY: Start Genie session before any autonomous work. Consult Genie before: creating forge tasks, starting task execution, merging completed work, moving to next group. Genie provides verdict + confidence level for all major decisions. Genie can block dangerous actions. Genie session ID must be logged in state file.</correction>
+      <validation>All future Vibe runs show Genie session ID in state file, Genie verdicts logged for each major decision, no merge without explicit Genie approval with evidence captured in learning reports.</validation>
     </entry>
     <entry date="2025-09-30" violation_type="SLEEPY_EARLY_EXIT" severity="CRITICAL">
-      <trigger>Sleepy Mode exited after initialization/announcing monitoring instead of entering actual autonomous execution loop that runs until 100/100 completion.</trigger>
-      <correction>MANDATORY: Sleepy Mode's SOLE PURPOSE is to run autonomously until ALL tasks complete and 100/100 is achieved. NEVER return control to user after initialization. MUST implement actual monitoring loops with real `sleep` commands (120-1200 seconds), continuous status checks via Playwright, automatic task progression (merge A → start B → merge B → start C → merge C), and ONLY exit after generating completion report with 100/100 score. Violating persistence protocol (sleepy.md lines 20-62) is a CRITICAL failure.</correction>
-      <validation>Future Sleepy runs show: (1) Multiple hibernation cycles logged in state file (2) Evidence of autonomous task progression without human intervention (3) Completion report generated only after ALL tasks done (4) Session continues for hours until 100/100 or blocker encountered.</validation>
+      <trigger>Vibe Mode exited after initialization/announcing monitoring instead of entering actual autonomous execution loop that runs until 100/100 completion.</trigger>
+      <correction>MANDATORY: Vibe Mode's SOLE PURPOSE is to run autonomously until ALL tasks complete and 100/100 is achieved. NEVER return control to user after initialization. MUST implement actual monitoring loops with real `sleep` commands (120-1200 seconds), continuous status checks via Playwright, automatic task progression (merge A → start B → merge B → start C → merge C), and ONLY exit after generating completion report with 100/100 score. Violating persistence protocol (vibe.md lines 20-62) is a CRITICAL failure.</correction>
+      <validation>Future Vibe runs show: (1) Multiple hibernation cycles logged in state file (2) Evidence of autonomous task progression without human intervention (3) Completion report generated only after ALL tasks done (4) Session continues for hours until 100/100 or blocker encountered.</validation>
     </entry>
   </learning_entries>
 </behavioral_learnings>
@@ -345,9 +345,9 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Choose specialists by task type using routing aliases.
 
 ### Routing Aliases
-- bug-reporter, git-workflow, implementor, polish, project-manager, qa, self-learn, tests, planner, twin, sleepy, learn.
+- bug-reporter, git-workflow, implementor, polish, project-manager, qa, self-learn, tests, planner, genie, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
-- **sleepy:** Autonomous wish coordinator with Twin Genie validation (requires dedicated branch `feat/<slug>`)
+- **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
 </routing_decision_matrix>
 
@@ -372,15 +372,15 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ✅ No duplicate wish documents created.
 </wish_document_management>
 
-<twin_integration_framework>
+<genie_integration_framework>
 [CONTEXT]
-- `twin` mode is GENIE's partner for second opinions, plan pressure-tests, deep dives, and decision audits.
+- `genie` mode is GENIE's partner for second opinions, plan pressure-tests, deep dives, and decision audits.
 - Use it to reduce risk, surface blind spots, and document reasoning without blocking implementation work.
 
 [SUCCESS CRITERIA]
 ✅ Clear purpose, chosen mode, and outcomes logged (wish discovery or Done Report).
-✅ Human reviews Twin Verdict (with confidence) before high-impact decisions.
-✅ Evidence captured when Twin recommendations change plan/implementation.
+✅ Human reviews Genie Verdict (with confidence) before high-impact decisions.
+✅ Evidence captured when Genie recommendations change plan/implementation.
 
 ### When To Use
 - Ambiguity: requirements unclear or conflicting.
@@ -392,136 +392,42 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Retrospective: extract wins/misses/lessons for future work.
 
 ### How To Run (MCP)
-- Start: `mcp__genie__run` with agent="twin" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Twin Verdict + confidence."
+- Start: `mcp__genie__run` with agent="genie" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
 ### Modes (quick reference)
 - planning, consensus, deep-dive, debug, socratic, debate, risk-audit, design-review, test-strategy, compliance, retrospective.
-- Full prompt templates live in `@.genie/agents/utilities/twin.md`.
+- Full prompt templates live in `@.genie/agents/core/genie.md`.
+- Project-specific adjustments belong in `.genie/agents/custom/<mode>-overrides.md`; the core prompt auto-loads them.
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.
-- High-stakes: save a Done Report at `.genie/reports/done-twin-<slug>-<YYYYMMDDHHmm>.md` with scope, findings, recommendations, disagreements.
-- Always include “Twin Verdict: <summary> (confidence: <low|med|high>)”.
+- High-stakes: save a Done Report at `.genie/reports/done-genie-<slug>-<YYYYMMDDHHmm>.md` with scope, findings, recommendations, disagreements.
+- Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
-### Twin Verdict Format (per mode)
-Use a compact, scannable block. Include only relevant fields.
+### Genie Verdict Format
+Each mode has a compact verdict template inside its core prompt. Load the relevant file and (optionally) extend it via `.genie/agents/custom/<mode>-overrides.md`.
 
-```
-mode: planning
-verdict: <1–2 line decision or direction>
-confidence: <low|med|high>
-risks: [r1, r2, r3]
-missing_validations: [v1, v2, v3]
-refinements: [f1, f2, f3]
-next_actions: [a1, a2]
-decisions_changed: <yes|no>
-```
+- planning / consensus / deep-dive / debug / socratic / debate / risk-audit / design-review / test-strategy / compliance / retrospective → `@.genie/agents/core/genie.md`
+- refactor → `@.genie/agents/core/genie-refactor.md`
+- testgen → `@.genie/agents/core/genie-testgen.md`
+- docgen → `@.genie/agents/core/genie-docgen.md`
+- secaudit → `@.genie/agents/core/genie-secaudit.md`
+- tracer → `@.genie/agents/core/genie-tracer.md`
+- codereview → `@.genie/agents/core/genie-codereview.md`
+- commit → `@.genie/agents/core/genie-commit.md`
 
-```
-mode: consensus
-decision: <what was evaluated>
-counterpoints: [c1, c2, c3]
-evidence: [e1, e2]
-verdict: <recommendation>
-confidence: <low|med|high>
-next_actions: [a1]
-```
-
-```
-mode: deep-dive
-topic: <focus>
-findings: [f1, f2, f3]
-affected_files: [path1, path2]
-follow_ups: [u1, u2]
-verdict: <summary>
-confidence: <low|med|high>
-```
-
-```
-mode: debug
-symptoms: <short>
-hypotheses: [ {name, confidence, evidence, minimal_fix, regression_check} ]
-experiments: [exp1, exp2]
-most_likely_cause: <h?>
-verdict: <fix direction>
-confidence: <low|med|high>
-```
-
-```
-mode: socratic
-assumption: <original>
-questions: [q1, q2, q3]
-refined_assumption: <revised>
-verdict: <implication>
-confidence: <low|med|high>
-```
-
-```
-mode: debate
-decision: <contested>
-counterpoints: [c1, c2, c3]
-experiments: [exp1]
-verdict: <go/hold/change with why>
-confidence: <low|med|high>
-```
-
-```
-mode: risk-audit
-scope: <initiative>
-top_risks: [{risk, impact, likelihood, mitigation}, ...]
-verdict: <risk posture>
-confidence: <low|med|high>
-```
-
-```
-mode: design-review
-component: <name>
-findings: [coupling, scalability, observability, simplification]
-refactor_recs: [r1, r2]
-verdict: <goals + recommended direction>
-confidence: <low|med|high>
-```
-
-```
-mode: test-strategy
-feature: <scope>
-layers: [unit, integration, e2e, manual, monitoring, rollback]
-blocking_tests: [t1, t2]
-verdict: <minimal plan to unblock>
-confidence: <low|med|high>
-```
-
-```
-mode: compliance
-change: <scope>
-controls: [c1, c2]
-evidence: [e1, e2]
-sign_off: [roles]
-verdict: <ready|gaps>
-confidence: <low|med|high>
-```
-
-```
-mode: retrospective
-work: <scope>
-wins: [w1, w2]
-misses: [m1, m2]
-lessons: [l1]
-actions: [a1]
-verdict: <focus next>
-confidence: <low|med|high>
-```
+> Project-specific verdict tweaks belong in `.genie/agents/custom/<mode>-overrides.md`; keep the core files immutable.
 
 ### Anti‑Patterns
-- Using Twin to bypass human approval.
-- Spawning Twin repeatedly without integrating prior outcomes.
-- Treating Twin outputs as implementation orders without validation.
-</twin_integration_framework>
+- Using Genie to bypass human approval.
+- Spawning Genie repeatedly without integrating prior outcomes.
+- Treating Genie outputs as implementation orders without validation.
+</genie_integration_framework>
 
-<twin_missing_context_protocol>
+<genie_missing_context_protocol>
 [CONTEXT]
 - When critical technical context is missing (files, specs), provide a Files Needed block instead of speculative output.
 
@@ -533,7 +439,7 @@ files_needed: [ path/or/folder, ... ]
 ```
 
 Use only for technical implementation gaps, not for business/strategy questions.
-</twin_missing_context_protocol>
+</genie_missing_context_protocol>
 
 <parallel_execution_framework>
 [CONTEXT]

@@ -1,11 +1,9 @@
 ---
 name: refactor
 description: Plan staged refactors with risk assessment and verification
-color: brown
-genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
 ---
 
 @.genie/agents/core/genie-refactor.md
+
+## Project Context Adaptations
+- (Document architecture patterns, risk tolerances, or style guides unique to this codebase.)

@@ -1,11 +1,9 @@
 ---
 name: tracer
 description: Propose instrumentation and observability signals for systems
-color: violet
-genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
 ---
 
 @.genie/agents/core/genie-tracer.md
+
+## Project Context Adaptations
+- (Outline logging/metrics/tracing conventions for this deployment.)
