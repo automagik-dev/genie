@@ -131,7 +131,7 @@ const server = new FastMCP({
   instructions: `Genie is an agent orchestration system for managing AI agents that help with software development tasks.
 
 **Core Capabilities:**
-- Run specialized agents (plan, forge, implementor, qa, etc.) with custom prompts
+- Run specialized agents (plan, forge, implementor, review, etc.) with custom prompts
 - Resume ongoing agent conversations with follow-up questions
 - List available agents and active sessions
 - View agent transcripts and stop running agents
@@ -146,7 +146,7 @@ const server = new FastMCP({
 
 **Agent Types:**
 - **Workflow Agents**: plan, wish, forge, review (structured development process)
-- **Tactical Agents**: implementor, tests, qa, polish (feature delivery)
+- **Tactical Agents**: implementor, tests, polish (feature delivery)
 - **Strategic Agents**: genie, analyze, debug (deep analysis)
 - **Utility Agents**: commit, refactor (code quality)
 

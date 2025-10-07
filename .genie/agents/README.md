@@ -12,7 +12,7 @@ Genie uses a layered architecture for extensibility without forking:
    - Immutable - no custom overrides loaded
 
 2. **Core Agents (`core/`)** – Reusable prompts shipped with framework
-   - **Delivery & utility agents** (10): `implementor.md`, `tests.md`, `qa.md`, `polish.md`, `commit.md`, `bug-reporter.md`, `git-workflow.md`, `install.md`, `learn.md`, `prompt.md`
+   - **Delivery & utility agents** (9): `implementor.md`, `tests.md`, `polish.md`, `commit.md`, `bug-reporter.md`, `git-workflow.md`, `install.md`, `learn.md`, `prompt.md`
    - **Orchestrator modes** (`core/modes/`, 17): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `codereview.md`, etc.
    - Immutable in distribution, but can be extended via custom layer
 
@@ -278,7 +278,6 @@ mcp__genie__view with sessionId="<session-id>" and full=true
 
 Current agent routing (see AGENTS.md for updates):
 - `implementor` → `.genie/agents/core/implementor.md`
-- `qa` → `.genie/agents/core/qa.md`
 - `polish` → `.genie/agents/core/polish.md`
 - `tests` → `.genie/agents/core/tests.md`
 - `git` | `git-workflow` → `.genie/agents/core/git-workflow.md`

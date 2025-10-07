@@ -45,9 +45,8 @@ Access via: `mcp__genie__run` OR Task tool
 #### Delivery Specialists
 - `implementor` — Feature implementation
 - `tests` — Test strategy, generation, and authoring
-- `review` — Wish audits and code review
+- `review` — Wish audits, code review, and QA validation
 - `polish` — Code refinement
-- `qa` — Quality assurance
 
 #### Infrastructure
 - `git-workflow` — Git operations
@@ -73,7 +72,6 @@ Access via: `mcp__genie__run` OR Task tool
 │   ├── git-workflow.md
 │   ├── implementor.md
 │   ├── prompt.md
-│   ├── qa.md
 │   ├── refactor.md
 │   ├── tests.md
 │   └── … (see AGENTS.md for the full list)
@@ -85,7 +83,6 @@ Access via: `mcp__genie__run` OR Task tool
 ├── analyze.md
 ├── git-workflow.md
 ├── implementor.md
-├── qa.md
 ├── tests.md
 └── …
 
@@ -120,7 +117,6 @@ Access via: `mcp__genie__run` OR Task tool
 ├── tests.md → @.genie/agents/core/tests.md
 ├── review.md → @.genie/agents/review.md
 ├── polish.md → @.genie/agents/core/polish.md
-├── qa.md → @.genie/agents/core/qa.md
 ├── git-workflow.md → @.genie/agents/core/git-workflow.md
 ├── vibe.md → @.genie/agents/vibe.md
 └── learn.md → @.genie/agents/core/learn.md
@@ -133,8 +129,8 @@ Access via: `mcp__genie__run` OR Task tool
 Genie uses a **3-layer extension system** for maximum flexibility without forking core prompts:
 
 ### Layer 1: Core Agents (`.genie/agents/core/`)
-- **10 delivery & utility agents** shipped with the Genie framework
-- Examples: `implementor.md`, `commit.md`, `tests.md`, `qa.md`
+- **9 delivery & utility agents** shipped with the Genie framework
+- Examples: `implementor.md`, `commit.md`, `tests.md`, `polish.md`
 - **17 orchestrator modes** in `modes/` subdirectory
 - Examples: `modes/analyze.md`, `modes/debug.md`, `modes/refactor.md`
 - **Immutable** - never edit these directly
@@ -205,17 +201,17 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 - `explore` — discovery-focused exploratory reasoning
 - `consensus` — multi-model perspective synthesis
 
-**Specialized Analysis (11):**
-- `plan`, `analyze`, `deep-dive` — strategic analysis
+**Specialized Analysis (7):**
+- `plan`, `analyze` — strategic analysis
 - `debug` — root-cause investigation
-- `risk-audit`, `design-review`, `secaudit` — audit & review
+- `audit` — risk & security assessment
 - `refactor`, `tracer`, `docgen` — implementation support
 - `precommit` — quality gates
 
 **Custom-Only (2):**
 - `compliance`, `retrospective`
 
-**Note:** Delivery agents (implementor, tests, qa, polish, git-workflow) are **not** orchestrator modes - they execute work directly.
+**Note:** Delivery agents (implementor, tests, review, polish, git-workflow) are **not** orchestrator modes - they execute work directly.
 
 ---
 
@@ -262,7 +258,7 @@ mcp__genie__run with agent="refactor" and prompt="Targets: api/routes"
 # Delivery agents (spawned by /forge)
 mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group A"
 mcp__genie__run with agent="tests" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group B"
-mcp__genie__run with agent="qa" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group C"
+mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/<slug>/<slug>-wish.md Group C"
 
 # Inspect & resume
 mcp__genie__list_sessions
@@ -292,7 +288,7 @@ mcp__genie__stop with sessionId="<session-id>"
 
 1. **Discovery:** `/plan` → creates planning brief
 2. **Blueprint:** `/wish` → creates wish document
-3. **Execution:** `/forge` → breaks into execution groups → spawns agents (implementor, tests, qa)
+3. **Execution:** `/forge` → breaks into execution groups → spawns agents (implementor, tests, review)
 4. **Validation:** `/review` → validates completion → generates QA report
 5. **Commit:** `/commit` → generates commit message and advisory
 
@@ -303,12 +299,12 @@ mcp__genie__stop with sessionId="<session-id>"
 # Example from forge plan:
 # Group A: implementor
 # Group B: tests
-# Group C: qa
+# Group C: review (QA mode)
 
 # Spawn agents with full context
 mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/auth-wish.md Group A"
 mcp__genie__run with agent="tests" and prompt="@.genie/wishes/auth-wish.md Group B"
-mcp__genie__run with agent="qa" and prompt="@.genie/wishes/auth-wish.md Group C"
+mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/auth-wish.md Group C"
 
 # Resume for follow-ups
 mcp__genie__resume with sessionId="<session-id>" and prompt="Address blocker: missing test fixtures"
@@ -356,7 +352,7 @@ Deliver: Counterarguments + experiments + verdict
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
 | **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
 | **Tactical** | refactor, docgen, secaudit, tracer | Focused support | Human or agents |
-| **Delivery** | implementor, tests, review, polish, qa | Execute work | Forge or human |
+| **Delivery** | implementor, tests, review, polish | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
 | **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
 

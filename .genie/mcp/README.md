@@ -69,7 +69,7 @@ After configuration:
 Start a new Genie agent session.
 
 **Parameters:**
-- `agent` (string): Agent name (e.g., "plan", "implementor", "qa")
+- `agent` (string): Agent name (e.g., "plan", "implementor", "review")
 - `prompt` (string): Initial prompt for the agent
 
 **Example:**

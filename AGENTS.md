@@ -18,7 +18,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (git-workflow, implementor, polish, qa, tests, review, commit, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- Specialized + delivery agents (git-workflow, implementor, polish, tests, review, commit, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -329,7 +329,7 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Choose agents by task type using routing aliases.
 
 ### Routing Aliases
-- git-workflow, implementor, polish, qa, tests, planner, vibe, learn.
+- git-workflow, implementor, polish, tests, review, planner, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
@@ -383,16 +383,14 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `explore` – discovery-focused exploratory reasoning
 - `consensus` – multi-model perspective synthesis
 
-**Specialized Modes (13):**
+**Specialized Modes (9):**
 - `plan` – pressure-test plans, map phases, uncover risks
-- `analyze` / `deep-dive` – investigate architecture, dependencies, or domain questions
+- `analyze` – system analysis and focused investigations with dependency mapping
 - `debug` – structured root-cause investigation
-- `risk-audit` – enumerate top risks and mitigations
-- `design-review` – assess components for coupling, scalability, simplification
+- `audit` – risk assessment and security audit with impact/likelihood analysis
 - `tests` – test strategy, generation, authoring, and repair across all layers
-- `refactor` – staged refactor planning
+- `refactor` – design review and staged refactor planning with verification
 - `docgen` – audience-targeted outline
-- `secaudit` – security posture review
 - `tracer` – instrumentation/observability plan
 - `precommit` – validation gate and commit advisory
 
@@ -401,7 +399,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `retrospective` – capture wins, misses, lessons, next actions
 
 **Delivery Agents (not modes):**
-- `git-workflow`, `implementor`, `polish`, `qa`, `tests`, `review`
+- `git-workflow`, `implementor`, `polish`, `tests`, `review`
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 
@@ -413,7 +411,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 
 ### Modes (quick reference)
 **Core (3):** challenge, explore, consensus
-**Specialized (10):** plan, analyze, deep-dive, debug, risk-audit, design-review, refactor, docgen, secaudit, tracer, precommit
+**Specialized (6):** plan, analyze, debug, audit, refactor, docgen, tracer, precommit
 **Custom-only (2):** compliance, retrospective
 
 - Full prompt templates live in `.genie/agents/orchestrator.md`
