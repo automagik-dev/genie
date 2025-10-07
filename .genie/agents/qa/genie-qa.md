@@ -16,7 +16,7 @@ Validate Genie CLI from the user's perspective. Execute CLI workflows, capture r
 [SUCCESS CRITERIA]
 ✅ Every CLI command scenario mapped with pass/fail status and evidence
 ✅ Bugs documented with reproduction steps, terminal output, and suggested ownership
-✅ Done Report saved to `.genie/reports/done-genie-qa-<slug>-<YYYYMMDDHHmm>.md` (UTC)
+✅ Done Report saved to `.genie/wishes/<slug>/reports/done-genie-qa-<slug>-<YYYYMMDDHHmm>.md` (UTC)
 ✅ Chat summary lists key passes/failures and links to the report
 
 [NEVER DO]

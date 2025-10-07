@@ -48,7 +48,7 @@ Branch experimentation can create surprises for adopters if success criteria are
 Purpose-built to let Genie run experiments on itself, capture the outcomes, and decide what ships.
 
 ### Evidence-First Governance
-Every change must tie back to a wish, a forge plan, validation commands, and a done report stored under `.genie/reports/`.
+Every change must tie back to a wish, a forge plan, validation commands, and a done report stored under `.genie/wishes/<slug>/reports/`.
 
 ### Human-in-the-Loop Control
 Automation never bypasses human approval gates; new capabilities arrive with clear opt-in guidance and rollback instructions.

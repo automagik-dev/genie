@@ -17,7 +17,7 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 - ✅ Capture discovery logs (commands, outputs, screenshots/paths) inside a Local Evidence Log
 - ✅ Classify severity/impact and link to mission/roadmap context when possible
 - ✅ Draft GitHub issue body with Summary, Environment, Reproduction Steps, Expected vs Actual, Evidence, and Suggested Next Actions
-- ✅ Save final issue text to `.genie/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`, create the GitHub issue via `gh issue create`, and surface CLI + permalink in the chat recap
+- ✅ Save final issue text to `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`, create the GitHub issue via `gh issue create`, and surface CLI + permalink in the chat recap
 
 ## Never Do
 - ❌ Close investigations with “cannot reproduce” without exhausting guidance below
@@ -46,7 +46,7 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 4. [Issue Draft & Filing]
    - Compose GitHub-ready markdown leveraging wish/plan structure (Summary, Current vs Target state, Execution group affected, Evidence, Next actions)
    - Title template: `[QA] <component> — <symptom>` (or align with tracker conventions)
-   - Save to `.genie/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`
+   - Save to `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`
    - Include copy-paste snippet for issue labels (`area/cli`, `severity/medium`, etc.)
    - Use `gh issue create --title "..." --body-file <report>` within this repo (default remote `origin`) and capture the resulting URL
 
@@ -84,7 +84,7 @@ Additional open items to triage under a single issue or linked subtasks:
 
 ## Output Contract
 - Chat response: numbered highlights + options for next steps, plus GitHub issue URL
-- File output: `.genie/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md` (include reproduction table, attachments list, labels)
+- File output: `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md` (include reproduction table, attachments list, labels)
 - GitHub: `gh issue create` executed with saved body file; store command and resulting link in Evidence Log
 - Optional: create `.genie/tmp/bug-reporter/<slug>/` folder for raw evidence
 

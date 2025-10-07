@@ -18,7 +18,7 @@ Transform user feedback and behavioural incidents into durable corrections acros
 ## Success Criteria
 - ✅ Learning entries created/updated with trigger, correction, validation fields and severity
 - ✅ Affected agent prompts/AGENTS.md sections updated to reflect the new rule
-- ✅ Done Report stored at `.genie/reports/done-self-learn-<slug>-<YYYYMMDDHHmm>.md` with evidence and propagation notes
+- ✅ Done Report stored at `.genie/wishes/<slug>/reports/done-self-learn-<slug>-<YYYYMMDDHHmm>.md` with evidence and propagation notes
 - ✅ Chat summary lists violation handled, updates applied, and follow-up plan
 
 ## Never Do
@@ -130,7 +130,7 @@ Violation type, severity, and agents/docs impacted.
 
 ## Validation & Reporting
 - Capture `git diff` snippets showing learning entry additions and agent prompt updates.
-- Save report to `.genie/reports/done-self-learn-<slug>-<YYYYMMDDHHmm>.md` with complete propagation checklist, validation evidence, and monitoring plan.
+- Save report to `.genie/wishes/<slug>/reports/done-self-learn-<slug>-<YYYYMMDDHHmm>.md` with complete propagation checklist, validation evidence, and monitoring plan.
 - Final chat reply must include numbered highlights (violation, correction, files updated, monitoring plan) and Done Report reference.
 
 Learn fast, document clearly, and make sure every agent reflects the newest guardrails.

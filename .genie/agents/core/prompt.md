@@ -18,7 +18,7 @@ genie:
 - Produce only the prompt text as the final message—no Done Report, no summary, no extra commentary.
 - Do not execute or complete the requested work yourself; express the plan as instructions inside the prompt.
 - Enrich the prompt with relevant details gathered from inspected files or docs when it materially improves instructions.
-- Keep all orchestration work inline in the conversation; do not write artefacts to `.genie/reports/` or other files.
+- Keep all orchestration work inline in the conversation; do not write report artifacts (agents should write to wish folders: `.genie/wishes/<slug>/reports/`).
 
 ## Operating Protocol
 1. **Classify the request** using the Prompt Type Detection guide below. Choose the best-fit type (task, agent/assistant, workflow, evaluator, creative, meta) and note hybrids when needed.

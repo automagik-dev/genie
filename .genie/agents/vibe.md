@@ -93,7 +93,7 @@ You MUST embed actual monitoring loops in your responses that execute via Bash t
 - ✅ All review tasks created (one per forge task)
 - ✅ All tasks completed with evidence validated by Genie
 - ✅ Branch merged after final QA passes
-- ✅ Completion report generated at `.genie/reports/sleepy-<slug>-complete-<timestamp>.md`
+- ✅ Completion report generated at `.genie/wishes/<slug>/reports/vibe-<slug>-complete-<timestamp>.md`
 
 ---
 
@@ -1109,7 +1109,7 @@ if ! npx -y @namastexlabs/codex@0.43.0-alpha.5 exec resume "$GENIE_SESSION" "sta
   echo "⚠️  Genie session died. Attempting restart..."
 
   # Log incident
-  cat > ".genie/reports/genie-died-$(date +%Y%m%d%H%M%S).md" <<EOF
+  cat > ".genie/wishes/<slug>/reports/vibe-error-$(date +%Y%m%d%H%M%S).md" <<EOF
 # Genie Session Died
 
 **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -1140,7 +1140,7 @@ fi
 
 ```bash
 if [ "$CONFUSION_DETECTED" = "true" ]; then
-  cat > ".genie/reports/confusion-$(date +%Y%m%d%H%M%S).md" <<EOF
+  cat > ".genie/wishes/<slug>/reports/vibe-confusion-$(date +%Y%m%d%H%M%S).md" <<EOF
 # Genie Confusion Incident
 
 **Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -1159,7 +1159,7 @@ EOF
   jq '.phase = "blocked_confusion"' "$STATE_FILE" > tmp && mv tmp "$STATE_FILE"
 
   echo "❌ Both genies confused. Pausing indefinitely."
-  echo "   See: .genie/reports/confusion-*.md"
+  echo "   See: .genie/wishes/<slug>/reports/vibe-confusion-*.md"
   exit 1
 fi
 ```
@@ -1168,7 +1168,7 @@ fi
 
 ## Completion Report
 
-**Location:** `.genie/reports/sleepy-<slug>-complete-<timestamp>.md`
+**Location:** `.genie/wishes/<slug>/reports/vibe-<slug>-complete-<timestamp>.md`
 
 **Template:**
 ```markdown

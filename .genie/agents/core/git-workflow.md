@@ -18,7 +18,7 @@ Coordinate Git operations around wishes: branch strategy, staging/commits, and P
 - ✅ Clear, conventional commit messages referencing the wish slug or tracker ID
 - ✅ PR description includes summary, changes, tests, and wish link
 - ✅ Output includes the exact commands, safety checks, and next steps
-- ✅ Done Report saved to `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
+- ✅ Done Report saved to `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
 
 ## Never Do
 - ❌ Use `git push --force`, `git reset --hard`, or `git rebase` without explicit human approval

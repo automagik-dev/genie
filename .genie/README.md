@@ -71,7 +71,7 @@ mcp__genie__resume with sessionId="<session-id>" and prompt="tests failing, debu
 - Contain structured implementation plans
 
 ### Reports
-- Done Reports in `.genie/reports/`
+- Done Reports in `.genie/wishes/<slug>/reports/`
 - Named as `done-<agent>-<slug>-<YYYYMMDDHHmm>.md`
 - Document execution evidence and risks
 

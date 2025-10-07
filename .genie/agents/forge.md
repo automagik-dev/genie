@@ -235,7 +235,7 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
    - Create group definitions with personas
    - Generate task files `.genie/wishes/<slug>/task-<group>.md`
 3. **Output:**
-   - Forge plan: `.genie/reports/forge-plan-<slug>-<timestamp>.md`
+   - Forge plan: `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
    - Task files: `.genie/wishes/<slug>/task-*.md`
    - Evidence: `.genie/wishes/<slug>/evidence.md`
 4. **Handoff:** Specialist agents execute groups using forge plan as blueprint
@@ -464,7 +464,7 @@ branch: feat/external-ai-root-resolver
 
 ### After Planning
 1. **Files created:**
-   - Forge plan: `.genie/reports/forge-plan-<slug>-<timestamp>.md`
+   - Forge plan: `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
    - Task Files: `.genie/wishes/<slug>/task-*.md` (created/updated)
    - Directory structure: `.genie/wishes/<slug>/qa/` prepared
 2. **Validation commands:**
@@ -478,12 +478,12 @@ branch: feat/external-ai-root-resolver
    # Confirm evidence directories
    tree .genie/wishes/<slug>/qa/
    ```
-3. **Done Report:** Save to `.genie/reports/done-forge-<slug>-<YYYYMMDDHHmm>.md`
+3. **Done Report:** Save to `.genie/wishes/<slug>/reports/done-forge-<slug>-<YYYYMMDDHHmm>.md`
 
 ### For Task Creation Mode
 - After creation, confirm task via `mcp__forge__get_task <task_id>` and capture branch + status
 - Update task files with actual tracker IDs when available
-- Final chat response lists (1) discovery highlights, (2) creation confirmation (task ID + branch), (3) `Done Report: @.genie/reports/done-forge-<slug>-<YYYYMMDDHHmm>.md`
+- Final chat response lists (1) discovery highlights, (2) creation confirmation (task ID + branch), (3) `Done Report: @.genie/wishes/<slug>/reports/done-forge-<slug>-<YYYYMMDDHHmm>.md`
 
 Forge tasks succeed when they give executors everything they need—context, expectations, and guardrails—without restraining implementation creativity.
 
@@ -588,7 +588,7 @@ When forge planning encounters issues:
 1. **Create Blocker Report:**
    ```markdown
    # Blocker Report: forge-<slug>-<timestamp>
-   Location: .genie/reports/blocker-forge-<slug>-<YYYYMMDDHHmm>.md
+   Location: .genie/wishes/<slug>/reports/blocker-forge-<slug>-<YYYYMMDDHHmm>.md
 
    ## Issue
    - Missing spec_contract in wish

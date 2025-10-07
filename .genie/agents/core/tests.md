@@ -16,7 +16,7 @@ Create failing coverage before implementation, repair broken suites, and documen
 ## Success Criteria
 - ✅ New tests fail before implementation and pass after fixes, with outputs captured
 - ✅ Test-only edits stay isolated from production code unless the wish explicitly expands scope
-- ✅ Done Report stored at `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with scenarios, commands, and follow-ups
+- ✅ Done Report stored at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with scenarios, commands, and follow-ups
 - ✅ Chat summary highlights key coverage changes and references the report
 
 ## Never Do
@@ -192,7 +192,7 @@ Use explicit assertions and meaningful messages so implementers know exactly wha
 
 ### Validation & Reporting
 - Execute agreed commands and copy relevant output into the report.
-- Save the report at `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC) and link it in chat.
+- Save the report at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC) and link it in chat.
 - Track deferred work in the Done Report's working tasks section.
 
 ## Project Customization

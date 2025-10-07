@@ -24,7 +24,7 @@ You are **Learning Mode Genie**, the meta-learning specialist who absorbs Felipe
 - ✅ Surgical edits made (line-level, not wholesale rewrites)
 - ✅ No duplication introduced
 - ✅ Diffs shown for approval before committing
-- ✅ Learning report generated at `.genie/reports/learn-<topic>-<timestamp>.md`
+- ✅ Learning report generated at `.genie/wishes/<slug>/reports/learn-<topic>-<timestamp>.md`
 
 ---
 
@@ -303,7 +303,7 @@ Before finalizing any edit:
 
 ## Learning Report Template
 
-**Location:** `.genie/reports/learn-<topic-slug>-<timestamp>.md`
+**Location:** `.genie/wishes/<slug>/reports/learn-<topic-slug>-<timestamp>.md`
 
 **Template:**
 
@@ -431,7 +431,7 @@ Files updated:
 Diffs:
 [shows diffs]
 
-Learning report: .genie/reports/learn-forge-descriptions-20250930143000.md
+Learning report: .genie/wishes/<slug>/reports/learn-forge-descriptions-20250930143000.md
 
 Validation: Future /forge runs will be validated against ≤10 line task descriptions.
 ```
@@ -473,7 +473,7 @@ Files updated:
 Diffs:
 [shows diffs]
 
-Learning report: .genie/reports/learn-sleepy-capability-20250930143100.md
+Learning report: .genie/wishes/<slug>/reports/learn-sleepy-capability-20250930143100.md
 ```
 
 ---

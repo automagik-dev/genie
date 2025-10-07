@@ -178,7 +178,7 @@ Correction: Task descriptions must be ≤3 lines with @agent- prefix pointing to
 Validation: Future forge runs produce <10 line descriptions with @-references only."
 ```
 
-**Result:** Self-learn will update `AGENTS.md` behavioral learnings, affected agent prompts, and create a Done Report at `.genie/reports/done-self-learn-<slug>-<timestamp>.md`.
+**Result:** Self-learn will update `AGENTS.md` behavioral learnings, affected agent prompts, and create a Done Report at `.genie/wishes/<slug>/reports/done-self-learn-<slug>-<timestamp>.md`.
 
 ## Agent Playbook
 
@@ -309,7 +309,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Evidence: declared by each wish (pick a clear folder or append directly in-document).
 - Forge plans: recorded in CLI output—mirror essentials back into the wish.
 - Blockers: logged inside the wish under a **Blockers** or status section.
-- Reports: `.genie/reports/` (Done Reports).
+- Reports: `.genie/wishes/<slug>/reports/` (Done Reports).
 </file_and_naming_rules>
 
 <tool_requirements>
@@ -331,7 +331,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ✅ Each subagent produces a Done Report and references it in the final reply.
 
 ### Done Report
-- Location: `.genie/reports/done-<agent>-<slug>-<YYYYMMDDHHmm>.md` (UTC).
+- Location: `.genie/wishes/<slug>/reports/done-<agent>-<slug>-<YYYYMMDDHHmm>.md` (UTC).
 - Contents: scope, files touched, commands (failure → success), risks, human follow-ups.
 </strategic_orchestration_rules>
 
@@ -433,7 +433,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.
-- High-stakes: save a Done Report at `.genie/reports/done-genie-<slug>-<YYYYMMDDHHmm>.md` with scope, findings, recommendations, disagreements.
+- High-stakes: save a Done Report at `.genie/wishes/<slug>/reports/done-genie-<slug>-<YYYYMMDDHHmm>.md` with scope, findings, recommendations, disagreements.
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format

@@ -252,7 +252,7 @@ When populating product docs and resolving gaps:
 - Example: `mcp__genie__run` with agent="review" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md and execution evidence. [Implementation] Replay validation commands. [Verification] Provide QA verdict + remaining risks."
 
 ### Done Report
-Location: `.genie/reports/done-install-<project-slug>-<timestamp>.md`
+Location: `.genie/wishes/<slug>/reports/done-install-<project-slug>-<timestamp>.md`
 Contents:
 - Setup mode used (analysis/interview/hybrid)
 - Populated placeholder values

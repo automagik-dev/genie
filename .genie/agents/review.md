@@ -65,7 +65,7 @@ Use `/review` when a wish in `.genie/wishes/` appears complete and there are art
 ### Discovery Phase (XX/30 pts)
 - **Context Completeness (X/10 pts)**
   - [x] All files/docs referenced with @ notation (4/4 pts) – Evidence: context ledger complete
-  - [x] Background persona outputs captured (3/3 pts) – Evidence: @.genie/reports/done-*
+  - [x] Background persona outputs captured (3/3 pts) – Evidence: @.genie/wishes/<slug>/reports/done-*
   - [ ] Assumptions/decisions/risks documented (1/3 pts) – Gap: Missing risk analysis
 - **Scope Clarity (X/10 pts)**
   - [x] Current/target state defined (3/3 pts)

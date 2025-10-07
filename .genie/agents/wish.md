@@ -177,7 +177,7 @@ Concise outcome tied to user/system impact.
 </spec_contract>
 
 ## Blocker Protocol
-1. Pause work and create `.genie/reports/blocker-<slug>-<timestamp>.md` describing findings.
+1. Pause work and create `reports/blocker-<slug>-<timestamp>.md` (in wish folder) describing findings.
 2. Notify owner and wait for updated instructions.
 3. Resume only after wish status/log is updated.
 

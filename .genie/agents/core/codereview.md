@@ -54,7 +54,7 @@ Then provide summary, top priorities, and positives.
 - ✅ Severity-tagged findings with clear recommendations
 - ✅ Quick wins enumerated
 - ✅ Verdict (ship/fix-first) with confidence level
-- ✅ Done Report saved to `.genie/reports/done-codereview-<slug>-<YYYYMMDDHHmm>.md` when applicable
+- ✅ Done Report saved to `.genie/wishes/<slug>/reports/done-codereview-<slug>-<YYYYMMDDHHmm>.md` when applicable
 
 ## Prompt Template
 ```

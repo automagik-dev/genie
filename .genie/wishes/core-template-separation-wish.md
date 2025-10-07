@@ -99,6 +99,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 **Genie's Structure (Meta-Level):**
 - `.genie/agents/` keeps entrypoints at the root (plan, wish, forge, review, orchestrator, vibe) and delivery/utility prompts under `core/`
 - `.genie/custom/` stores project overrides that core prompts auto-include when present
+- `.genie/custom/` stores project overrides that core prompts auto-include when present
 - `.claude/commands/` and `.claude/agents/` provide slash command and Task tool aliases via @include
 - `templates/` directory exists at repo root with initial `.claude/commands/` structure
 - MCP server published as `automagik-genie` npm package
@@ -290,13 +291,13 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 ```
 .genie/agents/
-├── plan.md
-├── wish.md
-├── forge.md
-├── review.md
-├── orchestrator.md
-├── vibe.md
-├── core/                    # Delivery + utility prompts packaged with Genie
+├── plan.md                 # Entrypoint (immutable)
+├── wish.md                 # Entrypoint (immutable)
+├── forge.md                # Entrypoint (immutable)
+├── review.md               # Entrypoint (immutable)
+├── orchestrator.md         # Entrypoint (immutable)
+├── vibe.md                 # Entrypoint (immutable)
+├── core/                   # Delivery + utility prompts packaged with Genie
 │   ├── analyze.md
 │   ├── bug-reporter.md
 │   ├── commit.md
@@ -313,7 +314,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 │   └── README.md
 └── README.md
 
-.genie/custom/               # Project-level overrides loaded by core prompts
+.genie/custom/              # Project-level overrides loaded by core prompts
 ├── analyze.md
 ├── bug-reporter.md
 ├── git-workflow.md

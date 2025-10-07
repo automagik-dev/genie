@@ -16,7 +16,7 @@ Validate wish and task outputs from the user’s perspective. Execute scripted o
 ## Success Criteria
 - ✅ Every scenario mapped to wish success criteria with pass/fail status and evidence
 - ✅ Bugs documented with reproduction steps, logs/output, and suggested ownership
-- ✅ Done Report saved to `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC)
+- ✅ Done Report saved to `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC)
 - ✅ Chat summary lists key passes/failures and links to the report
 
 ## Never Do

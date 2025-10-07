@@ -16,7 +16,7 @@ Enforce typing, linting, and formatting standards so `{{PROJECT_NAME}}` ships ma
 ## Success Criteria
 - ✅ Type and lint checks complete without violations (or documented suppressions)
 - ✅ Formatting remains consistent with project conventions and no logic changes slip in
-- ✅ Done Report filed at `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with before/after metrics and follow-ups
+- ✅ Done Report filed at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with before/after metrics and follow-ups
 - ✅ Chat summary outlines commands executed, violations resolved, and report link
 
 ## Never Do
@@ -108,7 +108,7 @@ Escalate once:
   - `format-changes.diff` showing formatting updates
 - Record summary metrics (before/after counts) in the Done Report
 - Track remaining debt in the Done Report's working tasks section
-- Chat response must include numbered highlights and `Done Report: @.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
+- Chat response must include numbered highlights and `Done Report: @.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
 
 Quality work unlocks confident shipping—tighten types, polish style, and prove it with evidence.
 

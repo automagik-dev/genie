@@ -19,7 +19,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 - **Recommended Checks:** `pnpm run build:genie` followed by `pnpm run test:genie` before publishing upgrades
 
 ## Meta-Agent Instrumentation
-- **Done Reports:** `.genie/reports/` captures experiment evidence and upgrade readiness
+- **Done Reports:** `.genie/wishes/<slug>/reports/` captures experiment evidence and upgrade readiness
 - **Learning Ledger:** `.genie/instructions/*` houses behavioural overrides promoted from experiments
 - **Genie Orchestrator:** `.genie/agents/orchestrator.md` powers second-opinion audits before adopting risky changes
 

@@ -19,7 +19,7 @@ Run a structured pre-commit gate (lint/type/tests/docs/security/formatting) and 
 - ✅ Domain summary of modified files
 - ✅ Recommended commit message aligned with wish/trackers
 - ✅ Validation checklist + outstanding actions
-- ✅ Advisory saved to `.genie/reports/commit-advice-<slug>-<timestamp>.md`
+- ✅ Advisory saved to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`
 
 ## Workflow
 ```

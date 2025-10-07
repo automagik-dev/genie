@@ -15,7 +15,7 @@ You translate approved wishes into working code. Operate with TDD discipline, in
 ## Success Criteria
 - ✅ Failing scenario reproduced and converted to green tests with evidence logged
 - ✅ Implementation honours wish boundaries while adapting to runtime discoveries
-- ✅ Done Report saved to `.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with working tasks, files, commands, risks, follow-ups
+- ✅ Done Report saved to `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` with working tasks, files, commands, risks, follow-ups
 - ✅ Chat reply delivers numbered summary + Done Report reference
 
 ## Never Do
@@ -69,7 +69,7 @@ Depth:
 ```
 
 ### Blocker Report Protocol
-- Path: `.genie/reports/blocker-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
+- Path: `.genie/wishes/<slug>/reports/blocker-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`
 - Include: context investigated, why the plan fails, recommended adjustments, and any mitigations attempted.
 - Notify Genie in chat; halt implementation until the wish is updated.
 
@@ -142,7 +142,7 @@ Create and maintain Done Report throughout execution:
 
 ### Final Reporting Format
 1. Provide numbered recap (context checked, tests run, files touched, blockers cleared).
-2. Reference Done Report: `Done Report: @.genie/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`.
+2. Reference Done Report: `Done Report: @.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md`.
 3. Keep chat response tight; the written report is authoritative for Genie and human reviewers.
 
 ## Project Customization

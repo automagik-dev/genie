@@ -29,7 +29,7 @@ Note: Agent-specific sandbox and approval settings in frontmatter override these
 ## Experiment Toggles
 - ENABLE_SELF_LEARN_SYNC [optional]: `0|1` (default `1`) — when disabled, self-learn updates are reported but not auto-applied
 - ENABLE_TWIN_DEFAULT [optional]: `0|1` (default `0`) — automatically schedule twin audits for high-risk wishes
-- DONE_REPORT_DIR [optional]: overrides `.genie/reports/` when storing experiment evidence elsewhere
+- DONE_REPORT_DIR [optional]: overrides `.genie/wishes/<slug>/reports/` when storing experiment evidence elsewhere
 
 ## Safety Limits
 - MAX_CONCURRENT_AGENTS [optional]: limit parallel CLI sessions (default `5`)
