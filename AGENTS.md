@@ -18,7 +18,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (bug-reporter, git-workflow, implementor, polish, qa, tests, commit, codereview, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- Specialized + delivery agents (git-workflow, implementor, polish, qa, tests, commit, codereview, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -119,14 +119,14 @@ Guidance:
 ## Chat-Mode Helpers (Scoped Use Only)
 Genie can handle small, interactive requests without entering Plan → Wish when the scope is clearly limited. Preferred helpers:
 
-- `core/debug` – root-cause investigations or “why is this broken?” questions
+- `core/debug` – root-cause investigations or "why is this broken?" questions
 - `core/codereview` – quick reviews of a small diff/file for severity-tagged feedback
 - `core/analyze` – explain current architecture or module behaviour at a high level
-- `core/thinkdeep` – timeboxed exploratory reasoning/research
+- `core/explore` – discovery-focused exploratory reasoning/research
 - `core/consensus` / `core/challenge` – pressure-test decisions or assumptions rapidly
 - `core/prompt` – rewrite instructions, wish sections, or prompts on the fly
 
-If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug reports that need tracking should route through the **bug-reporter** agent so evidence is captured and filed as an issue.
+If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug investigations should use **debug** mode for root-cause analysis.
 
 ## Subagents & Genie via MCP
 - Start subagent: `mcp__genie__run` with agent and prompt parameters
@@ -329,7 +329,7 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Choose agents by task type using routing aliases.
 
 ### Routing Aliases
-- bug-reporter, git-workflow, implementor, polish, qa, tests, planner, genie, vibe, learn.
+- git-workflow, implementor, polish, qa, tests, planner, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
@@ -378,38 +378,47 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 ### Mode Usage
 Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
 
-**Available modes:**
-- `planning` – pressure-test plans, map phases, uncover risks
-- `consensus` – evaluate contested decisions with counterpoints
+**Core Reasoning Modes (3):**
+- `challenge` – critical evaluation (auto-routes to socratic/debate/direct challenge)
+- `explore` – discovery-focused exploratory reasoning
+- `consensus` – multi-model perspective synthesis
+
+**Specialized Modes (13):**
+- `plan` – pressure-test plans, map phases, uncover risks
 - `analyze` / `deep-dive` – investigate architecture, dependencies, or domain questions
-- `thinkdeep` – timeboxed exploratory reasoning
 - `debug` – structured root-cause investigation
-- `socratic` / `debate` / `challenge` – interrogate assumptions from multiple angles
 - `risk-audit` – enumerate top risks and mitigations
 - `design-review` – assess components for coupling, scalability, simplification
 - `test-strategy` / `testgen` – outline layered testing or propose concrete tests
-- `compliance` – map controls, evidence, sign-offs
-- `retrospective` – capture wins, misses, lessons, next actions
 - `refactor` – staged refactor planning
 - `docgen` – audience-targeted outline
 - `secaudit` – security posture review
 - `tracer` – instrumentation/observability plan
 - `codereview` – severity-tagged review
 - `precommit` – validation gate and commit advisory
-- delivery agents (`bug-reporter`, `git-workflow`, `implementor`, `polish`, `qa`, `tests`)
+
+**Custom-Only Modes (2):**
+- `compliance` – map controls, evidence, sign-offs
+- `retrospective` – capture wins, misses, lessons, next actions
+
+**Delivery Agents (not modes):**
+- `git-workflow`, `implementor`, `polish`, `qa`, `tests`
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 
 ### How To Run (MCP)
-- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
+- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: plan. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
 ### Modes (quick reference)
-- planning, consensus, analyze, deep-dive, debug, socratic, debate, challenge, risk-audit, design-review, test-strategy, compliance, retrospective, refactor, testgen, docgen, secaudit, tracer, codereview, precommit.
-- Full prompt templates live in `@.genie/agents/orchestrator.md`.
-- Project-specific adjustments belong in `.genie/custom/<mode>.md`; the core prompt auto-loads them.
+**Core (3):** challenge, explore, consensus
+**Specialized (13):** plan, analyze, deep-dive, debug, risk-audit, design-review, test-strategy, testgen, refactor, docgen, secaudit, tracer, codereview, precommit
+**Custom-only (2):** compliance, retrospective
+
+- Full prompt templates live in `.genie/agents/orchestrator.md`
+- Project-specific adjustments belong in `.genie/custom/<mode>.md`; the core prompt auto-loads them
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.

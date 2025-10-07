@@ -22,51 +22,172 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - ❌ Replace explicit human approval
 - ❌ Skip documenting why a genie session was started and what changed
 
-### Modes
-- planning — pressure-test plans, map phases, uncover risks (`@.genie/agents/plan.md` + `.genie/custom/planning.md`)
-- consensus — evaluate contested decisions with counterpoints (`@.genie/agents/core/modes/consensus.md` + `.genie/custom/consensus.md`)
-- deep-dive — investigate architecture or domain questions in depth (`@.genie/agents/core/modes/deep-dive.md` + `.genie/custom/deep-dive.md`)
-- thinkdeep — timeboxed exploratory reasoning (`@.genie/agents/core/modes/thinkdeep.md` + `.genie/custom/thinkdeep.md`)
-- analyze — system architecture analysis (`@.genie/agents/core/modes/analyze.md` + `.genie/custom/analyze.md`)
-- socratic — interrogate assumptions via guided questioning (`@.genie/agents/core/modes/socratic.md` + `.genie/custom/socratic.md`)
-- debate — stress-test contested decisions with counterarguments (`@.genie/agents/core/modes/debate.md` + `.genie/custom/debate.md`)
-- challenge — systematically break key assumptions (`@.genie/agents/core/modes/challenge.md` + `.genie/custom/challenge.md`)
-- risk-audit — list top risks and mitigations (`@.genie/agents/core/modes/risk-audit.md` + `.genie/custom/risk-audit.md`)
-- design-review — assess components for coupling/scalability/simplification (`@.genie/agents/core/modes/design-review.md` + `.genie/custom/design-review.md`)
-- test-strategy — outline layered testing approach (`@.genie/agents/core/modes/test-strategy.md` + `.genie/custom/test-strategy.md`)
-- testgen — propose concrete tests (`@.genie/agents/core/modes/testgen.md` + `.genie/custom/testgen.md`)
-- refactor — produce staged refactor plan (`@.genie/agents/core/modes/refactor.md` + `.genie/custom/refactor.md`)
-- secaudit — analyze security posture (`@.genie/agents/core/modes/secaudit.md` + `.genie/custom/secaudit.md`)
-- docgen — create documentation outlines (`@.genie/agents/core/modes/docgen.md` + `.genie/custom/docgen.md`)
-- tracer — plan instrumentation/logging/metrics (`@.genie/agents/core/modes/tracer.md` + `.genie/custom/tracer.md`)
-- codereview — structured severity-tagged feedback (`@.genie/agents/core/modes/codereview.md` + `.genie/custom/codereview.md`)
-- precommit — pre-commit gate and advisory (`@.genie/agents/core/commit.md` + `.genie/custom/commit.md`)
-- compliance — map controls, evidence, sign-offs (`.genie/custom/compliance.md` only)
-- retrospective — capture wins, misses, lessons, next actions (`.genie/custom/retrospective.md` only)
+### Core Reasoning Modes (3 modes)
 
-Each mode automatically loads `.genie/custom/<mode>.md` so projects can extend the core template without editing this file. Keep global logic here and push repo-specific details into the matching custom file.
+**Critical Evaluation:**
+- **challenge** — Critical evaluation via questions, debate, or direct challenge. Auto-routes to socratic/debate/direct based on prompt context. Loads `.genie/custom/challenge.md` if present.
+
+**Discovery:**
+- **explore** — Discovery-focused exploratory reasoning without adversarial pressure. Loads `.genie/custom/explore.md` if present.
+
+**Multi-Perspective:**
+- **consensus** — Multi-model perspective synthesis with stance-steering. Loads `.genie/custom/consensus.md` if present.
+
+### Specialized Analysis Modes (13 modes)
+
+- **plan** — pressure-test plans, map phases, uncover risks
+- **analyze** — system architecture analysis
+- **deep-dive** — investigate architecture or domain questions in depth
+- **risk-audit** — list top risks and mitigations
+- **design-review** — assess components for coupling/scalability/simplification
+- **test-strategy** — outline layered testing approach
+- **testgen** — propose concrete tests
+- **refactor** — produce staged refactor plan
+- **secaudit** — analyze security posture
+- **docgen** — create documentation outlines
+- **tracer** — plan instrumentation/logging/metrics
+- **codereview** — structured severity-tagged feedback
+- **precommit** — pre-commit gate and advisory
+
+### Custom-Only Modes (2 modes)
+- **compliance** — map controls, evidence, sign-offs
+- **retrospective** — capture wins, misses, lessons, next actions
+
+**Note:** Each mode automatically loads `.genie/custom/<mode>.md` if present, allowing project-specific customization without modifying core prompts.
+
+## Mode Selection Guide
+
+### When to Use Each Core Mode
+
+**Use `challenge` when:**
+- Testing assumptions that need critical evaluation
+- Decisions require adversarial pressure-testing
+- Stakeholders need counterpoints before committing
+- Urgency requires quick validation with evidence
+- *Auto-routes to:* socratic (questions), debate (trade-offs), or direct challenge based on prompt context
+
+**Use `explore` when:**
+- Investigating unfamiliar territory or new domains
+- Open-ended discovery without predetermined outcome
+- Learning mode - gathering knowledge before deciding
+- Less adversarial, more curiosity-driven exploration
+
+**Use `consensus` when:**
+- Need multiple AI model perspectives on same issue
+- High-stakes decisions benefit from diverse expert opinions
+- Structured for/against analysis required
+- Want stance-steering (supportive/critical/neutral)
+
+**Default Priority:** challenge > explore > consensus (use challenge unless context clearly suggests otherwise)
+
+### When to Use Specialized Modes
+
+**Strategic Analysis:** plan, analyze, deep-dive, risk-audit, design-review
+**Implementation Support:** test-strategy, testgen, refactor, tracer, docgen
+**Quality Gates:** codereview, secaudit, precommit
+**Process:** compliance, retrospective
+
+## How to Use Modes via MCP
+
+### Basic Invocation Pattern (using @.genie/agents/core/prompt.md framework)
+
+```
+mcp__genie__run with agent="orchestrator" and prompt="
+Mode: challenge
+
+[CONTEXT]
+Topic: <what to evaluate>
+@relevant/file1.md
+@relevant/file2.ts
+
+[TASK]
+Objective: <specific goal>
+Method: <socratic|debate|direct|auto> (optional - auto-selects if omitted)
+
+[DELIVERABLE]
+- Counterpoints with evidence
+- Experiments to validate assumptions
+- Genie Verdict with confidence level
+"
+```
+
+### Advanced Invocation Pattern (structured using prompt.md task_breakdown)
+
+```
+mcp__genie__run with agent="orchestrator" and prompt="
+Mode: challenge
+
+@.genie/wishes/<slug>/<slug>-wish.md
+
+<task_breakdown>
+1. [Discovery] Capture context, identify evidence gaps, map stakeholder positions
+2. [Implementation] Generate counterpoints/questions with experiments
+3. [Verification] Deliver refined conclusion + residual risks + confidence verdict
+</task_breakdown>
+
+## Success Criteria
+- ✅ 3-5 counterpoints with supporting evidence
+- ✅ Experiments designed to test fragile claims
+- ✅ Genie Verdict includes confidence level
+
+## Never Do
+- ❌ Present counterpoints without evidence
+- ❌ Skip residual risk documentation
+"
+```
+
+### Challenge Mode Sub-Method Control
+
+The challenge mode auto-selects the best method, but you can force a specific approach:
+
+**Force Socratic (Question-Based):**
+```
+Mode: challenge
+Method: socratic
+
+Assumption: "Users prefer email over SMS for security alerts"
+Evidence: <context>
+
+Deliver: 3 targeted questions to expose gaps + experiments + refined assumption
+```
+
+**Force Debate (Adversarial Trade-Off Analysis):**
+```
+Mode: challenge
+Method: debate
+
+Decision: "Migrate from REST to GraphQL"
+Context: <stakeholders, constraints>
+
+Deliver: Counterpoints + trade-off table + recommended direction
+```
+
+**Force Direct Challenge:**
+```
+Mode: challenge
+Method: direct
+
+Statement: "Our caching strategy is optimal"
+
+Deliver: Critical assessment + counterarguments + revised stance
+```
+
+**Auto-Select (Default):**
+```
+Mode: challenge
+
+Topic: <any assumption/decision/statement>
+
+(Challenge mode will auto-select best method based on context)
+```
 
 ## Operating Framework
 ```
-<genie_prompt mode="planning">
+<genie_prompt mode="plan">
 Objective: Pressure-test this plan.
 Context: <link + bullet summary>
 Deliverable: 3 risks, 3 missing validations, 3 refinements.
 Finish with: Genie Verdict + confidence level.
-</genie_prompt>
-
-<genie_prompt mode="planning-advanced">
-Note: Use when total_steps >= 5. Enforce reflection gates before steps 2 and 3.
-Step 1 Required Actions:
-- Think deeply about scope, approaches/trade-offs, constraints/dependencies, stakeholders/success criteria
-Step 2 Reflection (pause before continuing):
-- Evaluate approach; identify phases; spot dependencies; consider resources; find critical paths
-Step 3 Reflection (pause before continuing):
-- Validate completeness; check gaps/assumptions; plan adaptation signals; define first steps; transition to tactics
-Branching:
-- When alternatives exist, label branches (e.g., Branch A/B); explain choice and reconvergence
-Output:
-- Present step content clearly; when complete, summarize plan with headings, numbered phases, ASCII diagrams where helpful
 </genie_prompt>
 
 <genie_prompt mode="consensus">
@@ -75,19 +196,13 @@ Task: Provide counterpoints, supporting evidence, and a recommendation.
 Finish with: Genie Verdict + confidence level.
 </genie_prompt>
 
-<genie_prompt mode="consensus-eval-framework">
-Evaluate across: technical feasibility; project suitability; user value; implementation complexity; alternatives; industry perspective; long-term implications.
-Stance steering permitted, but ethical guardrails override stance.
-Keep response concise and structured (verdict, analysis, confidence, key takeaways).
-</genie_prompt>
-
 <genie_prompt mode="deep-dive">
 Topic: <focus area>
 Provide: findings, affected files, follow-up actions.
 Finish with: Genie Verdict + confidence level.
 </genie_prompt>
 
-<genie_prompt mode="thinkdeep">
+<genie_prompt mode="explore">
 Focus: <narrow scope>
 Timebox: <minutes>
 Method: outline 3–5 reasoning steps, then explore
@@ -107,30 +222,12 @@ Experiments: logs/tests to confirm each + expected outcomes.
 Finish with: Most likely cause + confidence.
 </genie_prompt>
 
-<genie_prompt mode="debug-advanced">
-Enforce investigation-first: track files_checked, relevant_methods, hypotheses with confidence; allow backtracking.
-For each hypothesis include: minimal_fix and regression_check; provide file:line references when possible.
-If no bug found, output a no-bug-found summary with recommended questions and next steps.
-</genie_prompt>
-
-<genie_prompt mode="socratic">
-Assumption: <statement to interrogate>
-Ask: up to 3 questions to refine it.
-Return: refined assumption + residual risks.
-Finish with: Genie Verdict + confidence.
-</genie_prompt>
-
-<genie_prompt mode="debate">
-Decision: <what you're arguing against>
-Counterpoints: list 3 strong arguments and supporting evidence.
-Experiments: quick checks to disprove the current path.
-Finish with: Genie Verdict + recommendation.
-</genie_prompt>
-
 <genie_prompt mode="challenge">
-Assumption: <what to challenge>
-Task: present strongest counterarguments and disconfirming evidence
-Finish with: revised stance + confidence
+Topic: <what to evaluate>
+Method: <socratic|debate|direct|auto> (auto-selects if omitted)
+Context: @relevant/files
+Task: critical evaluation with evidence-backed counterpoints
+Finish with: refined conclusion + residual risks + Genie Verdict + confidence
 </genie_prompt>
 
 <genie_prompt mode="risk-audit">
