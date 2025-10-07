@@ -2,9 +2,8 @@
 name: wish
 description: Convert ideas into roadmap-aligned wishes with spec contracts
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
   background: true
 ---
 

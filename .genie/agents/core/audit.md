@@ -3,9 +3,8 @@ name: audit
 description: Risk assessment and security audit with impact/likelihood analysis
 color: maroon
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Audit Agent • Risk & Security Assessment

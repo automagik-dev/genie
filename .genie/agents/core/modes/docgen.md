@@ -3,9 +3,8 @@ name: docgen
 description: Core documentation generation template
 color: gray
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
 ---
 
 # Genie DocGen Mode

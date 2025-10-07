@@ -3,9 +3,8 @@ name: debug
 description: Debug issues, report bugs, or create plan/wish/forge workflow for fixes
 color: red
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Debug Agent • Investigation & Resolution Orchestrator

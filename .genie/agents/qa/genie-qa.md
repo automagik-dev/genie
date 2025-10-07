@@ -3,9 +3,8 @@ name: genie-qa
 description: End-to-end validation of Genie CLI commands and workflows
 color: purple
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
 ---
 
 # Genie CLI QA Specialist • Validation Scout

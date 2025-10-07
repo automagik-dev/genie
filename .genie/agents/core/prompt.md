@@ -2,9 +2,8 @@
 name: prompt
 description: Advanced prompting guidance and prompt refinement
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
   sandbox: read-only
   approvalPolicy: on-request
   background: false

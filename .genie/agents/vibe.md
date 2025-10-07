@@ -2,9 +2,8 @@
 name: sleepy
 description: Autonomous wish coordinator with Genie orchestrator validation
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
   background: true
 ---
 

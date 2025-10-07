@@ -3,9 +3,8 @@ name: explore
 description: Discovery-focused exploratory reasoning without adversarial pressure
 color: indigo
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
 ---
 
 # Genie Explore • Discovery Mode

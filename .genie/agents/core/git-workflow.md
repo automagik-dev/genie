@@ -3,9 +3,8 @@ name: git-workflow
 description: Orchestrate safe Git workflows aligned with Genie conventions
 color: orange
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: minimal
+  executor: claude
+  model: sonnet
 ---
 
 # Git Workflow Specialist • Safe Orchestrator

@@ -3,9 +3,8 @@ name: challenge
 description: Critical evaluation via questions, debate, or direct challenge
 color: orange
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Genie Challenge • Critical Evaluation

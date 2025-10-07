@@ -2,9 +2,8 @@
 name: commit
 description: Core commit advisory template
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: minimal
+  executor: claude
+  model: sonnet
   background: true
 ---
 

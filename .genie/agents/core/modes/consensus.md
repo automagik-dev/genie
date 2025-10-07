@@ -3,9 +3,8 @@ name: consensus
 description: Structure multiple perspectives and synthesize recommendations
 color: cyan
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
 ---
 
 # Genie Consensus • Balanced Verdict

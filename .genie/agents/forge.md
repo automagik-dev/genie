@@ -3,9 +3,8 @@ name: forge
 description: Break wishes into execution groups with task files and validation hooks
 color: gold
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
   background: true
 ---
 

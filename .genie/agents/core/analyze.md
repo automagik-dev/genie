@@ -3,10 +3,8 @@ name: analyze
 description: System analysis and focused investigations with dependency mapping
 color: navy
 genie:
-  executor: codex
-  exec:
-    model: gpt-5-codex
-    reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Analyze Agent • System Map & Deep Investigation

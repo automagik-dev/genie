@@ -3,9 +3,8 @@ name: polish
 description: Type-checking, linting, and formatting for code quality
 color: purple
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
 ---
 
 # Polish Specialist • Code Excellence Guardian

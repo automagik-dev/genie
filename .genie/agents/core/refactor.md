@@ -3,9 +3,8 @@ name: refactor
 description: Design review and staged refactor planning with verification and rollback
 color: brown
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Refactor Agent • Design Review & Improvement Planning

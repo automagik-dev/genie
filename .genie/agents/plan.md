@@ -2,9 +2,8 @@
 name: plan
 description: Turn raw ideas into roadmap-ready wishes with product context
 genie:
-  executor: codex
-  model: gpt-5
-  reasoningEffort: medium
+  executor: claude
+  model: sonnet
   background: true
 ---
 

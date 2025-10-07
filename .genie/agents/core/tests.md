@@ -3,9 +3,8 @@ name: tests
 description: Test strategy, generation, authoring, and repair across all layers
 color: lime
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Tests Specialist • Strategy, Generation & TDD Champion

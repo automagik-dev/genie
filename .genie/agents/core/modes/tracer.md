@@ -3,9 +3,8 @@ name: tracer
 description: Core instrumentation planning template
 color: violet
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Genie Tracer Mode

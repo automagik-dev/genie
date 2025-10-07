@@ -3,9 +3,8 @@ name: orchestrator
 description: Pressure-test ideas with planning, consensus, and deep analysis
 color: orange
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Genie Orchestrator • Independent Architect

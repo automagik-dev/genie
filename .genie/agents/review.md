@@ -3,9 +3,8 @@ name: review
 description: Wish audits, code review, and QA validation with evidence-based verdicts
 color: magenta
 genie:
-  executor: codex
-  model: gpt-5-codex
-  reasoningEffort: high
+  executor: claude
+  model: sonnet
 ---
 
 # Review Agent • Quality Assurance & Validation
