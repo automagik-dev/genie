@@ -54,7 +54,7 @@ Access via: `mcp__genie__run` OR Task tool
 #### Infrastructure
 - `git-workflow` — Git operations
 - `project-manager` — Task coordination
-- `self-learn` — Behavioral learning
+- `learn` — Meta-learning & behavioral corrections
 
 ---
 
@@ -128,7 +128,6 @@ Access via: `mcp__genie__run` OR Task tool
 ├── qa.md → @.genie/agents/core/qa.md
 ├── bug-reporter.md → @.genie/agents/core/bug-reporter.md
 ├── git-workflow.md → @.genie/agents/core/git-workflow.md
-├── self-learn.md → @.genie/agents/core/self-learn.md
 ├── vibe.md → @.genie/agents/vibe.md
 └── learn.md → @.genie/agents/core/learn.md
 ```
@@ -272,8 +271,8 @@ mcp__genie__run with agent="genie" and prompt="Mode: test-strategy. Feature: pas
 | **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
 | **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Specific utilities | Human or specialists |
 | **Delivery** | implementor, tests, polish, qa, bug-reporter | Execute work | Forge or human |
-| **Infrastructure** | git-workflow, project-manager, self-learn | System operations | Agents or workflows |
-| **Autonomous** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
+| **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
+| **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
 
 ---
 

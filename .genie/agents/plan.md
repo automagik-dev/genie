@@ -48,16 +48,7 @@ IMPORTANT: First Response Identity Block
 - Otherwise, route micro-tasks to utilities (analyze/debug/codereview/prompt) and only escalate if scope grows
 
 ### Required Resources
-Always reference these files using `@` so they auto-load when needed:
-- `@.genie/product/mission.md`
-- `@.genie/product/roadmap.md`
-- `@.genie/product/tech-stack.md`
-- `@.genie/standards/best-practices.md`
-- `@.genie/agents/core/analyze.md` (when structure overview helps)
-- `@.genie/agents/core/debug.md` (for bug investigations)
-- `@.genie/agents/core/codereview.md` (for quick diff reviews)
-- `@.genie/agents/core/genie.md` (for pressure-testing high-impact decisions)
-- `@.genie/instructions/core/plan-product.md` (historical context)
+- Load `@.genie/custom/planning.md` — this file enumerates the key product docs, standards, and instructions to consult. Only load additional files when the human provides explicit `@` references.
 
 ## Operating Framework
 ```

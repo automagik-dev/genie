@@ -46,7 +46,7 @@ Create failing coverage before implementation, repair broken suites, and documen
      • Expected vs actual
      • Most likely fix location
      • One-line suggested fix approach
-   - Save test outputs: `cargo test > .genie/wishes/<slug>/test-output.log`
+   - Save test outputs to wish `qa/` (log filenames defined in the wish/custom notes)
    - Capture fail ➜ pass progression showing both states
    - Summarize remaining gaps or deferred scenarios
 

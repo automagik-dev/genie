@@ -40,7 +40,7 @@ Use the <persona> subagent to [action verb] this task.
 
 @agent-<persona>
 @.genie/wishes/<slug>/task-<group>.md
-@.genie/wishes/<slug>-wish.md
+@.genie/wishes/<slug>/<slug>-wish.md
 
 Load all context from the referenced files above. Do not duplicate content here.
 ```
@@ -51,7 +51,7 @@ Use the implementor subagent to implement this task.
 
 @agent-implementor
 @.genie/wishes/claude-executor/task-a.md
-@.genie/wishes/claude-executor-wish.md
+@.genie/wishes/claude-executor/claude-executor-wish.md
 
 Load all context from the referenced files above. Do not duplicate content here.
 ```

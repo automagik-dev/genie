@@ -8,7 +8,7 @@ This directory contains agent definitions that power GENIE's intelligent orchest
 - **Custom Overrides (`custom/`)** – repo-specific extensions that auto-include alongside the core prompts.
 - **QA (`qa/`)** – Genie-only validation agents.
 
-> **Note:** Phase 1 of the same wish will merge the `self-learn` and `learn` personas into a single meta-learning agent; both files remain for now to avoid breaking workflows.
+> **Note:** `learn` is the unified meta-learning agent; the legacy `self-learn` prompt has been retired.
 
 Each agent is a specialized persona with specific expertise and behavioral patterns.
 

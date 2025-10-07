@@ -44,7 +44,7 @@ mcp__genie__list_sessions
 - **forge-quality** - Code quality enforcement
 - **forge-hooks** - Hook configuration specialist
 - **forge-qa-tester** - QA and testing coordinator
-- **forge-self-learn** - Behavioral learning and improvement
+- **learn** - Unified behavioral learning and improvement
 
 #### Local agents in this repo
 - **evaluator** – {{DOMAIN}} evaluation rubric and scoring prompt (`.genie/agents/evaluator.md`)

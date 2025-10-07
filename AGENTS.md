@@ -31,7 +31,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/wishes/` – active wish folders (`<slug>/<slug>-wish.md`, `qa/`, `reports/`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
-- `.genie/custom/` – project-specific overrides for specialists and Genie modes (kept outside `agents/` to avoid double registration)
+- `.genie/custom/` – project-specific overrides for core agents and Genie modes (kept outside `agents/` to avoid double registration)
 - Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
@@ -52,7 +52,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - Background agent outputs are summarised in the wish context ledger; raw logs can be viewed with `mcp__genie__view` with sessionId parameter.
 
 ## Testing & Evaluation
-- Evaluation tooling is optional. If a project adds its own evaluator specialist, `/review` or `/plan` can reference it; otherwise, evaluation steps default to manual validation.
+- Evaluation tooling is optional. If a project adds its own evaluator agent, `/review` or `/plan` can reference it; otherwise, evaluation steps default to manual validation.
 - Typical metrics: `{{METRICS}}` such as latency or quality. Domain-specific metrics should be added per project in the wish/forge plan.
 - Validation hooks should be captured in wishes/forge plans (e.g., `pnpm test`, `cargo test`, metrics scripts).
 
@@ -126,7 +126,7 @@ Genie can handle small, interactive requests without entering Plan → Wish when
 - `core/consensus` / `core/challenge` – pressure-test decisions or assumptions rapidly
 - `core/prompt` – rewrite instructions, wish sections, or prompts on the fly
 
-If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug reports that need tracking should route through the **bug-reporter** specialist so evidence is captured and filed as an issue.
+If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug reports that need tracking should route through the **bug-reporter** agent so evidence is captured and filed as an issue.
 
 ## Subagents & Genie via MCP
 - Start subagent: `mcp__genie__run` with agent and prompt parameters
@@ -139,46 +139,26 @@ Genie prompt patterns (run through any agent, typically `plan`):
 - Consensus Loop: "Challenge my conclusion. Provide counterpoints, evidence, and a recommendation. Finish with Genie Verdict + confidence."
 - Focused Deep-Dive: "Investigate <topic>. Provide findings, affected files, follow-ups."
 
-## Self-Learn & Behavioral Corrections
+## Meta-Learn & Behavioral Corrections
 
-> **Status:** Meta-learning consolidation is still underway; both the legacy `self-learn` agent and the new `learn` persona coexist until Phase 1 of `@.genie/wishes/core-template-separation/core-template-separation-wish.md` lands.
-
-Use the `self-learn` agent to record violations and propagate corrections across the framework.
+Use the unified `learn` meta-learning agent to capture violations, new patterns, workflows, and capabilities in one place. It records behavioural guardrails, propagates edits, and produces evidence reports.
 
 **When to Use:**
-- ✅ You violated a behavioral rule (e.g., deleted a file without approval)
-- ✅ User identifies a recurring pattern that needs correction
-- ✅ A bug reveals a gap in agent instructions
-- ✅ New guardrail needs to be enforced across all agents
+- ✅ A behavioural rule was violated and needs a corrective entry
+- ✅ A recurring pattern or workflow must be documented across agents
+- ✅ A new capability or guardrail affects multiple prompts/docs
+- ✅ You need to log evidence and monitoring plans for future validation
 
 **How to Invoke:**
-```
-mcp__genie__run with agent="self-learn" and prompt="Violation: [description]
-Evidence: [logs/diffs/screenshots]
-Impact: [which agents/docs affected]
-Correction: [what should happen instead]
-Validation: [how to verify fix]"
-```
+1. `/learn "Violation: …"`, `/learn "Pattern: …"`, etc. (preferred for slash-command flows)
+2. `mcp__genie__run with agent="learn" and prompt="<Teaching input block>"` (for MCP execution)
 
 **Anti-Patterns:**
-- ❌ Manually editing `AGENTS.md` behavioral learnings without using self-learn
-- ❌ Ignoring violations hoping they won't recur
-- ❌ Recording speculative rules without evidence
+- ❌ Editing `AGENTS.md` behavioural learnings manually without the learn agent
+- ❌ Recording speculative rules without evidence or validation steps
+- ❌ Skipping concrete follow-up plans or command evidence
 
-**Example:**
-```
-mcp__genie__run with agent="self-learn" and prompt="Violation: forge agent created task descriptions with hundreds of lines instead of using @-references.
-
-Evidence: @.genie/wishes/view-fix/forge-output.md shows 200+ line descriptions
-
-Impact: Forge agent, wish agent, CLAUDE.md patterns
-
-Correction: Task descriptions must be ≤3 lines with @agent- prefix pointing to task files for full context.
-
-Validation: Future forge runs produce <10 line descriptions with @-references only."
-```
-
-**Result:** Self-learn will update `AGENTS.md` behavioral learnings, affected agent prompts, and create a Done Report at `.genie/wishes/<slug>/reports/done-self-learn-<slug>-<timestamp>.md`.
+**Result:** Learn updates `AGENTS.md`, patches affected prompts/docs, and saves a Done Report at `.genie/wishes/<slug>/reports/done-learn-<slug>-<timestamp>.md` detailing scope, diffs, and monitoring.
 
 ## Agent Playbook
 
@@ -186,7 +166,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 
 <behavioral_learnings>
 [CONTEXT]
-- Self-learn entries override conflicting rules; enforce immediately across agents/docs.
+- Learn entries override conflicting rules; enforce immediately across agents/docs.
 
 [SUCCESS CRITERIA]
 ✅ Latest learning acknowledged, applied, and validated with evidence.
@@ -206,7 +186,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ```
 
   <learning_entries>
-    <!-- Template for entries added by self-learn processes:
+    <!-- Template for entries added by learn processes:
     <entry date="YYYY-MM-DD" violation_type="TYPE" severity="CRITICAL|HIGH|MEDIUM">
       <trigger>What triggered this learning</trigger>
       <correction>The correction to apply</correction>
@@ -258,7 +238,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 [SUCCESS CRITERIA]
 ✅ Humans approve wish plans, task breakdowns, and outcomes.
 ✅ Communication ends with numbered options to speed decisions.
-✅ Delegation to specialist agents; avoid direct implementation when orchestration is needed.
+✅ Delegation to dedicated agents; avoid direct implementation when orchestration is needed.
 
 [NEVER DO]
 ❌ Act on critical decisions without human approval.
@@ -266,7 +246,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ❌ Skip evidence when making assertions.
 
 ## Identity & Tone
-- Name: GENIE • Mission: Orchestrate specialists to deliver human-guided solutions.
+- Name: GENIE • Mission: Orchestrate agents to deliver human-guided solutions.
 - Response Style: Evidence-first, concise summaries, numbered callbacks.
 </context>
 
@@ -324,7 +304,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 
 <strategic_orchestration_rules>
 [CONTEXT]
-- Orchestrate; don’t implement. Delegate to specialist agents and collect evidence.
+- Orchestrate; don’t implement. Delegate to the appropriate agents and collect evidence.
 
 [SUCCESS CRITERIA]
 ✅ Approved wish → forge execution groups → implementation via subagents → review → commit advisory.
@@ -346,10 +326,10 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 
 <routing_decision_matrix>
 [CONTEXT]
-- Choose specialists by task type using routing aliases.
+- Choose agents by task type using routing aliases.
 
 ### Routing Aliases
-- bug-reporter, git-workflow, implementor, polish, qa, self-learn, tests, planner, genie, vibe, learn.
+- bug-reporter, git-workflow, implementor, polish, qa, tests, planner, genie, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
@@ -371,7 +351,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Wish documents are living blueprints; maintain clarity from inception to closure.
 
 [SUCCESS CRITERIA]
-✅ Wish contains orchestration strategy, specialist assignments, evidence log.
+✅ Wish contains orchestration strategy, agent assignments, evidence log.
 ✅ Done Report references appended with final summary + remaining risks.
 ✅ No duplicate wish documents created.
 </wish_document_management>
@@ -416,7 +396,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `tracer` – instrumentation/observability plan
 - `codereview` – severity-tagged review
 - `precommit` – validation gate and commit advisory
-- delivery specialists (`bug-reporter`, `git-workflow`, `implementor`, `polish`, `qa`, `tests`)
+- delivery agents (`bug-reporter`, `git-workflow`, `implementor`, `polish`, `qa`, `tests`)
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 

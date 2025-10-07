@@ -27,7 +27,7 @@ Note: Agent-specific sandbox and approval settings in frontmatter override these
 - PROVIDER_REGION [optional]: specify regional routing if required by service policy
 
 ## Experiment Toggles
-- ENABLE_SELF_LEARN_SYNC [optional]: `0|1` (default `1`) — when disabled, self-learn updates are reported but not auto-applied
+- ENABLE_LEARN_SYNC [optional]: `0|1` (default `1`) — when disabled, learn updates are reported but not auto-applied
 - ENABLE_TWIN_DEFAULT [optional]: `0|1` (default `0`) — automatically schedule twin audits for high-risk wishes
 - DONE_REPORT_DIR [optional]: overrides `.genie/wishes/<slug>/reports/` when storing experiment evidence elsewhere
 

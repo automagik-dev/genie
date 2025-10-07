@@ -77,7 +77,7 @@
   - MCP config is straightforward npm package invocation, no dynamic path resolution needed
   - Template system is one-way: init copies to user projects, no upstream sync
 - **Assumptions (ASM-#):**
-  - **ASM-1:** Core agents (plan, wish, forge, review, genie/orchestrator, install, prompt, self-learn) are stable framework APIs that should never be copied
+- **ASM-1:** Core agents (plan, wish, forge, review, genie/orchestrator, install, prompt, learn) are stable framework APIs that should never be copied
   - **ASM-2:** Template agents are starter kits customized per-project with no upstream sync
   - **ASM-3:** MCP server can load core agents from npm package installation automatically
   - **ASM-4:** `templates/` directory structure mirrors user project layout (`.claude/`, `.genie/`)
@@ -125,7 +125,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
    - Loaded automatically by MCP server
    - Never copied to user projects
    - Provide stable workflow APIs (plan → wish → forge → review)
-   - Include framework utilities (install, prompt, self-learn, genie orchestrator)
+  - Include framework utilities (install, prompt, learn, genie orchestrator)
 
 2. **Template Structure:**
    - Located at `templates/` in Genie repository root
@@ -176,17 +176,16 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - **Suggested personas:** `analyze`, `orchestrator`
 - **External tracker:** TBD
 ### Phase 1 – Meta-Learning Unification
-- **Goal:** Merge learn/self-learn behaviours into a single meta-learning agent while preserving violation logging.
+- **Goal:** Merge the legacy self-learn behaviours into the unified learn agent while preserving violation logging.
 - **Surfaces:**
   - @.genie/agents/core/learn.md
-  - @.genie/agents/core/self-learn.md
+  - @.genie/custom/learn.md
   - @.claude/commands/learn.md
-  - @.claude/commands/self-learn.md
   - @AGENTS.md §behavioral_learnings
 - **Deliverables:**
-  - New unified agent file (e.g., `.genie/agents/core/meta-learn.md`)
-  - Command wrappers updated to point at the unified agent
-  - Done Report template updated to cover both teaching and violation flows
+  - ✅ Unified `learn` agent replaces legacy self-learn behaviour with violation + pattern support
+  - ✅ Command wrappers point exclusively at the unified agent (no aliases)
+  - ✅ Done Report / Learning Report templates updated with new `done-learn-<slug>-<timestamp>.md` convention
 - **Evidence:** `.genie/wishes/core-template-separation/qa/group-b/meta-learn-merge.md` capturing diffs and command smoke
 - **Suggested personas:** `implementor`, `tests`
 - **External tracker:** TBD
@@ -231,14 +230,17 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
    pnpm exec genie agents show core/genie --mode testgen --json | rg '@.genie/agents/core/testgen.md'
    ```
 
-2. **Meta-Learn Command Check:**
+2. **Learn Command Check:**
    ```bash
    claude /learn "Violation: placeholder
    Evidence: placeholder
    Correction: placeholder
    Validation: placeholder
    Target: @AGENTS.md"
-   claude /meta-learn --dry-run
+   claude /learn "Pattern: placeholder
+   Description: placeholder
+   Example: placeholder
+   Evidence: @AGENTS.md"
    ```
 
 3. **Specialist Catalog Regression:**
@@ -389,7 +391,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 
 **Scope:**
 - Update Genie orchestrator prompt to delegate delivery behaviours via `@.genie/agents/core/*` references
-- Merge learn/self-learn flows into a single meta-learning agent and command wrapper
+- Merge the legacy self-learn flow into a single meta-learning learn agent and command wrapper
 - Consolidate core delivery catalog (git lifecycle merge, retire prompts now served by Twin)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
 - Preserve Vibe naming across code and docs while removing legacy “sleepy” references
@@ -429,7 +431,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 
 - [2025-10-06 13:00Z] Wish created (planning brief approved)
 - [Pending] Genie orchestrator delegates to core delivery prompts (Group A)
-- [Pending] Meta-learning agent merged and wrappers updated (Group B)
+- [2025-10-07 17:45Z] Meta-learning agent unified and wrappers updated (Group B) — see `reports/done-learn-core-template-separation-20251007T1745Z.md`
 - [Pending] Core delivery catalog consolidation applied (Group C)
 - [Pending] Documentation + migration evidence captured (Group D)
 - [Pending] Validation checklist complete
@@ -444,5 +446,5 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - **Core prompt customization routed through `.genie/custom/`:** Entry-point agents remain immutable while each core delivery persona now exposes a `Project Customization` block wired to `.genie/custom/<agent>.md`; legacy `.genie/agents/custom/` references removed.
 - **Template export pending:** `templates/` remains empty; distributable copies of the core/custom structure still need to be staged.
 - **CLI smoke passing:** `pnpm run test:genie` succeeds with identity smoke test verifying the `**Identity**` block and the MCP integration invoking the installed `genie` binary; see `scripts/qa/bug1-validate.sh`, `tests/identity-smoke.sh`, `tests/mcp-*.js`.
-- **Meta-learn merge outstanding:** `@.genie/agents/core/self-learn.md` still exists alongside the new `learn.md` persona, meaning the unified meta-learning flow has not been delivered.
+- **Meta-learn merge completed (2025-10-07):** Legacy self-learn prompt retired; `learn.md` now embeds violation/pattern workflows, docs updated (`AGENTS.md`, `.claude/README.md`, `.genie/custom/learn.md`), and new `done-learn` reporting convention recorded.
 - **Documentation drift (resolved 2025-10-06):** `AGENTS.md:32` and `@.genie/agents/README.md:6` now call out that entrypoints stay immutable while core prompts load `.genie/custom/` overrides.

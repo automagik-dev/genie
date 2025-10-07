@@ -25,7 +25,7 @@ The genie-dev branch is the laboratory for Genie’s self-improvement program. P
 
 ## Phase 4 — Automation & CI Integration
 - Land GitHub Actions pipeline that runs build + smoke tests and attaches artefacts to PRs
-- Add regression checks for behavioural rules (self-learn, guardrail compliance)
+- Add regression checks for behavioural rules (learn, guardrail compliance)
 - Introduce metrics capture (latency, wish completion velocity) with reporting hooks
 
 ## Success Metrics

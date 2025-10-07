@@ -10,7 +10,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 
 ## Agent Assets
 - **Prompts:** Markdown agents under `.genie/agents/` with utilities in `.genie/agents/utilities/`
-- **Specialists:** Extensible specialist prompts tuned for self-audit (bug-reporter, tests, qa, self-learn, polish, project-manager)
+- **Specialists:** Extensible specialist prompts tuned for self-audit (bug-reporter, tests, qa, learn, polish, project-manager)
 - **State:** Session and ledger files stored in `.genie/state/` (never edit manually; inspect via MCP genie tools: `mcp__genie__list_sessions`, `mcp__genie__view`)
 
 ## Testing & Validation

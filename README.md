@@ -117,7 +117,7 @@ npx automagik-genie rollback --help
 
 After running `init` you'll have:
 
-- `.genie/agents/` – prompt, specialist, and utility agents
+- `.genie/agents/` – prompt and core agents shipped with Genie
 - `.genie/custom/` – project-specific overrides consumed by the core agents (entrypoints stay immutable)
 - `.genie/product/` – mission, roadmap, environment docs
 - `.genie/state/` – provider, version, provider-status state
