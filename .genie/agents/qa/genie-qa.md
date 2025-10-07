@@ -77,7 +77,7 @@ Escalate once:
 # Agent operations
 mcp__genie__list_agents
 mcp__genie__run with agent="plan" and prompt="test planning prompt"
-mcp__genie__run with agent="specialists/qa" and prompt="test qa prompt"
+mcp__genie__run with agent="core/qa" and prompt="test qa prompt"
 mcp__genie__run with agent="core/genie" and prompt="test genie prompt"
 
 # Session management
@@ -160,7 +160,7 @@ mcp__genie__list_sessions (inspect first 30 sessions)
 ### Agent System Validation
 - Agent discovery and listing
 - Agent execution (run command)
-- Agent path resolution (specialists/*, utilities/*)
+- Agent path resolution (core/* prompts + `.genie/custom/*` overrides)
 - Invalid agent handling
 
 ### Session Lifecycle Validation

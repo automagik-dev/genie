@@ -118,6 +118,7 @@ npx automagik-genie rollback --help
 After running `init` you'll have:
 
 - `.genie/agents/` – prompt, specialist, and utility agents
+- `.genie/custom/` – project-specific overrides consumed by the core agents (entrypoints stay immutable)
 - `.genie/product/` – mission, roadmap, environment docs
 - `.genie/state/` – provider, version, provider-status state
 - `.genie/backups/<timestamp>/` – snapshots of previous states
@@ -141,7 +142,7 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 |------|-------------|---------------|
 | `mcp__genie__run` | Start a new Genie agent session | "Run plan with mission + roadmap context" |
 | `mcp__genie__resume` | Continue a previous session | "Resume session RUN-1234 with follow-up prompt" |
-| `mcp__genie__list_agents` | List available agents | "Show all specialists" |
+| `mcp__genie__list_agents` | List available agents | "Show all agents" |
 | `mcp__genie__list_sessions` | Inspect active/archived sessions | "Which sessions ran today?" |
 | `mcp__genie__view` | Fetch a transcript (full or tail) | "Fetch transcript for RUN-1234" |
 | `mcp__genie__stop` | Halt a running session | "Stop RUN-5678" |

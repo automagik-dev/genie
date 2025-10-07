@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * MCP CLI Integration Test
- * Tests the MCP server via the main ./genie CLI entry point
+ * Tests the MCP server via the main genie CLI entry point
  */
 
 const { spawn } = require('child_process');
@@ -9,7 +9,7 @@ const path = require('path');
 const assert = require('assert');
 
 console.log('=== MCP CLI Integration Test ===');
-console.log('Objective: Verify ./genie mcp command works end-to-end\n');
+console.log('Objective: Verify genie mcp command works end-to-end\n');
 
 let testsPassed = 0;
 let testsFailed = 0;
@@ -61,9 +61,9 @@ async function sendRequest(server, request, timeout = 5000) {
 }
 
 async function runTests() {
-  console.log('[Setup] Starting MCP server via ./genie mcp -t stdio...');
+  console.log('[Setup] Starting MCP server via genie mcp -t stdio...');
 
-  const server = spawn('./genie', ['mcp', '-t', 'stdio'], {
+  const server = spawn('genie', ['mcp', '-t', 'stdio'], {
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
@@ -165,7 +165,7 @@ async function runTests() {
   if (testsFailed === 0) {
     console.log('✅ MCP CLI Integration: PASS\n');
     console.log('📋 Validation Complete:');
-    console.log('  ✅ ./genie mcp command accessible');
+    console.log('  ✅ genie mcp command accessible');
     console.log('  ✅ MCP server starts via CLI');
     console.log('  ✅ All 6 tools discoverable');
     console.log('  ✅ Tool execution functional');

@@ -62,39 +62,36 @@ Access via: `mcp__genie__run` OR Task tool
 
 ```
 .genie/agents/               # Source of truth
-├── plan.md                  # Core workflow orchestrator
-├── wish.md                  # Wish creation agent
-├── forge.md                 # Execution planning agent
-├── review.md                # QA validation agent
-├── specialists/             # Delivery & domain experts
+├── plan.md                  # Core workflow orchestrator (immutable)
+├── wish.md                  # Wish creation agent (immutable)
+├── forge.md                 # Execution planning agent (immutable)
+├── review.md                # QA validation agent (immutable)
+├── orchestrator.md          # Genie second-opinion interface (immutable)
+├── vibe.md                  # Autonomous coordinator (immutable)
+├── core/                    # Reusable specialists + utilities
+│   ├── analyze.md
 │   ├── bug-reporter.md
-│   ├── genie-qa.md
+│   ├── commit.md
+│   ├── docgen.md
 │   ├── git-workflow.md
 │   ├── implementor.md
-│   ├── learn.md
-│   ├── polish.md
-│   ├── project-manager.md
+│   ├── prompt.md
 │   ├── qa.md
-│   ├── self-learn.md
-│   ├── sleepy.md
-│   └── tests.md
-└── utilities/               # Reusable helpers
-    ├── analyze.md
-    ├── challenge.md
-    ├── codereview.md
-    ├── commit.md
-    ├── consensus.md
-    ├── debug.md
-    ├── docgen.md
-    ├── identity-check.md
-    ├── install.md
-    ├── prompt.md
-    ├── refactor.md
-    ├── secaudit.md
-    ├── testgen.md
-    ├── thinkdeep.md
-    ├── tracer.md
-    └── orchestrator.md
+│   ├── refactor.md
+│   ├── tests.md
+│   └── … (see AGENTS.md for the full list)
+├── qa/
+│   └── genie-qa.md
+└── README.md
+
+.genie/custom/               # Project-specific overrides consumed by core prompts
+├── analyze.md
+├── bug-reporter.md
+├── git-workflow.md
+├── implementor.md
+├── qa.md
+├── tests.md
+└── …
 
 .claude/commands/            # Interactive slash commands
 ├── plan.md → @.genie/agents/plan.md
@@ -102,39 +99,38 @@ Access via: `mcp__genie__run` OR Task tool
 ├── forge.md → @.genie/agents/forge.md
 ├── review.md → @.genie/agents/review.md
 ├── commit.md → @.genie/agents/core/commit.md
-├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── install.md → @.genie/agents/utilities/install.md
-├── prompt.md → @.genie/agents/utilities/prompt.md
-├── sleepy.md → @.genie/agents/specialists/sleepy.md
-└── learn.md → @.genie/agents/specialists/learn.md
+├── genie-qa.md → @.genie/agents/qa/genie-qa.md
+├── install.md → @.genie/agents/core/install.md
+├── prompt.md → @.genie/agents/core/prompt.md
+├── vibe.md → @.genie/agents/vibe.md
+└── learn.md → @.genie/agents/core/learn.md
 
 .claude/agents/              # Task tool aliases (delegatable)
 ├── planner.md → @.genie/agents/plan.md
 ├── commit.md → @.genie/agents/core/commit.md
 ├── precommit.md → @.genie/agents/core/commit.md
-├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
+├── genie-qa.md → @.genie/agents/qa/genie-qa.md
 ├── orchestrator.md → @.genie/agents/orchestrator.md
-├── analyze.md → @.genie/agents/utilities/analyze.md
-├── debug.md → @.genie/agents/utilities/debug.md
-├── thinkdeep.md → @.genie/agents/utilities/thinkdeep.md
-├── consensus.md → @.genie/agents/utilities/consensus.md
-├── challenge.md → @.genie/agents/utilities/challenge.md
+├── analyze.md → @.genie/agents/core/analyze.md
+├── debug.md → @.genie/agents/core/debug.md
+├── thinkdeep.md → @.genie/agents/core/thinkdeep.md
+├── consensus.md → @.genie/agents/core/consensus.md
+├── challenge.md → @.genie/agents/core/challenge.md
 ├── codereview.md → @.genie/agents/core/codereview.md
 ├── refactor.md → @.genie/agents/core/refactor.md
 ├── testgen.md → @.genie/agents/core/testgen.md
 ├── docgen.md → @.genie/agents/core/docgen.md
 ├── secaudit.md → @.genie/agents/core/secaudit.md
 ├── tracer.md → @.genie/agents/core/tracer.md
-├── implementor.md → @.genie/agents/specialists/implementor.md
-├── tests.md → @.genie/agents/specialists/tests.md
-├── polish.md → @.genie/agents/specialists/polish.md
-├── qa.md → @.genie/agents/specialists/qa.md
-├── bug-reporter.md → @.genie/agents/specialists/bug-reporter.md
-├── git-workflow.md → @.genie/agents/specialists/git-workflow.md
-├── project-manager.md → @.genie/agents/specialists/project-manager.md
-├── self-learn.md → @.genie/agents/specialists/self-learn.md
-├── sleepy.md → @.genie/agents/specialists/sleepy.md
-└── learn.md → @.genie/agents/specialists/learn.md
+├── implementor.md → @.genie/agents/core/implementor.md
+├── tests.md → @.genie/agents/core/tests.md
+├── polish.md → @.genie/agents/core/polish.md
+├── qa.md → @.genie/agents/core/qa.md
+├── bug-reporter.md → @.genie/agents/core/bug-reporter.md
+├── git-workflow.md → @.genie/agents/core/git-workflow.md
+├── self-learn.md → @.genie/agents/core/self-learn.md
+├── vibe.md → @.genie/agents/vibe.md
+└── learn.md → @.genie/agents/core/learn.md
 ```
 
 ---

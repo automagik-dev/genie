@@ -18,7 +18,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (bug-reporter, git-workflow, implementor, polish, qa, tests, commit, codereview, docgen, refactor, secaudit, tracer, etc.) currently live under `.genie/agents/core/` while the planned `specialists/` split is still in progress (tracked in `@.genie/wishes/core-template-separation-wish.md`).
+- Specialized + delivery agents (bug-reporter, git-workflow, implementor, polish, qa, tests, commit, codereview, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -32,7 +32,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
 - `.genie/custom/` – project-specific overrides for specialists and Genie modes (kept outside `agents/` to avoid double registration)
-- *Planned:* `.genie/agents/specialists/` will house delivery agents once the core/template split lands; today those agents still reside in `core/`.
+- Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
@@ -349,7 +349,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 - Choose specialists by task type using routing aliases.
 
 ### Routing Aliases
-- bug-reporter, git-workflow, implementor, polish, project-manager, qa, self-learn, tests, planner, genie, vibe, learn.
+- bug-reporter, git-workflow, implementor, polish, qa, self-learn, tests, planner, genie, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)

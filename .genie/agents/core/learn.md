@@ -43,7 +43,7 @@ Target: <which files to update>
 **Example:**
 ```
 Violation: Deleted file without approval
-Evidence: commit abc123, file .genie/agents/utilities/install.md
+Evidence: commit abc123, file .genie/agents/core/install.md
 Correction: Never delete files without human approval; edit in place or mark for removal
 Validation: No future diffs show unapproved deletions
 Target: AGENTS.md <behavioral_learnings>
@@ -83,7 +83,7 @@ Target: <which files to update>
 Workflow: Pre-commit validation
 Steps: 1) Run tests 2) Check types 3) Lint 4) Generate commit message
 Tools: tests agent, commit agent, git-workflow
-Evidence: @.genie/agents/utilities/commit.md
+Evidence: @.genie/agents/core/commit.md
 Target: AGENTS.md <execution_patterns>, commit.md (already has it)
 ```
 

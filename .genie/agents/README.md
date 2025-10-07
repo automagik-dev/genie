@@ -3,11 +3,10 @@
 ## Overview
 This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP. Agents are organized as:
 
-- **Entrypoints** – workflow phases and high-priority agents stored at the root (`plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`).
+- **Entrypoints** – workflow phases and high-priority agents stored at the root (`plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`). These files remain immutable—no repo overrides are loaded.
 - **Core Modes (`core/`)** – reusable helpers (analyze, debug, commit workflow, docgen, refactor, tests, etc.) referenced by slash commands and templates.
 - **Custom Overrides (`custom/`)** – repo-specific extensions that auto-include alongside the core prompts.
 - **QA (`qa/`)** – Genie-only validation agents.
-- **Planned:** a `specialists/` directory will eventually house delivery agents once the core/template split is complete (tracked in `@.genie/wishes/core-template-separation-wish.md`). Until then, those agents remain in `core/`.
 
 > **Note:** Phase 1 of the same wish will merge the `self-learn` and `learn` personas into a single meta-learning agent; both files remain for now to avoid breaking workflows.
 
@@ -251,7 +250,7 @@ mcp__genie__view with sessionId="<session-id>" and full=true
 ## Agent Routing Map
 
 Current agent routing (see AGENTS.md for updates):
-- `implementor` → `.genie/agents/core/implementor.md` (scheduled to move under `specialists/`)
+- `implementor` → `.genie/agents/core/implementor.md`
 - `qa` → `.genie/agents/core/qa.md`
 - `polish` → `.genie/agents/core/polish.md`
 - `tests` → `.genie/agents/core/tests.md`

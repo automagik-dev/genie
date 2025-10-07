@@ -4,4 +4,4 @@ description: Testing framework and test execution specialist
 model: inherit
 ---
 
-@.genie/agents/specialists/tests.md
+@.genie/agents/core/tests.md

@@ -11,16 +11,20 @@ LOG_DIR="$REPO_DIR/.genie/state/agents/logs"
 
 mkdir -p "$LOG_DIR"
 
-before_snapshot=$(ls "$LOG_DIR"/plan-*.log 2>/dev/null || true)
+AGENT="plan"
+PROMPT=${1:-"Identity smoke test"}
+LOG_PREFIX=${AGENT//\//-}
 
-# Launch a lightweight identity-check agent in background; suppress stdout
-./genie run utilities/identity-check "Please acknowledge your custom instructions and confirm you received them correctly." > /dev/null &
+before_snapshot=$(ls "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null || true)
+
+# Launch the agent in background; suppress stdout
+genie run "$AGENT" "$PROMPT" > /dev/null &
 run_pid=$!
 
 log_file=""
 for _ in {1..60}; do
   sleep 0.5
-  candidate=$(ls -t "$LOG_DIR"/utilities-identity-check-*.log 2>/dev/null | head -n1 || true)
+  candidate=$(ls -t "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null | head -n1 || true)
   if [ -n "$candidate" ] && ! grep -Fxq "$candidate" <<< "$before_snapshot"; then
     log_file="$candidate"
     break
@@ -36,17 +40,18 @@ if [ -z "$log_file" ]; then
   sessions_path="$REPO_DIR/.genie/state/agents/sessions.json"
   for _ in {1..60}; do
     if [ -f "$sessions_path" ]; then
-      # Use Node to robustly parse JSON and read the 'plan' agent logFile
+      # Use Node to robustly parse JSON and read the agent logFile
       log_candidate=$(node -e '
         try {
           const fs = require("fs");
           const p = process.argv[1];
+          const agent = process.argv[2];
           if (!fs.existsSync(p)) { process.exit(0); }
           const data = JSON.parse(fs.readFileSync(p, "utf8"));
-          const entry = data && data.agents && data.agents["utilities/identity-check"]; 
+          const entry = data && data.agents && data.agents[agent];
           if (entry && entry.logFile) { console.log(entry.logFile); }
         } catch {}
-      ' "$sessions_path" 2>/dev/null || true)
+      ' "$sessions_path" "$AGENT" 2>/dev/null || true)
       if [ -n "$log_candidate" ]; then
         # sessions.json stores a repo-relative path; normalize to absolute
         if [[ "$log_candidate" != /* ]]; then
@@ -67,7 +72,7 @@ fi
 wait "$run_pid" 2>/dev/null || true
 
 if [ -z "$log_file" ]; then
-  echo "Failed to capture plan log" >&2
+  echo "Failed to capture $AGENT log" >&2
   exit 1
 fi
 
@@ -96,11 +101,11 @@ for _ in {1..300}; do
 done
 
 identity_found=0
-if rg -q 'TOKEN-IDENTITY-OVERRIDE-12345' "$log_file"; then
+if rg -q '\*\*Identity\*\*' "$log_file" && rg -q 'Name: GENIE' "$log_file"; then
   identity_found=1
 fi
 
-./genie stop "$session_id" > /dev/null || true
+genie stop "$session_id" > /dev/null || true
 
 if [ "$identity_found" -ne 1 ]; then
   echo "Identity block not found in $log_file" >&2

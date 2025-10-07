@@ -53,9 +53,9 @@ Always reference these files using `@` so they auto-load when needed:
 - `@.genie/product/roadmap.md`
 - `@.genie/product/tech-stack.md`
 - `@.genie/standards/best-practices.md`
-- `@.genie/agents/utilities/analyze.md` (when structure overview helps)
-- `@.genie/agents/utilities/debug.md` (for bug investigations)
-- `@.genie/agents/utilities/codereview.md` (for quick diff reviews)
+- `@.genie/agents/core/analyze.md` (when structure overview helps)
+- `@.genie/agents/core/debug.md` (for bug investigations)
+- `@.genie/agents/core/codereview.md` (for quick diff reviews)
 - `@.genie/agents/core/genie.md` (for pressure-testing high-impact decisions)
 - `@.genie/instructions/core/plan-product.md` (historical context)
 

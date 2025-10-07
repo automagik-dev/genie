@@ -65,7 +65,7 @@
 | Agent glob scan | discovery | 36 agents total across .genie/agents/ | categorization |
 | @.genie/agents/utilities/install.md | repo | Current init logic and setup modes | implementation |
 | templates/ directory | discovery | Already exists with templates/.claude/commands/ | implementation |
-| .genie/ directories | discovery | agents, specialists, utilities, qa, guides, standards, product, instructions | audit |
+| .genie/ directories | discovery | entrypoints, core prompts, custom overrides, qa, guides, standards, product, instructions | audit |
 
 ## Discovery Summary
 
@@ -73,7 +73,7 @@
 - **Key observations:**
   - Genie repository uses `.genie/` for its own development (meta-level)
   - `templates/` directory already exists at repo root with `.claude/commands/` subdirectory
-  - 36 agents cataloged across core workflow, specialists, and utilities
+- 36 agents cataloged across entrypoints, core delivery prompts, and utilities
   - MCP config is straightforward npm package invocation, no dynamic path resolution needed
   - Template system is one-way: init copies to user projects, no upstream sync
 - **Assumptions (ASM-#):**
@@ -97,9 +97,10 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## Current State
 
 **Genie's Structure (Meta-Level):**
-- `.genie/agents/` contains all agents (plan, wish, forge, review, specialists, utilities)
+- `.genie/agents/` keeps entrypoints at the root (plan, wish, forge, review, orchestrator, vibe) and delivery/utility prompts under `core/`
+- `.genie/custom/` stores project overrides that core prompts auto-include when present
 - `.claude/commands/` and `.claude/agents/` provide slash command and Task tool aliases via @include
-- `templates/` directory exists at root with initial `.claude/commands/` structure
+- `templates/` directory exists at repo root with initial `.claude/commands/` structure
 - MCP server published as `automagik-genie` npm package
 
 **User Projects (Post-Init):**
@@ -189,8 +190,8 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - **Suggested personas:** `implementor`, `tests`
 - **External tracker:** TBD
 
-### Phase 2 – Specialist Catalog Rationalization
-- **Goal:** Collapse legacy specialist prompts into core files plus custom includes, ensuring every delivery/utility agent loads from the `core/` directory with a matching `.genie/custom/<name>.md`.
+### Phase 2 – Core Delivery Catalog Rationalization
+- **Goal:** Collapse legacy delivery prompts into the `core/` directory with matching `.genie/custom/<name>.md` includes for project overrides.
 - **Surfaces:**
   - Core delivery/utility prompts: @.genie/agents/core/bug-reporter.md, git-workflow.md, implementor.md, polish.md, qa.md, tests.md, docgen.md, refactor.md, secaudit.md, testgen.md, tracer.md, codereview.md, commit.md
   - Custom configuration files: @.genie/custom/<name>.md for the same set
@@ -199,7 +200,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
   - All delivery/utility prompts live under `.genie/agents/core/` with project customization in `.genie/custom/`
   - `.claude/` wrappers and template copies point to the new core paths
   - Agent resolver/AGENTS.md documentation reflects the flattened structure
-- **Evidence:** `.genie/wishes/core-template-separation/qa/group-c/specialist-catalog.md` with agent inventory diff + CLI `genie agents list`
+- **Evidence:** `.genie/wishes/core-template-separation/qa/group-c/delivery-catalog.md` with agent inventory diff + CLI `genie agents list`
 - **Suggested personas:** `implementor`, `codereview`
 - **External tracker:** TBD
 
@@ -281,106 +282,82 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 ## Agent Inventory & Categorization (FINAL)
 
-**Total:** 31 Agents (15 Core + 13 Template + 2 Genie-Only + 5 Deleted)
+**Total:** 31 prompt files shipped in `.genie/agents/` (6 entrypoints + 25 core personas), 13 customization stubs in `.genie/custom/`, 2 Genie-only QA helpers, 5 retired.
 
-**Meta Pattern:** Template agents exist in BOTH `.genie/agents/specialists/` (Genie's own) AND `templates/` (for distribution)
+**Meta Pattern:** Entry-point orchestrators remain immutable. Delivery/utility prompts live under `.genie/agents/core/` and auto-include `.genie/custom/<agent>.md` if projects need overrides. Template exports will be wired up once this structure settles.
 
-### NEW DIRECTORY STRUCTURE ✅ COMPLETED
+### CURRENT DIRECTORY STRUCTURE ✅ COMPLETED
 
 ```
 .genie/agents/
-├── core/                    # 15 core agents (built into npm package)
-│   ├── plan.md
-│   ├── wish.md
-│   ├── forge.md
-│   ├── review.md
-│   ├── install.md
-│   ├── prompt.md
-│   ├── self-learn.md
-│   ├── genie.md         # ✅ RENAMED from twin.md
-│   ├── learn.md
+├── plan.md
+├── wish.md
+├── forge.md
+├── review.md
+├── orchestrator.md
+├── vibe.md
+├── core/                    # Delivery + utility prompts packaged with Genie
 │   ├── analyze.md
-│   ├── challenge.md
-│   ├── consensus.md
-│   ├── debug.md
-│   ├── thinkdeep.md
-│   └── vibe.md           # ✅ RENAMED from sleepy.md
-│
-├── specialists/             # 13 template agents (copied to user projects)
-│   ├── implementor.md
-│   ├── tests.md
-│   ├── qa.md            # Template for user projects
-│   ├── polish.md
 │   ├── bug-reporter.md
-│   ├── git-workflow.md
 │   ├── commit.md
-│   ├── codereview.md
-│   ├── refactor.md
-│   ├── testgen.md
 │   ├── docgen.md
-│   ├── secaudit.md
-│   └── tracer.md
-│
-├── qa/                      # ⚙️ Genie-only dev folder (NOT distributed)
-│   ├── genie-qa.md      # Genie framework self-validation
-│   └── README.md        # QA testing docs
-│
-└── README.md             # Agent system documentation
+│   ├── git-workflow.md
+│   ├── implementor.md
+│   ├── prompt.md
+│   ├── qa.md
+│   ├── refactor.md
+│   ├── tests.md
+│   └── … (full catalog in AGENTS.md)
+├── qa/
+│   ├── genie-qa.md
+│   └── README.md
+└── README.md
+
+.genie/custom/               # Project-level overrides loaded by core prompts
+├── analyze.md
+├── bug-reporter.md
+├── git-workflow.md
+├── implementor.md
+├── qa.md
+├── tests.md
+└── …
 ```
 
-### CORE AGENTS (15) — `.genie/agents/core/`
+### CORE PROMPTS — `.genie/agents/core/`
 
-**All in core/ now, built into npm package, never copied:**
+Packaged personas that define Genie’s default behaviour. Examples:
 
-1. `plan.md` — Product planning orchestrator
-2. `wish.md` — Wish creation architect
-3. `forge.md` — Execution planning with planner mode
-4. `review.md` — QA validation coordinator
-5. `install.md` — Template installation
-6. `prompt.md` — Prompting guidance
-7. `self-learn.md` — Behavioral learning
-8. `orchestrator.md` — Pressure-testing and second opinions
-9. `learn.md` — Meta-learning for new patterns
-10. `analyze.md` — Deep analysis (generic enough for any request)
-11. `challenge.md` — Assumption breaking
-12. `consensus.md` — Decision facilitation
-13. `debug.md` — Systematic debugging
-14. `thinkdeep.md` — Extended reasoning
-15. `vibe.md` — Autonomous coordinator ✅ RENAMED from sleepy.md
+1. `analyze.md` — System architecture deep-dive
+2. `bug-reporter.md` — Incident triage & issue filing
+3. `commit.md` — Commit advisory / pre-commit checks
+4. `docgen.md` — Documentation outline + drafting
+5. `git-workflow.md` — Branching/merge automation
+6. `implementor.md` — Feature implementation with TDD
+7. `prompt.md` — Advanced prompting framework
+8. `qa.md` — Manual QA coordination
+9. `refactor.md` — Staged refactor planning
+10. `tests.md` — Test authoring + repair
+11. `secaudit.md` — Security audit playbook
+12. `testgen.md` — Targeted test generation
+13. `tracer.md` — Instrumentation/observability plan
+14. `consensus.md` — Decision facilitation
+15. `thinkdeep.md` — Extended reasoning
 
-### TEMPLATE AGENTS (13) — `.genie/agents/specialists/`
+Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) remain at the top level and never load overrides.
 
-**All in specialists/ now, copied to user projects during init:**
+### CUSTOM OVERRIDES — `.genie/custom/`
 
-1. `implementor.md` — Feature implementation
-2. `tests.md` — Test writing
-3. `qa.md` — Quality assurance (user project template)
-4. `polish.md` — Code refinement
-5. `bug-reporter.md` — Bug triage & filing
-6. `git-workflow.md` — Git operations
-7. `commit.md` — Commit advisory
-8. `codereview.md` — Code review
-9. `refactor.md` — Refactor planning
-10. `testgen.md` — Test generation
-11. `docgen.md` — Documentation generation
-12. `secaudit.md` — Security audit
-13. `tracer.md` — Instrumentation planning
+Each stub mirrors its core counterpart and records project-specific defaults (commands, docs, evidence paths). Git includes but does not ship behaviour—core prompts remain the source of truth.
 
-**Important:** These exist in `.genie/agents/specialists/` for Genie's own development AND will be copied to `templates/` for distribution
+### GENIE-ONLY QA — `.genie/agents/qa/`
 
-### GENIE-REPO-ONLY (2) — `.genie/agents/qa/`
-
-**All Genie-only files in qa/ folder (NOT distributed):**
-
-1. `genie-qa.md` — Genie framework self-validation
-2. `README.md` — QA testing docs
-
-**Note:** The `qa/` folder is for Genie's own development/testing. User projects get `specialists/qa.md` template.
+1. `genie-qa.md` — Framework validation script
+2. `README.md` — QA operating notes
 
 ### DELETED AGENTS (5) ✅ COMPLETED
 
 1. ~~`utilities/identity-check.md`~~ ❌
-2. ~~`specialists/project-manager.md`~~ ❌
+2. ~~`project-manager.md`~~ ❌
 3. ~~`test-claude.md`~~ ❌
 4. ~~`qa/codex-parameter-test.md`~~ ❌
 5. ~~`qa/claude-parameter-test.md`~~ ❌
@@ -410,22 +387,22 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## <spec_contract>
 
 **Scope:**
-- Update Genie orchestrator prompt to delegate specialist behaviours via `@.genie/agents/core/*` references
+- Update Genie orchestrator prompt to delegate delivery behaviours via `@.genie/agents/core/*` references
 - Merge learn/self-learn flows into a single meta-learning agent and command wrapper
-- Consolidate specialist catalog (git lifecycle merge, retire prompts now served by Twin)
+- Consolidate core delivery catalog (git lifecycle merge, retire prompts now served by Twin)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
 - Preserve Vibe naming across code and docs while removing legacy “sleepy” references
 
 **Out of Scope:**
 - New feature development beyond agent/document consolidation
 - Automated migration tooling for downstream projects
-- Changing behaviour of surviving specialist prompts (beyond re-routing and clarity edits)
+- Changing behaviour of surviving core prompts (beyond re-routing and clarity edits)
 - Publishing updated npm package (handled separately after verification)
 
 **Success Metrics:**
-- Genie orchestrator modes (refactor/testgen/secaudit/docgen/etc.) resolve via specialist references (verified by CLI smoke)
+- Genie orchestrator modes (refactor/testgen/secaudit/docgen/etc.) resolve via core prompt references (verified by CLI smoke)
 - Meta-learning agent passes both teaching and violation sample prompts without errors
-- `pnpm exec genie agents list` shows merged git lifecycle specialist and no retired prompts
+- `pnpm exec genie agents list` shows merged git lifecycle delivery prompt and no retired entries
 - Documentation updates approved with no TODO placeholders and spell-check clean
 - Repository contains zero references to `sleepy` outside historical logs
 
@@ -433,7 +410,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 - Forge execution group IDs (TBD after `/forge`)
 
 **Dependencies:**
-- Stable specialist prompts retained for delegation (implementor/tests/qa/polish/bug-reporter/codereview)
+- Stable core delivery prompts retained for delegation (implementor/tests/qa/polish/bug-reporter/codereview)
 - CLI wrappers in `.claude/commands/`
 - Agent registry tests for `genie agents list`
 
@@ -448,18 +425,20 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 ## Status Log
 
 - [2025-10-06 13:00Z] Wish created (planning brief approved)
-- [Pending] Genie orchestrator delegates to specialists (Group A)
+- [Pending] Genie orchestrator delegates to core delivery prompts (Group A)
 - [Pending] Meta-learning agent merged and wrappers updated (Group B)
-- [Pending] Specialist catalog consolidation applied (Group C)
+- [Pending] Core delivery catalog consolidation applied (Group C)
 - [Pending] Documentation + migration evidence captured (Group D)
 - [Pending] Validation checklist complete
 - [Pending] Human approval for merge
+- [2025-10-06 15:20Z] Core prompts normalized to shared framework; project overrides moved to `.genie/custom/` with refreshed templates.
 - [2025-10-06 14:45Z] Slash command includes retargeted to `.genie/agents/<name>.md` to restore `/plan`, `/wish`, `/forge`, `/review`, `/vibe`.
 
 ## Review Findings – 2025-10-06
 
 - **Broken command includes (resolved 2025-10-06):** `.claude/commands/plan.md:7`, `wish.md:7`, `forge.md:7`, `review.md:7`, and `vibe.md:7` now point back to `@.genie/agents/<name>.md`, restoring the slash commands while the core/template move is still in flight.
-- **Specialists not split:** `@.genie/agents/core/implementor.md`, `tests.md`, and other delivery prompts are still under `core/` because `specialists/` has not been established; no templates exist under `templates/` yet, so nothing is copied for downstream projects.
+- **Core prompt customization routed through `.genie/custom/`:** Entry-point agents remain immutable while each core delivery persona now exposes a `Project Customization` block wired to `.genie/custom/<agent>.md`; legacy `.genie/agents/custom/` references removed.
+- **Template export pending:** `templates/` remains empty; distributable copies of the core/custom structure still need to be staged.
 - **Meta-learn merge outstanding:** `@.genie/agents/core/self-learn.md` still exists alongside the new `learn.md` persona, meaning the unified meta-learning flow has not been delivered.
-- **Documentation drift:** `AGENTS.md:8` and `@.genie/agents/README.md:5` still describe the legacy layout (entrypoints at the directory root) without warning about the in-progress separation.
+- **Documentation drift (resolved 2025-10-06):** `AGENTS.md:32` and `@.genie/agents/README.md:6` now call out that entrypoints stay immutable while core prompts load `.genie/custom/` overrides.
 - **Templates directory empty:** `templates/` contains no scaffolded content, so the init flow still lacks the promised template separation.
