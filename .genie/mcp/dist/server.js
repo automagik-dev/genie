@@ -125,7 +125,7 @@ const server = new fastmcp_1.FastMCP({
 **Agent Types:**
 - **Workflow Agents**: plan, wish, forge, review (structured development process)
 - **Tactical Agents**: implementor, tests, qa, polish (feature delivery)
-- **Strategic Agents**: twin, analyze, debug (deep analysis)
+- **Strategic Agents**: genie, analyze, debug (deep analysis)
 - **Utility Agents**: commit, codereview, refactor (code quality)
 
 Use agents for planning features, implementing code, reviewing changes, debugging issues, and managing development workflows.`
@@ -406,9 +406,9 @@ server.addPrompt({
 • Tag severity: CRITICAL/HIGH/MEDIUM/LOW for prioritization`;
     }
 });
-// Prompt: twin - Pressure-test decisions with multiple modes
+// Prompt: genie - Pressure-test decisions with multiple modes
 server.addPrompt({
-    name: 'twin',
+    name: 'genie',
     description: 'Get second opinions, pressure-test plans, or deep-dive analysis using 17+ specialized modes',
     arguments: [
         {
@@ -423,7 +423,7 @@ server.addPrompt({
         },
         {
             name: 'mode_hint',
-            description: 'Preferred twin mode (planning, consensus, debug, deep-dive, etc.) - optional',
+            description: 'Preferred Genie mode (planning, consensus, debug, deep-dive, etc.) - optional',
             required: false
         }
     ],
@@ -441,20 +441,20 @@ server.addPrompt({
             inferredMode = 'deep-dive';
         else if (goalLower.includes('test') || goalLower.includes('validate'))
             inferredMode = 'test-strategy';
-        return `Twin Modes: planning, consensus, deep-dive, debug, analyze, thinkdeep, design-review, risk-audit, test-strategy, socratic, debate, compliance, retrospective + more
+        return `Genie Modes: planning, consensus, deep-dive, debug, analyze, thinkdeep, design-review, risk-audit, test-strategy, socratic, debate, compliance, retrospective + more
 
 Recommended for "${args.goal}": ${inferredMode}
 
-run twin "Mode: ${inferredMode}. Objective: ${args.goal}
+run genie "Mode: ${inferredMode}. Objective: ${args.goal}
 
 Situation: ${args.situation}
 
 Deliver: [mode-specific outputs]
-Finish with: Twin Verdict + confidence (low/med/high)"
+Finish with: Genie Verdict + confidence (low/med/high)"
 
 💡 Prompting Tips:
 • State objective clearly, specify numbered deliverables (3 risks, 3 validations)
-• Request verdict format: Twin Verdict + confidence level
+• Request verdict format: Genie Verdict + confidence level
 • Gives agent clear completion boundaries`;
     }
 });
