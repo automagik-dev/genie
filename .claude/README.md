@@ -30,7 +30,7 @@ Access via: `mcp__genie__run` OR Task tool
 #### Strategic Deep-Dive
 - `genie` — Pressure-testing, second opinions, consensus building
 - `analyze` — System architecture audit
-- `thinkdeep` — Extended reasoning
+- `explore` — Discovery-focused exploratory reasoning
 - `debug` — Root cause investigation
 - `consensus` — Decision facilitation (also callable via genie)
 - `challenge` — Assumption breaking (also callable via genie)
@@ -38,7 +38,7 @@ Access via: `mcp__genie__run` OR Task tool
 #### Tactical Utilities
 - `refactor` — Refactor planning
 - `docgen` — Documentation generation
-- `secaudit` — Security audit
+- `audit` — Risk assessment and security audit
 - `tracer` — Instrumentation planning
 - `precommit` — Pre-commit validation (alias to commit)
 
@@ -105,14 +105,14 @@ Access via: `mcp__genie__run` OR Task tool
 ├── genie-qa.md → @.genie/agents/qa/genie-qa.md
 ├── orchestrator.md → @.genie/agents/orchestrator.md
 ├── analyze.md → @.genie/agents/core/analyze.md
+├── audit.md → @.genie/agents/core/audit.md
 ├── debug.md → @.genie/agents/core/debug.md
-├── thinkdeep.md → @.genie/agents/core/thinkdeep.md
-├── consensus.md → @.genie/agents/core/consensus.md
-├── challenge.md → @.genie/agents/core/challenge.md
+├── explore.md → @.genie/agents/core/modes/explore.md
+├── consensus.md → @.genie/agents/core/modes/consensus.md
+├── challenge.md → @.genie/agents/core/modes/challenge.md
 ├── refactor.md → @.genie/agents/core/refactor.md
-├── docgen.md → @.genie/agents/core/docgen.md
-├── secaudit.md → @.genie/agents/core/secaudit.md
-├── tracer.md → @.genie/agents/core/tracer.md
+├── docgen.md → @.genie/agents/core/modes/docgen.md
+├── tracer.md → @.genie/agents/core/modes/tracer.md
 ├── implementor.md → @.genie/agents/core/implementor.md
 ├── tests.md → @.genie/agents/core/tests.md
 ├── review.md → @.genie/agents/review.md
@@ -350,8 +350,8 @@ Deliver: Counterarguments + experiments + verdict
 |----------|--------|------------------|------------|
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
-| **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
-| **Tactical** | refactor, docgen, secaudit, tracer | Focused support | Human or agents |
+| **Strategic** | genie, analyze, explore, debug | High-level analysis | Human or plan/forge |
+| **Tactical** | refactor, docgen, audit, tracer | Focused support | Human or agents |
 | **Delivery** | implementor, tests, review, polish | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
 | **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
