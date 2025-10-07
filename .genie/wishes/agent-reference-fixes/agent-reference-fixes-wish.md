@@ -1,5 +1,5 @@
 # 🧞 Agent Reference Fixes WISH
-**Status:** DRAFT
+**Status:** APPROVED
 **Roadmap Item:** Phase 1 – @.genie/product/roadmap.md §Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md
 **Standards:** @.genie/standards/best-practices.md
