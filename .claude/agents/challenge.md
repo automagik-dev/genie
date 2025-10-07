@@ -4,4 +4,4 @@ description: Critical thinking and assumption challenging agent
 model: inherit
 ---
 
-@.genie/agents/core/challenge.md
+@.genie/agents/core/modes/challenge.md

@@ -1,14 +1,41 @@
 # GENIE Agents Documentation
 
 ## Overview
-This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP. Agents are organized as:
+This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP.
 
-- **Entrypoints** – workflow phases and high-priority agents stored at the root (`plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`). These files remain immutable—no repo overrides are loaded.
-- **Core Modes (`core/`)** – reusable helpers (analyze, debug, commit workflow, docgen, refactor, tests, etc.) referenced by slash commands and templates.
-- **Custom Overrides (`custom/`)** – repo-specific extensions that auto-include alongside the core prompts.
-- **QA (`qa/`)** – Genie-only validation agents.
+### 3-Layer Extension System
+
+Genie uses a layered architecture for extensibility without forking:
+
+1. **Workflow Agents (root)** – `plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`
+   - Primary workflow orchestrators
+   - Immutable - no custom overrides loaded
+
+2. **Core Agents (`core/`)** – Reusable prompts shipped with framework
+   - **Delivery & utility agents** (10): `implementor.md`, `tests.md`, `qa.md`, `polish.md`, `commit.md`, `bug-reporter.md`, `git-workflow.md`, `install.md`, `learn.md`, `prompt.md`
+   - **Orchestrator modes** (`core/modes/`, 17): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `codereview.md`, etc.
+   - Immutable in distribution, but can be extended via custom layer
+
+3. **Custom Extensions (`../custom/`)** – Project-specific additions
+   - Auto-load alongside core agents when invoked
+   - Example: `.genie/custom/analyze.md` extends `core/analyze.md`
+   - Keeps core prompts pristine while allowing per-project customization
+
+4. **QA (`qa/`)** – Framework validation agents
 
 > **Note:** `learn` is the unified meta-learning agent; the legacy `self-learn` prompt has been retired.
+
+### How Extensions Work
+
+When an agent is invoked, the system loads:
+```
+1. Core agent prompt
+   - Delivery/utility: .genie/agents/core/<agent>.md
+   - Orchestrator modes: .genie/agents/core/modes/<mode>.md
+2. Custom extensions (.genie/custom/<agent>.md) - if exists
+```
+
+This allows projects to add domain-specific context, preferred commands, or evidence paths without modifying shipped prompts.
 
 Each agent is a specialized persona with specific expertise and behavioral patterns.
 

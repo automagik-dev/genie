@@ -4,4 +4,4 @@ description: Test generation and automation agent
 model: inherit
 ---
 
-@.genie/agents/core/testgen.md
+@.genie/agents/core/modes/testgen.md

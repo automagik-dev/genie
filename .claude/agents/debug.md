@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Debugging and troubleshooting agent
+description: Debug issues, report bugs, or orchestrate fixes via plan/wish/forge
 model: inherit
 ---
 

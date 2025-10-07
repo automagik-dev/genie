@@ -134,6 +134,97 @@ Access via: `mcp__genie__run` OR Task tool
 
 ---
 
+## Architecture Layers
+
+Genie uses a **3-layer extension system** for maximum flexibility without forking core prompts:
+
+### Layer 1: Core Agents (`.genie/agents/core/`)
+- **10 delivery & utility agents** shipped with the Genie framework
+- Examples: `implementor.md`, `commit.md`, `tests.md`, `qa.md`, `bug-reporter.md`
+- **17 orchestrator modes** in `modes/` subdirectory
+- Examples: `modes/analyze.md`, `modes/debug.md`, `modes/refactor.md`
+- **Immutable** - never edit these directly
+- Updated only via framework releases
+
+### Layer 2: Custom Extensions (`.genie/custom/*.md`)
+- **Project-specific overrides** that auto-load alongside core agents
+- Example: `.genie/custom/analyze.md` loads automatically when `analyze` agent runs
+- Allows per-project customization without modifying core prompts
+- Each file adds context like preferred commands, evidence paths, domain rules
+
+### Layer 3: Claude Aliases (`.claude/agents/*.md`)
+- **Thin wrappers** that reference core agents via `@` notation
+- Used by Task tool for background delegation
+- Example: `.claude/agents/analyze.md` contains just `@.genie/agents/core/modes/analyze.md`
+- Provides friendly names for agent discovery
+
+### How It Works
+
+When you invoke an agent:
+```bash
+# Standalone invocation
+mcp__genie__run with agent="analyze" and prompt="..."
+```
+
+**Loads:**
+1. `.genie/agents/core/modes/analyze.md` (core prompt)
+2. `.genie/custom/analyze.md` (project extensions, if exists)
+
+**Via orchestrator:**
+```bash
+mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. ..."
+```
+
+**Loads:**
+1. `.genie/agents/orchestrator.md` (wrapper context)
+2. `.genie/agents/core/modes/analyze.md` (core prompt)
+3. `.genie/custom/analyze.md` (project extensions, if exists)
+
+---
+
+## Dual Invocation Pattern
+
+Many agents can be invoked two ways:
+
+### Method 1: Standalone (Direct)
+**When to use:** Quick analysis, informal review, no formal verdict needed
+
+```bash
+mcp__genie__run with agent="analyze" and prompt="Scope: src/auth. Deliver: coupling analysis."
+```
+
+**Output:** Raw analysis results formatted per agent's template
+
+### Method 2: Via Orchestrator (Formal)
+**When to use:** High-stakes decisions, pressure-testing, requires "Genie Verdict + confidence"
+
+```bash
+mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/auth. Deliver: coupling + Genie Verdict."
+```
+
+**Output:** Analysis + structured Genie Verdict + confidence level + Done Report structure
+
+### Orchestrator Modes (18 total)
+
+**Strategic Analysis:**
+- `planning`, `analyze`, `deep-dive`, `thinkdeep`
+
+**Decision Making:**
+- `consensus`, `challenge`, `debate`, `socratic`
+
+**Review & Audit:**
+- `design-review`, `risk-audit`, `compliance`, `secaudit`, `codereview`, `retrospective`
+
+**Planning:**
+- `test-strategy`, `refactor`, `docgen`, `tracer`, `testgen`
+
+**Commit:**
+- `precommit` (alias to commit agent)
+
+**Note:** Delivery agents (implementor, tests, qa, polish, bug-reporter, git-workflow) are **not** orchestrator modes - they execute work directly.
+
+---
+
 ## MCP Quick Reference
 
 ### Interactive Workflows (Commands)

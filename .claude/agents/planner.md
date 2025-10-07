@@ -4,4 +4,4 @@ description: Strategic planning and orchestration agent
 model: inherit
 ---
 
-@.genie/agents/core/plan.md
+@.genie/agents/plan.md
