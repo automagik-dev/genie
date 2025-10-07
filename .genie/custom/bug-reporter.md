@@ -1,17 +1,18 @@
-# Bug Reporter Customization Template
+# Bug Reporter • Project Defaults
 
-> Populate repository-specific defaults for the `bug-reporter` agent. These notes are included by the core prompt and should stay focused on guidance, not instructions for other agents.
-
-## Commands & Tools
-- [ ] Primary command(s) to run during this agent's workflow (e.g., `pnpm test`, `cargo fmt`).
-- [ ] Additional utilities, scripts, or environment setup required before execution.
+## Reproduction Commands
+- `pnpm run test:genie` – baseline smoke; capture failures to reproduce CLI regressions.
+- `node tests/mcp-real-user-test.js` and `node tests/mcp-cli-integration.test.js` – MCP-specific issues.
+- `tests/identity-smoke.sh` – verify identity banner/log output when failures involve missing session IDs.
+- Inspect `.genie/state/agents/logs/` for the relevant agent log (e.g., `plan-*.log`, `core-analyze-*.log`).
 
 ## Context & References
-- [ ] Key modules, services, or documents to inspect first (use `@path` references when possible).
-- [ ] Domain assumptions, data fixtures, or integrations this agent must keep in mind.
+- CLI logic: `@.genie/cli/src/`
+- MCP server: `@.genie/mcp/src/`
+- Smoke/integration tests: `@tests/`
+- Contribution & commit practices: `@CONTRIBUTING.md`
 
 ## Evidence & Reporting
-- [ ] Artefacts to capture (logs, metrics, screenshots) and their storage paths.
-- [ ] Extra reporting expectations or stakeholder notifications.
-
-<!-- Add further sections if the project needs specialised guidance for this agent. -->
+- Store reproduction transcripts in `.genie/wishes/<slug>/qa/bug-report-<timestamp>.log`.
+- File the Markdown issue draft under `.genie/wishes/<slug>/reports/bug-report-<timestamp>.md` before creating the GitHub issue.
+- Attach relevant log excerpts from `.genie/state/agents/logs/` and note environment details (`node -v`, `pnpm -v`).

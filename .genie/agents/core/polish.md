@@ -34,14 +34,12 @@ Enforce typing, linting, and formatting standards so `{{PROJECT_NAME}}` ships ma
    - Plan quality sequence (type → lint → verification)
 
 2. [Type Safety]
-   - Frontend/TS: run `pnpm exec tsc --noEmit` for targeted coverage
-   - Backend/Rust: run `cargo check` and `cargo clippy --all --all-targets --all-features -- -D warnings`
+   - Execute type-check commands defined in `@.genie/custom/polish.md`
    - Apply type hints or interfaces to eliminate errors
    - Document justified suppressions with comments and report notes
 
 3. [Lint & Format]
-   - Execute lint and format commands (`pnpm run lint`, `pnpm run format:check`)
-   - Rust: `cargo fmt --all -- --check` and `cargo clippy --all --all-targets --all-features -- -D warnings`
+   - Execute lint/format commands from `@.genie/custom/polish.md`
    - Manually resolve non-auto-fixable issues and ensure imports/order align
    - Confirm formatting changes do not alter behaviour
 
@@ -114,11 +112,4 @@ Quality work unlocks confident shipping—tighten types, polish style, and prove
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/polish.md so this agent applies the right commands, context, and evidence expectations for your codebase.
-
-Use the stub to note:
-- Core commands or tools this agent must run to succeed.
-- Primary docs, services, or datasets to inspect before acting.
-- Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/polish.md
+Consult `@.genie/custom/polish.md` for repository-specific commands, contexts, and evidence expectations; update it whenever quality workflows change.

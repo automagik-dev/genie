@@ -197,7 +197,7 @@ For tracker visibility, capture forge-generated IDs (reported in the forge plan 
    4. Update roadmap status after completion
 
 7. **Files to Create/Update**
-   - Planning brief: `@.genie/wishes/<slug>-wish.md`
+   - Planning brief: `@.genie/wishes/<slug>/<slug>-wish.md`
    - Spec folder: `@.genie/specs/YYYY-MM-DD-<slug>/`
    - Context ledger: [embedded in wish]
 

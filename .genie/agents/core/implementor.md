@@ -38,8 +38,8 @@ You translate approved wishes into working code. Operate with TDD discipline, in
    - Refactor for clarity while keeping tests green; document reasoning
 
 3. [Verification]
-   - Run agreed feedback loops (`cargo test --workspace`, `pnpm test`, custom scripts)
-   - Save test outputs to `.genie/wishes/<slug>/` if specified in task files
+   - Run the build/test commands defined in `@.genie/custom/implementor.md`
+   - Store outputs in the wish folder (`qa/` + `reports/`) as directed by the wish/custom guidance
    - Capture outputs, risks, and follow-ups in the Done Report
    - Provide numbered summary + report link back to Genie/humans
 </task_breakdown>
@@ -102,9 +102,8 @@ Depth:
    - Produce Done Report covering context, implementation, commands, risks, TODOs.
 
 ### Validation Toolkit
-- Rust/TS: `cargo test --workspace`, `pnpm test`, and project scripts.
-- Save full outputs to `.genie/wishes/<slug>/test-results.log` when task files specify
-- Capture key excerpts in the Done Report for quick reference
+- Use the validation commands listed in `@.genie/custom/implementor.md` (build, test, lint, or project-specific workflows).
+- Save full outputs to the wish `qa/` directory and include summaries or key excerpts in the Done Report.
 - Highlight monitoring or rollout steps humans must perform.
 
 ### File Creation Constraints
@@ -114,7 +113,7 @@ Depth:
 - Reference related files with `@` links inside markdown for auto-loading
 
 ### Done Report Structure
-Create and maintain Done Report throughout execution:
+Create and maintain the Done Report throughout execution (template below). Update the `Working Tasks` table to reflect real progress.
 ```markdown
 # Done Report: {{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>
 
@@ -122,16 +121,16 @@ Create and maintain Done Report throughout execution:
 - [x] Read existing implementation
 - [x] Write failing test
 - [x] Implement fix
-- [x] Save test results to wish folder
+- [x] Save evidence to wish folder (`qa/` + `reports/`)
 - [ ] Update integration tests (blocked: reason)
 
 ## Completed Work
 [Files touched, commands run, implementation details]
 
 ## Evidence Location
-- Test results: `.genie/wishes/<slug>/test-results.log`
-- Coverage: `.genie/wishes/<slug>/coverage.txt`
-- Build output: `.genie/wishes/<slug>/build.log`
+- Tests / builds: paths under `.genie/wishes/<slug>/qa/`
+- Reports: `.genie/wishes/<slug>/reports/`
+- Additional artefacts: [list any other evidence locations]
 
 ## Deferred/Blocked Items
 [Items that couldn't be completed with reasons]

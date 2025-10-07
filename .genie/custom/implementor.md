@@ -1,17 +1,22 @@
-# Implementor Customization Template
+# Implementor • Project Defaults
 
-> Populate repository-specific defaults for the `implementor` agent. These notes are included by the core prompt and should stay focused on guidance, not instructions for other agents.
+Use these instructions whenever Automagik Genie needs to implement features in this repository.
 
 ## Commands & Tools
-- [ ] Primary command(s) to run during this agent's workflow (e.g., `pnpm test`, `cargo fmt`).
-- [ ] Additional utilities, scripts, or environment setup required before execution.
+- `pnpm install` – install dependencies (use `corepack enable pnpm` first if pnpm is unavailable).
+- `pnpm run build:genie` – compile the CLI TypeScript sources under `@.genie/cli/src/` and refresh `@.genie/cli/dist/`.
+- `pnpm run build:mcp` – compile the MCP server in `@.genie/mcp/src/` when changes touch the server.
+- `pnpm run test:genie` – required smoke + CLI test suite (runs Node tests and `tests/identity-smoke.sh`).
+- `pnpm run test:session-service` – run when the session service or `.genie/state` handling changes.
+- `pnpm run test:all` – aggregated suite before publishing or large merges.
 
 ## Context & References
-- [ ] Key modules, services, or documents to inspect first (use `@path` references when possible).
-- [ ] Domain assumptions, data fixtures, or integrations this agent must keep in mind.
+- Source layout: CLI code in `@.genie/cli/src/`, MCP server in `@.genie/mcp/src/`, shared agent prompts in `@.genie/agents/core/`.
+- Tests live in `@tests/` (`genie-cli.test.js`, `mcp-real-user-test.js`, `identity-smoke.sh`). Keep an eye on `.genie/state/agents/logs/` when troubleshooting failing runs.
+- Contribution workflow and required co-author format: `@CONTRIBUTING.md`.
+- Wishes expect artefacts under `.genie/wishes/<slug>/qa/` and reports under `.genie/wishes/<slug>/reports/`.
 
 ## Evidence & Reporting
-- [ ] Artefacts to capture (logs, metrics, screenshots) and their storage paths.
-- [ ] Extra reporting expectations or stakeholder notifications.
-
-<!-- Add further sections if the project needs specialised guidance for this agent. -->
+- Capture command output (build + tests) to the wish `qa/` folder, e.g. `.genie/wishes/<slug>/qa/build.log` and `tests.log`.
+- Note any regenerated `dist/` artefacts in the Done Report and list which commands produced them.
+- Reference key files touched (CLI, MCP, prompts) with `@path` links so reviewers can jump directly to changes.

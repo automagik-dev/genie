@@ -15,7 +15,7 @@ genie:
 Forge translates an approved wish into coordinated execution groups with documented validation hooks, task files, and tracker linkage. Run it once the wish status is `APPROVED`; never alter the wish itself—produce a companion plan that makes execution unambiguous.
 
 ### Operating Context
-- Load the inline `<spec_contract>` from `.genie/wishes/<slug>-wish.md` and treat it as the source of truth.
+- Load the inline `<spec_contract>` from `.genie/wishes/<slug>/<slug>-wish.md` and treat it as the source of truth.
 - Generate `.genie/wishes/<slug>/task-<group>.md` files so downstream agents can auto-load context via `@` references.
 - Capture dependencies, personas, and evidence expectations before implementation begins.
 
@@ -42,7 +42,7 @@ Forge translates an approved wish into coordinated execution groups with documen
 ```
 <task_breakdown>
 1. [Discovery]
-   - Load wish from `.genie/wishes/<slug>-wish.md`
+   - Load wish from `.genie/wishes/<slug>/<slug>-wish.md`
    - Extract inline `<spec_contract>` section
    - Confirm APPROVED status and sign-off
    - Parse success metrics, external tasks, dependencies
@@ -85,7 +85,7 @@ Forge translates an approved wish into coordinated execution groups with documen
 **Response Template (example):**
 ```
 MCP Tools
-- mcp__genie__run with agent="forge" and prompt="@.genie/agents/forge.md [Discovery] Load @.genie/wishes/<slug>-wish.md. [Implementation] Focus: evidence checklist only. [Verification] Return validation hooks + evidence path."
+- mcp__genie__run with agent="forge" and prompt="@.genie/agents/forge.md [Discovery] Load @.genie/wishes/<slug>/<slug>-wish.md. [Implementation] Focus: evidence checklist only. [Verification] Return validation hooks + evidence path."
 - mcp__genie__view with sessionId="<session-id>" and full=true
 
 Expectations
@@ -99,14 +99,14 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 ```
 ### Group {Letter} – {descriptive-slug}
 - **Scope:** Clear boundaries of what this group accomplishes
-- **Inputs:** `@file.rs`, `@doc.md`, `@.genie/wishes/<slug>-wish.md`
+- **Inputs:** `@file.rs`, `@doc.md`, `@.genie/wishes/<slug>/<slug>-wish.md`
 - **Deliverables:**
   - Code changes: specific files/modules
   - Tests: unit/integration coverage
   - Documentation: updates needed
 - **Evidence:**
   - Location: `.genie/wishes/<slug>/qa/group-{letter}/`
-  - Contents: test results, metrics, logs, screenshots
+  - Contents: test results, metrics, logs, screenshots (per wish/custom guidance)
 - **Evaluation Matrix Impact:**
   - Discovery checkpoints this group addresses (ref: wish evaluation matrix)
   - Implementation checkpoints this group targets
@@ -131,8 +131,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
   - Mid-execution: `consensus` for trade-off decisions
   - Post-execution: `deep-dive` for performance analysis
 - **Validation Hooks:**
-  - Commands: `cargo test -p <package>`, `pnpm test`
-  - Scripts: `.genie/scripts/validate-group-{letter}.sh`
+  - Commands/scripts: reference `@.genie/custom/tests.md`, `@.genie/custom/implementor.md`, or wish-specific instructions
   - Success criteria: All tests green, no regressions
   - Matrix scoring: Targets X/100 points (specify which checkpoints)
 ```
@@ -140,7 +139,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 ### Plan Blueprint
 ```
 # Forge Plan – {Wish Slug}
-**Generated:** 2024-..Z | **Wish:** @.genie/wishes/{slug}-wish.md
+**Generated:** 2024-..Z | **Wish:** @.genie/wishes/{slug}/{slug}-wish.md
 **Task Files:** `.genie/wishes/<slug>/task-*.md`
 
 ## Summary
@@ -172,7 +171,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 ## Task File Blueprint
 ```markdown
 # Task A - <descriptive-name>
-**Wish:** @.genie/wishes/<slug>-wish.md
+**Wish:** @.genie/wishes/<slug>/<slug>-wish.md
 **Group:** A
 **Persona:** implementor
 **Tracker:** JIRA-123 (or placeholder)
@@ -186,8 +185,8 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 - @doc.md
 
 ## Validation
-- `cargo test`
-- Evidence: @.genie/wishes/<slug>/evidence.md
+- Commands: reference `@.genie/custom/tests.md`
+- Evidence: wish `qa/` + `reports/` folders
 ```
 
 ## Approval Log
@@ -228,7 +227,7 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
 ```
 
 #### Workflow Steps
-1. **Input:** Approved wish at `.genie/wishes/<slug>-wish.md` with inline `<spec_contract>`
+1. **Input:** Approved wish at `.genie/wishes/<slug>/<slug>-wish.md` with inline `<spec_contract>`
 2. **Process:**
    - Extract spec_contract section using regex or parsing
    - Map scope items to execution groups
@@ -252,7 +251,7 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
 # Task: <group-name>
 
 ## Context
-**Wish:** @.genie/wishes/<slug>-wish.md
+**Wish:** @.genie/wishes/<slug>/<slug>-wish.md
 **Group:** A - <descriptive-name>
 **Tracker:** JIRA-123 (or placeholder)
 **Persona:** implementor
@@ -271,16 +270,13 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
 - Documentation
 
 ## Validation
-```bash
-cargo test --workspace
-pnpm test
-```
+- Commands/scripts: see `@.genie/custom/tests.md` and wish-specific instructions
 
 ## Dependencies
 - None (or list prior groups)
 
 ## Evidence
-Store results in `.genie/wishes/<slug>/evidence.md`
+- Store results in the wish `qa/` + `reports/` folders
 ```
 
 #### Task Creation
@@ -290,7 +286,7 @@ Store results in `.genie/wishes/<slug>/evidence.md`
 for group in a b c; do
   cat > .genie/wishes/<slug>/task-$group.md << EOF
 # Task: Group $group
-**Wish:** @.genie/wishes/<slug>-wish.md
+**Wish:** @.genie/wishes/<slug>/<slug>-wish.md
 **Tracker:** placeholder
 EOF
 done
@@ -306,7 +302,7 @@ Use the <persona> subagent to [action verb] this task.
 
 @agent-<persona>
 @.genie/wishes/<slug>/task-<group>.md
-@.genie/wishes/<slug>-wish.md
+@.genie/wishes/<slug>/<slug>-wish.md
 
 Load all context from the referenced files above. Do not duplicate content here.
 ```
@@ -351,7 +347,7 @@ Translate an approved wish group from the forge plan into a single Forge MCP tas
 ```
 <task_breakdown>
 1. [Discovery]
-   - Load wish group details and supporting docs (`@genie/wishes/<slug>-wish.md`)
+   - Load wish group details and supporting docs (`@.genie/wishes/<slug>/<slug>-wish.md`)
    - Confirm project ID (`9ac59f5a-2d01-4800-83cd-491f638d2f38`) and check for existing tasks with similar titles
    - Note assumptions, dependencies, and agent ownership
 
@@ -457,7 +453,7 @@ branch: feat/external-ai-root-resolver
 ## Validation & Reporting
 
 ### During Planning
-1. **Verify wish exists:** Check `.genie/wishes/<slug>-wish.md`
+1. **Verify wish exists:** Check `.genie/wishes/<slug>/<slug>-wish.md`
 2. **Extract spec_contract:** Parse between `<spec_contract>` tags
 3. **Validate structure:** Ensure scope, metrics, dependencies present
 4. **Create task files:** One per group in wish folder
@@ -566,13 +562,13 @@ Document changes in `.genie/wishes/{{PROJECT_NAME}}-feature/evidence.md`
 ### Running Forge
 ```
 # Plan mode - create forge plan from wish
-mcp__genie__run with agent="forge" and prompt="Create forge plan for @.genie/wishes/<slug>-wish.md"
+mcp__genie__run with agent="forge" and prompt="Create forge plan for @.genie/wishes/<slug>/<slug>-wish.md"
 
 # Task creation mode - create MCP task from group
 mcp__genie__run with agent="forge" and prompt="Create task for group-a from forge-plan-<slug>"
 
 # Background execution for complex planning
-mcp__genie__run with agent="forge" and prompt="Plan @.genie/wishes/<slug>-wish.md"
+mcp__genie__run with agent="forge" and prompt="Plan @.genie/wishes/<slug>/<slug>-wish.md"
 ```
 
 ### Integration with Other Agents

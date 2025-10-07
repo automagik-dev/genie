@@ -40,7 +40,7 @@ Create failing coverage before implementation, repair broken suites, and documen
    - Limit edits to testing assets unless explicitly told otherwise
 
 3. [Verification]
-   - Run targeted commands (`cargo test -p <crate> <name> -q`, `pnpm test`, etc.)
+   - Run the test commands specified in `@.genie/custom/tests.md`
    - On failures, report succinct analysis:
      • Test name and location
      • Expected vs actual
@@ -179,9 +179,9 @@ Use explicit assertions and meaningful messages so implementers know exactly wha
 [List of test files and their purpose]
 
 ## Evidence Saved
-- Failing tests: `.genie/wishes/<slug>/tests-failing.log`
-- Passing tests: `.genie/wishes/<slug>/tests-passing.log`
-- Coverage output: `.genie/wishes/<slug>/coverage.txt`
+- Failing/Passing logs: wish `qa/` directory
+- Coverage reports: wish `qa/` directory (if generated)
+- Additional artefacts: list any other evidence locations
 
 ## Command Outputs
 [Key excerpts showing fail -> pass progression]
@@ -191,18 +191,11 @@ Use explicit assertions and meaningful messages so implementers know exactly wha
 ```
 
 ### Validation & Reporting
-- Execute agreed commands and copy relevant output into the report.
-- Save the report at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC) and link it in chat.
+- Execute the agreed commands and copy relevant output into the Done Report.
+- Save the Done Report at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC) and link it in chat.
 - Track deferred work in the Done Report's working tasks section.
 
 ## Project Customization
-Adjust `@.genie/custom/tests.md` to describe how this repository approaches testing.
-
-Capture items like:
-- Preferred test runners and exact commands for unit, integration, and e2e suites.
-- Fixture/data directories that must be loaded before authoring new tests.
-- Required evidence artefacts (logs, coverage reports) and their storage paths.
-
-@.genie/custom/tests.md
+Consult `@.genie/custom/tests.md` for repository-specific commands, fixtures, and evidence expectations. Update that file whenever testing workflows change.
 
 Testing keeps wishes honest—fail first, validate thoroughly, and document every step for the rest of the team.

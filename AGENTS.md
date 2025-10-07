@@ -28,7 +28,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/instructions/` – legacy Agent OS playbooks retained for reference
 - `.genie/guides/` – getting-started docs, onboarding
 - `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
-- `.genie/wishes/` – active wish contracts (`<slug>-wish.md`)
+- `.genie/wishes/` – active wish folders (`<slug>/<slug>-wish.md`, `qa/`, `reports/`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
 - `.genie/custom/` – project-specific overrides for specialists and Genie modes (kept outside `agents/` to avoid double registration)
@@ -38,7 +38,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 
 ## Workflow Summary
 1. **/plan** – single-entry agent for product mode. Loads mission/roadmap/standards, gathers context via `@` references, requests background personas via MCP, and decides if item is wish-ready.
-2. **/wish** – creates `.genie/wishes/<slug>-wish.md`, embedding context ledger, execution groups, inline `<spec_contract>`, branch/tracker strategy, and blocker protocol.
+2. **/wish** – creates `.genie/wishes/<slug>/` (`<slug>-wish.md`, `qa/`, `reports/`), embedding context ledger, execution groups, inline `<spec_contract>`, branch/tracker strategy, and blocker protocol.
 3. **/forge** – surfaces execution groups, evidence expectations, validation hooks, and pointers back to the wish for tracker updates (capture the plan summary inside the wish).
 4. **Implementation** – humans/agents follow forge plan, storing evidence exactly where the wish specifies (no default folders). Specialist agents run via `mcp__genie__run` with agent and prompt parameters. Tailor the files in `.genie/custom/` during installation.
 5. **/review** (optional) – aggregates QA artefacts, replays validation commands, and writes a review summary back into the wish (create a dedicated section or file path if needed).
@@ -141,7 +141,7 @@ Genie prompt patterns (run through any agent, typically `plan`):
 
 ## Self-Learn & Behavioral Corrections
 
-> **Status:** Meta-learning consolidation is still underway; both the legacy `self-learn` agent and the new `learn` persona coexist until Phase 1 of `@.genie/wishes/core-template-separation-wish.md` lands.
+> **Status:** Meta-learning consolidation is still underway; both the legacy `self-learn` agent and the new `learn` persona coexist until Phase 1 of `@.genie/wishes/core-template-separation/core-template-separation-wish.md` lands.
 
 Use the `self-learn` agent to record violations and propagate corrections across the framework.
 
@@ -305,7 +305,7 @@ Validation: Future forge runs produce <10 line descriptions with @-references on
 ❌ Use forbidden naming patterns (fixed, improved, updated, better, new, v2, _fix, _v, enhanced, comprehensive).
 
 ### Path Conventions
-- Wishes: `.genie/wishes/<slug>-wish.md`.
+- Wishes: `.genie/wishes/<slug>/<slug>-wish.md`.
 - Evidence: declared by each wish (pick a clear folder or append directly in-document).
 - Forge plans: recorded in CLI output—mirror essentials back into the wish.
 - Blockers: logged inside the wish under a **Blockers** or status section.
@@ -421,7 +421,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 
 ### How To Run (MCP)
-- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
+- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.

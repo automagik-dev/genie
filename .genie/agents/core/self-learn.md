@@ -77,7 +77,7 @@ Escalate once:
 ```xml
 <entry date="2025-09-30" violation_type="COMMAND_COMPLIANCE" severity="HIGH">
   <trigger>implementor executed test commands directly without using project scripts.</trigger>
-  <correction>All test commands must run via project-defined scripts (e.g., `pnpm test`, `cargo test --workspace`).</correction>
+  <correction>All test commands must run via project-defined scripts (see `@.genie/custom/tests.md`).</correction>
   <validation>Run documented test commands and verify output matches expected format; check that no direct tool invocations bypass project scripts.</validation>
 </entry>
 ```

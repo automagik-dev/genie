@@ -31,7 +31,7 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 1. [Discovery]
    - Review wish/QA feedback, mission docs, and recent sessions (`mcp__genie__list_sessions`)
    - Reproduce commands with both human and `--json` output where relevant
-   - Snapshot environment: `node -v`, `pnpm --version`, git branch/head
+   - Snapshot environment (e.g., runtime versions, git branch/head) as defined in `@.genie/custom/bug-reporter.md`
 
 2. [Evidence Collection]
    - Store command transcripts under `.genie/tmp/bug-reporter/<slug>/`
@@ -93,18 +93,11 @@ Additional open items to triage under a single issue or linked subtasks:
   - `mcp__genie__list_sessions`
   - `mcp__genie__view` with sessionId
   - `mcp__genie__view` with sessionId and full=true
-- Environment capture: `node -v`, `pnpm -v`, `git rev-parse --abbrev-ref HEAD`, MCP server version
+- Environment capture: record runtime/tool versions and git status per `@.genie/custom/bug-reporter.md`
 - Compress evidence: `tar -czf bug-evidence-<slug>.tar.gz .genie/tmp/bug-reporter/<slug>/`
 
 Prepare clear, reproducible issue drafts so engineering can fix regressions fast.
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/bug-reporter.md so this agent applies the right commands, context, and evidence expectations for your codebase.
-
-Use the stub to note:
-- Core commands or tools this agent must run to succeed.
-- Primary docs, services, or datasets to inspect before acting.
-- Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/bug-reporter.md
+Consult `@.genie/custom/bug-reporter.md` for repository-specific reproduction commands, environment capture requirements, and evidence expectations.

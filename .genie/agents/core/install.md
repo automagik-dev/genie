@@ -238,7 +238,7 @@ When populating product docs and resolving gaps:
 - Plan decides whether to proceed to wish immediately or gather more context.
 
 ### Wish Integration (after plan approval)
-- Plan creates `.genie/wishes/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
+- Plan creates `.genie/wishes/<slug>/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
 - Example: `mcp__genie__run` with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
 - Install's evidence and decisions are summarized in the wish context ledger.
 

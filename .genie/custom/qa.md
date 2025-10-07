@@ -1,17 +1,18 @@
-# Qa Customization Template
-
-> Populate repository-specific defaults for the `qa` agent. These notes are included by the core prompt and should stay focused on guidance, not instructions for other agents.
+# QA • Project Defaults
 
 ## Commands & Tools
-- [ ] Primary command(s) to run during this agent's workflow (e.g., `pnpm test`, `cargo fmt`).
-- [ ] Additional utilities, scripts, or environment setup required before execution.
+- `pnpm run test:genie` – primary smoke suite (runs Node tests and `tests/identity-smoke.sh`).
+- `pnpm run test:session-service` – execute when session service behaviour changes.
+- `tests/identity-smoke.sh` – standalone identity banner verification (reads `.genie/state/agents/logs/`).
+- `node tests/mcp-real-user-test.js` / `node tests/mcp-cli-integration.test.js` – MCP protocol coverage.
 
 ## Context & References
-- [ ] Key modules, services, or documents to inspect first (use `@path` references when possible).
-- [ ] Domain assumptions, data fixtures, or integrations this agent must keep in mind.
+- Smoke tests live in `@tests/`; review each script before reproducing failures.
+- Genie log output is stored in `.genie/state/agents/logs/<agent>-<timestamp>.log`; keep snippets for troubleshooting.
+- Product/environment toggles: `@.genie/product/environment.md` (e.g., `ENABLE_SELF_LEARN_SYNC`).
+- Wish artefacts belong inside `.genie/wishes/<slug>/qa/` (evidence) and `.genie/wishes/<slug>/reports/` (QA reports).
 
 ## Evidence & Reporting
-- [ ] Artefacts to capture (logs, metrics, screenshots) and their storage paths.
-- [ ] Extra reporting expectations or stakeholder notifications.
-
-<!-- Add further sections if the project needs specialised guidance for this agent. -->
+- Save command transcripts (stdout/stderr) to the wish `qa/` directory (`qa/identity-smoke.log`, `qa/mcp-cli.log`, etc.).
+- Reference any relevant log files from `.genie/state/agents/logs/` in the Done Report.
+- Escalate confirmed regressions through the bug-reporter agent with links to evidence and log files.

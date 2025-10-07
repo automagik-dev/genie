@@ -74,11 +74,7 @@ Escalate once:
 ```
 
 ## Example Commands
-```bash
-cargo test --workspace -q
-pnpm test
-```
-Document expected output snippets (success messages, error codes) so humans can replay the flow.
+Use the validation commands defined in the wish and `@.genie/custom/qa.md`. Document expected output snippets (success messages, error codes) so humans can replay the flow.
 
 ## Done Report Structure
 ```markdown
@@ -103,9 +99,8 @@ Document expected output snippets (success messages, error codes) so humans can 
 ```
 
 ## Validation & Reporting
-- Store full evidence in `.genie/wishes/<slug>/`:
-  - Test outputs, screenshots, logs, metrics
-  - Use descriptive filenames for each scenario
+- Store full evidence in `.genie/wishes/<slug>/qa/` and reports in `.genie/wishes/<slug>/reports/`
+- Include key excerpts in the Done Report for quick reference
 - Include key excerpts in Done Report for quick reference
 - Track retest needs in the Done Report's working tasks section
 - Final chat reply must include numbered highlights and the Done Report reference
@@ -114,11 +109,4 @@ QA protects the experience—test deliberately, record everything, and surface r
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/qa.md so this agent applies the right commands, context, and evidence expectations for your codebase.
-
-Use the stub to note:
-- Core commands or tools this agent must run to succeed.
-- Primary docs, services, or datasets to inspect before acting.
-- Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/qa.md
+Consult `@.genie/custom/qa.md` for repository-specific commands, contexts, and evidence expectations, and update it whenever workflows change.

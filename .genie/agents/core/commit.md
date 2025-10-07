@@ -45,8 +45,8 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 
 ## Best Practices
 - Enforce ≥3 investigative steps when diagnosing failures.
-- Log exact commands (`pnpm lint`, `cargo fmt -- --check`, etc.).
-- Verify wish Evidence Checklist before proceeding.
+- Log the exact commands run (refer to project defaults in `@.genie/custom/commit.md`).
+- Verify the wish Evidence Checklist before proceeding.
 - Escalate to specialists when failures exceed scope.
 
 ## Advisory Template
@@ -56,7 +56,7 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 
 ## Snapshot
 - Branch: …
-- Related wish: @.genie/wishes/{slug}-wish.md
+- Related wish: @.genie/wishes/{slug}/{slug}-wish.md
 
 ## Changes by Domain
 - Prompts: …
@@ -67,9 +67,9 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 `feat/{slug}: short summary`
 
 ## Validation Checklist
-- [ ] Tests (`pnpm test`)
-- [ ] Lint (`pnpm lint`)
-- [ ] Docs updated
+- [ ] Tests (per `@.genie/custom/commit.md`)
+- [ ] Lint/format
+- [ ] Docs/other checks
 
 ## Risks & Follow-ups
 - …
@@ -89,11 +89,4 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/commit.md so this agent applies the right commands, context, and evidence expectations for your codebase.
-
-Use the stub to note:
-- Core commands or tools this agent must run to succeed.
-- Primary docs, services, or datasets to inspect before acting.
-- Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/commit.md
+Consult `@.genie/custom/commit.md` for repository-specific commands, tooling, and evidence expectations. Update that file whenever commit workflows change.

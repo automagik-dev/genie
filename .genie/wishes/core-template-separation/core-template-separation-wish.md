@@ -10,35 +10,35 @@
 
 ### Discovery Phase (30 pts)
 - **Context Completeness (10 pts)**
-  - [ ] All relevant files/docs referenced with @ notation (4 pts)
-  - [ ] Agent inventory complete with categorization (3 pts)
+  - [x] All relevant files/docs referenced with @ notation (4 pts)
+  - [x] Agent inventory complete with categorization (3 pts)
   - [ ] Template content audit verified (3 pts)
 - **Scope Clarity (10 pts)**
-  - [ ] Clear distinction between core and template defined (3 pts)
-  - [ ] Spec contract complete with success metrics (4 pts)
-  - [ ] Out-of-scope explicitly stated (3 pts)
+  - [x] Clear distinction between core and template defined (3 pts)
+  - [x] Spec contract complete with success metrics (4 pts)
+  - [x] Out-of-scope explicitly stated (3 pts)
 - **Evidence Planning (10 pts)**
-  - [ ] Validation commands specified with exact syntax (4 pts)
+  - [x] Validation commands specified with exact syntax (4 pts)
   - [ ] Migration path documented (3 pts)
-  - [ ] Approval checkpoints documented (3 pts)
+  - [x] Approval checkpoints documented (3 pts)
 
 ### Implementation Phase (40 pts)
 - **Code Quality (15 pts)**
   - [ ] Clean directory structure (core vs templates/) (5 pts)
   - [ ] Minimal breaking changes to existing users (5 pts)
-  - [ ] Clear @include path conventions (5 pts)
+  - [x] Clear @include path conventions (5 pts)
 - **Test Coverage (10 pts)**
   - [ ] Init script tested in clean environment (4 pts)
   - [ ] Template copy verification tests (4 pts)
   - [ ] MCP agent resolution tests (2 pts)
 - **Documentation (5 pts)**
-  - [ ] AGENTS.md updated with new structure (2 pts)
+  - [x] AGENTS.md updated with new structure (2 pts)
   - [ ] Migration guide created (2 pts)
-  - [ ] README architecture section updated (1 pt)
+  - [x] README architecture section updated (1 pt)
 - **Execution Alignment (10 pts)**
-  - [ ] Stayed within spec contract scope (4 pts)
-  - [ ] No unapproved scope creep (3 pts)
-  - [ ] Dependencies and sequencing honored (3 pts)
+  - [x] Stayed within spec contract scope (4 pts)
+  - [x] No unapproved scope creep (3 pts)
+  - [x] Dependencies and sequencing honored (3 pts)
 
 ### Verification Phase (30 pts)
 - **Validation Completeness (15 pts)**
@@ -63,7 +63,7 @@
 | User clarification | feedback | Genie orchestrator is a core agent | categorization |
 | User clarification | feedback | Templates are one-way: Genie → user projects | implementation |
 | Agent glob scan | discovery | 36 agents total across .genie/agents/ | categorization |
-| @.genie/agents/utilities/install.md | repo | Current init logic and setup modes | implementation |
+| @.genie/agents/core/install.md | repo | Current init logic and setup modes | implementation |
 | templates/ directory | discovery | Already exists with templates/.claude/commands/ | implementation |
 | .genie/ directories | discovery | entrypoints, core prompts, custom overrides, qa, guides, standards, product, instructions | audit |
 
@@ -73,7 +73,7 @@
 - **Key observations:**
   - Genie repository uses `.genie/` for its own development (meta-level)
   - `templates/` directory already exists at repo root with `.claude/commands/` subdirectory
-- 36 agents cataloged across entrypoints, core delivery prompts, and utilities
+  - 36 agents cataloged across entrypoints, core delivery prompts, and utilities
   - MCP config is straightforward npm package invocation, no dynamic path resolution needed
   - Template system is one-way: init copies to user projects, no upstream sync
 - **Assumptions (ASM-#):**
@@ -393,6 +393,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - Consolidate core delivery catalog (git lifecycle merge, retire prompts now served by Twin)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
 - Preserve Vibe naming across code and docs while removing legacy “sleepy” references
+- Adopt the wish folder convention (`.genie/wishes/<slug>/<slug>-wish.md`, `qa/`, `reports/`) and migrate existing artifacts
 
 **Out of Scope:**
 - New feature development beyond agent/document consolidation
@@ -406,6 +407,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - `pnpm exec genie agents list` shows merged git lifecycle delivery prompt and no retired entries
 - Documentation updates approved with no TODO placeholders and spell-check clean
 - Repository contains zero references to `sleepy` outside historical logs
+- Wishes store documents/reports/evidence under the nested folder structure; no flat wish files remain
 
 **External Tasks:**
 - Forge execution group IDs (TBD after `/forge`)
@@ -419,7 +421,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 
 ## Blocker Protocol
 
-1. Pause work and create `.genie/reports/blocker-core-template-separation-<timestamp>.md` describing findings.
+1. Pause work and create `reports/blocker-core-template-separation-<timestamp>.md` inside the wish folder describing findings.
 2. Notify owner and wait for updated instructions.
 3. Resume only after wish status/log is updated.
 
@@ -432,6 +434,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - [Pending] Documentation + migration evidence captured (Group D)
 - [Pending] Validation checklist complete
 - [Pending] Human approval for merge
+- [2025-10-06 23:25Z] CLI wrappers updated to new `core/` layout, wish assets migrated to folder structure (`.genie/wishes/core-template-separation/`), identity smoke + MCP integration adjusted to `genie` binary; `pnpm run test:genie` passing.
 - [2025-10-06 15:20Z] Core prompts normalized to shared framework; project overrides moved to `.genie/custom/` with refreshed templates.
 - [2025-10-06 14:45Z] Slash command includes retargeted to `.genie/agents/<name>.md` to restore `/plan`, `/wish`, `/forge`, `/review`, `/vibe`.
 
@@ -440,6 +443,6 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - **Broken command includes (resolved 2025-10-06):** `.claude/commands/plan.md:7`, `wish.md:7`, `forge.md:7`, `review.md:7`, and `vibe.md:7` now point back to `@.genie/agents/<name>.md`, restoring the slash commands while the core/template move is still in flight.
 - **Core prompt customization routed through `.genie/custom/`:** Entry-point agents remain immutable while each core delivery persona now exposes a `Project Customization` block wired to `.genie/custom/<agent>.md`; legacy `.genie/agents/custom/` references removed.
 - **Template export pending:** `templates/` remains empty; distributable copies of the core/custom structure still need to be staged.
+- **CLI smoke passing:** `pnpm run test:genie` succeeds with identity smoke test verifying the `**Identity**` block and the MCP integration invoking the installed `genie` binary; see `scripts/qa/bug1-validate.sh`, `tests/identity-smoke.sh`, `tests/mcp-*.js`.
 - **Meta-learn merge outstanding:** `@.genie/agents/core/self-learn.md` still exists alongside the new `learn.md` persona, meaning the unified meta-learning flow has not been delivered.
 - **Documentation drift (resolved 2025-10-06):** `AGENTS.md:32` and `@.genie/agents/README.md:6` now call out that entrypoints stay immutable while core prompts load `.genie/custom/` overrides.
-- **Templates directory empty:** `templates/` contains no scaffolded content, so the init flow still lacks the promised template separation.

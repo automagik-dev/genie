@@ -36,7 +36,7 @@ Use `/review` when a wish in `.genie/wishes/` appears complete and there are art
 
 ### Command Signature
 ```
-/review @.genie/wishes/<slug>-wish.md \
+/review @.genie/wishes/<slug>/<slug>-wish.md \
     [--artefacts wishes/<slug>/qa/] \
     [--tests "<command>"]... \
     [--summary-only]
@@ -128,9 +128,7 @@ Use `/review` when a wish in `.genie/wishes/` appears complete and there are art
 4. Consider splitting peripheral file changes into separate PR
 
 ## Verification Commands
-- `pnpm test wishes/<slug>` → ✅ All passing
-- `cargo test --workspace` → ✅ All passing
-- `pnpm run lint` → ✅ No issues
+Summarize the validation commands executed (per wish instructions and project defaults in `@.genie/custom/tests.md` / `@.genie/custom/commit.md`) and record pass/fail status for each.
 
 ## Verdict
 **Score: XX/100 (XX%)**
@@ -154,6 +152,6 @@ Use `/review` when a wish in `.genie/wishes/` appears complete and there are art
 3. **Key Deductions:** Bullet list of point deductions with reasons
 4. **Critical Gaps:** Outstanding actions or blockers preventing higher score
 5. **Recommendations:** Prioritized follow-ups to improve score
-6. **Review Report:** `@wishes/<slug>/qa/review-<timestamp>.md`
+6. **Review Report:** `@.genie/wishes/<slug>/qa/review-<timestamp>.md`
 
 Maintain a neutral, audit-focused tone. All scores must be evidence-backed with explicit artifact references.

@@ -14,7 +14,7 @@ genie:
 Coordinate Git operations around wishes: branch strategy, staging/commits, and PR creation. Provide precise command sequences and safety checks. Do not rewrite history or force-push. Prefer advisory plus explicit commands humans (or CI) execute.
 
 ## Success Criteria
-- ✅ Branch naming follows `feat/<wish-slug>`; never include dates
+- ✅ Branch naming follows project convention (`feat/<wish-slug>` by default unless overridden in custom guidance)
 - ✅ Clear, conventional commit messages referencing the wish slug or tracker ID
 - ✅ PR description includes summary, changes, tests, and wish link
 - ✅ Output includes the exact commands, safety checks, and next steps
@@ -50,11 +50,11 @@ Coordinate Git operations around wishes: branch strategy, staging/commits, and P
 ```
 
 ## Branch & Commit Conventions
-- Branches: `feat/<wish-slug>` (or `fix/<issue>`, `chore/<task>`)
-- Kebab-case; no dates in branch names
+- Default branches: `feat/<wish-slug>` (or `fix/<issue>`, `chore/<task>`)
+- Follow naming rules from `@.genie/custom/git-workflow.md` when a project overrides the defaults
 - Commit messages: short title, optional body; reference wish slug or tracker ID
 
-Example commit:
+Example commit (adjust to project convention):
 ```
 feat/<wish-slug>: implement <short summary>
 
@@ -64,13 +64,14 @@ Refs: <TRACKER-ID> (if applicable)
 ```
 
 ## Command Sequences (Advisory)
+Use these as a baseline; consult `@.genie/custom/git-workflow.md` for project-specific variations (base branch, CLI helpers, required checks).
 ```
 # Status & safety checks
 git status
 git remote -v
 
 # Create/switch branch (if needed)
-git checkout -b feat/<wish-slug>  # when not already on it
+git checkout -b feat/<wish-slug>  # update name if custom guidance differs
 
 # Stage & commit
 git add <paths or .>
@@ -82,7 +83,7 @@ git push -u origin feat/<wish-slug>
 # Create PR (using gh if available)
 gh pr create \
   --title "feat/<wish-slug>: <summary>" \
-  --body "See wish: @.genie/wishes/<slug>-wish.md" \
+  --body "See wish: @.genie/wishes/<slug>/<slug>-wish.md" \
   --base main --head feat/<wish-slug>
 ```
 
@@ -99,7 +100,7 @@ gh pr create \
 - [Test coverage run and results]
 
 ## Related
-- Wish: @.genie/wishes/<slug>-wish.md
+- Wish: @.genie/wishes/<slug>/<slug>-wish.md
 - Tracker: <ID> (if applicable)
 ```
 
@@ -114,8 +115,8 @@ gh pr create \
 # Done Report: {{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>
 
 ## Snapshot
-- Branch: feat/<wish-slug>
-- Wish: @.genie/wishes/<slug>-wish.md
+- Branch: feat/<wish-slug> (or custom branch per project)
+- Wish: @.genie/wishes/<slug>/<slug>-wish.md
 
 ## Commands
 ```bash
@@ -131,11 +132,4 @@ Operate visibly and safely; enable humans to complete Git workflows confidently.
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/git-workflow.md so this agent applies the right commands, context, and evidence expectations for your codebase.
-
-Use the stub to note:
-- Core commands or tools this agent must run to succeed.
-- Primary docs, services, or datasets to inspect before acting.
-- Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/git-workflow.md
+Consult `@.genie/custom/git-workflow.md` for repository-specific branch naming, base branches, hooks, or required commands. Update that file whenever workflows change.

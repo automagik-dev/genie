@@ -1,17 +1,15 @@
-# Commit Customization Template
+# Commit • Project Defaults
 
-> Populate repository-specific defaults for the `commit` agent. These notes are included by the core prompt and should stay focused on guidance, not instructions for other agents.
+## Pre-Commit Checklist
+- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
+- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
+- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
 
-## Commands & Tools
-- [ ] Primary command(s) to run during this agent's workflow (e.g., `pnpm test`, `cargo fmt`).
-- [ ] Additional utilities, scripts, or environment setup required before execution.
-
-## Context & References
-- [ ] Key modules, services, or documents to inspect first (use `@path` references when possible).
-- [ ] Domain assumptions, data fixtures, or integrations this agent must keep in mind.
+## Commit Message Standards
+- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
+- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
+- Reference the active wish slug/ID in the body when applicable.
 
 ## Evidence & Reporting
-- [ ] Artefacts to capture (logs, metrics, screenshots) and their storage paths.
-- [ ] Extra reporting expectations or stakeholder notifications.
-
-<!-- Add further sections if the project needs specialised guidance for this agent. -->
+- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
+- Note any outstanding follow-up or manual verification required post-commit.
