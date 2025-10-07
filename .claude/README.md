@@ -36,7 +36,6 @@ Access via: `mcp__genie__run` OR Task tool
 - `challenge` — Assumption breaking (also callable via genie)
 
 #### Tactical Utilities
-- `codereview` — Diff/file review
 - `refactor` — Refactor planning
 - `docgen` — Documentation generation
 - `secaudit` — Security audit
@@ -45,7 +44,8 @@ Access via: `mcp__genie__run` OR Task tool
 
 #### Delivery Specialists
 - `implementor` — Feature implementation
-- `tests` — Test writing
+- `tests` — Test strategy, generation, and authoring
+- `review` — Wish audits and code review
 - `polish` — Code refinement
 - `qa` — Quality assurance
 
@@ -112,13 +112,13 @@ Access via: `mcp__genie__run` OR Task tool
 ├── thinkdeep.md → @.genie/agents/core/thinkdeep.md
 ├── consensus.md → @.genie/agents/core/consensus.md
 ├── challenge.md → @.genie/agents/core/challenge.md
-├── codereview.md → @.genie/agents/core/codereview.md
 ├── refactor.md → @.genie/agents/core/refactor.md
 ├── docgen.md → @.genie/agents/core/docgen.md
 ├── secaudit.md → @.genie/agents/core/secaudit.md
 ├── tracer.md → @.genie/agents/core/tracer.md
 ├── implementor.md → @.genie/agents/core/implementor.md
 ├── tests.md → @.genie/agents/core/tests.md
+├── review.md → @.genie/agents/review.md
 ├── polish.md → @.genie/agents/core/polish.md
 ├── qa.md → @.genie/agents/core/qa.md
 ├── git-workflow.md → @.genie/agents/core/git-workflow.md
@@ -205,12 +205,12 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 - `explore` — discovery-focused exploratory reasoning
 - `consensus` — multi-model perspective synthesis
 
-**Specialized Analysis (13):**
+**Specialized Analysis (11):**
 - `plan`, `analyze`, `deep-dive` — strategic analysis
 - `debug` — root-cause investigation
 - `risk-audit`, `design-review`, `secaudit` — audit & review
 - `refactor`, `tracer`, `docgen` — implementation support
-- `codereview`, `precommit` — quality gates
+- `precommit` — quality gates
 
 **Custom-Only (2):**
 - `compliance`, `retrospective`
@@ -255,7 +255,7 @@ mcp__genie__run with agent="challenge" and prompt="Topic: caching strategy"
 
 # Tactical support
 mcp__genie__run with agent="commit" and prompt="Generate commit message"
-mcp__genie__run with agent="codereview" and prompt="Scope: git diff main"
+mcp__genie__run with agent="review" and prompt="Mode: code review. Scope: git diff main"
 mcp__genie__run with agent="tests" and prompt="Mode: generation. Layer: unit. Files: src/auth/*.rs"
 mcp__genie__run with agent="refactor" and prompt="Targets: api/routes"
 
@@ -355,8 +355,8 @@ Deliver: Counterarguments + experiments + verdict
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
 | **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
-| **Tactical** | codereview, refactor, docgen, secaudit, tracer | Focused support | Human or agents |
-| **Delivery** | implementor, tests, polish, qa | Execute work | Forge or human |
+| **Tactical** | refactor, docgen, secaudit, tracer | Focused support | Human or agents |
+| **Delivery** | implementor, tests, review, polish, qa | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
 | **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
 

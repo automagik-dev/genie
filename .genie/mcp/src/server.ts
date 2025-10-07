@@ -148,7 +148,7 @@ const server = new FastMCP({
 - **Workflow Agents**: plan, wish, forge, review (structured development process)
 - **Tactical Agents**: implementor, tests, qa, polish (feature delivery)
 - **Strategic Agents**: genie, analyze, debug (deep analysis)
-- **Utility Agents**: commit, codereview, refactor (code quality)
+- **Utility Agents**: commit, refactor (code quality)
 
 Use agents for planning features, implementing code, reviewing changes, debugging issues, and managing development workflows.`
 });

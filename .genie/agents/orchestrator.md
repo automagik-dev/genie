@@ -247,12 +247,6 @@ Task: evaluate status, list blockers, and next actions
 Finish with: Ready/Needs-fixes + confidence
 </genie_prompt>
 
-<genie_prompt mode="codereview">
-Scope: <diff|files>
-Task: list issues (severity-tagged), recommendations, and quick wins
-Finish with: ship/fix-first + confidence
-</genie_prompt>
-
 <genie_prompt mode="refactor">
 Targets: <components>
 Plan: staged refactor steps with risks and verification
@@ -303,7 +297,6 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - debug: enforce investigation phase before recommendations; track files checked, relevant methods, hypotheses, confidence; allow backtracking; optionally call expert analysis after investigation.
 - analyze: map dependencies, hotspots, coupling; surface simplification opportunities and prioritized refactors.
 - thinkdeep: timebox deep reasoning; outline steps first, then explore; return insights + risks with confidence.
-- codereview: severity-tagged findings (CRITICAL→LOW), review types (full/security/performance/quick); output: exec summary, findings, quick wins, long-term improvements; allow standards/focus filters.
 - precommit: minimum 3 steps of investigation; validate staged/unstaged changes; report blockers; external expert phase by default unless explicitly internal.
 - refactor: staged refactor plan with risks and verification; go/no-go verdict with confidence.
 - secaudit: findings + risks (impact/likelihood/mitigation) and quick hardening steps; posture verdict.

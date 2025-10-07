@@ -18,7 +18,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (git-workflow, implementor, polish, qa, tests, commit, codereview, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- Specialized + delivery agents (git-workflow, implementor, polish, qa, tests, review, commit, docgen, refactor, secaudit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -120,7 +120,7 @@ Guidance:
 Genie can handle small, interactive requests without entering Plan → Wish when the scope is clearly limited. Preferred helpers:
 
 - `core/debug` – root-cause investigations or "why is this broken?" questions
-- `core/codereview` – quick reviews of a small diff/file for severity-tagged feedback
+- `review` – wish audits with 100-point matrix or code reviews with severity-tagged feedback
 - `core/analyze` – explain current architecture or module behaviour at a high level
 - `core/explore` – discovery-focused exploratory reasoning/research
 - `core/consensus` / `core/challenge` – pressure-test decisions or assumptions rapidly
@@ -394,7 +394,6 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `docgen` – audience-targeted outline
 - `secaudit` – security posture review
 - `tracer` – instrumentation/observability plan
-- `codereview` – severity-tagged review
 - `precommit` – validation gate and commit advisory
 
 **Custom-Only Modes (2):**
@@ -402,7 +401,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `retrospective` – capture wins, misses, lessons, next actions
 
 **Delivery Agents (not modes):**
-- `git-workflow`, `implementor`, `polish`, `qa`, `tests`
+- `git-workflow`, `implementor`, `polish`, `qa`, `tests`, `review`
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 
@@ -414,7 +413,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 
 ### Modes (quick reference)
 **Core (3):** challenge, explore, consensus
-**Specialized (11):** plan, analyze, deep-dive, debug, risk-audit, design-review, refactor, docgen, secaudit, tracer, codereview, precommit
+**Specialized (10):** plan, analyze, deep-dive, debug, risk-audit, design-review, refactor, docgen, secaudit, tracer, precommit
 **Custom-only (2):** compliance, retrospective
 
 - Full prompt templates live in `.genie/agents/orchestrator.md`
