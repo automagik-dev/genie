@@ -20,7 +20,7 @@ Forge translates an approved wish into coordinated execution groups with documen
 - Capture dependencies, personas, and evidence expectations before implementation begins.
 
 ## Success Criteria
-- ✅ Plan saved to `.genie/state/reports/forge-plan-<wish-slug>-<timestamp>.md`
+- ✅ Plan saved to `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
 - ✅ Each execution group lists scope, inputs (`@` references), deliverables, evidence, suggested persona, dependencies
 - ✅ Groups map to wish evaluation matrix checkpoints (Discovery 30pts, Implementation 40pts, Verification 30pts)
 - ✅ Task files created as `.genie/wishes/<slug>/task-<group>.md` for easy @ reference

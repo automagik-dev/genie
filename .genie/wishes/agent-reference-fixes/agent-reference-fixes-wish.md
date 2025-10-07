@@ -69,10 +69,11 @@
   - explore.md exists in modes/ but has no wrapper
 
 **Decisions (DEC-#):**
-- DEC-1: Move analyze and refactor TO modes/ (wrappers already expect them there)
-- DEC-2: Create secaudit.md mode as thin wrapper to audit.md security mode
-- DEC-3: Remove thinkdeep wrapper (unimplemented, not in roadmap)
-- DEC-4: Create explore wrapper (mode exists, should be delegatable)
+- DEC-1: Fix wrapper paths only (NO file moves - analyze/refactor stay in core/)
+- DEC-2: secaudit wrapper points to audit.md (security mode already exists there)
+- DEC-3: Remove thinkdeep wrapper (agent never implemented)
+- DEC-4: Create explore wrapper pointing to existing modes/explore.md
+- DEC-5: Keep analyze and refactor separate (complementary, not redundant)
 
 **Risks:**
 - Breaking existing scripts that rely on agent names
@@ -83,19 +84,16 @@
 Fix 5 broken agent wrapper references in `.claude/agents/` to restore full agent functionality. Minimal scope: update wrapper paths to match actual file locations, create missing wrappers for valid agents, document decisions for deprecated agents.
 
 ## Current State
-- **Misplaced agents (2):**
-  - `.genie/agents/core/analyze.md` (should be in `modes/`)
-  - `.genie/agents/core/refactor.md` (should be in `modes/`)
-  - Wrappers already point to correct paths, files are just in wrong location
-
-- **Missing mode files (1):**
-  - `.genie/agents/core/modes/secaudit.md` (wrapper exists, target missing)
+- **Wrong wrapper paths (3):**
+  - `.claude/agents/analyze.md` → points to `modes/analyze.md` (wrong, should be `core/analyze.md`)
+  - `.claude/agents/refactor.md` → points to `modes/refactor.md` (wrong, should be `core/refactor.md`)
+  - `.claude/agents/secaudit.md` → points to `modes/secaudit.md` (wrong, should be `core/audit.md`)
 
 - **Invalid wrapper (1):**
-  - `.claude/agents/thinkdeep.md` (references non-existent agent, needs removal)
+  - `.claude/agents/thinkdeep.md` → references non-existent agent, needs removal
 
 - **Missing wrapper (1):**
-  - `.claude/agents/explore.md` (target exists, wrapper missing)
+  - `.claude/agents/explore.md` → target exists at `modes/explore.md`, wrapper missing
 
 - **Pain points:**
   - Task tool can't delegate to broken agents
@@ -116,50 +114,50 @@ Fix 5 broken agent wrapper references in `.claude/agents/` to restore full agent
 
 ## Execution Groups
 
-### Group A – Move Agents to Modes
-- **Goal:** Relocate analyze and refactor to modes/ directory
+### Group A – Fix Wrapper Paths
+- **Goal:** Update 3 wrapper files to point to correct agent locations
 - **Surfaces:**
-  - `@.genie/agents/core/analyze.md`
-  - `@.genie/agents/core/refactor.md`
+  - `@.claude/agents/analyze.md`
+  - `@.claude/agents/refactor.md`
+  - `@.claude/agents/secaudit.md`
 - **Deliverables:**
-  - Move analyze.md: `core/analyze.md` → `core/modes/analyze.md`
-  - Move refactor.md: `core/refactor.md` → `core/modes/refactor.md`
-  - Verify wrappers now resolve correctly
-- **Evidence:** Store before/after file tree + git mv output in `qa/group-a/`
+  - Fix analyze.md: change `modes/analyze.md` → `core/analyze.md`
+  - Fix refactor.md: change `modes/refactor.md` → `core/refactor.md`
+  - Fix secaudit.md: change `modes/secaudit.md` → `core/audit.md`
+  - Verify all 3 refs resolve
+- **Evidence:** Store git diff in `qa/group-a/`
 - **Suggested personas:** implementor
 - **External tracker:** N/A
 
-### Group B – Create Missing Files
-- **Goal:** Create secaudit mode and explore wrapper
-- **Surfaces:**
-  - `@.genie/agents/core/modes/secaudit.md`
-  - `@.claude/agents/explore.md`
-- **Deliverables:**
-  - Create secaudit.md as thin wrapper pointing to audit.md with security focus
-  - Create explore.md wrapper pointing to `@.genie/agents/core/modes/explore.md`
-- **Evidence:** File creation logged in `qa/group-b/`
-- **Suggested personas:** implementor
-- **External tracker:** N/A
-
-### Group C – Remove Invalid Wrapper
-- **Goal:** Clean up thinkdeep wrapper (agent not implemented)
+### Group B – Clean Up Invalid Wrapper
+- **Goal:** Remove thinkdeep wrapper (agent never implemented)
 - **Surfaces:** `@.claude/agents/thinkdeep.md`
 - **Deliverables:**
-  - Remove `.claude/agents/thinkdeep.md`
-  - Document removal in AGENTS.md (agent deprecated/not implemented)
-- **Evidence:** Deletion logged in `qa/group-c/`
+  - Delete `.claude/agents/thinkdeep.md`
+  - Verify wrapper count drops to 22
+- **Evidence:** Deletion logged in `qa/group-b/`
+- **Suggested personas:** implementor
+- **External tracker:** N/A
+
+### Group C – Create Missing Wrapper
+- **Goal:** Add explore.md wrapper for existing mode
+- **Surfaces:** `@.claude/agents/explore.md`
+- **Deliverables:**
+  - Create explore.md pointing to `@.genie/agents/core/modes/explore.md`
+  - Verify wrapper resolves
+- **Evidence:** File creation logged in `qa/group-c/`
 - **Suggested personas:** implementor
 - **External tracker:** N/A
 
 ### Group D – Update Documentation
-- **Goal:** Sync docs with structural changes
+- **Goal:** Sync docs with fixes
 - **Surfaces:**
   - `@.claude/README.md`
   - `@AGENTS.md`
 - **Deliverables:**
-  - Update agent inventory (22 total, -1 thinkdeep)
-  - Update mode list (now 7 modes: analyze, refactor, secaudit, challenge, consensus, explore, docgen, tracer)
-  - Document modes vs full agents distinction
+  - Update agent count: 22 total (was 23, removed thinkdeep)
+  - Update secaudit documentation (now points to audit.md)
+  - Clarify explore is now Task-delegatable
 - **Evidence:** Doc diffs in `qa/group-d/`
 - **Suggested personas:** docgen
 - **External tracker:** N/A
@@ -211,28 +209,26 @@ Fix 5 broken agent wrapper references in `.claude/agents/` to restore full agent
 
 ## <spec_contract>
 - **Scope:**
-  - Move analyze.md and refactor.md to modes/ directory
-  - Create secaudit.md mode (wrapper to audit.md)
-  - Create explore.md wrapper in .claude/agents/
-  - Remove thinkdeep.md wrapper (unimplemented agent)
-  - Update documentation to match new structure
+  - Fix 3 wrapper paths (analyze, refactor, secaudit)
+  - Remove 1 invalid wrapper (thinkdeep)
+  - Create 1 missing wrapper (explore)
+  - Update documentation to match
 
 - **Out of scope:**
   - Changes to agent prompt logic
+  - Moving agent files to different directories
   - Creating new agent functionality
-  - Refactoring agent architecture
-  - Moving other agents to modes/
+  - Merging or consolidating agents
 
 - **Success metrics:**
   - 0 broken references in `.claude/agents/`
   - All 22 valid wrappers resolve to existing files
-  - Mode count updated: 7 modes (was 5)
   - `pnpm run test:genie` passes
-  - Documentation matches reality
+  - Documentation accurate
 
 - **External tasks:** None
 
-- **Dependencies:** None (all decisions made)
+- **Dependencies:** None
 </spec_contract>
 
 ## Blocker Protocol
