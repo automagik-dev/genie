@@ -38,17 +38,17 @@ mcp__genie__list_sessions
 
 ### Available Agents
 
-- **forge-coder** - Feature implementation specialist
+- **forge-coder** - Feature implementation agent
 - **forge-tests** - Test writing expert
 - **forge-master** - Task creation and orchestration
 - **forge-quality** - Code quality enforcement
-- **forge-hooks** - Hook configuration specialist
+- **forge-hooks** - Hook configuration agent
 - **forge-qa-tester** - QA and testing coordinator
 - **learn** - Unified behavioral learning and improvement
 
 #### Local agents in this repo
 - **evaluator** – {{DOMAIN}} evaluation rubric and scoring prompt (`.genie/agents/evaluator.md`)
-- **refactorer** – Prompt refactoring specialist (`.genie/agents/refactorer.md`)
+- **refactorer** – Prompt refactoring agent (`.genie/agents/refactorer.md`)
 - **rules-integrator** – Minimal, non-destructive rules updater (`.genie/agents/rules-integrator.md`)
 
 ### For AI Agents (Claude, etc.)

@@ -68,7 +68,7 @@ Access via: `mcp__genie__run` OR Task tool
 ├── review.md                # QA validation agent (immutable)
 ├── orchestrator.md          # Genie second-opinion interface (immutable)
 ├── vibe.md                  # Autonomous coordinator (immutable)
-├── core/                    # Reusable specialists + utilities
+├── core/                    # Reusable core agents shipped with Genie
 │   ├── analyze.md
 │   ├── bug-reporter.md
 │   ├── commit.md
@@ -165,13 +165,13 @@ mcp__genie__run with agent="analyze" and prompt="Scope: src/services. Deliver: d
 mcp__genie__run with agent="debug" and prompt="Bug: auth failing. Hypotheses: ..."
 mcp__genie__run with agent="thinkdeep" and prompt="Focus: scaling strategy. Timebox: 10min..."
 
-# Tactical utilities
+# Tactical support
 mcp__genie__run with agent="commit" and prompt="Generate commit message for current staged changes"
 mcp__genie__run with agent="codereview" and prompt="Scope: git diff main. Task: ..."
 mcp__genie__run with agent="testgen" and prompt="Layer: unit. Files: src/auth/*.rs..."
 mcp__genie__run with agent="refactor" and prompt="Targets: api/routes. Plan: ..."
 
-# Delivery specialists (spawned by /forge)
+# Delivery agents (spawned by /forge)
 mcp__genie__run with agent="implementor" and prompt="Task: FORGE-123"
 mcp__genie__run with agent="tests" and prompt="Task: FORGE-124"
 mcp__genie__run with agent="qa" and prompt="Task: FORGE-125"
@@ -198,7 +198,7 @@ mcp__genie__stop with sessionId="<session-id>"
 - Delegating specific task to background worker
 - Need parallel execution of multiple tasks
 - Want to resume/inspect long-running work
-- Spawning specialists from forge execution groups
+- Spawning agents from forge execution groups
 
 ### Workflow Pattern
 
@@ -269,7 +269,7 @@ mcp__genie__run with agent="genie" and prompt="Mode: test-strategy. Feature: pas
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
 | **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
-| **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Specific utilities | Human or specialists |
+| **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Focused support | Human or agents |
 | **Delivery** | implementor, tests, polish, qa, bug-reporter | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
 | **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |

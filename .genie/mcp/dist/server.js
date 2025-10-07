@@ -604,7 +604,7 @@ server.addPrompt({
 
 Create structured prompt using:"
 
-## Genie Prompting Framework (@.genie/agents/utilities/prompt.md)
+## Genie Prompting Framework (@.genie/agents/core/prompt.md)
 
 **1. Task Breakdown:**
 <task_breakdown>

@@ -9,8 +9,8 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 - **Formatting & Parsing:** `yaml` for agent metadata, native fs/stream tooling for logs
 
 ## Agent Assets
-- **Prompts:** Markdown agents under `.genie/agents/` with utilities in `.genie/agents/utilities/`
-- **Specialists:** Extensible specialist prompts tuned for self-audit (bug-reporter, tests, qa, learn, polish, project-manager)
+- **Prompts:** Markdown agents under `.genie/agents/` with shared personas in `.genie/agents/core/`
+- **Custom Overrides:** Repository-specific adjustments live in `.genie/custom/` (bug-reporter, tests, qa, learn, polish, project-manager, etc.)
 - **State:** Session and ledger files stored in `.genie/state/` (never edit manually; inspect via MCP genie tools: `mcp__genie__list_sessions`, `mcp__genie__view`)
 
 ## Testing & Validation

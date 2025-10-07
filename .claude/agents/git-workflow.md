@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Git workflow and version control specialist
+description: Git workflow and version control agent
 model: inherit
 ---
 

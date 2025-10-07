@@ -186,7 +186,7 @@ Once wish is approved, break it down for implementation.
 **What it does:**
 - Analyzes wish complexity and dependencies
 - Creates 2-3 focused execution groups
-- Assigns specialist agents (implementor, tests, qa)
+- Assigns delivery agents (implementor, tests, qa)
 - Defines validation commands and evidence paths
 
 ---

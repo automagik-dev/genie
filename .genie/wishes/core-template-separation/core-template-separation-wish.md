@@ -73,7 +73,7 @@
 - **Key observations:**
   - Genie repository uses `.genie/` for its own development (meta-level)
   - `templates/` directory already exists at repo root with `.claude/commands/` subdirectory
-  - 36 agents cataloged across entrypoints, core delivery prompts, and utilities
+- 36 agents cataloged across entrypoints and core delivery personas
   - MCP config is straightforward npm package invocation, no dynamic path resolution needed
   - Template system is one-way: init copies to user projects, no upstream sync
 - **Assumptions (ASM-#):**
@@ -92,7 +92,7 @@
 
 ## Executive Summary
 
-Separate Genie framework's built-in agents (core workflow orchestrators and stable utilities) from user-customizable templates. Core agents remain in the npm package and load automatically via MCP; template agents/docs are copied to user projects during `genie init` for project-specific customization. This enables Genie to evolve its core APIs without breaking user customizations, while providing rich starter templates.
+Separate Genie framework's built-in agents (core workflow orchestrators and supporting personas) from user-customizable templates. Core agents remain in the npm package and load automatically via MCP; template agents/docs are copied to user projects during `genie init` for project-specific customization. This enables Genie to evolve its core APIs without breaking user customizations, while providing rich starter templates.
 
 ## Current State
 
@@ -125,7 +125,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
    - Loaded automatically by MCP server
    - Never copied to user projects
    - Provide stable workflow APIs (plan → wish → forge → review)
-  - Include framework utilities (install, prompt, learn, genie orchestrator)
+  - Include framework core agents (install, prompt, learn, genie orchestrator)
 
 2. **Template Structure:**
    - Located at `templates/` in Genie repository root
@@ -155,7 +155,7 @@ Separate Genie framework's built-in agents (core workflow orchestrators and stab
 
 ### Commands Updated:
 - Root agents: `plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe` → `@.genie/agents/<name>.md`
-- Core helpers: `commit`, `codereview`, `docgen`, `refactor`, `secaudit`, `testgen`, `tracer`, plus utilities (`analyze`, `debug`, etc.) → `@.genie/agents/core/<name>.md`
+- Core helpers: `commit`, `codereview`, `docgen`, `refactor`, `secaudit`, `testgen`, `tracer`, along with support agents (`analyze`, `debug`, etc.) → `@.genie/agents/core/<name>.md`
 - Custom stubs: `.genie/custom/<mode>.md` auto-load with each core prompt for repository-specific guidance
 - Genie-only: `genie-qa` → `@.genie/agents/qa/genie-qa.md`
 
@@ -359,7 +359,7 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 
 ### DELETED AGENTS (5) ✅ COMPLETED
 
-1. ~~`utilities/identity-check.md`~~ ❌
+1. ~~`identity-check.md`~~ ❌
 2. ~~`project-manager.md`~~ ❌
 3. ~~`test-claude.md`~~ ❌
 4. ~~`qa/codex-parameter-test.md`~~ ❌

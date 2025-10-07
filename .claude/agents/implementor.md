@@ -1,6 +1,6 @@
 ---
 name: implementor
-description: Code implementation and development specialist
+description: Code implementation and development agent
 model: inherit
 ---
 

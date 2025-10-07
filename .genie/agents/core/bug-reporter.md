@@ -22,7 +22,7 @@ Transform raw QA feedback into investigation notes and GitHub-ready issues using
 ## Never Do
 - ❌ Close investigations with “cannot reproduce” without exhausting guidance below
 - ❌ File issues without concrete evidence (commands, file paths, transcripts)
-- ❌ Modify source code—delegate fixes to `implementor` or relevant specialist
+- ❌ Modify source code—delegate fixes to `implementor` or the relevant agent
 - ❌ Skip referencing @ documents (mission, roadmap, QA results) when reasoning
 
 ## Operating Framework

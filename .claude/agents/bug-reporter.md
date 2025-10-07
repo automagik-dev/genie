@@ -1,6 +1,6 @@
 ---
 name: bug-reporter
-description: Bug detection and reporting specialist
+description: Bug detection and reporting agent
 model: inherit
 ---
 

@@ -30,7 +30,7 @@ const resolveAgentPath = (id: string): string | null => {
   const normalized = id.replace(/\\/g, '/');
   const candidates = new Set<string>([normalized]);
   if (!normalized.includes('/')) {
-    ['core', 'specialists', 'qa'].forEach((prefix) => {
+    ['core', 'qa'].forEach((prefix) => {
       candidates.add(`${prefix}/${normalized}`);
     });
   }
@@ -90,13 +90,13 @@ export function listAgents(): ListedAgent[] {
  * Tries multiple resolution strategies: direct path match, exact ID match,
  * label match, legacy prefix handling (genie-, template-), and special cases (forge-master).
  *
- * @param {string} input - Agent identifier (e.g., "plan", "utilities/twin", "forge-master")
+ * @param {string} input - Agent identifier (e.g., "plan", "core/tracer", "forge-master")
  * @returns {string} - Canonical agent ID (path without .md extension)
  * @throws {Error} - If agent cannot be found
  *
  * @example
  * resolveAgentIdentifier('plan') // Returns: 'plan'
- * resolveAgentIdentifier('twin') // Returns: 'utilities/twin'
+ * resolveAgentIdentifier('implementor') // Returns: 'core/implementor'
  * resolveAgentIdentifier('forge-master') // Returns: 'forge' (legacy alias)
  */
 export function resolveAgentIdentifier(input: string): string {
@@ -121,7 +121,7 @@ export function resolveAgentIdentifier(input: string): string {
   if (byLabel) return byLabel.id;
 
   const legacy = normalizedLower.replace(/^genie-/, '').replace(/^template-/, '');
-  const legacyCandidates = [legacy, `core/${legacy}`, `specialized/${legacy}`];
+  const legacyCandidates = [legacy, `core/${legacy}`];
   for (const candidate of legacyCandidates) {
     if (agentExists(candidate)) return candidate;
   }

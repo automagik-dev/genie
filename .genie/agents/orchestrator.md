@@ -44,7 +44,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - precommit — pre-commit gate and advisory (`@.genie/agents/core/commit.md` + `.genie/custom/commit.md`)
 - compliance — map controls, evidence, sign-offs (`@.genie/agents/core/compliance.md` + `.genie/custom/compliance.md`)
 - retrospective — capture wins, misses, lessons, next actions (`@.genie/agents/core/retrospective.md` + `.genie/custom/retrospective.md`)
-- delivery specialists: bug-reporter, git-workflow, implementor, polish, qa, tests (all under `.genie/agents/core/` + `.genie/custom/`)
+- delivery agents: bug-reporter, git-workflow, implementor, polish, qa, tests (all under `.genie/agents/core/` + `.genie/custom/`)
 
 Each mode automatically loads `.genie/custom/<mode>.md` so projects can extend the core template without editing this file. Keep global logic here and push repo-specific details into the matching custom file.
 

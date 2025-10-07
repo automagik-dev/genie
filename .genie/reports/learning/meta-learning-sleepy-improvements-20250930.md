@@ -701,7 +701,7 @@ Load all context from the referenced files above. Do not duplicate content here.
 
 ### Files to Update
 
-1. **`.genie/agents/specialists/sleepy.md`**
+1. **`.genie/agents/vibe.md`**
    - Sections: Twin Integration, Hibernation Protocol, Executor Selection, Emergency Protocols
    - Changes: ~150 lines (surgical edits)
 

@@ -47,7 +47,7 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 - Enforce ≥3 investigative steps when diagnosing failures.
 - Log the exact commands run (refer to project defaults in `@.genie/custom/commit.md`).
 - Verify the wish Evidence Checklist before proceeding.
-- Escalate to specialists when failures exceed scope.
+- Escalate to the appropriate agents when failures exceed scope.
 
 ## Advisory Template
 ```

@@ -71,13 +71,13 @@ $ ./genie run --help
 - Dispatcher at `.genie/cli/src/genie.ts:216` handles `list` command
 - Catalog view at `.genie/cli/src/views/agent-catalog.ts`
 - Discovers all `.md` files recursively under `.genie/agents/`
-- Groups by folder: root, utilities/, specialists/, custom folders
+- Groups by folder: root, core/, qa/ folders
 - Shows agent count and folder summaries
 
 **Validation:**
 ```bash
 $ ./genie list agents
-# ✅ Shows 29 agents grouped by 3 folders (root, utilities, specialists)
+# ✅ Shows 29 agents grouped by 2 folders (root, core)
 # ✅ Clean table layout with identifier and summary columns
 # ✅ Provides usage hints
 ```
@@ -277,9 +277,9 @@ Agents • .genie/agents
 ├────────────────────────┼────────────────────────────────────────────┤
 │ plan                   │ Orchestrates discovery → wish readiness    │
 │ forge                  │ Breaks wish into execution groups + checks │
-│ utilities/twin         │ Second-opinion loop with verdict + confidence │
-│ specialists/implementor│ Applies forge plan to this repo            │
-│ specialists/qa         │ Validation specialist for repo standards   │
+│ core/analyze           │ Deep architecture analysis support         │
+│ core/implementor       │ Applies forge plan to this repo            │
+│ core/qa                │ Validation agent for repo standards        │
 └────────────────────────┴────────────────────────────────────────────┘
 ```
 
@@ -371,8 +371,8 @@ help                                   Show this panel
 Prompt Framework
 • Plan → load @ context (mission, roadmap, standards), restate goals, surface blockers early.
 • Wish → capture spec contract, execution plan, branch/tracker guidance, and evidence expectations.
-• Forge → break wish into execution groups, validations, and specialist hand-offs.
-• Implementation → follow forge guidance, delegate to specialists, capture evidence as you go.
+• Forge → break wish into execution groups, validations, and agent hand-offs.
+• Implementation → follow forge guidance, delegate to the right agents, capture evidence as you go.
 • Verification → replay validation hooks, summarize metrics, queue review/commit follow-ups.
 
 Examples
@@ -389,7 +389,7 @@ Examples
 1. **Dispatcher** – ✅ Rewritten switch in `.genie/cli/src/genie.ts:201-239` with six verbs (run, list, resume, view, stop, help). Legacy aliases removed.
 2. **Argument parsing** – ✅ Deprecated flags stripped from `parseArguments()`; only `--full` remains. Environment overrides cleaned up.
 3. **Sandbox & Approval** – ✅ Two separate configuration dimensions (sandbox + approvalPolicy) documented. Agents use frontmatter configuration. Documentation updated codebase-wide to remove "preset" terminology.
-4. **Agent discovery** – ✅ Recursive discovery operational; finds 29 agents across 3 folders (root, utilities, specialists).
+4. **Agent discovery** – ✅ Recursive discovery operational; finds 29 agents across 2 folders (root and core).
 5. **Session listing** – ✅ `list sessions` produces active/recent tables as designed.
 6. **Transcript view** – ✅ Chat transcript rendering finalized in `runView()`; session status surfaced; log-path leakage removed.
 7. **Stop semantics** – ✅ PID-based stop removed; session-id only accepted.

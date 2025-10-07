@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Debugging and troubleshooting specialist
+description: Debugging and troubleshooting agent
 model: inherit
 ---
 

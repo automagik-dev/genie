@@ -56,6 +56,6 @@ Automation never bypasses human approval gates; new capabilities arrive with cle
 ## Key Focus Areas
 
 - **Self-Audit Loops:** Plan → Wish → Forge cycles targeted at the prompt stack, CLAUDE/AGENTS guardrails, and CLI behaviours.
-- **Learning Propagation:** Promote validated learnings into `.genie/instructions/` and specialist briefs so changes stick.
+- **Learning Propagation:** Promote validated learnings into `.genie/instructions/` and agent briefs so changes stick.
 - **Tooling Diagnostics:** Expand test harnesses and smoke commands that ensure the CLI behaves before releases.
 - **Adoption Playbooks:** Provide branch-to-main migration guides, change logs, and decision records for every improvement wave.
