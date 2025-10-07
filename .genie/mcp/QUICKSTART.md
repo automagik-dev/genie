@@ -209,7 +209,7 @@ After implementation, validate against standards.
 #### 5. **twin** - Pressure-Test Decisions (17+ Modes)
 Get a second opinion with structured analysis.
 
-**Common modes:** planning, consensus, deep-dive, debug, risk-audit, design-review, test-strategy
+**Common modes:** planning, consensus, deep-dive, debug, risk-audit, design-review
 
 **Usage:**
 > "Use the twin prompt to evaluate choosing PostgreSQL vs MongoDB for user data"

@@ -38,7 +38,6 @@ Access via: `mcp__genie__run` OR Task tool
 #### Tactical Utilities
 - `codereview` — Diff/file review
 - `refactor` — Refactor planning
-- `testgen` — Test generation
 - `docgen` — Documentation generation
 - `secaudit` — Security audit
 - `tracer` — Instrumentation planning
@@ -115,7 +114,6 @@ Access via: `mcp__genie__run` OR Task tool
 ├── challenge.md → @.genie/agents/core/challenge.md
 ├── codereview.md → @.genie/agents/core/codereview.md
 ├── refactor.md → @.genie/agents/core/refactor.md
-├── testgen.md → @.genie/agents/core/testgen.md
 ├── docgen.md → @.genie/agents/core/docgen.md
 ├── secaudit.md → @.genie/agents/core/secaudit.md
 ├── tracer.md → @.genie/agents/core/tracer.md
@@ -211,7 +209,7 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 - `plan`, `analyze`, `deep-dive` — strategic analysis
 - `debug` — root-cause investigation
 - `risk-audit`, `design-review`, `secaudit` — audit & review
-- `test-strategy`, `testgen`, `refactor`, `tracer`, `docgen` — implementation support
+- `refactor`, `tracer`, `docgen` — implementation support
 - `codereview`, `precommit` — quality gates
 
 **Custom-Only (2):**
@@ -258,7 +256,7 @@ mcp__genie__run with agent="challenge" and prompt="Topic: caching strategy"
 # Tactical support
 mcp__genie__run with agent="commit" and prompt="Generate commit message"
 mcp__genie__run with agent="codereview" and prompt="Scope: git diff main"
-mcp__genie__run with agent="testgen" and prompt="Layer: unit. Files: src/auth/*.rs"
+mcp__genie__run with agent="tests" and prompt="Mode: generation. Layer: unit. Files: src/auth/*.rs"
 mcp__genie__run with agent="refactor" and prompt="Targets: api/routes"
 
 # Delivery agents (spawned by /forge)
@@ -357,7 +355,7 @@ Deliver: Counterarguments + experiments + verdict
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
 | **Strategic** | genie, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
-| **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Focused support | Human or agents |
+| **Tactical** | codereview, refactor, docgen, secaudit, tracer | Focused support | Human or agents |
 | **Delivery** | implementor, tests, polish, qa | Execute work | Forge or human |
 | **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
 | **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |

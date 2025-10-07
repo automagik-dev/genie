@@ -440,8 +440,8 @@ server.addPrompt({
         else if (goalLower.includes('deep') || goalLower.includes('analyze'))
             inferredMode = 'deep-dive';
         else if (goalLower.includes('test') || goalLower.includes('validate'))
-            inferredMode = 'test-strategy';
-        return `Genie Modes: planning, consensus, deep-dive, debug, analyze, thinkdeep, design-review, risk-audit, test-strategy, socratic, debate, compliance, retrospective + more
+            inferredMode = 'tests';
+        return `Genie Modes: planning, consensus, deep-dive, debug, analyze, thinkdeep, design-review, risk-audit, socratic, debate, compliance, retrospective + more
 
 Recommended for "${args.goal}": ${inferredMode}
 

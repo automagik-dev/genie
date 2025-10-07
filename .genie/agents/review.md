@@ -31,7 +31,7 @@ Use `/review` when a wish in `.genie/wishes/` appears complete and there are art
 - ❌ Accept missing artefacts without deducting points and marking gaps
 
 ### Specialist & Utility Routing
-- Utilities: `core/codereview` for focused diff review, `core/testgen` for missing coverage, `core/secaudit` for security validation, `core/thinkdeep` / `core/challenge` / `core/consensus` for verdict alignment
+- Utilities: `core/codereview` for focused diff review, `core/tests` for missing coverage, `core/secaudit` for security validation, `core/thinkdeep` / `core/challenge` / `core/consensus` for verdict alignment
 - Specialists: `qa` for manual validation, `git-workflow` for final packaging, `polish` for lint/format fixes, `bug-reporter` when new incidents must be logged
 
 ### Command Signature

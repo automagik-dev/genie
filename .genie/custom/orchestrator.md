@@ -3,7 +3,6 @@
 ## Preferred Modes
 - `planning` – Pressure-test new wish briefs before `/wish`.
 - `consensus` – Resolve competing approaches across CLI vs MCP changes.
-- `test-strategy` – Deep dive on test coverage when new suites are proposed.
 - `design-review` – Required for architecture-impacting refactors (CLI/MCP interaction).
 
 ## Mode Notes

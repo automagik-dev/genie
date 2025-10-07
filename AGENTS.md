@@ -389,7 +389,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `debug` – structured root-cause investigation
 - `risk-audit` – enumerate top risks and mitigations
 - `design-review` – assess components for coupling, scalability, simplification
-- `test-strategy` / `testgen` – outline layered testing or propose concrete tests
+- `tests` – test strategy, generation, authoring, and repair across all layers
 - `refactor` – staged refactor planning
 - `docgen` – audience-targeted outline
 - `secaudit` – security posture review
@@ -414,7 +414,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 
 ### Modes (quick reference)
 **Core (3):** challenge, explore, consensus
-**Specialized (13):** plan, analyze, deep-dive, debug, risk-audit, design-review, test-strategy, testgen, refactor, docgen, secaudit, tracer, codereview, precommit
+**Specialized (11):** plan, analyze, deep-dive, debug, risk-audit, design-review, refactor, docgen, secaudit, tracer, codereview, precommit
 **Custom-only (2):** compliance, retrospective
 
 - Full prompt templates live in `.genie/agents/orchestrator.md`

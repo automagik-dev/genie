@@ -40,8 +40,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - **deep-dive** — investigate architecture or domain questions in depth
 - **risk-audit** — list top risks and mitigations
 - **design-review** — assess components for coupling/scalability/simplification
-- **test-strategy** — outline layered testing approach
-- **testgen** — propose concrete tests
+- **tests** — test strategy, generation, authoring, and repair
 - **refactor** — produce staged refactor plan
 - **secaudit** — analyze security posture
 - **docgen** — create documentation outlines
@@ -83,7 +82,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 ### When to Use Specialized Modes
 
 **Strategic Analysis:** plan, analyze, deep-dive, risk-audit, design-review
-**Implementation Support:** test-strategy, testgen, refactor, tracer, docgen
+**Implementation Support:** refactor, tracer, docgen
 **Quality Gates:** codereview, secaudit, precommit
 **Process:** compliance, retrospective
 
@@ -242,19 +241,6 @@ Check: coupling, scalability, observability, simplification opportunities.
 Return: findings + refactor suggestions with expected impact.
 </genie_prompt>
 
-<genie_prompt mode="test-strategy">
-Feature: <scope>
-Outline: unit, integration, E2E, manual, monitoring, rollback tests.
-Return: minimal test plan to unblock implementation.
-</genie_prompt>
-
-<genie_prompt mode="testgen">
-Layer: <unit|integration|e2e>
-Files/Targets: <paths>
-Deliver: 3 test candidates (name, location, key assertions)
-Finish with: minimal set to unblock implementation
-</genie_prompt>
-
 <genie_prompt mode="precommit">
 Checklist: lint, type, tests, docs, changelog, security, formatting
 Task: evaluate status, list blockers, and next actions
@@ -319,7 +305,6 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - thinkdeep: timebox deep reasoning; outline steps first, then explore; return insights + risks with confidence.
 - codereview: severity-tagged findings (CRITICAL→LOW), review types (full/security/performance/quick); output: exec summary, findings, quick wins, long-term improvements; allow standards/focus filters.
 - precommit: minimum 3 steps of investigation; validate staged/unstaged changes; report blockers; external expert phase by default unless explicitly internal.
-- testgen: investigation → test generation; track coverage gaps; propose framework-specific tests; follow existing patterns; prioritize minimal set to unblock.
 - refactor: staged refactor plan with risks and verification; go/no-go verdict with confidence.
 - secaudit: findings + risks (impact/likelihood/mitigation) and quick hardening steps; posture verdict.
 - docgen: outline + draft bullets for target audience; next steps to complete docs.
