@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.1] - 2025-10-07
+
+### Fixed
+- Minor patch release
+
 ## [2.0.0] - 2025-10-03
 
 ### Breaking
