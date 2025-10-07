@@ -203,7 +203,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
   1. List groups with one-line summaries
   2. Call out blockers or approvals required
   3. Mention validation hooks and evidence storage paths
-  4. Provide plan path: `Forge Plan: @.genie/state/reports/forge-plan-<slug>-<timestamp>.md`
+  4. Provide plan path: `Forge Plan: @.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
   5. List task files: `Tasks created in @.genie/wishes/<slug>/task-*.md`
   6. Branch strategy: `feat/<wish-slug>` or documented alternative
 - **Direct execution mode:**
@@ -434,7 +434,7 @@ branch: feat/external-ai-root-resolver
 - [ ] Verify external tracker integration (if needed)
 
 ## Files Created/Modified
-- Forge Plan: `.genie/state/reports/forge-plan-<slug>-<timestamp>.md`
+- Forge Plan: `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
 - Task Files: `.genie/wishes/<slug>/task-*.md`
 
 ## Execution Groups Defined
@@ -466,7 +466,7 @@ branch: feat/external-ai-root-resolver
 2. **Validation commands:**
    ```bash
    # Verify forge plan created
-   ls -la .genie/state/reports/forge-plan-*.md
+   ls -la .genie/wishes/*/reports/forge-plan-*.md
 
    # List created task files
    ls -la .genie/wishes/<slug>/task-*.md
