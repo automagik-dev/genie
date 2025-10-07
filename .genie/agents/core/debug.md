@@ -69,9 +69,11 @@ Present three resolution paths with recommendation based on investigation findin
    - Symptoms misleading; 'no bug' valid conclusion if evidence supports it
 
 2. [Evidence Collection]
-   - Store command transcripts under `.genie/tmp/debug/<slug>/`
+   - Store investigation reports under `.genie/reports/debug/<slug>/`
+   - For wish-related debugging: Store in `.genie/wishes/<slug>/reports/debug-<slug>-<timestamp>.md`
+   - For standalone debugging: Store in `.genie/reports/debug/<slug>-<timestamp>.md`
    - Extract structured data (session IDs, meta fields) to inform remediation
-   - Capture artifacts: screenshots, log excerpts, diffs, metrics
+   - Capture artifacts: screenshots, log excerpts, diffs, metrics alongside report
    - Use MCP tools for context:
      - `mcp__genie__list_sessions`
      - `mcp__genie__view` with sessionId
@@ -91,7 +93,10 @@ Present three resolution paths with recommendation based on investigation findin
    **Option 1: Report Bug**
    - Use when: Issue needs tracking, affects others, requires discussion
    - Action: File GitHub issue with investigation summary
-   - Output: GitHub issue with evidence at `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`
+   - Output:
+     - If wish-related: `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
+     - If standalone: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md`
+     - GitHub issue created via `gh issue create`
 
    **Option 2: Quick Fix**
    - Use when: Fix is obvious, minimal, low-risk
@@ -158,7 +163,10 @@ Present three resolution paths with recommendation based on investigation findin
 - Command: `<command that failed>`
 - Timestamp (UTC): YYYY-MM-DDTHH:MM:SSZ
 - Outcome: <error/unexpected behavior>
-- Artifact: `.genie/tmp/debug/<slug>/output.txt`
+- Artifacts:
+  - Command output: `output.txt` (in same directory as report)
+  - Screenshots: `screenshot-*.png` (if applicable)
+  - Logs: `error.log`, `session.log`
 - Environment: <runtime versions, git status>
 ```
 
@@ -194,7 +202,7 @@ Evidence:
 - Output: <error/unexpected>
 - Files: <relevant paths>
 - Screenshots: <if applicable>
-- Logs: `.genie/tmp/debug/<slug>/`
+- Artifacts: Saved alongside report
 
 Investigation Summary:
 <findings from debug investigation>
@@ -204,7 +212,9 @@ Suggested Next Actions:
 2. <action 2>
 
 ---
-File saved: `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md`
+Report Location:
+- Wish-related: `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
+- Standalone: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md`
 GitHub issue: `gh issue create --title "..." --body-file <report>`
 ```
 
@@ -259,7 +269,9 @@ Confidence: <level>
 Resolution Options:
 1. 🐛 Report Bug
    When: Issue needs tracking, affects multiple users, requires team discussion
-   Output: GitHub issue filed at `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
+   Output:
+     - Report: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md` (or in wish if related)
+     - GitHub issue filed via `gh issue create`
 
 2. 🔧 Quick Fix
    When: Fix is obvious, minimal, low-risk, isolated change
@@ -288,9 +300,14 @@ Possible Actions:
 
 ## Output Contract
 - **Chat response**: Numbered highlights + resolution options, plus GitHub issue URL if Option 1 chosen
-- **File output** (Option 1): `.genie/wishes/<slug>/reports/bug-report-<slug>-<YYYYMMDDHHmm>.md` with full issue body
-- **GitHub** (Option 1): `gh issue create` executed with saved body file; store command and resulting link in Evidence Log
-- **Evidence folder**: `.genie/tmp/debug/<slug>/` for investigation artifacts (logs, outputs, screenshots)
+- **Debug Report Locations**:
+  - Wish-related: `.genie/wishes/<slug>/reports/debug-<slug>-<timestamp>.md`
+  - Standalone: `.genie/reports/debug/<slug>-<timestamp>.md`
+- **Bug Report** (Option 1):
+  - Wish-related: `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
+  - Standalone: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md`
+- **GitHub** (Option 1): `gh issue create` executed with saved body file; store command and resulting link in report
+- **Artifacts**: Saved alongside report (output.txt, screenshots, logs)
 - **Verification**: Re-run failing command to confirm state, `gh issue view <number>` to confirm issue exists
 
 ## Runbook Snippets
@@ -299,7 +316,6 @@ Possible Actions:
   - `mcp__genie__view` with sessionId
   - `mcp__genie__view` with sessionId and full=true
 - Environment capture: record runtime/tool versions and git status per `@.genie/custom/debug.md`
-- Compress evidence: `tar -czf debug-evidence-<slug>.tar.gz .genie/tmp/debug/<slug>/`
 
 ## Project Customization
 Define repository-specific defaults in @.genie/custom/debug.md:
