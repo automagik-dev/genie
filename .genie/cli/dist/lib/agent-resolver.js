@@ -40,7 +40,7 @@ const resolveAgentPath = (id) => {
     const normalized = id.replace(/\\/g, '/');
     const candidates = new Set([normalized]);
     if (!normalized.includes('/')) {
-    ['core', 'qa'].forEach((prefix) => {
+        ['core', 'qa'].forEach((prefix) => {
             candidates.add(`${prefix}/${normalized}`);
         });
     }
