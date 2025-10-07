@@ -170,8 +170,8 @@ Separate Genie framework's built-in agents (core workflow orchestrators and supp
   - @.genie/agents/core/modes/<mode>.md and @.genie/custom/<mode>.md for analyze, challenge, codereview, consensus, deep-dive, design-review, docgen, explore, refactor, risk-audit, secaudit, test-strategy, testgen, tracer
   - @.genie/mcp/src/server.ts (orchestrator prompt helper)
 - **Deliverables:**
-  - ✅ **PARTIAL COMPLETE:** Mode consolidation (socratic/debate/challenge merged, thinkdeep→explore, bloat variants removed) — commit 544bd0d, score 92/100
-  - [ ] **REMAINING:** Verify all 14 orchestrator modes have matching `.genie/custom/<mode>.md` stubs
+  - ✅ Mode consolidation (socratic/debate/challenge merged, thinkdeep→explore, bloat variants removed) — commit 544bd0d, score 92/100
+  - ✅ All 14 orchestrator modes have matching `.genie/custom/<mode>.md` stubs — commit 96f3ca2
   - ✅ MCP wrapper documents mode selection via `agent="orchestrator"` prompts (orchestrator.md updated)
   - ✅ AGENTS.md lists the mode matrix with core/custom references
 - **Evidence:**
@@ -452,9 +452,9 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 ## Status Log
 
 - [2025-10-06 13:00Z] Wish created (planning brief approved)
-- [2025-10-07 04:31Z] **Phase 0 COMPLETE:** Orchestrator mode consolidation (5→3 core modes, removed bloat) — commit 544bd0d, score 92/100 — see `reports/commit-advice-mode-consolidation-202510070431.md` and `qa/review-mode-consolidation-202510070437.md`
+- [2025-10-07 04:31Z] **Phase 0 PARTIAL:** Orchestrator mode consolidation (5→3 core modes, removed bloat) — commit 544bd0d, score 92/100 — see `reports/commit-advice-mode-consolidation-202510070431.md` and `qa/review-mode-consolidation-202510070437.md`
 - [2025-10-07 04:50Z] **Wish corrected against reality** — removed hallucinated commands/agents (bug-reporter, git-lifecycle, genie agents show --mode), fixed CLI syntax (genie list agents), corrected paths (core/modes/), updated agent counts (30 not 36) — see `qa/reality-check-202510070445.md`
-- [Pending] Phase 0 (remaining): Genie orchestrator delegates to core delivery prompts (full Group A completion)
+- [2025-10-07 05:05Z] **Phase 0 COMPLETE:** All 14 orchestrator modes have custom stubs — commit 96f3ca2, created .genie/custom/explore.md
 - [2025-10-07 17:45Z] **Phase 1 COMPLETE:** Meta-learning agent unified and wrappers updated — see `reports/done-learn-core-template-separation-20251007T1745Z.md`
 - [Pending] Phase 2: Core delivery catalog consolidation applied
 - [Pending] Phase 3: Documentation + migration evidence captured
