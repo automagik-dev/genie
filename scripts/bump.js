@@ -35,7 +35,8 @@ function log(color, emoji, message) {
 
 function exec(cmd, silent = false) {
   try {
-    return execSync(cmd, { encoding: 'utf8', stdio: silent ? 'pipe' : 'inherit' }).trim();
+    const result = execSync(cmd, { encoding: 'utf8', stdio: silent ? 'pipe' : 'inherit' });
+    return result ? result.trim() : '';
   } catch (error) {
     if (!silent) throw error;
     return '';
