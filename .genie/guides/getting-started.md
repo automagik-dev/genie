@@ -60,7 +60,7 @@ mcp__genie__run with agent="wish" and prompt="Create a wish for onboarding Genie
 ## 7. Next Steps
 
 - Add/adjust agents as needed under `.genie/agents/`.
-- Customize `.genie/agents/specialists/*.md` with your project’s personas (implementor, qa, polish, tests, self-learn, bug-reporter).
+- Customize `.genie/custom/*.md` with your project’s personas (implementor, qa, polish, tests, learn, bug-reporter).
 - Keep AGENTS.md synchronized with your Local Agent Map.
 
 ## Troubleshooting

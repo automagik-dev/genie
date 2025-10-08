@@ -1,7 +1,7 @@
 ---
 name: debug
-description: Debugging and troubleshooting specialist
+description: Debug issues, report bugs, or orchestrate fixes via plan/wish/forge
 model: inherit
 ---
 
-@.genie/agents/utilities/debug.md
+@.genie/agents/core/debug.md

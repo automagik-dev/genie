@@ -48,7 +48,7 @@ Branch experimentation can create surprises for adopters if success criteria are
 Purpose-built to let Genie run experiments on itself, capture the outcomes, and decide what ships.
 
 ### Evidence-First Governance
-Every change must tie back to a wish, a forge plan, validation commands, and a done report stored under `.genie/reports/`.
+Every change must tie back to a wish, a forge plan, validation commands, and a done report stored under `.genie/wishes/<slug>/reports/`.
 
 ### Human-in-the-Loop Control
 Automation never bypasses human approval gates; new capabilities arrive with clear opt-in guidance and rollback instructions.
@@ -56,6 +56,6 @@ Automation never bypasses human approval gates; new capabilities arrive with cle
 ## Key Focus Areas
 
 - **Self-Audit Loops:** Plan → Wish → Forge cycles targeted at the prompt stack, CLAUDE/AGENTS guardrails, and CLI behaviours.
-- **Learning Propagation:** Promote validated learnings into `.genie/instructions/` and specialist briefs so changes stick.
+- **Learning Propagation:** Promote validated learnings into `.genie/instructions/` and agent briefs so changes stick.
 - **Tooling Diagnostics:** Expand test harnesses and smoke commands that ensure the CLI behaves before releases.
 - **Adoption Playbooks:** Provide branch-to-main migration guides, change logs, and decision records for every improvement wave.

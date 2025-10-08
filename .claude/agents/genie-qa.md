@@ -4,4 +4,4 @@ description: Genie framework self-validation
 model: inherit
 ---
 
-@.genie/agents/specialists/genie-qa.md
+@.genie/agents/qa/genie-qa.md

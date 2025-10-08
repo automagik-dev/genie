@@ -1,1 +1,1 @@
-@.genie/agents/utilities/prompt.md
+@.genie/agents/core/prompt.md

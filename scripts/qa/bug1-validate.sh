@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Quick QA validation for Genie CLI Bug #1
-# Validates that `./genie run <agent> "<prompt>"`:
+# Validates that `genie run <agent> "<prompt>"`:
 #  - returns within ~5–10 seconds (non-hanging background launch)
 #  - creates/updates a background session entry in sessions.json
 #  - creates a log file for the run
@@ -17,11 +17,11 @@ TS=$(date -u +%Y%m%d%H%M%S)
 OUTFILE="$OUTDIR/bug1-qa-${TS}.txt"
 
 echo "[Bug1 QA] Starting validation at $(date -u -Iseconds)" | tee "$OUTFILE"
-echo "[Bug1 QA] Command: ./genie run $AGENT \"$PROMPT\"" | tee -a "$OUTFILE"
+echo "[Bug1 QA] Command: genie run $AGENT \"$PROMPT\"" | tee -a "$OUTFILE"
 
 start_ts=$(date +%s)
 set +e
-timeout 12s ./genie run "$AGENT" "$PROMPT" >"$OUTDIR/bug1-qa-run-${TS}.stdout" 2>"$OUTDIR/bug1-qa-run-${TS}.stderr"
+timeout 12s genie run "$AGENT" "$PROMPT" >"$OUTDIR/bug1-qa-run-${TS}.stdout" 2>"$OUTDIR/bug1-qa-run-${TS}.stderr"
 rc=$?
 set -e
 end_ts=$(date +%s)
@@ -84,4 +84,3 @@ echo "  - $stdout_file" | tee -a "$OUTFILE"
 echo "  - $stderr_file" | tee -a "$OUTFILE"
 
 echo "[Bug1 QA] Done." | tee -a "$OUTFILE"
-

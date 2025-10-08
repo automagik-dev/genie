@@ -74,7 +74,7 @@ Body content`;
 
 // Test: agentExists with path separators
 (function testAgentExistsWithPath() {
-  const exists = agentExists('utilities/twin');
+  const exists = agentExists('orchestrator');
   assert.strictEqual(exists, true, 'should handle path separators correctly');
 })();
 
@@ -118,25 +118,25 @@ Body content`;
 // Test: resolveAgentIdentifier with exact match
 (function testResolveAgentIdentifierExact() {
   const resolved = resolveAgentIdentifier('plan');
-  assert.strictEqual(resolved, 'plan', 'should resolve exact match');
+  assert.strictEqual(resolved, 'plan', 'should resolve canonical core path');
 })();
 
 // Test: resolveAgentIdentifier with case insensitive
 (function testResolveAgentIdentifierCaseInsensitive() {
   const resolved = resolveAgentIdentifier('PLAN');
-  assert.strictEqual(resolved.toLowerCase(), 'plan', 'should resolve case-insensitive match');
+  assert.strictEqual(resolved.toLowerCase(), 'plan', 'should resolve case-insensitive match to canonical path');
 })();
 
 // Test: resolveAgentIdentifier with .md extension
 (function testResolveAgentIdentifierWithExtension() {
   const resolved = resolveAgentIdentifier('plan.md');
-  assert.strictEqual(resolved, 'plan', 'should strip .md extension');
+  assert.strictEqual(resolved, 'plan', 'should strip .md extension and return canonical path');
 })();
 
 // Test: resolveAgentIdentifier with path
 (function testResolveAgentIdentifierWithPath() {
-  const resolved = resolveAgentIdentifier('utilities/twin');
-  assert.strictEqual(resolved, 'utilities/twin', 'should resolve paths correctly');
+  const resolved = resolveAgentIdentifier('orchestrator');
+  assert.strictEqual(resolved, 'orchestrator', 'should resolve paths correctly');
 })();
 
 // Test: resolveAgentIdentifier with non-existing agent

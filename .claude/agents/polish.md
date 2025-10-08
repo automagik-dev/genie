@@ -1,7 +1,7 @@
 ---
 name: polish
-description: Code polishing and refinement specialist
+description: Code polishing and refinement agent
 model: inherit
 ---
 
-@.genie/agents/specialists/polish.md
+@.genie/agents/core/polish.md

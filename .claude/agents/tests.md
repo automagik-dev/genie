@@ -1,7 +1,7 @@
 ---
 name: tests
-description: Testing framework and test execution specialist
+description: Testing framework and test execution agent
 model: inherit
 ---
 
-@.genie/agents/specialists/tests.md
+@.genie/agents/core/tests.md

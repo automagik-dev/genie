@@ -19,6 +19,38 @@ try {
 catch (_) {
     // yaml module optional
 }
+const fallbackParseFrontMatter = (raw) => {
+    const meta = {};
+    raw.split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#'))
+            return;
+        const separatorIndex = trimmed.indexOf(':');
+        if (separatorIndex === -1)
+            return;
+        const key = trimmed.slice(0, separatorIndex).trim();
+        const value = trimmed.slice(separatorIndex + 1).trim();
+        if (!key)
+            return;
+        meta[key] = value;
+    });
+    return meta;
+};
+const resolveAgentPath = (id) => {
+    const normalized = id.replace(/\\/g, '/');
+    const candidates = new Set([normalized]);
+    if (!normalized.includes('/')) {
+        ['core', 'qa'].forEach((prefix) => {
+            candidates.add(`${prefix}/${normalized}`);
+        });
+    }
+    for (const candidate of candidates) {
+        const file = path_1.default.join('.genie', 'agents', `${candidate}.md`);
+        if (fs_1.default.existsSync(file))
+            return candidate;
+    }
+    return null;
+};
 /**
  * Lists all available agent definitions from .genie/agents directory.
  *
@@ -62,13 +94,13 @@ function listAgents() {
  * Tries multiple resolution strategies: direct path match, exact ID match,
  * label match, legacy prefix handling (genie-, template-), and special cases (forge-master).
  *
- * @param {string} input - Agent identifier (e.g., "plan", "utilities/twin", "forge-master")
+ * @param {string} input - Agent identifier (e.g., "plan", "core/tracer", "forge-master")
  * @returns {string} - Canonical agent ID (path without .md extension)
  * @throws {Error} - If agent cannot be found
  *
  * @example
  * resolveAgentIdentifier('plan') // Returns: 'plan'
- * resolveAgentIdentifier('twin') // Returns: 'utilities/twin'
+ * resolveAgentIdentifier('implementor') // Returns: 'core/implementor'
  * resolveAgentIdentifier('forge-master') // Returns: 'forge' (legacy alias)
  */
 function resolveAgentIdentifier(input) {
@@ -80,8 +112,9 @@ function resolveAgentIdentifier(input) {
     const normalizedLower = normalized.toLowerCase();
     const directCandidates = [normalized, normalizedLower];
     for (const candidate of directCandidates) {
-        if (agentExists(candidate))
-            return candidate.replace(/\\/g, '/');
+        const resolved = resolveAgentPath(candidate);
+        if (resolved)
+            return resolved.replace(/\\/g, '/');
     }
     const agents = listAgents();
     const byExactId = agents.find((agent) => agent.id.toLowerCase() === normalizedLower);
@@ -91,7 +124,7 @@ function resolveAgentIdentifier(input) {
     if (byLabel)
         return byLabel.id;
     const legacy = normalizedLower.replace(/^genie-/, '').replace(/^template-/, '');
-    const legacyCandidates = [legacy, `core/${legacy}`, `specialized/${legacy}`];
+    const legacyCandidates = [legacy, `core/${legacy}`];
     for (const candidate of legacyCandidates) {
         if (agentExists(candidate))
             return candidate;
@@ -109,9 +142,7 @@ function resolveAgentIdentifier(input) {
 function agentExists(id) {
     if (!id)
         return false;
-    const normalized = id.replace(/\\/g, '/');
-    const file = path_1.default.join('.genie', 'agents', `${normalized}.md`);
-    return fs_1.default.existsSync(file);
+    return resolveAgentPath(id) !== null;
 }
 /**
  * Loads agent specification from markdown file with frontmatter metadata.
@@ -126,7 +157,16 @@ function agentExists(id) {
  */
 function loadAgentSpec(name) {
     const base = name.endsWith('.md') ? name.slice(0, -3) : name;
-    const agentPath = path_1.default.join('.genie', 'agents', `${base}.md`);
+    let normalized = base;
+    try {
+        normalized = resolveAgentIdentifier(base);
+    }
+    catch (_) {
+        if (!agentExists(normalized)) {
+            throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
+        }
+    }
+    const agentPath = path_1.default.join('.genie', 'agents', `${normalized}.md`);
     if (!fs_1.default.existsSync(agentPath)) {
         throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
     }
@@ -161,14 +201,14 @@ function extractFrontMatter(source) {
     const raw = source.slice(3, end).trim();
     const body = source.slice(end + 4);
     if (!YAML) {
-        (0, config_1.recordStartupWarning)('[genie] YAML module unavailable; front matter metadata ignored.');
-        return { meta: {}, body };
+        (0, config_1.recordStartupWarning)('[genie] YAML module unavailable; falling back to basic front matter parsing.');
+        return { meta: fallbackParseFrontMatter(raw), body };
     }
     try {
         const parsed = YAML.parse(raw) || {};
         return { meta: parsed, body };
     }
     catch {
-        return { meta: {}, body };
+        return { meta: fallbackParseFrontMatter(raw), body };
     }
 }

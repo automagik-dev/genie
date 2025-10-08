@@ -2,8 +2,8 @@
 /**
  * CLI Core Module - Pure handlers with zero side effects on import
  *
- * Addresses Twin RISK-1: genie.ts main() execution on import
- * Addresses Twin RISK-2: Session store concurrency via SessionService with file locking
+ * Addresses Genie RISK-1: genie.ts main() execution on import
+ * Addresses Genie RISK-2: Session store concurrency via SessionService with file locking
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SessionService = void 0;

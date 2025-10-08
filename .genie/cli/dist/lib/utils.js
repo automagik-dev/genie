@@ -92,7 +92,7 @@ function truncateText(text, maxLength = 64) {
  * @returns {string} - Safe filename (alphanumeric, dashes, dots, underscores only)
  *
  * @example
- * sanitizeLogFilename('utilities/twin')  // Returns: 'utilities-twin'
+ * sanitizeLogFilename('core/implementor')  // Returns: 'core-implementor'
  * sanitizeLogFilename('my-agent@@!!')    // Returns: 'my-agent'
  */
 function sanitizeLogFilename(agentName) {

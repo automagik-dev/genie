@@ -11,6 +11,36 @@ try {
   // yaml module optional
 }
 
+const fallbackParseFrontMatter = (raw: string): Record<string, any> => {
+  const meta: Record<string, any> = {};
+  raw.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const separatorIndex = trimmed.indexOf(':');
+    if (separatorIndex === -1) return;
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    if (!key) return;
+    meta[key] = value;
+  });
+  return meta;
+};
+
+const resolveAgentPath = (id: string): string | null => {
+  const normalized = id.replace(/\\/g, '/');
+  const candidates = new Set<string>([normalized]);
+  if (!normalized.includes('/')) {
+    ['core', 'qa'].forEach((prefix) => {
+      candidates.add(`${prefix}/${normalized}`);
+    });
+  }
+  for (const candidate of candidates) {
+    const file = path.join('.genie', 'agents', `${candidate}.md`);
+    if (fs.existsSync(file)) return candidate;
+  }
+  return null;
+};
+
 interface ListedAgent {
   id: string;
   label: string;
@@ -60,13 +90,13 @@ export function listAgents(): ListedAgent[] {
  * Tries multiple resolution strategies: direct path match, exact ID match,
  * label match, legacy prefix handling (genie-, template-), and special cases (forge-master).
  *
- * @param {string} input - Agent identifier (e.g., "plan", "utilities/twin", "forge-master")
+ * @param {string} input - Agent identifier (e.g., "plan", "core/tracer", "forge-master")
  * @returns {string} - Canonical agent ID (path without .md extension)
  * @throws {Error} - If agent cannot be found
  *
  * @example
  * resolveAgentIdentifier('plan') // Returns: 'plan'
- * resolveAgentIdentifier('twin') // Returns: 'utilities/twin'
+ * resolveAgentIdentifier('implementor') // Returns: 'core/implementor'
  * resolveAgentIdentifier('forge-master') // Returns: 'forge' (legacy alias)
  */
 export function resolveAgentIdentifier(input: string): string {
@@ -79,7 +109,8 @@ export function resolveAgentIdentifier(input: string): string {
 
   const directCandidates = [normalized, normalizedLower];
   for (const candidate of directCandidates) {
-    if (agentExists(candidate)) return candidate.replace(/\\/g, '/');
+    const resolved = resolveAgentPath(candidate);
+    if (resolved) return resolved.replace(/\\/g, '/');
   }
 
   const agents = listAgents();
@@ -90,7 +121,7 @@ export function resolveAgentIdentifier(input: string): string {
   if (byLabel) return byLabel.id;
 
   const legacy = normalizedLower.replace(/^genie-/, '').replace(/^template-/, '');
-  const legacyCandidates = [legacy, `core/${legacy}`, `specialized/${legacy}`];
+  const legacyCandidates = [legacy, `core/${legacy}`];
   for (const candidate of legacyCandidates) {
     if (agentExists(candidate)) return candidate;
   }
@@ -108,9 +139,7 @@ export function resolveAgentIdentifier(input: string): string {
  */
 export function agentExists(id: string): boolean {
   if (!id) return false;
-  const normalized = id.replace(/\\/g, '/');
-  const file = path.join('.genie', 'agents', `${normalized}.md`);
-  return fs.existsSync(file);
+  return resolveAgentPath(id) !== null;
 }
 
 /**
@@ -126,7 +155,15 @@ export function agentExists(id: string): boolean {
  */
 export function loadAgentSpec(name: string): AgentSpec {
   const base = name.endsWith('.md') ? name.slice(0, -3) : name;
-  const agentPath = path.join('.genie', 'agents', `${base}.md`);
+  let normalized = base;
+  try {
+    normalized = resolveAgentIdentifier(base);
+  } catch (_) {
+    if (!agentExists(normalized)) {
+      throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
+    }
+  }
+  const agentPath = path.join('.genie', 'agents', `${normalized}.md`);
   if (!fs.existsSync(agentPath)) {
     throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
   }
@@ -162,13 +199,13 @@ export function extractFrontMatter(source: string): { meta?: Record<string, any>
   const raw = source.slice(3, end).trim();
   const body = source.slice(end + 4);
   if (!YAML) {
-    recordStartupWarning('[genie] YAML module unavailable; front matter metadata ignored.');
-    return { meta: {}, body };
+    recordStartupWarning('[genie] YAML module unavailable; falling back to basic front matter parsing.');
+    return { meta: fallbackParseFrontMatter(raw), body };
   }
   try {
     const parsed = YAML.parse(raw) || {};
     return { meta: parsed, body };
   } catch {
-    return { meta: {}, body };
+    return { meta: fallbackParseFrontMatter(raw), body };
   }
 }

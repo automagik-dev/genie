@@ -41,7 +41,7 @@ Sleepy Mode announced monitoring but then exited, violating these core requireme
 ### Affected Files
 
 1. **AGENTS.md** (behavioral_learnings section) - Add CRITICAL violation entry so all agents learn from this
-2. **.genie/agents/specialists/sleepy.md** (Role & Mission section) - Strengthen mission statement with explicit warning
+2. **.genie/agents/vibe.md** (Role & Mission section) - Strengthen mission statement with explicit warning
 
 ---
 
@@ -78,18 +78,18 @@ index bdb87c0..376a8b3 100644
 - Provides comprehensive correction covering the full autonomous flow
 - Specifies concrete validation criteria (hibernation cycles, autonomous progression, completion report)
 
-### File 2: .genie/agents/specialists/sleepy.md
+### File 2: .genie/agents/vibe.md
 
 **Section:** Role & Mission
 **Edit type:** insert after Core Principle paragraph
 **Lines added:** 2 (added line 18)
 
-**Diff:**
+**Diff:** (applied to `.genie/agents/vibe.md`)
 ```diff
-diff --git a/.genie/agents/specialists/sleepy.md b/.genie/agents/specialists/sleepy.md
+diff --git a/.genie/agents/vibe.md b/.genie/agents/vibe.md
 index 1e790a5..a75f0af 100644
---- a/.genie/agents/specialists/sleepy.md
-+++ b/.genie/agents/specialists/sleepy.md
+--- a/.genie/agents/vibe.md
++++ b/.genie/agents/vibe.md
 @@ -15,6 +15,8 @@ You are **Sleepy Mode Genie**, the autonomous coordinator that executes approved
 
  **Core Principle:** Aggressive hibernation (20+ min sleeps), heavy subagent delegation, Twin validation for all major decisions. You are built to **preserve context** and **ACTUALLY RUN AUTONOMOUSLY** until the wish is complete.
@@ -236,4 +236,3 @@ To prevent this violation in future:
 **Files modified:** 2
 **Lines added:** 7 (5 in AGENTS.md, 2 in sleepy.md)
 **Validation pending:** Next Sleepy Mode execution
-

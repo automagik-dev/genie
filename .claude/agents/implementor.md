@@ -1,7 +1,7 @@
 ---
 name: implementor
-description: Code implementation and development specialist
+description: Code implementation and development agent
 model: inherit
 ---
 
-@.genie/agents/specialists/implementor.md
+@.genie/agents/core/implementor.md

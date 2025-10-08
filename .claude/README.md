@@ -12,7 +12,7 @@ Access via: `/command`
 - `/review` — QA validation dialogue
 - `/install` — Framework installation
 - `/prompt` — Prompt refinement helper
-- `/sleepy` — Autonomous wish coordinator with Twin Genie
+- `/sleepy` — Autonomous wish coordinator with Genie validation
 - `/learn` — Meta-learning for framework improvements
 
 ### Both Command & Agent (Dual-Purpose)
@@ -28,33 +28,30 @@ Best invoked via `mcp__genie__run` or spawned by other agents.
 Access via: `mcp__genie__run` OR Task tool
 
 #### Strategic Deep-Dive
-- `twin` — Pressure-testing, second opinions, consensus building
+- `genie` — Pressure-testing, second opinions, consensus building
 - `analyze` — System architecture audit
-- `thinkdeep` — Extended reasoning
+- `explore` — Discovery-focused exploratory reasoning
 - `debug` — Root cause investigation
-- `consensus` — Decision facilitation (also callable via twin)
-- `challenge` — Assumption breaking (also callable via twin)
+- `consensus` — Decision facilitation (also callable via genie)
+- `challenge` — Assumption breaking (also callable via genie)
 
 #### Tactical Utilities
-- `codereview` — Diff/file review
 - `refactor` — Refactor planning
-- `testgen` — Test generation
 - `docgen` — Documentation generation
-- `secaudit` — Security audit
+- `audit` — Risk assessment and security audit
 - `tracer` — Instrumentation planning
 - `precommit` — Pre-commit validation (alias to commit)
 
 #### Delivery Specialists
 - `implementor` — Feature implementation
-- `tests` — Test writing
+- `tests` — Test strategy, generation, and authoring
+- `review` — Wish audits, code review, and QA validation
 - `polish` — Code refinement
-- `qa` — Quality assurance
-- `bug-reporter` — Bug triage & filing
 
 #### Infrastructure
 - `git-workflow` — Git operations
 - `project-manager` — Task coordination
-- `self-learn` — Behavioral learning
+- `learn` — Meta-learning & behavioral corrections
 
 ---
 
@@ -62,80 +59,159 @@ Access via: `mcp__genie__run` OR Task tool
 
 ```
 .genie/agents/               # Source of truth
-├── plan.md                  # Core workflow orchestrator
-├── wish.md                  # Wish creation agent
-├── forge.md                 # Execution planning agent
-├── review.md                # QA validation agent
-├── specialists/             # Delivery & domain experts
-│   ├── bug-reporter.md
-│   ├── genie-qa.md
+├── plan.md                  # Core workflow orchestrator (immutable)
+├── wish.md                  # Wish creation agent (immutable)
+├── forge.md                 # Execution planning agent (immutable)
+├── review.md                # QA validation agent (immutable)
+├── orchestrator.md          # Genie second-opinion interface (immutable)
+├── vibe.md                  # Autonomous coordinator (immutable)
+├── core/                    # Reusable core agents shipped with Genie
+│   ├── analyze.md
+│   ├── commit.md
+│   ├── docgen.md
 │   ├── git-workflow.md
 │   ├── implementor.md
-│   ├── learn.md
-│   ├── polish.md
-│   ├── project-manager.md
-│   ├── qa.md
-│   ├── self-learn.md
-│   ├── sleepy.md
-│   └── tests.md
-└── utilities/               # Reusable helpers
-    ├── analyze.md
-    ├── challenge.md
-    ├── codereview.md
-    ├── commit.md
-    ├── consensus.md
-    ├── debug.md
-    ├── docgen.md
-    ├── identity-check.md
-    ├── install.md
-    ├── prompt.md
-    ├── refactor.md
-    ├── secaudit.md
-    ├── testgen.md
-    ├── thinkdeep.md
-    ├── tracer.md
-    └── twin.md
+│   ├── prompt.md
+│   ├── refactor.md
+│   ├── tests.md
+│   └── … (see AGENTS.md for the full list)
+├── qa/
+│   └── genie-qa.md
+└── README.md
+
+.genie/custom/               # Project-specific overrides consumed by core prompts
+├── analyze.md
+├── git-workflow.md
+├── implementor.md
+├── tests.md
+└── …
 
 .claude/commands/            # Interactive slash commands
 ├── plan.md → @.genie/agents/plan.md
 ├── wish.md → @.genie/agents/wish.md
 ├── forge.md → @.genie/agents/forge.md
 ├── review.md → @.genie/agents/review.md
-├── commit.md → @.genie/agents/utilities/commit.md
-├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── install.md → @.genie/agents/utilities/install.md
-├── prompt.md → @.genie/agents/utilities/prompt.md
-├── sleepy.md → @.genie/agents/specialists/sleepy.md
-└── learn.md → @.genie/agents/specialists/learn.md
+├── commit.md → @.genie/agents/core/commit.md
+├── genie-qa.md → @.genie/agents/qa/genie-qa.md
+├── install.md → @.genie/agents/core/install.md
+├── prompt.md → @.genie/agents/core/prompt.md
+├── vibe.md → @.genie/agents/vibe.md
+└── learn.md → @.genie/agents/core/learn.md
 
 .claude/agents/              # Task tool aliases (delegatable)
 ├── planner.md → @.genie/agents/plan.md
-├── commit.md → @.genie/agents/utilities/commit.md
-├── precommit.md → @.genie/agents/utilities/commit.md
-├── genie-qa.md → @.genie/agents/specialists/genie-qa.md
-├── twin.md → @.genie/agents/utilities/twin.md
-├── analyze.md → @.genie/agents/utilities/analyze.md
-├── debug.md → @.genie/agents/utilities/debug.md
-├── thinkdeep.md → @.genie/agents/utilities/thinkdeep.md
-├── consensus.md → @.genie/agents/utilities/consensus.md
-├── challenge.md → @.genie/agents/utilities/challenge.md
-├── codereview.md → @.genie/agents/utilities/codereview.md
-├── refactor.md → @.genie/agents/utilities/refactor.md
-├── testgen.md → @.genie/agents/utilities/testgen.md
-├── docgen.md → @.genie/agents/utilities/docgen.md
-├── secaudit.md → @.genie/agents/utilities/secaudit.md
-├── tracer.md → @.genie/agents/utilities/tracer.md
-├── implementor.md → @.genie/agents/specialists/implementor.md
-├── tests.md → @.genie/agents/specialists/tests.md
-├── polish.md → @.genie/agents/specialists/polish.md
-├── qa.md → @.genie/agents/specialists/qa.md
-├── bug-reporter.md → @.genie/agents/specialists/bug-reporter.md
-├── git-workflow.md → @.genie/agents/specialists/git-workflow.md
-├── project-manager.md → @.genie/agents/specialists/project-manager.md
-├── self-learn.md → @.genie/agents/specialists/self-learn.md
-├── sleepy.md → @.genie/agents/specialists/sleepy.md
-└── learn.md → @.genie/agents/specialists/learn.md
+├── commit.md → @.genie/agents/core/commit.md
+├── precommit.md → @.genie/agents/core/commit.md
+├── genie-qa.md → @.genie/agents/qa/genie-qa.md
+├── orchestrator.md → @.genie/agents/orchestrator.md
+├── analyze.md → @.genie/agents/core/analyze.md
+├── audit.md → @.genie/agents/core/audit.md
+├── debug.md → @.genie/agents/core/debug.md
+├── explore.md → @.genie/agents/core/modes/explore.md
+├── consensus.md → @.genie/agents/core/modes/consensus.md
+├── challenge.md → @.genie/agents/core/modes/challenge.md
+├── refactor.md → @.genie/agents/core/refactor.md
+├── docgen.md → @.genie/agents/core/modes/docgen.md
+├── tracer.md → @.genie/agents/core/modes/tracer.md
+├── implementor.md → @.genie/agents/core/implementor.md
+├── tests.md → @.genie/agents/core/tests.md
+├── review.md → @.genie/agents/review.md
+├── polish.md → @.genie/agents/core/polish.md
+├── git-workflow.md → @.genie/agents/core/git-workflow.md
+├── vibe.md → @.genie/agents/vibe.md
+└── learn.md → @.genie/agents/core/learn.md
 ```
+
+---
+
+## Architecture Layers
+
+Genie uses a **3-layer extension system** for maximum flexibility without forking core prompts:
+
+### Layer 1: Core Agents (`.genie/agents/core/`)
+- **9 delivery & utility agents** shipped with the Genie framework
+- Examples: `implementor.md`, `commit.md`, `tests.md`, `polish.md`
+- **17 orchestrator modes** in `modes/` subdirectory
+- Examples: `modes/analyze.md`, `modes/debug.md`, `modes/refactor.md`
+- **Immutable** - never edit these directly
+- Updated only via framework releases
+
+### Layer 2: Custom Extensions (`.genie/custom/*.md`)
+- **Project-specific overrides** that auto-load alongside core agents
+- Example: `.genie/custom/analyze.md` loads automatically when `analyze` agent runs
+- Allows per-project customization without modifying core prompts
+- Each file adds context like preferred commands, evidence paths, domain rules
+
+### Layer 3: Claude Aliases (`.claude/agents/*.md`)
+- **Thin wrappers** that reference core agents via `@` notation
+- Used by Task tool for background delegation
+- Example: `.claude/agents/analyze.md` contains just `@.genie/agents/core/modes/analyze.md`
+- Provides friendly names for agent discovery
+
+### How It Works
+
+When you invoke an agent:
+```bash
+# Standalone invocation
+mcp__genie__run with agent="analyze" and prompt="..."
+```
+
+**Loads:**
+1. `.genie/agents/core/modes/analyze.md` (core prompt)
+2. `.genie/custom/analyze.md` (project extensions, if exists)
+
+**Via orchestrator:**
+```bash
+mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. ..."
+```
+
+**Loads:**
+1. `.genie/agents/orchestrator.md` (wrapper context)
+2. `.genie/agents/core/modes/analyze.md` (core prompt)
+3. `.genie/custom/analyze.md` (project extensions, if exists)
+
+---
+
+## Dual Invocation Pattern
+
+Many agents can be invoked two ways:
+
+### Method 1: Standalone (Direct)
+**When to use:** Quick analysis, informal review, no formal verdict needed
+
+```bash
+mcp__genie__run with agent="analyze" and prompt="Scope: src/auth. Deliver: coupling analysis."
+```
+
+**Output:** Raw analysis results formatted per agent's template
+
+### Method 2: Via Orchestrator (Formal)
+**When to use:** High-stakes decisions, pressure-testing, requires "Genie Verdict + confidence"
+
+```bash
+mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/auth. Deliver: coupling + Genie Verdict."
+```
+
+**Output:** Analysis + structured Genie Verdict + confidence level + Done Report structure
+
+### Orchestrator Modes (18 total)
+
+**Core Reasoning Modes (3):**
+- `challenge` — critical evaluation (auto-routes to socratic/debate/direct)
+- `explore` — discovery-focused exploratory reasoning
+- `consensus` — multi-model perspective synthesis
+
+**Specialized Analysis (7):**
+- `plan`, `analyze` — strategic analysis
+- `debug` — root-cause investigation
+- `audit` — risk & security assessment
+- `refactor`, `tracer`, `docgen` — implementation support
+- `precommit` — quality gates
+
+**Custom-Only (2):**
+- `compliance`, `retrospective`
+
+**Note:** Delivery agents (implementor, tests, review, polish, git-workflow) are **not** orchestrator modes - they execute work directly.
 
 ---
 
@@ -163,23 +239,26 @@ Use slash commands for interactive workflows:
 Use MCP tools for background agents:
 
 ```
-# Strategic deep-dive
-mcp__genie__run with agent="twin" and prompt="Mode: planning. Objective: ..."
-mcp__genie__run with agent="planner" and prompt="Background: analyze roadmap gaps..."
-mcp__genie__run with agent="analyze" and prompt="Scope: src/services. Deliver: dependency map..."
-mcp__genie__run with agent="debug" and prompt="Bug: auth failing. Hypotheses: ..."
-mcp__genie__run with agent="thinkdeep" and prompt="Focus: scaling strategy. Timebox: 10min..."
+# Orchestrator (routes to modes)
+mcp__genie__run with agent="orchestrator" and prompt="Mode: plan. @.genie/wishes/<slug>/<slug>-wish.md"
+mcp__genie__run with agent="orchestrator" and prompt="Mode: challenge. Topic: <assumption>"
+mcp__genie__run with agent="orchestrator" and prompt="Mode: explore. Focus: <topic>. Timebox: 10min"
 
-# Tactical utilities
-mcp__genie__run with agent="commit" and prompt="Generate commit message for current staged changes"
-mcp__genie__run with agent="codereview" and prompt="Scope: git diff main. Task: ..."
-mcp__genie__run with agent="testgen" and prompt="Layer: unit. Files: src/auth/*.rs..."
-mcp__genie__run with agent="refactor" and prompt="Targets: api/routes. Plan: ..."
+# Direct mode invocation (bypasses orchestrator)
+mcp__genie__run with agent="analyze" and prompt="Scope: src/services"
+mcp__genie__run with agent="debug" and prompt="Bug: auth failing"
+mcp__genie__run with agent="challenge" and prompt="Topic: caching strategy"
 
-# Delivery specialists (spawned by /forge)
-mcp__genie__run with agent="implementor" and prompt="Task: FORGE-123"
-mcp__genie__run with agent="tests" and prompt="Task: FORGE-124"
-mcp__genie__run with agent="qa" and prompt="Task: FORGE-125"
+# Tactical support
+mcp__genie__run with agent="commit" and prompt="Generate commit message"
+mcp__genie__run with agent="review" and prompt="Mode: code review. Scope: git diff main"
+mcp__genie__run with agent="tests" and prompt="Mode: generation. Layer: unit. Files: src/auth/*.rs"
+mcp__genie__run with agent="refactor" and prompt="Targets: api/routes"
+
+# Delivery agents (spawned by /forge)
+mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group A"
+mcp__genie__run with agent="tests" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group B"
+mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/<slug>/<slug>-wish.md Group C"
 
 # Inspect & resume
 mcp__genie__list_sessions
@@ -203,13 +282,13 @@ mcp__genie__stop with sessionId="<session-id>"
 - Delegating specific task to background worker
 - Need parallel execution of multiple tasks
 - Want to resume/inspect long-running work
-- Spawning specialists from forge execution groups
+- Spawning agents from forge execution groups
 
 ### Workflow Pattern
 
 1. **Discovery:** `/plan` → creates planning brief
 2. **Blueprint:** `/wish` → creates wish document
-3. **Execution:** `/forge` → breaks into execution groups → spawns agents (implementor, tests, qa)
+3. **Execution:** `/forge` → breaks into execution groups → spawns agents (implementor, tests, review)
 4. **Validation:** `/review` → validates completion → generates QA report
 5. **Commit:** `/commit` → generates commit message and advisory
 
@@ -220,12 +299,12 @@ mcp__genie__stop with sessionId="<session-id>"
 # Example from forge plan:
 # Group A: implementor
 # Group B: tests
-# Group C: qa
+# Group C: review (QA mode)
 
 # Spawn agents with full context
 mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/auth-wish.md Group A"
 mcp__genie__run with agent="tests" and prompt="@.genie/wishes/auth-wish.md Group B"
-mcp__genie__run with agent="qa" and prompt="@.genie/wishes/auth-wish.md Group C"
+mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/auth-wish.md Group C"
 
 # Resume for follow-ups
 mcp__genie__resume with sessionId="<session-id>" and prompt="Address blocker: missing test fixtures"
@@ -233,37 +312,35 @@ mcp__genie__resume with sessionId="<session-id>" and prompt="Address blocker: mi
 
 ---
 
-## Twin Modes Reference
+## Orchestrator Usage
 
-`twin` consolidates multiple analysis patterns into a single versatile agent:
+The orchestrator automatically routes to the appropriate mode based on your prompt:
 
 ```
-# Planning & pressure-testing
-mcp__genie__run with agent="twin" and prompt="Mode: planning. Objective: pressure-test @.genie/wishes/auth-wish.md"
+# Option 1: Let orchestrator auto-route (recommended)
+mcp__genie__run with agent="orchestrator" and prompt="
+Pressure-test the authentication plan for risks and missing validations.
+@.genie/wishes/auth-wish.md
+"
 
-# Consensus & decision-making
-mcp__genie__run with agent="twin" and prompt="Mode: consensus. Decision: use PostgreSQL vs MongoDB"
+# Option 2: Explicit mode selection
+mcp__genie__run with agent="orchestrator" and prompt="
+Mode: challenge
 
-# Challenge assumptions
-mcp__genie__run with agent="twin" and prompt="Mode: challenge. Assumption: users prefer email over SMS"
+Topic: Users prefer email over SMS for security alerts
+@docs/user-research.md
 
-# Deep investigation
-mcp__genie__run with agent="twin" and prompt="Mode: deep-dive. Topic: authentication flow dependencies"
+Deliver: Critical evaluation with experiments
+"
 
-# Debug with hypotheses
-mcp__genie__run with agent="twin" and prompt="Mode: debug. Bug: login fails intermittently"
-
-# Risk assessment
-mcp__genie__run with agent="twin" and prompt="Mode: risk-audit. Initiative: migrate to microservices"
-
-# Design review
-mcp__genie__run with agent="twin" and prompt="Mode: design-review. Component: payment service"
-
-# Test strategy
-mcp__genie__run with agent="twin" and prompt="Mode: test-strategy. Feature: password reset flow"
-
-# See @.genie/agents/utilities/twin.md for all modes
+# Option 3: Direct mode invocation (bypasses orchestrator)
+mcp__genie__run with agent="challenge" and prompt="
+Topic: Caching strategy assumptions
+Deliver: Counterarguments + experiments + verdict
+"
 ```
+
+**See `.genie/agents/orchestrator.md` for all 18 modes and usage patterns**
 
 ---
 
@@ -273,11 +350,11 @@ mcp__genie__run with agent="twin" and prompt="Mode: test-strategy. Feature: pass
 |----------|--------|------------------|------------|
 | **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
 | **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
-| **Strategic** | twin, analyze, debug, thinkdeep | High-level analysis | Human or plan/forge |
-| **Tactical** | codereview, refactor, testgen, docgen, secaudit, tracer | Specific utilities | Human or specialists |
-| **Delivery** | implementor, tests, polish, qa, bug-reporter | Execute work | Forge or human |
-| **Infrastructure** | git-workflow, project-manager, self-learn | System operations | Agents or workflows |
-| **Autonomous** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
+| **Strategic** | genie, analyze, explore, debug | High-level analysis | Human or plan/forge |
+| **Tactical** | refactor, docgen, audit, tracer | Focused support | Human or agents |
+| **Delivery** | implementor, tests, review, polish | Execute work | Forge or human |
+| **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
+| **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
 
 ---
 

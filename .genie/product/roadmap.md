@@ -16,7 +16,7 @@ The genie-dev branch is the laboratory for Genie’s self-improvement program. P
 ## Phase 2 — Guided Self-Improvement
 - Author wishes that target prompt quality, guardrail clarity, and CLI usability
 - Pair each wish with twin audits and validation scripts before merging back to `main`
-- Promote validated learnings into `.genie/instructions/` and specialist briefs
+- Promote validated learnings into `.genie/instructions/` and agent briefs
 
 ## Phase 3 — Adoption Kits for Downstream Repos
 - Package upgrade notes, migration diffs, and rollback guidance for every major change
@@ -25,7 +25,7 @@ The genie-dev branch is the laboratory for Genie’s self-improvement program. P
 
 ## Phase 4 — Automation & CI Integration
 - Land GitHub Actions pipeline that runs build + smoke tests and attaches artefacts to PRs
-- Add regression checks for behavioural rules (self-learn, guardrail compliance)
+- Add regression checks for behavioural rules (learn, guardrail compliance)
 - Introduce metrics capture (latency, wish completion velocity) with reporting hooks
 
 ## Success Metrics

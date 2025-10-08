@@ -4,4 +4,4 @@ description: Consensus building and decision facilitation agent
 model: inherit
 ---
 
-@.genie/agents/utilities/consensus.md
+@.genie/agents/core/modes/consensus.md

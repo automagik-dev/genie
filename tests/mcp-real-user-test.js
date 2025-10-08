@@ -64,7 +64,7 @@ async function sendRequest(server, request, timeout = 15000) {
 async function runTests() {
   console.log('[Setup] Starting MCP server...');
 
-  const server = spawn('./genie', ['mcp', '-t', 'stdio'], {
+  const server = spawn('genie', ['mcp', '-t', 'stdio'], {
     stdio: ['pipe', 'pipe', 'pipe']
   });
 
@@ -93,7 +93,7 @@ async function runTests() {
     test('Initialize successful', initResponse.result !== undefined);
 
     // Step 2: Run an agent
-    console.log('\n[Step 2] Run agent: utilities/identity-check');
+    console.log('\n[Step 2] Run agent: core/analyze');
     const runRequest = {
       jsonrpc: '2.0',
       id: 2,
@@ -101,7 +101,7 @@ async function runTests() {
       params: {
         name: 'run',
         arguments: {
-          agent: 'utilities/identity-check',
+          agent: 'core/analyze',
           prompt: 'Verify your identity and confirm you can access the framework. Be brief.'
         }
       }
@@ -174,7 +174,7 @@ async function runTests() {
     const listText = listResponse.result.content[0]?.text || '';
     if (sessionId) {
       test('New session appears in list',
-        listText.includes(sessionId) || listText.includes('utilities/identity-check'),
+        listText.includes(sessionId) || listText.includes('core/analyze'),
         'Session found in list'
       );
     }

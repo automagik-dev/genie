@@ -1,1 +1,1 @@
-@.genie/agents/utilities/debug.md
+@.genie/agents/core/debug.md

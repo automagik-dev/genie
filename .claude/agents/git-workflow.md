@@ -1,7 +1,7 @@
 ---
 name: git-workflow
-description: Git workflow and version control specialist
+description: Git workflow and version control agent
 model: inherit
 ---
 
-@.genie/agents/specialists/git-workflow.md
+@.genie/agents/core/git-workflow.md

@@ -83,7 +83,7 @@ function cleanupTestSessions() {
   const result = execCLI('list agents');
   assert.strictEqual(result.exitCode, 0, 'list agents should exit 0');
   assert.match(result.stdout, /agents|Identifier/i, 'Should show agents listing');
-  assert.match(result.stdout, /twin|specialists/, 'Should list agents');
+  assert.match(result.stdout, /core\//, 'Should list agents');
   console.log('✓ list agents displays agent catalog');
 })();
 

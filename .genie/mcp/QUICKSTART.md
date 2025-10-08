@@ -186,7 +186,7 @@ Once wish is approved, break it down for implementation.
 **What it does:**
 - Analyzes wish complexity and dependencies
 - Creates 2-3 focused execution groups
-- Assigns specialist agents (implementor, tests, qa)
+- Assigns delivery agents (implementor, tests, review)
 - Defines validation commands and evidence paths
 
 ---
@@ -209,7 +209,7 @@ After implementation, validate against standards.
 #### 5. **twin** - Pressure-Test Decisions (17+ Modes)
 Get a second opinion with structured analysis.
 
-**Common modes:** planning, consensus, deep-dive, debug, risk-audit, design-review, test-strategy
+**Common modes:** planning, consensus, deep-dive, debug, risk-audit, design-review
 
 **Usage:**
 > "Use the twin prompt to evaluate choosing PostgreSQL vs MongoDB for user data"

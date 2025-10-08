@@ -2,7 +2,7 @@
 /**
  * Assert that cli-core module can be imported without side effects
  *
- * Twin RISK-1 mitigation: Verify that importing cli-core does NOT execute CLI main()
+ * Genie RISK-1 mitigation: Verify that importing cli-core does NOT execute CLI main()
  */
 
 const assert = require('assert');
