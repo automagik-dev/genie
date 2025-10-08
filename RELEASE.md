@@ -33,8 +33,9 @@ pnpm bump:minor
 1. ✅ Updates `package.json` from `2.0.1` → `2.1.0-rc.1`
 2. ✅ Creates git commit with co-author attribution
 3. ✅ Creates git tag `v2.1.0-rc.1`
-4. ✅ Pushes to GitHub (triggers CI)
-5. ✅ CI publishes to npm with `@next` tag
+4. ✅ Pushes to GitHub
+5. ✅ Automatically triggers publish workflow
+6. ✅ CI publishes to npm with `@next` tag
 
 **Testing RC:**
 ```bash
@@ -63,9 +64,9 @@ pnpm release:stable
 1. ✅ Updates `package.json` from `2.1.0-rc.X` → `2.1.0`
 2. ✅ Runs full test suite
 3. ✅ Creates git commit + tag `v2.1.0`
-4. ✅ Pushes to GitHub (triggers CI)
-5. ✅ CI publishes to npm with `@latest` tag
-6. ✅ Creates GitHub release with auto-generated notes
+4. ✅ Pushes to GitHub
+5. ✅ Creates GitHub release (auto-triggers publish workflow)
+6. ✅ CI publishes to npm with `@latest` tag
 
 **Users get stable version:**
 ```bash

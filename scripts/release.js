@@ -146,14 +146,18 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
   log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
   console.log('');
 
-  // Create GitHub release
+  // Create GitHub release (triggers publish workflow automatically)
   log('blue', '🏷️', 'Creating GitHub release...');
   try {
     exec(`gh release create v${stableVersion} --generate-notes --title "v${stableVersion}"`);
     log('green', '✅', 'GitHub release created');
+    log('green', '✅', 'Publish workflow triggered automatically');
+    log('blue', '📦', 'CI will publish: npm install automagik-genie@latest');
+    log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
   } catch (error) {
-    log('yellow', '⚠️', 'Could not create GitHub release automatically.');
+    log('yellow', '⚠️', 'Could not create GitHub release automatically');
     log('yellow', '💡', `Create manually: gh release create v${stableVersion} --generate-notes`);
+    log('yellow', '💡', `Or trigger workflow: gh workflow run publish.yml --field tag=v${stableVersion}`);
   }
 
   console.log('');

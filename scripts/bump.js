@@ -157,8 +157,20 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
 
   log('green', '🎉', 'Release candidate created!');
   console.log('');
-  log('blue', '📦', `CI will publish: npm install automagik-genie@next`);
-  log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
+
+  // Trigger publish workflow
+  log('blue', '🚀', 'Triggering publish workflow...');
+  const workflowResult = exec(`gh workflow run publish.yml --field tag=v${newVersion}`, true);
+
+  if (workflowResult === null || workflowResult === '') {
+    log('green', '✅', 'Publish workflow triggered');
+    log('blue', '📦', `CI will publish: npm install automagik-genie@next`);
+    log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
+  } else {
+    log('yellow', '⚠️', 'Could not trigger workflow automatically');
+    log('yellow', '💡', `Run manually: gh workflow run publish.yml --field tag=v${newVersion}`);
+  }
+
   console.log('');
   log('yellow', '💡', `When ready: pnpm release:stable`);
 }
