@@ -42,6 +42,12 @@
     "test:genie": "pnpm run build:genie && node tests/genie-cli.test.js && tests/identity-smoke.sh",
     "test:session-service": "pnpm run build:genie && node tests/session-service.test.js",
     "test:all": "pnpm run test:genie && pnpm run test:session-service",
+    "bump:patch": "node scripts/bump.js patch",
+    "bump:minor": "node scripts/bump.js minor",
+    "bump:major": "node scripts/bump.js major",
+    "bump:rc": "node scripts/bump.js rc-increment",
+    "release:stable": "node scripts/release.js stable",
+    "status": "node scripts/status.js",
     "postinstall": "node scripts/postinstall.js || true",
     "prepublishOnly": "pnpm run build && pnpm run test:all"
   },

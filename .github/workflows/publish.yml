@@ -67,13 +67,28 @@ jobs:
             const { execSync } = require('child_process');
             const pkg = require('./package.json');
             const currentVersion = pkg.version;
+
+            // Skip validation for RC versions
+            if (currentVersion.includes('-rc.')) {
+              console.log('RC version detected - skipping sequence validation');
+              process.exit(0);
+            }
+
             const tags = execSync('git tag -l --sort=-version:refname').toString().trim().split('\n');
             const otherTags = tags.filter(t => t && t.startsWith('v') && t !== 'v' + currentVersion);
             if (otherTags.length === 0) {
               console.log('First release - no sequence validation needed');
               process.exit(0);
             }
-            const latestTag = otherTags[0].replace('v', '');
+
+            // Find latest stable tag (skip RC tags)
+            const latestStableTag = otherTags.find(t => !t.includes('-rc.'));
+            if (!latestStableTag) {
+              console.log('No previous stable release - skipping validation');
+              process.exit(0);
+            }
+
+            const latestTag = latestStableTag.replace('v', '');
             const parse = (v) => v.split('.').map(Number);
             const [cMaj, cMin, cPat] = parse(currentVersion);
             const [lMaj, lMin, lPat] = parse(latestTag);
@@ -101,6 +116,18 @@ jobs:
         run: |
           GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
 
+      - name: Determine npm dist-tag
+        id: npm_tag
+        run: |
+          VERSION="${{ steps.tagref.outputs.version }}"
+          if [[ "$VERSION" == *"-rc."* ]]; then
+            echo "tag=next" >> $GITHUB_OUTPUT
+            echo "📦 RC version detected - will publish to @next"
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "📦 Stable version detected - will publish to @latest"
+          fi
+
       - name: Check if version already published
         id: npm_version
         run: |
@@ -113,7 +140,7 @@ jobs:
 
       - name: Publish to NPM
         if: steps.npm_version.outputs.exists == '0'
-        run: npm publish
+        run: npm publish --tag ${{ steps.npm_tag.outputs.tag }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GENIE_SKIP_IDENTITY_SMOKE: '1'
