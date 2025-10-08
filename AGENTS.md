@@ -94,7 +94,7 @@ mcp__genie__run with agent="forge" and prompt="[Discovery] … [Implementation] 
 
 # Inspect runs and view logs
 mcp__genie__list_sessions
-mcp__genie__view with sessionId="<session-id>" and full=true
+mcp__genie__view with sessionId="<session-id>" and full=false  # Use full=true only when complete history needed
 
 # Continue a specific run by session id
 mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up …"
@@ -108,13 +108,18 @@ mcp__genie__stop with sessionId="<session-id>"
 
 - Start a session: `mcp__genie__run` with agent and prompt
 - Resume the session: `mcp__genie__resume` with sessionId and prompt
-- Inspect context: `mcp__genie__view` with sessionId and full=true
+- Inspect context: `mcp__genie__view` with sessionId and full=false (default; use full=true only when complete history needed)
 - Discover sessions: `mcp__genie__list_sessions`
 
 Guidance:
 - Treat each session as a thread with memory; use `resume` for follow‑ups instead of starting new `run`s.
 - Keep work per session focused (one wish/feature/bug) for clean transcripts and easier review.
 - When scope changes significantly, start a new `run` and reference the prior session in your prompt.
+
+**Polling Pattern:**
+- After `mcp__genie__run`, either (1) do parallel work OR (2) wait ≥60 seconds before first view
+- Increase wait intervals adaptively: 60s → 120s → 300s → 1200s for complex tasks
+- Prefer parallel work over polling when possible
 
 ## Chat-Mode Helpers (Scoped Use Only)
 Genie can handle small, interactive requests without entering Plan → Wish when the scope is clearly limited. Preferred helpers:
@@ -193,41 +198,6 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
       <validation>How to verify the correction is working</validation>
     </entry>
     -->
-    <entry date="2025-09-29" violation_type="DOC_INTEGRITY" severity="HIGH">
-      <trigger>Overwriting `AGENTS.md` wholesale without approval during restructuring.</trigger>
-      <correction>Perform targeted, line-level edits for documentation updates; never replace entire files unless explicitly authorized.</correction>
-      <validation>Subsequent doc changes appear as focused diffs reviewed with stakeholders before merge.</validation>
-    </entry>
-    <entry date="2025-09-29" violation_type="FILE_DELETION" severity="CRITICAL">
-      <trigger>Deleted `.genie/agents/core/install.md` without explicit approval.</trigger>
-      <correction>Never delete or rename repository files unless the human explicitly instructs it; instead, edit contents in place or mark for removal pending approval.</correction>
-      <validation>No future diffs show unapproved deletions; any removal is preceded by documented approval in chat.</validation>
-    </entry>
-    <entry date="2025-09-29" violation_type="CLI_DESIGN" severity="HIGH">
-      <trigger>Bug #3 discovered: Documentation suggested `--preset` or `--mode` CLI flags that don't exist and shouldn't exist.</trigger>
-      <correction>Execution modes (sandbox, model, reasoning) are configured per-agent in YAML frontmatter only, never via CLI flags. Remove all documentation references to `--preset` or `--mode` CLI flags. Each agent declares its own settings like @.genie/agents/core/prompt.md does.</correction>
-      <validation>Documentation contains no references to `--preset` or `--mode` CLI flags; all execution configuration examples show YAML frontmatter.</validation>
-    </entry>
-    <entry date="2025-09-29" violation_type="WORKFLOW" severity="MEDIUM">
-      <trigger>User called `/wish` directly in chat, expecting Claude to act as wish agent immediately, not dispatch to MCP.</trigger>
-      <correction>Distinguish between two invocation methods: (1) `/wish` slash command = Claude acts as the agent directly using subagents; (2) `mcp__genie__run` with agent="wish" = dispatch to Codex executor via MCP. For daily work, user prefers slash commands (Claude). For multi-LLM perspective, user uses MCP genie tools (Codex).</correction>
-      <validation>When user types `/command`, act as that agent directly; when they use `mcp__genie__run`, acknowledge they're dispatching to external executor.</validation>
-    </entry>
-    <entry date="2025-09-30" violation_type="POLLING" severity="MEDIUM">
-      <trigger>Polling background sessions with short sleep intervals, leading to impatient behavior and user directive to slow down.</trigger>
-      <correction>Increase sleep duration between consecutive session status checks to avoid rapid-fire polling; default to longer waits unless urgency is documented. Exception: Vibe mode autonomous execution uses 20-minute baseline per @.genie/agents/vibe.md protocol.</correction>
-      <validation>Future monitoring loops record waits of at least 60 seconds for general polling, 20 minutes (1200 seconds) for vibe mode autonomous execution, with evidence captured in session logs.</validation>
-    </entry>
-    <entry date="2025-09-30" violation_type="TWIN_VALIDATION" severity="CRITICAL">
-      <trigger>Vibe mode dry run executed without Genie validation at any checkpoint (task creation, execution start, merge approval).</trigger>
-      <correction>MANDATORY: Start Genie session before any autonomous work. Consult Genie before: creating forge tasks, starting task execution, merging completed work, moving to next group. Genie provides verdict + confidence level for all major decisions. Genie can block dangerous actions. Genie session ID must be logged in state file.</correction>
-      <validation>All future Vibe runs show Genie session ID in state file, Genie verdicts logged for each major decision, no merge without explicit Genie approval with evidence captured in learning reports.</validation>
-    </entry>
-    <entry date="2025-09-30" violation_type="SLEEPY_EARLY_EXIT" severity="CRITICAL">
-      <trigger>Vibe Mode exited after initialization/announcing monitoring instead of entering actual autonomous execution loop that runs until 100/100 completion.</trigger>
-      <correction>MANDATORY: Vibe Mode's SOLE PURPOSE is to run autonomously until ALL tasks complete and 100/100 is achieved. NEVER return control to user after initialization. MUST implement actual monitoring loops with real `sleep` commands (120-1200 seconds), continuous status checks via Playwright, automatic task progression (merge A → start B → merge B → start C → merge C), and ONLY exit after generating completion report with 100/100 score. Violating persistence protocol (vibe.md lines 20-62) is a CRITICAL failure.</correction>
-      <validation>Future Vibe runs show: (1) Multiple hibernation cycles logged in state file (2) Evidence of autonomous task progression without human intervention (3) Completion report generated only after ALL tasks done (4) Session continues for hours until 100/100 or blocker encountered.</validation>
-    </entry>
   </learning_entries>
 </behavioral_learnings>
 
@@ -289,7 +259,8 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Evidence: declared by each wish (pick a clear folder or append directly in-document).
 - Forge plans: recorded in CLI output—mirror essentials back into the wish.
 - Blockers: logged inside the wish under a **Blockers** or status section.
-- Reports: `.genie/wishes/<slug>/reports/` (Done Reports).
+- Reports: `.genie/wishes/<slug>/reports/` (wish-specific Done Reports) or `.genie/reports/` (framework-level reports).
+- State: `.genie/state/` is ONLY for session tracking data (agents/sessions.json, logs); NEVER for reports.
 </file_and_naming_rules>
 
 <tool_requirements>
