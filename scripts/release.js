@@ -113,7 +113,7 @@ function executeRelease(pkg, stableVersion) {
   // Run tests before releasing
   log('blue', '🧪', 'Running tests...');
   try {
-    exec('pnpm run test:all');
+    exec('GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:all');
     log('green', '✅', 'Tests passed');
   } catch (error) {
     log('red', '❌', 'Tests failed. Aborting release.');

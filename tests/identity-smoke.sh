@@ -18,7 +18,12 @@ LOG_PREFIX=${AGENT//\//-}
 before_snapshot=$(ls "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null || true)
 
 # Launch the agent in background; suppress stdout
-genie run "$AGENT" "$PROMPT" > /dev/null &
+# Use local build if genie command not installed globally
+if command -v genie &> /dev/null; then
+  genie run "$AGENT" "$PROMPT" > /dev/null &
+else
+  node "$REPO_DIR/.genie/cli/dist/genie-cli.js" run "$AGENT" "$PROMPT" > /dev/null &
+fi
 run_pid=$!
 
 log_file=""
