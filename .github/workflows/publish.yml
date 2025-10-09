@@ -92,6 +92,14 @@ jobs:
             const parse = (v) => v.split('.').map(Number);
             const [cMaj, cMin, cPat] = parse(currentVersion);
             const [lMaj, lMin, lPat] = parse(latestTag);
+
+            // Check if there's an RC tag for this version (RC -> stable promotion)
+            const hasRcForVersion = otherTags.some(t => t === 'v' + currentVersion + '-rc.1' || t.startsWith('v' + currentVersion + '-rc.'));
+            if (hasRcForVersion) {
+              console.log('Promoting RC to stable - validation passed');
+              process.exit(0);
+            }
+
             const validPatch = cMaj === lMaj && cMin === lMin && cPat === lPat + 1;
             const validMinor = cMaj === lMaj && cMin === lMin + 1 && cPat === 0;
             const validMajor = cMaj === lMaj + 1 && cMin === 0 && cPat === 0;
