@@ -1,0 +1,106 @@
+name: 🐛 Bug Report
+description: Report a bug or unexpected behavior
+title: "[Bug] "
+labels: ["type:bug", "status:needs-triage", "priority:medium"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us investigate.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: What's broken? Clear and concise explanation.
+      placeholder: "Example: The CLI crashes when running 'genie init' without arguments"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this? Be specific.
+      placeholder: |
+        1. Run command: genie init
+        2. See error: ...
+        3. Expected: should show help
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should happen?
+      placeholder: "Should display help message and exit gracefully"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happens?
+      placeholder: "Process crashes with stack trace"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, version, relevant context
+      placeholder: |
+        - OS: macOS 14.0
+        - Node: v22.0.0
+        - Package version: 0.5.2
+        - Shell: zsh
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: How severe is this bug? (Informational - helps with triage)
+      options:
+        - Critical (blocking work)
+        - High (major impact)
+        - Medium (annoying but workaround exists)
+        - Low (minor inconvenience)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs / Screenshots
+      description: Paste error messages, logs, or attach screenshots
+      placeholder: "Paste error output or drag & drop images here"
+      render: shell
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Possible Solution (Optional)
+      description: Any ideas on how to fix this?
+      placeholder: "If you have suggestions, share them here"
+
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Affected Areas (Optional)
+      description: Which parts of the system are affected? Helps with routing.
+      options:
+        - label: CLI
+        - label: MCP Server
+        - label: Agents
+        - label: Wishes
+        - label: Forge
+        - label: Templates
+        - label: Docs
+        - label: Build/Testing
+        - label: Other

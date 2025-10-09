@@ -1,0 +1,102 @@
+name: ✨ Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature] "
+labels: ["type:enhancement", "status:needs-review", "priority:medium"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea to make this project better? We'd love to hear it! Fill out the details below.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: One-line description of the feature
+      placeholder: "Example: Add support for TypeScript agent prompts"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this solve? Describe the pain point.
+      placeholder: |
+        I'm trying to write agent prompts with better type safety, but currently only JavaScript is supported.
+        This makes it harder to catch errors during development.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you solve this? Describe your vision.
+      placeholder: |
+        Add TypeScript support to the agent system:
+        - Accept .ts files in .genie/agents/
+        - Compile TypeScript during agent loading
+        - Provide type definitions for agent context
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you think about?
+      placeholder: |
+        - Using JSDoc comments (less robust)
+        - External transpilation (adds complexity)
+        - TypeScript-only mode (breaks compatibility)
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use Cases
+      description: Specific scenarios where this feature helps
+      placeholder: |
+        As a developer building complex agents, I want type safety so that I can:
+        - Catch errors before runtime
+        - Get better IDE autocomplete
+        - Refactor with confidence
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Related Areas (Optional)
+      description: Which parts would this affect? Helps with routing.
+      options:
+        - label: CLI
+        - label: MCP Server
+        - label: Agents
+        - label: Wishes
+        - label: Forge
+        - label: Templates
+        - label: Docs
+        - label: Build/Testing
+        - label: Other
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Willingness to Contribute
+      description: Can you help implement this?
+      options:
+        - "I can code this feature"
+        - "I can test it"
+        - "I can write documentation"
+        - "I can provide feedback"
+        - "I don't have bandwidth to contribute"
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Anything else? Mockups, examples, related issues?
+      placeholder: "Links to similar features, code examples, etc."

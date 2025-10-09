@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Ask a Question
+    url: https://discord.gg/xcW8c7fF3R
+    about: For questions and discussions, join our Discord community
+  - name: 📚 Documentation
+    url: https://github.com/namastexlabs/automagik-roadmap/blob/main/docs/project-label-guide.md
+    about: Learn about labels, workflows, and contribution guidelines
+  - name: 🗺️ Roadmap
+    url: https://github.com/namastexlabs/automagik-roadmap/issues?q=label%3Ainitiative
+    about: View strategic initiatives and project roadmap

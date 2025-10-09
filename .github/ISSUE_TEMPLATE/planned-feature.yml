@@ -1,0 +1,166 @@
+name: 🎯 Planned Feature
+description: Implementation work linked to a roadmap initiative
+title: ""
+labels: ["planned-feature", "priority:medium"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Roadmap-Linked Work Item
+
+        This template creates work items that automatically link to strategic roadmap initiatives.
+        **Required:** You must provide a valid initiative number from [automagik-roadmap](https://github.com/namastexlabs/automagik-roadmap/issues?q=label%3Ainitiative).
+
+  - type: input
+    id: initiative
+    attributes:
+      label: 🔗 Roadmap Initiative Number
+      description: Which initiative is this part of? (e.g., 42)
+      placeholder: "42"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: work-type
+    attributes:
+      label: 📋 Work Type
+      description: What kind of work is this?
+      options:
+        - "Bug Fix (from investigation/debug)"
+        - "Feature Implementation"
+        - "Technical Debt / Refactoring"
+        - "Testing / QA"
+        - "Documentation"
+        - "Research / Spike"
+    validations:
+      required: true
+
+  - type: input
+    id: title
+    attributes:
+      label: 📝 Work Item Title
+      description: Clear, concise title (no prefix needed)
+      placeholder: "Example: Implement Slack message handler"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 📄 Description
+      description: What needs to be done? Include technical scope.
+      placeholder: |
+        Implement the core Slack message handler that:
+        - Receives webhook events from Slack API
+        - Parses message payloads
+        - Routes to appropriate MCP tools
+        - Handles error cases
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: ✅ Acceptance Criteria
+      description: How do we know this is complete? Use checkboxes.
+      placeholder: |
+        - [ ] Handler receives and parses Slack webhooks
+        - [ ] Messages routed to correct MCP tools
+        - [ ] Error handling implemented with proper logging
+        - [ ] Unit tests cover main paths
+        - [ ] Integration tests pass
+        - [ ] Documentation updated
+      value: |
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 🔍 Context / Evidence
+      description: Debug reports, investigation links, related wish documents
+      placeholder: |
+        Debug Report: .genie/reports/debug/01-slack-debug.md
+        Related Wish: .genie/wishes/slack-integration/
+        Investigation: Found in Phase 2 implementation
+      render: markdown
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 🧩 Dependencies
+      description: Other issues/PRs that must complete first, or that this blocks
+      placeholder: |
+        **Blocked by:**
+        - namastexlabs/automagik-roadmap#29 (parent initiative)
+        - #123 (MCP protocol upgrade)
+
+        **Blocks:**
+        - #125 (Integration tests)
+      render: markdown
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: 📊 Estimated Complexity
+      description: T-shirt sizing for planning
+      options:
+        - "XS - Few hours"
+        - "S - 1-2 days"
+        - "M - 3-5 days"
+        - "L - 1-2 weeks"
+        - "XL - 2+ weeks"
+
+  - type: dropdown
+    id: priority-override
+    attributes:
+      label: ⚡ Priority Override (Optional)
+      description: Override default medium priority if needed
+      options:
+        - "Keep default (medium)"
+        - "Critical"
+        - "High"
+        - "Low"
+
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: 🏷️ Component / Area (Optional)
+      description: Which areas does this touch? Helps with routing and filtering.
+      options:
+        - label: CLI
+        - label: MCP Server
+        - label: Agents
+        - label: Wishes
+        - label: Forge
+        - label: Templates
+        - label: Docs
+        - label: Testing
+        - label: Build / CI
+        - label: Other
+
+  - type: input
+    id: wish
+    attributes:
+      label: 🔗 Related Wish (Optional)
+      description: Path to wish document if applicable
+      placeholder: ".genie/wishes/slack-integration/"
+
+  - type: input
+    id: assignee
+    attributes:
+      label: 👤 Suggested Assignee (Optional)
+      description: GitHub username if you have a suggestion
+      placeholder: "@username"
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        **What happens next:**
+        1. Workflow validates initiative exists in automagik-roadmap
+        2. Creates sub-issue link to roadmap initiative
+        3. Adds labels: `roadmap-linked`, `initiative-{number}`
+        4. Comments with confirmation and project board link
+        5. Triager reviews and adds area labels based on your selections
