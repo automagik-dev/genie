@@ -1,0 +1,230 @@
+# Automagik Genie - Unified Label Taxonomy
+# Synced automatically via .github/workflows/label-sync.yml
+# Based on automagik-roadmap taxonomy, adapted for project repos
+
+# ============================================
+# TYPE DIMENSION (7 labels)
+# ============================================
+
+- name: type:bug
+  color: 'D73A4A'
+  description: 'Bug - Something isn''t working'
+
+- name: type:feature
+  color: '7057FF'
+  description: 'Feature - New capability or functionality'
+
+- name: type:enhancement
+  color: 'A2EEEF'
+  description: 'Enhancement - Improvement to existing functionality'
+
+- name: type:debt
+  color: '795548'
+  description: 'Technical Debt - Refactoring, cleanup, maintenance'
+
+- name: type:docs
+  color: '0075CA'
+  description: 'Documentation - Documentation changes only'
+
+- name: type:testing
+  color: 'FFEB3B'
+  description: 'Testing - Test infrastructure or test additions'
+
+- name: type:research
+  color: 'FFC107'
+  description: 'Research - Investigation, spike, or exploration'
+
+# ============================================
+# PRIORITY DIMENSION (4 labels)
+# ============================================
+
+- name: priority:critical
+  color: 'D93F0B'
+  description: 'Critical - Blocker, urgent, immediate attention'
+
+- name: priority:high
+  color: 'FF9800'
+  description: 'High - Important, should be addressed soon'
+
+- name: priority:medium
+  color: 'FFC107'
+  description: 'Medium - Normal priority'
+
+- name: priority:low
+  color: 'CDDC39'
+  description: 'Low - Nice to have'
+
+# ============================================
+# AREA DIMENSION (15 base + genie-specific)
+# ============================================
+
+- name: area:api
+  color: '006B75'
+  description: 'API - Backend, REST/GraphQL APIs, webhooks'
+
+- name: area:cli
+  color: '006B75'
+  description: 'CLI - Command-line interface and tools'
+
+- name: area:mcp
+  color: '006B75'
+  description: 'MCP - Model Context Protocol integration'
+
+- name: area:agents
+  color: '006B75'
+  description: 'Agents - Agent prompts, logic, orchestration'
+
+- name: area:ui
+  color: '006B75'
+  description: 'UI - User interface, dashboards, web views'
+
+- name: area:docs
+  color: '006B75'
+  description: 'Docs - Documentation, guides, tutorials'
+
+- name: area:testing
+  color: '006B75'
+  description: 'Testing - Test infrastructure, test suites'
+
+- name: area:build
+  color: '006B75'
+  description: 'Build - Build system, CI/CD, deployment'
+
+- name: area:auth
+  color: '006B75'
+  description: 'Auth - Authentication, authorization'
+
+- name: area:storage
+  color: '006B75'
+  description: 'Storage - Database, persistence, caching'
+
+- name: area:performance
+  color: '006B75'
+  description: 'Performance - Optimization, scaling'
+
+- name: area:security
+  color: '006B75'
+  description: 'Security - Security features, vulnerabilities'
+
+- name: area:workflows
+  color: '006B75'
+  description: 'Workflows - Workflow orchestration, automation'
+
+- name: area:messaging
+  color: '006B75'
+  description: 'Messaging - Messaging systems, integrations'
+
+- name: area:knowledge
+  color: '006B75'
+  description: 'Knowledge - RAG, embeddings, vector DB'
+
+# Genie-specific areas
+- name: area:wishes
+  color: '006B75'
+  description: 'Wishes - Wish system and workflow'
+
+- name: area:forge
+  color: '006B75'
+  description: 'Forge - Forge agent and task breakdown'
+
+- name: area:templates
+  color: '006B75'
+  description: 'Templates - Template management and init'
+
+# ============================================
+# ROADMAP LINKING (3 labels)
+# ============================================
+
+- name: planned-feature
+  color: 'B60205'
+  description: 'Planned Feature - Work linked to roadmap initiative'
+
+- name: roadmap-linked
+  color: '0E8A16'
+  description: 'Roadmap Linked - Successfully linked as sub-issue'
+
+- name: closed-initiative-work
+  color: 'FBCA04'
+  description: 'Closed Initiative Work - Parent initiative is closed'
+
+# Note: initiative-{number} labels created dynamically by workflow
+
+# ============================================
+# RELEASE/VERSIONING (4 labels)
+# ============================================
+
+- name: release:patch
+  color: 'FEF2C0'
+  description: 'Patch - Backwards-compatible bug fixes (0.0.x)'
+
+- name: release:minor
+  color: '0E8A16'
+  description: 'Minor - Backwards-compatible features (0.x.0)'
+
+- name: release:major
+  color: 'D73A4A'
+  description: 'Major - Breaking changes (x.0.0)'
+
+- name: release:auto
+  color: '1D76DB'
+  description: 'Auto - Let CI determine version bump'
+
+# ============================================
+# STATUS (4 labels)
+# ============================================
+
+- name: status:blocked
+  color: 'D93F0B'
+  description: 'Blocked - Cannot proceed due to dependencies'
+
+- name: status:needs-triage
+  color: 'FBCA04'
+  description: 'Needs Triage - Awaiting initial review'
+
+- name: status:in-progress
+  color: '1D76DB'
+  description: 'In Progress - Actively being worked on'
+
+- name: status:needs-review
+  color: '9C27B0'
+  description: 'Needs Review - Ready for code review'
+
+# ============================================
+# COMMUNITY (4 labels)
+# ============================================
+
+- name: community
+  color: '7057FF'
+  description: 'Community - From external contributors'
+
+- name: good-first-issue
+  color: '7057FF'
+  description: 'Good First Issue - Good for newcomers'
+
+- name: help-wanted
+  color: '008672'
+  description: 'Help Wanted - Looking for contributors'
+
+- name: question
+  color: 'D876E3'
+  description: 'Question - Needs clarification or discussion'
+
+# ============================================
+# ADMINISTRATIVE (4 labels)
+# ============================================
+
+- name: duplicate
+  color: 'CFD3D7'
+  description: 'Duplicate - Already exists'
+
+- name: invalid
+  color: 'E4E669'
+  description: 'Invalid - Not a valid issue'
+
+- name: wontfix
+  color: 'FFFFFF'
+  description: 'Won''t Fix - Won''t be addressed'
+
+- name: breaking-change
+  color: 'D93F0B'
+  description: 'Breaking Change - Introduces breaking changes'
