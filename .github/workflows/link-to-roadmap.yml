@@ -1,0 +1,174 @@
+name: Link to Roadmap Initiative
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  link-to-initiative:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'planned-feature')
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Parse initiative number from issue body
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+
+            // Parse initiative number from "### 🔗 Roadmap Initiative Number" field
+            const initiativeMatch = body.match(/### 🔗 Roadmap Initiative Number\s*\n+([^#\n]+)/i);
+            const initiativeNumber = initiativeMatch ? initiativeMatch[1].trim() : '';
+
+            console.log('Parsed initiative number:', initiativeNumber);
+
+            if (!initiativeNumber || !initiativeNumber.match(/^\d+$/)) {
+              core.setFailed('Could not find valid initiative number in issue body');
+              return;
+            }
+
+            core.setOutput('initiative_number', initiativeNumber);
+
+      - name: Validate initiative exists
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const initiativeNumber = '${{ steps.parse.outputs.initiative_number }}';
+
+            try {
+              const { data: initiative } = await github.rest.issues.get({
+                owner: 'namastexlabs',
+                repo: 'automagik-roadmap',
+                issue_number: parseInt(initiativeNumber)
+              });
+
+              console.log('Found initiative:', initiative.title);
+              console.log('Initiative state:', initiative.state);
+
+              // Get node ID for GraphQL
+              core.setOutput('initiative_node_id', initiative.node_id);
+              core.setOutput('initiative_title', initiative.title);
+              core.setOutput('initiative_state', initiative.state);
+
+            } catch (error) {
+              core.setFailed(`Initiative #${initiativeNumber} not found in automagik-roadmap: ${error.message}`);
+            }
+
+      - name: Get current issue node ID
+        id: current-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.setOutput('issue_node_id', context.payload.issue.node_id);
+
+      - name: Create sub-issue link
+        id: link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const initiativeNodeId = '${{ steps.validate.outputs.initiative_node_id }}';
+            const issueNodeId = '${{ steps.current-issue.outputs.issue_node_id }}';
+            const initiativeNumber = '${{ steps.parse.outputs.initiative_number }}';
+
+            const mutation = `
+              mutation {
+                addSubIssue(input: {
+                  issueId: "${initiativeNodeId}"
+                  subIssueId: "${issueNodeId}"
+                }) {
+                  issue {
+                    title
+                    number
+                  }
+                  subIssue {
+                    title
+                    number
+                  }
+                }
+              }
+            `;
+
+            try {
+              const result = await github.graphql(mutation, {
+                headers: {
+                  'GraphQL-Features': 'sub_issues'
+                }
+              });
+
+              console.log('✓ Sub-issue link created successfully');
+              console.log('Parent:', result.addSubIssue.issue.title);
+              console.log('Child:', result.addSubIssue.subIssue.title);
+
+            } catch (error) {
+              core.setFailed(`Failed to create sub-issue link: ${error.message}`);
+            }
+
+      - name: Add labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const initiativeNumber = '${{ steps.parse.outputs.initiative_number }}';
+            const initiativeState = '${{ steps.validate.outputs.initiative_state }}';
+
+            const labels = ['roadmap-linked', `initiative-${initiativeNumber}`];
+
+            // If parent initiative is closed, add special label
+            if (initiativeState === 'closed') {
+              labels.push('closed-initiative-work');
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: labels
+            });
+
+            console.log('✓ Added labels:', labels.join(', '));
+
+      - name: Comment on issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const initiativeNumber = '${{ steps.parse.outputs.initiative_number }}';
+            const initiativeTitle = '${{ steps.validate.outputs.initiative_title }}';
+            const initiativeState = '${{ steps.validate.outputs.initiative_state }}';
+
+            let comment = `✅ **Successfully linked to roadmap initiative**\n\n`;
+            comment += `**Parent Initiative:** [#${initiativeNumber} - ${initiativeTitle}](https://github.com/namastexlabs/automagik-roadmap/issues/${initiativeNumber})\n\n`;
+
+            if (initiativeState === 'closed') {
+              comment += `⚠️ **Note:** Parent initiative is closed, but link created for traceability.\n\n`;
+            }
+
+            comment += `**Labels Added:**\n`;
+            comment += `- \`roadmap-linked\` - Successfully linked as sub-issue\n`;
+            comment += `- \`initiative-${initiativeNumber}\` - Quick filter for this initiative's work\n`;
+
+            if (initiativeState === 'closed') {
+              comment += `- \`closed-initiative-work\` - Work continues despite parent closure\n`;
+            }
+
+            comment += `\n---\n\n`;
+            comment += `**Query this relationship:**\n`;
+            comment += `\`\`\`graphql\n`;
+            comment += `# Get parent initiative\n`;
+            comment += `query {\n`;
+            comment += `  repository(owner: "${context.repo.owner}", name: "${context.repo.repo}") {\n`;
+            comment += `    issue(number: ${context.issue.number}) {\n`;
+            comment += `      parent { number title url }\n`;
+            comment += `    }\n`;
+            comment += `  }\n`;
+            comment += `}\n`;
+            comment += `\`\`\`\n\n`;
+            comment += `[View all work for initiative #${initiativeNumber}](https://github.com/namastexlabs/automagik-roadmap/issues/${initiativeNumber})`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
