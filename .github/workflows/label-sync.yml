@@ -10,13 +10,15 @@ on:
 jobs:
   label-sync:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - name: Sync labels
-        uses: micnncim/action-label-syncer@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: EndBug/label-sync@v2
         with:
-          manifest: .github/labels.yml
-          prune: false  # Don't delete existing labels not in manifest
+          config-file: .github/labels.yml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          delete-other-labels: false  # Don't delete existing labels
