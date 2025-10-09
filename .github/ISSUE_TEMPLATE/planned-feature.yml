@@ -9,38 +9,14 @@ body:
         ## Roadmap-Linked Work Item
 
         This template creates work items that automatically link to strategic roadmap initiatives.
-        **Required:** You must provide a valid initiative number from [automagik-roadmap](https://github.com/namastexlabs/automagik-roadmap/issues?q=label%3Ainitiative).
+        **Required:** Provide initiative number from [automagik-roadmap](https://github.com/namastexlabs/automagik-roadmap/issues?q=label%3Ainitiative).
 
   - type: input
     id: initiative
     attributes:
       label: 🔗 Roadmap Initiative Number
-      description: Which initiative is this part of? (e.g., 42)
-      placeholder: "42"
-    validations:
-      required: true
-
-  - type: dropdown
-    id: work-type
-    attributes:
-      label: 📋 Work Type
-      description: What kind of work is this?
-      options:
-        - "Bug Fix (from investigation/debug)"
-        - "Feature Implementation"
-        - "Technical Debt / Refactoring"
-        - "Testing / QA"
-        - "Documentation"
-        - "Research / Spike"
-    validations:
-      required: true
-
-  - type: input
-    id: title
-    attributes:
-      label: 📝 Work Item Title
-      description: Clear, concise title (no prefix needed)
-      placeholder: "Example: Implement Slack message handler"
+      description: Which initiative is this part of?
+      placeholder: "32"
     validations:
       required: true
 
@@ -48,7 +24,7 @@ body:
     id: description
     attributes:
       label: 📄 Description
-      description: What needs to be done? Include technical scope.
+      description: What needs to be done? Include technical scope and approach.
       placeholder: |
         Implement the core Slack message handler that:
         - Receives webhook events from Slack API
@@ -100,10 +76,30 @@ body:
         - #125 (Integration tests)
       render: markdown
 
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ## 📋 Metadata (for planning and routing)
+
+  - type: dropdown
+    id: work-type
+    attributes:
+      label: Work Type
+      options:
+        - "Feature Implementation"
+        - "Bug Fix (from investigation/debug)"
+        - "Technical Debt / Refactoring"
+        - "Testing / QA"
+        - "Documentation"
+        - "Research / Spike"
+    validations:
+      required: true
+
   - type: dropdown
     id: complexity
     attributes:
-      label: 📊 Estimated Complexity
+      label: Estimated Complexity
       description: T-shirt sizing for planning
       options:
         - "XS - Few hours"
@@ -115,7 +111,7 @@ body:
   - type: dropdown
     id: priority-override
     attributes:
-      label: ⚡ Priority Override (Optional)
+      label: Priority Override (Optional)
       description: Override default medium priority if needed
       options:
         - "Keep default (medium)"
@@ -126,7 +122,7 @@ body:
   - type: checkboxes
     id: areas
     attributes:
-      label: 🏷️ Component / Area (Optional)
+      label: Component / Area (Optional)
       description: Which areas does this touch? Helps with routing and filtering.
       options:
         - label: CLI
@@ -135,6 +131,7 @@ body:
         - label: Wishes
         - label: Forge
         - label: Templates
+        - label: Messaging
         - label: Docs
         - label: Testing
         - label: Build / CI
@@ -143,14 +140,14 @@ body:
   - type: input
     id: wish
     attributes:
-      label: 🔗 Related Wish (Optional)
+      label: Related Wish (Optional)
       description: Path to wish document if applicable
       placeholder: ".genie/wishes/slack-integration/"
 
   - type: input
     id: assignee
     attributes:
-      label: 👤 Suggested Assignee (Optional)
+      label: Suggested Assignee (Optional)
       description: GitHub username if you have a suggestion
       placeholder: "@username"
 
@@ -163,4 +160,3 @@ body:
         2. Creates sub-issue link to roadmap initiative
         3. Adds labels: `roadmap-linked`, `initiative-{number}`
         4. Comments with confirmation and project board link
-        5. Triager reviews and adds area labels based on your selections
