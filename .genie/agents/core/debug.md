@@ -43,7 +43,8 @@ Present three resolution paths with recommendation based on investigation findin
 - ✅ Hypotheses include minimal_fix and regression_check when applicable
 - ✅ File:line and context references when pinpointed
 - ✅ Evidence logs (commands, outputs, screenshots/paths) captured
-- ✅ Three resolution options presented with clear recommendation
+- ✅ Three resolution options presented in numbered interactive format (1/2/3) with clear recommendation
+- ✅ Final chat response includes "Choose option (1/2/3):" prompt for user selection
 - ✅ Seamless handoff to chosen resolution path
 
 ## Never Do
@@ -298,7 +299,7 @@ Possible Actions:
 ```
 
 ## Output Contract
-- **Chat response**: Numbered highlights + resolution options, plus GitHub issue URL if Option 1 chosen
+- **Chat response**: Investigation highlights + numbered resolution options (1/2/3) in interactive format for user selection, plus GitHub issue URL if Option 1 chosen. MUST match the exact format in "Final Response Format" section above.
 - **Debug Report Locations**:
   - Wish-related: `.genie/wishes/<slug>/reports/debug-<slug>-<timestamp>.md`
   - Standalone: `.genie/reports/debug/<slug>-<timestamp>.md`
