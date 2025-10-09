@@ -69,9 +69,11 @@ Present three resolution paths with recommendation based on investigation findin
    - Symptoms misleading; 'no bug' valid conclusion if evidence supports it
 
 2. [Evidence Collection]
-   - Store investigation reports under `.genie/reports/debug/<slug>/`
-   - For wish-related debugging: Store in `.genie/wishes/<slug>/reports/debug-<slug>-<timestamp>.md`
-   - For standalone debugging: Store in `.genie/reports/debug/<slug>-<timestamp>.md`
+   - Store investigation reports under `.genie/reports/debug/`
+   - For wish-related debugging: Store in `.genie/wishes/<slug>/reports/{seq}-{context}-debug.md`
+   - For standalone debugging: Store in `.genie/reports/debug/{seq}-{context}-debug.md`
+   - Use sequential prefix (01, 02, etc.) for chronological ordering
+   - Use consistent context slug to group related files
    - Extract structured data (session IDs, meta fields) to inform remediation
    - Capture artifacts: screenshots, log excerpts, diffs, metrics alongside report
    - Use MCP tools for context:
@@ -94,8 +96,8 @@ Present three resolution paths with recommendation based on investigation findin
    - Use when: Issue needs tracking, affects others, requires discussion
    - Action: File GitHub issue with investigation summary
    - Output:
-     - If wish-related: `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
-     - If standalone: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md`
+     - If wish-related: `.genie/wishes/<slug>/reports/{seq}-{context}-bug-report.md`
+     - If standalone: `.genie/reports/debug/{seq}-{context}-bug-report.md`
      - GitHub issue created via `gh issue create`
 
    **Option 2: Quick Fix**
@@ -301,11 +303,12 @@ Possible Actions:
 ## Output Contract
 - **Chat response**: Investigation highlights + numbered resolution options (1/2/3) in interactive format for user selection, plus GitHub issue URL if Option 1 chosen. MUST match the exact format in "Final Response Format" section above.
 - **Debug Report Locations**:
-  - Wish-related: `.genie/wishes/<slug>/reports/debug-<slug>-<timestamp>.md`
-  - Standalone: `.genie/reports/debug/<slug>-<timestamp>.md`
+  - Wish-related: `.genie/wishes/<slug>/reports/{seq}-{context}-debug.md`
+  - Standalone: `.genie/reports/debug/{seq}-{context}-debug.md`
+  - Format: `{seq}` = two-digit sequence (01, 02...), `{context}` = shared slug for related files
 - **Bug Report** (Option 1):
-  - Wish-related: `.genie/wishes/<slug>/reports/bug-report-<slug>-<timestamp>.md`
-  - Standalone: `.genie/reports/debug/bug-report-<slug>-<timestamp>.md`
+  - Wish-related: `.genie/wishes/<slug>/reports/{seq}-{context}-bug-report.md`
+  - Standalone: `.genie/reports/debug/{seq}-{context}-bug-report.md`
 - **GitHub** (Option 1): `gh issue create` executed with saved body file; store command and resulting link in report
 - **Artifacts**: Saved alongside report (output.txt, screenshots, logs)
 - **Verification**: Re-run failing command to confirm state, `gh issue view <number>` to confirm issue exists

@@ -115,6 +115,8 @@ export async function runInit(
       await copyTemplateClaude(templateClaude, claudeDir);
     }
 
+    await copyTemplateRootFiles(packageRoot, cwd);
+
     if (stagedBackupDir) {
       const finalBackupsDir = path.join(backupsRoot, backupId);
       await ensureDir(backupsRoot);
@@ -204,6 +206,20 @@ async function copyTemplateGenie(templateGenie: string, targetGenie: string): Pr
 async function copyTemplateClaude(templateClaude: string, targetClaude: string): Promise<void> {
   await ensureDir(path.dirname(targetClaude));
   await copyDirectory(templateClaude, targetClaude);
+}
+
+async function copyTemplateRootFiles(packageRoot: string, targetDir: string): Promise<void> {
+  const templatesDir = path.join(packageRoot, 'templates');
+  const rootFiles = ['AGENTS.md', 'CLAUDE.md'];
+
+  for (const file of rootFiles) {
+    const sourcePath = path.join(templatesDir, file);
+    const targetPath = path.join(targetDir, file);
+
+    if (await pathExists(sourcePath)) {
+      await fsp.copyFile(sourcePath, targetPath);
+    }
+  }
 }
 
 async function resolveProviderChoice(flags: InitFlags): Promise<string> {

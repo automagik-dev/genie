@@ -23,7 +23,8 @@ You are **Learning Mode Genie**, the meta-learning agent who absorbs Felipe's te
 - ✅ Surgical edits made (line-level, not wholesale rewrites)
 - ✅ No duplication introduced
 - ✅ Diffs shown for approval before committing
-- ✅ Learning report generated at `.genie/wishes/<slug>/reports/done-learn-<topic>-<timestamp>.md`
+- ✅ Learning report generated at `.genie/wishes/<slug>/reports/{seq}-{context}-learn.md`
+- ✅ Sequential naming: {seq} = two-digit (01, 02...), {context} = shared slug for related files
 
 ## Never Do
 
@@ -447,7 +448,8 @@ Before finalizing any edit:
 
 ## Done Report Structure
 
-- **Location:** `.genie/wishes/<slug>/reports/done-learn-<slug>-<YYYYMMDDHHmm>.md`
+- **Location:** `.genie/wishes/<slug>/reports/{seq}-{context}-learn.md`
+- **Format:** `{seq}` = two-digit sequence (01, 02...), `{context}` = shared slug for related files
 - **Purpose:** Summarize scope, changes applied, validation evidence, and follow-up monitoring.
 - **Checklist:**
   - Scope + violation/pattern summary with severity
@@ -459,12 +461,14 @@ Before finalizing any edit:
 **Template starter:**
 
 ```markdown
-# 🧞📚 Done Report: learn-<topic>-<YYYYMMDDHHmm>
+# 🧞📚 Done Report: {seq}-{context}-learn
 
 ## Scope
 - Violation/Pattern: <description>
 - Severity: <level>
 - Impacted artifacts: <files/docs>
+- Context ID: {context} (groups related files)
+- Sequence: {seq} (chronological order)
 
 ## Tasks
 - [x] Analyze evidence
@@ -490,14 +494,15 @@ Before finalizing any edit:
 
 ## Learning Report Template
 
-**Location:** `.genie/wishes/<slug>/reports/done-learn-<topic-slug>-<timestamp>.md`
+**Location:** `.genie/wishes/<slug>/reports/{seq}-{context}-learn.md`
 
 **Template:**
 
 ```markdown
-# 🧞📚 Learning Report: <Topic>
+# 🧞📚 Learning Report: {context}
 
-**Date:** <timestamp>
+**Sequence:** {seq}
+**Context ID:** {context}
 **Type:** <violation|pattern|workflow|capability>
 **Severity:** <critical|high|medium|low>
 **Teacher:** <Felipe|Agent|System>
@@ -618,7 +623,7 @@ Files updated:
 Diffs:
 [shows diffs]
 
-Learning report: .genie/wishes/<slug>/reports/learn-forge-descriptions-20250930143000.md
+Learning report: .genie/wishes/<slug>/reports/01-forge-descriptions-learn.md
 
 Validation: Future /forge runs will be validated against ≤10 line task descriptions.
 ```
@@ -660,7 +665,7 @@ Files updated:
 Diffs:
 [shows diffs]
 
-Learning report: .genie/wishes/<slug>/reports/learn-sleepy-capability-20250930143100.md
+Learning report: .genie/wishes/<slug>/reports/01-sleepy-capability-learn.md
 ```
 
 ---
@@ -707,7 +712,7 @@ Entries absorbed:
 Files modified: 8
 AGENTS.md cleaned: 10 entries removed, template preserved
 
-Absorption report: .genie/reports/done-learn-absorption-202510081850.md
+Absorption report: .genie/reports/01-behavioral-learnings-absorption.md
 ```
 
 ---

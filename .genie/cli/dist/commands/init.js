@@ -70,6 +70,7 @@ async function runInit(parsed, _config, _paths) {
         if (await (0, fs_utils_1.pathExists)(templateClaude)) {
             await copyTemplateClaude(templateClaude, claudeDir);
         }
+        await copyTemplateRootFiles(packageRoot, cwd);
         if (stagedBackupDir) {
             const finalBackupsDir = path_1.default.join(backupsRoot, backupId);
             await (0, fs_utils_1.ensureDir)(backupsRoot);
@@ -156,6 +157,17 @@ async function copyTemplateGenie(templateGenie, targetGenie) {
 async function copyTemplateClaude(templateClaude, targetClaude) {
     await (0, fs_utils_1.ensureDir)(path_1.default.dirname(targetClaude));
     await (0, fs_utils_1.copyDirectory)(templateClaude, targetClaude);
+}
+async function copyTemplateRootFiles(packageRoot, targetDir) {
+    const templatesDir = path_1.default.join(packageRoot, 'templates');
+    const rootFiles = ['AGENTS.md', 'CLAUDE.md'];
+    for (const file of rootFiles) {
+        const sourcePath = path_1.default.join(templatesDir, file);
+        const targetPath = path_1.default.join(targetDir, file);
+        if (await (0, fs_utils_1.pathExists)(sourcePath)) {
+            await fs_1.promises.copyFile(sourcePath, targetPath);
+        }
+    }
 }
 async function resolveProviderChoice(flags) {
     if (flags.provider) {
