@@ -24,9 +24,19 @@ jobs:
           script: |
             const body = context.payload.issue.body || '';
 
-            // Parse initiative number from "### 🔗 Roadmap Initiative Number" field
-            const initiativeMatch = body.match(/### 🔗 Roadmap Initiative Number\s*\n+([^#\n]+)/i);
-            const initiativeNumber = initiativeMatch ? initiativeMatch[1].trim() : '';
+            // Parse initiative number from new format: "### 🔗 Roadmap Initiative: [#29](url)"
+            // Also support old format: "### 🔗 Roadmap Initiative Number\n29"
+            let initiativeNumber = '';
+
+            // Try new format first
+            const newFormatMatch = body.match(/### 🔗 Roadmap Initiative:\s*\[#(\d+)\]/i);
+            if (newFormatMatch) {
+              initiativeNumber = newFormatMatch[1];
+            } else {
+              // Fall back to old format
+              const oldFormatMatch = body.match(/### 🔗 Roadmap Initiative Number\s*\n+([^#\n]+)/i);
+              initiativeNumber = oldFormatMatch ? oldFormatMatch[1].trim() : '';
+            }
 
             console.log('Parsed initiative number:', initiativeNumber);
 
@@ -36,6 +46,22 @@ jobs:
             }
 
             core.setOutput('initiative_number', initiativeNumber);
+
+            // Parse additional metadata for labels/fields
+            const workTypeMatch = body.match(/### 📋 Work Type:\s*`([^`]+)`/i);
+            const workType = workTypeMatch ? workTypeMatch[1].trim() : '';
+
+            const complexityMatch = body.match(/### 📊 Estimated Complexity:\s*`([^`]+)`/i);
+            const complexity = complexityMatch ? complexityMatch[1].trim() : '';
+
+            const priorityMatch = body.match(/### ⚡ Priority:\s*`([^`]+)`/i);
+            const priority = priorityMatch ? priorityMatch[1].trim() : '';
+
+            console.log('Parsed metadata - Work Type:', workType, 'Complexity:', complexity, 'Priority:', priority);
+
+            core.setOutput('work_type', workType);
+            core.setOutput('complexity', complexity);
+            core.setOutput('priority', priority);
 
       - name: Validate initiative exists
         id: validate
