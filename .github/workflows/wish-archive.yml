@@ -1,0 +1,249 @@
+name: Archive Wishes to Roadmap
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main, master]
+
+jobs:
+  archive-wishes:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for proper git diff
+
+      - name: Generate GitHub App token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PROJECT_APP_ID }}
+          private-key: ${{ secrets.PROJECT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: automagik-roadmap,${{ github.event.repository.name }}
+
+      - name: Extract wishes from PR
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // Get PR diff to find modified/added wishes
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+
+            // Filter for wish files in .ai/wishes/ or .genie/wishes/
+            const wishFiles = files.filter(file =>
+              (file.filename.includes('.ai/wishes/') ||
+               file.filename.includes('.genie/wishes/')) &&
+              file.filename.endsWith('.md') &&
+              (file.status === 'added' || file.status === 'modified')
+            );
+
+            console.log(`Found ${wishFiles.length} wish files in PR`);
+
+            if (wishFiles.length === 0) {
+              console.log('No wishes to archive');
+              return;
+            }
+
+            // Read each wish file and prepare for archival
+            const wishes = [];
+            for (const file of wishFiles) {
+              try {
+                const content = fs.readFileSync(file.filename, 'utf8');
+                wishes.push({
+                  path: file.filename,
+                  content: content,
+                  sha: file.sha
+                });
+              } catch (error) {
+                console.log(`Warning: Could not read ${file.filename}: ${error.message}`);
+              }
+            }
+
+            core.setOutput('wishes', JSON.stringify(wishes));
+            core.setOutput('wish_count', wishes.length);
+
+      - name: Enrich wishes with metadata
+        id: enrich
+        if: steps.extract.outputs.wish_count > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const wishes = JSON.parse('${{ steps.extract.outputs.wishes }}');
+
+            // Determine quarter from current date
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = now.getMonth() + 1;
+            const quarter = Math.ceil(month / 3);
+            const quarterStr = `${year}-q${quarter}`;
+
+            // Extract initiative number from PR body if present
+            const prBody = context.payload.pull_request.body || '';
+            const initiativeMatch = prBody.match(/(?:initiative|roadmap).*?#(\d+)/i);
+            const initiativeNumber = initiativeMatch ? initiativeMatch[1] : null;
+
+            // Enrich each wish
+            const enrichedWishes = wishes.map(wish => {
+              const frontmatter = `---
+original_repo: ${context.repo.repo}
+original_path: ${wish.path}
+initiative_number: ${initiativeNumber || 'unknown'}
+pr_url: ${context.payload.pull_request.html_url}
+pr_number: ${context.payload.pull_request.number}
+completed_at: ${context.payload.pull_request.merged_at}
+archived_at: ${new Date().toISOString()}
+quarter: ${quarterStr}
+author: ${context.payload.pull_request.user.login}
+---
+
+`;
+
+              return {
+                ...wish,
+                enrichedContent: frontmatter + wish.content,
+                quarter: quarterStr,
+                targetPath: `wishes/${context.repo.repo.replace('automagik-', '')}/${quarterStr}/`
+              };
+            });
+
+            core.setOutput('enriched_wishes', JSON.stringify(enrichedWishes));
+            core.setOutput('quarter', quarterStr);
+
+      - name: Checkout roadmap repo
+        if: steps.extract.outputs.wish_count > 0
+        uses: actions/checkout@v4
+        with:
+          repository: namastexlabs/automagik-roadmap
+          path: roadmap
+          token: ${{ steps.generate-token.outputs.token }}
+
+      - name: Transfer wishes to roadmap
+        id: transfer
+        if: steps.extract.outputs.wish_count > 0
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.generate-token.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const wishes = JSON.parse('${{ steps.enrich.outputs.enriched_wishes }}');
+
+            // Create target directory if needed
+            const targetDir = path.join('roadmap', wishes[0].targetPath);
+            if (!fs.existsSync(targetDir)) {
+              fs.mkdirSync(targetDir, { recursive: true });
+            }
+
+            // Write each wish to roadmap
+            const transferredFiles = [];
+            for (const wish of wishes) {
+              const filename = path.basename(wish.path);
+              const targetPath = path.join(targetDir, filename);
+
+              fs.writeFileSync(targetPath, wish.enrichedContent);
+              transferredFiles.push({
+                source: wish.path,
+                target: wish.targetPath + filename
+              });
+
+              console.log(`✓ Transferred: ${wish.path} → ${wish.targetPath}${filename}`);
+            }
+
+            core.setOutput('transferred_files', JSON.stringify(transferredFiles));
+
+      - name: Update roadmap manifest
+        if: steps.extract.outputs.wish_count > 0
+        working-directory: roadmap
+        run: |
+          # Update or create manifest file
+          MANIFEST="wishes/MANIFEST.md"
+
+          if [ ! -f "$MANIFEST" ]; then
+            echo "# Wish Archive Manifest" > "$MANIFEST"
+            echo "" >> "$MANIFEST"
+            echo "Auto-generated by wish-archive workflow" >> "$MANIFEST"
+            echo "" >> "$MANIFEST"
+          fi
+
+          # Append archival record
+          echo "## Archived: $(date -I)" >> "$MANIFEST"
+          echo "- **PR**: ${{ github.event.pull_request.html_url }}" >> "$MANIFEST"
+          echo "- **Repo**: ${{ github.repository }}" >> "$MANIFEST"
+          echo "- **Count**: ${{ steps.extract.outputs.wish_count }}" >> "$MANIFEST"
+          echo "- **Quarter**: ${{ steps.enrich.outputs.quarter }}" >> "$MANIFEST"
+          echo "" >> "$MANIFEST"
+
+      - name: Commit wishes to roadmap
+        if: steps.extract.outputs.wish_count > 0
+        working-directory: roadmap
+        run: |
+          git config user.name "Automagik Wish System"
+          git config user.email "genie@namastex.ai"
+          git add .
+          git commit -m "wishes: archive from ${{ github.repository }}#${{ github.event.pull_request.number }}
+
+          Archived ${{ steps.extract.outputs.wish_count }} wish(es) from PR #${{ github.event.pull_request.number }}
+
+          Source: ${{ github.event.pull_request.html_url }}
+          Quarter: ${{ steps.enrich.outputs.quarter }}
+
+          Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>"
+          git push
+
+      - name: Comment on PR
+        if: steps.extract.outputs.wish_count > 0
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.generate-token.outputs.token }}
+          script: |
+            const wishes = JSON.parse('${{ steps.transfer.outputs.transferred_files }}');
+
+            let comment = `## 🧞 Wishes Archived Successfully\n\n`;
+            comment += `Archived **${{ steps.extract.outputs.wish_count }}** wish(es) to [automagik-roadmap](https://github.com/namastexlabs/automagik-roadmap):\n\n`;
+
+            for (const wish of wishes) {
+              comment += `- \`${wish.source}\` → [\`${wish.target}\`](https://github.com/namastexlabs/automagik-roadmap/blob/main/${wish.target})\n`;
+            }
+
+            comment += `\n**Quarter:** ${wishes[0].targetPath.split('/')[2]}\n`;
+            comment += `**Cleanup:** Archived wishes will be removed from this repo in next cleanup run.\n`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: comment
+            });
+
+      - name: Trigger cleanup workflow
+        if: steps.extract.outputs.wish_count > 0
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.generate-token.outputs.token }}
+          script: |
+            const transferred = JSON.parse('${{ steps.transfer.outputs.transferred_files }}');
+            const filesToClean = transferred.map(f => f.source);
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'wish-cleanup.yml',
+              ref: 'main',
+              inputs: {
+                files: JSON.stringify(filesToClean),
+                pr_number: context.payload.pull_request.number.toString()
+              }
+            });
+
+            console.log('✓ Triggered cleanup workflow for', filesToClean.length, 'files');

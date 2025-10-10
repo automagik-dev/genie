@@ -1,0 +1,141 @@
+name: Clean Up Archived Wishes
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'JSON array of file paths to clean up'
+        required: true
+        type: string
+      pr_number:
+        description: 'Original PR number for reference'
+        required: true
+        type: string
+
+jobs:
+  cleanup-wishes:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify files are archived
+        id: verify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const filesToClean = JSON.parse('${{ github.event.inputs.files }}');
+
+            // Check if files exist in roadmap repo
+            const verifiedFiles = [];
+
+            for (const file of filesToClean) {
+              // Extract project and filename
+              const filename = file.split('/').pop();
+              const project = context.repo.repo.replace('automagik-', '');
+
+              // Get current quarter
+              const now = new Date();
+              const year = now.getFullYear();
+              const month = now.getMonth() + 1;
+              const quarter = Math.ceil(month / 3);
+              const quarterStr = `${year}-q${quarter}`;
+
+              const roadmapPath = `wishes/${project}/${quarterStr}/${filename}`;
+
+              try {
+                // Try to fetch file from roadmap repo
+                await github.rest.repos.getContent({
+                  owner: 'namastexlabs',
+                  repo: 'automagik-roadmap',
+                  path: roadmapPath
+                });
+
+                verifiedFiles.push(file);
+                console.log(`✓ Verified archived: ${roadmapPath}`);
+
+              } catch (error) {
+                console.log(`⚠️  Not found in roadmap: ${roadmapPath} - keeping in source`);
+              }
+            }
+
+            if (verifiedFiles.length === 0) {
+              core.setFailed('No files verified as archived - aborting cleanup');
+              return;
+            }
+
+            core.setOutput('verified_files', JSON.stringify(verifiedFiles));
+            core.setOutput('verified_count', verifiedFiles.length);
+
+      - name: Remove archived wishes
+        if: steps.verify.outputs.verified_count > 0
+        run: |
+          FILES='${{ steps.verify.outputs.verified_files }}'
+          echo "Removing ${{ steps.verify.outputs.verified_count }} verified archived files"
+
+          # Parse JSON and remove files
+          echo "$FILES" | jq -r '.[]' | while read -r file; do
+            if [ -f "$file" ]; then
+              git rm "$file"
+              echo "✓ Removed: $file"
+            else
+              echo "⚠️  Already removed: $file"
+            fi
+          done
+
+      - name: Commit cleanup
+        if: steps.verify.outputs.verified_count > 0
+        run: |
+          git config user.name "Automagik Wish System"
+          git config user.email "genie@namastex.ai"
+          git commit -m "wishes: clean up archived wishes from PR #${{ github.event.inputs.pr_number }}
+
+          Removed ${{ steps.verify.outputs.verified_count }} wish(es) that were successfully
+          archived to automagik-roadmap.
+
+          Original PR: #${{ github.event.inputs.pr_number }}
+          Archival workflow: wish-archive.yml
+
+          These files are now preserved in:
+          https://github.com/namastexlabs/automagik-roadmap/tree/main/wishes
+
+          Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>" || echo "Nothing to commit"
+          git push
+
+      - name: Create cleanup summary
+        if: steps.verify.outputs.verified_count > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const files = JSON.parse('${{ steps.verify.outputs.verified_files }}');
+
+            // Create issue comment summarizing cleanup
+            const comment = `## 🧹 Wish Cleanup Complete\n\n` +
+              `Removed **${files.length}** archived wish(es) from repository.\n\n` +
+              `**Cleaned files:**\n` +
+              files.map(f => `- \`${f}\``).join('\n') + '\n\n' +
+              `**Archive location:** [automagik-roadmap/wishes](https://github.com/namastexlabs/automagik-roadmap/tree/main/wishes)\n\n` +
+              `Git history preserved - files are still accessible in repository history.`;
+
+            // Try to find related PR to comment on
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt('${{ github.event.inputs.pr_number }}'),
+                body: comment
+              });
+            } catch (error) {
+              console.log('Could not comment on PR:', error.message);
+            }
+
+            // Also create workflow summary
+            await core.summary
+              .addHeading('Wish Cleanup Complete')
+              .addRaw(`Cleaned up ${files.length} archived wishes`)
+              .addList(files.map(f => f))
+              .write();

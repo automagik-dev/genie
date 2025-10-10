@@ -144,6 +144,17 @@ body:
       description: Path to wish document if applicable
       placeholder: ".genie/wishes/slack-integration/"
 
+  - type: dropdown
+    id: wish-status
+    attributes:
+      label: Wish Status (Optional)
+      description: Current status of related wish in workflow
+      options:
+        - "N/A - No wish"
+        - "Active - Being implemented"
+        - "Implementation - In development"
+        - "Ready for archive - PR merged"
+
   - type: input
     id: assignee
     attributes:
