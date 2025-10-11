@@ -213,17 +213,17 @@
 # WISH WORKFLOW (3 labels)
 # ============================================
 
+- name: wish:triage
+  color: 'E1BEE7'
+  description: 'Wish Triage - User-submitted wish pending team review'
+
 - name: wish:active
   color: '1D76DB'
-  description: 'Wish Active - Wish currently being implemented'
+  description: 'Wish Active - Currently being worked on'
 
 - name: wish:archived
   color: '6C757D'
-  description: 'Wish Archived - Wish archived to roadmap'
-
-- name: wish:implementation
-  color: '9C27B0'
-  description: 'Wish Implementation - Wish in active implementation'
+  description: 'Wish Archived - Completed and moved to roadmap archive'
 
 # ============================================
 # ADMINISTRATIVE (4 labels)
