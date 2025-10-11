@@ -1,10 +1,18 @@
 ## 🔗 Linked Issue/Wish (Optional but Recommended)
 
-<!-- Link to issue using GitHub keywords: Closes #123, Fixes #456, Resolves #789 -->
-<!-- Or reference wish: Implements: .genie/wishes/my-feature.md -->
+<!-- Link to issue using GitHub keywords below (one per line): -->
+<!-- - Closes #123 -->
+<!-- - Fixes #456 -->
+<!-- - Resolves #789 -->
 
-**Issue:** <!-- #number or N/A -->
-**Wish Path:** <!-- .genie/wishes/file.md or N/A -->
+<!-- Or reference wish implementation: -->
+<!-- Implements: .genie/wishes/my-feature.md -->
+
+**Linked Issues:**
+<!-- - Closes #number or N/A -->
+
+**Wish Path:**
+<!-- .genie/wishes/file.md or N/A -->
 
 ---
 
