@@ -254,51 +254,104 @@ jobs:
               return;
             }
 
-            // Field IDs from roadmap project
-            const fields = {
+            // ============================================
+            // FIELD IDs (DO NOT CHANGE - These are correct)
+            // ============================================
+            const FIELDS = {
               stage: 'PVTSSF_lADOBvG2684BE-4Ezg2c_hc',
-              status: 'PVTSSF_lADOBvG2684BE-4Ezg2dPw0',
-              project: 'PVTSSF_lADOBvG2684BE-4Ezg2c_ec'
+              status: 'PVTSSF_lADOBvG2684BE-4Ezg2c5dY',
+              project: 'PVTSSF_lADOBvG2684BE-4Ezg2c_ec',
+              eta: 'PVTSSF_lADOBvG2684BE-4Ezg2dPxc',
+              expectedResults: 'PVTF_lADOBvG2684BE-4Ezg2c8aE',
+              priority: 'PVTSSF_lADOBvG2684BE-4Ezg2c_kA'
             };
 
-            // Option IDs
-            const options = {
-              stage_executing: '2f83e636',
-              status_todo: 'f75ad846',
-              project_omni: '63cc59e9'  // Will need to verify this
+            // ============================================
+            // STAGE OPTIONS (Based on initiative stage)
+            // ============================================
+            const STAGE_OPTIONS = {
+              'open': '073f61b0',      // Executing (for open initiatives)
+              'closed': '3d0b8ddd'     // Shipped (for closed initiatives)
             };
 
-            const repoName = context.repo.repo.replace('automagik-', '');
-            let projectOption = options.project_omni; // default
+            // ============================================
+            // STATUS OPTIONS
+            // ============================================
+            const STATUS_OPTIONS = {
+              todo: 'f75ad846',
+              in_progress: '47fc9ee4',
+              done: '98236657'
+            };
 
-            // Update Stage to "Executing"
+            // ============================================
+            // PROJECT OPTIONS (Repo name mapping)
+            // ============================================
+            const PROJECT_OPTIONS = {
+              'automagik-omni': '9c171c42',
+              'automagik-hive': 'a28ceeff',
+              'automagik-spark': '0a588179',
+              'automagik-forge': '2a9e974c',
+              'automagik-genie': '93d4bd3c',
+              'automagik-tools': 'f00fd26a'
+            };
+
+            // ============================================
+            // ETA OPTIONS (Quarter mapping)
+            // ============================================
+            const ETA_OPTIONS = {
+              '2025-Q4': 'a35fa4f5',
+              '2026-Q1': 'a0cccfe6',
+              '2026-Q2': 'cf1026cb',
+              '2026-Q3': '3c402b09',
+              '2026-Q4': 'ec810765',
+              'backlog': '88ae1263'
+            };
+
+            // ============================================
+            // PRIORITY OPTIONS
+            // ============================================
+            const PRIORITY_OPTIONS = {
+              critical: '700a2c58',
+              high: 'd7a47ff6',
+              medium: '79c50f9e',
+              low: 'c7f229a8'
+            };
+
+            // ============================================
+            // 1. SET STAGE (Based on initiative state)
+            // ============================================
+            const initiativeState = '${{ steps.validate.outputs.initiative_state }}';
+            const stageOption = STAGE_OPTIONS[initiativeState] || STAGE_OPTIONS['open'];
+
             try {
               await github.graphql(`
                 mutation {
                   updateProjectV2ItemFieldValue(input: {
                     projectId: "${projectId}"
                     itemId: "${itemId}"
-                    fieldId: "${fields.stage}"
-                    value: { singleSelectOptionId: "${options.stage_executing}" }
+                    fieldId: "${FIELDS.stage}"
+                    value: { singleSelectOptionId: "${stageOption}" }
                   }) {
                     projectV2Item { id }
                   }
                 }
               `);
-              console.log('✓ Set Stage to Executing');
+              console.log('✓ Set Stage to', initiativeState === 'closed' ? 'Shipped' : 'Executing');
             } catch (error) {
               console.log('Warning: Could not set Stage:', error.message);
             }
 
-            // Update Status to "Todo"
+            // ============================================
+            // 2. SET STATUS (Default: Todo)
+            // ============================================
             try {
               await github.graphql(`
                 mutation {
                   updateProjectV2ItemFieldValue(input: {
                     projectId: "${projectId}"
                     itemId: "${itemId}"
-                    fieldId: "${fields.status}"
-                    value: { singleSelectOptionId: "${options.status_todo}" }
+                    fieldId: "${FIELDS.status}"
+                    value: { singleSelectOptionId: "${STATUS_OPTIONS.todo}" }
                   }) {
                     projectV2Item { id }
                   }
@@ -309,21 +362,123 @@ jobs:
               console.log('Warning: Could not set Status:', error.message);
             }
 
-            // Update Project to repo name
+            // ============================================
+            // 3. SET PROJECT (From repo name)
+            // ============================================
+            const repoFullName = context.repo.owner + '/' + context.repo.repo;
+            const projectOption = PROJECT_OPTIONS[context.repo.repo];
+
+            if (projectOption) {
+              try {
+                await github.graphql(`
+                  mutation {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: "${projectId}"
+                      itemId: "${itemId}"
+                      fieldId: "${FIELDS.project}"
+                      value: { singleSelectOptionId: "${projectOption}" }
+                    }) {
+                      projectV2Item { id }
+                    }
+                  }
+                `);
+                console.log('✓ Set Project to', context.repo.repo.replace('automagik-', ''));
+              } catch (error) {
+                console.log('Warning: Could not set Project:', error.message);
+              }
+            }
+
+            // ============================================
+            // 4. SET ETA (Default: 2025-Q4 or parse from body)
+            // ============================================
+            const body = context.payload.issue.body || '';
+
+            // Try to parse ETA from body (look for "### 📊 Estimated Complexity" or quarter mentions)
+            let etaOption = ETA_OPTIONS['2025-Q4']; // Default
+
+            const quarterMatch = body.match(/quarter[:\s]*(20\d{2}-Q[1-4])/i);
+            if (quarterMatch && ETA_OPTIONS[quarterMatch[1]]) {
+              etaOption = ETA_OPTIONS[quarterMatch[1]];
+            }
+
             try {
               await github.graphql(`
                 mutation {
                   updateProjectV2ItemFieldValue(input: {
                     projectId: "${projectId}"
                     itemId: "${itemId}"
-                    fieldId: "${fields.project}"
-                    value: { singleSelectOptionId: "${projectOption}" }
+                    fieldId: "${FIELDS.eta}"
+                    value: { singleSelectOptionId: "${etaOption}" }
                   }) {
                     projectV2Item { id }
                   }
                 }
               `);
-              console.log('✓ Set Project to', repoName);
+              console.log('✓ Set ETA to 2025-Q4 (default)');
             } catch (error) {
-              console.log('Warning: Could not set Project:', error.message);
+              console.log('Warning: Could not set ETA:', error.message);
+            }
+
+            // ============================================
+            // 5. SET EXPECTED RESULTS (From acceptance criteria)
+            // ============================================
+            const criteriaMatch = body.match(/### ✅ Acceptance Criteria\n+([\s\S]*?)\n+###/);
+
+            if (criteriaMatch) {
+              // Extract category headers (**Category:**)
+              const categories = criteriaMatch[1]
+                .match(/\*\*[^*]+:\*\*/g)
+                ?.map(cat => cat.replace(/\*\*/g, '').replace(/:$/, ''))
+                .join(', ') || 'Various acceptance criteria';
+
+              const results = categories.substring(0, 300); // Limit to 300 chars
+
+              try {
+                await github.graphql(`
+                  mutation {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: "${projectId}"
+                      itemId: "${itemId}"
+                      fieldId: "${FIELDS.expectedResults}"
+                      value: { text: "${results.replace(/"/g, '\\"')}" }
+                    }) {
+                      projectV2Item { id }
+                    }
+                  }
+                `);
+                console.log('✓ Set Expected Results:', results);
+              } catch (error) {
+                console.log('Warning: Could not set Expected Results:', error.message);
+              }
+            }
+
+            // ============================================
+            // 6. SET PRIORITY (From issue labels)
+            // ============================================
+            const labels = context.payload.issue.labels.map(l => l.name);
+            const priorityLabel = labels.find(l => l.startsWith('priority:'));
+
+            if (priorityLabel) {
+              const priorityValue = priorityLabel.replace('priority:', '');
+              const priorityOption = PRIORITY_OPTIONS[priorityValue];
+
+              if (priorityOption) {
+                try {
+                  await github.graphql(`
+                    mutation {
+                      updateProjectV2ItemFieldValue(input: {
+                        projectId: "${projectId}"
+                        itemId: "${itemId}"
+                        fieldId: "${FIELDS.priority}"
+                        value: { singleSelectOptionId: "${priorityOption}" }
+                      }) {
+                        projectV2Item { id }
+                      }
+                    }
+                  `);
+                  console.log('✓ Set Priority to', priorityValue);
+                } catch (error) {
+                  console.log('Warning: Could not set Priority:', error.message);
+                }
+              }
             }
