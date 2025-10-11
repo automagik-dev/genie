@@ -1,0 +1,54 @@
+name: "🧞 Make a Wish"
+description: "Share your idea or feature request - we'll handle the rest!"
+title: "[Wish] "
+labels: ["wish:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🧞 Make a Wish!
+
+        Got an idea? A feature you'd love to see? Share it here!
+
+        Our team will review your wish and guide it through our development process. Just give us the basics - we'll ask follow-up questions if needed.
+
+  - type: textarea
+    id: wish
+    attributes:
+      label: "What's your wish?"
+      description: "Describe the feature, improvement, or idea you'd like to see. Be as detailed or brief as you like!"
+      placeholder: "I wish I could..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: "Why would this be useful?"
+      description: "Optional: Help us understand the problem you're trying to solve or the benefit you'd get"
+      placeholder: "This would help me..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: "Anything else?"
+      description: "Optional: Examples, links, screenshots, or any other context"
+      placeholder: "For example..."
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        **What happens next?**
+
+        1. ✨ Your wish will be labeled `wish:triage` and reviewed by our team
+        2. 🔍 We'll ask clarifying questions if needed
+        3. 📋 If approved, we'll convert it into a proper initiative
+        4. 🚀 You'll be notified when development begins!
+
+        Thanks for making Automagik better! 🙏
