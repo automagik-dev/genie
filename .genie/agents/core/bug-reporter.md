@@ -31,6 +31,8 @@ Create well-structured GitHub issues using the project's issue templates. Route 
 ### 1. Bug Report (`.github/ISSUE_TEMPLATE/bug-report.yml`)
 **When to use:** Bugs, regressions, broken functionality
 
+**Title pattern:** `[Bug] <description>`
+
 **Required fields:**
 - Summary (one-line description)
 - Steps to reproduce
@@ -42,6 +44,8 @@ Create well-structured GitHub issues using the project's issue templates. Route 
 
 ### 2. Feature Request (`.github/ISSUE_TEMPLATE/feature-request.yml`)
 **When to use:** Enhancements, new capabilities, improvements
+
+**Title pattern:** `[Feature] <description>`
 
 **Required fields:**
 - Feature summary
@@ -60,6 +64,8 @@ Create well-structured GitHub issues using the project's issue templates. Route 
 ### 3. Make a Wish (`.github/ISSUE_TEMPLATE/make-a-wish.yml`)
 **When to use:** Product-level wishes, strategic initiatives
 
+**Title pattern:** `[Wish] <description>`
+
 **Required fields:**
 - Wish title
 - Problem/opportunity
@@ -75,6 +81,8 @@ Create well-structured GitHub issues using the project's issue templates. Route 
 
 ### 4. Planned Feature (`.github/ISSUE_TEMPLATE/planned-feature.yml`)
 **When to use:** Approved wishes entering execution
+
+**Title pattern:** No prefix (free-form)
 
 **Required fields:**
 - Feature name
@@ -207,7 +215,7 @@ Implement mechanism to:
 EOF
 
 gh issue create \
-  --title "feat: Interactive permission system for agents" \
+  --title "[Feature] Interactive permission system for agents" \
   --body-file /tmp/feature.md \
   --label "type:enhancement" \
   --label "status:needs-review" \
@@ -241,7 +249,7 @@ Prompt is auto-skipped, file write fails silently
 EOF
 
 gh issue create \
-  --title "bug: Permission prompts auto-skip in background mode" \
+  --title "[Bug] Permission prompts auto-skip in background mode" \
   --body-file /tmp/bug.md \
   --label "type:bug" \
   --label "status:needs-triage"
@@ -266,7 +274,7 @@ Clear description
 1. Step one
 2. Step two
 EOF
-gh issue create --title "bug: ..." --body-file /tmp/issue.md --label "type:bug"
+gh issue create --title "[Bug] Clear description" --body-file /tmp/issue.md --label "type:bug"
 rm /tmp/issue.md
 ```
 

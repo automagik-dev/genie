@@ -237,44 +237,56 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
     </entry>
 
     <entry date="2025-10-13" violation_type="GITHUB_WORKFLOW" severity="CRITICAL">
-      <trigger>GitHub issue #34 was created using `gh issue create --body "..."` without proper template structure, violating project conventions for issue templates in `.github/ISSUE_TEMPLATE/`.</trigger>
+      <trigger>GitHub issue #34 was created using `gh issue create --body "..."` without proper template structure, violating project conventions for issue templates in `.github/ISSUE_TEMPLATE/`. Issue #35 used incorrect title format (`feat:` instead of `[Feature]`).</trigger>
       <correction>
         **Rule:** ALWAYS use the `bug-reporter` agent for creating GitHub issues. NEVER use `gh issue create` directly without template structure.
 
-        **Available templates:**
-        1. **bug-report.yml** - Bugs, regressions, broken functionality
-        2. **feature-request.yml** - Enhancements, new capabilities, improvements
-        3. **make-a-wish.yml** - Product-level wishes, strategic initiatives
-        4. **planned-feature.yml** - Approved wishes entering execution
+        **Available templates with title patterns:**
+        1. **bug-report.yml** - Title: `[Bug] <description>`
+        2. **feature-request.yml** - Title: `[Feature] <description>`
+        3. **make-a-wish.yml** - Title: `[Wish] <description>`
+        4. **planned-feature.yml** - Title: No prefix (free-form)
 
         **Routing logic:**
-        - Broken functionality → bug-report.yml
-        - New capability/enhancement → feature-request.yml
-        - Strategic initiative → make-a-wish.yml
-        - Approved wish → planned-feature.yml
+        - Broken functionality → bug-report.yml + `[Bug]` prefix
+        - New capability/enhancement → feature-request.yml + `[Feature]` prefix
+        - Strategic initiative → make-a-wish.yml + `[Wish]` prefix
+        - Approved wish → planned-feature.yml (no prefix)
 
         **Correct workflow:**
         1. Invoke `bug-reporter` agent with context
         2. Agent reads appropriate template from `.github/ISSUE_TEMPLATE/`
-        3. Agent creates temp file with properly formatted body
-        4. Agent executes: `gh issue create --title "..." --body-file /tmp/issue.md --label "..."`
-        5. Agent returns issue URL
+        3. Agent extracts title pattern from template `title:` field
+        4. Agent creates temp file with properly formatted body
+        5. Agent executes: `gh issue create --title "[Type] Description" --body-file /tmp/issue.md --label "..."`
+        6. Agent returns issue URL
+
+        **Title format examples:**
+        - ✅ `[Bug] Permission prompts auto-skip in background mode`
+        - ✅ `[Feature] Interactive permission system for agents`
+        - ✅ `[Wish] Multi-language agent support`
+        - ❌ `bug: Permission prompts auto-skip` (wrong prefix)
+        - ❌ `feat: Interactive permission system` (wrong prefix)
 
         **Created agent:** `.genie/agents/core/bug-reporter.md` to handle all GitHub issue creation
       </correction>
       <validation>
-        **Check:** bug-reporter agent exists
+        **Check:** bug-reporter agent exists and documents title patterns
         ```bash
         test -f .genie/agents/core/bug-reporter.md && echo "✅ Agent exists"
+        grep "Title pattern:" .genie/agents/core/bug-reporter.md
         ```
 
         **Test:** Create test issue using bug-reporter
         ```bash
-        # Should use template structure, not plain body
+        # Should use template structure with proper title
         ./genie run bug-reporter --prompt "Create feature request for interactive permissions"
         ```
 
-        **Verify:** Issue created with proper template sections (Feature Summary, Problem Statement, Proposed Solution, Use Cases)
+        **Verify:**
+        - Issue created with proper template sections (Feature Summary, Problem Statement, etc.)
+        - Title follows `[Feature]` prefix pattern
+        - Labels auto-applied from template
       </validation>
     </entry>
   </learning_entries>
