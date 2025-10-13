@@ -56,8 +56,10 @@
 ## Context Ledger
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
-| @.genie/cli/src/commands/init.ts:77-137 | code | Current backup mechanism | implementation |
+| @.genie/cli/src/commands/update.ts:133+ | code | Current backup mechanism (update flow) | implementation |
+| @.genie/cli/src/commands/init.ts:86-106 | code | Backup mechanism (init flow) | implementation |
 | @.genie/cli/src/lib/fs-utils.ts:64-72 | code | Atomic snapshot implementation | implementation |
+| @.genie/cli/src/commands/rollback.ts | code | Existing rollback command | implementation |
 | User clarification (items #1-3) | requirements | Always backup, tailored update agent per version | entire wish |
 | @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
 
@@ -83,23 +85,32 @@
   - RISK-3: Version-specific update instructions increase maintenance burden
 
 ## Executive Summary
-Enable seamless Genie framework upgrades by:
-1. **Expanding backup** to include root `AGENTS.md` and `CLAUDE.md` files alongside `.genie/` and `.claude/`
-2. **Creating `genie update` command** that upgrades npm package and triggers version-specific update agent
-3. **Building `update.md` agent** that intelligently merges new framework changes with user customizations
+Enhance existing `genie update` command to preserve user customizations during framework upgrades by:
+1. **Expanding backup scope** - Include root `AGENTS.md`, `CLAUDE.md`, and `.claude/` in `update.ts:createBackup()`
+2. **Creating `update.md` agent** - Intelligently merge new framework changes with backed-up user customizations
+3. **Adding version-specific guides** - Per-release migration instructions for breaking changes
 
-This eliminates manual migration pain and preserves user investment in customized behavioral rules and project patterns.
+Current `genie update` command works but **overwrites user customizations**. This wish adds intelligent merge logic to preserve user investment in behavioral learnings (`AGENTS.md`) and project patterns (`CLAUDE.md`).
 
 ## Current State
-- **Backup mechanism:** `init.ts:createBackup()` snapshots `.genie/` and `.claude/` to `.genie/backups/<timestamp>/`
-  - Uses atomic `snapshotDirectory()` from `fs-utils.ts` to avoid partial backups
+- **Backup mechanism:**
+  - `update.ts:createBackup()` snapshots `.genie/` to `.genie/backups/<timestamp>/` (atomic via `snapshotDirectory()`)
+  - `init.ts:86-106` creates backups of `.genie/` and `.claude/` before re-initialization
   - Does NOT capture root `AGENTS.md`/`CLAUDE.md` despite these being user-editable
-- **Update process:** Manual npm install + users must manually reconcile breaking changes
-- **Version tracking:** `.genie/state/version.json` records current version but no migration tooling exists
+  - Atomic guarantee via staging pattern in `fs-utils.ts:64-72` prevents partial backups
+- **Update commands exist:**
+  - `genie update` (`.genie/cli/src/commands/update.ts`) - Automates template sync with diff preview and backup
+  - `genie rollback` (`.genie/cli/src/commands/rollback.ts`) - Restores from backups with `--latest` or `--id` flags
+  - Version tracking via `.genie/state/version.json`
+- **What's missing:**
+  - Backup expansion: AGENTS.md, CLAUDE.md, .claude/ not included in `update.ts:createBackup()`
+  - Intelligent merge: Current update overwrites everything; no customization preservation
+  - Migration agent: No `update.md` agent to handle version-specific transformations
+  - Update guides: No per-version instructions for breaking changes
 - **Pain points:**
-  - Users lose customizations when re-running `genie init` after upgrades
+  - Users lose customizations in `AGENTS.md`/`CLAUDE.md` during updates (files not backed up)
   - No guidance for migrating old structures (e.g., pre-`custom/` folder era)
-  - Framework updates with breaking changes require manual file comparisons
+  - Framework updates with breaking changes overwrite user learnings/patterns
 
 ## Target State & Guardrails
 - **Desired behaviour:**
@@ -117,15 +128,19 @@ This eliminates manual migration pain and preserves user investment in customize
 
 ### Group A – Backup Enhancement
 **Slug:** backup-expansion
-**Goal:** Include `AGENTS.md` and `CLAUDE.md` in init backup snapshots
+**Goal:** Include `AGENTS.md`, `CLAUDE.md`, and `.claude/` in update backup snapshots
 
 **Surfaces:**
-- @.genie/cli/src/commands/init.ts:77-137 – `createBackup()` function
-- @.genie/cli/src/lib/fs-utils.ts:64-72 – `snapshotDirectory()` helper
+- @.genie/cli/src/commands/update.ts:133+ – `createBackup()` function (primary target)
+- @.genie/cli/src/commands/init.ts:86-106 – Init backup flow (secondary alignment)
+- @.genie/cli/src/lib/fs-utils.ts:64-72 – `snapshotDirectory()` helper (reuse atomic pattern)
 
 **Deliverables:**
-1. Extend `createBackup()` to snapshot root `AGENTS.md` and `CLAUDE.md` into backup directory
-2. Maintain atomic snapshot guarantees (use staging pattern)
+1. Extend `update.ts:createBackup()` to snapshot:
+   - Root `AGENTS.md` (if exists)
+   - Root `CLAUDE.md` (if exists)
+   - `.claude/` directory (if exists)
+2. Maintain atomic snapshot guarantees (existing staging pattern continues to work)
 3. Update backup directory structure:
    ```
    .genie/backups/<timestamp>/
@@ -158,33 +173,38 @@ ls -la .genie/backups/<timestamp>/root-docs/
 
 ---
 
-### Group B – Update Command Infrastructure
-**Slug:** update-cli
-**Goal:** Create `genie update` command that upgrades package and triggers update agent
+### Group B – Update Agent Integration
+**Slug:** update-agent-integration
+**Goal:** Integrate `update.md` agent into existing `genie update` command for intelligent merge
 
 **Surfaces:**
-- @.genie/cli/src/commands/ – new `update.ts` command
-- @.genie/cli/src/genie.ts – command routing
-- @bin/update.js – CLI wrapper (already exists, needs implementation)
+- @.genie/cli/src/commands/update.ts:73-77 – Post-backup, pre-template-copy hook point
+- @.genie/agents/core/update.md – New update agent (to be created in Group C)
+
+**Current behavior:**
+```typescript
+// update.ts:73-77
+const backupId = await createBackup(targetGenie);
+await copyTemplateGenie(templateGenie, targetGenie); // ← Overwrites everything
+await touchVersionFile(cwd);
+```
+
+**Desired behavior:**
+```typescript
+const backupId = await createBackup(targetGenie);
+await runUpdateAgent(backupId, templateGenie, targetGenie); // ← Intelligent merge
+await touchVersionFile(cwd);
+```
 
 **Deliverables:**
-1. Implement `genie update [--target-version X.Y.Z] [--yes]` command
-2. Flow:
-   ```
-   1. Check current version from .genie/state/version.json
-   2. Fetch latest version from npm registry (or use --target-version)
-   3. Run npm install -g automagik-genie@<target>
-   4. Verify new version installed successfully
-   5. Re-run genie init (triggers backup + file copy)
-   6. Launch update agent with version transition context
-   7. Display update summary report
-   ```
-3. Add `--dry-run` flag to preview changes without applying
-4. Integrate with existing rollback utility (`bin/rollback.js`)
-5. Handle edge cases:
-   - Already on latest version → no-op with message
-   - Version downgrade requested → confirm with user
-   - Network failure during npm install → abort cleanly
+1. Add `runUpdateAgent()` function that:
+   - Launches `update.md` agent with backup context
+   - Passes version transition info (old → new)
+   - Waits for agent completion
+   - Captures merge decisions in update report
+2. Agent invocation uses existing MCP infrastructure (`mcp__genie__run`)
+3. Fallback: If agent fails, revert to current overwrite behavior with warning
+4. Update summary view includes merge report from agent
 
 **Evidence:**
 - Store CLI output logs in `qa/group-b/update-cli-tests/`
@@ -409,25 +429,32 @@ genie update --target-version 2.3.0
 
 ## <spec_contract>
 - **Scope:**
-  - Backup mechanism includes `AGENTS.md` and `CLAUDE.md`
-  - `genie update` command automates package upgrade + agent-driven migration
-  - `update.md` agent merges new framework files with user customizations
-  - Version-specific update guides bundled in releases
-  - Rollback support via existing `genie rollback` utility
+  - **Group A:** Expand `update.ts:createBackup()` to include `AGENTS.md`, `CLAUDE.md`, `.claude/`
+  - **Group B:** Integrate `update.md` agent into existing `genie update` command flow
+  - **Group C:** Create `update.md` agent that merges new framework files with backed-up user customizations
+  - **Group D:** Author version-specific update guides bundled in releases
+  - Leverage existing infrastructure: `genie update`, `genie rollback`, atomic snapshot pattern
+- **Already built (out of scope):**
+  - `genie update` command (`.genie/cli/src/commands/update.ts`) - exists, needs enhancement
+  - `genie rollback` command (`.genie/cli/src/commands/rollback.ts`) - exists, no changes needed
+  - Atomic backup pattern (`fs-utils.ts:snapshotDirectory()`) - exists, reuse as-is
+  - Version tracking (`.genie/state/version.json`) - exists, no changes needed
 - **Out of scope:**
   - Multi-template architecture (separate wish)
   - Provider runtime override (separate wish)
   - Automated testing of update guides (manual QA by Namastex team)
   - Update notification system (future enhancement)
+  - npm package installation automation (users run `npm install` manually before `genie update`)
 - **Success metrics:**
   - 100% user customizations preserved across updates (test suite validates)
   - Zero data loss during failed updates (atomic backup + rollback)
   - Update time <60s for typical framework upgrades
-  - Update reports clearly document all changes
+  - Update reports clearly document merge decisions
 - **External tasks:**
   - FORGE-TBD-A: Backup expansion implementation
-  - FORGE-TBD-B: Update CLI command
+  - FORGE-TBD-B: Update agent integration
   - FORGE-TBD-C: Update agent authoring
+  - FORGE-TBD-D: Version guide authoring
   - FORGE-TBD-D: Update guide template system
 - **Dependencies:**
   - Existing `genie init` backup mechanism
