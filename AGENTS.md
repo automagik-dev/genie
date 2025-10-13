@@ -556,10 +556,11 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Choose agents by task type using routing aliases.
 
 ### Routing Aliases
-- git-workflow, implementor, polish, tests, review, planner, vibe, learn.
+- git-workflow, implementor, polish, tests, review, planner, vibe, learn, release.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
+- **release:** GitHub release creation and npm publish orchestration (validates readiness, creates releases, monitors publishing)
 </routing_decision_matrix>
 
 <execution_patterns>
