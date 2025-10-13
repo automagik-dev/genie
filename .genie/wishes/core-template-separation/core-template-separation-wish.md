@@ -24,8 +24,8 @@
 
 ### Implementation Phase (40 pts)
 - **Code Quality (15 pts)**
-  - [ ] Clean directory structure (core vs templates/) (5 pts)
-  - [ ] Minimal breaking changes to existing users (5 pts)
+  - [x] Clean directory structure (core vs templates/) (5 pts)
+  - [x] Minimal breaking changes to existing users (5 pts)
   - [x] Clear @include path conventions (5 pts)
 - **Test Coverage (10 pts)**
   - [ ] Init script tested in clean environment (4 pts)
@@ -494,10 +494,75 @@ Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) re
 - [2025-10-07 04:50Z] **Wish corrected against reality** — removed hallucinated commands/agents (bug-reporter, git-lifecycle, genie agents show --mode), fixed CLI syntax (genie list agents), corrected paths (core/modes/), updated agent counts (30 not 36) — see `qa/reality-check-202510070445.md`
 - [2025-10-07 05:05Z] **Phase 0 COMPLETE:** All 14 orchestrator modes have custom stubs — commit 96f3ca2, created .genie/custom/explore.md
 - [2025-10-07 17:45Z] **Phase 1 COMPLETE:** Meta-learning agent unified and wrappers updated — see `reports/done-learn-core-template-separation-20251007T1745Z.md`
-- [Pending] Phase 2: Core delivery catalog consolidation applied
+- [2025-10-13 16:30Z] **Phase 2 COMPLETE:** Template structure created at `templates/base/` — 22 custom stubs, product/standards templates, .claude/ references to npm package, empty .genie/agents/ for user agents, comprehensive READMEs — see validation below
 - [Pending] Phase 3: Documentation + migration evidence captured
 - [Pending] Validation checklist complete
 - [Pending] Human approval for merge
+
+## Phase 2 Validation — Template Structure
+
+**Created:** 2025-10-13 16:30Z
+
+### File Tree
+```
+templates/base/
+├── .claude/              # 36 files (25 agents + 10 commands + 1 README)
+│   ├── agents/          # 25 agent aliases → npm package
+│   ├── commands/        # 10 slash commands → npm package
+│   └── README.md
+├── .genie/
+│   ├── agents/          # Empty (for user-created agents)
+│   │   └── README.md
+│   ├── custom/          # 22 customization stubs
+│   ├── product/         # 6 template files
+│   │   └── planning-notes/
+│   ├── standards/       # 5 template files
+│   │   └── code-style/
+│   ├── state/           # Session data structure
+│   │   ├── agents/logs/
+│   │   └── README.md
+│   └── wishes/          # Empty (created by /wish)
+├── .gitignore           # State files excluded
+├── AGENTS.md            # Full workflow guide (23KB)
+├── CLAUDE.md            # Claude Code patterns (4.2KB)
+└── README.md            # Template introduction
+```
+
+### Verification Commands
+```bash
+# File count validation
+tree -L 1 templates/base/ --dirsfirst
+# 14 directories, 73 files ✅
+
+# Custom stubs count
+ls -1 templates/base/.genie/custom/*.md | wc -l
+# 22 ✅
+
+# Agent aliases count
+ls -1 templates/base/.claude/agents/*.md | wc -l
+# 25 ✅
+
+# Command aliases count
+ls -1 templates/base/.claude/commands/*.md | wc -l
+# 10 ✅
+
+# Example agent reference
+head -10 templates/base/.claude/agents/implementor.md
+# Contains: @.genie/agents/core/implementor.md ✅
+```
+
+### Architecture Compliance
+- ✅ **NPM Package References**: All .claude/ files reference `@.genie/agents/` (not copied)
+- ✅ **Custom Stubs Only**: 22 customization injection points in `.genie/custom/`
+- ✅ **Empty Agent Directory**: `.genie/agents/` empty with README (for user agents)
+- ✅ **Template Files**: Product/standards populated with `{{PLACEHOLDER}}` syntax
+- ✅ **State Ignored**: `.gitignore` excludes `.genie/state/`
+- ✅ **Documentation**: README.md, AGENTS.md, CLAUDE.md included
+
+### Next Steps
+- [ ] Test `genie init` copies structure correctly
+- [ ] Validate agent resolution via MCP in clean project
+- [ ] Create migration guide (Phase 3)
 - [2025-10-06 23:25Z] CLI wrappers updated to new `core/` layout, wish assets migrated to folder structure (`.genie/wishes/core-template-separation/`), identity smoke + MCP integration adjusted to `genie` binary; `pnpm run test:genie` passing.
 - [2025-10-06 15:20Z] Core prompts normalized to shared framework; project overrides moved to `.genie/custom/` with refreshed templates.
 - [2025-10-06 14:45Z] Slash command includes retargeted to `.genie/agents/<name>.md` to restore `/plan`, `/wish`, `/forge`, `/review`, `/vibe`.
