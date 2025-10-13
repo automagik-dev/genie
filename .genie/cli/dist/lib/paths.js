@@ -19,13 +19,23 @@ function getPackageRoot() {
     return path_1.default.resolve(__dirname, '../../../..');
 }
 function getTemplateGeniePath() {
-    return path_1.default.join(getPackageRoot(), '.genie');
+    // Use templates/base/.genie/ (clean template) NOT .genie/ (framework dev)
+    return path_1.default.join(getPackageRoot(), 'templates', 'base', '.genie');
 }
 function getTemplateClaudePath() {
-    return path_1.default.join(getPackageRoot(), 'templates', '.claude');
+    return path_1.default.join(getPackageRoot(), 'templates', 'base', '.claude');
 }
 function getTemplateRelativeBlacklist() {
-    return new Set(['cli', 'mcp', 'state', 'backups']);
+    // Protect user work - these directories should NEVER be overwritten
+    return new Set([
+        'cli', // Framework CLI code
+        'mcp', // Framework MCP code
+        'backups', // User backups
+        'agents', // User custom agents (preserve entirely)
+        'wishes', // User wishes (preserve entirely)
+        'reports', // User reports (preserve entirely)
+        'state' // User session state (preserve entirely)
+    ]);
 }
 function resolveTargetGeniePath(cwd = process.cwd()) {
     return path_1.default.resolve(cwd, '.genie');

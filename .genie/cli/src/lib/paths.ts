@@ -5,15 +5,25 @@ export function getPackageRoot(): string {
 }
 
 export function getTemplateGeniePath(): string {
-  return path.join(getPackageRoot(), '.genie');
+  // Use templates/base/.genie/ (clean template) NOT .genie/ (framework dev)
+  return path.join(getPackageRoot(), 'templates', 'base', '.genie');
 }
 
 export function getTemplateClaudePath(): string {
-  return path.join(getPackageRoot(), 'templates', '.claude');
+  return path.join(getPackageRoot(), 'templates', 'base', '.claude');
 }
 
 export function getTemplateRelativeBlacklist(): Set<string> {
-  return new Set(['cli', 'mcp', 'state', 'backups']);
+  // Protect user work - these directories should NEVER be overwritten
+  return new Set([
+    'cli',        // Framework CLI code
+    'mcp',        // Framework MCP code
+    'backups',    // User backups
+    'agents',     // User custom agents (preserve entirely)
+    'wishes',     // User wishes (preserve entirely)
+    'reports',    // User reports (preserve entirely)
+    'state'       // User session state (preserve entirely)
+  ]);
 }
 
 export function resolveTargetGeniePath(cwd: string = process.cwd()): string {
