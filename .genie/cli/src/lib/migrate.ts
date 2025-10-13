@@ -1,0 +1,355 @@
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
+
+/**
+ * Migration utility for upgrading from old Genie versions to npm-backed architecture
+ *
+ * Strategy:
+ * 1. Detect existing Genie installation
+ * 2. Backup entire .genie/ directory
+ * 3. Analyze user customizations vs framework defaults
+ * 4. Migrate to new structure (core agents in npm, customs in .genie/custom/)
+ * 5. Preserve user work (product/, standards/, wishes/, state/)
+ */
+
+export interface MigrationResult {
+  status: 'clean_install' | 'upgraded' | 'already_migrated' | 'failed';
+  backupPath?: string;
+  customAgentsPreserved: string[];
+  coreAgentsRemoved: string[];
+  customizationsExtracted: string[];
+  errors: string[];
+  warnings: string[];
+}
+
+// Core agents that ship with npm package (should NOT be in user .genie/agents/)
+const CORE_AGENT_IDS = [
+  // Top-level orchestrators
+  'plan', 'wish', 'forge', 'review', 'orchestrator', 'vibe',
+
+  // Core delivery agents
+  'core/analyze', 'core/audit', 'core/commit', 'core/debug',
+  'core/git-workflow', 'core/github-workflow', 'core/implementor',
+  'core/install', 'core/learn', 'core/polish', 'core/prompt',
+  'core/refactor', 'core/tests',
+
+  // Orchestrator modes
+  'core/modes/challenge', 'core/modes/consensus', 'core/modes/docgen',
+  'core/modes/explore', 'core/modes/tracer',
+
+  // QA agents
+  'qa/genie-qa'
+];
+
+/**
+ * Detects if this is a clean install or needs migration
+ */
+export function detectInstallType(): 'clean' | 'old_genie' | 'already_new' {
+  const genieDir = '.genie';
+
+  if (!fs.existsSync(genieDir)) {
+    return 'clean';
+  }
+
+  const agentsDir = path.join(genieDir, 'agents');
+  if (!fs.existsSync(agentsDir)) {
+    return 'clean';
+  }
+
+  // Check if agents/core/ exists with proper structure
+  const coreDir = path.join(agentsDir, 'core');
+  if (fs.existsSync(coreDir)) {
+    // Has core/ subdirectory - likely new structure OR mid-migration
+    const coreAgents = fs.readdirSync(coreDir).filter(f => f.endsWith('.md'));
+
+    // If core/ has agents, this is old structure (agents in repo)
+    // New structure has empty .genie/agents/, core comes from npm
+    if (coreAgents.length > 0) {
+      return 'old_genie';
+    }
+
+    return 'already_new';
+  }
+
+  // Check for top-level core agents (very old structure)
+  const topLevelAgents = fs.readdirSync(agentsDir).filter(f => f.endsWith('.md'));
+  const hasCoreAgents = topLevelAgents.some(f =>
+    CORE_AGENT_IDS.map(id => id.split('/').pop()).includes(f.replace('.md', ''))
+  );
+
+  return hasCoreAgents ? 'old_genie' : 'already_new';
+}
+
+/**
+ * Creates timestamped backup of .genie/ directory
+ */
+export function backupGenie(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T').join('-').slice(0, -5);
+  const backupPath = `.genie-backup-${timestamp}`;
+
+  execSync(`cp -r .genie "${backupPath}"`);
+
+  return backupPath;
+}
+
+/**
+ * Analyzes which agents are custom (user-created) vs core (framework)
+ */
+export function analyzeAgents(): {
+  core: string[];
+  custom: string[];
+  modified: string[];
+} {
+  const agentsDir = '.genie/agents';
+  const result = {
+    core: [] as string[],
+    custom: [] as string[],
+    modified: [] as string[]
+  };
+
+  if (!fs.existsSync(agentsDir)) {
+    return result;
+  }
+
+  const walkDir = (dir: string, prefix: string = ''): void => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.name === 'README.md') continue;
+
+      const fullPath = path.join(dir, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        walkDir(fullPath, relativePath);
+      } else if (entry.name.endsWith('.md')) {
+        const agentId = relativePath.replace(/\.md$/, '');
+
+        if (CORE_AGENT_IDS.includes(agentId)) {
+          // TODO: Check if modified from framework default
+          // For now, assume all core agents should be removed
+          result.core.push(agentId);
+        } else {
+          result.custom.push(agentId);
+        }
+      }
+    }
+  };
+
+  walkDir(agentsDir);
+
+  return result;
+}
+
+/**
+ * Extracts customizations from modified core agents to .genie/custom/
+ */
+export function extractCustomizations(coreAgents: string[]): string[] {
+  const extracted: string[] = [];
+
+  // TODO: Implement diff-based extraction
+  // For now, we'll preserve by moving to .genie/custom/
+
+  return extracted;
+}
+
+/**
+ * Copies templates from npm package to user project
+ */
+export function copyTemplates(options: { force?: boolean } = {}): void {
+  // Resolve npm package location
+  const packageRoot = path.resolve(__dirname, '../../../..');
+  const templatesSource = path.join(packageRoot, 'templates', 'base');
+
+  if (!fs.existsSync(templatesSource)) {
+    throw new Error(`Templates not found at ${templatesSource}`);
+  }
+
+  // Copy .claude/ directory (npm-referencing aliases)
+  const claudeSource = path.join(templatesSource, '.claude');
+  const claudeDest = '.claude';
+
+  if (fs.existsSync(claudeDest) && !options.force) {
+    console.warn(`⚠️  .claude/ exists, skipping (use --force to overwrite)`);
+  } else {
+    if (fs.existsSync(claudeDest)) {
+      execSync(`rm -rf ${claudeDest}`);
+    }
+    execSync(`cp -r "${claudeSource}" "${claudeDest}"`);
+  }
+
+  // Copy .genie/custom/ stubs (merge with existing)
+  const customSource = path.join(templatesSource, '.genie', 'custom');
+  const customDest = path.join('.genie', 'custom');
+
+  if (!fs.existsSync(customDest)) {
+    fs.mkdirSync(customDest, { recursive: true });
+  }
+
+  const customStubs = fs.readdirSync(customSource);
+  for (const stub of customStubs) {
+    const stubSource = path.join(customSource, stub);
+    const stubDest = path.join(customDest, stub);
+
+    if (!fs.existsSync(stubDest)) {
+      fs.copyFileSync(stubSource, stubDest);
+    }
+  }
+
+  // Copy product/ and standards/ templates if they don't exist
+  const copyIfMissing = (subdir: string) => {
+    const source = path.join(templatesSource, '.genie', subdir);
+    const dest = path.join('.genie', subdir);
+
+    if (!fs.existsSync(dest)) {
+      execSync(`cp -r "${source}" "${dest}"`);
+    }
+  };
+
+  copyIfMissing('product');
+  copyIfMissing('standards');
+
+  // Ensure state/ and wishes/ directories exist
+  ['state', 'wishes'].forEach(dir => {
+    const dirPath = path.join('.genie', dir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  });
+
+  // Copy root documentation files if missing
+  const rootDocs = ['AGENTS.md', 'CLAUDE.md', 'README.md', '.gitignore'];
+  for (const doc of rootDocs) {
+    const source = path.join(templatesSource, doc);
+    const dest = doc;
+
+    if (fs.existsSync(source) && !fs.existsSync(dest)) {
+      fs.copyFileSync(source, dest);
+    }
+  }
+}
+
+/**
+ * Main migration orchestrator
+ */
+export async function runMigration(options: {
+  force?: boolean;
+  dryRun?: boolean;
+} = {}): Promise<MigrationResult> {
+  const result: MigrationResult = {
+    status: 'failed',
+    customAgentsPreserved: [],
+    coreAgentsRemoved: [],
+    customizationsExtracted: [],
+    errors: [],
+    warnings: []
+  };
+
+  try {
+    // Step 1: Detect installation type
+    const installType = detectInstallType();
+    console.log(`📊 Installation type: ${installType}`);
+
+    if (installType === 'clean') {
+      console.log('✨ Clean installation detected');
+
+      if (!options.dryRun) {
+        copyTemplates(options);
+      }
+
+      result.status = 'clean_install';
+      return result;
+    }
+
+    if (installType === 'already_new') {
+      console.log('✅ Already using new structure');
+      result.status = 'already_migrated';
+      return result;
+    }
+
+    // Step 2: Backup existing installation
+    console.log('💾 Creating backup...');
+    if (!options.dryRun) {
+      result.backupPath = backupGenie();
+      console.log(`   Backup created: ${result.backupPath}`);
+    }
+
+    // Step 3: Analyze agents
+    console.log('🔍 Analyzing agents...');
+    const analysis = analyzeAgents();
+    console.log(`   Core agents: ${analysis.core.length}`);
+    console.log(`   Custom agents: ${analysis.custom.length}`);
+    console.log(`   Modified: ${analysis.modified.length}`);
+
+    result.customAgentsPreserved = analysis.custom;
+
+    // Step 4: Extract customizations from modified core agents
+    if (analysis.modified.length > 0) {
+      console.log('📝 Extracting customizations...');
+      if (!options.dryRun) {
+        result.customizationsExtracted = extractCustomizations(analysis.modified);
+      }
+    }
+
+    // Step 5: Remove core agents (they'll come from npm)
+    console.log('🗑️  Removing core agents (now in npm package)...');
+    if (!options.dryRun) {
+      for (const agentId of analysis.core) {
+        const agentPath = path.join('.genie', 'agents', `${agentId}.md`);
+        if (fs.existsSync(agentPath)) {
+          fs.unlinkSync(agentPath);
+          result.coreAgentsRemoved.push(agentId);
+        }
+      }
+
+      // Clean up empty directories
+      const cleanEmptyDirs = (dir: string): void => {
+        if (!fs.existsSync(dir)) return;
+
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+        // Recursively clean subdirectories first
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            cleanEmptyDirs(path.join(dir, entry.name));
+          }
+        }
+
+        // If directory is empty, remove it
+        const remaining = fs.readdirSync(dir);
+        if (remaining.length === 0 || (remaining.length === 1 && remaining[0] === 'README.md')) {
+          execSync(`rm -rf "${dir}"`);
+        }
+      };
+
+      cleanEmptyDirs(path.join('.genie', 'agents', 'core'));
+      cleanEmptyDirs(path.join('.genie', 'agents', 'qa'));
+    }
+
+    // Step 6: Copy new templates
+    console.log('📦 Installing new template structure...');
+    if (!options.dryRun) {
+      copyTemplates(options);
+    }
+
+    // Step 7: Success!
+    console.log('✅ Migration complete!');
+    result.status = 'upgraded';
+
+    // Summary
+    console.log('\n📋 Migration Summary:');
+    console.log(`   Backup: ${result.backupPath}`);
+    console.log(`   Custom agents preserved: ${result.customAgentsPreserved.length}`);
+    console.log(`   Core agents removed: ${result.coreAgentsRemoved.length}`);
+    if (result.customizationsExtracted.length > 0) {
+      console.log(`   Customizations extracted: ${result.customizationsExtracted.length}`);
+    }
+
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : String(error));
+    console.error('❌ Migration failed:', error);
+  }
+
+  return result;
+}

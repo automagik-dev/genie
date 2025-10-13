@@ -18,6 +18,7 @@ const view_2 = require("./commands/view");
 const stop_1 = require("./commands/stop");
 const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
+const migrate_1 = require("./commands/migrate");
 const update_1 = require("./commands/update");
 const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
@@ -78,6 +79,17 @@ async function main() {
                     return;
                 }
                 await (0, init_1.runInit)(parsed, config, paths);
+                break;
+            case 'migrate':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie migrate', [
+                        'Usage: genie migrate [--dry-run] [--force]',
+                        'Migrates old Genie installations to npm-backed architecture (v3.0+).',
+                        'Backs up existing setup, preserves custom agents, removes core agents (now in npm).'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, migrate_1.runMigrateCommand)(parsed, config, paths);
                 break;
             case 'update':
                 if (parsed.options.requestHelp) {

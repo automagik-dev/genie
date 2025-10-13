@@ -54,6 +54,23 @@ program
     execGenie(args);
   });
 
+// Migrate command
+program
+  .command('migrate')
+  .description('Migrate from old Genie (v2.x) to npm-backed architecture (v3.0+)')
+  .option('--dry-run', 'Show changes without applying them')
+  .option('-f, --force', 'Force migration even if already migrated')
+  .action((options: { dryRun?: boolean; force?: boolean }) => {
+    const args = ['migrate'];
+    if (options.dryRun) {
+      args.push('--dry-run');
+    }
+    if (options.force) {
+      args.push('--force');
+    }
+    execGenie(args);
+  });
+
 // Update command
 program
   .command('update')

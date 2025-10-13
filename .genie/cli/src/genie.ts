@@ -30,6 +30,7 @@ import { runView } from './commands/view';
 import { runStop } from './commands/stop';
 import { runHelp } from './commands/help';
 import { runInit } from './commands/init';
+import { runMigrateCommand } from './commands/migrate';
 import { runUpdate } from './commands/update';
 import { runRollback } from './commands/rollback';
 import { runStatus } from './commands/status';
@@ -100,6 +101,17 @@ async function main(): Promise<void> {
           return;
         }
         await runInit(parsed, config, paths);
+        break;
+      case 'migrate':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie migrate', [
+            'Usage: genie migrate [--dry-run] [--force]',
+            'Migrates old Genie installations to npm-backed architecture (v3.0+).',
+            'Backs up existing setup, preserves custom agents, removes core agents (now in npm).'
+          ]), parsed.options);
+          return;
+        }
+        await runMigrateCommand(parsed, config, paths);
         break;
       case 'update':
         if (parsed.options.requestHelp) {

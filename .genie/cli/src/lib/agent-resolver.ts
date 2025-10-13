@@ -26,6 +26,23 @@ const fallbackParseFrontMatter = (raw: string): Record<string, any> => {
   return meta;
 };
 
+// Resolve npm package location for core agents
+const getPackageAgentsDir = (): string | null => {
+  try {
+    // Resolve from compiled dist location: dist/ -> package root
+    const packageRoot = path.resolve(__dirname, '../../../..');
+    const agentsDir = path.join(packageRoot, '.genie', 'agents');
+
+    if (fs.existsSync(agentsDir)) {
+      return agentsDir;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 const resolveAgentPath = (id: string): string | null => {
   const normalized = id.replace(/\\/g, '/');
   const candidates = new Set<string>([normalized]);
@@ -34,10 +51,22 @@ const resolveAgentPath = (id: string): string | null => {
       candidates.add(`${prefix}/${normalized}`);
     });
   }
+
+  // Check local .genie/agents first (user project - takes precedence)
   for (const candidate of candidates) {
     const file = path.join('.genie', 'agents', `${candidate}.md`);
     if (fs.existsSync(file)) return candidate;
   }
+
+  // Fallback to npm package location (core agents)
+  const packageAgentsDir = getPackageAgentsDir();
+  if (packageAgentsDir) {
+    for (const candidate of candidates) {
+      const file = path.join(packageAgentsDir, `${candidate}.md`);
+      if (fs.existsSync(file)) return candidate;
+    }
+  }
+
   return null;
 };
 
@@ -49,20 +78,23 @@ interface ListedAgent {
 }
 
 /**
- * Lists all available agent definitions from .genie/agents directory.
+ * Lists all available agent definitions from both local and npm package locations.
  *
  * Recursively scans for .md files, extracts metadata, and filters out hidden/disabled agents.
+ * Checks local .genie/agents first (user agents), then npm package (core agents).
  *
  * @returns {ListedAgent[]} - Array of agent records with id, label, metadata, and folder path
  */
 export function listAgents(): ListedAgent[] {
-  const baseDir = '.genie/agents';
   const records: ListedAgent[] = [];
-  if (!fs.existsSync(baseDir)) return records;
-  const visit = (dirPath: string, relativePath: string | null) => {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  const seenIds = new Set<string>();
+
+  const visit = (baseDir: string, relativePath: string | null) => {
+    if (!fs.existsSync(baseDir)) return;
+
+    const entries = fs.readdirSync(baseDir, { withFileTypes: true });
     entries.forEach((entry) => {
-      const entryPath = path.join(dirPath, entry.name);
+      const entryPath = path.join(baseDir, entry.name);
       if (entry.isDirectory()) {
         visit(entryPath, relativePath ? path.join(relativePath, entry.name) : entry.name);
         return;
@@ -70,6 +102,11 @@ export function listAgents(): ListedAgent[] {
       if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md') return;
       const rawId = relativePath ? path.join(relativePath, entry.name) : entry.name;
       const normalizedId = rawId.replace(/\.md$/i, '').split(path.sep).join('/');
+
+      // Skip if already seen (local agents override npm package agents)
+      if (seenIds.has(normalizedId)) return;
+      seenIds.add(normalizedId);
+
       const content = fs.readFileSync(entryPath, 'utf8');
       const { meta } = extractFrontMatter(content);
       const metaObj = meta || {};
@@ -80,7 +117,15 @@ export function listAgents(): ListedAgent[] {
     });
   };
 
-  visit(baseDir, null);
+  // Visit local agents first (user project)
+  visit('.genie/agents', null);
+
+  // Visit npm package agents second (core agents)
+  const packageAgentsDir = getPackageAgentsDir();
+  if (packageAgentsDir) {
+    visit(packageAgentsDir, null);
+  }
+
   return records;
 }
 
@@ -144,6 +189,7 @@ export function agentExists(id: string): boolean {
 
 /**
  * Loads agent specification from markdown file with frontmatter metadata.
+ * Checks local .genie/agents first, then npm package location.
  *
  * @param {string} name - Agent name/path (with or without .md extension)
  * @returns {AgentSpec} - Object containing metadata and instructions
@@ -160,14 +206,31 @@ export function loadAgentSpec(name: string): AgentSpec {
     normalized = resolveAgentIdentifier(base);
   } catch (_) {
     if (!agentExists(normalized)) {
-      throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
+      throw new Error(`❌ Agent '${name}' not found`);
     }
   }
-  const agentPath = path.join('.genie', 'agents', `${normalized}.md`);
-  if (!fs.existsSync(agentPath)) {
-    throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
+
+  // Try local .genie/agents first
+  let agentPath = path.join('.genie', 'agents', `${normalized}.md`);
+  let content: string;
+
+  if (fs.existsSync(agentPath)) {
+    content = fs.readFileSync(agentPath, 'utf8');
+  } else {
+    // Fallback to npm package location
+    const packageAgentsDir = getPackageAgentsDir();
+    if (packageAgentsDir) {
+      agentPath = path.join(packageAgentsDir, `${normalized}.md`);
+      if (fs.existsSync(agentPath)) {
+        content = fs.readFileSync(agentPath, 'utf8');
+      } else {
+        throw new Error(`❌ Agent '${name}' not found`);
+      }
+    } else {
+      throw new Error(`❌ Agent '${name}' not found`);
+    }
   }
-  const content = fs.readFileSync(agentPath, 'utf8');
+
   const { meta, body } = extractFrontMatter(content);
   return {
     meta,
