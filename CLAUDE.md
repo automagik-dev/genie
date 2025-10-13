@@ -119,3 +119,42 @@ Assistant: "Let me verify that..."
 - Before agreeing, search the relevant code/docs
 - Provide file paths and line numbers in your response
 - If uncertain, admit it and investigate further
+
+## Agent Configuration
+
+See @AGENTS.md §Agent Configuration Standards for:
+- **Permission mode requirements**: All write-enabled agents MUST declare `permissionMode: default`
+- **Executor settings**: Claude executor configuration and hierarchy
+- **Background execution rules**: How `background: true` interacts with permissions
+- **Agent categories**: Implementation vs analysis agents
+- **Validation commands**: Check agent configurations are correct
+
+## GitHub Workflow
+
+See @AGENTS.md §GitHub Workflow Integration for:
+- **Issue lifecycle operations**: CREATE, LIST, UPDATE, ASSIGN, CLOSE, LINK
+- **Template conventions**: Required `[Type]` title patterns for all issues
+- **Quick capture pattern**: Document bugs/ideas without losing focus
+- **Cross-referencing**: Link issues ↔ wishes ↔ PRs
+- **Agent reference**: `.genie/agents/core/github-workflow.md`
+
+**Critical:** ALWAYS use `github-workflow` agent for issue creation. NEVER use `gh issue create` directly without template structure.
+
+## Slash Commands
+
+See @AGENTS.md §Slash Command Reference for:
+- **Available commands**: `/plan`, `/wish`, `/forge`, `/review`, `/commit`, etc.
+- **Usage patterns**: When to use slash vs MCP agents
+- **Routing triggers**: What user phrases should trigger slash commands
+- **Integration**: How slash commands fit into Genie workflow
+
+**Rule:** Proactively suggest appropriate slash commands based on user intent.
+
+## Experimentation
+
+See @AGENTS.md §Experimentation Protocol for:
+- **Core philosophy**: Learning = Experimentation (not optional)
+- **Experimentation framework**: Hypothesis → Experiment → Observe → Learn → Apply
+- **Safe experimentation guidelines**: What's always safe vs requires explanation
+- **Documentation patterns**: How to capture experimental findings
+- **Meta-principle**: Felipe guides alongside; treat sessions as discovery opportunities

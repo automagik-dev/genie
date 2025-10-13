@@ -65,6 +65,159 @@ https://github.com/namastexlabs/automagik-genie/issues/42
 You can continue with #35. Issue #42 is now tracked for later.
 ```
 
+### GitHub Workflow Integration
+
+**Agent:** `.genie/agents/core/github-workflow.md` (renamed from bug-reporter 2025-10-13)
+
+**Full issue lifecycle management:**
+- **CREATE**: New issues with proper templates (bug-report, feature-request, make-a-wish, planned-feature)
+- **LIST**: Query by assignee/label/status (`gh issue list --assignee @me`)
+- **UPDATE**: Modify title, labels, milestone
+- **ASSIGN**: Set/remove assignees
+- **CLOSE**: Resolve with reason and comment
+- **LINK**: Cross-reference wishes, PRs, commits
+
+**Title patterns (CRITICAL):**
+- Bug Report: `[Bug] <description>`
+- Feature Request: `[Feature] <description>`
+- Make a Wish: `[Wish] <description>`
+- Planned Feature: No prefix (free-form)
+
+**❌ Wrong:** `bug:`, `feat:`, `fix:` (conventional commit style not used for issues)
+**✅ Right:** `[Bug]`, `[Feature]`, `[Wish]`
+
+**Integration with Genie workflow:**
+1. **Quick capture:** Developer working on wish A discovers bug → invoke `github-workflow` agent → issue created → return to work (no context loss)
+2. **Welcome flow:** List assigned issues at session start with `!gh issue list --assignee @me`
+3. **Wish linking:** Cross-reference issues ↔ wishes ↔ PRs via comments
+
+**Template structure:**
+All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads template, populates fields, creates temp file, executes `gh issue create --title "[Type] Description" --body-file /tmp/issue.md`.
+
+**Validation:**
+```bash
+# Verify agent exists
+test -f .genie/agents/core/github-workflow.md && echo "✅"
+
+# Check operations documented
+grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK" .genie/agents/core/github-workflow.md
+
+# Test issue creation
+./genie run github-workflow --prompt "Create feature request: interactive permissions"
+```
+
+**Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
+
+## Slash Command Reference
+
+**Rule:** Proactively use slash commands as first-class tools alongside MCP agents.
+
+**When to use:**
+- **Interactive workflows** → Slash commands (human-in-the-loop)
+- **Background/autonomous work** → MCP agents (`mcp__genie__run`)
+
+**Available commands:**
+
+### Workflow Commands
+- `/plan` — Start product planning dialogue (loads mission, roadmap, standards)
+- `/wish` — Create wish document with spec contract
+- `/forge` — Break wish into execution groups with validation hooks
+- `/review` — Validate completed work with 100-point matrix
+
+### Utility Commands
+- `/commit` — Interactive commit flow with diff analysis
+- `/genie-qa` — Self-validate Genie framework
+- `/install` — Framework installation and setup
+- `/prompt` — Prompt refinement helper (meta-prompting)
+- `/sleepy` — Autonomous wish coordinator (requires dedicated branch)
+- `/learn` — Meta-learning for framework improvements
+
+**How to invoke:**
+```
+User: "Let's plan the interactive permissions feature"
+Agent: "I'll start /plan to guide you through product planning..."
+*invokes /plan*
+```
+
+**Routing triggers:**
+- User mentions "plan" → suggest `/plan`
+- User mentions "wish" → suggest `/wish`
+- User mentions "forge" / "break down" → suggest `/forge`
+- User mentions "review" / "validate" → suggest `/review`
+- Commit preparation needed → suggest `/commit`
+
+**Validation:**
+```bash
+# Check commands listed in welcome flow
+grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
+
+# Verify slash command invocation works
+# (Test in actual conversation with user request)
+```
+
+**Context:** Discovered 2025-10-13 that agents were not utilizing available slash commands, preferring direct MCP invocation even for interactive workflows. Slash commands provide better human-in-the-loop experience for guided workflows.
+
+## Experimentation Protocol
+
+**Core philosophy:** Learning = Experimentation
+
+**Rule:** ALWAYS EXPERIMENT during learning. Experimentation is not optional—it's how we discover better patterns.
+
+### Experimentation Framework
+
+**Protocol:**
+1. **Hypothesis**: State what you're testing explicitly
+2. **Experiment**: Try it (with appropriate safety checks)
+3. **Observe**: Capture results and unexpected behaviors
+4. **Learn**: Document finding as new knowledge
+5. **Apply**: Use learning in future tasks
+
+**Example experiments:**
+- "Let me try using /plan instead of MCP for this workflow and observe the difference..."
+- "Testing if github-workflow can handle bulk label updates..."
+- "Experimenting with combining orchestrator + implementor agents for this task..."
+
+### Safe Experimentation Guidelines
+
+**Always safe:**
+- Read-only operations (list, view, analyze)
+- Tool combination experiments
+- Workflow pattern exploration
+- Query optimization tests
+
+**Requires explanation first:**
+- Write operations (explain intent, get approval if destructive)
+- Configuration changes
+- External API calls
+- Git operations (especially push, force, rebase)
+
+**Documentation pattern:**
+After experiment, capture in done reports or learning entries:
+```
+**Experiment**: Tried X approach for Y task
+**Hypothesis**: Expected Z outcome
+**Result**: Actually observed A, discovered B
+**Learning**: Will use A pattern going forward because B
+```
+
+### Meta-Principle
+
+**Felipe guides alongside the learning process.** Treat each session as an opportunity to discover better patterns through active experimentation. Don't wait for permission to try—experiment safely, document findings, and iterate.
+
+**Validation:**
+```bash
+# Check learning entries show experimentation
+grep -i "experiment\|try\|test\|discover" AGENTS.md | wc -l
+# Should show multiple references
+
+# Observe agent behavior:
+# - Does agent suggest experiments proactively?
+# - Does agent try new approaches?
+# - Does agent document learnings from experiments?
+```
+
+**Context:** Discovered 2025-10-13 that learning process was overly cautious, waiting for explicit instructions rather than experimenting with available tools and patterns. Shifted to experimentation-first approach.
+
 ## Unified Agent Stack
 The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in `.claude/commands/`:
 - `plan.md` – orchestrates discovery, roadmap sync, context ledger, branch guidance
@@ -90,6 +243,59 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
+
+## Agent Configuration Standards
+
+### File Write Permissions
+**Rule:** All agents requiring file write access MUST explicitly declare `permissionMode: default` in their frontmatter.
+
+**Context:** Discovered 2025-10-13 when Claude agents with `executor: claude` were unable to write files. Permission prompts auto-skipped because stdin was hardcoded to `'ignore'` during process spawn, making `permissionMode: acceptEdits` completely non-functional.
+
+**Why this matters:**
+- Default executor config doesn't grant write access
+- Without explicit `permissionMode: default`, agents silently fail on file operations
+- Background mode (`background: true`) requires the same permission declaration
+
+**Agent categories:**
+
+**Implementation agents** (REQUIRE `permissionMode: default`):
+- Core delivery: `implementor`, `tests`, `polish`, `refactor`, `git-workflow`
+- Infrastructure: `install`, `learn`, `commit`, `review`
+- Workflow orchestrators: `wish`, `plan`, `forge`, `vibe`, `genie-qa`
+
+**Analysis agents** (READ-ONLY, no permissionMode needed):
+- `analyze`, `audit`, `debug`, `orchestrator`, `prompt`
+
+**Configuration hierarchy:**
+1. **Agent frontmatter** (highest priority) ← Use this level
+2. Config override (`.genie/cli/config.yaml:48`)
+3. Executor default (`claude.ts:13`)
+
+**Implementation example:**
+```yaml
+---
+name: implementor
+genie:
+  executor: claude
+  model: sonnet
+  permissionMode: default  # ← Required for file writes
+---
+```
+
+**Validation:**
+```bash
+# Check all implementation agents have permissionMode
+grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git-workflow,install,learn,commit}.md
+# Should return empty (all agents have the setting)
+
+# Test file write capability
+./genie run implementor --prompt "Create test file at /tmp/test.txt"
+# Should create file without permission prompts
+```
+
+**Future work:** Issue #35 tracks interactive permission system for foreground/background pause-and-resume approval workflow.
+
+**Root cause reference:** Debug session `292942e0-07d1-4448-8d5e-74db8acc8c5b` identified stdin configuration at `.genie/cli/src/cli-core/handlers/shared.ts:391`.
 
 ## Workflow Summary
 1. **/plan** – single-entry agent for product mode. Loads mission/roadmap/standards, gathers context via `@` references, requests background personas via MCP, and decides if item is wish-ready.
@@ -223,258 +429,6 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 ## Agent Playbook
 
 <prompt>
-
-<behavioral_learnings>
-[CONTEXT]
-- Learn entries override conflicting rules; enforce immediately across agents/docs.
-
-[SUCCESS CRITERIA]
-✅ Latest learning acknowledged, applied, and validated with evidence.
-✅ Violations escalate a new learning with trigger, correction, validation.
-✅ Learnings referenced in wishes/forge artefacts when relevant.
-
-[NEVER DO]
-❌ Remove existing learnings without explicit approval.
-❌ Proceed without validation steps for corrections.
-
-```
-<task_breakdown>
-1. [Discovery] Read new feedback, gather evidence, identify affected agents/docs.
-2. [Implementation] Add/update learning entries with correction + validation details; propagate instructions.
-3. [Verification] Monitor subsequent runs, capture proof, note follow-up tasks.
-</task_breakdown>
-```
-
-  <learning_entries>
-    <!-- Template for entries added by learn processes:
-    <entry date="YYYY-MM-DD" violation_type="TYPE" severity="CRITICAL|HIGH|MEDIUM">
-      <trigger>What triggered this learning</trigger>
-      <correction>The correction to apply</correction>
-      <validation>How to verify the correction is working</validation>
-    </entry>
-    -->
-
-    <entry date="2025-10-13" violation_type="AGENT_CONFIG" severity="HIGH">
-      <trigger>Claude agents with `executor: claude` were unable to write files due to missing `permissionMode` configuration. Permission prompts auto-skipped because stdin was hardcoded to 'ignore', making `permissionMode: acceptEdits` non-functional.</trigger>
-      <correction>
-        **Rule:** All agents requiring file write access MUST explicitly declare `permissionMode: default` in their frontmatter.
-
-        **Agent categories:**
-        - **Implementation agents** (REQUIRE `permissionMode: default`): implementor, tests, polish, refactor, git-workflow, install, learn, commit, review, wish, plan, forge, vibe, genie-qa
-        - **Analysis agents** (READ-ONLY, no permissionMode needed): analyze, audit, debug, orchestrator, prompt
-
-        **Config hierarchy:**
-        1. Agent frontmatter (highest priority) ← Use this
-        2. Config override (`.genie/cli/config.yaml:48`)
-        3. Executor default (`claude.ts:13`)
-
-        **Example:**
-        ```yaml
-        genie:
-          executor: claude
-          model: sonnet
-          permissionMode: default  # Allows writes without prompts
-        ```
-      </correction>
-      <validation>
-        **Check:** All implementation agents have `permissionMode: default` in frontmatter
-        ```bash
-        grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git-workflow,install,learn,commit}.md
-        # Should return empty (all have permissionMode)
-        ```
-
-        **Test:** Run agent and verify file writes succeed
-        ```bash
-        ./genie run implementor --prompt "Create test file at /tmp/test.txt"
-        # Should create file without permission prompts
-        ```
-      </validation>
-    </entry>
-
-    <entry date="2025-10-13" violation_type="GITHUB_WORKFLOW" severity="CRITICAL">
-      <trigger>GitHub issue #34 was created using `gh issue create --body "..."` without proper template structure, violating project conventions for issue templates in `.github/ISSUE_TEMPLATE/`. Issue #35 used incorrect title format (`feat:` instead of `[Feature]`).</trigger>
-      <correction>
-        **Rule:** ALWAYS use the `bug-reporter` agent for creating GitHub issues. NEVER use `gh issue create` directly without template structure.
-
-        **Available templates with title patterns:**
-        1. **bug-report.yml** - Title: `[Bug] <description>`
-        2. **feature-request.yml** - Title: `[Feature] <description>`
-        3. **make-a-wish.yml** - Title: `[Wish] <description>`
-        4. **planned-feature.yml** - Title: No prefix (free-form)
-
-        **Routing logic:**
-        - Broken functionality → bug-report.yml + `[Bug]` prefix
-        - New capability/enhancement → feature-request.yml + `[Feature]` prefix
-        - Strategic initiative → make-a-wish.yml + `[Wish]` prefix
-        - Approved wish → planned-feature.yml (no prefix)
-
-        **Correct workflow:**
-        1. Invoke `bug-reporter` agent with context
-        2. Agent reads appropriate template from `.github/ISSUE_TEMPLATE/`
-        3. Agent extracts title pattern from template `title:` field
-        4. Agent creates temp file with properly formatted body
-        5. Agent executes: `gh issue create --title "[Type] Description" --body-file /tmp/issue.md --label "..."`
-        6. Agent returns issue URL
-
-        **Title format examples:**
-        - ✅ `[Bug] Permission prompts auto-skip in background mode`
-        - ✅ `[Feature] Interactive permission system for agents`
-        - ✅ `[Wish] Multi-language agent support`
-        - ❌ `bug: Permission prompts auto-skip` (wrong prefix)
-        - ❌ `feat: Interactive permission system` (wrong prefix)
-
-        **Created agent:** `.genie/agents/core/github-workflow.md` (renamed from bug-reporter) to handle full GitHub issue lifecycle
-
-        **Expanded scope (2025-10-13):**
-        Agent now handles ALL GitHub issue operations, not just creation:
-        - **CREATE**: New issues with proper templates
-        - **LIST**: Query by assignee/label/status
-        - **UPDATE**: Modify title, labels, milestone
-        - **ASSIGN**: Set/remove assignees
-        - **CLOSE**: Resolve with reason and comment
-        - **LINK**: Cross-reference wishes, PRs, commits
-
-        **Integration with Genie workflow:**
-        - Quick capture: Document bugs/ideas without losing focus on current wish
-        - Welcome flow: List assigned issues at session start
-        - Wish linking: Cross-reference issues ↔ wishes ↔ PRs
-      </correction>
-      <validation>
-        **Check:** github-workflow agent exists and documents all operations
-        ```bash
-        test -f .genie/agents/core/github-workflow.md && echo "✅ Agent exists"
-        grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK" .genie/agents/core/github-workflow.md
-        ```
-
-        **Test:** Full lifecycle operations
-        ```bash
-        # List my issues
-        gh issue list --assignee @me --state open
-
-        # Create with template
-        ./genie run github-workflow --prompt "Create feature request: ..."
-
-        # Update existing
-        gh issue edit 35 --add-label "priority:high"
-        ```
-
-        **Verify:**
-        - All 6 operation types documented
-        - Title patterns documented for all templates
-        - Quick capture workflow example included
-        - Welcome flow integrated in AGENTS.md
-      </validation>
-    </entry>
-
-    <entry date="2025-10-13" violation_type="WORKFLOW_TOOLING" severity="HIGH">
-      <trigger>Agents were not utilizing available slash commands (/plan, /wish, /forge, /review) to facilitate workflows. Direct agent invocation was used instead of leveraging built-in commands.</trigger>
-      <correction>
-        **Rule:** Proactively use slash commands to facilitate Genie workflows. Treat them as first-class tools alongside MCP agents.
-
-        **Available slash commands:**
-        - `/plan` — Start product planning dialogue (interactive)
-        - `/wish` — Create wish document (interactive)
-        - `/forge` — Break wish into execution groups (interactive)
-        - `/review` — Validate completed work (interactive)
-        - `/commit` — Interactive commit flow
-        - `/genie-qa` — Self-validate Genie framework
-        - `/install` — Framework installation
-        - `/prompt` — Prompt refinement helper
-        - `/sleepy` — Autonomous wish coordinator
-        - `/learn` — Meta-learning for framework improvements
-
-        **When to use:**
-        - User mentions "plan", "wish", "forge", or "review" → suggest appropriate slash command
-        - Starting new feature work → `/plan`
-        - Creating wish document → `/wish`
-        - Breaking down approved wish → `/forge`
-        - Validating completion → `/review`
-        - Commit preparation → `/commit`
-
-        **How to invoke:**
-        ```
-        User: "Let's plan the interactive permissions feature"
-        Agent: "I'll start /plan to guide you through product planning..."
-        *invokes /plan*
-        ```
-
-        **Integration with MCP:**
-        - Slash commands for interactive workflows (human-in-loop)
-        - MCP agents (`mcp__genie__run`) for background/autonomous work
-        - Both are valid; choose based on task needs
-      </correction>
-      <validation>
-        **Check:** Slash commands listed in welcome flow
-        ```bash
-        grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
-        ```
-
-        **Test:** Invoke slash command in conversation
-        ```
-        User: "Start planning the new feature"
-        Agent: *uses /plan command*
-        ```
-
-        **Verify:**
-        - Agent suggests appropriate slash command based on context
-        - Agent explains what the command will do before invoking
-        - Agent can switch between slash commands and MCP agents fluidly
-      </validation>
-    </entry>
-
-    <entry date="2025-10-13" violation_type="LEARNING_PHILOSOPHY" severity="MEDIUM">
-      <trigger>Learning process was overly cautious, waiting for explicit instructions rather than experimenting with available tools and patterns.</trigger>
-      <correction>
-        **Rule:** ALWAYS EXPERIMENT during learning. Experimentation is core to the learning process.
-
-        **Learning = Experimentation:**
-        - Try new tool combinations
-        - Test different workflow patterns
-        - Explore edge cases
-        - Validate assumptions actively
-        - Document what works and what doesn't
-
-        **Experimentation protocol:**
-        1. **Hypothesis**: State what you're testing
-        2. **Experiment**: Try it (with safety checks)
-        3. **Observe**: Capture results
-        4. **Learn**: Document finding as new knowledge
-        5. **Apply**: Use learning in future tasks
-
-        **Example experiments:**
-        - "Let me try using /plan instead of MCP for this workflow..."
-        - "Testing if github-workflow can handle bulk updates..."
-        - "Experimenting with combining orchestrator + implementor agents..."
-
-        **Safe experimentation:**
-        - Read-only operations: Always safe to experiment
-        - Write operations: Explain first, get approval for destructive changes
-        - Tool combinations: Experiment freely, document outcomes
-        - Workflow patterns: Try new approaches, validate effectiveness
-
-        **Meta-principle:**
-        Felipe will guide alongside the learning process. Treat each session as an opportunity to discover better patterns through active experimentation.
-      </correction>
-      <validation>
-        **Check:** Learning entries show evidence of experimentation
-        ```bash
-        grep -i "experiment\|try\|test" AGENTS.md | wc -l
-        # Should show multiple experimentation references
-        ```
-
-        **Observe:** Agent behavior in conversations
-        - Does agent suggest experiments?
-        - Does agent try new approaches?
-        - Does agent document learnings from experiments?
-
-        **Verify:**
-        - Learning entries include "tried X, discovered Y" patterns
-        - Agent proactively suggests experiments during tasks
-        - Agent captures experimental results in done reports
-      </validation>
-    </entry>
-  </learning_entries>
-</behavioral_learnings>
 
 <context>
 [CONTEXT]
