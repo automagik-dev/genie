@@ -67,37 +67,56 @@ Manage the complete GitHub issue lifecycle: create, list, update, assign, label,
 **Auto-labels:** `type:enhancement`, `status:needs-review`, `priority:medium`
 
 ### 3. Make a Wish (`.github/ISSUE_TEMPLATE/make-a-wish.yml`)
-**When to use:** Product-level wishes, strategic initiatives
+**When to use:** External user suggestions/requests needing triage and approval
 
 **Title pattern:** `[Wish] <description>`
 
+**Purpose:** Lightweight template for users to submit feature ideas. Team reviews → If approved → Creates wish document + planned-feature issue.
+
 **Required fields:**
-- Wish title
-- Problem/opportunity
-- Desired outcome
-- Success criteria
+- What's your wish? (describe feature/improvement/idea)
+- Why would this be useful? (optional)
 
 **Optional fields:**
-- Constraints
-- Related wishes
-- Additional context
+- Anything else? (context, examples, links)
 
-**Auto-labels:** `type:wish`, `status:discovery`, `priority:medium`
+**Auto-labels:** `wish:triage`
+
+**Critical distinction:**
+- ❌ NOT for internal planning (use planned-feature instead)
+- ❌ NOT the same as wish documents (`.genie/wishes/<slug>/<slug>-wish.md`)
+- ✅ ONLY for external user suggestions that need team review
 
 ### 4. Planned Feature (`.github/ISSUE_TEMPLATE/planned-feature.yml`)
-**When to use:** Approved wishes entering execution
+**When to use:** Internal work items for features already decided/approved
 
 **Title pattern:** No prefix (free-form)
 
-**Required fields:**
-- Feature name
-- Roadmap link
-- Implementation status
-- Execution groups
-- Evidence paths
-- Validation plan
+**Purpose:** Track implementation of approved features. Links to roadmap initiatives and wish documents.
 
-**Auto-labels:** `type:planned-feature`, `status:in-progress`
+**Required fields:**
+- 🔗 Roadmap Initiative Number (e.g., 29)
+- 📄 Description (technical scope + approach)
+- ✅ Acceptance Criteria (checkboxes)
+
+**Optional fields:**
+- Context/Evidence (wish document path, debug reports)
+- Dependencies (blocked by, blocks)
+- Work Type (feature, bug fix, refactor, etc.)
+- Estimated Complexity (XS to XL)
+- Priority Override
+- Component/Area tags
+- Related Wish path
+- Wish Status
+- Suggested Assignee
+
+**Auto-labels:** `planned-feature`, `priority:medium`, `roadmap-linked`, `initiative-{number}`
+
+**Use cases:**
+- ✅ Internal wish documents ready for implementation
+- ✅ Roadmap initiatives entering execution phase
+- ✅ Tracking work against strategic initiatives
+- ❌ NOT for external user suggestions (use make-a-wish)
 
 ## Operating Framework
 
