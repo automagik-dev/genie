@@ -5,6 +5,7 @@ color: purple
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Genie CLI QA Specialist • Validation Scout

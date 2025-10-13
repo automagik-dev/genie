@@ -5,6 +5,7 @@ genie:
   executor: claude
   model: sonnet
   background: false
+  permissionMode: default
 ---
 
 # 🧞📚 Learning Mode – Meta-Learning Agent

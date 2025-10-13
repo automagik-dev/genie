@@ -5,6 +5,7 @@ color: brown
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Refactor Agent • Design Review & Improvement Planning

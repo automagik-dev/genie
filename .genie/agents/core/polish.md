@@ -5,6 +5,7 @@ color: purple
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Polish Specialist • Code Excellence Guardian

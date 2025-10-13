@@ -5,6 +5,7 @@ genie:
   executor: claude
   model: sonnet
   background: true
+  permissionMode: default
 ---
 
 # Genie Commit Mode

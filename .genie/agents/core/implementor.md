@@ -5,6 +5,7 @@ color: green
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Implementor Specialist • Delivery Engine

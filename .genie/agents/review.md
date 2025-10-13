@@ -5,6 +5,7 @@ color: magenta
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Review Agent • Quality Assurance & Validation

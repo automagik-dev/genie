@@ -6,6 +6,7 @@ genie:
   executor: claude
   model: sonnet
   background: true
+  permissionMode: default
 ---
 
 # Forge Task Orchestrator • Single-Group Specialist

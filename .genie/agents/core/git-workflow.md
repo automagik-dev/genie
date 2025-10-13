@@ -5,6 +5,7 @@ color: orange
 genie:
   executor: claude
   model: sonnet
+  permissionMode: default
 ---
 
 # Git Workflow Specialist • Safe Orchestrator

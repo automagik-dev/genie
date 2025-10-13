@@ -198,6 +198,85 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
       <validation>How to verify the correction is working</validation>
     </entry>
     -->
+
+    <entry date="2025-10-13" violation_type="AGENT_CONFIG" severity="HIGH">
+      <trigger>Claude agents with `executor: claude` were unable to write files due to missing `permissionMode` configuration. Permission prompts auto-skipped because stdin was hardcoded to 'ignore', making `permissionMode: acceptEdits` non-functional.</trigger>
+      <correction>
+        **Rule:** All agents requiring file write access MUST explicitly declare `permissionMode: default` in their frontmatter.
+
+        **Agent categories:**
+        - **Implementation agents** (REQUIRE `permissionMode: default`): implementor, tests, polish, refactor, git-workflow, install, learn, commit, review, wish, plan, forge, vibe, genie-qa
+        - **Analysis agents** (READ-ONLY, no permissionMode needed): analyze, audit, debug, orchestrator, prompt
+
+        **Config hierarchy:**
+        1. Agent frontmatter (highest priority) ← Use this
+        2. Config override (`.genie/cli/config.yaml:48`)
+        3. Executor default (`claude.ts:13`)
+
+        **Example:**
+        ```yaml
+        genie:
+          executor: claude
+          model: sonnet
+          permissionMode: default  # Allows writes without prompts
+        ```
+      </correction>
+      <validation>
+        **Check:** All implementation agents have `permissionMode: default` in frontmatter
+        ```bash
+        grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git-workflow,install,learn,commit}.md
+        # Should return empty (all have permissionMode)
+        ```
+
+        **Test:** Run agent and verify file writes succeed
+        ```bash
+        ./genie run implementor --prompt "Create test file at /tmp/test.txt"
+        # Should create file without permission prompts
+        ```
+      </validation>
+    </entry>
+
+    <entry date="2025-10-13" violation_type="GITHUB_WORKFLOW" severity="CRITICAL">
+      <trigger>GitHub issue #34 was created using `gh issue create --body "..."` without proper template structure, violating project conventions for issue templates in `.github/ISSUE_TEMPLATE/`.</trigger>
+      <correction>
+        **Rule:** ALWAYS use the `bug-reporter` agent for creating GitHub issues. NEVER use `gh issue create` directly without template structure.
+
+        **Available templates:**
+        1. **bug-report.yml** - Bugs, regressions, broken functionality
+        2. **feature-request.yml** - Enhancements, new capabilities, improvements
+        3. **make-a-wish.yml** - Product-level wishes, strategic initiatives
+        4. **planned-feature.yml** - Approved wishes entering execution
+
+        **Routing logic:**
+        - Broken functionality → bug-report.yml
+        - New capability/enhancement → feature-request.yml
+        - Strategic initiative → make-a-wish.yml
+        - Approved wish → planned-feature.yml
+
+        **Correct workflow:**
+        1. Invoke `bug-reporter` agent with context
+        2. Agent reads appropriate template from `.github/ISSUE_TEMPLATE/`
+        3. Agent creates temp file with properly formatted body
+        4. Agent executes: `gh issue create --title "..." --body-file /tmp/issue.md --label "..."`
+        5. Agent returns issue URL
+
+        **Created agent:** `.genie/agents/core/bug-reporter.md` to handle all GitHub issue creation
+      </correction>
+      <validation>
+        **Check:** bug-reporter agent exists
+        ```bash
+        test -f .genie/agents/core/bug-reporter.md && echo "✅ Agent exists"
+        ```
+
+        **Test:** Create test issue using bug-reporter
+        ```bash
+        # Should use template structure, not plain body
+        ./genie run bug-reporter --prompt "Create feature request for interactive permissions"
+        ```
+
+        **Verify:** Issue created with proper template sections (Feature Summary, Problem Statement, Proposed Solution, Use Cases)
+      </validation>
+    </entry>
   </learning_entries>
 </behavioral_learnings>
 
