@@ -57,19 +57,23 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | @.genie/cli/src/lib/executor-config.ts:9-15 | code | Current executor resolution (mode → defaults) | implementation |
-| @.genie/cli/src/commands/run.ts:55-58 | code | Agent executor override logic | implementation |
-| @.genie/state/provider.json | state | Provider selected at init time | implementation |
+| @.genie/cli/src/lib/config.ts:154-157 | code | Runtime provider.json loading (already works!) | implementation |
+| @.genie/cli/src/lib/config.ts:188-204 | code | loadWorkspaceProvider() and applyProviderOverrides() | implementation |
+| @.genie/cli/src/commands/run.ts | code | Run command (needs --provider flag integration) | implementation |
+| @.genie/state/provider.json | state | Provider selected at init, read at runtime | implementation |
 | User clarification (items #7-9) | requirements | Runtime override with fallbacks, binary detection | entire wish |
 | @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
 
 ## Discovery Summary
 - **Primary analyst:** Human (namastex) + Genie planning agent
 - **Key observations:**
-  - Current executor resolution: Agent frontmatter → Mode config → Defaults (static at init)
-  - Provider stored in `.genie/state/provider.json` but only used during init, not runtime
-  - Users with single provider access (e.g., Claude Code only) can't override Codex defaults
+  - Current executor resolution: Agent frontmatter → Mode config → Defaults (from config + provider.json)
+  - Provider stored in `.genie/state/provider.json` and **IS read at runtime via `loadWorkspaceProvider()`**
+  - `applyProviderOverrides()` updates config.defaults.executor based on provider.json
+  - **What's missing:** CLI flag (`--provider`) for per-command override without changing provider.json
+  - Users with single provider access can't temporarily override without re-running init
   - Future Forge executor APIs will expand beyond Codex/Claude (Cursor, Windsurf, etc.)
-  - Need lightweight solution (state file read + CLI flag) without refactoring executor system
+  - Need lightweight solution (CLI flag + binary validation) without refactoring executor system
 - **Assumptions (ASM-#):**
   - ASM-1: Users know their available providers (no need for discovery wizard)
   - ASM-2: Binary detection sufficient for validation (`which codex`, `which claude`)
@@ -101,13 +105,18 @@ This accommodates users with limited provider access while maintaining backward 
   2. Fallback to config.defaults.executor
   3. Fallback to DEFAULT_EXECUTOR_KEY (codex)
   ```
-- **Provider state:** `.genie/state/provider.json` written during init, never read at runtime
+- **Provider state integration:** `.genie/state/provider.json` IS read at runtime
+  - `config.ts:154-157` - `loadWorkspaceProvider()` reads provider.json on config load
+  - `applyProviderOverrides()` sets `config.defaults.executor` based on provider
+  - Updates execution modes with provider-specific executor/model
+  - **Works at runtime but lacks CLI override capability**
 - **Agent overrides:** Frontmatter `genie.executor` and `genie.model` respected
-- **No CLI override:** Users can't force provider selection per command
+- **What's missing:** CLI flag for per-command provider override
 - **Pain points:**
-  - User with only Claude Code access can't run agents defaulting to Codex
-  - No way to test multi-provider scenarios without re-running init
-  - State file provider selection ignored after init completes
+  - User with only Claude Code access can't run agents defaulting to Codex **without re-running init**
+  - No way to temporarily override provider for testing multi-provider scenarios
+  - No binary validation before execution (fails cryptically if binary missing)
+  - No intelligent fallback suggestions when provider unavailable
 
 ## Target State & Guardrails
 - **Desired behaviour:**
