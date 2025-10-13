@@ -213,7 +213,22 @@ gh issue comment <number> --body "Fixed in commit 8ddce89"
 
 ## Template Usage Pattern
 
-### Method 1: Body File (Recommended for Templates)
+**⚠️ CRITICAL LIMITATION:** GitHub Issue Forms (`.github/ISSUE_TEMPLATE/*.yml`) do NOT work with `gh issue create --body-file`.
+
+**Problem:** Creating issues via CLI bypasses the form workflow automation:
+- Labels are NOT auto-applied from template configuration
+- Workflow triggers do NOT fire
+- Issue form validations are NOT enforced
+
+**Solution:** Manual label correction after CLI creation
+```bash
+# After creating issue via CLI, manually add template labels:
+gh issue edit <number> --add-label "planned-feature,priority:high,roadmap-linked,initiative-29"
+```
+
+**Best practice:** For planned-feature and make-a-wish templates, guide user to create via GitHub web UI, OR create via CLI and immediately fix labels.
+
+### Method 1: Body File (with manual label fix)
 ```bash
 # Create temporary body file with template fields
 cat > /tmp/issue-body.md <<'EOF'
