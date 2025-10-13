@@ -2,7 +2,18 @@
 
 **Created:** 2025-10-12
 **Status:** Ready for review
-**Total Wishes:** 3
+**Total Wishes:** 3 active
+
+---
+
+## Changelog
+
+### 2025-10-13: Archived agent-reference-fixes
+**Reason:** Completed wish (100/100 on 2025-10-07) superseded by core-template-separation Phase 0.
+
+All fixes for broken wrapper references were incorporated into the ongoing core-template restructuring work. The wish served its purpose and has been moved to `.genie/wishes/.archive/agent-reference-fixes/` for historical reference.
+
+**Evidence:** Wish completion score 100/100, all validation commands passed, work integrated into parent initiative.
 
 ---
 
