@@ -91,13 +91,27 @@ You can continue with #35. Issue #42 is now tracked for later.
 - **Planned Feature** = Internal work items for features already decided/approved → Links to roadmap initiatives and wish documents
 - **Wish Document** = Internal planning artifact (`.genie/wishes/<slug>/<slug>-wish.md`) → NOT the same as "Make a Wish" issue!
 
-**Template selection rules:**
-- External users → `make-a-wish` (title: `[Make a Wish]`)
-- Internal + roadmap initiative exists → `planned-feature` (no title prefix)
-- Internal + no initiative + feature → `feature-request` (title: `[Feature]`)
-- Internal + no initiative + bug → `bug-report` (title: `[Bug]`)
-- **Critical:** Always update mistakes with `gh issue edit` (never close and reopen)
-- **Critical:** NOT everything needs roadmap initiative (standalone work uses feature-request/bug-report)
+**Template selection rules (DECISION TREE):**
+
+```
+Is this an external user suggestion?
+  YES → Use make-a-wish (title: "[Make a Wish]")
+  NO  ↓
+
+Does a wish document (.genie/wishes/<slug>/) exist?
+  YES → Use planned-feature (no title prefix) ⚠️ ALWAYS
+  NO  ↓
+
+Is this a bug?
+  YES → Use bug-report (title: "[Bug]")
+  NO  → Use feature-request (title: "[Feature]")
+```
+
+**Critical rules:**
+- ⚠️ **NEVER use make-a-wish for internal work** - It's ONLY for external user suggestions
+- ⚠️ **ALWAYS use planned-feature when wish document exists** - Even if no roadmap initiative yet
+- ⚠️ **Update mistakes with `gh issue edit`** - Never close and reopen
+- **NOT everything needs roadmap initiative** - Standalone work uses feature-request/bug-report
 
 **Integration with Genie workflow:**
 1. **Quick capture:** Developer working on wish A discovers bug → invoke `github-workflow` agent → issue created → return to work (no context loss)

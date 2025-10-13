@@ -49,6 +49,55 @@ Coordinate Git operations around wishes: branch strategy, staging/commits, and P
 </task_breakdown>
 ```
 
+## GitHub Issue Template Selection
+
+**CRITICAL:** Choose the correct template based on work type and source:
+
+| Template | When to Use | Title Format | Who Creates |
+|----------|-------------|--------------|-------------|
+| **Make a Wish** | External user suggestions/ideas | `[Make a Wish]` | External users ONLY |
+| **Bug Report** | Bugs discovered (no wish) | `[Bug]` | Team or users |
+| **Feature Request** | Internal features (no roadmap initiative) | `[Feature]` | Team (standalone work) |
+| **Planned Feature** | Work with wish document + roadmap initiative | No prefix | Team (internal work) |
+
+**Decision Tree:**
+```
+Is this an external user suggestion?
+  YES → Use "Make a Wish" template
+  NO  ↓
+
+Does a wish document exist?
+  YES → Use "Planned Feature" template
+  NO  ↓
+
+Is this a bug?
+  YES → Use "Bug Report" template
+  NO  → Use "Feature Request" template
+```
+
+**Key distinction:**
+- **Make a Wish** (external) = User suggestions → Team reviews → If approved → Create wish document + Planned Feature issue
+- **Planned Feature** (internal) = Work with existing wish document → Links to roadmap initiative
+- **Wish Document** (internal) = `.genie/wishes/<slug>/<slug>-wish.md` planning artifacts (NOT the same as "Make a Wish" issue!)
+
+**Examples:**
+```bash
+# Internal work with wish document
+gh issue create \
+  --template planned-feature.yml \
+  --title "Provider runtime override with intelligent fallbacks"
+
+# External user suggestion
+gh issue create \
+  --template make-a-wish.yml \
+  --title "[Make a Wish] Add dark mode support"
+
+# Bug (no wish)
+gh issue create \
+  --template bug-report.yml \
+  --title "[Bug] Session timeout in background mode"
+```
+
 ## Branch & Commit Conventions
 - Default branches: `feat/<wish-slug>` (or `fix/<issue>`, `chore/<task>`)
 - Follow naming rules from `@.genie/custom/git-workflow.md` when a project overrides the defaults
