@@ -57,7 +57,10 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | @.genie/cli/src/commands/init.ts:77-209 | code | Current init copies from package `.genie/` | implementation |
-| @.genie/cli/src/lib/paths.ts:7-13 | code | Template path resolution | implementation |
+| @.genie/cli/src/lib/paths.ts:7-13 | code | Template path resolution (.claude already migrated) | implementation |
+| @templates/.claude/ | existing | Claude templates already moved (20+ files) | Group A (partial complete) |
+| @templates/AGENTS.md | existing | Root doc already moved (23KB) | Group A (partial complete) |
+| @templates/CLAUDE.md | existing | Root doc already moved (4KB) | Group A (partial complete) |
 | @package.json:15-34 | config | Files bundled in npm package | implementation |
 | User clarification (items #4-6) | requirements | Separate templates, support Next.js/Rust, version independently | entire wish |
 | @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
@@ -86,10 +89,12 @@
   - RISK-3: Framework dev workflow disruption during `.genie/` relocation
 
 ## Executive Summary
-Transform Genie from single-template to multi-template architecture:
-1. **Separate concerns:** Move framework dev `.genie/` to `templates/base/.genie/` (cleaned of framework context)
+Complete multi-template architecture migration (partial work already done):
+1. **Complete separation:** Move remaining `.genie/` to `templates/base/.genie/` + create symlink for framework dev
 2. **Enable project-type scaffolds:** Support `genie init --template nextjs` for pre-configured starters
 3. **Independent versioning:** Track template versions separately from framework, enabling rapid iteration
+
+**Partial migration complete:** `.claude/`, `AGENTS.md`, `CLAUDE.md` already in `templates/` (2025-10-12). This wish completes the migration by moving `.genie/` and adding template selection + versioning.
 
 This unlocks Genie as a foundation for opinionated starter kits while maintaining clean framework development.
 
@@ -97,10 +102,22 @@ This unlocks Genie as a foundation for opinionated starter kits while maintainin
 - **Template source:** Framework repo's `.genie/` copied directly to user projects during `genie init`
   - Path resolution: `paths.ts:getTemplateGeniePath()` → `<package-root>/.genie/`
   - Includes framework-specific context: `.genie/custom/analyze.md`, product docs referencing Genie itself
-- **Single template:** No project-type differentiation
+- **Partial migration complete (as of 2025-10-12):**
+  - ✅ `.claude/` templates moved to `templates/.claude/` (20+ agent wrappers)
+  - ✅ `AGENTS.md` moved to `templates/AGENTS.md` (23KB)
+  - ✅ `CLAUDE.md` moved to `templates/CLAUDE.md` (4KB)
+  - ✅ Path resolution updated: `getTemplateClaudePath()` points to `templates/.claude/`
+  - ❌ `.genie/` still at package root (not yet in `templates/`)
+- **Single template:** No project-type differentiation (no nextjs/, rust-cli/ variants)
 - **No versioning:** Templates tied to framework version (no independent evolution)
+- **What's missing:**
+  - `.genie/` not yet moved to `templates/base/.genie/`
+  - No symlink from root `.genie/` → `templates/base/.genie/`
+  - No template selection logic (`--template` flag doesn't exist)
+  - No template versioning system (`template.json` files)
+  - No project-type scaffolds (Next.js, Rust CLI templates)
 - **Pain points:**
-  - Users copy Genie-specific context into their projects
+  - Users still copy Genie-specific context into their projects
   - No quick-start for common stacks (Next.js, Rust CLI, Python API, etc.)
   - Template improvements require framework releases
 
@@ -606,11 +623,16 @@ genie run implementor "@.genie/product/mission.md"
 
 ## <spec_contract>
 - **Scope:**
-  - Separate framework dev `.genie/` from distribution `templates/base/`
+  - Complete `.genie/` migration to `templates/base/.genie/` + create symlink
   - Create Next.js + Rust CLI template scaffolds
   - Implement `genie init --template <type>` CLI
   - Add template versioning with compatibility checks
   - Track installed template in `.genie/state/template.json`
+- **Already complete (partial Group A, 2025-10-12):**
+  - ✅ `.claude/` moved to `templates/.claude/` (20+ agent wrappers)
+  - ✅ `AGENTS.md` moved to `templates/AGENTS.md`
+  - ✅ `CLAUDE.md` moved to `templates/CLAUDE.md`
+  - ✅ Path resolution updated (`getTemplateClaudePath()` points to templates/)
 - **Out of scope:**
   - External template registry (npm, GitHub) – ship in package only
   - Template generation wizard (`genie create-template`) – manual authoring for now
@@ -622,7 +644,7 @@ genie run implementor "@.genie/product/mission.md"
   - Template versioning enables independent iteration
   - At least 2 complete templates shipped (Next.js, Rust CLI)
 - **External tasks:**
-  - FORGE-TBD-A: Template restructure + base cleanup
+  - FORGE-TBD-A: Complete template restructure (finish .genie migration + symlink)
   - FORGE-TBD-B: Next.js template authoring
   - FORGE-TBD-C: Template selection CLI
   - FORGE-TBD-D: Template versioning system
