@@ -79,10 +79,11 @@ async function runChat(parsed, config, paths) {
     if (handledBackground) {
         return;
     }
-    const agentPath = path_1.default.join('.genie', 'agents', `${resolvedAgentName}.md`);
+    // Pass agent instructions directly (already loaded by loadAgentSpec)
+    // This avoids path resolution issues with npm-backed agents
     const command = executor.buildRunCommand({
         config: executorConfig,
-        agentPath,
+        instructions: agentSpec.instructions,
         prompt
     });
     await executeRun({

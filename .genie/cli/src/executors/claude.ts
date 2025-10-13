@@ -21,7 +21,7 @@ const defaults: ExecutorDefaults = {
   sessionExtractionDelayMs: 1000
 };
 
-function buildRunCommand({ config = {}, agentPath, prompt }: { config?: Record<string, any>; agentPath?: string; prompt?: string }): ExecutorCommand {
+function buildRunCommand({ config = {}, instructions, agentPath, prompt }: { config?: Record<string, any>; instructions?: string; agentPath?: string; prompt?: string }): ExecutorCommand {
   const execConfig = mergeExecConfig(config.exec) as Record<string, any>;
   const command = config.binary || defaults.binary!;
   const args: string[] = ['-p', '--verbose', '--output-format', 'stream-json'];
@@ -42,7 +42,10 @@ function buildRunCommand({ config = {}, agentPath, prompt }: { config?: Record<s
     args.push('--disallowed-tools', execConfig.disallowedTools.join(','));
   }
 
-  if (agentPath) {
+  // Prefer instructions (already loaded) over agentPath (requires file read)
+  if (instructions) {
+    args.push('--append-system-prompt', instructions);
+  } else if (agentPath) {
     const instructionsFile = path.isAbsolute(agentPath) ? agentPath : path.resolve(agentPath);
     try {
       const content = fs.readFileSync(instructionsFile, 'utf-8');

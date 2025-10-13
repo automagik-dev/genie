@@ -56,7 +56,7 @@ const defaults = {
     },
     sessionExtractionDelayMs: 1000
 };
-function buildRunCommand({ config = {}, agentPath, prompt }) {
+function buildRunCommand({ config = {}, instructions, agentPath, prompt }) {
     const execConfig = mergeExecConfig(config.exec);
     const command = config.binary || defaults.binary;
     const args = ['-p', '--verbose', '--output-format', 'stream-json'];
@@ -72,7 +72,11 @@ function buildRunCommand({ config = {}, agentPath, prompt }) {
     if (Array.isArray(execConfig.disallowedTools) && execConfig.disallowedTools.length > 0) {
         args.push('--disallowed-tools', execConfig.disallowedTools.join(','));
     }
-    if (agentPath) {
+    // Prefer instructions (already loaded) over agentPath (requires file read)
+    if (instructions) {
+        args.push('--append-system-prompt', instructions);
+    }
+    else if (agentPath) {
         const instructionsFile = path_1.default.isAbsolute(agentPath) ? agentPath : path_1.default.resolve(agentPath);
         try {
             const content = fs_1.default.readFileSync(instructionsFile, 'utf-8');
