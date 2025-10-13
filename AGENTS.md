@@ -80,16 +80,24 @@ You can continue with #35. Issue #42 is now tracked for later.
 **Title patterns (CRITICAL):**
 - Bug Report: `[Bug] <description>`
 - Feature Request: `[Feature] <description>`
-- Make a Wish: `[Wish] <description>` (external user suggestions only)
+- Make a Wish: `[Make a Wish] <description>` (external user suggestions only)
 - Planned Feature: No prefix (free-form) (internal work items)
 
 **❌ Wrong:** `bug:`, `feat:`, `fix:` (conventional commit style not used for issues)
-**✅ Right:** `[Bug]`, `[Feature]`, `[Wish]`
+**✅ Right:** `[Bug]`, `[Feature]`, `[Make a Wish]`
 
 **Template distinctions:**
 - **Make a Wish** = External user suggestions → Team reviews → If approved → Create wish document + planned-feature issue
 - **Planned Feature** = Internal work items for features already decided/approved → Links to roadmap initiatives and wish documents
 - **Wish Document** = Internal planning artifact (`.genie/wishes/<slug>/<slug>-wish.md`) → NOT the same as "Make a Wish" issue!
+
+**Template selection rules:**
+- External users → `make-a-wish` (title: `[Make a Wish]`)
+- Internal + roadmap initiative exists → `planned-feature` (no title prefix)
+- Internal + no initiative + feature → `feature-request` (title: `[Feature]`)
+- Internal + no initiative + bug → `bug-report` (title: `[Bug]`)
+- **Critical:** Always update mistakes with `gh issue edit` (never close and reopen)
+- **Critical:** NOT everything needs roadmap initiative (standalone work uses feature-request/bug-report)
 
 **Integration with Genie workflow:**
 1. **Quick capture:** Developer working on wish A discovers bug → invoke `github-workflow` agent → issue created → return to work (no context loss)

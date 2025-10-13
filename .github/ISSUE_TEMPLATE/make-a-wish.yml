@@ -1,6 +1,6 @@
 name: "🧞 Make a Wish"
 description: "Share your idea or feature request - we'll handle the rest!"
-title: "[Wish] "
+title: "[Make a Wish] "
 labels: ["wish:triage"]
 body:
   - type: markdown

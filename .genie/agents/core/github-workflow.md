@@ -69,7 +69,7 @@ Manage the complete GitHub issue lifecycle: create, list, update, assign, label,
 ### 3. Make a Wish (`.github/ISSUE_TEMPLATE/make-a-wish.yml`)
 **When to use:** External user suggestions/requests needing triage and approval
 
-**Title pattern:** `[Wish] <description>`
+**Title pattern:** `[Make a Wish] <description>`
 
 **Purpose:** Lightweight template for users to submit feature ideas. Team reviews → If approved → Creates wish document + planned-feature issue.
 
@@ -117,6 +117,54 @@ Manage the complete GitHub issue lifecycle: create, list, update, assign, label,
 - ✅ Roadmap initiatives entering execution phase
 - ✅ Tracking work against strategic initiatives
 - ❌ NOT for external user suggestions (use make-a-wish)
+
+---
+
+## Template Selection Decision Tree
+
+**Use this to choose the correct template:**
+
+```
+WHO is creating the issue?
+├─ External user (community, customer)
+│  └─ Use: make-a-wish
+│     Title: [Make a Wish] <description>
+│     Purpose: Team triages and reviews
+│
+└─ Internal (founder, team member, agent)
+   │
+   ├─ Is there an existing roadmap initiative?
+   │  ├─ YES → Use: planned-feature
+   │  │         Title: <description> (no prefix)
+   │  │         Required: initiative number in body
+   │  │         Auto-links to roadmap
+   │  │
+   │  └─ NO → What kind of work?
+   │            ├─ New feature/enhancement → Use: feature-request
+   │            │                            Title: [Feature] <description>
+   │            │                            Labels: type:enhancement
+   │            │
+   │            └─ Bug/defect → Use: bug-report
+   │                            Title: [Bug] <description>
+   │                            Labels: type:bug
+```
+
+**Critical rules:**
+- ✅ Always update mistakes with `gh issue edit` (never close and reopen)
+- ✅ Standalone work (no roadmap initiative) uses feature-request or bug-report
+- ✅ Make-a-wish is ONLY for external users (not founder/team)
+- ❌ Don't force everything into roadmap initiatives
+- ❌ Don't use make-a-wish for internal planning
+
+**Examples:**
+
+| Scenario | Template | Reasoning |
+|----------|----------|-----------|
+| User submits idea via GitHub | make-a-wish | External source, needs triage |
+| Founder discovers infrastructure need | feature-request | Internal, no initiative yet |
+| Developer finds bug during work | bug-report | Internal bug, immediate fix |
+| Roadmap initiative needs sub-task | planned-feature | Links to existing initiative |
+| Wish document approved and ready | planned-feature | Implementation tracking |
 
 ## Operating Framework
 
