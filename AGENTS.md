@@ -8,7 +8,62 @@
   - `@.genie/product/roadmap.md`
   - `@.genie/product/environment.md`
   - (Optional) project-specific docs referenced by wishes, if present in target repos.
-- **External dependencies**: Template repo is domain-agnostic. Declare any provider dependencies in your project’s wish/forge plan.
+- **External dependencies**: Template repo is domain-agnostic. Declare any provider dependencies in your project's wish/forge plan.
+
+## Developer Welcome Flow
+
+When starting a new session, help developers triage their work by listing assigned GitHub issues and offering clear next actions.
+
+### My Current Tasks
+List all issues assigned to you:
+```bash
+!gh issue list --assignee @me --state open --limit 20
+```
+
+### Welcome Pattern
+
+**When conversation starts:**
+1. List assigned issues (if available via `gh` CLI)
+2. Present options:
+   - **Continue existing work**: Pick from assigned issues
+   - **Start new inquiry**: Use `/plan` for new feature/bug investigation
+   - **Quick task capture**: Use `github-workflow` agent to document idea without losing focus
+
+**Example welcome:**
+```
+Welcome! Here are your assigned issues:
+
+#35 [Feature] Interactive permission system (priority:high)
+#42 [Bug] Session extraction timeout in background mode (priority:medium)
+
+What would you like to work on?
+1. Continue #35 (interactive permissions)
+2. Continue #42 (session timeout fix)
+3. Start new inquiry (I'll guide you through /plan)
+4. Quick capture (document a new idea while staying focused)
+```
+
+### Quick Capture Workflow
+
+**Context:** Developer working on wish A discovers bug/idea related to wish B.
+
+**Pattern:**
+1. Invoke `github-workflow` agent: "Document bug: <description>"
+2. Agent creates GitHub issue with proper template
+3. Agent returns issue URL
+4. Developer continues working on wish A without context loss
+
+**Example:**
+```
+User: "While working on interactive permissions (#35), I noticed session extraction
+      times out in background mode. Document this."
+
+Agent: *invokes github-workflow*
+Created issue #42: [Bug] Session extraction timeout in background mode
+https://github.com/namastexlabs/automagik-genie/issues/42
+
+You can continue with #35. Issue #42 is now tracked for later.
+```
 
 ## Unified Agent Stack
 The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in `.claude/commands/`:
@@ -268,25 +323,154 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
         - ❌ `bug: Permission prompts auto-skip` (wrong prefix)
         - ❌ `feat: Interactive permission system` (wrong prefix)
 
-        **Created agent:** `.genie/agents/core/bug-reporter.md` to handle all GitHub issue creation
+        **Created agent:** `.genie/agents/core/github-workflow.md` (renamed from bug-reporter) to handle full GitHub issue lifecycle
+
+        **Expanded scope (2025-10-13):**
+        Agent now handles ALL GitHub issue operations, not just creation:
+        - **CREATE**: New issues with proper templates
+        - **LIST**: Query by assignee/label/status
+        - **UPDATE**: Modify title, labels, milestone
+        - **ASSIGN**: Set/remove assignees
+        - **CLOSE**: Resolve with reason and comment
+        - **LINK**: Cross-reference wishes, PRs, commits
+
+        **Integration with Genie workflow:**
+        - Quick capture: Document bugs/ideas without losing focus on current wish
+        - Welcome flow: List assigned issues at session start
+        - Wish linking: Cross-reference issues ↔ wishes ↔ PRs
       </correction>
       <validation>
-        **Check:** bug-reporter agent exists and documents title patterns
+        **Check:** github-workflow agent exists and documents all operations
         ```bash
-        test -f .genie/agents/core/bug-reporter.md && echo "✅ Agent exists"
-        grep "Title pattern:" .genie/agents/core/bug-reporter.md
+        test -f .genie/agents/core/github-workflow.md && echo "✅ Agent exists"
+        grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK" .genie/agents/core/github-workflow.md
         ```
 
-        **Test:** Create test issue using bug-reporter
+        **Test:** Full lifecycle operations
         ```bash
-        # Should use template structure with proper title
-        ./genie run bug-reporter --prompt "Create feature request for interactive permissions"
+        # List my issues
+        gh issue list --assignee @me --state open
+
+        # Create with template
+        ./genie run github-workflow --prompt "Create feature request: ..."
+
+        # Update existing
+        gh issue edit 35 --add-label "priority:high"
         ```
 
         **Verify:**
-        - Issue created with proper template sections (Feature Summary, Problem Statement, etc.)
-        - Title follows `[Feature]` prefix pattern
-        - Labels auto-applied from template
+        - All 6 operation types documented
+        - Title patterns documented for all templates
+        - Quick capture workflow example included
+        - Welcome flow integrated in AGENTS.md
+      </validation>
+    </entry>
+
+    <entry date="2025-10-13" violation_type="WORKFLOW_TOOLING" severity="HIGH">
+      <trigger>Agents were not utilizing available slash commands (/plan, /wish, /forge, /review) to facilitate workflows. Direct agent invocation was used instead of leveraging built-in commands.</trigger>
+      <correction>
+        **Rule:** Proactively use slash commands to facilitate Genie workflows. Treat them as first-class tools alongside MCP agents.
+
+        **Available slash commands:**
+        - `/plan` — Start product planning dialogue (interactive)
+        - `/wish` — Create wish document (interactive)
+        - `/forge` — Break wish into execution groups (interactive)
+        - `/review` — Validate completed work (interactive)
+        - `/commit` — Interactive commit flow
+        - `/genie-qa` — Self-validate Genie framework
+        - `/install` — Framework installation
+        - `/prompt` — Prompt refinement helper
+        - `/sleepy` — Autonomous wish coordinator
+        - `/learn` — Meta-learning for framework improvements
+
+        **When to use:**
+        - User mentions "plan", "wish", "forge", or "review" → suggest appropriate slash command
+        - Starting new feature work → `/plan`
+        - Creating wish document → `/wish`
+        - Breaking down approved wish → `/forge`
+        - Validating completion → `/review`
+        - Commit preparation → `/commit`
+
+        **How to invoke:**
+        ```
+        User: "Let's plan the interactive permissions feature"
+        Agent: "I'll start /plan to guide you through product planning..."
+        *invokes /plan*
+        ```
+
+        **Integration with MCP:**
+        - Slash commands for interactive workflows (human-in-loop)
+        - MCP agents (`mcp__genie__run`) for background/autonomous work
+        - Both are valid; choose based on task needs
+      </correction>
+      <validation>
+        **Check:** Slash commands listed in welcome flow
+        ```bash
+        grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
+        ```
+
+        **Test:** Invoke slash command in conversation
+        ```
+        User: "Start planning the new feature"
+        Agent: *uses /plan command*
+        ```
+
+        **Verify:**
+        - Agent suggests appropriate slash command based on context
+        - Agent explains what the command will do before invoking
+        - Agent can switch between slash commands and MCP agents fluidly
+      </validation>
+    </entry>
+
+    <entry date="2025-10-13" violation_type="LEARNING_PHILOSOPHY" severity="MEDIUM">
+      <trigger>Learning process was overly cautious, waiting for explicit instructions rather than experimenting with available tools and patterns.</trigger>
+      <correction>
+        **Rule:** ALWAYS EXPERIMENT during learning. Experimentation is core to the learning process.
+
+        **Learning = Experimentation:**
+        - Try new tool combinations
+        - Test different workflow patterns
+        - Explore edge cases
+        - Validate assumptions actively
+        - Document what works and what doesn't
+
+        **Experimentation protocol:**
+        1. **Hypothesis**: State what you're testing
+        2. **Experiment**: Try it (with safety checks)
+        3. **Observe**: Capture results
+        4. **Learn**: Document finding as new knowledge
+        5. **Apply**: Use learning in future tasks
+
+        **Example experiments:**
+        - "Let me try using /plan instead of MCP for this workflow..."
+        - "Testing if github-workflow can handle bulk updates..."
+        - "Experimenting with combining orchestrator + implementor agents..."
+
+        **Safe experimentation:**
+        - Read-only operations: Always safe to experiment
+        - Write operations: Explain first, get approval for destructive changes
+        - Tool combinations: Experiment freely, document outcomes
+        - Workflow patterns: Try new approaches, validate effectiveness
+
+        **Meta-principle:**
+        Felipe will guide alongside the learning process. Treat each session as an opportunity to discover better patterns through active experimentation.
+      </correction>
+      <validation>
+        **Check:** Learning entries show evidence of experimentation
+        ```bash
+        grep -i "experiment\|try\|test" AGENTS.md | wc -l
+        # Should show multiple experimentation references
+        ```
+
+        **Observe:** Agent behavior in conversations
+        - Does agent suggest experiments?
+        - Does agent try new approaches?
+        - Does agent document learnings from experiments?
+
+        **Verify:**
+        - Learning entries include "tried X, discovered Y" patterns
+        - Agent proactively suggests experiments during tasks
+        - Agent captures experimental results in done reports
       </validation>
     </entry>
   </learning_entries>
