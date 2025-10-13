@@ -1,0 +1,3 @@
+[submodule "research/automagik-forge"]
+	path = research/automagik-forge
+	url = https://github.com/namastexlabs/automagik-forge.git
