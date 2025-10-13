@@ -13,6 +13,7 @@ const common_1 = require("../views/common");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
+const migrate_1 = require("../lib/migrate");
 const PROVIDER_EXECUTOR = {
     codex: 'codex',
     claude: 'claude'
@@ -41,6 +42,30 @@ async function runInit(parsed, _config, _paths) {
         if (!templateExists) {
             await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Template missing', `Could not locate packaged .genie templates at ${templateGenie}`), parsed.options, { stream: process.stderr });
             process.exitCode = 1;
+            return;
+        }
+        // Auto-detect old Genie structure and suggest migration
+        const installType = (0, migrate_1.detectInstallType)();
+        if (installType === 'old_genie' && !flags.yes) {
+            console.log('');
+            console.log('╭───────────────────────────────────────────────────────────╮');
+            console.log('│ ⚠️  Old Genie Installation Detected                       │');
+            console.log('╰───────────────────────────────────────────────────────────╯');
+            console.log('');
+            console.log('Your project has an old Genie structure (v2.0.x) with core');
+            console.log('agents stored locally. The new architecture (v2.1.0+) loads');
+            console.log('core agents from the npm package for easier updates.');
+            console.log('');
+            console.log('Recommended: Run `genie update` instead of `genie init`');
+            console.log('This will automatically migrate to the new architecture.');
+            console.log('');
+            console.log('Or run `genie migrate` for migration only.');
+            console.log('');
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Migration Recommended', [
+                'Use `genie update` to migrate and update in one step.',
+                'Or use `genie migrate` for migration only.',
+                'Or use `genie init --yes` to force reinitialize (not recommended).'
+            ]), parsed.options);
             return;
         }
         const backupId = (0, fs_utils_1.toIsoId)();

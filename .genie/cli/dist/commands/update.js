@@ -11,6 +11,7 @@ const common_1 = require("../views/common");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
+const migrate_1 = require("../lib/migrate");
 async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
@@ -30,6 +31,31 @@ async function runUpdate(parsed, _config, _paths) {
             await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Template missing', `Could not locate packaged .genie templates at ${templateGenie}`), parsed.options, { stream: process.stderr });
             process.exitCode = 1;
             return;
+        }
+        // Auto-detect and migrate old Genie structure
+        const installType = (0, migrate_1.detectInstallType)();
+        if (installType === 'old_genie') {
+            console.log('');
+            console.log('╭───────────────────────────────────────────────────────────╮');
+            console.log('│ 🔄 Old Genie Structure Detected                          │');
+            console.log('│ Migrating to npm-backed architecture...                  │');
+            console.log('╰───────────────────────────────────────────────────────────╯');
+            console.log('');
+            const migrationResult = await (0, migrate_1.runMigration)({ dryRun: flags.dryRun });
+            if (migrationResult.status === 'failed') {
+                await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Migration Failed', `Could not migrate to new architecture:\n${migrationResult.errors.join('\n')}`), parsed.options, { stream: process.stderr });
+                process.exitCode = 1;
+                return;
+            }
+            if (migrationResult.status === 'upgraded') {
+                console.log('✅ Migration complete!');
+                console.log(`   Backup: ${migrationResult.backupPath}`);
+                console.log(`   Custom agents preserved: ${migrationResult.customAgentsPreserved.length}`);
+                console.log(`   Core agents removed: ${migrationResult.coreAgentsRemoved.length}`);
+                console.log('');
+                console.log('📦 Continuing with template update...');
+                console.log('');
+            }
         }
         const diff = await computeDiff(templateGenie, targetGenie);
         if (flags.dryRun) {
