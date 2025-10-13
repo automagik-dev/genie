@@ -60,11 +60,17 @@ function buildRunCommand({ config = {}, instructions, agentPath, prompt }) {
     const execConfig = mergeExecConfig(config.exec);
     const command = config.binary || defaults.binary;
     const args = ['-p', '--verbose', '--output-format', 'stream-json'];
+    // Debug: log exec config
+    console.error(`[DEBUG] execConfig.permissionMode = ${execConfig.permissionMode}`);
     if (execConfig.model) {
         args.push('--model', String(execConfig.model));
     }
-    if (execConfig.permissionMode && execConfig.permissionMode !== 'default') {
+    if (execConfig.permissionMode) {
         args.push('--permission-mode', String(execConfig.permissionMode));
+        console.error(`[DEBUG] Added --permission-mode ${execConfig.permissionMode}`);
+    }
+    else {
+        console.error(`[DEBUG] permissionMode is falsy, not adding flag`);
     }
     if (Array.isArray(execConfig.allowedTools) && execConfig.allowedTools.length > 0) {
         args.push('--allowed-tools', execConfig.allowedTools.join(','));

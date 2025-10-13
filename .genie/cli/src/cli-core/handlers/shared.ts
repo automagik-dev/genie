@@ -387,6 +387,15 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
     fs.mkdirSync(logDir, { recursive: true });
   }
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  // Debug: log the command being executed
+  const fullCommand = `${command.command} ${command.args.join(' ')}`;
+  try {
+    fs.writeFileSync('/home/namastex/spawn-debug-test.txt', `${fullCommand}\n`, { flag: 'a' });
+  } catch (e) {
+    // Ignore errors
+  }
+
   const spawnOptions: SpawnOptionsWithoutStdio = {
     stdio: ['ignore', 'pipe', 'pipe'] as any,
     ...(command.spawnOptions || {})

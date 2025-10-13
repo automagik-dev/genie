@@ -27,6 +27,10 @@ function createRunHandler(ctx) {
         const executor = (0, shared_1.requireExecutor)(ctx, executorKey);
         const executorOverrides = (0, shared_1.extractExecutorOverrides)(ctx, agentGenie, executorKey);
         const executorConfig = (0, shared_1.buildExecutorConfig)(ctx, modeName, executorKey, executorOverrides);
+        // Debug: log executor config
+        console.error(`[DEBUG run.ts] agentGenie:`, JSON.stringify(agentGenie));
+        console.error(`[DEBUG run.ts] executorOverrides:`, JSON.stringify(executorOverrides));
+        console.error(`[DEBUG run.ts] executorConfig:`, JSON.stringify(executorConfig));
         const executorPaths = (0, shared_1.resolveExecutorPaths)(ctx.paths, executorKey);
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const startTime = (0, shared_1.deriveStartTime)();
