@@ -1,5 +1,6 @@
 @AGENTS.md
 @.claude/README.md
+@~/.genie/context.md
 
 # Claude-Specific Patterns
 
