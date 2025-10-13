@@ -12,6 +12,7 @@ const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
 const migrate_1 = require("../lib/migrate");
+const run_1 = require("./run");
 async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
@@ -57,6 +58,7 @@ async function runUpdate(parsed, _config, _paths) {
                 console.log('');
             }
         }
+        // Compute diff to provide context to update agent
         const diff = await computeDiff(templateGenie, targetGenie);
         if (flags.dryRun) {
             await (0, view_helpers_1.emitView)(buildUpdatePreviewView(diff), parsed.options);
@@ -66,16 +68,60 @@ async function runUpdate(parsed, _config, _paths) {
             await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('No updates available', ['Your workspace already matches the packaged templates.']), parsed.options);
             return;
         }
-        const backupId = await createBackup(targetGenie);
-        await copyTemplateGenie(templateGenie, targetGenie);
-        await touchVersionFile(cwd);
-        await (0, view_helpers_1.emitView)(buildUpdateSummaryView(diff, backupId), parsed.options);
+        // Spawn update agent for intelligent orchestration
+        console.log('');
+        console.log('🔄 Spawning update agent for intelligent orchestration...');
+        console.log('');
+        const updatePrompt = buildUpdatePrompt(diff, installType, cwd);
+        const agentParsed = {
+            ...parsed,
+            commandArgs: ['update', updatePrompt]
+        };
+        await (0, run_1.runChat)(agentParsed, _config, _paths);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Update failed', message), parsed.options, { stream: process.stderr });
         process.exitCode = 1;
     }
+}
+function buildUpdatePrompt(diff, installType, cwd) {
+    const version = (0, package_1.getPackageVersion)();
+    return `# Update Context
+
+## Current State
+- **Project directory:** ${cwd}
+- **Install type:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
+- **Framework version:** ${version}
+
+## Changes Detected
+- **Files to add:** ${diff.added.length}
+${diff.added.length > 0 ? diff.added.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
+${diff.added.length > 10 ? `  ... and ${diff.added.length - 10} more` : ''}
+
+- **Files to update:** ${diff.modified.length}
+${diff.modified.length > 0 ? diff.modified.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
+${diff.modified.length > 10 ? `  ... and ${diff.modified.length - 10} more` : ''}
+
+## Your Task
+1. Create backup of current state
+2. Apply template updates intelligently
+3. Preserve all user customizations (custom agents, wishes, reports)
+4. Update version file
+5. Generate update report with:
+   - Files changed summary
+   - Backup location
+   - Verification steps
+   - Next actions for user
+
+## Success Criteria
+- ✅ Backup created successfully
+- ✅ Template updates applied
+- ✅ User work preserved
+- ✅ Version file updated
+- ✅ Update report generated
+
+Execute the update following your operating framework.`;
 }
 function parseFlags(args) {
     const flags = {};

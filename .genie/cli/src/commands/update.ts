@@ -21,6 +21,7 @@ import {
 } from '../lib/fs-utils';
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType, runMigration } from '../lib/migrate';
+import { runChat } from './run';
 
 interface UpdateFlags {
   dryRun?: boolean;
@@ -96,6 +97,7 @@ export async function runUpdate(
       }
     }
 
+    // Compute diff to provide context to update agent
     const diff = await computeDiff(templateGenie, targetGenie);
     if (flags.dryRun) {
       await emitView(buildUpdatePreviewView(diff), parsed.options);
@@ -107,16 +109,63 @@ export async function runUpdate(
       return;
     }
 
-    const backupId = await createBackup(targetGenie);
-    await copyTemplateGenie(templateGenie, targetGenie);
-    await touchVersionFile(cwd);
+    // Spawn update agent for intelligent orchestration
+    console.log('');
+    console.log('🔄 Spawning update agent for intelligent orchestration...');
+    console.log('');
 
-    await emitView(buildUpdateSummaryView(diff, backupId), parsed.options);
+    const updatePrompt = buildUpdatePrompt(diff, installType, cwd);
+    const agentParsed: ParsedCommand = {
+      ...parsed,
+      commandArgs: ['update', updatePrompt]
+    };
+
+    await runChat(agentParsed, _config, _paths);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Update failed', message), parsed.options, { stream: process.stderr });
     process.exitCode = 1;
   }
+}
+
+function buildUpdatePrompt(diff: DiffSummary, installType: string, cwd: string): string {
+  const version = getPackageVersion();
+
+  return `# Update Context
+
+## Current State
+- **Project directory:** ${cwd}
+- **Install type:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
+- **Framework version:** ${version}
+
+## Changes Detected
+- **Files to add:** ${diff.added.length}
+${diff.added.length > 0 ? diff.added.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
+${diff.added.length > 10 ? `  ... and ${diff.added.length - 10} more` : ''}
+
+- **Files to update:** ${diff.modified.length}
+${diff.modified.length > 0 ? diff.modified.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
+${diff.modified.length > 10 ? `  ... and ${diff.modified.length - 10} more` : ''}
+
+## Your Task
+1. Create backup of current state
+2. Apply template updates intelligently
+3. Preserve all user customizations (custom agents, wishes, reports)
+4. Update version file
+5. Generate update report with:
+   - Files changed summary
+   - Backup location
+   - Verification steps
+   - Next actions for user
+
+## Success Criteria
+- ✅ Backup created successfully
+- ✅ Template updates applied
+- ✅ User work preserved
+- ✅ Version file updated
+- ✅ Update report generated
+
+Execute the update following your operating framework.`;
 }
 
 function parseFlags(args: string[]): UpdateFlags {
