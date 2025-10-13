@@ -299,11 +299,36 @@ Separate Genie framework's built-in agents (core workflow orchestrators and supp
   - Init script changes (Group C completion before testing)
   - Migration guide accuracy (Group D completion)
 
-## Agent Inventory & Categorization (FINAL)
+## Agent Inventory & Categorization (REVISED 2025-10-13)
 
-**Total:** 30 prompt files shipped in `.genie/agents/` (6 top-level + 10 core + 14 modes), customization stubs in `.genie/custom/`, 1 Genie-only QA helper.
+**Total:** 25 agents in `.genie/agents/` = **19 user-facing** + **6 Genie-internal**
 
-**Meta Pattern:** Entry-point orchestrators remain immutable. Delivery/utility prompts live under `.genie/agents/core/` and auto-include `.genie/custom/<agent>.md` if projects need overrides. Template exports will be wired up once this structure settles.
+**Breakdown:**
+- 6 workflow orchestrators (plan, wish, forge, review, orchestrator, vibe)
+- 13 core agents (10 user-facing delivery + 3 Genie-internal)
+- 5 orchestrator modes (all user-facing)
+- 1 QA agent (Genie-internal)
+
+**User-Facing (19 agents - available for templates):**
+- 10 delivery agents: analyze, audit, commit, debug, git-workflow, github-workflow, implementor, polish, refactor, tests
+- 5 modes: challenge, consensus, docgen, explore, tracer
+- 4 workflow examples (optional): plan, wish, forge, review
+
+**Genie-Internal (6 agents - NOT for templates):**
+- 3 core agents: install, learn, prompt (operate on Genie framework itself)
+- 2 orchestrators: orchestrator, vibe (Genie-specific routing/coordination)
+- 1 QA agent: genie-qa (framework self-validation)
+
+**Architecture Pattern:**
+- **NPM package ships 19 user-facing agents** - Users reference via `@.genie/agents/core/`, NOT copy
+- **Templates copy `.genie/custom/` stubs only** - Customization injection points
+- **Two agent inventories:**
+  1. **NPM inventory:** 19 agents in package (users reference)
+  2. **Custom inventory:** User-created agents in `.genie/agents/` (project-specific)
+
+**Key insight:** Master prompts load from npm package + inject `.genie/custom/` overrides. Users never copy master prompts.
+
+**Categorization Analysis:** See `reports/agent-categorization-analysis.md` for detailed rationale.
 
 ### CURRENT DIRECTORY STRUCTURE ✅ COMPLETED
 
@@ -342,45 +367,54 @@ Separate Genie framework's built-in agents (core workflow orchestrators and supp
 └── …
 ```
 
-### CORE DELIVERY AGENTS — `.genie/agents/core/` (10)
+### CORE DELIVERY AGENTS — `.genie/agents/core/` (13 total: 10 user-facing + 3 internal)
 
-Packaged delivery agents that define Genie's default behaviour:
-
-1. `commit.md` — Commit advisory / pre-commit checks
-2. `debug.md` — Debug issues, root-cause analysis
-3. `git-workflow.md` — Branching/merge automation
-4. `implementor.md` — Feature implementation with TDD
-5. `install.md` — Genie initialization and setup
-6. `learn.md` — Meta-learning for framework improvements
-7. `polish.md` — Linting, formatting, type-checking
-8. `prompt.md` — Advanced prompting framework
-9. `qa.md` — Manual QA coordination
+**User-Facing (10 agents):**
+1. `analyze.md` — System architecture analysis
+2. `audit.md` — Risk assessment and security audit
+3. `commit.md` — Commit advisory / pre-commit checks
+4. `debug.md` — Debug issues, root-cause analysis
+5. `git-workflow.md` — Branching/merge automation
+6. `github-workflow.md` — Issue lifecycle management
+7. `implementor.md` — Feature implementation with TDD
+8. `polish.md` — Linting, formatting, type-checking
+9. `refactor.md` — Staged refactor planning
 10. `tests.md` — Test authoring + repair
 
-### ORCHESTRATOR MODES — `.genie/agents/core/modes/` (14)
+**Genie-Internal (3 agents - NOT for templates):**
+11. `install.md` — Genie initialization (operates on framework)
+12. `learn.md` — Meta-learning (teaches framework itself)
+13. `prompt.md` — Advanced prompting (Genie meta-prompting)
 
-Reasoning modes loaded by orchestrator agent:
+### ORCHESTRATOR MODES — `.genie/agents/core/modes/` (5 implemented)
 
-1. `analyze.md` — System architecture analysis
-2. `challenge.md` — Critical evaluation (merged socratic/debate)
-3. `codereview.md` — Severity-tagged code review
-4. `consensus.md` — Multi-model decision synthesis
-5. `deep-dive.md` — In-depth investigation
-6. `design-review.md` — Component coupling/scalability review
-7. `docgen.md` — Documentation outline + drafting
-8. `explore.md` — Discovery-focused reasoning (renamed from thinkdeep)
-9. `refactor.md` — Staged refactor planning
-10. `risk-audit.md` — Risk enumeration + mitigation
-11. `secaudit.md` — Security audit playbook
-12. `test-strategy.md` — Layered testing approach
-13. `testgen.md` — Targeted test generation
-14. `tracer.md` — Instrumentation/observability plan
+**User-Facing (all 5 modes available for templates):**
+1. `challenge.md` — Critical evaluation (merged socratic/debate)
+2. `consensus.md` — Multi-model decision synthesis
+3. `docgen.md` — Documentation outline + drafting
+4. `explore.md` — Discovery-focused reasoning (renamed from thinkdeep)
+5. `tracer.md` — Instrumentation/observability plan
+
+**Note on "missing" modes:** During Phase 0 consolidation, 9 originally planned modes were either:
+- Merged into existing modes (socratic/debate → challenge)
+- Promoted to core agents (analyze, refactor, audit)
+- Deferred as future expansion (codereview, deep-dive, design-review, risk-audit, secaudit, test-strategy, testgen)
+
+See Phase 0 status log (2025-10-07): "Mode consolidation (5→3 core modes, removed bloat)"
 
 Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) remain at the top level and never load overrides.
 
-### CUSTOM OVERRIDES — `.genie/custom/`
+### CUSTOM OVERRIDES — `.genie/custom/` (WHAT USERS COPY)
 
-Each stub mirrors its core counterpart and records project-specific defaults (commands, docs, evidence paths). Git includes but does not ship behaviour—core prompts remain the source of truth.
+**Template exports:** Only `.genie/custom/` stubs (22 files for 19 user-facing agents + 3 workflows)
+
+**Master prompts:** Stay in npm package at `.genie/agents/core/`, loaded via `@` references
+
+**User workflow:**
+1. `genie init` copies `.genie/custom/` stubs to project
+2. `.claude/agents/` wrappers reference npm package: `@.genie/agents/core/<agent>.md`
+3. Master prompts auto-include `.genie/custom/<agent>.md` when present
+4. Users add project agents in `.genie/agents/` (custom inventory)
 
 ### GENIE-ONLY QA — `.genie/agents/qa/` (1)
 
@@ -424,22 +458,26 @@ Each stub mirrors its core counterpart and records project-specific defaults (co
 - Changing behaviour of surviving core prompts (beyond re-routing and clarity edits)
 - Publishing updated npm package (handled separately after verification)
 
-**Success Metrics:**
-- ✅ Orchestrator modes (refactor/testgen/secaudit/docgen/etc.) exist at `.genie/agents/core/modes/` (verified: 14 modes)
+**Success Metrics (REVISED 2025-10-13):**
+- ✅ Orchestrator modes exist at `.genie/agents/core/modes/` (verified: 5 implemented modes)
 - ✅ Meta-learning agent passes both teaching and violation sample prompts without errors
-- `genie list agents` shows 30 agents total (6 + 10 + 14) with correct structure
+- ✅ Agent inventory accurately documented: 25 total (19 user-facing + 6 Genie-internal)
+- ✅ All 19 user-facing agents have `.genie/custom/` stubs (22 stubs total including workflows)
 - Documentation updates approved with no TODO placeholders and spell-check clean
 - `vibe` agent exists and is properly referenced (not "sleepy")
 - ✅ Wishes store documents/reports/evidence under the nested folder structure
+- ✅ Agent categorization analysis complete (user-facing vs Genie-internal distinction clear)
 
 **External Tasks:**
 - Forge execution group IDs (TBD after `/forge`)
 
 **Dependencies:**
-- Stable core delivery prompts (10): commit, debug, git-workflow, implementor, install, learn, polish, prompt, qa, tests
-- Stable orchestrator modes (14): analyze, challenge, codereview, consensus, deep-dive, design-review, docgen, explore, refactor, risk-audit, secaudit, test-strategy, testgen, tracer
+- Stable core agents (13 total):
+  - User-facing (10): analyze, audit, commit, debug, git-workflow, github-workflow, implementor, polish, refactor, tests
+  - Genie-internal (3): install, learn, prompt
+- Stable orchestrator modes (5): challenge, consensus, docgen, explore, tracer
 - CLI wrappers in `.claude/commands/`
-- Agent registry via `genie list agents`
+- Custom stubs in `.genie/custom/` for all user-facing agents
 
 </spec_contract>
 
