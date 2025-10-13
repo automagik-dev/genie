@@ -37,6 +37,76 @@ npx @automagik/genie init
 3. Customize `.genie/product/` with your project details
 4. Customize `.genie/standards/` with your coding standards
 5. Edit `.genie/custom/*.md` to override agent behavior
+6. **Set up user profile** (recommended):
+   ```bash
+   mkdir -p ~/.genie
+   # Copy context template to ~/.genie/context.md
+   # Template includes: session state, decision queue, user preferences
+   ```
+
+## User Profile System (Session Continuity)
+
+Genie includes a **user profile system** that eliminates session amnesia and maintains context across sessions.
+
+### Setup
+
+Create `~/.genie/context.md` (user-local, not committed):
+```markdown
+# 🧞 Genie Context: Your Name
+
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Current Repo:** !`basename $(pwd)`
+
+## 📊 Runtime Context (Auto-Updated)
+**Branch:** !`git branch --show-current`
+**Status:** !`git status --short | head -10`
+**Recent Commits:** !`git log --oneline -5`
+
+## 🎯 Current Focus
+**Task:** [What you're working on]
+**Status:** [ACTIVE/PENDING]
+**Next Action:** [Next step]
+
+## ⏳ Decision Queue (One at a Time)
+### Decision 1: [Topic] [NEXT]
+**Question:** [The question]
+**Context:** [Background]
+
+## 👤 User Profile
+**Communication Preferences:**
+- ✅ Sequential decisions (one at a time)
+- ✅ Evidence-based approach
+- ✅ Collaborative planning
+```
+
+### How It Works
+
+1. **Automatic Loading**: CLAUDE.md includes `@~/.genie/context.md`
+2. **Runtime Commands**: `!command` syntax executes automatically (fresh git status, date)
+3. **Session Greeting**: Claude greets you with current context and where you left off
+4. **Decision Queue**: Decisions presented one at a time (humans are single-attention beings)
+5. **Cross-Repo**: Lives in `~/.genie/`, follows you across all projects
+
+### Benefits
+
+- ✅ **No session amnesia** - Context persists between sessions
+- ✅ **Always fresh** - Git status, branch, commits updated automatically
+- ✅ **Single-attention workflow** - One decision at a time, queued
+- ✅ **Relationship memory** - Preferences and history maintained
+- ✅ **Cross-project** - One profile for all repos
+
+### Example Session Start
+
+```
+Hey [Your Name]! 👋
+
+**Current focus:** Issue audit compliance fixes
+**Where we left off:** Committed Phase 2 template structure
+**Branch:** main
+**Status:** 1 file modified
+
+**Next up:** Decision 1 about Issue #41. Ready to discuss?
+```
 
 ## Architecture
 

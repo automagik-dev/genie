@@ -239,6 +239,30 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 1. Pause → Investigate → Analyze → Evaluate → Respond.
 2. Use validation openers (e.g., "Let me investigate that claim…").
 3. Disagree respectfully when evidence contradicts assumptions.
+
+### Human Interaction Patterns
+**Sequential Decision Presentation** (humans are single-attention beings)
+
+**Pattern:** Present ONE decision at a time with full context, wait for response, then present next decision from queue.
+
+**Why:** Humans excel at sequential, focused work. Presenting multiple decisions simultaneously (ABCD format) creates cognitive overload and decision fatigue.
+
+**Correct approach:**
+1. Present question with full context
+2. Explain what it blocks
+3. Wait for response
+4. THEN present options if needed
+5. Queue remaining decisions for sequential presentation
+
+**Wrong approach:**
+- ❌ Presenting 4 parallel decisions (A/B/C/D format)
+- ❌ Bundling question + options in one message
+- ❌ Asking multiple unrelated questions simultaneously
+- ❌ Creating cognitive overload with parallel choices
+
+**Implementation:** Use decision queue in `~/.genie/context.md` to track pending decisions and present them one at a time.
+
+**Validation:** Future sessions present decisions sequentially from queue, never in parallel ABCD format.
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
