@@ -168,7 +168,17 @@ export async function runUpdate(
       console.log('');
     }
 
-    console.log(`📝 Generating update orchestration prompt...`);
+    // Copy template files BEFORE handing off to executor
+    console.log('📦 Copying template files...');
+    console.log('');
+    await copyTemplateGenie(templateGenie, targetGenie);
+    console.log(`✅ Copied ${diff.added.length + diff.modified.length} template files`);
+    console.log('');
+
+    // Update version file
+    await touchVersionFile(cwd);
+
+    console.log(`📝 Generating migration orchestration prompt...`);
     console.log('');
 
     const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
@@ -177,8 +187,8 @@ export async function runUpdate(
     const promptFile = path.join(cwd, '.genie-update-prompt.md');
     await fsp.writeFile(promptFile, updatePrompt, 'utf8');
 
-    console.log(`✅ Orchestration prompt ready`);
-    console.log(`🚀 Handing off to ${executor} (unrestricted mode)...`);
+    console.log(`✅ Migration prompt ready`);
+    console.log(`🚀 Handing off to ${executor} for context migration...`);
     console.log('');
 
     // Hand off to executor (replaces Node process with executor in user's terminal)
@@ -198,43 +208,44 @@ function buildUpdateOrchestrationPrompt(
 ): string {
   const version = getPackageVersion();
 
-  return `# Genie Framework Update
+  return `# Genie Framework Context Migration
 
-Follow the comprehensive update workflow documented in UPDATE.md.
+**✅ Template files already copied** - Framework updated to v${version}
+
+Your task: Migrate user context from backup to new installation.
 
 @.genie/UPDATE.md
 
-## Update Context
+## Migration Context
 
 **Project:** ${cwd}
-**Current architecture:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
-**Target version:** ${version}
-**Executor:** ${executor}
-
-**Changes detected:**
-- Files to add: ${diff.added.length}
-- Files to update: ${diff.modified.length}
-
+**Architecture:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
+**Current version:** ${version}
 **Backup location:** \`.genie.backup/\`
+
+## What's Already Done
+
+✅ Template files copied (${diff.added.length} added, ${diff.modified.length} updated)
+✅ UPDATE.md workflow guide available
+✅ Version file updated
+✅ MCP configured
 
 ## Your Task
 
-Follow the UPDATE.md workflow systematically:
+Follow UPDATE.md to migrate user context:
 
-1. **Discovery Phase**: Inventory all files in \`.genie.backup/\` and categorize them
-2. **Implementation Phase**: Migrate wishes, custom agents, config, docs, reports, and legacy context
-3. **Verification Phase**: Self-review for 100% file coverage and run validation tests
+1. **Discovery**: Inventory backup files and categorize
+2. **Implementation**: Migrate wishes, custom agents, config, docs, reports
+3. **Verification**: Verify 100% file coverage and run validation tests
 
-Work autonomously through all phases. The UPDATE.md document contains:
-- Complete task breakdown (Discovery → Implementation → Verification)
-- File categorization matrix with migration priorities
-- Concrete commands and examples for each step
-- Success criteria and validation checklist
-- Migration summary template
+**Focus on:** Preserving user work (wishes, custom agents, reports, context)
+**Skip:** Template file copying (already done)
 
-## Begin
+## Completion
 
-Start by reading @.genie/UPDATE.md and following its structured workflow.`;
+After migration, document what was preserved and any items needing review.
+
+Begin by reading @.genie/UPDATE.md and following its workflow.`;
 }
 
 async function detectAvailableExecutors(): Promise<string[]> {

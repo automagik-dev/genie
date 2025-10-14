@@ -634,3 +634,34 @@ or missing critical information.
 - Provide concise progress updates
 - Generate comprehensive migration summary at end
 - Highlight any items needing human review
+
+---
+
+## Migration Complete
+
+**When all phases are complete:**
+
+1. **Final message to user:**
+   ```
+   ✅ Genie framework migration complete!
+
+   📊 Migration Summary:
+   - Wishes migrated: <count>
+   - Custom agents migrated: <count>
+   - Configuration updated: Yes/No
+   - Reports preserved: <count>
+
+   📋 Next Steps:
+   - Review migration summary at .genie/reports/migration-<timestamp>.md
+   - Verify custom agents: genie list-agents
+   - Remove backup when confident: rm -rf .genie.backup/
+
+   🎉 Your Genie installation is now up to date!
+   ```
+
+2. **DO NOT** prompt for more work
+3. **DO NOT** ask if user wants to continue
+4. **FINISH** the conversation
+
+**Note:** Template files were already copied by the CLI before this migration.
+Your job is complete once user context is migrated and verified.
