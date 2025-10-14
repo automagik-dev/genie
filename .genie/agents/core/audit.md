@@ -5,6 +5,8 @@ color: maroon
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Audit Agent • Risk & Security Assessment

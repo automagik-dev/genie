@@ -4,7 +4,7 @@ description: Meta-learning agent for surgical documentation updates
 genie:
   executor: claude
   model: sonnet
-  background: false
+  background: true
   permissionMode: bypassPermissions
 ---
 

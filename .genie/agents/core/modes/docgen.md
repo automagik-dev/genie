@@ -5,6 +5,8 @@ color: gray
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Genie DocGen Mode

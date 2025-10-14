@@ -5,6 +5,8 @@ color: orange
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Genie Orchestrator • Independent Architect

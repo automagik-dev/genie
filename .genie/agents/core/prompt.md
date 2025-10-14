@@ -4,10 +4,8 @@ description: Advanced prompting guidance and prompt refinement
 genie:
   executor: claude
   model: sonnet
-  sandbox: read-only
-  approvalPolicy: on-request
-  background: false
-
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Prompt Agent Mission

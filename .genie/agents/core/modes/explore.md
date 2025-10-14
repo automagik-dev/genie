@@ -5,6 +5,8 @@ color: indigo
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Genie Explore • Discovery Mode

@@ -5,6 +5,8 @@ color: red
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Debug Agent • Investigation & Resolution Orchestrator

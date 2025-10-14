@@ -5,6 +5,8 @@ color: navy
 genie:
   executor: claude
   model: sonnet
+  background: true
+  permissionMode: bypassPermissions
 ---
 
 # Analyze Agent • System Map & Deep Investigation

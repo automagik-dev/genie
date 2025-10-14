@@ -64,7 +64,13 @@ function buildRunCommand({ config = {}, instructions, prompt, agentPath }: { con
     args.push(prompt);
   }
 
-  return { command, args };
+  return {
+    command,
+    args,
+    spawnOptions: {
+      cwd: process.cwd()  // Use user's project directory, not npm package directory
+    }
+  };
 }
 
 function buildResumeCommand({ config = {}, sessionId, prompt }: { config?: Record<string, any>; sessionId?: string; prompt?: string }): ExecutorCommand {

@@ -94,7 +94,13 @@ function buildRunCommand({ config = {}, instructions, prompt, agentPath }) {
     if (prompt) {
         args.push(prompt);
     }
-    return { command, args };
+    return {
+        command,
+        args,
+        spawnOptions: {
+            cwd: process.cwd() // Use user's project directory, not npm package directory
+        }
+    };
 }
 function buildResumeCommand({ config = {}, sessionId, prompt }) {
     const resumeConfig = mergeResumeConfig(config.resume);

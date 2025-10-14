@@ -5,6 +5,7 @@ color: lime
 genie:
   executor: claude
   model: sonnet
+  background: true
   permissionMode: bypassPermissions
 ---
 
