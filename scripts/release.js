@@ -43,8 +43,8 @@ function exec(cmd, silent = false) {
 function preflight() {
   log('blue', '🔍', 'Running pre-flight checks...');
 
-  // Check git status
-  const status = exec('git status --porcelain', true);
+  // Check git status (ignore submodules)
+  const status = exec('git status --porcelain --ignore-submodules', true);
   if (status) {
     log('red', '❌', 'Working directory not clean. Commit or stash changes first.');
     process.exit(1);
