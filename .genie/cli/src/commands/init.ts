@@ -706,12 +706,18 @@ After setup:
 }
 
 async function handoffToExecutor(executor: string, promptFile: string, cwd: string): Promise<void> {
+  console.log('[HANDOFF] Starting handoffToExecutor');
+  console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
+
   const { spawn } = await import('child_process');
 
   const command = executor === 'claude' ? 'claude' : 'codex';
+  console.log(`[HANDOFF] command=${command}`);
 
   // Read prompt content from file
+  console.log(`[HANDOFF] Reading prompt file: ${promptFile}`);
   const promptContent = await fsp.readFile(promptFile, 'utf8');
+  console.log(`[HANDOFF] Prompt content length: ${promptContent.length}`);
 
   // Add unrestricted flags for infrastructure operations
   const args: string[] = [];
@@ -726,21 +732,27 @@ async function handoffToExecutor(executor: string, promptFile: string, cwd: stri
 
   // Add prompt as final argument
   args.push(promptContent);
+  console.log(`[HANDOFF] Args prepared: ${args.length} arguments`);
 
   // Spawn executor with unrestricted flags, inheriting user's terminal (stdio)
+  console.log(`[HANDOFF] About to spawn: ${command}`);
   const child = spawn(command, args, {
     cwd,
     stdio: 'inherit',  // User terminal becomes executor terminal
     shell: false  // No shell - let Node handle argument escaping
   });
 
+  console.log(`[HANDOFF] Spawned child PID: ${child.pid}`);
+
   // Wait for executor to complete, then exit with its code
   return new Promise((resolve, reject) => {
     child.on('exit', (code) => {
+      console.log(`[HANDOFF] Child exited with code: ${code}`);
       process.exit(code || 0);
     });
 
     child.on('error', (error) => {
+      console.error(`[HANDOFF] Child error:`, error);
       reject(new Error(`Failed to start ${command}: ${error.message}`));
     });
   });
