@@ -83,13 +83,18 @@ async function runUpdate(parsed, _config, _paths) {
             process.exitCode = 1;
             return;
         }
+        console.log(`📦 Available executors: ${availableExecutors.join(', ')}`);
+        console.log('');
         const config = await (0, config_1.loadConfig)();
-        let executor = config?.defaults?.executor || 'codex';
-        // If configured executor not available, use what we have
-        if (!availableExecutors.includes(executor)) {
+        let executor;
+        // If both available, ask user to choose
+        if (availableExecutors.length > 1) {
+            executor = await promptExecutorChoice(availableExecutors, config?.defaults?.executor);
+        }
+        else {
+            // Only one available, use it
             executor = availableExecutors[0];
-            console.log(`⚠️  Configured executor "${config?.defaults?.executor}" not found`);
-            console.log(`   Using available executor: ${executor}`);
+            console.log(`✓ Using ${executor} (only available executor)`);
             console.log('');
         }
         // Configure MCP for both Codex and Claude Code
@@ -224,6 +229,51 @@ async function detectAvailableExecutors() {
         // Not available
     }
     return available;
+}
+async function promptExecutorChoice(availableExecutors, configuredDefault) {
+    const readline = await import('readline');
+    // Show default if configured and available
+    const defaultChoice = configuredDefault && availableExecutors.includes(configuredDefault)
+        ? configuredDefault
+        : availableExecutors[0];
+    console.log('Multiple executors available. Which would you like to use?');
+    console.log('');
+    availableExecutors.forEach((exec, idx) => {
+        const isDefault = exec === defaultChoice;
+        const marker = isDefault ? '→' : ' ';
+        console.log(`  ${marker} ${idx + 1}) ${exec}${isDefault ? ' (default)' : ''}`);
+    });
+    console.log('');
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+    return new Promise((resolve) => {
+        rl.question(`Select executor (1-${availableExecutors.length}, or press Enter for ${defaultChoice}): `, (answer) => {
+            rl.close();
+            const trimmed = answer.trim();
+            // Empty = use default
+            if (!trimmed) {
+                console.log(`Using ${defaultChoice}`);
+                console.log('');
+                resolve(defaultChoice);
+                return;
+            }
+            // Parse number selection
+            const choice = parseInt(trimmed, 10);
+            if (!isNaN(choice) && choice >= 1 && choice <= availableExecutors.length) {
+                const selected = availableExecutors[choice - 1];
+                console.log(`Using ${selected}`);
+                console.log('');
+                resolve(selected);
+                return;
+            }
+            // Invalid choice - use default
+            console.log(`Invalid choice, using ${defaultChoice}`);
+            console.log('');
+            resolve(defaultChoice);
+        });
+    });
 }
 async function handoffToExecutor(executor, promptFile, cwd) {
     const { spawn } = await import('child_process');
