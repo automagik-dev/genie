@@ -91,8 +91,8 @@ ls -la .genie/
 ls -la .genie/agents/
 ls -la .genie/custom/ 2>/dev/null || echo "No custom/ directory"
 
-# Detect version
-if [ -f ".genie/agents/core/implementor.md" ]; then
+# Detect version (check for actual old structure files)
+if [ -f ".genie/agents/plan.md" ] || [ -f ".genie/agents/wish.md" ] || [ -d ".genie/agents/core/" ]; then
   echo "Old structure: core agents in project"
 else
   echo "New structure: core agents from npm"
@@ -113,15 +113,24 @@ ls .genie/state/ 2>/dev/null && echo "Has state"
 
 ### Step 2: Detect Installation Type
 
-Use migration detection:
+**Improved detection logic:**
 
 ```bash
-# Check installation type
-if [ -f ".genie/agents/core/implementor.md" ] || [ -f ".genie/agents/plan.md" ]; then
-  echo "DETECTED: old_genie (v2.0.x)"
-  echo "ACTION: Migration required"
+# Check for old structure (core agents in project)
+OLD_AGENTS=0
+[ -f ".genie/agents/plan.md" ] && OLD_AGENTS=$((OLD_AGENTS + 1))
+[ -f ".genie/agents/wish.md" ] && OLD_AGENTS=$((OLD_AGENTS + 1))
+[ -f ".genie/agents/forge.md" ] && OLD_AGENTS=$((OLD_AGENTS + 1))
+[ -f ".genie/agents/review.md" ] && OLD_AGENTS=$((OLD_AGENTS + 1))
+
+# Also check legacy core/ structure
+[ -d ".genie/agents/core/" ] && OLD_AGENTS=$((OLD_AGENTS + 10))
+
+if [ $OLD_AGENTS -gt 0 ]; then
+  echo "DETECTED: old_genie (v2.0.x - v2.1.3)"
+  echo "ACTION: Migration required ($OLD_AGENTS core agent indicators → npm + custom/)"
 elif [ -d ".genie/agents/" ] && [ -d ".genie/custom/" ]; then
-  echo "DETECTED: already_new (v2.1.0+)"
+  echo "DETECTED: already_new (v2.1.4+)"
   echo "ACTION: Template update only"
 else
   echo "DETECTED: clean (no Genie installation)"
@@ -155,39 +164,94 @@ find .genie/reports/ -name "*.md" 2>/dev/null | wc -l
 ls .genie/state/agents/sessions.json 2>/dev/null
 ```
 
+### Step 4: Explain Architectural Change (if old structure)
+
+**If core agents found in project, show user clear before/after:**
+
+```
+📊 ARCHITECTURE MIGRATION REQUIRED
+
+Your project uses OLD structure (v2.0.x - v2.1.3):
+  .genie/agents/
+  ├── plan.md (full definition)
+  ├── wish.md (full definition)
+  ├── forge.md (full definition)
+  ├── review.md (full definition)
+  └── ... (other core agents)
+
+New v2.1.4+ structure:
+  npm package: @automagik/genie
+  ├── agents/plan.md (core logic maintained by framework)
+  ├── agents/wish.md (core logic)
+  ├── agents/forge.md (core logic)
+  └── agents/review.md (core logic)
+
+  Your project: .genie/custom/
+  ├── plan.md (project-specific overrides only)
+  ├── wish.md (project overrides)
+  ├── forge.md (project overrides)
+  └── ... (other custom extensions)
+
+WHAT THIS MEANS:
+✅ Core agent logic moves to npm package (maintained by framework team)
+✅ Your project keeps only custom extensions (smaller, cleaner)
+✅ No content loss - full backup will be created
+✅ Easier updates - `npm install` gets new core agents automatically
+
+WHAT WILL CHANGE:
+- Delete: Core agent files from .genie/agents/ (moved to npm)
+- Create: Custom override files in .genie/custom/ (project-specific)
+- Preserve: All specialists, utilities, wishes, reports (100%)
+
+Continue? (y/N)
+```
+
 ---
 
 ## Migration Decision
 
-### Old Structure Detected (v2.0.x)
+### Old Structure Detected (v2.0.x - v2.1.3)
 
 **If core agents found in project:**
 
-1. **Explain what will happen:**
+1. **Show migration plan:**
    ```
-   📊 Old Genie structure detected (v2.0.x)
+   📊 Old Genie structure detected
 
-   Your project has 25 core agents stored locally.
-   The new architecture (v2.1.0+) loads these from npm package.
+   Core agents found: 4 files (plan, wish, forge, review)
 
    Migration plan:
    1. Backup: .genie/ → .genie-backup-TIMESTAMP/
-   2. Analyze: Identify custom vs core agents
-   3. Preserve: Keep your custom agents + all docs/wishes
-   4. Remove: Delete core agents (25 files, now from npm)
-   5. Update: Apply new templates from npm package
-
-   Estimated time: 30-60 seconds
+   2. Analyze: Count core agents vs custom/specialist/utility agents
+   3. Delete: Core agents (plan, wish, forge, review) - moving to npm
+   4. Create: Custom overrides in .genie/custom/ (project-specific only)
+   5. Preserve: ALL specialists, utilities, wishes, reports (100%)
+   6. Verify: Test agent resolution and custom override loading
    ```
 
 2. **Invoke migration:**
    Use the migration utility we built in `.genie/cli/src/lib/migrate.ts`
 
 3. **Verify migration:**
-   - Check backup exists
-   - Verify core agents removed
-   - Verify custom agents preserved
-   - Test agent resolution
+   ```bash
+   # Check backup exists
+   [ -d ".genie-backup-$(date +%Y%m%d)*" ] && echo "✅ Backup created"
+
+   # Verify core agents moved to npm
+   [ ! -f ".genie/agents/plan.md" ] && echo "✅ Core agents removed from project"
+   [ ! -f ".genie/agents/wish.md" ] && echo "✅ (now loaded from npm)"
+
+   # Check custom overrides created
+   [ -f ".genie/custom/plan.md" ] && echo "✅ Custom overrides created"
+   [ -f ".genie/custom/implementor.md" ] && echo "✅ Project extensions present"
+
+   # Verify specialists/utilities preserved
+   [ -d ".genie/agents/specialists" ] && echo "✅ Specialists preserved"
+   [ -d ".genie/agents/utilities" ] && echo "✅ Utilities preserved"
+
+   # Test agent resolution
+   genie list agents | grep -q "25 agents" && echo "✅ Agent resolution working"
+   ```
 
 ### New Structure Already (v2.1.0+)
 
@@ -381,26 +445,150 @@ echo "✅ Backup created: $BACKUP_DIR"
 ### Post-Update Checks
 
 ```bash
-# 1. Agent resolution works
-echo "Testing agent resolution..."
-genie list agents | grep -q "25 agents" && echo "✅ Agents resolved" || echo "❌ Agent resolution failed"
-
-# 2. Custom agents work
-if [ -f ".genie/agents/my-custom-agent.md" ]; then
-  genie run my-custom-agent --help >/dev/null 2>&1 && echo "✅ Custom agent works" || echo "❌ Custom agent failed"
+# 1. Verify npm package installed
+echo "Checking npm core agents..."
+NPM_AGENTS=$(npm ls -g automagik-genie --depth=0 2>/dev/null | grep -c "automagik-genie")
+if [ $NPM_AGENTS -gt 0 ]; then
+  echo "✅ Core agents available from npm"
+else
+  echo "❌ npm package not found - reinstall: npm install -g automagik-genie@latest"
+  exit 1
 fi
 
-# 3. Core agents from npm
-genie run implementor --help >/dev/null 2>&1 && echo "✅ Core agent (npm) works" || echo "❌ Core agent failed"
+# 2. Agent resolution works
+echo "Testing agent resolution..."
+AGENT_COUNT=$(genie list agents 2>/dev/null | wc -l)
+if [ $AGENT_COUNT -gt 20 ]; then
+  echo "✅ Agent resolution working (${AGENT_COUNT} agents)"
+else
+  echo "❌ Agent resolution broken - consider rollback"
+  exit 1
+fi
 
-# 4. Templates valid
+# 3. Core agents from npm work
+genie run implementor --help >/dev/null 2>&1 && \
+  echo "✅ Core agent (npm) works" || \
+  echo "❌ Core agent failed - check npm package"
+
+# 4. Custom overrides load correctly
+echo "Verifying custom overrides..."
+if [ -f ".genie/custom/implementor.md" ]; then
+  # Check if override contains project-specific content
+  if grep -q "pnpm\|cargo\|npm run" ".genie/custom/implementor.md" 2>/dev/null; then
+    echo "✅ Custom overrides contain project-specific commands"
+  else
+    echo "⚠️ Custom override exists but may be empty"
+  fi
+fi
+
+# 5. Custom specialist agents work
+if [ -f ".genie/agents/specialists/qa.md" ]; then
+  genie run qa --help >/dev/null 2>&1 && \
+    echo "✅ Custom specialist agents work" || \
+    echo "❌ Custom specialist failed"
+fi
+
+# 6. Templates valid
 [ -f "AGENTS.md" ] && echo "✅ AGENTS.md present"
 [ -f "CLAUDE.md" ] && echo "✅ CLAUDE.md present"
-[ -d ".genie/custom" ] && echo "✅ Custom stubs present"
+[ -d ".genie/custom" ] && echo "✅ Custom overrides present"
 
-# 5. User work preserved
+# 7. User work preserved
 [ -d ".genie/wishes" ] && echo "✅ Wishes preserved"
 [ -d ".genie/reports" ] && echo "✅ Reports preserved"
+[ -d ".genie/agents/specialists" ] && echo "✅ Specialists preserved"
+[ -d ".genie/agents/utilities" ] && echo "✅ Utilities preserved"
+```
+
+### Rollback Decision Tree
+
+**Run these tests before deciding:**
+
+```bash
+# Test 1: Agent resolution
+genie list agents >/dev/null 2>&1
+AGENT_TEST=$?
+
+# Test 2: Custom overrides
+test -f ".genie/custom/implementor.md"
+OVERRIDE_TEST=$?
+
+# Test 3: Core agents
+genie run plan --help >/dev/null 2>&1
+CORE_TEST=$?
+
+# Evaluate results
+if [ $AGENT_TEST -ne 0 ] || [ $OVERRIDE_TEST -ne 0 ] || [ $CORE_TEST -ne 0 ]; then
+  echo "❌ Update verification failed"
+  echo ""
+  echo "ROLLBACK RECOMMENDED:"
+  echo "1. Stop using updated version"
+  echo "2. Restore backup: rm -rf .genie && cp -r .genie-backup-TIMESTAMP .genie"
+  echo "3. Report issue with:"
+  echo "   - Agent resolution status: $AGENT_TEST"
+  echo "   - Override test status: $OVERRIDE_TEST"
+  echo "   - Core agent test status: $CORE_TEST"
+  echo "   - Backup location: $(ls -d .genie-backup-* 2>/dev/null | tail -1)"
+  exit 1
+else
+  echo "✅ All verification tests passed"
+fi
+```
+
+---
+
+## Custom Override Best Practices
+
+### What to Include in Custom Overrides
+
+**✅ Project-Specific Content:**
+- Build commands (`pnpm run build:genie`, `cargo build --release`)
+- Test commands (`pnpm run test:genie`, `cargo test --workspace`)
+- File paths (`source layout: CLI in @.genie/cli/src/`)
+- Project conventions (evidence paths, done report locations)
+- Tool-specific flags (language versions, frameworks)
+- Environment setup instructions
+
+**❌ Avoid in Custom Overrides:**
+- Agent orchestration logic (let npm core handle)
+- Task breakdown patterns (framework responsibility)
+- Generic guidance (not project-specific)
+- Duplicate content from npm core agents
+
+### Example: Good Custom Override
+
+```markdown
+# Implementor • Project Defaults
+
+## Commands & Tools
+- `pnpm install` – install dependencies (use `corepack enable pnpm` first if unavailable)
+- `pnpm run build:genie` – compile CLI TypeScript sources under `@.genie/cli/src/`
+- `pnpm run test:genie` – required smoke + CLI test suite
+- `cargo build --release` – build Rust backend (if applicable)
+
+## Context & References
+- Source layout: CLI code in `@.genie/cli/src/`, MCP server in `@.genie/mcp/src/`
+- Tests live in `@tests/` (`genie-cli.test.js`, `identity-smoke.sh`)
+- Wishes expect artifacts under `.genie/wishes/<slug>/qa/`
+
+## Evidence & Reporting
+- Capture command output (build + tests) to wish `qa/` folder
+- Reference key files touched with `@path` links for reviewers
+```
+
+### Custom Override Template Structure
+
+```markdown
+# {Agent} • Project Defaults
+
+## Commands & Tools
+[List project-specific commands, build tools, test runners]
+
+## Context & References
+[Project structure, key paths, conventions]
+
+## Evidence & Reporting
+[Where to store artifacts, how to capture evidence]
 ```
 
 ---
@@ -426,6 +614,42 @@ genie run implementor --help >/dev/null 2>&1 && echo "✅ Core agent (npm) works
 - **Custom agents:** N (preserved)
 - **User wishes:** N (preserved)
 - **User reports:** N (preserved)
+
+## Architectural Migration (if applicable)
+
+### OLD Structure (v2.0.x - v2.1.3)
+- **Core agents in project:** N files (plan, wish, forge, review, etc.)
+- **Total lines:** N,NNN
+- **Location:** `.genie/agents/`
+
+### NEW Structure (v2.1.4+)
+- **Core agents:** Loaded from npm package `automagik-genie`
+- **Custom overrides:** N files in `.genie/custom/`
+- **Total override lines:** NNN
+
+### What Changed
+**Deleted (moved to npm):**
+- `.genie/agents/plan.md` (NNN lines) → `npm:automagik-genie/agents/plan.md`
+- `.genie/agents/wish.md` (NNN lines) → `npm:automagik-genie/agents/wish.md`
+- `.genie/agents/forge.md` (NNN lines) → `npm:automagik-genie/agents/forge.md`
+- `.genie/agents/review.md` (NNN lines) → `npm:automagik-genie/agents/review.md`
+
+**Created (project-specific):**
+- `.genie/custom/plan.md` (NN lines) - Project planning overrides
+- `.genie/custom/wish.md` (NN lines) - Project wish overrides
+- `.genie/custom/implementor.md` (NN lines) - Project tooling/commands
+- ... (list all custom overrides created)
+
+**Preserved (no changes):**
+- `.genie/agents/specialists/` (N files, N,NNN lines)
+- `.genie/agents/utilities/` (N files, N,NNN lines)
+- All product docs, standards, wishes, reports
+
+### Why This Change
+- **Code reuse:** Core agent logic maintained by Genie framework team
+- **Smaller repos:** Projects only store custom extensions (NNN lines vs N,NNN lines)
+- **Easier updates:** `npm install` updates core agents automatically
+- **Clear separation:** Base behavior (npm) vs customization (project)
 
 ## Migration (if applicable)
 - **Backup created:** .genie-backup-TIMESTAMP/
@@ -633,3 +857,92 @@ genie update                            # Update agent runs
 ## Project Customization
 
 @.genie/custom/update.md
+
+---
+
+## Update Agent Improvements (v2.1.4)
+
+**Document Version:** 2.1.4
+**Updated:** 2025-10-13
+**Changes:** Based on real-world Forge update analysis
+
+### Key Improvements
+
+1. **Fixed Structure Detection (Line 120-139)**
+   - Now checks for actual files: `plan.md`, `wish.md`, `forge.md`, `review.md`
+   - Also checks legacy `core/` directory
+   - Provides clear migration count
+
+2. **Added Architectural Change Explanation (Line 167-207)**
+   - Shows clear before/after directory structure
+   - Explains why files "disappear" (moved to npm)
+   - Documents what content goes where
+   - Clarifies no content loss
+
+3. **Enhanced Migration Verification (Line 236-254)**
+   - Checks backup exists
+   - Verifies core agents removed from project
+   - Confirms custom overrides created
+   - Tests specialists/utilities preserved
+   - Validates agent resolution
+
+4. **Added Custom Override Verification (Line 473-482)**
+   - Tests that overrides actually load
+   - Checks for project-specific commands
+   - Warns if overrides are empty
+
+5. **Added Rollback Decision Tree (Line 503-536)**
+   - Clear test steps
+   - Pass/fail criteria
+   - Rollback command with context
+   - Issue reporting guidance
+
+6. **Enhanced Done Report Template (Line 562-596)**
+   - New "Architectural Migration" section
+   - Before/after agent counts
+   - Clear explanation of what changed
+   - Why the change was made
+
+7. **Added Custom Override Guidance (Line 540-593)**
+   - What to include/avoid
+   - Best practices
+   - Example templates
+   - Clear structure
+
+### What Was Fixed
+
+**Problem 1:** Users confused by "missing" core agents
+**Solution:** Architectural change explanation shows files moved to npm
+
+**Problem 2:** Detection logic checked wrong directory
+**Solution:** Now checks for actual old structure files
+
+**Problem 3:** No guidance on what belongs in custom overrides
+**Solution:** Added best practices section with examples
+
+**Problem 4:** No way to verify custom overrides load
+**Solution:** Added verification step that checks override content
+
+**Problem 5:** No rollback guidance
+**Solution:** Added decision tree with clear tests and commands
+
+**Problem 6:** Done Report didn't explain architectural change
+**Solution:** Added detailed migration section to template
+
+### Based On
+
+- **Real update:** Automagik Forge v2.1.1 → v2.1.4
+- **Analysis:** `.genie/reports/update-agent-analysis-202510132400.md`
+- **Evidence:** `.genie/reports/genie-update-absorption-analysis-202510132359.md`
+- **Result:** Zero content loss, 100% preservation, successful migration
+
+### Testing Checklist
+
+Before releasing update agent changes:
+
+- [ ] Test old structure detection with actual old repos
+- [ ] Verify architectural explanation shows in output
+- [ ] Test custom override verification catches empty files
+- [ ] Verify rollback decision tree works with failed updates
+- [ ] Test Done Report includes all new sections
+- [ ] Validate custom override guidance with real examples
