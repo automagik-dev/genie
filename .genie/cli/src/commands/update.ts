@@ -22,6 +22,7 @@ import {
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType, runMigration } from '../lib/migrate';
 import { runChat } from './run';
+import { loadConfig } from '../lib/config';
 
 interface UpdateFlags {
   dryRun?: boolean;
@@ -109,18 +110,22 @@ export async function runUpdate(
       return;
     }
 
-    // Spawn update agent for intelligent orchestration
+    // Set up executor orchestration for update
     console.log('');
-    console.log('🔄 Spawning update agent for intelligent orchestration...');
+    console.log('🔄 Preparing update orchestration...');
     console.log('');
 
-    const updatePrompt = buildUpdatePrompt(diff, installType, cwd);
-    const agentParsed: ParsedCommand = {
-      ...parsed,
-      commandArgs: ['update', updatePrompt]
-    };
+    const config = await loadConfig();
+    const executor = config?.defaults?.executor || 'codex';
 
-    await runChat(agentParsed, _config, _paths);
+    console.log(`📝 Configuring MCP server for ${executor}...`);
+    await setupMcpConfig(cwd, executor);
+
+    console.log(`🚀 Invoking ${executor} to orchestrate update...`);
+    console.log('');
+
+    const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
+    await invokeExecutor(executor, updatePrompt, cwd);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Update failed', message), parsed.options, { stream: process.stderr });
@@ -128,44 +133,147 @@ export async function runUpdate(
   }
 }
 
-function buildUpdatePrompt(diff: DiffSummary, installType: string, cwd: string): string {
+async function setupMcpConfig(cwd: string, executor: string): Promise<void> {
+  const mcpPath = path.join(cwd, '.mcp.json');
+  let mcpConfig: any = { mcpServers: {} };
+
+  if (await pathExists(mcpPath)) {
+    const content = await fsp.readFile(mcpPath, 'utf8');
+    mcpConfig = JSON.parse(content);
+  }
+
+  // Ensure mcpServers exists
+  mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+
+  // Add genie MCP server if not present
+  if (!mcpConfig.mcpServers.genie) {
+    mcpConfig.mcpServers.genie = {
+      command: 'node',
+      args: [path.resolve(__dirname, '../../mcp/dist/server.js')],
+      env: {
+        MCP_TRANSPORT: 'stdio'
+      }
+    };
+  }
+
+  await writeJsonFile(mcpPath, mcpConfig);
+}
+
+function buildUpdateOrchestrationPrompt(
+  diff: DiffSummary,
+  installType: string,
+  cwd: string,
+  executor: string
+): string {
   const version = getPackageVersion();
 
-  return `# Update Context
+  return `# Genie Framework Update Orchestration
+
+You are orchestrating a Genie framework update. Use the Genie MCP server to run the update agent in background.
+
+## Update Context
+
+**Project:** ${cwd}
+**Current architecture:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
+**Target version:** ${version}
+**Executor:** ${executor}
+
+**Changes detected:**
+- Files to add: ${diff.added.length}
+- Files to update: ${diff.modified.length}
+
+## Orchestration Steps
+
+1. **Launch update agent** via Genie MCP:
+   \`\`\`
+   mcp__genie__run with agent="update" and prompt="<paste full update context below>"
+   \`\`\`
+
+2. **Wait for agent** (update typically takes 60-120 seconds):
+   - Poll \`mcp__genie__list_sessions\` to check status
+   - Or wait 90 seconds then view results
+
+3. **Review results**:
+   \`\`\`
+   mcp__genie__view with sessionId="<session-id>" and full=false
+   \`\`\`
+
+4. **Resume if needed**:
+   \`\`\`
+   mcp__genie__resume with sessionId="<session-id>" and prompt="<follow-up>"
+   \`\`\`
+
+## Update Agent Context
+
+Use this as the prompt when calling \`mcp__genie__run\`:
+
+\`\`\`
+# Update Task
 
 ## Current State
-- **Project directory:** ${cwd}
-- **Install type:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
-- **Framework version:** ${version}
+- Project directory: ${cwd}
+- Install type: ${installType}
+- Framework version: ${version}
 
-## Changes Detected
-- **Files to add:** ${diff.added.length}
-${diff.added.length > 0 ? diff.added.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
-${diff.added.length > 10 ? `  ... and ${diff.added.length - 10} more` : ''}
-
-- **Files to update:** ${diff.modified.length}
-${diff.modified.length > 0 ? diff.modified.slice(0, 10).map(f => `  - ${f}`).join('\n') : ''}
-${diff.modified.length > 10 ? `  ... and ${diff.modified.length - 10} more` : ''}
+## Changes to Apply
+- Add ${diff.added.length} new files
+- Update ${diff.modified.length} existing files
+${diff.added.length > 0 ? '\n### Files to Add\n' + diff.added.slice(0, 10).map(f => `- ${f}`).join('\n') : ''}
+${diff.added.length > 10 ? `... and ${diff.added.length - 10} more` : ''}
+${diff.modified.length > 0 ? '\n### Files to Update\n' + diff.modified.slice(0, 10).map(f => `- ${f}`).join('\n') : ''}
+${diff.modified.length > 10 ? `... and ${diff.modified.length - 10} more` : ''}
 
 ## Your Task
-1. Create backup of current state
-2. Apply template updates intelligently
-3. Preserve all user customizations (custom agents, wishes, reports)
-4. Update version file
-5. Generate update report with:
-   - Files changed summary
-   - Backup location
-   - Verification steps
-   - Next actions for user
+1. Create timestamped backup of current state
+2. Extract content from old structure (if applicable) into custom overrides
+3. Apply template updates intelligently (add new files, update modified files)
+4. Preserve ALL user customizations (custom agents, wishes, reports, context.md)
+5. Populate .genie/custom/ folder with project-specific content
+6. Update .genie/version.json with framework version and timestamp
+7. Create update report with evidence
 
 ## Success Criteria
 - ✅ Backup created successfully
+- ✅ Old structure content extracted (if applicable)
 - ✅ Template updates applied
-- ✅ User work preserved
+- ✅ User work preserved (custom/, wishes/, reports/, context.md)
+- ✅ Custom folder populated with project content
 - ✅ Version file updated
-- ✅ Update report generated
+- ✅ Update report generated with file paths and verification steps
 
-Execute the update following your operating framework.`;
+Execute following @.genie/agents/core/update.md framework.
+\`\`\`
+
+## Begin
+
+Start by launching the update agent with the context above.`;
+}
+
+async function invokeExecutor(executor: string, prompt: string, cwd: string): Promise<void> {
+  const { spawn } = await import('child_process');
+
+  const command = executor === 'claude' ? 'claude' : 'codex';
+  const args = [prompt];
+
+  const child = spawn(command, args, {
+    cwd,
+    stdio: 'inherit',
+    shell: true
+  });
+
+  return new Promise((resolve, reject) => {
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`${command} exited with code ${code}`));
+      }
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(`Failed to invoke ${command}: ${error.message}`));
+    });
+  });
 }
 
 function parseFlags(args: string[]): UpdateFlags {

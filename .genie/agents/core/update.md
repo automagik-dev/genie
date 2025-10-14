@@ -4,7 +4,7 @@ description: Intelligent project update with context analysis and migration orch
 genie:
   executor: claude
   model: sonnet
-  background: false
+  background: true
   permissionMode: default
 ---
 
