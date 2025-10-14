@@ -116,8 +116,29 @@ export async function runUpdate(
     console.log('🔄 Preparing update orchestration...');
     console.log('');
 
+    // Detect available executors
+    const availableExecutors = await detectAvailableExecutors();
+    if (availableExecutors.length === 0) {
+      await emitView(buildErrorView('No executor found',
+        'Could not find codex or claude CLI.\n\n' +
+        'Install one of:\n' +
+        '  • Codex: npm install -g @namastexlabs/codex\n' +
+        '  • Claude Code: https://docs.claude.com/docs/claude-code/install'
+      ), parsed.options, { stream: process.stderr });
+      process.exitCode = 1;
+      return;
+    }
+
     const config = await loadConfig();
-    const executor = config?.defaults?.executor || 'codex';
+    let executor = config?.defaults?.executor || 'codex';
+
+    // If configured executor not available, use what we have
+    if (!availableExecutors.includes(executor)) {
+      executor = availableExecutors[0];
+      console.log(`⚠️  Configured executor "${config?.defaults?.executor}" not found`);
+      console.log(`   Using available executor: ${executor}`);
+      console.log('');
+    }
 
     // Configure MCP for both Codex and Claude Code
     await configureBothExecutors(cwd);
@@ -132,7 +153,7 @@ export async function runUpdate(
     await fsp.writeFile(promptFile, updatePrompt, 'utf8');
 
     console.log(`✅ Orchestration prompt ready`);
-    console.log(`🚀 Handing off to ${executor}...`);
+    console.log(`🚀 Handing off to ${executor} (unrestricted mode)...`);
     console.log('');
 
     // Hand off to executor (replaces Node process with executor in user's terminal)
@@ -234,6 +255,38 @@ Execute following @.genie/agents/core/update.md framework.
 Start by launching the update agent with the context above.`;
 }
 
+async function detectAvailableExecutors(): Promise<string[]> {
+  const { execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const execFileAsync = promisify(execFile);
+
+  const available: string[] = [];
+
+  // Check Codex
+  try {
+    await execFileAsync('codex', ['--version'], { timeout: 5000 });
+    available.push('codex');
+  } catch {
+    // Try npx fallback
+    try {
+      await execFileAsync('npx', ['-y', '@namastexlabs/codex@latest', '--version'], { timeout: 5000 });
+      available.push('codex');
+    } catch {
+      // Not available
+    }
+  }
+
+  // Check Claude
+  try {
+    await execFileAsync('claude', ['--version'], { timeout: 5000 });
+    available.push('claude');
+  } catch {
+    // Not available
+  }
+
+  return available;
+}
+
 async function handoffToExecutor(executor: string, promptFile: string, cwd: string): Promise<void> {
   const { spawn } = await import('child_process');
 
@@ -242,9 +295,22 @@ async function handoffToExecutor(executor: string, promptFile: string, cwd: stri
   // Read prompt content from file
   const promptContent = await fsp.readFile(promptFile, 'utf8');
 
-  // Spawn executor with prompt, inheriting user's terminal (stdio)
-  // Pass prompt directly as argument (Node handles escaping when shell=false)
-  const child = spawn(command, [promptContent], {
+  // Add unrestricted flags for infrastructure operations
+  const args: string[] = [];
+
+  if (executor === 'claude') {
+    // Claude: bypass all permission checks
+    args.push('--dangerously-skip-permissions');
+  } else {
+    // Codex: bypass approvals and sandbox
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+  }
+
+  // Add prompt as final argument
+  args.push(promptContent);
+
+  // Spawn executor with unrestricted flags, inheriting user's terminal (stdio)
+  const child = spawn(command, args, {
     cwd,
     stdio: 'inherit',  // User terminal becomes executor terminal
     shell: false  // No shell - let Node handle argument escaping

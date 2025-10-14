@@ -49,7 +49,9 @@ executors:
       outputFormat: stream-json              # JSONL output format
       allowedTools: []                       # tool filtering (empty = all allowed)
       disallowedTools: []                    # tool filtering (empty = none blocked)
-      additionalArgs: []                     # extra CLI flags
+      additionalArgs:                        # extra CLI flags
+        - --add-dir
+        - /home/namastex/workspace/automagik-forge
     resume:
       additionalArgs: []                     # extra CLI flags for resume
 
