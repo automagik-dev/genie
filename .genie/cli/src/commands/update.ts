@@ -127,23 +127,16 @@ export async function runUpdate(
 
     const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
 
-    // Save prompt to file for user to run manually
+    // Save prompt to file
     const promptFile = path.join(cwd, '.genie-update-prompt.md');
     await fsp.writeFile(promptFile, updatePrompt, 'utf8');
 
-    console.log(`✅ Update orchestration prompt saved to:`);
-    console.log(`   ${promptFile}`);
+    console.log(`✅ Orchestration prompt ready`);
+    console.log(`🚀 Handing off to ${executor}...`);
     console.log('');
-    console.log(`🚀 Next step: Run your ${executor} with the prompt:`);
-    console.log('');
-    if (executor === 'codex') {
-      console.log(`   codex "$(cat ${promptFile})"`);
-    } else {
-      console.log(`   claude "$(cat ${promptFile})"`);
-    }
-    console.log('');
-    console.log(`Or manually open ${executor} and paste the prompt from the file.`);
-    console.log('');
+
+    // Hand off to executor (replaces Node process with executor in user's terminal)
+    await handoffToExecutor(executor, promptFile, cwd);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Update failed', message), parsed.options, { stream: process.stderr });
@@ -239,6 +232,34 @@ Execute following @.genie/agents/core/update.md framework.
 ## Begin
 
 Start by launching the update agent with the context above.`;
+}
+
+async function handoffToExecutor(executor: string, promptFile: string, cwd: string): Promise<void> {
+  const { spawn } = await import('child_process');
+
+  const command = executor === 'claude' ? 'claude' : 'codex';
+
+  // Read prompt content from file
+  const promptContent = await fsp.readFile(promptFile, 'utf8');
+
+  // Spawn executor with prompt, inheriting user's terminal (stdio)
+  // Pass prompt directly as argument (Node handles escaping when shell=false)
+  const child = spawn(command, [promptContent], {
+    cwd,
+    stdio: 'inherit',  // User terminal becomes executor terminal
+    shell: false  // No shell - let Node handle argument escaping
+  });
+
+  // Wait for executor to complete, then exit with its code
+  return new Promise((resolve, reject) => {
+    child.on('exit', (code) => {
+      process.exit(code || 0);
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(`Failed to start ${command}: ${error.message}`));
+    });
+  });
 }
 
 async function invokeExecutor(executor: string, prompt: string, cwd: string): Promise<void> {
