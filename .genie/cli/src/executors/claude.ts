@@ -22,7 +22,7 @@ const defaults: ExecutorDefaults = {
 };
 
 function buildRunCommand({ config = {}, instructions, agentPath, prompt }: { config?: Record<string, any>; instructions?: string; agentPath?: string; prompt?: string }): ExecutorCommand {
-  const execConfig = mergeExecConfig(config.exec) as Record<string, any>;
+  const execConfig = mergeExecConfig(config) as Record<string, any>;
   const command = config.binary || defaults.binary!;
   const args: string[] = ['-p', '--verbose', '--output-format', 'stream-json'];
 

@@ -57,7 +57,7 @@ const defaults = {
     sessionExtractionDelayMs: 1000
 };
 function buildRunCommand({ config = {}, instructions, agentPath, prompt }) {
-    const execConfig = mergeExecConfig(config.exec);
+    const execConfig = mergeExecConfig(config);
     const command = config.binary || defaults.binary;
     const args = ['-p', '--verbose', '--output-format', 'stream-json'];
     // Debug: log exec config
