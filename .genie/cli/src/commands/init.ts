@@ -302,12 +302,16 @@ export async function runInit(
 
     // Hand off to install agent
     console.log('');
-    console.log(`🚀 Starting install agent with ${provider}...`);
+    console.log(`📝 Generating installation prompt...`);
     console.log('');
 
     const installPrompt = buildInstallPrompt(cwd, provider);
     const promptFile = path.join(cwd, '.genie-install-prompt.md');
     await fsp.writeFile(promptFile, installPrompt, 'utf8');
+
+    console.log(`✅ Installation prompt ready`);
+    console.log(`🚀 Handing off to ${provider} for installation...`);
+    console.log('');
 
     await handoffToExecutor(provider, promptFile, cwd);
   } catch (error) {
