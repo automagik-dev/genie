@@ -14,6 +14,7 @@ const package_1 = require("../lib/package");
 const migrate_1 = require("../lib/migrate");
 const config_1 = require("../lib/config");
 const mcp_config_1 = require("../lib/mcp-config");
+const executor_prompt_js_1 = require("../lib/executor-prompt.js");
 async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
@@ -89,7 +90,13 @@ async function runUpdate(parsed, _config, _paths) {
         let executor;
         // If both available, ask user to choose
         if (availableExecutors.length > 1) {
-            executor = await promptExecutorChoice(availableExecutors, config?.defaults?.executor);
+            const defaultChoice = config?.defaults?.executor && availableExecutors.includes(config.defaults.executor)
+                ? config.defaults.executor
+                : availableExecutors[0];
+            executor = await (0, executor_prompt_js_1.promptExecutorChoice)(availableExecutors, defaultChoice);
+            console.log('');
+            console.log(`✓ Using ${executor}`);
+            console.log('');
             // Persist user's choice
             await saveExecutorChoice(executor, cwd);
         }
@@ -121,9 +128,11 @@ async function runUpdate(parsed, _config, _paths) {
 }
 function buildUpdateOrchestrationPrompt(diff, installType, cwd, executor) {
     const version = (0, package_1.getPackageVersion)();
-    return `# Genie Framework Update Orchestration
+    return `# Genie Framework Update
 
-You are orchestrating a Genie framework update. Use the Genie MCP server to run the update agent in background.
+Follow the comprehensive update workflow documented in UPDATE.md.
+
+@.genie/UPDATE.md
 
 ## Update Context
 
@@ -136,71 +145,26 @@ You are orchestrating a Genie framework update. Use the Genie MCP server to run 
 - Files to add: ${diff.added.length}
 - Files to update: ${diff.modified.length}
 
-## Orchestration Steps
-
-1. **Launch update agent** via Genie MCP:
-   \`\`\`
-   mcp__genie__run with agent="update" and prompt="<paste full update context below>"
-   \`\`\`
-
-2. **Wait for agent** (update typically takes 60-120 seconds):
-   - Poll \`mcp__genie__list_sessions\` to check status
-   - Or wait 90 seconds then view results
-
-3. **Review results**:
-   \`\`\`
-   mcp__genie__view with sessionId="<session-id>" and full=false
-   \`\`\`
-
-4. **Resume if needed**:
-   \`\`\`
-   mcp__genie__resume with sessionId="<session-id>" and prompt="<follow-up>"
-   \`\`\`
-
-## Update Agent Context
-
-Use this as the prompt when calling \`mcp__genie__run\`:
-
-\`\`\`
-# Update Task
-
-## Current State
-- Project directory: ${cwd}
-- Install type: ${installType}
-- Framework version: ${version}
-
-## Changes to Apply
-- Add ${diff.added.length} new files
-- Update ${diff.modified.length} existing files
-${diff.added.length > 0 ? '\n### Files to Add\n' + diff.added.slice(0, 10).map(f => `- ${f}`).join('\n') : ''}
-${diff.added.length > 10 ? `... and ${diff.added.length - 10} more` : ''}
-${diff.modified.length > 0 ? '\n### Files to Update\n' + diff.modified.slice(0, 10).map(f => `- ${f}`).join('\n') : ''}
-${diff.modified.length > 10 ? `... and ${diff.modified.length - 10} more` : ''}
+**Backup location:** \`.genie.backup/\`
 
 ## Your Task
-1. Create timestamped backup of current state
-2. Extract content from old structure (if applicable) into custom overrides
-3. Apply template updates intelligently (add new files, update modified files)
-4. Preserve ALL user customizations (custom agents, wishes, reports, context.md)
-5. Populate .genie/custom/ folder with project-specific content
-6. Update .genie/version.json with framework version and timestamp
-7. Create update report with evidence
 
-## Success Criteria
-- ✅ Backup created successfully
-- ✅ Old structure content extracted (if applicable)
-- ✅ Template updates applied
-- ✅ User work preserved (custom/, wishes/, reports/, context.md)
-- ✅ Custom folder populated with project content
-- ✅ Version file updated
-- ✅ Update report generated with file paths and verification steps
+Follow the UPDATE.md workflow systematically:
 
-Execute following @.genie/agents/core/update.md framework.
-\`\`\`
+1. **Discovery Phase**: Inventory all files in \`.genie.backup/\` and categorize them
+2. **Implementation Phase**: Migrate wishes, custom agents, config, docs, reports, and legacy context
+3. **Verification Phase**: Self-review for 100% file coverage and run validation tests
+
+Work autonomously through all phases. The UPDATE.md document contains:
+- Complete task breakdown (Discovery → Implementation → Verification)
+- File categorization matrix with migration priorities
+- Concrete commands and examples for each step
+- Success criteria and validation checklist
+- Migration summary template
 
 ## Begin
 
-Start by launching the update agent with the context above.`;
+Start by reading @.genie/UPDATE.md and following its structured workflow.`;
 }
 async function detectAvailableExecutors() {
     const { execFile } = await import('child_process');
@@ -231,51 +195,6 @@ async function detectAvailableExecutors() {
         // Not available
     }
     return available;
-}
-async function promptExecutorChoice(availableExecutors, configuredDefault) {
-    const readline = await import('readline');
-    // Show default if configured and available
-    const defaultChoice = configuredDefault && availableExecutors.includes(configuredDefault)
-        ? configuredDefault
-        : availableExecutors[0];
-    console.log('Multiple executors available. Which would you like to use?');
-    console.log('');
-    availableExecutors.forEach((exec, idx) => {
-        const isDefault = exec === defaultChoice;
-        const marker = isDefault ? '→' : ' ';
-        console.log(`  ${marker} ${idx + 1}) ${exec}${isDefault ? ' (default)' : ''}`);
-    });
-    console.log('');
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-    return new Promise((resolve) => {
-        rl.question(`Select executor (1-${availableExecutors.length}, or press Enter for ${defaultChoice}): `, (answer) => {
-            rl.close();
-            const trimmed = answer.trim();
-            // Empty = use default
-            if (!trimmed) {
-                console.log(`Using ${defaultChoice}`);
-                console.log('');
-                resolve(defaultChoice);
-                return;
-            }
-            // Parse number selection
-            const choice = parseInt(trimmed, 10);
-            if (!isNaN(choice) && choice >= 1 && choice <= availableExecutors.length) {
-                const selected = availableExecutors[choice - 1];
-                console.log(`Using ${selected}`);
-                console.log('');
-                resolve(selected);
-                return;
-            }
-            // Invalid choice - use default
-            console.log(`Invalid choice, using ${defaultChoice}`);
-            console.log('');
-            resolve(defaultChoice);
-        });
-    });
 }
 async function saveExecutorChoice(executor, cwd) {
     try {

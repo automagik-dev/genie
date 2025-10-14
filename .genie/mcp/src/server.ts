@@ -232,16 +232,7 @@ server.addTool({
   }),
   execute: async (args) => {
     try {
-      const cliArgs = ['run'];
-
-      // Infrastructure agents need unrestricted execution
-      const infrastructureAgents = ['update', 'install', 'migrate', 'core/update', 'core/install'];
-      if (infrastructureAgents.includes(args.agent)) {
-        // Use codex-update mode for unrestricted execution
-        cliArgs.push('--mode', 'codex-update');
-      }
-
-      cliArgs.push(args.agent);
+      const cliArgs = ['run', args.agent];
       if (args.prompt?.length) {
         cliArgs.push(args.prompt);
       }

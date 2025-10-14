@@ -1,11 +1,11 @@
 import path from 'path';
 import fs from 'fs';
 import { promises as fsp } from 'fs';
-import readline from 'readline';
 import YAML from 'yaml';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
+import { promptExecutorChoice } from '../lib/executor-prompt.js';
 import {
   getPackageRoot,
   getTemplateGeniePath,
@@ -338,52 +338,12 @@ async function promptProvider(): Promise<string> {
     return provider;
   }
 
-  // Both available - show menu
+  // Both available - use ink selector
+  const selected = await promptExecutorChoice(available, 'claude');
   console.log('');
-  console.log('Multiple executors available. Which would you like to use?');
+  console.log(`✓ Using ${selected}`);
   console.log('');
-  available.forEach((exec, idx) => {
-    const isDefault = exec === 'claude';
-    const marker = isDefault ? '→' : ' ';
-    console.log(`  ${marker} ${idx + 1}) ${exec}${isDefault ? ' (default)' : ''}`);
-  });
-  console.log('');
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  return new Promise((resolve) => {
-    rl.question(`Select executor (1-${available.length}, or press Enter for claude): `, (answer) => {
-      rl.close();
-
-      const trimmed = answer.trim();
-
-      // Empty = use default (claude)
-      if (!trimmed) {
-        console.log('Using claude');
-        console.log('');
-        resolve('claude');
-        return;
-      }
-
-      // Parse number selection
-      const choice = parseInt(trimmed, 10);
-      if (!isNaN(choice) && choice >= 1 && choice <= available.length) {
-        const selected = available[choice - 1];
-        console.log(`Using ${selected}`);
-        console.log('');
-        resolve(selected);
-        return;
-      }
-
-      // Invalid choice - use default
-      console.log('Invalid choice, using claude');
-      console.log('');
-      resolve('claude');
-    });
-  });
+  return selected;
 }
 
 async function writeProviderState(cwd: string, provider: string): Promise<void> {

@@ -6,10 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.runInit = runInit;
 const path_1 = __importDefault(require("path"));
 const fs_1 = require("fs");
-const readline_1 = __importDefault(require("readline"));
 const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
+const executor_prompt_js_1 = require("../lib/executor-prompt.js");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
@@ -269,46 +269,12 @@ async function promptProvider() {
         console.log('');
         return provider;
     }
-    // Both available - show menu
+    // Both available - use ink selector
+    const selected = await (0, executor_prompt_js_1.promptExecutorChoice)(available, 'claude');
     console.log('');
-    console.log('Multiple executors available. Which would you like to use?');
+    console.log(`✓ Using ${selected}`);
     console.log('');
-    available.forEach((exec, idx) => {
-        const isDefault = exec === 'claude';
-        const marker = isDefault ? '→' : ' ';
-        console.log(`  ${marker} ${idx + 1}) ${exec}${isDefault ? ' (default)' : ''}`);
-    });
-    console.log('');
-    const rl = readline_1.default.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-    return new Promise((resolve) => {
-        rl.question(`Select executor (1-${available.length}, or press Enter for claude): `, (answer) => {
-            rl.close();
-            const trimmed = answer.trim();
-            // Empty = use default (claude)
-            if (!trimmed) {
-                console.log('Using claude');
-                console.log('');
-                resolve('claude');
-                return;
-            }
-            // Parse number selection
-            const choice = parseInt(trimmed, 10);
-            if (!isNaN(choice) && choice >= 1 && choice <= available.length) {
-                const selected = available[choice - 1];
-                console.log(`Using ${selected}`);
-                console.log('');
-                resolve(selected);
-                return;
-            }
-            // Invalid choice - use default
-            console.log('Invalid choice, using claude');
-            console.log('');
-            resolve('claude');
-        });
-    });
+    return selected;
 }
 async function writeProviderState(cwd, provider) {
     const providerPath = (0, paths_1.resolveWorkspaceProviderPath)(cwd);

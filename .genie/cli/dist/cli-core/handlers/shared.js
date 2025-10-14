@@ -325,6 +325,7 @@ async function executeRun(ctx, args) {
     }
     const spawnOptions = {
         stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: process.cwd(),
         ...(command.spawnOptions || {})
     };
     const proc = (0, child_process_1.spawn)(command.command, command.args, spawnOptions);
