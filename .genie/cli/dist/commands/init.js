@@ -239,11 +239,19 @@ async function runInit(parsed, _config, _paths) {
         console.log(`📝 Generating installation prompt...`);
         console.log('');
         const installPrompt = buildInstallPrompt(cwd, provider);
+        // Save prompt to file
         const promptFile = path_1.default.join(cwd, '.genie-install-prompt.md');
-        await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
+        try {
+            await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
+        }
+        catch (writeError) {
+            console.error('❌ Failed to write prompt file:', writeError);
+            throw writeError;
+        }
         console.log(`✅ Installation prompt ready`);
         console.log(`🚀 Handing off to ${provider} for installation...`);
         console.log('');
+        // Hand off to executor (replaces Node process with executor in user's terminal)
         await handoffToExecutor(provider, promptFile, cwd);
     }
     catch (error) {
