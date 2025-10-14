@@ -109,9 +109,12 @@ async function runInit(parsed, _config, _paths) {
             }
             // Skip file operations, go straight to executor handoff
             const installPrompt = buildInstallPrompt(cwd, provider);
+            // Save prompt file for resume path too
+            const promptFile = path_1.default.join(targetGenie, 'INSTALL-PROMPT.md');
+            await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
             console.log(`🚀 Resuming install with ${provider}...`);
             console.log('');
-            await handoffToExecutor(provider, installPrompt, cwd);
+            await handoffToExecutor(provider, cwd);
             return;
         }
         // Auto-detect old Genie structure and suggest migration
@@ -234,18 +237,22 @@ async function runInit(parsed, _config, _paths) {
         }
         // Hand off to install agent
         console.log('');
-        console.log(`📝 Generating installation prompt...`);
+        console.log(`📝 Saving installation workflow...`);
         console.log('');
         console.log('[INIT] Building install prompt...');
         const installPrompt = buildInstallPrompt(cwd, provider);
         console.log(`[INIT] Prompt built: ${installPrompt.length} chars`);
-        console.log(`✅ Installation prompt ready`);
+        // Save prompt to .genie/INSTALL-PROMPT.md (like update saves to .genie-update-prompt.md)
+        const promptFile = path_1.default.join(targetGenie, 'INSTALL-PROMPT.md');
+        await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
+        console.log(`[INIT] Saved prompt to ${promptFile}`);
+        console.log(`✅ Installation workflow ready`);
         console.log(`🚀 Handing off to ${provider} for installation...`);
         console.log('');
-        // Hand off to executor (replaces Node process with executor in user's terminal)
+        // Hand off to executor with @ reference (not content string)
         console.log('[INIT] About to call handoffToExecutor');
         console.log(`[INIT] provider=${provider}, cwd=${cwd}`);
-        await handoffToExecutor(provider, installPrompt, cwd);
+        await handoffToExecutor(provider, cwd);
         console.log('[INIT] AFTER handoffToExecutor (should never see this)');
     }
     catch (error) {
@@ -583,37 +590,29 @@ After setup:
 3. Optionally offer to delete .genie/INSTALL.md (see cleanup section in INSTALL.md)
 `;
 }
-async function handoffToExecutor(executor, promptContent, cwd) {
+async function handoffToExecutor(executor, cwd) {
     console.log('[HANDOFF] Starting handoffToExecutor');
     console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
-    console.log(`[HANDOFF] Prompt content length: ${promptContent.length}`);
     const { spawn } = await import('child_process');
     const command = executor === 'claude' ? 'claude' : 'codex';
     console.log(`[HANDOFF] command=${command}`);
-    // Add unrestricted flag for infrastructure operations
-    const permissionArg = executor === 'claude'
-        ? '--dangerously-skip-permissions'
-        : '--dangerously-bypass-approvals-and-sandbox';
-    const hasInteractiveTty = Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY) && Boolean(process.stderr.isTTY);
-    if (!hasInteractiveTty) {
-        console.log('[HANDOFF] No interactive TTY detected; attempting pseudo-terminal fallback via `script`.');
-        try {
-            await spawnWithPseudoTerminal(command, permissionArg, promptContent, cwd);
-            return;
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.log(`[HANDOFF] Pseudo-terminal fallback failed (${message}). Proceeding with direct spawn.`);
-        }
+    // Build args: unrestricted flag + @ reference to saved prompt
+    const args = [];
+    if (executor === 'claude') {
+        args.push('--dangerously-skip-permissions');
     }
-    const args = [permissionArg, promptContent];
-    console.log(`[HANDOFF] Args prepared: ${args.length} arguments`);
-    // Spawn executor with unrestricted flags, inheriting user's terminal (stdio)
+    else {
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+    }
+    // Use @ reference to the saved prompt file
+    args.push('@.genie/INSTALL-PROMPT.md');
+    console.log(`[HANDOFF] Args: ${args.join(' ')}`);
+    // Spawn executor, inheriting user's terminal (stdio)
     console.log(`[HANDOFF] About to spawn: ${command}`);
     const child = spawn(command, args, {
         cwd,
-        stdio: 'inherit', // User terminal becomes executor terminal
-        shell: false // No shell - let Node handle argument escaping
+        stdio: 'inherit',
+        shell: false
     });
     console.log(`[HANDOFF] Spawned child PID: ${child.pid}`);
     // Wait for executor to complete, then exit with its code
@@ -625,41 +624,6 @@ async function handoffToExecutor(executor, promptContent, cwd) {
         child.on('error', (error) => {
             console.error(`[HANDOFF] Child error:`, error);
             reject(new Error(`Failed to start ${command}: ${error.message}`));
-        });
-    });
-}
-async function spawnWithPseudoTerminal(command, permissionArg, promptContent, cwd) {
-    console.log('[HANDOFF] Using pseudo-terminal fallback (script).');
-    const { spawn } = await import('child_process');
-    const os = await import('os');
-    const tmpFile = path_1.default.join(os.tmpdir(), `genie-init-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
-    await fs_1.promises.writeFile(tmpFile, promptContent, 'utf8');
-    const cleanupTempFile = async () => {
-        try {
-            await fs_1.promises.unlink(tmpFile);
-        }
-        catch {
-            // ignore cleanup errors
-        }
-    };
-    const shellEscape = (value) => `'${value.replace(/'/g, `'\"'\"'`)}'`;
-    const catExpression = `$(cat ${shellEscape(tmpFile)})`;
-    const scriptCommand = `${command} ${permissionArg} "${catExpression}"`;
-    return new Promise((resolve, reject) => {
-        const child = spawn('script', ['-q', '-c', scriptCommand, '/dev/null'], {
-            cwd,
-            stdio: 'inherit',
-            shell: false
-        });
-        console.log(`[HANDOFF] Spawned script child PID: ${child.pid}`);
-        child.on('exit', async (code) => {
-            await cleanupTempFile();
-            console.log(`[HANDOFF] Script child exited with code: ${code}`);
-            process.exit(code || 0);
-        });
-        child.on('error', async (error) => {
-            await cleanupTempFile();
-            reject(new Error(`Failed to start script fallback: ${error.message}`));
         });
     });
 }
