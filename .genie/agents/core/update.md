@@ -2,10 +2,10 @@
 name: update
 description: Intelligent project update with context analysis and migration orchestration
 genie:
-  executor: claude
-  model: sonnet
+  executor: codex
+  model: gpt-5-codex
+  mode: codex-update
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # 🔄 Update Agent

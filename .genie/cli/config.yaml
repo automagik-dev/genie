@@ -88,6 +88,14 @@ executionModes:
         model: gpt-5-codex
         sandbox: read-only
         includePlanTool: true
+  codex-update:
+    description: Codex with full access for infrastructure agents (update, install, migrate)
+    overrides:
+      exec:
+        sandbox: danger-full-access
+        fullAuto: true
+        additionalArgs:
+          - --dangerously-bypass-approvals-and-sandbox
   claude-default:
     description: Claude Code with default permissions
     executor: claude
