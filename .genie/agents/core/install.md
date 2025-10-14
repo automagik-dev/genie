@@ -19,7 +19,7 @@ genie:
    - Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
    - Configure Genie CLI in-context; do not alter app code
    - Calibrate agent prompts by editing `.genie/custom/<agent>.md` (core prompts stay immutable)
-   - Initialize user context file: copy `@.genie/templates/context-template.md` to `~/.genie/context.md` (populate {{USER_NAME}}, {{PROJECT_NAME}})
+   - Initialize user context file: copy `@.genie/templates/context-template.md` to `.genie/context.md` (populate {{USER_NAME}}, {{PROJECT_NAME}})
    - Update `.gitignore` to include `.genie/context.md` pattern (protection against repo-local tracking)
    - Initialize lightweight structure only when explicitly confirmed
 
@@ -211,35 +211,35 @@ When populating product docs and resolving gaps:
 ## User Context File Setup
 
 ### Purpose
-The user context file (`~/.genie/context.md`) enables cross-repo session continuity, relationship memory, and runtime state tracking.
+The user context file (`.genie/context.md`) enables cross-repo session continuity, relationship memory, and runtime state tracking.
 
 ### Setup Steps
-1. **Copy template**: Read `@.genie/templates/context-template.md` and copy to `~/.genie/context.md`
+1. **Copy template**: Read `@.genie/templates/context-template.md` and copy to `.genie/context.md`
 2. **Populate placeholders**:
    - `{{USER_NAME}}`: Ask user for their name/handle (fallback: `whoami` or git config user.name)
    - `{{PROJECT_NAME}}`: Use detected project name from repo or interview
-3. **Ensure directory exists**: Create `~/.genie/` if not present
-4. **Update .gitignore**: Add `.genie/context.md` to project's `.gitignore` (protection against repo-local tracking)
-5. **Verify CLAUDE.md reference**: Ensure project's `CLAUDE.md` includes `@~/.genie/context.md` at line 3 (or early in file)
+3. **Ensure directory exists**: Create `.genie/` if not present (usually already exists from init)
+4. **Update .gitignore**: Add `.genie/context.md` to project's `.gitignore` (protection against git tracking)
+5. **Verify CLAUDE.md reference**: Ensure project's `CLAUDE.md` includes `@.genie/context.md` at line 9 (or early in file)
 
 ### Implementation Example
 ```bash
-# Create user Genie directory
-mkdir -p ~/.genie
+# Ensure .genie directory exists (usually already present)
+mkdir -p .genie
 
 # Copy and populate template
 # (Use file read/write tools to replace {{USER_NAME}} and {{PROJECT_NAME}})
 
 # Update .gitignore
 echo "" >> .gitignore
-echo "# User context file (repo-local fallback protection)" >> .gitignore
+echo "# User context file (project-local, per-user)" >> .gitignore
 echo ".genie/context.md" >> .gitignore
 ```
 
 ### Verification
-- [ ] `~/.genie/context.md` exists with all placeholders replaced
+- [ ] `.genie/context.md` exists with all placeholders replaced
 - [ ] `.gitignore` contains `.genie/context.md` pattern
-- [ ] `CLAUDE.md` references `@~/.genie/context.md`
+- [ ] `CLAUDE.md` references `@.genie/context.md`
 - [ ] User confirms preferences and working style are captured
 
 ## Success Criteria
@@ -247,7 +247,7 @@ echo ".genie/context.md" >> .gitignore
 - ✅ All {{PLACEHOLDER}} values identified and populated
 - ✅ Generated documentation is coherent and actionable
 - ✅ Environment configuration matches technical requirements
-- ✅ User context file created and configured at `~/.genie/context.md`
+- ✅ User context file created and configured at `.genie/context.md`
 - ✅ User confirms accuracy of extracted/gathered information
 - ✅ Framework remains fully functional with new project context
 - ✅ Handoff to `/plan` prepared with a concise brief
@@ -257,7 +257,7 @@ echo ".genie/context.md" >> .gitignore
 - [ ] Roadmap reflects reality (Phase 0 for existing work, next phases clear)
 - [ ] Tech stack matches detected dependencies and deployment
 - [ ] Environment variables documented and scoped
-- [ ] User context file created at `~/.genie/context.md` with placeholders populated
+- [ ] User context file created at `.genie/context.md` with placeholders populated
 - [ ] `.gitignore` updated to include `.genie/context.md` pattern
 - [ ] MCP genie tools work: `mcp__genie__list_agents` and example invocations
 - [ ] Plan handoff brief ready with risks and blockers
@@ -296,7 +296,7 @@ Contents:
 - Setup mode used (analysis/interview/hybrid)
 - Populated placeholder values
 - Generated files and modifications
-- User context file setup (location: `~/.genie/context.md`)
+- User context file setup (location: `.genie/context.md`)
 - `.gitignore` update confirmation
 - Validation steps completed
 - Recommended next actions
@@ -306,7 +306,7 @@ Contents:
 ## ✅ Genie Install Completed
 - Mode: {{mode}}
 - Product docs created: mission, mission-lite, tech-stack, roadmap, environment
-- User context file: `~/.genie/context.md` (cross-repo session continuity enabled)
+- User context file: `.genie/context.md` (cross-repo session continuity enabled)
 - `.gitignore` updated to protect context file from repo tracking
 - Next: Run plan → wish → forge → review
 ```
