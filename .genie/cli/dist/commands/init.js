@@ -14,6 +14,7 @@ const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
 const migrate_1 = require("../lib/migrate");
+const mcp_config_1 = require("../lib/mcp-config");
 const PROVIDER_EXECUTOR = {
     codex: 'codex',
     claude: 'claude'
@@ -122,6 +123,8 @@ async function runInit(parsed, _config, _paths) {
         await writeVersionState(cwd, backupId, claudeExists);
         await initializeProviderStatus(cwd);
         await applyProviderDefaults(targetGenie, provider);
+        // Configure MCP servers for both Codex and Claude Code
+        await (0, mcp_config_1.configureBothExecutors)(cwd);
         const summary = {
             provider,
             backupId,

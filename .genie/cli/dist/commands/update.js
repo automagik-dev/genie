@@ -13,6 +13,7 @@ const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
 const migrate_1 = require("../lib/migrate");
 const config_1 = require("../lib/config");
+const mcp_config_1 = require("../lib/mcp-config");
 async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
@@ -74,8 +75,8 @@ async function runUpdate(parsed, _config, _paths) {
         console.log('');
         const config = await (0, config_1.loadConfig)();
         const executor = config?.defaults?.executor || 'codex';
-        console.log(`📝 Configuring MCP server for ${executor}...`);
-        await setupMcpConfig(cwd, executor);
+        // Configure MCP for both Codex and Claude Code
+        await (0, mcp_config_1.configureBothExecutors)(cwd);
         console.log(`🚀 Invoking ${executor} to orchestrate update...`);
         console.log('');
         const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
@@ -86,27 +87,6 @@ async function runUpdate(parsed, _config, _paths) {
         await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Update failed', message), parsed.options, { stream: process.stderr });
         process.exitCode = 1;
     }
-}
-async function setupMcpConfig(cwd, executor) {
-    const mcpPath = path_1.default.join(cwd, '.mcp.json');
-    let mcpConfig = { mcpServers: {} };
-    if (await (0, fs_utils_1.pathExists)(mcpPath)) {
-        const content = await fs_1.promises.readFile(mcpPath, 'utf8');
-        mcpConfig = JSON.parse(content);
-    }
-    // Ensure mcpServers exists
-    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-    // Add genie MCP server if not present
-    if (!mcpConfig.mcpServers.genie) {
-        mcpConfig.mcpServers.genie = {
-            command: 'node',
-            args: [path_1.default.resolve(__dirname, '../../mcp/dist/server.js')],
-            env: {
-                MCP_TRANSPORT: 'stdio'
-            }
-        };
-    }
-    await (0, fs_utils_1.writeJsonFile)(mcpPath, mcpConfig);
 }
 function buildUpdateOrchestrationPrompt(diff, installType, cwd, executor) {
     const version = (0, package_1.getPackageVersion)();

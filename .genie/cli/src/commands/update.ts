@@ -23,6 +23,7 @@ import { getPackageVersion } from '../lib/package';
 import { detectInstallType, runMigration } from '../lib/migrate';
 import { runChat } from './run';
 import { loadConfig } from '../lib/config';
+import { configureBothExecutors } from '../lib/mcp-config';
 
 interface UpdateFlags {
   dryRun?: boolean;
@@ -118,8 +119,8 @@ export async function runUpdate(
     const config = await loadConfig();
     const executor = config?.defaults?.executor || 'codex';
 
-    console.log(`📝 Configuring MCP server for ${executor}...`);
-    await setupMcpConfig(cwd, executor);
+    // Configure MCP for both Codex and Claude Code
+    await configureBothExecutors(cwd);
 
     console.log(`🚀 Invoking ${executor} to orchestrate update...`);
     console.log('');
@@ -131,32 +132,6 @@ export async function runUpdate(
     await emitView(buildErrorView('Update failed', message), parsed.options, { stream: process.stderr });
     process.exitCode = 1;
   }
-}
-
-async function setupMcpConfig(cwd: string, executor: string): Promise<void> {
-  const mcpPath = path.join(cwd, '.mcp.json');
-  let mcpConfig: any = { mcpServers: {} };
-
-  if (await pathExists(mcpPath)) {
-    const content = await fsp.readFile(mcpPath, 'utf8');
-    mcpConfig = JSON.parse(content);
-  }
-
-  // Ensure mcpServers exists
-  mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-
-  // Add genie MCP server if not present
-  if (!mcpConfig.mcpServers.genie) {
-    mcpConfig.mcpServers.genie = {
-      command: 'node',
-      args: [path.resolve(__dirname, '../../mcp/dist/server.js')],
-      env: {
-        MCP_TRANSPORT: 'stdio'
-      }
-    };
-  }
-
-  await writeJsonFile(mcpPath, mcpConfig);
 }
 
 function buildUpdateOrchestrationPrompt(

@@ -29,6 +29,7 @@ import {
 } from '../lib/fs-utils';
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
+import { configureBothExecutors } from '../lib/mcp-config';
 
 interface InitFlags {
   provider?: string;
@@ -176,6 +177,9 @@ export async function runInit(
     await writeVersionState(cwd, backupId, claudeExists);
     await initializeProviderStatus(cwd);
     await applyProviderDefaults(targetGenie, provider);
+
+    // Configure MCP servers for both Codex and Claude Code
+    await configureBothExecutors(cwd);
 
     const summary: InitSummary = {
       provider,
