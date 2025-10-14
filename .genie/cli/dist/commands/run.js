@@ -32,7 +32,8 @@ async function runChat(parsed, config, paths) {
     }
     const defaultMode = config.defaults?.executionMode || config.defaults?.preset || 'default';
     const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
-    const modeName = typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode;
+    const cliMode = parsed.options.mode;
+    const modeName = cliMode || (typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode);
     const executorKey = parsed.options.executor || agentGenie.executor || (0, executor_config_1.resolveExecutorKey)(config, modeName);
     const executor = (0, executor_config_1.requireExecutor)(executorKey);
     const executorOverrides = (0, executor_config_1.extractExecutorOverrides)(agentGenie, executorKey);

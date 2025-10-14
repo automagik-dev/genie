@@ -31,7 +31,8 @@ function parseArguments(argv) {
         requestHelp: undefined,
         full: false,
         live: false,
-        executor: undefined
+        executor: undefined,
+        mode: undefined
     };
     const filtered = [];
     for (let i = 0; i < raw.length; i++) {
@@ -57,6 +58,14 @@ function parseArguments(argv) {
             const nextToken = raw[i + 1];
             if (nextToken && !nextToken.startsWith('-')) {
                 options.executor = nextToken;
+                i++; // Skip next token
+                continue;
+            }
+        }
+        if (token === '--mode' || token === '-m') {
+            const nextToken = raw[i + 1];
+            if (nextToken && !nextToken.startsWith('-')) {
+                options.mode = nextToken;
                 i++; // Skip next token
                 continue;
             }

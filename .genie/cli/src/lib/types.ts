@@ -10,6 +10,7 @@ export interface CLIOptions {
   full: boolean;
   live: boolean;
   executor?: string;
+  mode?: string;
 }
 
 export interface ParsedCommand {
