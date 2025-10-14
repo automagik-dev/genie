@@ -129,6 +129,27 @@ export async function runInit(
         }
       }
 
+      // Verify executor is installed before resuming
+      if (!available.includes(provider)) {
+        console.log('');
+        console.log(`⚠️  ${provider} is not installed`);
+        console.log('');
+        if (provider === 'claude') {
+          console.log('Install Claude Code:');
+          console.log('  npm install -g @anthropic-ai/claude-code');
+          console.log('');
+          console.log('Or visit: https://docs.claude.com/docs/claude-code/install');
+        } else {
+          console.log('Install Codex:');
+          console.log('  npm install -g @namastexlabs/codex');
+        }
+        console.log('');
+        console.log(`After installation, run: cd ${cwd} && genie init`);
+        console.log('');
+        process.exitCode = 1;
+        return;
+      }
+
       // Skip file operations, go straight to executor handoff
       const installPrompt = buildInstallPrompt(cwd, provider);
       const promptFile = path.join(cwd, '.genie-install-prompt.md');
@@ -253,6 +274,29 @@ export async function runInit(
     };
 
     await emitView(buildInitSummaryView(summary), parsed.options);
+
+    // Verify executor is installed before handoff
+    const available = await detectAvailableExecutors();
+    if (!available.includes(provider)) {
+      console.log('');
+      console.log(`⚠️  ${provider} is not installed`);
+      console.log('');
+      if (provider === 'claude') {
+        console.log('Install Claude Code:');
+        console.log('  npm install -g @anthropic-ai/claude-code');
+        console.log('');
+        console.log('Or visit: https://docs.claude.com/docs/claude-code/install');
+      } else {
+        console.log('Install Codex:');
+        console.log('  npm install -g @namastexlabs/codex');
+      }
+      console.log('');
+      console.log(`After installation, run: cd ${cwd} && genie init`);
+      console.log('The templates are already installed - init will resume the setup.');
+      console.log('');
+      process.exitCode = 1;
+      return;
+    }
 
     // Hand off to install agent
     console.log('');
