@@ -5,7 +5,7 @@ genie:
   executor: claude
   model: sonnet
   background: false
-  permissionMode: default
+  permissionMode: bypassPermissions
 ---
 
 # 🚀 Release Agent

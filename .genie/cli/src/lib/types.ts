@@ -9,6 +9,7 @@ export interface CLIOptions {
   requestHelp?: boolean;
   full: boolean;
   live: boolean;
+  executor?: string;
 }
 
 export interface ParsedCommand {

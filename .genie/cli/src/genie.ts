@@ -36,6 +36,7 @@ import { runRollback } from './commands/rollback';
 import { runStatus } from './commands/status';
 import { runCleanup } from './commands/cleanup';
 import { runStatusline } from './commands/statusline';
+import { modelCommand } from './commands/model';
 import {
   INTERNAL_BACKGROUND_MARKER_ENV,
   INTERNAL_BACKGROUND_ENV,
@@ -141,6 +142,23 @@ async function main(): Promise<void> {
         break;
       case 'statusline':
         await runStatusline(parsed, config, paths);
+        break;
+      case 'model':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie model', [
+            'Usage: genie model [subcommand]',
+            '',
+            'Configure default executor (codex or claude)',
+            '',
+            'Subcommands:',
+            '  show    - Show current default executor (default)',
+            '  detect  - Detect available executors',
+            '  codex   - Set codex as default executor',
+            '  claude  - Set claude as default executor'
+          ]), parsed.options);
+          return;
+        }
+        await modelCommand(parsed, config, paths);
         break;
       case 'resume':
         if (parsed.options.requestHelp) {

@@ -33,7 +33,7 @@ async function runChat(parsed, config, paths) {
     const defaultMode = config.defaults?.executionMode || config.defaults?.preset || 'default';
     const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
     const modeName = typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode;
-    const executorKey = agentGenie.executor || (0, executor_config_1.resolveExecutorKey)(config, modeName);
+    const executorKey = parsed.options.executor || agentGenie.executor || (0, executor_config_1.resolveExecutorKey)(config, modeName);
     const executor = (0, executor_config_1.requireExecutor)(executorKey);
     const executorOverrides = (0, executor_config_1.extractExecutorOverrides)(agentGenie, executorKey);
     const executorConfig = (0, executor_config_1.buildExecutorConfig)(config, modeName, executorKey, executorOverrides);
@@ -63,6 +63,18 @@ async function runChat(parsed, config, paths) {
     };
     store.agents[resolvedAgentName] = entry;
     (0, session_store_1.saveSessions)(paths, store);
+    // Show executor info to user
+    if (!parsed.options.backgroundRunner) {
+        const model = executorConfig.exec?.model || executorConfig.model || 'default';
+        const permissionMode = executorConfig.exec?.permissionMode || executorConfig.permissionMode || 'default';
+        const executorSource = parsed.options.executor ? 'flag' : (agentGenie.executor ? 'agent' : 'config');
+        console.error(`🧞 Starting agent: ${resolvedAgentName}`);
+        console.error(`   Executor: ${executorKey} (from ${executorSource})`);
+        console.error(`   Mode: ${modeName}`);
+        console.error(`   Model: ${model}`);
+        console.error(`   Permissions: ${permissionMode}`);
+        console.error('');
+    }
     const handledBackground = await (0, background_launcher_1.maybeHandleBackgroundLaunch)({
         parsed,
         config,

@@ -5,7 +5,7 @@ genie:
   executor: claude
   model: sonnet
   background: true
-  permissionMode: default
+  permissionMode: bypassPermissions
 ---
 
 # /wish – Genie Wish Architect

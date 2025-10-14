@@ -5,7 +5,7 @@ color: lime
 genie:
   executor: claude
   model: sonnet
-  permissionMode: default
+  permissionMode: bypassPermissions
 ---
 
 # Tests Specialist • Strategy, Generation & TDD Champion

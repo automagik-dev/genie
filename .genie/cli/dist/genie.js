@@ -24,6 +24,7 @@ const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
+const model_1 = require("./commands/model");
 const background_manager_1 = require("./background-manager");
 void main();
 async function main() {
@@ -119,6 +120,23 @@ async function main() {
                 break;
             case 'statusline':
                 await (0, statusline_1.runStatusline)(parsed, config, paths);
+                break;
+            case 'model':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie model', [
+                        'Usage: genie model [subcommand]',
+                        '',
+                        'Configure default executor (codex or claude)',
+                        '',
+                        'Subcommands:',
+                        '  show    - Show current default executor (default)',
+                        '  detect  - Detect available executors',
+                        '  codex   - Set codex as default executor',
+                        '  claude  - Set claude as default executor'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, model_1.modelCommand)(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {

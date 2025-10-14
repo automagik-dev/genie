@@ -459,7 +459,7 @@ description: Feature implementation with Claude
 genie:
   executor: claude
   model: sonnet
-  permissionMode: default
+  permissionMode: bypassPermissions
   disallowedTools: ["Bash(rm:*)", "Bash(sudo:*)"]
   background: true
 ---
@@ -494,7 +494,7 @@ After (Claude):
 genie:
   executor: claude
   model: sonnet
-  permissionMode: default
+  permissionMode: bypassPermissions
 ```
 
 ### Session Management

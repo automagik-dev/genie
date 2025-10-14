@@ -30,7 +30,8 @@ function parseArguments(argv) {
         backgroundRunner: false,
         requestHelp: undefined,
         full: false,
-        live: false
+        live: false,
+        executor: undefined
     };
     const filtered = [];
     for (let i = 0; i < raw.length; i++) {
@@ -46,6 +47,19 @@ function parseArguments(argv) {
         if (token === '--live') {
             options.live = true;
             continue;
+        }
+        if (token === '--background' || token === '-b') {
+            options.background = true;
+            options.backgroundExplicit = true;
+            continue;
+        }
+        if (token === '--executor' || token === '-e') {
+            const nextToken = raw[i + 1];
+            if (nextToken && !nextToken.startsWith('-')) {
+                options.executor = nextToken;
+                i++; // Skip next token
+                continue;
+            }
         }
         if (token === '--') {
             filtered.push(...raw.slice(i + 1));

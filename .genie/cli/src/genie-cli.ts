@@ -29,10 +29,14 @@ program
   .command('run <agent> <prompt>')
   .description('Run an agent with a prompt')
   .option('-b, --background', 'Run in background mode')
-  .action((agent: string, prompt: string, options: { background?: boolean }) => {
+  .option('-e, --executor <executor>', 'Override executor (codex or claude)')
+  .action((agent: string, prompt: string, options: { background?: boolean; executor?: string }) => {
     const args = ['run', agent, prompt];
     if (options.background) {
       args.push('--background');
+    }
+    if (options.executor) {
+      args.push('--executor', options.executor);
     }
     execGenie(args);
   });
@@ -172,6 +176,18 @@ program
   .description('Emit statusline output (deprecated)')
   .action(() => {
     execGenie(['statusline']);
+  });
+
+// Model command
+program
+  .command('model [subcommand]')
+  .description('Configure default executor (show, detect, codex, claude)')
+  .action((subcommand?: string) => {
+    const args = ['model'];
+    if (subcommand) {
+      args.push(subcommand);
+    }
+    execGenie(args);
   });
 
 // MCP command

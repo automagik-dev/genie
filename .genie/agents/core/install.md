@@ -4,7 +4,7 @@ description: Install Genie template and CLI setup for new projects
 genie:
   executor: claude
   model: sonnet
-  permissionMode: default
+  permissionMode: bypassPermissions
 ---
 
 # Install Agent
