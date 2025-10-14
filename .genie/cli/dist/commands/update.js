@@ -90,6 +90,8 @@ async function runUpdate(parsed, _config, _paths) {
         // If both available, ask user to choose
         if (availableExecutors.length > 1) {
             executor = await promptExecutorChoice(availableExecutors, config?.defaults?.executor);
+            // Persist user's choice
+            await saveExecutorChoice(executor, cwd);
         }
         else {
             // Only one available, use it
@@ -274,6 +276,33 @@ async function promptExecutorChoice(availableExecutors, configuredDefault) {
             resolve(defaultChoice);
         });
     });
+}
+async function saveExecutorChoice(executor, cwd) {
+    try {
+        const YAML = await import('yaml');
+        const configPath = path_1.default.join(cwd, '.genie/cli/config.yaml');
+        // Read existing config
+        const configContent = await fs_1.promises.readFile(configPath, 'utf8');
+        const configData = YAML.parse(configContent);
+        // Update default executor
+        if (!configData.defaults) {
+            configData.defaults = {};
+        }
+        const oldExecutor = configData.defaults.executor;
+        if (oldExecutor !== executor) {
+            configData.defaults.executor = executor;
+            // Write back
+            const newContent = YAML.stringify(configData, { indent: 2, lineWidth: 120 });
+            await fs_1.promises.writeFile(configPath, newContent, 'utf8');
+            console.log(`💾 Saved ${executor} as default executor`);
+            console.log('');
+        }
+    }
+    catch (error) {
+        // Non-fatal - just log warning
+        console.log(`⚠️  Could not save executor preference: ${error instanceof Error ? error.message : String(error)}`);
+        console.log('');
+    }
 }
 async function handoffToExecutor(executor, promptFile, cwd) {
     const { spawn } = await import('child_process');

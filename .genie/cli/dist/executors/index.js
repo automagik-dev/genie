@@ -7,7 +7,7 @@ exports.DEFAULT_EXECUTOR_KEY = void 0;
 exports.loadExecutors = loadExecutors;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-exports.DEFAULT_EXECUTOR_KEY = 'codex';
+exports.DEFAULT_EXECUTOR_KEY = 'claude';
 function loadExecutors() {
     const executors = {};
     const currentDir = __dirname;

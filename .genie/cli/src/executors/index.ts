@@ -3,7 +3,7 @@ import path from 'path';
 import type { Executor } from './types';
 
 export type { Executor } from './types';
-export const DEFAULT_EXECUTOR_KEY = 'codex';
+export const DEFAULT_EXECUTOR_KEY = 'claude';
 
 export function loadExecutors(): Record<string, Executor> {
   const executors: Record<string, Executor> = {};

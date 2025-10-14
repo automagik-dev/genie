@@ -138,6 +138,8 @@ export async function runUpdate(
     // If both available, ask user to choose
     if (availableExecutors.length > 1) {
       executor = await promptExecutorChoice(availableExecutors, config?.defaults?.executor);
+      // Persist user's choice
+      await saveExecutorChoice(executor, cwd);
     } else {
       // Only one available, use it
       executor = availableExecutors[0];
@@ -344,6 +346,38 @@ async function promptExecutorChoice(availableExecutors: string[], configuredDefa
       resolve(defaultChoice);
     });
   });
+}
+
+async function saveExecutorChoice(executor: string, cwd: string): Promise<void> {
+  try {
+    const YAML = await import('yaml');
+    const configPath = path.join(cwd, '.genie/cli/config.yaml');
+
+    // Read existing config
+    const configContent = await fsp.readFile(configPath, 'utf8');
+    const configData = YAML.parse(configContent) as any;
+
+    // Update default executor
+    if (!configData.defaults) {
+      configData.defaults = {};
+    }
+
+    const oldExecutor = configData.defaults.executor;
+    if (oldExecutor !== executor) {
+      configData.defaults.executor = executor;
+
+      // Write back
+      const newContent = YAML.stringify(configData, { indent: 2, lineWidth: 120 });
+      await fsp.writeFile(configPath, newContent, 'utf8');
+
+      console.log(`💾 Saved ${executor} as default executor`);
+      console.log('');
+    }
+  } catch (error) {
+    // Non-fatal - just log warning
+    console.log(`⚠️  Could not save executor preference: ${error instanceof Error ? error.message : String(error)}`);
+    console.log('');
+  }
 }
 
 async function handoffToExecutor(executor: string, promptFile: string, cwd: string): Promise<void> {
