@@ -667,3 +667,26 @@ or missing critical information.
 
 **Note:** Template files were already copied by the CLI before this migration.
 Your job is complete once user context is migrated and verified.
+
+---
+
+## Cleanup (After Completion)
+
+Once migration is verified and complete, you can optionally delete this workflow guide:
+
+```bash
+rm .genie/UPDATE.md
+```
+
+**When to delete:**
+- ✅ Migration verified complete (100% file coverage)
+- ✅ All user context migrated and tested
+- ✅ No data loss detected
+- ✅ Validation tests passed
+
+**When to keep:**
+- ⚠️ Migration incomplete or needs revision
+- ⚠️ Team members may need to reference the workflow
+- ⚠️ Useful as documentation of migration process
+
+**Note:** This file is copied fresh on each `genie update` run. Deleting it won't affect future updates.

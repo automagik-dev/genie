@@ -190,7 +190,10 @@ When you read @.genie/UPDATE.md, replace all instances of \`{{BACKUP_PATH}}\` wi
 
 ## Completion
 
-After migration, document what was preserved and any items needing review.
+After migration:
+1. Document what was preserved and any items needing review
+2. Provide migration summary
+3. Optionally offer to delete .genie/UPDATE.md (see cleanup section in UPDATE.md)
 
 Begin by reading @.genie/UPDATE.md and following its workflow.`;
 }

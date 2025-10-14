@@ -529,7 +529,10 @@ Follow @.genie/INSTALL.md to complete the installation:
 
 ## Completion
 
-After setup, provide the installation summary from INSTALL.md and suggest next steps (typically \`/plan\`).
+After setup:
+1. Provide the installation summary from INSTALL.md
+2. Suggest next steps (typically \`/plan\`)
+3. Optionally offer to delete .genie/INSTALL.md (see cleanup section in INSTALL.md)
 `;
 }
 async function handoffToExecutor(executor, promptFile, cwd) {

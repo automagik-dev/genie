@@ -417,4 +417,27 @@ After installation, provide the summary above and suggest next steps:
 
 ---
 
+## Cleanup (After Completion)
+
+Once installation is verified and complete, you can optionally delete this workflow guide:
+
+```bash
+rm .genie/INSTALL.md
+```
+
+**When to delete:**
+- ✅ Installation verified complete
+- ✅ All product docs created and reviewed
+- ✅ MCP tools tested and functional
+- ✅ No data loss concerns
+
+**When to keep:**
+- ⚠️ Installation incomplete or needs revision
+- ⚠️ Team members may need to reference the workflow
+- ⚠️ Useful as documentation of installation process
+
+**Note:** This file is NOT tracked in git and won't be updated on `genie update`. It's a one-time installation guide.
+
+---
+
 **Project Customization:** Load additional context from `.genie/custom/install.md` if it exists.
