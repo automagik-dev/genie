@@ -305,13 +305,18 @@ export async function runInit(
     console.log(`📝 Generating installation prompt...`);
     console.log('');
 
+    console.log('[INIT] Building install prompt...');
     const installPrompt = buildInstallPrompt(cwd, provider);
+    console.log(`[INIT] Prompt built: ${installPrompt.length} chars`);
 
     // Save prompt to file
     const promptFile = path.join(cwd, '.genie-install-prompt.md');
+    console.log(`[INIT] Prompt file path: ${promptFile}`);
 
     try {
+      console.log('[INIT] BEFORE writeFile');
       await fsp.writeFile(promptFile, installPrompt, 'utf8');
+      console.log('[INIT] AFTER writeFile - file written successfully');
     } catch (writeError) {
       console.error('❌ Failed to write prompt file:', writeError);
       throw writeError;
@@ -322,7 +327,10 @@ export async function runInit(
     console.log('');
 
     // Hand off to executor (replaces Node process with executor in user's terminal)
+    console.log('[INIT] About to call handoffToExecutor');
+    console.log(`[INIT] provider=${provider}, promptFile=${promptFile}, cwd=${cwd}`);
     await handoffToExecutor(provider, promptFile, cwd);
+    console.log('[INIT] AFTER handoffToExecutor (should never see this)');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
