@@ -152,13 +152,11 @@ export async function runInit(
 
       // Skip file operations, go straight to executor handoff
       const installPrompt = buildInstallPrompt(cwd, provider);
-      const promptFile = path.join(cwd, '.genie-install-prompt.md');
-      await fsp.writeFile(promptFile, installPrompt, 'utf8');
 
       console.log(`🚀 Resuming install with ${provider}...`);
       console.log('');
 
-      await handoffToExecutor(provider, promptFile, cwd);
+      await handoffToExecutor(provider, installPrompt, cwd);
       return;
     }
 
@@ -309,27 +307,14 @@ export async function runInit(
     const installPrompt = buildInstallPrompt(cwd, provider);
     console.log(`[INIT] Prompt built: ${installPrompt.length} chars`);
 
-    // Save prompt to file
-    const promptFile = path.join(cwd, '.genie-install-prompt.md');
-    console.log(`[INIT] Prompt file path: ${promptFile}`);
-
-    try {
-      console.log('[INIT] BEFORE writeFile');
-      await fsp.writeFile(promptFile, installPrompt, 'utf8');
-      console.log('[INIT] AFTER writeFile - file written successfully');
-    } catch (writeError) {
-      console.error('❌ Failed to write prompt file:', writeError);
-      throw writeError;
-    }
-
     console.log(`✅ Installation prompt ready`);
     console.log(`🚀 Handing off to ${provider} for installation...`);
     console.log('');
 
     // Hand off to executor (replaces Node process with executor in user's terminal)
     console.log('[INIT] About to call handoffToExecutor');
-    console.log(`[INIT] provider=${provider}, promptFile=${promptFile}, cwd=${cwd}`);
-    await handoffToExecutor(provider, promptFile, cwd);
+    console.log(`[INIT] provider=${provider}, cwd=${cwd}`);
+    await handoffToExecutor(provider, installPrompt, cwd);
     console.log('[INIT] AFTER handoffToExecutor (should never see this)');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -713,19 +698,15 @@ After setup:
 `;
 }
 
-async function handoffToExecutor(executor: string, promptFile: string, cwd: string): Promise<void> {
+async function handoffToExecutor(executor: string, promptContent: string, cwd: string): Promise<void> {
   console.log('[HANDOFF] Starting handoffToExecutor');
   console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
+  console.log(`[HANDOFF] Prompt content length: ${promptContent.length}`);
 
   const { spawn } = await import('child_process');
 
   const command = executor === 'claude' ? 'claude' : 'codex';
   console.log(`[HANDOFF] command=${command}`);
-
-  // Read prompt content from file
-  console.log(`[HANDOFF] Reading prompt file: ${promptFile}`);
-  const promptContent = await fsp.readFile(promptFile, 'utf8');
-  console.log(`[HANDOFF] Prompt content length: ${promptContent.length}`);
 
   // Add unrestricted flags for infrastructure operations
   const args: string[] = [];
