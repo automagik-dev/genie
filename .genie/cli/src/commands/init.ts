@@ -93,19 +93,48 @@ export async function runInit(
     if (partialInit) {
       console.log('');
       console.log('🔍 Detected partial installation');
-      console.log('📦 Templates already copied, resuming executor handoff...');
+      console.log('📦 Templates already copied, resuming setup...');
       console.log('');
 
       // Read provider from saved state
       const providerData = JSON.parse(await fsp.readFile(providerPath, 'utf8'));
-      const provider = providerData.provider || 'claude';
+      const savedProvider = providerData.provider || 'claude';
+
+      // Detect available executors
+      const available = await detectAvailableExecutors();
+
+      let provider: string;
+      if (flags.provider) {
+        provider = normalizeProvider(flags.provider);
+      } else if (available.length === 0) {
+        console.log(`⚠️  No executors detected, using saved choice: ${savedProvider}`);
+        console.log('');
+        provider = savedProvider;
+      } else if (available.length === 1) {
+        provider = available[0];
+        console.log(`✓ Using ${provider} (only available executor)`);
+        console.log('');
+      } else {
+        // Both available - prompt user to confirm or change
+        console.log(`Previously selected: ${savedProvider}`);
+        console.log('');
+        provider = await promptExecutorChoice(available, savedProvider);
+        console.log('');
+        console.log(`✓ Using ${provider}`);
+        console.log('');
+
+        // Update saved provider if changed
+        if (provider !== savedProvider) {
+          await writeProviderState(cwd, provider);
+        }
+      }
 
       // Skip file operations, go straight to executor handoff
       const installPrompt = buildInstallPrompt(cwd, provider);
       const promptFile = path.join(cwd, '.genie-install-prompt.md');
       await fsp.writeFile(promptFile, installPrompt, 'utf8');
 
-      console.log(`🚀 Starting install agent with ${provider}...`);
+      console.log(`🚀 Resuming install with ${provider}...`);
       console.log('');
 
       await handoffToExecutor(provider, promptFile, cwd);
@@ -573,21 +602,49 @@ function replaceFirst(source: string, pattern: RegExp, replacement: string | ((m
 }
 
 function buildInstallPrompt(cwd: string, provider: string): string {
-  return `# Genie Installation Workflow
+  const version = getPackageVersion();
+  return `# Genie Project Installation
 
-Run the install agent to complete project setup:
+**✅ Framework installed** - Genie v${version} templates ready
 
-\`\`\`bash
-cd ${cwd}
-genie run install --prompt "Complete project initialization:
-- Verify .genie/ structure
-- Check AGENTS.md and CLAUDE.md
-- Confirm MCP configuration
-- Validate template files
-- Report any issues"
-\`\`\`
+Your task: Complete project initialization and setup product documentation.
 
-This ensures your Genie installation is properly configured and ready to use.
+@.genie/agents/core/install.md
+
+## Installation Context
+
+**Project:** ${cwd}
+**Executor:** ${provider}
+**Version:** ${version}
+
+## What's Already Done
+
+✅ Template files copied to .genie/
+✅ AGENTS.md and CLAUDE.md created
+✅ MCP configured (.mcp.json)
+✅ Executor selected (${provider})
+
+## Your Task
+
+Follow the install agent workflow:
+
+1. **Discovery**: Analyze repo state
+   - Detect if existing codebase or new/empty project
+   - Choose mode: Codebase Analysis, New Repo Interview, or Hybrid
+
+2. **Implementation**: Create product documentation
+   - Initialize .genie/product/ docs (mission.md, tech-stack.md, roadmap.md, environment.md)
+   - Populate .genie/CONTEXT.md with project details
+   - Calibrate custom agent configurations if needed
+
+3. **Verification**: Validate installation
+   - Test MCP tools (mcp__genie__list_agents)
+   - Confirm all critical files present
+   - Create installation report
+
+## Completion
+
+After setup, document the installation summary and suggest next steps (typically \`/plan\` to start product planning).
 `;
 }
 
