@@ -151,15 +151,8 @@ export async function runInit(
       }
 
       // Skip file operations, go straight to executor handoff
-      const installPrompt = buildInstallPrompt(cwd, provider);
-
-      // Save prompt file for resume path too
-      const promptFile = path.join(targetGenie, 'INSTALL-PROMPT.md');
-      await fsp.writeFile(promptFile, installPrompt, 'utf8');
-
       console.log(`🚀 Resuming install with ${provider}...`);
       console.log('');
-
       await handoffToExecutor(provider, cwd);
       return;
     }
@@ -304,27 +297,9 @@ export async function runInit(
 
     // Hand off to install agent
     console.log('');
-    console.log(`📝 Saving installation workflow...`);
-    console.log('');
-
-    console.log('[INIT] Building install prompt...');
-    const installPrompt = buildInstallPrompt(cwd, provider);
-    console.log(`[INIT] Prompt built: ${installPrompt.length} chars`);
-
-    // Save prompt to .genie/INSTALL-PROMPT.md (like update saves to .genie-update-prompt.md)
-    const promptFile = path.join(targetGenie, 'INSTALL-PROMPT.md');
-    await fsp.writeFile(promptFile, installPrompt, 'utf8');
-    console.log(`[INIT] Saved prompt to ${promptFile}`);
-
-    console.log(`✅ Installation workflow ready`);
     console.log(`🚀 Handing off to ${provider} for installation...`);
     console.log('');
-
-    // Hand off to executor with @ reference (not content string)
-    console.log('[INIT] About to call handoffToExecutor');
-    console.log(`[INIT] provider=${provider}, cwd=${cwd}`);
     await handoffToExecutor(provider, cwd);
-    console.log('[INIT] AFTER handoffToExecutor (should never see this)');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
@@ -666,46 +641,6 @@ function replaceFirst(source: string, pattern: RegExp, replacement: string | ((m
   return source.replace(pattern, replacement);
 }
 
-function buildInstallPrompt(cwd: string, provider: string): string {
-  const version = getPackageVersion();
-  return `# Genie Project Installation
-
-**✅ Framework installed** - Genie v${version} templates ready
-
-Your task: Complete project initialization and setup product documentation.
-
-@.genie/INSTALL.md
-
-## Installation Context
-
-**Project:** ${cwd}
-**Executor:** ${provider}
-**Version:** ${version}
-
-## What's Already Done
-
-✅ Template files copied to .genie/
-✅ AGENTS.md and CLAUDE.md created
-✅ MCP configured (.mcp.json)
-✅ Executor selected (${provider})
-✅ INSTALL.md workflow guide available
-
-## Your Task
-
-Follow @.genie/INSTALL.md to complete the installation:
-
-1. **Discovery**: Analyze repo state and choose installation mode
-2. **Implementation**: Create product documentation
-3. **Verification**: Validate installation and create summary
-
-## Completion
-
-After setup:
-1. Provide the installation summary from INSTALL.md
-2. Suggest next steps (typically \`/plan\`)
-3. Optionally offer to delete .genie/INSTALL.md (see cleanup section in INSTALL.md)
-`;
-}
 
 async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
   console.log('[HANDOFF] Starting handoffToExecutor');
@@ -725,8 +660,8 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     args.push('--dangerously-bypass-approvals-and-sandbox');
   }
 
-  // Use @ reference to the saved prompt file
-  args.push('@.genie/INSTALL-PROMPT.md');
+  // Use @ reference to the template's INSTALL.md
+  args.push('@.genie/INSTALL.md');
 
   console.log(`[HANDOFF] Args: ${args.join(' ')}`);
 
