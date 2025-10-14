@@ -147,6 +147,12 @@ async function runInit(parsed, _config, _paths) {
             await copyTemplateClaude(templateClaude, claudeDir);
         }
         await copyTemplateRootFiles(packageRoot, cwd);
+        // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
+        const templateInstallMd = path_1.default.join(templateGenie, 'INSTALL.md');
+        const targetInstallMd = path_1.default.join(targetGenie, 'INSTALL.md');
+        if (await (0, fs_utils_1.pathExists)(templateInstallMd)) {
+            await fs_1.promises.copyFile(templateInstallMd, targetInstallMd);
+        }
         if (stagedBackupDir) {
             const finalBackupsDir = path_1.default.join(backupsRoot, backupId);
             await (0, fs_utils_1.ensureDir)(backupsRoot);
@@ -497,7 +503,7 @@ function buildInstallPrompt(cwd, provider) {
 
 Your task: Complete project initialization and setup product documentation.
 
-@.genie/agents/core/install.md
+@.genie/INSTALL.md
 
 ## Installation Context
 
@@ -511,28 +517,19 @@ Your task: Complete project initialization and setup product documentation.
 ✅ AGENTS.md and CLAUDE.md created
 ✅ MCP configured (.mcp.json)
 ✅ Executor selected (${provider})
+✅ INSTALL.md workflow guide available
 
 ## Your Task
 
-Follow the install agent workflow:
+Follow @.genie/INSTALL.md to complete the installation:
 
-1. **Discovery**: Analyze repo state
-   - Detect if existing codebase or new/empty project
-   - Choose mode: Codebase Analysis, New Repo Interview, or Hybrid
-
+1. **Discovery**: Analyze repo state and choose installation mode
 2. **Implementation**: Create product documentation
-   - Initialize .genie/product/ docs (mission.md, tech-stack.md, roadmap.md, environment.md)
-   - Populate .genie/CONTEXT.md with project details
-   - Calibrate custom agent configurations if needed
-
-3. **Verification**: Validate installation
-   - Test MCP tools (mcp__genie__list_agents)
-   - Confirm all critical files present
-   - Create installation report
+3. **Verification**: Validate installation and create summary
 
 ## Completion
 
-After setup, document the installation summary and suggest next steps (typically \`/plan\` to start product planning).
+After setup, provide the installation summary from INSTALL.md and suggest next steps (typically \`/plan\`).
 `;
 }
 async function handoffToExecutor(executor, promptFile, cwd) {
