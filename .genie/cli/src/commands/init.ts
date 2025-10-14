@@ -708,19 +708,27 @@ async function handoffToExecutor(executor: string, promptContent: string, cwd: s
   const command = executor === 'claude' ? 'claude' : 'codex';
   console.log(`[HANDOFF] command=${command}`);
 
-  // Add unrestricted flags for infrastructure operations
-  const args: string[] = [];
+  // Add unrestricted flag for infrastructure operations
+  const permissionArg =
+    executor === 'claude'
+      ? '--dangerously-skip-permissions'
+      : '--dangerously-bypass-approvals-and-sandbox';
 
-  if (executor === 'claude') {
-    // Claude: bypass all permission checks
-    args.push('--dangerously-skip-permissions');
-  } else {
-    // Codex: bypass approvals and sandbox
-    args.push('--dangerously-bypass-approvals-and-sandbox');
+  const hasInteractiveTty =
+    Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY) && Boolean(process.stderr.isTTY);
+
+  if (!hasInteractiveTty) {
+    console.log('[HANDOFF] No interactive TTY detected; attempting pseudo-terminal fallback via `script`.');
+    try {
+      await spawnWithPseudoTerminal(command, permissionArg, promptContent, cwd);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`[HANDOFF] Pseudo-terminal fallback failed (${message}). Proceeding with direct spawn.`);
+    }
   }
 
-  // Add prompt as final argument
-  args.push(promptContent);
+  const args: string[] = [permissionArg, promptContent];
   console.log(`[HANDOFF] Args prepared: ${args.length} arguments`);
 
   // Spawn executor with unrestricted flags, inheriting user's terminal (stdio)
@@ -743,6 +751,57 @@ async function handoffToExecutor(executor: string, promptContent: string, cwd: s
     child.on('error', (error) => {
       console.error(`[HANDOFF] Child error:`, error);
       reject(new Error(`Failed to start ${command}: ${error.message}`));
+    });
+  });
+}
+
+async function spawnWithPseudoTerminal(
+  command: string,
+  permissionArg: string,
+  promptContent: string,
+  cwd: string
+): Promise<void> {
+  console.log('[HANDOFF] Using pseudo-terminal fallback (script).');
+  const { spawn } = await import('child_process');
+  const os = await import('os');
+
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `genie-init-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`
+  );
+
+  await fsp.writeFile(tmpFile, promptContent, 'utf8');
+
+  const cleanupTempFile = async () => {
+    try {
+      await fsp.unlink(tmpFile);
+    } catch {
+      // ignore cleanup errors
+    }
+  };
+
+  const shellEscape = (value: string): string => `'${value.replace(/'/g, `'\"'\"'`)}'`;
+  const catExpression = `$(cat ${shellEscape(tmpFile)})`;
+  const scriptCommand = `${command} ${permissionArg} "${catExpression}"`;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('script', ['-q', '-c', scriptCommand, '/dev/null'], {
+      cwd,
+      stdio: 'inherit',
+      shell: false
+    });
+
+    console.log(`[HANDOFF] Spawned script child PID: ${child.pid}`);
+
+    child.on('exit', async (code) => {
+      await cleanupTempFile();
+      console.log(`[HANDOFF] Script child exited with code: ${code}`);
+      process.exit(code || 0);
+    });
+
+    child.on('error', async (error) => {
+      await cleanupTempFile();
+      reject(new Error(`Failed to start script fallback: ${error.message}`));
     });
   });
 }
