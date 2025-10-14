@@ -159,6 +159,15 @@ export async function runUpdate(
     // Configure MCP for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
+    // Copy UPDATE.md from template BEFORE generating prompt (so executor can reference it)
+    const templateUpdateMd = path.join(templateGenie, 'UPDATE.md');
+    const targetUpdateMd = path.join(targetGenie, 'UPDATE.md');
+    if (await pathExists(templateUpdateMd)) {
+      await fsp.copyFile(templateUpdateMd, targetUpdateMd);
+      console.log('📄 Copied UPDATE.md workflow guide');
+      console.log('');
+    }
+
     console.log(`📝 Generating update orchestration prompt...`);
     console.log('');
 
