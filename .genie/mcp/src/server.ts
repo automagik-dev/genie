@@ -27,7 +27,9 @@ const execFileAsync = promisify(execFile);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
-const WORKSPACE_ROOT = path.resolve(__dirname, '../../..');
+// Use process.cwd() instead of __dirname to get user's project directory
+// __dirname would resolve to npm package install location
+const WORKSPACE_ROOT = process.cwd();
 
 interface CliInvocation {
   command: string;
