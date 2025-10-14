@@ -365,6 +365,11 @@ async function updateConfigForProvider(genieRoot, provider, executor, model) {
 }
 async function updateAgentsForProvider(genieRoot, executor, model) {
     const agentsDir = path_1.default.join(genieRoot, 'agents');
+    // Skip if agents directory doesn't exist (blacklisted during init)
+    const agentsDirExists = await (0, fs_utils_1.pathExists)(agentsDir);
+    if (!agentsDirExists) {
+        return;
+    }
     const files = await collectAgentFiles(agentsDir);
     await Promise.all(files.map(async (file) => {
         const original = await fs_1.promises.readFile(file, 'utf8');
