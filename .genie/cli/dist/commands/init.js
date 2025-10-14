@@ -45,6 +45,27 @@ async function runInit(parsed, _config, _paths) {
             process.exitCode = 1;
             return;
         }
+        // Check for partial installation (templates copied but executor not started)
+        const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
+        const providerPath = (0, paths_1.resolveWorkspaceProviderPath)(cwd);
+        const partialInit = await (0, fs_utils_1.pathExists)(versionPath) && await (0, fs_utils_1.pathExists)(providerPath);
+        if (partialInit) {
+            console.log('');
+            console.log('🔍 Detected partial installation');
+            console.log('📦 Templates already copied, resuming executor handoff...');
+            console.log('');
+            // Read provider from saved state
+            const providerData = JSON.parse(await fs_1.promises.readFile(providerPath, 'utf8'));
+            const provider = providerData.provider || 'claude';
+            // Skip file operations, go straight to executor handoff
+            const installPrompt = buildInstallPrompt(cwd, provider);
+            const promptFile = path_1.default.join(cwd, '.genie-install-prompt.md');
+            await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
+            console.log(`🚀 Starting install agent with ${provider}...`);
+            console.log('');
+            await handoffToExecutor(provider, promptFile, cwd);
+            return;
+        }
         // Auto-detect old Genie structure and suggest migration
         const installType = (0, migrate_1.detectInstallType)();
         if (installType === 'old_genie' && !flags.yes) {
@@ -133,6 +154,14 @@ async function runInit(parsed, _config, _paths) {
             target: targetGenie
         };
         await (0, view_helpers_1.emitView)(buildInitSummaryView(summary), parsed.options);
+        // Hand off to install agent
+        console.log('');
+        console.log(`🚀 Starting install agent with ${provider}...`);
+        console.log('');
+        const installPrompt = buildInstallPrompt(cwd, provider);
+        const promptFile = path_1.default.join(cwd, '.genie-install-prompt.md');
+        await fs_1.promises.writeFile(promptFile, installPrompt, 'utf8');
+        await handoffToExecutor(provider, promptFile, cwd);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -430,4 +459,55 @@ function replaceFirst(source, pattern, replacement) {
         return source.slice(0, match.index ?? 0) + replaced + source.slice((match.index ?? 0) + match[0].length);
     }
     return source.replace(pattern, replacement);
+}
+function buildInstallPrompt(cwd, provider) {
+    return `# Genie Installation Workflow
+
+Run the install agent to complete project setup:
+
+\`\`\`bash
+cd ${cwd}
+genie run install --prompt "Complete project initialization:
+- Verify .genie/ structure
+- Check AGENTS.md and CLAUDE.md
+- Confirm MCP configuration
+- Validate template files
+- Report any issues"
+\`\`\`
+
+This ensures your Genie installation is properly configured and ready to use.
+`;
+}
+async function handoffToExecutor(executor, promptFile, cwd) {
+    const { spawn } = await import('child_process');
+    const command = executor === 'claude' ? 'claude' : 'codex';
+    // Read prompt content from file
+    const promptContent = await fs_1.promises.readFile(promptFile, 'utf8');
+    // Add unrestricted flags for infrastructure operations
+    const args = [];
+    if (executor === 'claude') {
+        // Claude: bypass all permission checks
+        args.push('--dangerously-skip-permissions');
+    }
+    else {
+        // Codex: bypass approvals and sandbox
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+    }
+    // Add prompt as final argument
+    args.push(promptContent);
+    // Spawn executor with unrestricted flags, inheriting user's terminal (stdio)
+    const child = spawn(command, args, {
+        cwd,
+        stdio: 'inherit', // User terminal becomes executor terminal
+        shell: false // No shell - let Node handle argument escaping
+    });
+    // Wait for executor to complete, then exit with its code
+    return new Promise((resolve, reject) => {
+        child.on('exit', (code) => {
+            process.exit(code || 0);
+        });
+        child.on('error', (error) => {
+            reject(new Error(`Failed to start ${command}: ${error.message}`));
+        });
+    });
 }

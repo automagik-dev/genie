@@ -24,7 +24,7 @@ async function configureCodexMcp() {
     const content = await fs_1.promises.readFile(codexConfigPath, 'utf8');
     // Check if genie MCP server already configured correctly
     const hasGenieSection = /\[mcp_servers\.genie\]/i.test(content);
-    const hasCorrectCommand = /command\s*=\s*"npx"[\s\S]*?args\s*=\s*\[[\s\S]*?"automagik-genie-mcp"/i.test(content);
+    const hasCorrectCommand = /command\s*=\s*"npx"[\s\S]*?args\s*=\s*\[[\s\S]*?"automagik-genie"/i.test(content);
     if (hasGenieSection && hasCorrectCommand) {
         console.log('✅ Codex MCP already configured correctly');
         return;
@@ -34,7 +34,7 @@ async function configureCodexMcp() {
         // Replace existing genie section
         newContent = content.replace(/\[mcp_servers\.genie\][\s\S]*?(?=\n\[|\n\n\[|$)/, `[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie-mcp"]
+args = ["automagik-genie", "mcp"]
 `);
         console.log('✅ Updated existing Genie MCP configuration in Codex');
     }
@@ -46,7 +46,7 @@ args = ["automagik-genie-mcp"]
             newContent = content.slice(0, insertIndex) +
                 `\n\n[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie-mcp"]
+args = ["automagik-genie", "mcp"]
 ` +
                 content.slice(insertIndex);
         }
@@ -54,7 +54,7 @@ args = ["automagik-genie-mcp"]
             // No mcp_servers section exists, add at end
             newContent = content + `\n\n[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie-mcp"]
+args = ["automagik-genie", "mcp"]
 `;
         }
         console.log('✅ Added Genie MCP configuration to Codex');
@@ -79,17 +79,16 @@ async function configureClaudeMcp(projectDir) {
     mcpConfig.mcpServers = mcpConfig.mcpServers || {};
     // Check if genie already configured correctly
     const existingGenie = mcpConfig.mcpServers.genie;
-    if (existingGenie?.command === 'npx' && existingGenie?.args?.[0] === 'automagik-genie-mcp') {
+    if (existingGenie?.command === 'npx' &&
+        existingGenie?.args?.[0] === 'automagik-genie' &&
+        existingGenie?.args?.[1] === 'mcp') {
         console.log(`✅ Claude Code MCP already configured correctly${projectDir ? ' (project-local)' : ' (global)'}`);
         return;
     }
     // Add/update genie MCP server
     mcpConfig.mcpServers.genie = {
         command: 'npx',
-        args: ['automagik-genie-mcp'],
-        env: {
-            MCP_TRANSPORT: 'stdio'
-        }
+        args: ['automagik-genie', 'mcp']
     };
     // Ensure parent directory exists
     if (projectDir) {
