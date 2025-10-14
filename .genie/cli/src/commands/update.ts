@@ -228,13 +228,19 @@ async function invokeExecutor(executor: string, prompt: string, cwd: string): Pr
   const { spawn } = await import('child_process');
 
   const command = executor === 'claude' ? 'claude' : 'codex';
-  const args = [prompt];
 
-  const child = spawn(command, args, {
+  // Pipe prompt via stdin to avoid shell escaping issues with markdown
+  const child = spawn(command, [], {
     cwd,
-    stdio: 'inherit',
-    shell: true
+    stdio: ['pipe', 'inherit', 'inherit'],
+    shell: false
   });
+
+  // Write prompt to stdin
+  if (child.stdin) {
+    child.stdin.write(prompt);
+    child.stdin.end();
+  }
 
   return new Promise((resolve, reject) => {
     child.on('close', (code) => {
