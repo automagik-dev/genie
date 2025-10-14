@@ -267,7 +267,7 @@ async function resolveProviderChoice(flags: InitFlags): Promise<string> {
     return normalizeProvider(process.env.GENIE_PROVIDER);
   }
   if (!process.stdout.isTTY || flags.yes) {
-    return 'codex';
+    return 'claude';  // Changed default from codex to claude
   }
   return await promptProvider();
 }
@@ -280,27 +280,110 @@ function normalizeProvider(value: string): string {
   return 'codex';
 }
 
+async function detectAvailableExecutors(): Promise<string[]> {
+  const { execFile } = await import('child_process');
+  const { promisify } = await import('util');
+  const execFileAsync = promisify(execFile);
+
+  const available: string[] = [];
+
+  // Check Codex
+  try {
+    await execFileAsync('codex', ['--version'], { timeout: 5000 });
+    available.push('codex');
+  } catch {
+    // Try npx fallback
+    try {
+      await execFileAsync('npx', ['-y', '@namastexlabs/codex@latest', '--version'], { timeout: 5000 });
+      available.push('codex');
+    } catch {
+      // Not available
+    }
+  }
+
+  // Check Claude
+  try {
+    await execFileAsync('claude', ['--version'], { timeout: 5000 });
+    available.push('claude');
+  } catch {
+    // Not available
+  }
+
+  return available;
+}
+
 async function promptProvider(): Promise<string> {
+  // Detect available executors
+  const available = await detectAvailableExecutors();
+
+  if (available.length === 0) {
+    console.log('');
+    console.log('⚠️  No executors detected (codex or claude)');
+    console.log('');
+    console.log('Install one of:');
+    console.log('  • Codex: npm install -g @namastexlabs/codex');
+    console.log('  • Claude Code: https://docs.claude.com/docs/claude-code/install');
+    console.log('');
+    console.log('Defaulting to claude (you can install it later)');
+    console.log('');
+    return 'claude';
+  }
+
+  // If only one available, use it
+  if (available.length === 1) {
+    const provider = available[0];
+    console.log('');
+    console.log(`✓ Using ${provider} (only available executor)`);
+    console.log('');
+    return provider;
+  }
+
+  // Both available - show menu
+  console.log('');
+  console.log('Multiple executors available. Which would you like to use?');
+  console.log('');
+  available.forEach((exec, idx) => {
+    const isDefault = exec === 'claude';
+    const marker = isDefault ? '→' : ' ';
+    console.log(`  ${marker} ${idx + 1}) ${exec}${isDefault ? ' (default)' : ''}`);
+  });
+  console.log('');
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
 
-  const question = (): Promise<string> => {
-    return new Promise((resolve) => {
-      rl.question('Select provider ([c]odex / [a]nthropic): ', resolve);
-    });
-  };
+  return new Promise((resolve) => {
+    rl.question(`Select executor (1-${available.length}, or press Enter for claude): `, (answer) => {
+      rl.close();
 
-  try {
-    const answer = (await question()).trim().toLowerCase();
-    if (answer.startsWith('a')) {
-      return 'claude';
-    }
-    return 'codex';
-  } finally {
-    rl.close();
-  }
+      const trimmed = answer.trim();
+
+      // Empty = use default (claude)
+      if (!trimmed) {
+        console.log('Using claude');
+        console.log('');
+        resolve('claude');
+        return;
+      }
+
+      // Parse number selection
+      const choice = parseInt(trimmed, 10);
+      if (!isNaN(choice) && choice >= 1 && choice <= available.length) {
+        const selected = available[choice - 1];
+        console.log(`Using ${selected}`);
+        console.log('');
+        resolve(selected);
+        return;
+      }
+
+      // Invalid choice - use default
+      console.log('Invalid choice, using claude');
+      console.log('');
+      resolve('claude');
+    });
+  });
 }
 
 async function writeProviderState(cwd: string, provider: string): Promise<void> {
