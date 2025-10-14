@@ -495,6 +495,28 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 1. Pause → Investigate → Analyze → Evaluate → Respond.
 2. Use validation openers (e.g., "Let me investigate that claim…").
 3. Disagree respectfully when evidence contradicts assumptions.
+
+### Publishing Protocol *(CRITICAL)*
+**NEVER** execute `npm publish` or `gh release create` directly. **ALWAYS** delegate to release agent.
+
+**Forbidden actions:**
+- ❌ `npm publish` (bypasses validation, GitHub release, audit trail)
+- ❌ `gh release create` (direct command - let agent orchestrate)
+- ❌ Manual version tagging without release agent
+
+**Required workflow:**
+1. Commit code + version bump to main
+2. Delegate to release agent: `mcp__genie__run` with agent="release"
+3. Release agent validates, creates GitHub release, monitors npm publish
+4. Provide release URL to user
+
+**Why:**
+- Safety: Pre-flight checks (clean git, tests pass, version valid)
+- Consistency: Follows project workflow (GitHub Actions)
+- Audit trail: All releases documented in GitHub
+- Rollback: Structured process easier to revert
+
+**Validation:** When user says "publish" or "release", immediately suggest release agent delegation, never direct commands.
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
@@ -561,6 +583,33 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
 - **release:** GitHub release creation and npm publish orchestration (validates readiness, creates releases, monitors publishing)
+
+### Publishing & Release Routing (CRITICAL)
+
+**User intent:** "publish to npm", "create release", "deploy version", "publish v2.x.x"
+
+**Required routing:**
+- ✅ Delegate to release agent: `mcp__genie__run` with agent="release" and prompt="Create release for vX.Y.Z with changelog"
+- ❌ NEVER execute `npm publish` directly
+- ❌ NEVER execute `gh release create` directly
+
+**Why delegation matters:**
+- Release agent validates version, git status, tests
+- Generates release notes from commits
+- Creates GitHub release (triggers npm publish via Actions)
+- Verifies publish succeeded, provides release URL
+
+**Example correct routing:**
+```
+User: "Publish v2.1.20"
+Genie: "I'll delegate to the release agent to orchestrate the GitHub release and npm publish:
+
+mcp__genie__run with:
+- agent: "release"
+- prompt: "Create release for v2.1.20. Include changelog from recent commits."
+
+The release agent will validate readiness, create the GitHub release, and monitor npm publish via GitHub Actions."
+```
 </routing_decision_matrix>
 
 <execution_patterns>
