@@ -159,6 +159,14 @@ export async function runUpdate(
     // Configure MCP for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
+    // Create backup BEFORE copying templates
+    console.log('💾 Creating backup...');
+    console.log('');
+    const backupId = await createBackup(targetGenie);
+    const backupPath = path.join('.genie/backups', backupId, 'genie');
+    console.log(`✅ Backup created: ${backupPath}`);
+    console.log('');
+
     // Copy UPDATE.md from template BEFORE generating prompt (so executor can reference it)
     const templateUpdateMd = path.join(templateGenie, 'UPDATE.md');
     const targetUpdateMd = path.join(targetGenie, 'UPDATE.md');
@@ -181,7 +189,7 @@ export async function runUpdate(
     console.log(`📝 Generating migration orchestration prompt...`);
     console.log('');
 
-    const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
+    const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor, backupPath);
 
     // Save prompt to file
     const promptFile = path.join(cwd, '.genie-update-prompt.md');
@@ -204,7 +212,8 @@ function buildUpdateOrchestrationPrompt(
   diff: DiffSummary,
   installType: string,
   cwd: string,
-  executor: string
+  executor: string,
+  backupPath: string
 ): string {
   const version = getPackageVersion();
 
@@ -221,7 +230,7 @@ Your task: Migrate user context from backup to new installation.
 **Project:** ${cwd}
 **Architecture:** ${installType === 'old_genie' ? 'Migrated from v2.0.x' : 'v2.1+ architecture'}
 **Current version:** ${version}
-**Backup location:** \`.genie.backup/\`
+**Backup location:** \`${backupPath}\`
 
 ## What's Already Done
 
@@ -240,6 +249,10 @@ Follow UPDATE.md to migrate user context:
 
 **Focus on:** Preserving user work (wishes, custom agents, reports, context)
 **Skip:** Template file copying (already done)
+
+## Important
+
+When you read @.genie/UPDATE.md, replace all instances of \`{{BACKUP_PATH}}\` with \`${backupPath}\`.
 
 ## Completion
 

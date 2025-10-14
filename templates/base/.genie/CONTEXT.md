@@ -154,7 +154,7 @@
 
 **Session Start (Auto):**
 1. Claude Code loads CLAUDE.md
-2. Finds `@~/.genie/context.md` reference
+2. Finds `@.genie/CONTEXT.md` reference
 3. Executes all `!command` statements
 4. Greets you with:
    - Current focus
@@ -207,9 +207,9 @@ This ensures:
 
 **System Status:** ✅ ACTIVE
 
-**This file location:** `~/.genie/context.md` (user-local, cross-repo)
+**This file location:** `.genie/CONTEXT.md` (project-local, per-user)
 
-**Loaded via:** `@~/.genie/context.md` in CLAUDE.md (line 3)
+**Loaded via:** `@.genie/CONTEXT.md` in CLAUDE.md (line 9)
 
 **Next evolution:** [Your ideas for improving this system]
 

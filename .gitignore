@@ -146,7 +146,7 @@ secrets.json
 # Genie/Agent-OS (if present)
 .genie/state/
 .genie/logs/
-.genie/context.md
+.genie/CONTEXT.md
 .agent-os/cache/
 
 # Build artifacts

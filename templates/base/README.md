@@ -28,64 +28,34 @@ This is the base template for Genie-powered projects. It provides the directory 
 
 ### Via `genie init` (Recommended)
 ```bash
-npx @automagik/genie init
+npx automagik-genie init
 ```
+
+This automatically:
+- Copies template structure to your project
+- Creates `.genie/CONTEXT.md` from template (project-local, gitignored)
+- Sets up user profile with placeholders
+- Configures `.gitignore` to protect user context
 
 ### Manual Installation
 1. Copy this template to your project root
-2. Install Genie CLI: `npm install -g @automagik/genie`
+2. Install Genie CLI: `npm install -g automagik-genie`
 3. Customize `.genie/product/` with your project details
 4. Customize `.genie/standards/` with your coding standards
 5. Edit `.genie/custom/*.md` to override agent behavior
-6. **Set up user profile** (recommended):
-   ```bash
-   mkdir -p ~/.genie
-   # Copy context template to ~/.genie/context.md
-   # Template includes: session state, decision queue, user preferences
-   ```
+6. Populate `.genie/CONTEXT.md` with your preferences
 
-## User Profile System (Session Continuity)
+## User Context File (Session Continuity)
 
-Genie includes a **user profile system** that eliminates session amnesia and maintains context across sessions.
-
-### Setup
-
-Create `~/.genie/context.md` (user-local, not committed):
-```markdown
-# 🧞 Genie Context: Your Name
-
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**Current Repo:** !`basename $(pwd)`
-
-## 📊 Runtime Context (Auto-Updated)
-**Branch:** !`git branch --show-current`
-**Status:** !`git status --short | head -10`
-**Recent Commits:** !`git log --oneline -5`
-
-## 🎯 Current Focus
-**Task:** [What you're working on]
-**Status:** [ACTIVE/PENDING]
-**Next Action:** [Next step]
-
-## ⏳ Decision Queue (One at a Time)
-### Decision 1: [Topic] [NEXT]
-**Question:** [The question]
-**Context:** [Background]
-
-## 👤 User Profile
-**Communication Preferences:**
-- ✅ Sequential decisions (one at a time)
-- ✅ Evidence-based approach
-- ✅ Collaborative planning
-```
+Each project has its own **user context file** (`.genie/CONTEXT.md`) that eliminates session amnesia and maintains context across sessions.
 
 ### How It Works
 
-1. **Automatic Loading**: CLAUDE.md includes `@~/.genie/context.md`
-2. **Runtime Commands**: `!command` syntax executes automatically (fresh git status, date)
+1. **Automatic Creation**: `genie init` creates `.genie/CONTEXT.md` from template
+2. **Runtime Commands**: `!command` syntax executes automatically (fresh git status, date, commits)
 3. **Session Greeting**: Claude greets you with current context and where you left off
 4. **Decision Queue**: Decisions presented one at a time (humans are single-attention beings)
-5. **Cross-Repo**: Lives in `~/.genie/`, follows you across all projects
+5. **Project-Local**: Lives in `.genie/`, per-project, per-user (gitignored)
 
 ### Benefits
 
@@ -93,19 +63,19 @@ Create `~/.genie/context.md` (user-local, not committed):
 - ✅ **Always fresh** - Git status, branch, commits updated automatically
 - ✅ **Single-attention workflow** - One decision at a time, queued
 - ✅ **Relationship memory** - Preferences and history maintained
-- ✅ **Cross-project** - One profile for all repos
+- ✅ **Per-project** - Each project has its own context
 
 ### Example Session Start
 
 ```
-Hey [Your Name]! 👋
+Hey {{USER_NAME}}! 👋
 
-**Current focus:** Issue audit compliance fixes
-**Where we left off:** Committed Phase 2 template structure
-**Branch:** main
-**Status:** 1 file modified
+**Current focus:** {{TASK_DESCRIPTION}}
+**Where we left off:** {{LAST_COMPLETION}}
+**Branch:** {{BRANCH_NAME}}
+**Status:** {{GIT_STATUS_SUMMARY}}
 
-**Next up:** Decision 1 about Issue #41. Ready to discuss?
+**Ready to:** {{NEXT_ACTION}}
 ```
 
 ## Architecture
@@ -235,12 +205,10 @@ Edit files in `.genie/custom/`:
 
 ## Support
 
-- **Documentation**: See `AGENTS.md` and `CLAUDE.md`
+- **Documentation**: See `AGENTS.md` and `CLAUDE.md` in your project
 - **GitHub**: https://github.com/namastexlabs/automagik-genie
-- **Issues**: https://github.com/namastexlabs/automagik-genie/issues
+- **NPM**: https://www.npmjs.com/package/automagik-genie
 
 ---
 
-**Version**: 0.1.0
-**License**: MIT
-**Maintainer**: Namastex Labs
+🧞 **Genie: Making agent orchestration magical** ✨

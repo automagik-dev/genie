@@ -2,11 +2,11 @@
 @.claude/README.md
 
 # ⚠️ User Context (Project-Specific Session Continuity)
-# Load project-local user context from: .genie/context.md (gitignored, per-user, per-project)
+# Load project-local user context from: .genie/CONTEXT.md (gitignored, per-user, per-project)
 # This file enables session memory, user preferences, decision tracking, and parallel work for THIS project.
 # Each team member has their own context file (not shared in git).
 # If missing, install/update agent will create it from template.
-@.genie/context.md
+@.genie/CONTEXT.md
 
 # Claude-Specific Patterns
 
