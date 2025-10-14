@@ -535,7 +535,7 @@ function replaceFirst(source, pattern, replacement) {
 async function handoffToExecutor(executor, cwd) {
     console.log('[HANDOFF] Starting handoffToExecutor');
     console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
-    const { spawn } = await import('child_process');
+    const { spawn, execSync } = await import('child_process');
     const command = executor === 'claude' ? 'claude' : 'codex';
     console.log(`[HANDOFF] command=${command}`);
     // Build args: unrestricted flag + @ reference to saved prompt
@@ -549,7 +549,45 @@ async function handoffToExecutor(executor, cwd) {
     // Use @ reference to the template's INSTALL.md
     args.push('@.genie/INSTALL.md');
     console.log(`[HANDOFF] Args: ${args.join(' ')}`);
-    // Spawn executor, inheriting user's terminal (stdio)
+    // Check if we have a real TTY or are in a subprocess (like npx)
+    const hasRealTTY = process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY;
+    // Check if we're running under npx by looking at npm_execpath
+    const isNpxSubprocess = process.env.npm_execpath && process.env.npm_execpath.includes('npx');
+    console.log(`[HANDOFF] TTY status: stdin=${process.stdin.isTTY}, stdout=${process.stdout.isTTY}, stderr=${process.stderr.isTTY}`);
+    console.log(`[HANDOFF] Running under npx: ${isNpxSubprocess}`);
+    // If no real TTY or running under npx, use script command to allocate pseudo-TTY
+    if (!hasRealTTY || isNpxSubprocess) {
+        console.log('[HANDOFF] No real TTY detected, using script command for pseudo-TTY...');
+        // Check if script command exists
+        try {
+            execSync('which script', { stdio: 'ignore' });
+        }
+        catch {
+            console.error('ERROR: script command not found. Install it or run: npm install -g automagik-genie && genie init');
+            process.exit(1);
+        }
+        // Build the command for script
+        const fullCommand = `${command} ${args.join(' ')}`;
+        const scriptArgs = ['-q', '-c', fullCommand, '/dev/null'];
+        console.log(`[HANDOFF] Running: script ${scriptArgs.join(' ')}`);
+        const child = spawn('script', scriptArgs, {
+            cwd,
+            stdio: 'inherit',
+            shell: false
+        });
+        console.log(`[HANDOFF] Spawned script PID: ${child.pid}`);
+        return new Promise((resolve, reject) => {
+            child.on('exit', (code) => {
+                console.log(`[HANDOFF] Script exited with code: ${code}`);
+                process.exit(code || 0);
+            });
+            child.on('error', (error) => {
+                console.error(`[HANDOFF] Script error:`, error);
+                reject(new Error(`Failed to start script: ${error.message}`));
+            });
+        });
+    }
+    // Normal spawn when we have a real TTY
     console.log(`[HANDOFF] About to spawn: ${command}`);
     const child = spawn(command, args, {
         cwd,
