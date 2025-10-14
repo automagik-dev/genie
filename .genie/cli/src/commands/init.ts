@@ -256,7 +256,10 @@ export async function runInit(
 
     await ensureDir(backupsRoot);
 
-    const provider = await resolveProviderChoice(flags);
+    // Detect available executors ONCE and reuse throughout
+    const availableExecutors = await detectAvailableExecutors();
+
+    const provider = await resolveProviderChoice(flags, availableExecutors);
     await writeProviderState(cwd, provider);
     await writeVersionState(cwd, backupId, claudeExists);
     await initializeProviderStatus(cwd);
@@ -275,9 +278,8 @@ export async function runInit(
 
     await emitView(buildInitSummaryView(summary), parsed.options);
 
-    // Verify executor is installed before handoff
-    const available = await detectAvailableExecutors();
-    if (!available.includes(provider)) {
+    // Verify executor is installed before handoff (use cached detection)
+    if (!availableExecutors.includes(provider)) {
       console.log('');
       console.log(`⚠️  ${provider} is not installed`);
       console.log('');
@@ -377,7 +379,7 @@ async function copyTemplateRootFiles(packageRoot: string, targetDir: string): Pr
   }
 }
 
-async function resolveProviderChoice(flags: InitFlags): Promise<string> {
+async function resolveProviderChoice(flags: InitFlags, availableExecutors: string[]): Promise<string> {
   if (flags.provider) {
     return normalizeProvider(flags.provider);
   }
@@ -387,7 +389,7 @@ async function resolveProviderChoice(flags: InitFlags): Promise<string> {
   if (!process.stdout.isTTY || flags.yes) {
     return 'claude';  // Changed default from codex to claude
   }
-  return await promptProvider();
+  return await promptProvider(availableExecutors);
 }
 
 function normalizeProvider(value: string): string {
@@ -430,11 +432,8 @@ async function detectAvailableExecutors(): Promise<string[]> {
   return available;
 }
 
-async function promptProvider(): Promise<string> {
-  // Detect available executors
-  const available = await detectAvailableExecutors();
-
-  if (available.length === 0) {
+async function promptProvider(availableExecutors: string[]): Promise<string> {
+  if (availableExecutors.length === 0) {
     console.log('');
     console.log('⚠️  No executors detected (codex or claude)');
     console.log('');
@@ -448,8 +447,8 @@ async function promptProvider(): Promise<string> {
   }
 
   // If only one available, use it
-  if (available.length === 1) {
-    const provider = available[0];
+  if (availableExecutors.length === 1) {
+    const provider = availableExecutors[0];
     console.log('');
     console.log(`✓ Using ${provider} (only available executor)`);
     console.log('');
@@ -457,7 +456,7 @@ async function promptProvider(): Promise<string> {
   }
 
   // Both available - use ink selector
-  const selected = await promptExecutorChoice(available, 'claude');
+  const selected = await promptExecutorChoice(availableExecutors, 'claude');
   console.log('');
   console.log(`✓ Using ${selected}`);
   console.log('');
