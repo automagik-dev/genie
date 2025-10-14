@@ -503,10 +503,11 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - ❌ `npm publish` (bypasses validation, GitHub release, audit trail)
 - ❌ `gh release create` (direct command - let agent orchestrate)
 - ❌ Manual version tagging without release agent
+- ❌ Using `/release` slash command with arguments (incorrect invocation)
 
 **Required workflow:**
 1. Commit code + version bump to main
-2. Delegate to release agent: `mcp__genie__run` with agent="release"
+2. Delegate to release agent: `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
 3. Release agent validates, creates GitHub release, monitors npm publish
 4. Provide release URL to user
 
@@ -516,7 +517,14 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Audit trail: All releases documented in GitHub
 - Rollback: Structured process easier to revert
 
-**Validation:** When user says "publish" or "release", immediately suggest release agent delegation, never direct commands.
+**Recent violation (2025-10-14):**
+- Attempted `gh release create` manually (bypassed validation)
+- Attempted `npm publish` directly (timed out, triggered background agent)
+- Attempted `/release` with arguments instead of proper MCP invocation
+- **Result**: Inconsistent state, manual cleanup required
+- **Evidence**: Commits 0c6ef02, 30dce09, GitHub Actions runs 18506885592
+
+**Validation:** When user says "publish" or "release", immediately suggest release agent delegation via MCP, never direct commands or slash commands.
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
