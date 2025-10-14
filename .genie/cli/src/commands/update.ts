@@ -122,11 +122,28 @@ export async function runUpdate(
     // Configure MCP for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
-    console.log(`🚀 Invoking ${executor} to orchestrate update...`);
+    console.log(`📝 Generating update orchestration prompt...`);
     console.log('');
 
     const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor);
-    await invokeExecutor(executor, updatePrompt, cwd);
+
+    // Save prompt to file for user to run manually
+    const promptFile = path.join(cwd, '.genie-update-prompt.md');
+    await fsp.writeFile(promptFile, updatePrompt, 'utf8');
+
+    console.log(`✅ Update orchestration prompt saved to:`);
+    console.log(`   ${promptFile}`);
+    console.log('');
+    console.log(`🚀 Next step: Run your ${executor} with the prompt:`);
+    console.log('');
+    if (executor === 'codex') {
+      console.log(`   codex "$(cat ${promptFile})"`);
+    } else {
+      console.log(`   claude "$(cat ${promptFile})"`);
+    }
+    console.log('');
+    console.log(`Or manually open ${executor} and paste the prompt from the file.`);
+    console.log('');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Update failed', message), parsed.options, { stream: process.stderr });
@@ -226,35 +243,42 @@ Start by launching the update agent with the context above.`;
 
 async function invokeExecutor(executor: string, prompt: string, cwd: string): Promise<void> {
   const { spawn } = await import('child_process');
+  const os = await import('os');
+  const { writeFile, unlink } = await import('fs/promises');
 
   const command = executor === 'claude' ? 'claude' : 'codex';
 
-  // Pipe prompt via stdin to avoid shell escaping issues with markdown
-  const child = spawn(command, [], {
-    cwd,
-    stdio: ['pipe', 'inherit', 'inherit'],
-    shell: false
-  });
+  // Write prompt to temp file
+  const tmpFile = path.join(os.tmpdir(), `genie-update-prompt-${Date.now()}.txt`);
+  await writeFile(tmpFile, prompt, 'utf8');
 
-  // Write prompt to stdin
-  if (child.stdin) {
-    child.stdin.write(prompt);
-    child.stdin.end();
+  try {
+    // Use script to allocate pseudo-TTY, pass prompt as argument
+    const child = spawn('script', ['-q', '-c', `${command} "$(cat ${tmpFile})"`, '/dev/null'], {
+      cwd,
+      stdio: 'inherit',
+      shell: false
+    });
+
+    return new Promise((resolve, reject) => {
+      child.on('close', async (code) => {
+        await unlink(tmpFile).catch(() => {});
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`${command} exited with code ${code}`));
+        }
+      });
+
+      child.on('error', async (error) => {
+        await unlink(tmpFile).catch(() => {});
+        reject(new Error(`Failed to invoke ${command}: ${error.message}`));
+      });
+    });
+  } catch (error) {
+    await unlink(tmpFile).catch(() => {});
+    throw error;
   }
-
-  return new Promise((resolve, reject) => {
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`${command} exited with code ${code}`));
-      }
-    });
-
-    child.on('error', (error) => {
-      reject(new Error(`Failed to invoke ${command}: ${error.message}`));
-    });
-  });
 }
 
 function parseFlags(args: string[]): UpdateFlags {
