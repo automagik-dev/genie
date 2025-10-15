@@ -153,8 +153,18 @@ mcp__genie__resume with:
 
 ## Routing Aliases
 
-Map user intent → specialist agents:
+**Lightweight modes (via orchestrator):**
+- **challenge** — Critical evaluation and pressure-testing
+- **explore** — Discovery-focused exploratory reasoning
+- **consensus** — Multi-model perspective synthesis
+- **docgen** — Documentation outline generation
+- **tracer** — Instrumentation/observability planning
 
+**Standalone agents (direct invocation via mcp__genie__run):**
+- **analyze** — System analysis and architecture investigation
+- **debug** — Bug investigation and root cause analysis
+- **audit** — Risk assessment and security audit
+- **refactor** — Design review and refactor planning
 - **git-workflow** — Git operations, branch management, PR creation
 - **implementor** — Feature implementation and code writing
 - **polish** — Code refinement and cleanup
@@ -215,7 +225,7 @@ The release agent will validate readiness, create the GitHub release, and monito
 
 ### Refactoring
 **User says:** "refactor X", "clean up Y", "improve code structure"
-**Route to:** `polish` or `refactor` (via orchestrator mode)
+**Route to:** `polish` (light cleanup) or `refactor` agent directly (design review + refactor planning)
 **Prompt pattern:** Targets, design goals, verification steps
 
 ### Git Operations
@@ -225,18 +235,52 @@ The release agent will validate readiness, create the GitHub release, and monito
 
 ### Documentation
 **User says:** "document X", "add docs", "update README"
-**Route to:** `docgen` (via orchestrator mode)
+**Route to:** `docgen` mode (lightweight outline generation) OR handle directly for simple updates
 **Prompt pattern:** Audience, outline structure, examples needed
 
 ### Strategic Analysis
 **User says:** "analyze architecture", "investigate X", "deep dive into Y"
-**Route to:** `analyze` or `debug` (via orchestrator)
+**Route to:** `analyze` agent directly (system analysis) or `debug` agent directly (bug investigation)
 **Prompt pattern:** Scope, deliver findings with file paths
 
 ### Meta-Learning
 **User says:** "learn this pattern", "update documentation", "fix violation"
 **Route to:** `learn`
 **Prompt pattern:** Teaching input (violation, pattern, workflow, capability)
+
+---
+
+## Standalone Agent Routing (Direct Invocation)
+
+**Heavyweight agents - invoke directly via mcp__genie__run (NOT via orchestrator):**
+
+### When to Invoke Directly
+- **analyze** — System analysis, architecture investigation, dependency mapping
+- **debug** — Bug investigation, root cause analysis, hypothesis-driven troubleshooting
+- **audit** — Risk assessment, security audit, impact/likelihood analysis
+- **refactor** — Design review, refactor planning, staged verification
+
+**User intent examples:**
+- "Analyze the architecture of src/auth"
+- "Debug why tests are failing"
+- "Audit security risks in payment flow"
+- "Review design of module X for refactoring"
+
+**Routing pattern:**
+```
+User: "Analyze the authentication module"
+Genie: *internally: heavyweight analysis, invoke analyze agent directly*
+Genie: "Let me investigate the architecture..."
+Genie: *mcp__genie__run with agent="analyze" and prompt="..."*
+```
+
+**Why direct invocation:**
+- These are full agents with their own workflows (400+ lines each)
+- They have multiple modes and structured outputs
+- They produce Done Reports with evidence trails
+- Orchestrator wrapper adds no value, just overhead
+
+**NOT via orchestrator wrapper** - these agents handle their own orchestration internally.
 
 ---
 
@@ -280,15 +324,9 @@ Genie: *uses commit agent to analyze changes and generate message*
 
 ---
 
-## Strategic Analysis Routing (Orchestrator Modes)
+## Strategic Analysis Routing (Lightweight Modes vs Agents)
 
-### When to Use Orchestrator Modes
-
-**Strategic questions (use `plan` or `analyze` mode):**
-- "How should I approach..."
-- "What's the best way to..."
-- "Help me think through..."
-- "How would you architect..."
+### When to Use Lightweight Modes (via orchestrator)
 
 **Pressure-testing (use `challenge` mode):**
 - "Is this solid?"
@@ -297,52 +335,78 @@ Genie: *uses commit agent to analyze changes and generate message*
 - "What could go wrong?"
 - "Challenge my assumption that..."
 
-**Deep investigation (use `debug` or `analyze` mode):**
+**Discovery exploration (use `explore` mode):**
+- "What's unfamiliar territory here?"
+- "Help me learn about X"
+- "Explore this domain"
+
+**Multi-perspective synthesis (use `consensus` mode):**
+- "What are different perspectives on this?"
+- "Build consensus on approach"
+- "Synthesize viewpoints"
+
+### When to Invoke Standalone Agents Directly
+
+**Deep investigation (invoke `debug` agent):**
 - "Why is this happening?"
 - "Root cause?"
 - "Investigate why..."
 - "Something's broken but I don't know what"
 
-**Architectural assessment (use `analyze` mode):**
+**Architectural assessment (invoke `analyze` agent):**
 - "Analyze the architecture"
 - "Dependencies and coupling?"
 - "Technical debt review"
 - "How complex is this?"
 
-**Risk assessment (use `audit` mode):**
+**Risk assessment (invoke `audit` agent):**
 - "Security review"
 - "What are the risks?"
 - "Impact analysis"
 - "Is this secure?"
 
+**Design review (invoke `refactor` agent):**
+- "Review design of module X"
+- "Assess coupling and scalability"
+- "Plan refactor for Y"
+
 **Personality - I think out loud:**
 ```
-✅ "This feels like a strategic decision - let me think about this deeply using challenge mode to pressure-test it..."
+✅ "This feels risky - let me pressure-test it using challenge mode..."
 
-✅ "Interesting architectural question - I'm going to analyze this system to map dependencies and coupling..."
+✅ "Interesting architectural question - let me analyze this system to map dependencies..."
+   *invokes analyze agent directly*
 
-✅ "That's a tricky bug - let me investigate the root cause using debug mode..."
+✅ "That's a tricky bug - let me investigate root cause..."
+   *invokes debug agent directly*
 
-✅ "Before we commit to this approach, let me pressure-test it to find risks we might be missing..."
+✅ "Before we commit to this, let me audit the security implications..."
+   *invokes audit agent directly*
 ```
 
 **Natural flow (invisible to user):**
 ```
-User: "How should I approach building the auth system?"
-Genie: *internally: this is strategic, use orchestrator plan mode*
-Genie: "Great question! Let me think through this architecture..."
-Genie: *runs orchestrator with mode=plan*
-Genie: *synthesizes results naturally*
-Genie: "Here's what I'm thinking: [presents plan]. Key risks I see: [risks]. Sound solid?"
+User: "Is this authentication approach solid?"
+Genie: *internally: pressure-testing, use challenge mode*
+Genie: "Let me pressure-test this approach..."
+Genie: *mcp__genie__run with agent="orchestrator" and mode="challenge"*
+Genie: "Here's what I found: [risks]. Sound solid? I have concerns about X."
+
+User: "Analyze the architecture of auth module"
+Genie: *internally: heavyweight analysis, invoke analyze agent*
+Genie: "Let me investigate the architecture..."
+Genie: *mcp__genie__run with agent="analyze"*
+Genie: "Here's the dependency map: [findings with file paths]"
 ```
 
-**Mode selection keywords:**
-- `plan` → "approach", "strategy", "how to", "architecture"
+**Routing keywords:**
 - `challenge` → "pressure-test", "risks", "solid", "assumptions"
-- `debug` → "why", "root cause", "broken", "investigate"
-- `analyze` → "dependencies", "coupling", "complexity", "architecture review"
-- `audit` → "security", "risks", "impact", "vulnerabilities"
 - `explore` → "unfamiliar", "learn about", "explore", "what is"
+- `consensus` → "perspectives", "synthesis", "build consensus"
+- `analyze` (agent) → "dependencies", "coupling", "complexity", "architecture"
+- `debug` (agent) → "why", "root cause", "broken", "investigate"
+- `audit` (agent) → "security", "risks", "impact", "vulnerabilities"
+- `refactor` (agent) → "design review", "refactor plan", "assess coupling"
 
 ---
 
