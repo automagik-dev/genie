@@ -1,31 +1,26 @@
-# Genie Agent Architecture
+# Genie Natural Language Routing
 
-## Access Patterns
+**You just talk. Genie handles everything.**
 
-### Commands Only (Interactive Workflows)
-Conversational flows that guide humans through multi-step processes.
-Access via: `/command`
+## Architecture
 
-- `/plan` — Product planning dialogue
-- `/wish` — Wish creation dialogue
-- `/forge` — Execution breakdown dialogue
-- `/review` — QA validation dialogue
-- `/install` — Framework installation
-- `/prompt` — Prompt refinement helper
-- `/sleepy` — Autonomous wish coordinator with Genie validation
-- `/learn` — Meta-learning for framework improvements
+```
+Felipe ↔ Genie (persistent conversational mentor)
+          ↓
+       Neuron Sessions (persistent conversations)
+       ├─ orchestrator-[context]
+       ├─ implementor-[task]
+       ├─ tests-[module]
+       ├─ challenge-[topic]
+       └─ etc.
+```
 
-### Both Command & Agent (Dual-Purpose)
-Can be invoked interactively OR delegated to background/subagents.
-Access via: `/command` OR `mcp__genie__run` OR Task tool
+**Single interface:** Natural conversation
+**Single routing mechanism:** Genie decides based on context (routing.md)
+**Single execution layer:** MCP direct to specialist neurons
+**Persistence:** Neuron sessions for long-running work
 
-- `commit` / `/commit` — Commit advisory generation
-- `genie-qa` / `/genie-qa` — Self-validation workflow
-- `planner` — Background strategic planning (alias to plan.md, used by /plan workflow)
-
-### Agents Only (Delegatable Workers)
-Best invoked via `mcp__genie__run` or spawned by other agents.
-Access via: `mcp__genie__run` OR Task tool
+## Specialist Neurons (Access via MCP Only)
 
 #### Strategic Deep-Dive
 - `genie` — Pressure-testing, second opinions, consensus building
@@ -86,41 +81,11 @@ Access via: `mcp__genie__run` OR Task tool
 ├── tests.md
 └── …
 
-.claude/commands/            # Interactive slash commands
-├── plan.md → @.genie/agents/plan.md
-├── wish.md → @.genie/agents/wish.md
-├── forge.md → @.genie/agents/forge.md
-├── review.md → @.genie/agents/review.md
-├── commit.md → @.genie/agents/core/commit.md
-├── genie-qa.md → @.genie/agents/qa/genie-qa.md
-├── install.md → @.genie/agents/core/install.md
-├── prompt.md → @.genie/agents/core/prompt.md
-├── vibe.md → @.genie/agents/vibe.md
-└── learn.md → @.genie/agents/core/learn.md
-
-.claude/agents/              # Task tool aliases (delegatable)
-├── planner.md → @.genie/agents/plan.md
-├── commit.md → @.genie/agents/core/commit.md
-├── precommit.md → @.genie/agents/core/commit.md
-├── genie-qa.md → @.genie/agents/qa/genie-qa.md
-├── orchestrator.md → @.genie/agents/orchestrator.md
-├── analyze.md → @.genie/agents/core/analyze.md
-├── audit.md → @.genie/agents/core/audit.md
-├── debug.md → @.genie/agents/core/debug.md
-├── explore.md → @.genie/agents/core/modes/explore.md
-├── consensus.md → @.genie/agents/core/modes/consensus.md
-├── challenge.md → @.genie/agents/core/modes/challenge.md
-├── refactor.md → @.genie/agents/core/refactor.md
-├── docgen.md → @.genie/agents/core/modes/docgen.md
-├── tracer.md → @.genie/agents/core/modes/tracer.md
-├── implementor.md → @.genie/agents/core/implementor.md
-├── tests.md → @.genie/agents/core/tests.md
-├── review.md → @.genie/agents/review.md
-├── polish.md → @.genie/agents/core/polish.md
-├── git-workflow.md → @.genie/agents/core/git-workflow.md
-├── vibe.md → @.genie/agents/vibe.md
-└── learn.md → @.genie/agents/core/learn.md
+.genie/custom/routing.md     # Routing triggers & neuron architecture (Genie only)
 ```
+
+**Note:** `.claude/commands/` and `.claude/agents/` removed in natural language routing.
+Genie routes directly via MCP based on conversation context.
 
 ---
 
@@ -142,11 +107,11 @@ Genie uses a **3-layer extension system** for maximum flexibility without forkin
 - Allows per-project customization without modifying core prompts
 - Each file adds context like preferred commands, evidence paths, domain rules
 
-### Layer 3: Claude Aliases (`.claude/agents/*.md`)
-- **Thin wrappers** that reference core agents via `@` notation
-- Used by Task tool for background delegation
-- Example: `.claude/agents/analyze.md` contains just `@.genie/agents/core/modes/analyze.md`
-- Provides friendly names for agent discovery
+### Layer 3: Routing Logic (`.genie/custom/routing.md`)
+- **Routing triggers** that guide Genie's delegation decisions
+- Loaded ONLY by Genie (not by specialist agents)
+- Contains: neuron architecture, routing triggers, natural conversation patterns
+- Prevents routing paradox (specialists never see routing rules)
 
 ### How It Works
 
@@ -215,100 +180,118 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 
 ---
 
-## MCP Quick Reference
+## Natural Language Routing (How Genie Works)
 
-### Interactive Workflows (Commands)
-Use slash commands for interactive workflows:
+**You talk naturally. Genie routes invisibly.**
 
-```
-/plan           # Start product planning dialogue
-/wish           # Create wish document
-/forge          # Break wish into execution groups
-/review         # Validate completed work
-
-# Helpers
-/install        # Set up Genie in new project
-/prompt         # Refine prompt/instructions
-/commit         # Interactive commit flow
-/genie-qa       # Self-validate Genie framework
-/sleepy         # Autonomous wish coordinator (requires dedicated branch)
-/learn          # Teach Genie new patterns/behaviors
-```
-
-### Background Agents (Delegatable via MCP)
-Use MCP tools for background agents:
+### Example Conversation
 
 ```
-# Orchestrator (routes to modes)
-mcp__genie__run with agent="orchestrator" and prompt="Mode: plan. @.genie/wishes/<slug>/<slug>-wish.md"
-mcp__genie__run with agent="orchestrator" and prompt="Mode: challenge. Topic: <assumption>"
-mcp__genie__run with agent="orchestrator" and prompt="Mode: explore. Focus: <topic>. Timebox: 10min"
+You: "I want to build an auth system"
+Genie: *consults plan neuron, gathers context*
+Genie: "Cool! Here's what I'm thinking... [plan]. Sound good?"
 
-# Direct mode invocation (bypasses orchestrator)
-mcp__genie__run with agent="analyze" and prompt="Scope: src/services"
-mcp__genie__run with agent="debug" and prompt="Bug: auth failing"
-mcp__genie__run with agent="challenge" and prompt="Topic: caching strategy"
+You: "Yes"
+Genie: *creates wish document*
+Genie: "Awesome! I've captured this. Ready to break it down?"
 
-# Tactical support
-mcp__genie__run with agent="commit" and prompt="Generate commit message"
-mcp__genie__run with agent="review" and prompt="Mode: code review. Scope: git diff main"
-mcp__genie__run with agent="tests" and prompt="Mode: generation. Layer: unit. Files: src/auth/*.rs"
-mcp__genie__run with agent="refactor" and prompt="Targets: api/routes"
+You: "Yes"
+Genie: *creates forge plan or executes directly*
+Genie: "Let's start with Group A..."
 
-# Delivery agents (spawned by /forge)
-mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group A"
-mcp__genie__run with agent="tests" and prompt="@.genie/wishes/<slug>/<slug>-wish.md Group B"
-mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/<slug>/<slug>-wish.md Group C"
+[Work happens naturally with neuron sessions]
 
-# Inspect & resume
+Genie: "Done! Want me to review it?"
+```
+
+**You never see:** Commands, MCP calls, agent names
+**You only see:** Natural conversation
+
+### Neuron Sessions (Persistent Conversations)
+
+**Neurons are persistent conversation partners, not one-shot tools.**
+
+```
+# Start neuron session
+mcp__genie__run with agent="orchestrator" and prompt="[Initial context]"
+# Creates session: orchestrator-abc123
+
+# Resume throughout work (builds context over time)
+mcp__genie__resume with sessionId="orchestrator-abc123" and prompt="[Follow-up]"
+
+# Neuron remembers everything, context grows organically
+```
+
+**Session naming:** `[neuron-type]-[context-slug]`
+- `orchestrator-auth-design`
+- `implementor-routing-triggers`
+- `tests-api-validation`
+- `challenge-architecture`
+
+**Benefits:**
+- ✅ Context preserved across iterations
+- ✅ Longer collaboration without resets
+- ✅ Socratic dialogues that actually work
+- ✅ Complete conversation = evidence trail
+- ✅ No context explosion (scoped per neuron)
+
+**When Genie uses neurons:**
+- Strategic work → orchestrator neuron (persistent thinking partner)
+- Complex implementation → implementor neuron (iterative refinement)
+- Test development → tests neuron (evolving strategy)
+- Long-running tasks → appropriate neuron with session
+
+**Inspect sessions:**
+```
 mcp__genie__list_sessions
 mcp__genie__view with sessionId="<session-id>" and full=true
-mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up: ..."
+mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up..."
 mcp__genie__stop with sessionId="<session-id>"
 ```
 
 ---
 
-## Usage Guidelines
+## Natural Flow (Plan → Wish → Forge → Review)
 
-### When to Use Commands vs MCP Agents
+**Genie obsesses over this flow. You just talk, Genie guides you through it.**
 
-**Use Commands (`/command`) when:**
-- Starting a new workflow step (plan → wish → forge → review)
-- Need interactive guidance through multi-step process
-- Want conversation-style collaboration
+### 1. Discovery (Plan Phase - Invisible)
+- You express intent naturally
+- Genie detects complexity (≥3 files, strategic, multi-domain)
+- Genie consults plan neuron, gathers context
+- Genie presents plan naturally: "Here's what I'm thinking..."
+- You approve or refine
 
-**Use MCP Agents (`mcp__genie__run` or Task tool) when:**
-- Delegating specific task to background worker
-- Need parallel execution of multiple tasks
-- Want to resume/inspect long-running work
-- Spawning agents from forge execution groups
+### 2. Blueprint (Wish Phase - Invisible)
+- Genie creates `.genie/wishes/<slug>/<slug>-wish.md`
+- Mentions casually: "I've captured this as a wish"
+- You don't need to know mechanics
 
-### Workflow Pattern
+### 3. Breakdown (Forge Phase)
+- Complex work: Genie creates forge plan document
+- Simple work: Genie executes directly
+- You see: "Here's the breakdown..." or "Let me handle this..."
 
-1. **Discovery:** `/plan` → creates planning brief
-2. **Blueprint:** `/wish` → creates wish document
-3. **Execution:** `/forge` → breaks into execution groups → spawns agents (implementor, tests, review)
-4. **Validation:** `/review` → validates completion → generates QA report
-5. **Commit:** `/commit` → generates commit message and advisory
+### 4. Execution (Natural)
+- Simple tasks: Genie handles directly
+- Complex tasks: Genie summons specialist neurons
+- Neuron sessions for iterative work
+- Progress updates: "Working on Group A..." → "Done!"
 
-### Agent Delegation Pattern
+### 5. Validation (Review Phase)
+- Genie suggests: "Want me to review this?"
+- Runs review neuron, validates completion
+- Reports: "All validated! Here's the evidence..."
 
-```
-# Forge outputs execution groups with agent suggestions
-# Example from forge plan:
-# Group A: implementor
-# Group B: tests
-# Group C: review (QA mode)
+### 6. Checkpoint (Commit)
+- Genie detects checkpoint (≥3 files, logical completion)
+- Suggests: "Looks like a good checkpoint - want to commit?"
+- Handles commit naturally
 
-# Spawn agents with full context
-mcp__genie__run with agent="implementor" and prompt="@.genie/wishes/auth-wish.md Group A"
-mcp__genie__run with agent="tests" and prompt="@.genie/wishes/auth-wish.md Group B"
-mcp__genie__run with agent="review" and prompt="Mode: QA. @.genie/wishes/auth-wish.md Group C"
-
-# Resume for follow-ups
-mcp__genie__resume with sessionId="<session-id>" and prompt="Address blocker: missing test fixtures"
-```
+### 7. Completion
+- Suggests PR when appropriate
+- Handles git workflow invisibly
+- Returns: "PR created: [link]"
 
 ---
 
@@ -348,20 +331,21 @@ Deliver: Counterarguments + experiments + verdict
 
 | Category | Agents | Primary Use Case | Invoked By |
 |----------|--------|------------------|------------|
-| **Workflow** | plan, wish, forge, review | Structure work | Human via commands |
-| **Orchestration** | planner, commit, genie-qa | Coordinate & validate | Human or agents |
-| **Strategic** | genie, analyze, explore, debug | High-level analysis | Human or plan/forge |
-| **Tactical** | refactor, docgen, audit, tracer | Focused support | Human or agents |
-| **Delivery** | implementor, tests, review, polish | Execute work | Forge or human |
-| **Infrastructure** | git-workflow, project-manager | System operations | Agents or workflows |
-| **Autonomous / Meta** | sleepy, learn | Long-running coordination & meta-learning | Human via commands (sleepy requires dedicated branch) |
+| **Workflow** | plan, wish, forge, review | Structure work | Genie (invisible to user) |
+| **Orchestration** | orchestrator, commit | Coordinate & validate | Genie as neurons |
+| **Strategic** | analyze, explore, debug, challenge, consensus | High-level analysis | Genie via orchestrator neuron |
+| **Tactical** | refactor, docgen, audit, tracer | Focused support | Genie when needed |
+| **Delivery** | implementor, tests, review, polish | Execute work | Genie for complex tasks |
+| **Infrastructure** | git-workflow, learn | System operations | Genie when needed |
+| **Autonomous** | vibe | Autonomous wish coordination | Genie (requires dedicated branch) |
 
 ---
 
 ## Maintenance Notes
 
 - **Single source of truth:** All agent definitions live in `.genie/agents/`
-- **Commands:** Simple `@include` wrappers pointing to `.genie/agents/`
-- **Agent aliases:** Simple frontmatter with `@include` pointing to `.genie/agents/`
+- **Routing logic:** `.genie/custom/routing.md` guides Genie's delegation decisions
+- **No wrappers needed:** Genie routes directly via MCP based on conversation context
 - **No duplication:** All agent logic maintained in one place
-- **Easy extension:** Add new agent to `.genie/agents/`, create wrappers as needed
+- **Easy extension:** Add new agent to `.genie/agents/`, update routing.md triggers if needed
+- **Natural interface:** User just talks, no commands to maintain

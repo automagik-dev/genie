@@ -27,7 +27,9 @@
 
 ## 🚀 What is Automagik Genie?
 
-**Automagik Genie** is the glue between your AI agents and your repositories. It ships a ready-to-run `.genie/` workspace, keeps it in sync with upstream templates, and exposes a battle-tested CLI + MCP server so any agent can work in your project with context.
+**Automagik Genie** is your persistent conversational development partner. Just talk naturally—Genie orchestrates agents, maintains context through neuron sessions, and guides you through Plan → Wish → Forge → Review without exposing commands or complexity.
+
+It ships a ready-to-run `.genie/` workspace, keeps it in sync with upstream templates, and exposes a battle-tested CLI + MCP server with natural language routing.
 
 ### 🎭 Why Traditional Bootstrapping Fails
 
@@ -131,21 +133,26 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 
 ### Typical Workflow
 
-1. Initialise Genie in your repo (`npx automagik-genie init`)
-2. Launch the MCP server via `genie mcp -t stdio`
-3. Configure your tool of choice (Claude Code, Cursor, Gemini CLI, Roo Code, etc.) with the MCP command `npx automagik-genie mcp -t stdio`
-4. Run Genie agents (`plan`, `wish`, `forge`, `review`, etc.) from within your editor or terminal
+1. **Setup:** Initialise Genie in your repo (`npx automagik-genie init`)
+2. **Connect:** Configure your tool (Claude Code, Cursor, etc.) with the MCP command
+3. **Just talk:** "I want to build an auth system"
+4. **Genie guides you:** Through Plan → Wish → Forge → Review naturally
+5. **Neuron sessions:** Genie maintains persistent conversations with specialist agents (orchestrator, implementor, tests) that remember context and iterate over time
+
+**No slash commands. No agent names. Just conversation.**
 
 ### Available MCP Tools
 
 | Tool | Description | Example Usage |
 |------|-------------|---------------|
-| `mcp__genie__run` | Start a new Genie agent session | "Run plan with mission + roadmap context" |
-| `mcp__genie__resume` | Continue a previous session | "Resume session RUN-1234 with follow-up prompt" |
+| `mcp__genie__run` | Start a new neuron session | Genie uses this to start persistent conversations |
+| `mcp__genie__resume` | Continue a neuron session | Genie resumes to build context over time |
 | `mcp__genie__list_agents` | List available agents | "Show all agents" |
 | `mcp__genie__list_sessions` | Inspect active/archived sessions | "Which sessions ran today?" |
-| `mcp__genie__view` | Fetch a transcript (full or tail) | "Fetch transcript for RUN-1234" |
-| `mcp__genie__stop` | Halt a running session | "Stop RUN-5678" |
+| `mcp__genie__view` | Fetch session transcript | View conversation history with neurons |
+| `mcp__genie__stop` | Halt a running session | Stop long-running neuron work |
+
+**Neuron Sessions:** Genie creates persistent conversations with specialist agents (orchestrator, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
 
 ### Claude Code Configuration
 
