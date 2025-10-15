@@ -124,6 +124,52 @@ Genie: "Autonomous mode enabled. I'll notify you of changes
     └── learnings.md              # Accumulated insights
 ```
 
+## Universal Workflow (Plan → Wish → Forge → Review)
+
+**Genie uses the same workflow for ALL projects - code, research, content, planning.**
+
+### How It Works
+
+```
+1. Plan    → You describe intent, Genie analyzes scope
+2. Wish    → Genie captures as structured wish document
+3. Forge   → Breaks into execution groups
+4. Execute → Uses domain neurons (created via pattern recognition)
+5. Review  → Validates completion, provides evidence
+```
+
+**For research/content projects:**
+- **Wishes** = Papers, campaigns, learning projects
+- **Execution groups** = Literature review, outlining, drafting, experiments
+- **Evidence** = Quality criteria, peer review, completion checklist
+- **Neurons** = Created dynamically (≥3 pattern threshold)
+
+**Example: Research Paper**
+```
+Wish: "Adversarial Robustness Literature Review"
+
+Forge Groups:
+- Group A: Paper Collection (20-30 papers)
+- Group B: Analysis (read, annotate, extract)
+- Group C: Synthesis (write review, create visuals)
+
+Neurons used:
+- literature-reviewer (created after 3rd literature task)
+- synthesizer (created after 3rd synthesis task)
+- technical-editor (created after 3rd editing task)
+```
+
+### Why This Matters
+
+✅ **Structured execution** - Not just "pattern recognition and chaos"
+✅ **Evidence-based** - Clear validation at each step
+✅ **Scalable** - Workflow handles simple AND complex projects
+✅ **Universal** - Same system for code, research, content, planning
+
+**See `.genie/agents/workflows/` for plan.md, wish.md, forge.md, review.md agents.**
+
+---
+
 ## Philosophy
 
 **Traditional AI:** Same assistant for everyone, forgets between sessions, limited capabilities

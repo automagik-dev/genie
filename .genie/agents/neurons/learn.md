@@ -748,6 +748,9 @@ Can absorb and clean behavioral_learnings from AGENTS.md."
 - ❌ **Skipping diffs:** Always show what changed
 - ❌ **No evidence:** Every learning must have concrete evidence
 - ❌ **Ignoring validation:** Every learning must specify how to verify it worked
+- ❌ **Meta-awareness:** When teaching delegation discipline, recognize this applies to learn agent itself (don't teach patterns you violate)
+
+**Meta-learning note:** The delegation discipline pattern (orchestrators delegate, specialists implement) applies to all orchestration contexts, including this learn agent when it coordinates multi-file propagation work. This agent should be aware of its own teachings and embody them.
 
 ---
 

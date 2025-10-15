@@ -251,7 +251,48 @@ Result: Token-efficient, clean evidence trail, proper separation
 
 **Learning absorbed and propagated successfully.** 🧞📚✅
 
-**Files modified:** 2 (AGENTS.md, CLAUDE.md)
-**Lines added:** 77 (37 in AGENTS.md, 40 in CLAUDE.md)
+**Files modified:** 4 total
+- **2025-10-15:** AGENTS.md, CLAUDE.md (initial propagation)
+- **2025-10-16:** routing.md, learn.md (completion propagation)
+
+**Lines added:** ~85 total
+- 37 in AGENTS.md (2025-10-15)
+- 40 in CLAUDE.md (2025-10-15)
+- 8 in routing.md (2025-10-16)
+- 2 in learn.md (2025-10-16)
+
 **Validation method:** Behavioral monitoring on next cleanup task
 **Follow-up:** Track delegation patterns in future context updates
+
+---
+
+## Update: 2025-10-16 Propagation Completion
+
+### Additional Changes
+
+**File 3: .genie/custom/routing.md**
+
+**Section:** Anti-Patterns (NEVER DO)
+**Edit type:** Append new anti-pattern
+**Date:** 2025-10-16
+
+**Change:**
+Added concrete anti-pattern about bypassing delegation for "quick" multi-file work. Includes real violation example (11 Edit calls) and pattern to watch for.
+
+**File 4: .genie/agents/neurons/learn.md**
+
+**Section:** Anti-Patterns
+**Edit type:** Append meta-awareness note
+**Date:** 2025-10-16
+
+**Change:**
+Added meta-awareness reminder that learn agent itself should embody delegation discipline when coordinating multi-file propagation. Self-referential consistency check.
+
+### Final Propagation Status
+
+✅ **AGENTS.md** - Critical behavioral override (2025-10-15)
+✅ **CLAUDE.md** - Claude-specific pattern (2025-10-15)
+✅ **routing.md** - Orchestrator anti-pattern with example (2025-10-16)
+✅ **learn.md** - Meta-awareness note (2025-10-16)
+
+**Coverage:** Complete framework propagation across all delegation discipline touchpoints

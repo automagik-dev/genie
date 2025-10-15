@@ -319,6 +319,54 @@ mcp__genie__stop with sessionId="<session-id>"
 
 ---
 
+## Universal Workflow Architecture
+
+**The wish system applies to ALL Genie variants, not just code projects.**
+
+### Core Principle
+
+```
+Plan → Wish → Forge → Review
+```
+
+This workflow is universal. Only the **domain adaptation** changes:
+
+| Variant | Wishes | Forge Tasks | Evidence | Neurons |
+|---------|--------|-------------|----------|---------|
+| **Code** | Features, bugs, refactors | Implementation, tests, docs | Tests pass, builds, PRs | implementor, tests, polish, git, release |
+| **Create** | Research papers, content, learning projects | Literature review, outlining, drafting, experiments | Quality criteria, peer review | literature-reviewer, outline-builder, experiment-designer (via ≥3 pattern) |
+| **NL** | Analysis, frameworks, process improvements | Research, synthesis, documentation | Stakeholder approval | Domain-specific (via ≥3 pattern) |
+
+### Architecture Design
+
+**✅ CORRECT:**
+- Universal workflow (Plan → Wish → Forge → Review) across all templates
+- Domain neurons created dynamically (≥3 pattern recognition threshold)
+- Evidence criteria adapted to domain
+- Workflow orchestration + specialized neurons
+
+**❌ WRONG:**
+- Treating wishes as code-only concept
+- Pattern recognition WITHOUT structured execution
+- Missing workflow agents in non-code templates
+
+### Template Requirements
+
+**All templates MUST include:**
+- `.genie/agents/workflows/plan.md` (domain-adapted)
+- `.genie/agents/workflows/wish.md` (domain-adapted)
+- `.genie/agents/workflows/forge.md` (domain-adapted)
+- `.genie/agents/workflows/review.md` (domain-adapted)
+
+**Domain neurons created dynamically:**
+- Via pattern recognition (≥3 occurrences)
+- Stored in `.genie/agents/domain/` (create/NL) or `.genie/agents/neurons/` (code)
+- Invoked through forge execution groups
+
+**See @AGENTS.md §Universal Workflow Architecture for detailed examples and validation.**
+
+---
+
 ## Strategic Thinking Consultation
 
 When Genie needs to think critically or analyze deeply, it consults the orchestrator neuron with the appropriate reasoning mode:
