@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPackageRoot = getPackageRoot;
 exports.getTemplateGeniePath = getTemplateGeniePath;
 exports.getTemplateClaudePath = getTemplateClaudePath;
+exports.getTemplateRootPath = getTemplateRootPath;
 exports.getTemplateRelativeBlacklist = getTemplateRelativeBlacklist;
 exports.resolveTargetGeniePath = resolveTargetGeniePath;
 exports.resolveTargetStatePath = resolveTargetStatePath;
@@ -18,12 +19,16 @@ const path_1 = __importDefault(require("path"));
 function getPackageRoot() {
     return path_1.default.resolve(__dirname, '../../../..');
 }
-function getTemplateGeniePath() {
-    // Use templates/base/.genie/ (clean template) NOT .genie/ (framework dev)
-    return path_1.default.join(getPackageRoot(), 'templates', 'base', '.genie');
+function getTemplateGeniePath(template = 'code') {
+    // templates/code/.genie/ - Software development template
+    // templates/create/.genie/ - Adaptive learning template
+    return path_1.default.join(getPackageRoot(), 'templates', template, '.genie');
 }
-function getTemplateClaudePath() {
-    return path_1.default.join(getPackageRoot(), 'templates', 'base', '.claude');
+function getTemplateClaudePath(template = 'code') {
+    return path_1.default.join(getPackageRoot(), 'templates', template, '.claude');
+}
+function getTemplateRootPath(template = 'code') {
+    return path_1.default.join(getPackageRoot(), 'templates', template);
 }
 function getTemplateRelativeBlacklist() {
     // Protect user work - these directories should NEVER be overwritten

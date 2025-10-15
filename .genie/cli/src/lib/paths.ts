@@ -4,13 +4,20 @@ export function getPackageRoot(): string {
   return path.resolve(__dirname, '../../../..');
 }
 
-export function getTemplateGeniePath(): string {
-  // Use templates/base/.genie/ (clean template) NOT .genie/ (framework dev)
-  return path.join(getPackageRoot(), 'templates', 'base', '.genie');
+export type TemplateType = 'code' | 'create';
+
+export function getTemplateGeniePath(template: TemplateType = 'code'): string {
+  // templates/code/.genie/ - Software development template
+  // templates/create/.genie/ - Adaptive learning template
+  return path.join(getPackageRoot(), 'templates', template, '.genie');
 }
 
-export function getTemplateClaudePath(): string {
-  return path.join(getPackageRoot(), 'templates', 'base', '.claude');
+export function getTemplateClaudePath(template: TemplateType = 'code'): string {
+  return path.join(getPackageRoot(), 'templates', template, '.claude');
+}
+
+export function getTemplateRootPath(template: TemplateType = 'code'): string {
+  return path.join(getPackageRoot(), 'templates', template);
 }
 
 export function getTemplateRelativeBlacklist(): Set<string> {
