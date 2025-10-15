@@ -48,7 +48,7 @@ What would you like to work on?
 **Context:** Developer working on wish A discovers bug/idea related to wish B.
 
 **Pattern:**
-1. Invoke `github-workflow` agent: "Document bug: <description>"
+1. Invoke `git` agent: "Document bug: <description>"
 2. Agent creates GitHub issue with proper template
 3. Agent returns issue URL
 4. Developer continues working on wish A without context loss
@@ -58,21 +58,27 @@ What would you like to work on?
 User: "While working on interactive permissions (#35), I noticed session extraction
       times out in background mode. Document this."
 
-Agent: *invokes github-workflow*
+Agent: *invokes git agent*
 Created issue #42: [Bug] Session extraction timeout in background mode
 https://github.com/namastexlabs/automagik-genie/issues/42
 
 You can continue with #35. Issue #42 is now tracked for later.
 ```
 
-### GitHub Workflow Integration
+### Git & GitHub Workflow Integration
 
-**Agent:** `.genie/agents/core/github-workflow.md` (renamed from bug-reporter 2025-10-13)
+**Agent:** `.genie/agents/core/git.md` (unified git+GitHub operations)
 
-**Full issue lifecycle management:**
+**Git operations:**
+- Branch strategy and management
+- Staging, commits, push
+- Safe operations with approval gates
+- PR creation with proper descriptions
+
+**GitHub issue lifecycle:**
 - **CREATE**: New issues with proper templates (bug-report, feature-request, make-a-wish, planned-feature)
 - **LIST**: Query by assignee/label/status (`gh issue list --assignee @me`)
-- **UPDATE**: Modify title, labels, milestone
+- **UPDATE**: Contextual decision - edit body vs add comment (preserves conversation)
 - **ASSIGN**: Set/remove assignees
 - **CLOSE**: Resolve with reason and comment
 - **LINK**: Cross-reference wishes, PRs, commits
@@ -114,9 +120,14 @@ Is this a bug?
 - **NOT everything needs roadmap initiative** - Standalone work uses feature-request/bug-report
 
 **Integration with Genie workflow:**
-1. **Quick capture:** Developer working on wish A discovers bug → invoke `github-workflow` agent → issue created → return to work (no context loss)
+1. **Quick capture:** Developer working on wish A discovers bug → invoke `git` agent → issue created → return to work (no context loss)
 2. **Welcome flow:** List assigned issues at session start with `!gh issue list --assignee @me`
 3. **Wish linking:** Cross-reference issues ↔ wishes ↔ PRs via comments
+4. **Git operations:** Branch creation, commits, PR creation all through unified agent
+
+**Contextual Issue Editing Pattern:**
+- **Edit body** when: consolidating comments, fixing template mistakes, user says "unify/consolidate", early corrections (< 5 min, no discussion)
+- **Add comment** when: active discussion exists (comments > 0), adding updates, preserving conversation
 
 **Template structure:**
 All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads template, populates fields, creates temp file, executes `gh issue create --title "[Type] Description" --body-file /tmp/issue.md`.
@@ -124,13 +135,16 @@ All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads templa
 **Validation:**
 ```bash
 # Verify agent exists
-test -f .genie/agents/core/github-workflow.md && echo "✅"
+test -f .genie/agents/core/git.md && echo "✅"
 
 # Check operations documented
-grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK" .genie/agents/core/github-workflow.md
+grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/core/git.md
 
 # Test issue creation
-./genie run github-workflow --prompt "Create feature request: interactive permissions"
+./genie run git --prompt "Create feature request: interactive permissions"
+
+# Test PR creation
+./genie run git --prompt "Create PR for feat/my-feature"
 ```
 
 **Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
@@ -253,7 +267,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (git-workflow, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -286,7 +300,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 **Agent categories:**
 
 **Implementation agents** (REQUIRE `permissionMode: default`):
-- Core delivery: `implementor`, `tests`, `polish`, `refactor`, `git-workflow`
+- Core delivery: `implementor`, `tests`, `polish`, `refactor`, `git`
 - Infrastructure: `install`, `learn`, `commit`, `review`
 - Workflow orchestrators: `wish`, `plan`, `forge`, `vibe`, `genie-qa`
 
@@ -312,7 +326,7 @@ genie:
 **Validation:**
 ```bash
 # Check all implementation agents have permissionMode
-grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git-workflow,install,learn,commit}.md
+grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git,install,learn,commit}.md
 # Should return empty (all agents have the setting)
 
 # Test file write capability
@@ -733,7 +747,7 @@ Execute your workflow directly per your agent instructions. Do NOT delegate to y
 
 ### Quick Reference: Available Specialists
 
-- **git-workflow** — Git operations, branch management, PR creation
+- **git** — ALL git and GitHub operations (branch, commit, PR, issues)
 - **implementor** — Feature implementation and code writing
 - **polish** — Code refinement and cleanup
 - **tests** — Test strategy, generation, and authoring
@@ -808,7 +822,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `retrospective` – capture wins, misses, lessons, next actions
 
 **Delivery Agents (not modes):**
-- `git-workflow`, `implementor`, `polish`, `tests`, `review`
+- `git`, `implementor`, `polish`, `tests`, `review`
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 

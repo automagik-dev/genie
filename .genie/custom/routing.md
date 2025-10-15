@@ -165,7 +165,7 @@ mcp__genie__resume with:
 - **debug** — Bug investigation and root cause analysis
 - **audit** — Risk assessment and security audit
 - **refactor** — Design review and refactor planning
-- **git-workflow** — Git operations, branch management, PR creation
+- **git** — ALL git and GitHub operations (branch, commit, PR, issues)
 - **implementor** — Feature implementation and code writing
 - **polish** — Code refinement and cleanup
 - **tests** — Test strategy, generation, and authoring
@@ -228,10 +228,10 @@ The release agent will validate readiness, create the GitHub release, and monito
 **Route to:** `polish` (light cleanup) or `refactor` agent directly (design review + refactor planning)
 **Prompt pattern:** Targets, design goals, verification steps
 
-### Git Operations
-**User says:** "create PR", "merge branch", "git workflow"
-**Route to:** `git-workflow`
-**Prompt pattern:** Branch names, PR description, commit strategy
+### Git & GitHub Operations
+**User says:** "create PR", "create issue", "commit", "git workflow", "manage issues"
+**Route to:** `git`
+**Prompt pattern:** Specify operation type (git/PR/issue), include wish context, provide all needed info
 
 ### Documentation
 **User says:** "document X", "add docs", "update README"
@@ -480,20 +480,26 @@ Polish: *refactors, POOF!*
 Genie: "Cleaned up! Reduced complexity, better naming, same behavior."
 ```
 
-### Git Operations → `git-workflow`
+### Git & GitHub Operations → `git`
 
 **Triggers:**
-- "Create PR"
-- "Merge this branch"
-- "Rebase on main"
-- Complex git workflow
+- "Create PR" / "Create issue"
+- "Commit this" / "git workflow"
+- "Merge this branch" / "Rebase on main"
+- "Manage issues" / "Update issue"
+- Complex git/GitHub workflow
 
 **Natural flow:**
 ```
 User: "Create a PR for this"
 Genie: "Got it! I'll handle the PR creation with proper description..."
-Git-workflow: *creates PR, POOF!*
+Git: *creates PR, POOF!*
 Genie: "PR created: [link]. Ready for review!"
+
+User: "Document this bug in an issue"
+Genie: "I'll create an issue with proper template..."
+Git: *creates issue using bug-report template, POOF!*
+Genie: "Issue created: [link]. Captured all the details!"
 ```
 
 ### Delegation decision logic:

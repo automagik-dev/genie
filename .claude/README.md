@@ -44,7 +44,7 @@ Felipe ↔ Genie (persistent conversational mentor)
 - `polish` — Code refinement
 
 #### Infrastructure
-- `git-workflow` — Git operations
+- `git` — ALL git and GitHub operations (branch, commit, PR, issues)
 - `project-manager` — Task coordination
 - `learn` — Meta-learning & behavioral corrections
 
@@ -64,7 +64,7 @@ Felipe ↔ Genie (persistent conversational mentor)
 │   ├── analyze.md
 │   ├── commit.md
 │   ├── docgen.md
-│   ├── git-workflow.md
+│   ├── git.md
 │   ├── implementor.md
 │   ├── prompt.md
 │   ├── refactor.md
@@ -76,7 +76,7 @@ Felipe ↔ Genie (persistent conversational mentor)
 
 .genie/custom/               # Project-specific overrides consumed by core prompts
 ├── analyze.md
-├── git-workflow.md
+├── git.md
 ├── implementor.md
 ├── tests.md
 └── …
@@ -176,7 +176,7 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 **Custom-Only (2):**
 - `compliance`, `retrospective`
 
-**Note:** Delivery agents (implementor, tests, review, polish, git-workflow) are **not** orchestrator modes - they execute work directly.
+**Note:** Delivery agents (implementor, tests, review, polish, git) are **not** orchestrator modes - they execute work directly.
 
 ---
 
@@ -336,7 +336,7 @@ Deliver: Counterarguments + experiments + verdict
 | **Strategic** | analyze, explore, debug, challenge, consensus | High-level analysis | Genie via orchestrator neuron |
 | **Tactical** | refactor, docgen, audit, tracer | Focused support | Genie when needed |
 | **Delivery** | implementor, tests, review, polish | Execute work | Genie for complex tasks |
-| **Infrastructure** | git-workflow, learn | System operations | Genie when needed |
+| **Infrastructure** | git, learn | System operations | Genie when needed |
 | **Autonomous** | vibe | Autonomous wish coordination | Genie (requires dedicated branch) |
 
 ---
