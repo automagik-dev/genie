@@ -700,29 +700,22 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
   }
 
-  // For npx: just run Claude directly - it might show TTY warnings but will work
+  // For npx: Complete init and tell user to run the command manually
   if (isNpxSubprocess || pathsHaveNpx) {
-    console.log('[HANDOFF] NPX detected - running claude directly (may show TTY warnings)...');
+    console.log('[HANDOFF] NPX environment detected - cannot launch Claude directly from npx');
+    console.log('');
+    console.log('╭────────────────────────────────────────────────────╮');
+    console.log('│ ✅ Genie installation completed!                    │');
+    console.log('│                                                    │');
+    console.log('│ Now run this command to complete setup:           │');
+    console.log('│                                                    │');
+    console.log(`│   ${command} ${args.join(' ')}${' '.repeat(Math.max(0, 48 - command.length - args.join(' ').length))}│`);
+    console.log('│                                                    │');
+    console.log('╰────────────────────────────────────────────────────╯');
+    console.log('');
 
-    const child = spawn(command, args, {
-      cwd,
-      stdio: 'inherit',
-      shell: false
-    });
-
-    console.log(`[HANDOFF] Spawned ${command} PID: ${child.pid}`);
-
-    return new Promise((resolve, reject) => {
-      child.on('exit', (code) => {
-        console.log(`[HANDOFF] ${command} exited with code: ${code}`);
-        process.exit(code || 0);
-      });
-
-      child.on('error', (error) => {
-        console.error(`[HANDOFF] ${command} error:`, error);
-        reject(new Error(`Failed to start ${command}: ${error.message}`));
-      });
-    });
+    // Exit cleanly so user can run the command
+    process.exit(0);
   }
 
   // For non-TTY non-npx situations, try script fallback
