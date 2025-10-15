@@ -140,11 +140,11 @@ test -f .genie/agents/neurons/git.md && echo "✅"
 # Check operations documented
 grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/neurons/git.md
 
-# Test issue creation
-./genie run git --prompt "Create feature request: interactive permissions"
+# Test issue creation (via MCP, not CLI)
+# Use mcp__genie__run with agent="git" and prompt="Create feature request: interactive permissions"
 
-# Test PR creation
-./genie run git --prompt "Create PR for feat/my-feature"
+# Test PR creation (via MCP, not CLI)
+# Use mcp__genie__run with agent="git" and prompt="Create PR for feat/my-feature"
 ```
 
 **Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
@@ -281,8 +281,8 @@ genie:
 grep -L "permissionMode:" .genie/agents/neurons/{implementor,tests,polish,refactor,git,install,learn,commit}.md
 # Should return empty (all agents have the setting)
 
-# Test file write capability
-./genie run implementor --prompt "Create test file at /tmp/test.txt"
+# Test file write capability (via MCP, not CLI)
+# Use mcp__genie__run with agent="implementor" and prompt="Create test file at /tmp/test.txt"
 # Should create file without permission prompts
 ```
 
@@ -564,6 +564,17 @@ A common snippet:
 3. Resume only after guidance is updated.
 
 ## MCP Quick Reference
+
+**Entry Point:**
+- ❌ NEVER use `./genie` (doesn't exist since v2.4.0)
+- ✅ ALWAYS use `npx automagik-genie` for CLI operations
+
+**Version Self-Awareness:**
+- MCP should display version in outputs (future capability): `Genie MCP v{version}`
+- Helps with debugging: "Is my MCP latest?" or "I prefer to stay on X version"
+- Version injection planned for all MCP tool responses
+
+**MCP Tools:**
 ```
 # List available agents
 mcp__genie__list_agents
