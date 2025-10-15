@@ -700,50 +700,37 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
   }
 
-  // For npx: Write a launch script and execute it
+  // For npx: Simply spawn Claude with inherited stdio
   if (isNpxSubprocess || pathsHaveNpx) {
-    console.log('[HANDOFF] NPX detected - creating launch script...');
-
-    const os = require('os');
-    const fs = require('fs');
-    const scriptPath = path.join(os.tmpdir(), `genie-launch-${Date.now()}.sh`);
-
-    // Create a script that will run after npx exits
-    const scriptContent = `#!/bin/bash
-cd "${cwd}"
-${command} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}
-rm -f "${scriptPath}"
-`;
-
-    fs.writeFileSync(scriptPath, scriptContent);
-    fs.chmodSync(scriptPath, '755');
-
-    console.log('[HANDOFF] Launching Claude...');
+    console.log('[HANDOFF] NPX detected - launching Claude...');
     console.log('');
 
-    // Start the script detached so it survives npx exit
-    const child = spawn('bash', [scriptPath], {
+    // Small delay to let npx setup complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    console.log('Starting Claude installation workflow...');
+    console.log('');
+
+    // Just spawn Claude directly with inherited stdio
+    const child = spawn(command, args, {
       cwd,
-      detached: true,
-      stdio: 'ignore'
+      stdio: 'inherit',
+      env: { ...process.env, FORCE_TTY: '1' } // Try to force TTY
     });
 
-    child.unref(); // Allow parent to exit
+    child.on('exit', (code: number | null) => {
+      process.exit(code || 0);
+    });
 
-    // Give user immediate feedback
-    console.log('╭────────────────────────────────────────────────────╮');
-    console.log('│ ✅ Genie initialization complete!                   │');
-    console.log('│                                                    │');
-    console.log('│ Claude is starting in a new window...             │');
-    console.log('│ (It may take a few seconds to appear)             │');
-    console.log('│                                                    │');
-    console.log('│ If Claude doesn\'t start, run:                     │');
-    console.log(`│   ${command} ${args[0]}${' '.repeat(Math.max(0, 44 - command.length - args[0].length))}│`);
-    console.log(`│   ${args[1]}${' '.repeat(Math.max(0, 50 - args[1].length))}│`);
-    console.log('╰────────────────────────────────────────────────────╯');
+    child.on('error', (error: Error) => {
+      console.error('Claude failed to start:', error.message);
+      console.log('');
+      console.log('Please run manually:');
+      console.log(`  ${command} ${args.join(' ')}`);
+      process.exit(1);
+    });
 
-    // Exit immediately so npx completes
-    process.exit(0);
+    return new Promise(() => {}); // Keep alive
   }
 
   // For non-TTY non-npx situations, try script fallback
