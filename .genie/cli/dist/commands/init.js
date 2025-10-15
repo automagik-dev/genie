@@ -577,43 +577,42 @@ async function handoffToExecutor(executor, cwd) {
     if (pathsHaveNpx) {
         console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
     }
-    // For npx: Launch in a new shell session to escape TTY jail
+    // For npx: Write a launch script and execute it
     if (isNpxSubprocess || pathsHaveNpx) {
-        console.log('[HANDOFF] NPX detected - launching in new shell to escape TTY issues...');
-        // Build the full command
-        const fullCommand = `${command} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
-        // Use exec to replace the current process with a fresh shell running our command
-        // This escapes the npx TTY environment
-        const { exec } = require('child_process');
-        console.log(`[HANDOFF] Starting ${command} in fresh shell...`);
-        // Execute in a new bash session with proper TTY allocation
-        const shellCmd = process.platform === 'win32'
-            ? `cmd /c "${fullCommand}"`
-            : `bash -c "${fullCommand}"`;
-        const child = exec(shellCmd, {
+        console.log('[HANDOFF] NPX detected - creating launch script...');
+        const os = require('os');
+        const fs = require('fs');
+        const scriptPath = path_1.default.join(os.tmpdir(), `genie-launch-${Date.now()}.sh`);
+        // Create a script that will run after npx exits
+        const scriptContent = `#!/bin/bash
+cd "${cwd}"
+${command} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}
+rm -f "${scriptPath}"
+`;
+        fs.writeFileSync(scriptPath, scriptContent);
+        fs.chmodSync(scriptPath, '755');
+        console.log('[HANDOFF] Launching Claude...');
+        console.log('');
+        // Start the script detached so it survives npx exit
+        const child = spawn('bash', [scriptPath], {
             cwd,
-            stdio: 'inherit',
-            shell: true
+            detached: true,
+            stdio: 'ignore'
         });
-        // Pipe all stdio
-        if (child.stdout)
-            child.stdout.pipe(process.stdout);
-        if (child.stderr)
-            child.stderr.pipe(process.stderr);
-        if (process.stdin.isTTY) {
-            process.stdin.pipe(child.stdin);
-        }
-        child.on('exit', (code) => {
-            process.exit(code || 0);
-        });
-        child.on('error', (err) => {
-            console.error(`[HANDOFF] Failed to launch ${command}:`, err);
-            console.log('');
-            console.log('Please run manually:');
-            console.log(`  ${fullCommand}`);
-            process.exit(1);
-        });
-        return new Promise(() => { }); // Keep process alive
+        child.unref(); // Allow parent to exit
+        // Give user immediate feedback
+        console.log('╭────────────────────────────────────────────────────╮');
+        console.log('│ ✅ Genie initialization complete!                   │');
+        console.log('│                                                    │');
+        console.log('│ Claude is starting in a new window...             │');
+        console.log('│ (It may take a few seconds to appear)             │');
+        console.log('│                                                    │');
+        console.log('│ If Claude doesn\'t start, run:                     │');
+        console.log(`│   ${command} ${args[0]}${' '.repeat(Math.max(0, 44 - command.length - args[0].length))}│`);
+        console.log(`│   ${args[1]}${' '.repeat(Math.max(0, 50 - args[1].length))}│`);
+        console.log('╰────────────────────────────────────────────────────╯');
+        // Exit immediately so npx completes
+        process.exit(0);
     }
     // For non-TTY non-npx situations, try script fallback
     if (!hasRealTTY) {
