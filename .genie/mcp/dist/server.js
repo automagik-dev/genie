@@ -104,10 +104,25 @@ function listSessions() {
         return [];
     }
 }
+// Helper: Get Genie version from package.json
+function getGenieVersion() {
+    try {
+        const packageJsonPath = path_1.default.join(__dirname, '..', '..', '..', 'package.json');
+        const packageJson = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf8'));
+        return packageJson.version || '0.0.0';
+    }
+    catch (error) {
+        return '0.0.0';
+    }
+}
+// Helper: Get version header for MCP outputs
+function getVersionHeader() {
+    return `Genie MCP v${getGenieVersion()}\n\n`;
+}
 // Initialize FastMCP server
 const server = new fastmcp_1.FastMCP({
     name: 'genie',
-    version: '1.0.0',
+    version: getGenieVersion(),
     instructions: `Genie is an agent orchestration system for managing AI agents that help with software development tasks.
 
 **Core Capabilities:**
@@ -140,9 +155,9 @@ server.addTool({
     execute: async () => {
         const agents = listAgents();
         if (agents.length === 0) {
-            return 'No agents found in .genie/agents directory.';
+            return getVersionHeader() + 'No agents found in .genie/agents directory.';
         }
-        let response = `Found ${agents.length} available agents:\n\n`;
+        let response = getVersionHeader() + `Found ${agents.length} available agents:\n\n`;
         // Group by folder
         const grouped = {};
         agents.forEach(agent => {
@@ -175,9 +190,9 @@ server.addTool({
     execute: async () => {
         const sessions = listSessions();
         if (sessions.length === 0) {
-            return 'No sessions found. Start a new session with the "run" tool.';
+            return getVersionHeader() + 'No sessions found. Start a new session with the "run" tool.';
         }
-        let response = `Found ${sessions.length} session(s):\n\n`;
+        let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
         sessions.forEach((session, index) => {
             response += `${index + 1}. **${session.id}**\n`;
             response += `   Agent: ${session.agent}\n`;
@@ -205,10 +220,10 @@ server.addTool({
             }
             const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            return `Started agent session:\nAgent: ${args.agent}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
+            return getVersionHeader() + `Started agent session:\nAgent: ${args.agent}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
         }
         catch (error) {
-            return formatCliFailure('start agent session', error);
+            return getVersionHeader() + formatCliFailure('start agent session', error);
         }
     }
 });
@@ -228,10 +243,10 @@ server.addTool({
             }
             const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            return `Resumed session ${args.sessionId}:\n\n${output}`;
+            return getVersionHeader() + `Resumed session ${args.sessionId}:\n\n${output}`;
         }
         catch (error) {
-            return formatCliFailure('resume session', error);
+            return getVersionHeader() + formatCliFailure('resume session', error);
         }
     }
 });
@@ -251,10 +266,10 @@ server.addTool({
             }
             const { stdout, stderr } = await runCliCommand(cliArgs, 30000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            return `Session ${args.sessionId} transcript:\n\n${output}`;
+            return getVersionHeader() + `Session ${args.sessionId} transcript:\n\n${output}`;
         }
         catch (error) {
-            return formatCliFailure('view session', error);
+            return getVersionHeader() + formatCliFailure('view session', error);
         }
     }
 });
@@ -269,10 +284,10 @@ server.addTool({
         try {
             const { stdout, stderr } = await runCliCommand(['stop', args.sessionId], 30000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            return `Stopped session ${args.sessionId}:\n\n${output}`;
+            return getVersionHeader() + `Stopped session ${args.sessionId}:\n\n${output}`;
         }
         catch (error) {
-            return formatCliFailure('stop session', error);
+            return getVersionHeader() + formatCliFailure('stop session', error);
         }
     }
 });
@@ -643,6 +658,7 @@ Show code: \`try/catch\` not "ensure error handling"
 });
 // Start server with configured transport
 console.error('Starting Genie MCP Server...');
+console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
 console.error('Protocol: MCP (Model Context Protocol)');
 console.error('Implementation: FastMCP v3.18.0');

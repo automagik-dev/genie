@@ -48,7 +48,7 @@ When Genie needs to think critically, investigate, or analyze, it consults the o
 
 **User experience:** "Let me pressure-test this..." (natural thinking, mode invisible)
 
-### Execution Specialists (6 total - direct neurons)
+### Execution Specialists (7 total - direct neurons)
 For implementation work, Genie collaborates with specialized neurons:
 
 **Delivery specialists:**
@@ -60,6 +60,9 @@ For implementation work, Genie collaborates with specialized neurons:
 **Infrastructure specialists:**
 - `git` — ALL git and GitHub operations (branch, commit, PR, issues)
 - `release` — GitHub release and npm publish orchestration
+
+**Strategic documentation specialists:**
+- `roadmap` — Strategic initiative documentation in automagik-roadmap repo
 
 **Workflow specialists:**
 - `learn` — Meta-learning and documentation updates
@@ -405,7 +408,7 @@ Deliver: Counterarguments + experiments + verdict
 |-------|-----------|-------------|-----------------|
 | **Genie** | Main interface | Persistent conversational mentor | "You just talk to me" |
 | **Strategic Thinking** | 18 modes via orchestrator neuron | challenge, explore, consensus, plan, analyze, debug, audit, refactor, docgen, tracer, precommit, compliance, retrospective | "Let me pressure-test this..." (invisible) |
-| **Execution Specialists** | 6 direct neurons | implementor, tests, polish, review, git, release | "Let me work with my implementor neuron..." (collaborative) |
+| **Execution Specialists** | 7 direct neurons | implementor, tests, polish, review, git, release, roadmap | "Let me work with my implementor neuron..." (collaborative) |
 | **Workflow** | plan, wish, forge, review | Structure work flow | Invisible orchestration |
 | **Autonomous** | vibe, learn | Background coordination & learning | Invisible support |
 
