@@ -40,12 +40,15 @@ program
 });
 // Init command
 program
-    .command('init')
+    .command('init [template]')
     .description('Initialize Genie configuration in the current workspace')
     .option('--provider <provider>', 'Choose provider (codex or claude)')
     .option('-y, --yes', 'Accept defaults without prompting')
-    .action((options) => {
+    .action((template, options) => {
     const args = ['init'];
+    if (template) {
+        args.push(template);
+    }
     if (options.provider) {
         args.push('--provider', options.provider);
     }
