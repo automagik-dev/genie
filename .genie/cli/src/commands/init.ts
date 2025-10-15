@@ -713,16 +713,24 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
       process.exit(1);
     }
 
-    // Build the command for script
-    const fullCommand = `${command} ${args.join(' ')}`;
-    const scriptArgs = ['-q', '-c', fullCommand, '/dev/null'];
+    // Build the command for script - properly escape arguments
+    const escapedArgs = args.map(arg => {
+      // If arg contains spaces or special chars, wrap in single quotes
+      if (arg.includes(' ') || arg.includes('@') || arg.includes('"')) {
+        return `'${arg.replace(/'/g, "'\\''")}'`;
+      }
+      return arg;
+    });
 
-    console.log(`[HANDOFF] Running: script ${scriptArgs.join(' ')}`);
+    const fullCommand = `${command} ${escapedArgs.join(' ')}`;
 
-    const child = spawn('script', scriptArgs, {
+    console.log(`[HANDOFF] Running: script -q -c "${fullCommand}" /dev/null`);
+
+    // Use shell to properly handle the command execution
+    const child = spawn('script', ['-q', '-c', fullCommand, '/dev/null'], {
       cwd,
       stdio: 'inherit',
-      shell: false
+      shell: true
     });
 
     console.log(`[HANDOFF] Spawned script PID: ${child.pid}`);

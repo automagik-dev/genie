@@ -589,14 +589,21 @@ async function handoffToExecutor(executor, cwd) {
             console.error('ERROR: script command not found. Install it or run: npm install -g automagik-genie && genie init');
             process.exit(1);
         }
-        // Build the command for script
-        const fullCommand = `${command} ${args.join(' ')}`;
-        const scriptArgs = ['-q', '-c', fullCommand, '/dev/null'];
-        console.log(`[HANDOFF] Running: script ${scriptArgs.join(' ')}`);
-        const child = spawn('script', scriptArgs, {
+        // Build the command for script - properly escape arguments
+        const escapedArgs = args.map(arg => {
+            // If arg contains spaces or special chars, wrap in single quotes
+            if (arg.includes(' ') || arg.includes('@') || arg.includes('"')) {
+                return `'${arg.replace(/'/g, "'\\''")}'`;
+            }
+            return arg;
+        });
+        const fullCommand = `${command} ${escapedArgs.join(' ')}`;
+        console.log(`[HANDOFF] Running: script -q -c "${fullCommand}" /dev/null`);
+        // Use shell to properly handle the command execution
+        const child = spawn('script', ['-q', '-c', fullCommand, '/dev/null'], {
             cwd,
             stdio: 'inherit',
-            shell: false
+            shell: true
         });
         console.log(`[HANDOFF] Spawned script PID: ${child.pid}`);
         return new Promise((resolve, reject) => {
