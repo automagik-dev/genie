@@ -1,5 +1,3 @@
-import { ViewEnvelope, ViewStyle, ViewNode } from '../view';
-
 interface HelpViewParams {
   backgroundDefault: boolean;
   commandRows: Array<{ command: string; args: string; description: string }>;
@@ -17,187 +15,125 @@ interface SubcommandHelpParams {
   notes?: string[];
 }
 
-const GENIE_STYLE: ViewStyle = 'genie';
-
 // Main help view
-export function buildHelpView(params: HelpViewParams): ViewEnvelope {
-  const commandTable = {
-    type: 'table' as const,
-    columns: [
-      { key: 'command', label: 'Command' },
-      { key: 'args', label: 'Arguments' },
-      { key: 'description', label: 'Description' }
-    ],
-    rows: params.commandRows,
-    rowGap: 0,
-    border: 'round' as const,
-    divider: true
-  };
+export function buildHelpView(params: HelpViewParams): string {
+  const lines: string[] = [];
 
-  const metaBadges: ViewNode[] = [
-    {
-      type: 'badge',
-      text: params.backgroundDefault ? 'Background: detached default' : 'Background: attach by default',
-      tone: params.backgroundDefault ? 'info' : 'warning'
-    },
-    { type: 'badge', text: 'Plan → Wish → Forge workflow', tone: 'info' },
-    { type: 'badge', text: 'Evidence-first outputs', tone: 'success' }
+  lines.push('# GENIE CLI');
+  lines.push('');
+  lines.push('*Genie Template :: Command Palette Quickstart*');
+  lines.push('');
+
+  // Meta badges
+  const badges: string[] = [
+    params.backgroundDefault ? 'Background: detached default' : 'Background: attach by default',
+    'Plan → Wish → Forge workflow',
+    'Evidence-first outputs'
   ];
+  lines.push(badges.map(b => `**${b}**`).join(' · '));
+  lines.push('');
 
-  return {
-    style: GENIE_STYLE,
-    title: 'GENIE Command Palette',
-    body: {
-      type: 'layout',
-      direction: 'column',
-      gap: 0,
-      children: [
-        { type: 'heading', level: 1, text: 'GENIE CLI', accent: 'primary', align: 'center' },
-        { type: 'text', text: 'Genie Template :: Command Palette Quickstart', tone: 'muted', align: 'center' },
-        {
-          type: 'layout',
-          direction: 'row',
-          gap: 1,
-          children: metaBadges
-        },
-        { type: 'divider', variant: 'double', accent: 'primary' },
-        {
-          type: 'callout',
-          tone: 'info',
-          icon: '🧭',
-          title: 'Usage',
-          body: [
-            'Invoke commands with `genie <command> [options]`.'
-          ]
-        },
-        { type: 'divider', variant: 'solid', accent: 'muted' },
-        { type: 'heading', level: 2, text: 'Command Palette', accent: 'secondary' },
-        commandTable,
-        {
-          type: 'callout',
-          tone: 'info',
-          title: params.promptFramework.title,
-          body: params.promptFramework.bulletPoints.map((line) => `• ${line}`)
-        },
-        {
-          type: 'callout',
-          tone: 'success',
-          icon: '⚡',
-          title: 'Quick start examples',
-          body: params.examples
-        },
-        {
-          type: 'callout',
-          tone: 'info',
-          icon: '💡',
-          title: 'Tips',
-          body: [
-            'Watch sessions: `genie list sessions`.',
-            'Run an agent: `genie run <agent-id> "<prompt>"`.'
-          ]
-        }
-      ]
-    }
-  };
+  // Usage
+  lines.push('🧭 **Usage**');
+  lines.push('');
+  lines.push('Invoke commands with `genie <command> [options]`.');
+  lines.push('');
+
+  // Command table
+  lines.push('## Command Palette');
+  lines.push('');
+  lines.push('| Command | Arguments | Description |');
+  lines.push('|---------|-----------|-------------|');
+  for (const row of params.commandRows) {
+    lines.push(`| ${row.command} | ${row.args} | ${row.description} |`);
+  }
+  lines.push('');
+
+  // Prompt framework
+  lines.push(`ℹ️ **${params.promptFramework.title}**`);
+  for (const bullet of params.promptFramework.bulletPoints) {
+    lines.push(`• ${bullet}`);
+  }
+  lines.push('');
+
+  // Examples
+  lines.push('⚡ **Quick start examples**');
+  for (const example of params.examples) {
+    lines.push(`- ${example}`);
+  }
+  lines.push('');
+
+  // Tips
+  lines.push('💡 **Tips**');
+  lines.push('- Watch sessions: `genie list sessions`.');
+  lines.push('- Run an agent: `genie run <agent-id> "<prompt>"`.');
+
+  return lines.join('\n');
 }
 
 // Helper function to build subcommand help views
-export function buildSubcommandHelpView(params: SubcommandHelpParams): ViewEnvelope {
-  const children: ViewNode[] = [
-    { type: 'heading', level: 1, text: `genie ${params.command}`, accent: 'primary', align: 'center' },
-    { type: 'text', text: params.description, tone: 'muted', align: 'center' },
-    { type: 'divider', variant: 'double', accent: 'primary' },
-    {
-      type: 'callout',
-      tone: 'info',
-      icon: '📖',
-      title: 'Usage',
-      body: [params.usage]
-    }
-  ];
+export function buildSubcommandHelpView(params: SubcommandHelpParams): string {
+  const lines: string[] = [];
 
+  lines.push(`# genie ${params.command}`);
+  lines.push('');
+  lines.push(`*${params.description}*`);
+  lines.push('');
+
+  // Usage
+  lines.push('📖 **Usage**');
+  lines.push('');
+  lines.push(params.usage);
+  lines.push('');
+
+  // Arguments
   if (params.arguments && params.arguments.length > 0) {
-    children.push(
-      { type: 'divider', variant: 'solid', accent: 'muted' },
-      { type: 'heading', level: 2, text: 'Arguments', accent: 'secondary' },
-      {
-        type: 'table',
-        columns: [
-          { key: 'name', label: 'Argument' },
-          { key: 'description', label: 'Description' },
-          { key: 'required', label: 'Required' }
-        ],
-        rows: params.arguments.map(arg => ({
-          name: arg.name,
-          description: arg.description,
-          required: arg.required !== false ? 'Yes' : 'No'
-        })),
-        border: 'round',
-        divider: true
-      }
-    );
-  }
-
-  if (params.options && params.options.length > 0) {
-    children.push(
-      { type: 'divider', variant: 'solid', accent: 'muted' },
-      { type: 'heading', level: 2, text: 'Options', accent: 'secondary' },
-      {
-        type: 'table',
-        columns: [
-          { key: 'flag', label: 'Option' },
-          { key: 'description', label: 'Description' }
-        ],
-        rows: params.options.map(opt => ({
-          flag: opt.flag,
-          description: opt.description
-        })),
-        border: 'round',
-        divider: true
-      }
-    );
-  }
-
-  if (params.examples && params.examples.length > 0) {
-    children.push(
-      { type: 'divider', variant: 'solid', accent: 'muted' },
-      {
-        type: 'callout',
-        tone: 'success',
-        icon: '⚡',
-        title: 'Examples',
-        body: params.examples
-      }
-    );
-  }
-
-  if (params.notes && params.notes.length > 0) {
-    children.push(
-      { type: 'divider', variant: 'solid', accent: 'muted' },
-      {
-        type: 'callout',
-        tone: 'info',
-        icon: '💡',
-        title: 'Notes',
-        body: params.notes
-      }
-    );
-  }
-
-  return {
-    style: GENIE_STYLE,
-    title: `GENIE ${params.command.toUpperCase()}`,
-    body: {
-      type: 'layout',
-      direction: 'column',
-      gap: 0,
-      children
+    lines.push('## Arguments');
+    lines.push('');
+    lines.push('| Argument | Description | Required |');
+    lines.push('|----------|-------------|----------|');
+    for (const arg of params.arguments) {
+      const required = arg.required !== false ? 'Yes' : 'No';
+      lines.push(`| ${arg.name} | ${arg.description} | ${required} |`);
     }
-  };
+    lines.push('');
+  }
+
+  // Options
+  if (params.options && params.options.length > 0) {
+    lines.push('## Options');
+    lines.push('');
+    lines.push('| Option | Description |');
+    lines.push('|--------|-------------|');
+    for (const opt of params.options) {
+      lines.push(`| ${opt.flag} | ${opt.description} |`);
+    }
+    lines.push('');
+  }
+
+  // Examples
+  if (params.examples && params.examples.length > 0) {
+    lines.push('⚡ **Examples**');
+    for (const example of params.examples) {
+      lines.push(`- ${example}`);
+    }
+    lines.push('');
+  }
+
+  // Notes
+  if (params.notes && params.notes.length > 0) {
+    lines.push('💡 **Notes**');
+    for (const note of params.notes) {
+      lines.push(`- ${note}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 // Specific help views for each subcommand
-export function buildRunHelpView(): ViewEnvelope {
+export function buildRunHelpView(): string {
   return buildSubcommandHelpView({
     command: 'run',
     description: 'Start or attach to an agent session',
@@ -222,7 +158,7 @@ export function buildRunHelpView(): ViewEnvelope {
   });
 }
 
-export function buildResumeHelpView(): ViewEnvelope {
+export function buildResumeHelpView(): string {
   return buildSubcommandHelpView({
     command: 'resume',
     description: 'Continue an existing agent session',
@@ -247,7 +183,7 @@ export function buildResumeHelpView(): ViewEnvelope {
   });
 }
 
-export function buildListHelpView(): ViewEnvelope {
+export function buildListHelpView(): string {
   return buildSubcommandHelpView({
     command: 'list',
     description: 'Display available agents or active sessions',
@@ -270,7 +206,7 @@ export function buildListHelpView(): ViewEnvelope {
   });
 }
 
-export function buildViewHelpView(): ViewEnvelope {
+export function buildViewHelpView(): string {
   return buildSubcommandHelpView({
     command: 'view',
     description: 'Show transcript and details for a session',
@@ -294,7 +230,7 @@ export function buildViewHelpView(): ViewEnvelope {
   });
 }
 
-export function buildStopHelpView(): ViewEnvelope {
+export function buildStopHelpView(): string {
   return buildSubcommandHelpView({
     command: 'stop',
     description: 'End a running background session',
@@ -317,7 +253,7 @@ export function buildStopHelpView(): ViewEnvelope {
   });
 }
 
-export function buildGeneralHelpView(): ViewEnvelope {
+export function buildGeneralHelpView(): string {
   return buildSubcommandHelpView({
     command: 'help',
     description: 'Show help information for commands',

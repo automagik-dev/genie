@@ -66,8 +66,17 @@ function buildRunCommand({ config = {}, instructions, agentPath, prompt }) {
         args.push('--model', String(execConfig.model));
     }
     if (execConfig.permissionMode) {
-        args.push('--permission-mode', String(execConfig.permissionMode));
-        console.error(`[DEBUG] Added --permission-mode ${execConfig.permissionMode}`);
+        // For bypassPermissions, use --dangerously-skip-permissions instead
+        // This flag bypasses ALL permission checks, including Edit operations
+        // (--permission-mode bypassPermissions doesn't bypass Edit prompts)
+        if (execConfig.permissionMode === 'bypassPermissions') {
+            args.push('--dangerously-skip-permissions');
+            console.error(`[DEBUG] Added --dangerously-skip-permissions (for bypassPermissions mode)`);
+        }
+        else {
+            args.push('--permission-mode', String(execConfig.permissionMode));
+            console.error(`[DEBUG] Added --permission-mode ${execConfig.permissionMode}`);
+        }
     }
     else {
         console.error(`[DEBUG] permissionMode is falsy, not adding flag`);

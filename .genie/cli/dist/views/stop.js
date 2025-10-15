@@ -1,52 +1,38 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildStopView = buildStopView;
-const GENIE_STYLE = 'genie';
 function buildStopView(params) {
     const counts = countStatuses(params.events);
-    const badgeRow = {
-        type: 'layout',
-        direction: 'row',
-        gap: 1,
-        children: [
-            { type: 'badge', text: `${counts.done} stopped`, tone: 'success' },
-            { type: 'badge', text: `${counts.pending} pending`, tone: counts.pending ? 'warning' : 'muted' },
-            { type: 'badge', text: `${counts.failed} failed`, tone: counts.failed ? 'danger' : 'muted' }
-        ]
-    };
-    return {
-        style: GENIE_STYLE,
-        title: `Stop: ${params.target}`,
-        body: {
-            type: 'layout',
-            direction: 'column',
-            gap: 1,
-            children: [
-                { type: 'heading', level: 1, text: `Stop signal • ${params.target}`, accent: 'primary' },
-                badgeRow,
-                { type: 'divider', variant: 'solid', accent: 'muted' },
-                {
-                    type: 'timeline',
-                    items: params.events.map((event) => ({
-                        title: event.label,
-                        subtitle: event.detail,
-                        meta: event.message,
-                        status: event.status
-                    }))
-                },
-                {
-                    type: 'callout',
-                    tone: params.events.every((e) => e.status === 'done') ? 'success' : 'warning',
-                    icon: params.events.every((e) => e.status === 'done') ? '✅' : '⚠️',
-                    title: 'Summary',
-                    body: [params.summary]
-                },
-                params.followUps && params.followUps.length
-                    ? { type: 'list', items: params.followUps, tone: 'muted' }
-                    : null
-            ].filter(Boolean)
+    const lines = [];
+    lines.push(`# Stop signal • ${params.target}`);
+    lines.push('');
+    lines.push(`**${counts.done} stopped** · **${counts.pending} pending** · **${counts.failed} failed**`);
+    lines.push('');
+    // Timeline of events
+    for (const event of params.events) {
+        const icon = event.status === 'done' ? '✓' : event.status === 'pending' ? '○' : '✗';
+        lines.push(`${icon} **${event.label}**`);
+        if (event.detail) {
+            lines.push(`  ${event.detail}`);
         }
-    };
+        if (event.message) {
+            lines.push(`  *${event.message}*`);
+        }
+    }
+    lines.push('');
+    // Summary
+    const allDone = params.events.every((e) => e.status === 'done');
+    const summaryIcon = allDone ? '✅' : '⚠️';
+    lines.push(`${summaryIcon} **Summary**`);
+    lines.push(params.summary);
+    // Follow-ups
+    if (params.followUps && params.followUps.length > 0) {
+        lines.push('');
+        for (const followUp of params.followUps) {
+            lines.push(`- ${followUp}`);
+        }
+    }
+    return lines.join('\n');
 }
 function countStatuses(events) {
     return events.reduce((acc, event) => {

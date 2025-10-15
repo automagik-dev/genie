@@ -7,14 +7,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const cli_parser_1 = require("./lib/cli-parser");
 const config_1 = require("./lib/config");
 const session_helpers_1 = require("./lib/session-helpers");
-const view_1 = require("./view");
 const help_1 = require("./views/help");
 const common_1 = require("./views/common");
 const view_helpers_1 = require("./lib/view-helpers");
 const run_1 = require("./commands/run");
 const resume_1 = require("./commands/resume");
 const list_1 = require("./commands/list");
-const view_2 = require("./commands/view");
+const view_1 = require("./commands/view");
 const stop_1 = require("./commands/stop");
 const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
@@ -157,7 +156,7 @@ async function main() {
                     await (0, view_helpers_1.emitView)((0, help_1.buildViewHelpView)(), parsed.options);
                     return;
                 }
-                await (0, view_2.runView)(parsed, config, paths);
+                await (0, view_1.runView)(parsed, config, paths);
                 break;
             case 'stop':
                 if (parsed.options.requestHelp) {
@@ -191,6 +190,6 @@ async function main() {
     }
 }
 async function emitEmergencyError(message) {
-    const envelope = (0, common_1.buildErrorView)('Fatal error', message);
-    await (0, view_1.renderEnvelope)(envelope, { json: false, stream: process.stderr });
+    const errorMessage = (0, common_1.buildErrorView)('Fatal error', message);
+    process.stderr.write(errorMessage + '\n');
 }

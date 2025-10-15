@@ -11,14 +11,16 @@ Genie uses a layered architecture for extensibility without forking:
    - Primary workflow orchestrators
    - Immutable - no custom overrides loaded
 
-2. **Core Agents (`core/`)** – Reusable prompts shipped with framework
-   - **Delivery & utility agents** (9): `implementor.md`, `tests.md`, `polish.md`, `commit.md`, `bug-reporter.md`, `git-workflow.md`, `install.md`, `learn.md`, `prompt.md`
-   - **Orchestrator modes** (`core/modes/`, 17): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `codereview.md`, etc.
+2. **Neuron Agents (`neurons/`)** – Specialized agents shipped with framework
+   - **Delivery agents** (6): `implementor.md`, `tests.md`, `polish.md`, `review.md`, `git.md`, `release.md`
+   - **Infrastructure agents** (4): `commit.md`, `install.md`, `learn.md`, `prompt.md`
+   - **Strategic modes** (`neurons/modes/`, 9): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `audit.md`, `docgen.md`, `tracer.md`, `explore.md`
+   - **Orchestrator** (`neurons/orchestrator.md`): Multi-mode strategic thinking interface
    - Immutable in distribution, but can be extended via custom layer
 
 3. **Custom Extensions (`../custom/`)** – Project-specific additions
-   - Auto-load alongside core agents when invoked
-   - Example: `.genie/custom/analyze.md` extends `core/analyze.md`
+   - Auto-load alongside neuron agents when invoked
+   - Example: `.genie/custom/neurons/modes/analyze.md` extends `agents/neurons/modes/analyze.md`
    - Keeps core prompts pristine while allowing per-project customization
 
 4. **QA (`qa/`)** – Framework validation agents
@@ -29,10 +31,11 @@ Genie uses a layered architecture for extensibility without forking:
 
 When an agent is invoked, the system loads:
 ```
-1. Core agent prompt
-   - Delivery/utility: .genie/agents/core/<agent>.md
-   - Orchestrator modes: .genie/agents/core/modes/<mode>.md
-2. Custom extensions (.genie/custom/<agent>.md) - if exists
+1. Neuron agent prompt
+   - Delivery/infrastructure: .genie/agents/neurons/<agent>.md
+   - Strategic modes: .genie/agents/neurons/modes/<mode>.md
+   - Orchestrator: .genie/agents/neurons/orchestrator.md
+2. Custom extensions (.genie/custom/neurons/<agent>.md) - if exists
 ```
 
 This allows projects to add domain-specific context, preferred commands, or evidence paths without modifying shipped prompts.
@@ -277,16 +280,41 @@ mcp__genie__view with sessionId="<session-id>" and full=true
 ## Agent Routing Map
 
 Current agent routing (see AGENTS.md for updates):
-- `implementor` → `.genie/agents/core/implementor.md`
-- `polish` → `.genie/agents/core/polish.md`
-- `tests` → `.genie/agents/core/tests.md`
-- `git` | `git-workflow` → `.genie/agents/core/git-workflow.md`
-- `bug-reporter` → `.genie/agents/core/bug-reporter.md`
-- `commit` → `.genie/agents/core/commit.md`
-- `codereview` → `.genie/agents/core/codereview.md`
-- `docgen` → `.genie/agents/core/docgen.md`
-- `refactor` → `.genie/agents/core/refactor.md`
-- `orchestrator` → `.genie/agents/orchestrator.md`
+
+**Delivery Specialists:**
+- `implementor` → `.genie/agents/neurons/implementor.md`
+- `tests` → `.genie/agents/neurons/tests.md`
+- `polish` → `.genie/agents/neurons/polish.md`
+- `review` → `.genie/agents/neurons/review.md`
+
+**Infrastructure Specialists:**
+- `git` → `.genie/agents/neurons/git.md`
+- `release` → `.genie/agents/neurons/release.md`
+- `commit` → `.genie/agents/neurons/commit.md`
+- `install` → `.genie/agents/neurons/install.md`
+- `learn` → `.genie/agents/neurons/learn.md`
+
+**Strategic Modes (via orchestrator):**
+- `analyze` → `.genie/agents/neurons/modes/analyze.md`
+- `debug` → `.genie/agents/neurons/modes/debug.md`
+- `audit` → `.genie/agents/neurons/modes/audit.md`
+- `refactor` → `.genie/agents/neurons/modes/refactor.md`
+- `challenge` → `.genie/agents/neurons/modes/challenge.md`
+- `consensus` → `.genie/agents/neurons/modes/consensus.md`
+- `explore` → `.genie/agents/neurons/modes/explore.md`
+- `docgen` → `.genie/agents/neurons/modes/docgen.md`
+- `tracer` → `.genie/agents/neurons/modes/tracer.md`
+
+**Orchestrator:**
+- `orchestrator` → `.genie/agents/neurons/orchestrator.md`
+
+**Workflows:**
+- `plan` → `.genie/agents/workflows/plan.md`
+- `wish` → `.genie/agents/workflows/wish.md`
+- `forge` → `.genie/agents/workflows/forge.md`
+- `review` → `.genie/agents/workflows/review.md` (workflow level)
+- `vibe` → `.genie/agents/workflows/vibe.md`
+- `genie-qa` → `.genie/agents/workflows/genie-qa.md`
 
 ## Best Practices
 

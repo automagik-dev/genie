@@ -160,7 +160,8 @@ export function extractCustomizations(coreAgents: string[]): string[] {
 export function copyTemplates(options: { force?: boolean } = {}): void {
   // Resolve npm package location
   const packageRoot = path.resolve(__dirname, '../../../..');
-  const templatesSource = path.join(packageRoot, 'templates', 'base');
+  // Migration is for code projects (old Genie was for development)
+  const templatesSource = path.join(packageRoot, 'templates', 'code');
 
   if (!fs.existsSync(templatesSource)) {
     throw new Error(`Templates not found at ${templatesSource}`);

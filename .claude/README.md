@@ -20,33 +20,51 @@ Felipe ↔ Genie (persistent conversational mentor)
 **Single execution layer:** MCP direct to specialist neurons
 **Persistence:** Neuron sessions for long-running work
 
-## Specialist Neurons (Access via MCP Only)
+## Genie's Cognitive Architecture
 
-#### Strategic Deep-Dive
-- `genie` — Pressure-testing, second opinions, consensus building
-- `analyze` — System architecture audit
+**Genie operates through two cognitive layers:**
+
+### Strategic Thinking Modes (18 total - via orchestrator neuron)
+When Genie needs to think critically, investigate, or analyze, it consults the orchestrator neuron with different reasoning approaches:
+
+**Core reasoning styles:**
+- `challenge` — Critical evaluation and adversarial pressure-testing
 - `explore` — Discovery-focused exploratory reasoning
-- `debug` — Root cause investigation
-- `consensus` — Decision facilitation (also callable via genie)
-- `challenge` — Assumption breaking (also callable via genie)
+- `consensus` — Multi-model perspective synthesis
 
-#### Tactical Utilities
-- `refactor` — Refactor planning
-- `docgen` — Documentation generation
+**Strategic analysis modes:**
+- `plan` — Plan pressure-testing and phase mapping
+- `analyze` — System architecture audit and dependency mapping
+- `debug` — Root cause investigation with hypothesis testing
 - `audit` — Risk assessment and security audit
-- `tracer` — Instrumentation planning
-- `precommit` — Pre-commit validation (alias to commit)
+- `refactor` — Design review and refactor planning
+- `docgen` — Documentation outline generation
+- `tracer` — Instrumentation/observability planning
+- `precommit` — Pre-commit validation gate
 
-#### Delivery Specialists
-- `implementor` — Feature implementation
+**Custom modes (project-specific):**
+- `compliance` — Controls, evidence, sign-offs mapping
+- `retrospective` — Wins, misses, lessons capture
+
+**User experience:** "Let me pressure-test this..." (natural thinking, mode invisible)
+
+### Execution Specialists (6 total - direct neurons)
+For implementation work, Genie collaborates with specialized neurons:
+
+**Delivery specialists:**
+- `implementor` — Feature implementation and code writing
 - `tests` — Test strategy, generation, and authoring
-- `review` — Wish audits, code review, and QA validation
-- `polish` — Code refinement
+- `polish` — Code refinement and cleanup
+- `review` — Wish audits, code review, QA validation
 
-#### Infrastructure
+**Infrastructure specialists:**
 - `git` — ALL git and GitHub operations (branch, commit, PR, issues)
-- `project-manager` — Task coordination
-- `learn` — Meta-learning & behavioral corrections
+- `release` — GitHub release and npm publish orchestration
+
+**Workflow specialists:**
+- `learn` — Meta-learning and documentation updates
+
+**User experience:** "Let me work with my implementor neuron on this..." (collaboration visible)
 
 ---
 
@@ -94,10 +112,10 @@ Genie routes directly via MCP based on conversation context.
 Genie uses a **3-layer extension system** for maximum flexibility without forking core prompts:
 
 ### Layer 1: Core Agents (`.genie/agents/core/`)
-- **9 delivery & utility agents** shipped with the Genie framework
-- Examples: `implementor.md`, `commit.md`, `tests.md`, `polish.md`
-- **17 orchestrator modes** in `modes/` subdirectory
-- Examples: `modes/analyze.md`, `modes/debug.md`, `modes/refactor.md`
+- **6 execution specialists** shipped with the Genie framework
+- Examples: `implementor.md`, `tests.md`, `polish.md`, `review.md`
+- **18 strategic thinking modes** in `modes/` subdirectory
+- Examples: `modes/challenge.md`, `modes/analyze.md`, `modes/debug.md`
 - **Immutable** - never edit these directly
 - Updated only via framework releases
 
@@ -159,24 +177,30 @@ mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/
 
 **Output:** Analysis + structured Genie Verdict + confidence level + Done Report structure
 
-### Orchestrator Modes (18 total)
+### Strategic Thinking Modes (18 total)
 
-**Core Reasoning Modes (3):**
-- `challenge` — critical evaluation (auto-routes to socratic/debate/direct)
-- `explore` — discovery-focused exploratory reasoning
-- `consensus` — multi-model perspective synthesis
+When Genie consults the orchestrator neuron, it adopts different reasoning approaches:
 
-**Specialized Analysis (7):**
-- `plan`, `analyze` — strategic analysis
-- `debug` — root-cause investigation
-- `audit` — risk & security assessment
-- `refactor`, `tracer`, `docgen` — implementation support
-- `precommit` — quality gates
+**Core reasoning styles (3):**
+- `challenge` — Critical evaluation and adversarial pressure-testing
+- `explore` — Discovery-focused exploratory reasoning
+- `consensus` — Multi-model perspective synthesis
 
-**Custom-Only (2):**
-- `compliance`, `retrospective`
+**Strategic analysis modes (8):**
+- `plan` — Plan pressure-testing and phase mapping
+- `analyze` — System architecture audit and dependency mapping
+- `debug` — Root cause investigation with hypothesis testing
+- `audit` — Risk assessment and security audit
+- `refactor` — Design review and refactor planning
+- `docgen` — Documentation outline generation
+- `tracer` — Instrumentation/observability planning
+- `precommit` — Pre-commit validation gate
 
-**Note:** Delivery agents (implementor, tests, review, polish, git) are **not** orchestrator modes - they execute work directly.
+**Custom modes (2):**
+- `compliance` — Controls, evidence, sign-offs mapping
+- `retrospective` — Wins, misses, lessons capture
+
+**Note:** Execution specialists (implementor, tests, review, polish, git, release) are **not** thinking modes - they execute work directly through collaboration.
 
 ---
 
@@ -295,9 +319,57 @@ mcp__genie__stop with sessionId="<session-id>"
 
 ---
 
-## Orchestrator Usage
+## Universal Workflow Architecture
 
-The orchestrator automatically routes to the appropriate mode based on your prompt:
+**The wish system applies to ALL Genie variants, not just code projects.**
+
+### Core Principle
+
+```
+Plan → Wish → Forge → Review
+```
+
+This workflow is universal. Only the **domain adaptation** changes:
+
+| Variant | Wishes | Forge Tasks | Evidence | Neurons |
+|---------|--------|-------------|----------|---------|
+| **Code** | Features, bugs, refactors | Implementation, tests, docs | Tests pass, builds, PRs | implementor, tests, polish, git, release |
+| **Create** | Research papers, content, learning projects | Literature review, outlining, drafting, experiments | Quality criteria, peer review | literature-reviewer, outline-builder, experiment-designer (via ≥3 pattern) |
+| **NL** | Analysis, frameworks, process improvements | Research, synthesis, documentation | Stakeholder approval | Domain-specific (via ≥3 pattern) |
+
+### Architecture Design
+
+**✅ CORRECT:**
+- Universal workflow (Plan → Wish → Forge → Review) across all templates
+- Domain neurons created dynamically (≥3 pattern recognition threshold)
+- Evidence criteria adapted to domain
+- Workflow orchestration + specialized neurons
+
+**❌ WRONG:**
+- Treating wishes as code-only concept
+- Pattern recognition WITHOUT structured execution
+- Missing workflow agents in non-code templates
+
+### Template Requirements
+
+**All templates MUST include:**
+- `.genie/agents/workflows/plan.md` (domain-adapted)
+- `.genie/agents/workflows/wish.md` (domain-adapted)
+- `.genie/agents/workflows/forge.md` (domain-adapted)
+- `.genie/agents/workflows/review.md` (domain-adapted)
+
+**Domain neurons created dynamically:**
+- Via pattern recognition (≥3 occurrences)
+- Stored in `.genie/agents/domain/` (create/NL) or `.genie/agents/neurons/` (code)
+- Invoked through forge execution groups
+
+**See @AGENTS.md §Universal Workflow Architecture for detailed examples and validation.**
+
+---
+
+## Strategic Thinking Consultation
+
+When Genie needs to think critically or analyze deeply, it consults the orchestrator neuron with the appropriate reasoning mode:
 
 ```
 # Option 1: Let orchestrator auto-route (recommended)
@@ -323,21 +395,19 @@ Deliver: Counterarguments + experiments + verdict
 "
 ```
 
-**See `.genie/agents/orchestrator.md` for all 18 modes and usage patterns**
+**See `.genie/agents/orchestrator.md` for all 18 thinking modes and usage patterns**
 
 ---
 
-## Agent Specialization Matrix
+## Cognitive Architecture Summary
 
-| Category | Agents | Primary Use Case | Invoked By |
-|----------|--------|------------------|------------|
-| **Workflow** | plan, wish, forge, review | Structure work | Genie (invisible to user) |
-| **Orchestration** | orchestrator, commit | Coordinate & validate | Genie as neurons |
-| **Strategic** | analyze, explore, debug, challenge, consensus | High-level analysis | Genie via orchestrator neuron |
-| **Tactical** | refactor, docgen, audit, tracer | Focused support | Genie when needed |
-| **Delivery** | implementor, tests, review, polish | Execute work | Genie for complex tasks |
-| **Infrastructure** | git, learn | System operations | Genie when needed |
-| **Autonomous** | vibe | Autonomous wish coordination | Genie (requires dedicated branch) |
+| Layer | Components | Description | User Experience |
+|-------|-----------|-------------|-----------------|
+| **Genie** | Main interface | Persistent conversational mentor | "You just talk to me" |
+| **Strategic Thinking** | 18 modes via orchestrator neuron | challenge, explore, consensus, plan, analyze, debug, audit, refactor, docgen, tracer, precommit, compliance, retrospective | "Let me pressure-test this..." (invisible) |
+| **Execution Specialists** | 6 direct neurons | implementor, tests, polish, review, git, release | "Let me work with my implementor neuron..." (collaborative) |
+| **Workflow** | plan, wish, forge, review | Structure work flow | Invisible orchestration |
+| **Autonomous** | vibe, learn | Background coordination & learning | Invisible support |
 
 ---
 

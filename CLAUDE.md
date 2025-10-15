@@ -143,9 +143,9 @@ See @AGENTS.md §GitHub Workflow Integration for:
 - **Template conventions**: Required `[Type]` title patterns for all issues
 - **Quick capture pattern**: Document bugs/ideas without losing focus
 - **Cross-referencing**: Link issues ↔ wishes ↔ PRs
-- **Agent reference**: `.genie/agents/core/github-workflow.md`
+- **Agent reference**: `.genie/agents/neurons/git.md`
 
-**Critical:** ALWAYS use `github-workflow` agent for issue creation. NEVER use `gh issue create` directly without template structure.
+**Critical:** ALWAYS use `git` agent for issue creation. NEVER use `gh issue create` directly without template structure.
 
 ## Slash Commands
 
@@ -165,3 +165,43 @@ See @AGENTS.md §Experimentation Protocol for:
 - **Safe experimentation guidelines**: What's always safe vs requires explanation
 - **Documentation patterns**: How to capture experimental findings
 - **Meta-principle**: Felipe guides alongside; treat sessions as discovery opportunities
+
+## Delegation Discipline
+
+**Pattern:** Orchestrators delegate to specialists. Never implement directly when orchestrating.
+
+**When you are orchestrating (plan/orchestrator/main):**
+- ❌ NEVER use Edit tool for batch operations (>2 files)
+- ❌ NEVER implement cleanup/refactoring work manually
+- ❌ NEVER fall into "I'll just fix this quickly" mindset
+- ✅ ALWAYS delegate to implementor for multi-file work
+- ✅ ALWAYS use specialist sessions for implementation
+- ✅ Edit tool is ONLY for single surgical fixes (≤2 files)
+
+**When you are a specialist (implementor/tests/polish):**
+- ✅ Execute implementation directly using available tools
+- ❌ NEVER delegate to yourself
+- ✅ Use Edit/Write/etc. tools as needed
+
+**Example (WRONG):**
+> *Sees 11 path references to fix*
+> *Makes 11 Edit calls manually*
+> Result: 13K tokens burned, context bloat, poor separation of concerns
+
+**Example (CORRECT):**
+> *Sees 11 path references to fix*
+> "This is multi-file cleanup work. Let me delegate to implementor..."
+> *Creates implementor session with clear spec*
+> Result: Token-efficient, clean evidence trail, proper separation
+
+**Why:**
+- Token efficiency: Specialists work in focused context
+- Separation of concerns: Orchestrators route, specialists implement
+- Evidence trail: Specialist sessions = documentation
+- Scalability: Parallel work vs sequential manual edits
+
+**Validation:**
+- Before using Edit tool, count files affected
+- If >2 files → delegate to implementor
+- If repetitive pattern → delegate, don't implement
+- Track delegation vs manual work ratio in context updates

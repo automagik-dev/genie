@@ -1,5 +1,6 @@
 # 🧞 Natural Routing Skills Enhancement WISH
 **Status:** COMPLETE ✅ (100/100)
+**GitHub Issue:** #47 - [Feature] Natural routing skills enhancement (closed)
 **Roadmap Item:** Phase 1 – @.genie/product/roadmap.md §Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md §Meta-Agent Feedback Harness
 **Standards:** @.genie/standards/best-practices.md §Core Principles
@@ -58,7 +59,7 @@
 | --- | --- | --- | --- |
 | Planning brief | doc | Orchestrator session 36e0999a insights on routing, delegation, mode selection | entire wish |
 | @.genie/custom/routing.md | repo | Orchestrator-specific routing guidance (new from infinite loop fix) | wish, Group A |
-| @.genie/agents/orchestrator.md | repo | 18 orchestrator modes requiring selection heuristics | wish, Group C |
+| @.genie/agents/orchestrator.md | repo | 18 strategic thinking modes via orchestrator neuron | wish, Group C |
 | @.genie/agents/core/commit.md | repo | Underutilized commit agent, needs routing triggers | wish, Group A |
 | @AGENTS.md | repo | Global context loaded by ALL agents (routing paradox risk) | wish, risk analysis |
 | @CLAUDE.md | repo | Project-specific patterns | wish, documentation |
@@ -68,28 +69,28 @@
 - **Primary analyst:** Felipe + Orchestrator session 36e0999a-4ebe-4ce1-a8f0-0169ded2bee8
 - **Key observations:**
   - Commit agent underutilized during v2.3.6 release
-  - Orchestrator positioned as background tool vs user-facing interface
-  - 18 orchestrator modes lack clear "when to use" heuristics
+  - Orchestrator neuron provides 18 strategic thinking modes for Genie
+  - Thinking modes lack clear "when to use" heuristics
   - Delegation threshold criteria undefined (file count, complexity, domain)
   - Recent infinite loop fix created routing.md as orchestrator-scoped guidance
 - **Assumptions (ASM-#):**
   - ASM-1: Routing triggers in AGENTS.md would cause routing paradox (ALL agents load it)
   - ASM-2: Commit agent useful for multi-file commits with complex context
-  - ASM-3: Orchestrator modes can be consolidated or clarified without losing utility
+  - ASM-3: Strategic thinking modes can be clarified with natural routing triggers
   - ASM-4: Delegation thresholds can be defined with concrete criteria (≥3 files, multi-domain, strategic)
 - **Open questions (Q-#):**
   - Q-1: Should routing triggers live ONLY in routing.md to prevent paradox?
-  - Q-2: Which of 18 orchestrator modes are redundant or overlapping?
+  - Q-2: Which of 18 strategic thinking modes are redundant or overlapping?
   - Q-3: What are concrete delegation thresholds? (file count, domain count, task type)
-  - Q-4: How to make orchestrator feel natural vs forced in conversation flow?
+  - Q-4: How to make strategic thinking feel natural vs forced in conversation flow?
 - **Risks:**
   - R-1: Routing paradox recurrence if triggers added to AGENTS.md
   - R-2: Over-routing could slow down simple tasks with unnecessary delegation
   - R-3: Context bloat from excessive routing guidance
-  - R-4: Mode simplification might remove useful specialized tools
+  - R-4: Thinking mode clarification might remove useful specialized patterns
 
 ## Executive Summary
-Enhance natural routing instincts for delegation vs direct execution by creating scoped routing triggers (avoiding routing paradox), improving orchestrator discoverability, simplifying 18-mode selection with clear heuristics, and defining concrete delegation thresholds. Builds on recent infinite loop fix (commit 0f45945) that created routing.md for orchestrator-scoped guidance.
+Enhance natural routing instincts for delegation vs direct execution by creating scoped routing triggers (avoiding routing paradox), clarifying 18 strategic thinking modes with natural heuristics, and defining concrete delegation thresholds. Builds on Genie's two-layer cognitive architecture: strategic thinking (via orchestrator neuron) and execution specialists (direct collaboration). Extends recent infinite loop fix (commit 0f45945) that created routing.md for orchestrator-scoped guidance.
 
 ## Current State
 - **What exists today:**

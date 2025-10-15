@@ -1,5 +1,6 @@
 # 🧞 ENHANCED BACKUP & UPDATE SYSTEM WISH
 **Status:** DRAFT
+**GitHub Issue:** #38 - Enhanced backup & update system with customization preservation
 **Roadmap Item:** INIT-BACKUP-UPDATE – Framework version migration with user customization preservation
 **Mission Link:** @.genie/product/mission.md §Pitch
 **Standards:** @.genie/standards/best-practices.md §Core Principles

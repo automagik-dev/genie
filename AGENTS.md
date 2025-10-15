@@ -26,8 +26,8 @@ List all issues assigned to you:
 1. List assigned issues (if available via `gh` CLI)
 2. Present options:
    - **Continue existing work**: Pick from assigned issues
-   - **Start new inquiry**: Use `/plan` for new feature/bug investigation
-   - **Quick task capture**: Use `github-workflow` agent to document idea without losing focus
+   - **Start new inquiry**: I'll guide you through natural planning
+   - **Quick task capture**: Use `git` agent to document idea without losing focus
 
 **Example welcome:**
 ```
@@ -39,7 +39,7 @@ Welcome! Here are your assigned issues:
 What would you like to work on?
 1. Continue #35 (interactive permissions)
 2. Continue #42 (session timeout fix)
-3. Start new inquiry (I'll guide you through /plan)
+3. Start new inquiry (I'll guide you naturally through planning)
 4. Quick capture (document a new idea while staying focused)
 ```
 
@@ -67,7 +67,7 @@ You can continue with #35. Issue #42 is now tracked for later.
 
 ### Git & GitHub Workflow Integration
 
-**Agent:** `.genie/agents/core/git.md` (unified git+GitHub operations)
+**Agent:** `.genie/agents/neurons/git.md` (unified git+GitHub operations)
 
 **Git operations:**
 - Branch strategy and management
@@ -135,10 +135,10 @@ All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads templa
 **Validation:**
 ```bash
 # Verify agent exists
-test -f .genie/agents/core/git.md && echo "✅"
+test -f .genie/agents/neurons/git.md && echo "✅"
 
 # Check operations documented
-grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/core/git.md
+grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/neurons/git.md
 
 # Test issue creation
 ./genie run git --prompt "Create feature request: interactive permissions"
@@ -148,55 +148,6 @@ grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/co
 ```
 
 **Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
-
-## Slash Command Reference
-
-**Rule:** Proactively use slash commands as first-class tools alongside MCP agents.
-
-**When to use:**
-- **Interactive workflows** → Slash commands (human-in-the-loop)
-- **Background/autonomous work** → MCP agents (`mcp__genie__run`)
-
-**Available commands:**
-
-### Workflow Commands
-- `/plan` — Start product planning dialogue (loads mission, roadmap, standards)
-- `/wish` — Create wish document with spec contract
-- `/forge` — Break wish into execution groups with validation hooks
-- `/review` — Validate completed work with 100-point matrix
-
-### Utility Commands
-- `/commit` — Interactive commit flow with diff analysis
-- `/genie-qa` — Self-validate Genie framework
-- `/install` — Framework installation and setup
-- `/prompt` — Prompt refinement helper (meta-prompting)
-- `/sleepy` — Autonomous wish coordinator (requires dedicated branch)
-- `/learn` — Meta-learning for framework improvements
-
-**How to invoke:**
-```
-User: "Let's plan the interactive permissions feature"
-Agent: "I'll start /plan to guide you through product planning..."
-*invokes /plan*
-```
-
-**Routing triggers:**
-- User mentions "plan" → suggest `/plan`
-- User mentions "wish" → suggest `/wish`
-- User mentions "forge" / "break down" → suggest `/forge`
-- User mentions "review" / "validate" → suggest `/review`
-- Commit preparation needed → suggest `/commit`
-
-**Validation:**
-```bash
-# Check commands listed in welcome flow
-grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
-
-# Verify slash command invocation works
-# (Test in actual conversation with user request)
-```
-
-**Context:** Discovered 2025-10-13 that agents were not utilizing available slash commands, preferring direct MCP invocation even for interactive workflows. Slash commands provide better human-in-the-loop experience for guided workflows.
 
 ## Experimentation Protocol
 
@@ -214,8 +165,8 @@ grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
 5. **Apply**: Use learning in future tasks
 
 **Example experiments:**
-- "Let me try using /plan instead of MCP for this workflow and observe the difference..."
-- "Testing if github-workflow can handle bulk label updates..."
+- "Let me try natural routing instead of direct MCP for this workflow and observe the difference..."
+- "Testing if git can handle bulk label updates..."
 - "Experimenting with combining orchestrator + implementor agents for this task..."
 
 ### Safe Experimentation Guidelines
@@ -266,8 +217,8 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `forge.md` – breaks approved wish into execution groups + validation hooks (includes planner mode)
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
-- `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- `prompt.md` – advanced prompting guidance stored in `.genie/agents/neurons/prompt.md`
+- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/` and load optional overrides from `.genie/custom/neurons/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -279,7 +230,8 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
 - `.genie/wishes/` – active wish folders (`<slug>/<slug>-wish.md`, `qa/`, `reports/`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
-- `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
+- `.genie/agents/neurons/` – specialized agents (git, implementor, polish, tests, etc.)
+- `.genie/agents/workflows/` – orchestration workflows (plan, wish, forge, review, etc.)
 - `.genie/custom/` – project-specific overrides for core agents and Genie modes (kept outside `agents/` to avoid double registration)
 - Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
@@ -326,7 +278,7 @@ genie:
 **Validation:**
 ```bash
 # Check all implementation agents have permissionMode
-grep -L "permissionMode:" .genie/agents/core/{implementor,tests,polish,refactor,git,install,learn,commit}.md
+grep -L "permissionMode:" .genie/agents/neurons/{implementor,tests,polish,refactor,git,install,learn,commit}.md
 # Should return empty (all agents have the setting)
 
 # Test file write capability
@@ -437,6 +389,144 @@ Genie: "Done! Here's what we built: [summary]. Want to create a PR?"
 
 ---
 
+## Universal Workflow Architecture (All Genie Variants)
+
+**Core Principle:** The wish system is NOT code-specific. It's a universal planning/execution framework.
+
+### The Universal Workflow
+
+```
+Plan → Wish → Forge → Review
+```
+
+**This workflow applies to ALL Genie variants** (code, create, NL). Only domain adaptation changes, not the workflow itself.
+
+### Variant Differences (Domain Adaptation)
+
+**Code Variant** (`templates/code/`):
+- **Wishes:** Features, bugs, refactors
+- **Forge tasks:** Implementation, tests, documentation
+- **Evidence:** Tests pass, builds succeed, PR approved
+- **Neurons:** implementor, tests, polish, git, release
+- **Outputs:** Code files, PRs, GitHub issues
+
+**Create Variant** (`templates/create/`):
+- **Wishes:** Research papers, content campaigns, strategic plans, learning projects
+- **Forge tasks:** Literature review, outlining, drafting, analysis, experiments
+- **Evidence:** Quality criteria, peer review, completion checklist
+- **Neurons:** literature-reviewer, outline-builder, experiment-designer (via pattern recognition ≥3)
+- **Outputs:** Documents, research findings, content artifacts
+
+**NL Variant** (General knowledge work):
+- **Wishes:** Analysis projects, decision frameworks, process improvements
+- **Forge tasks:** Research, synthesis, documentation, validation
+- **Evidence:** Stakeholder approval, completeness checks
+- **Neurons:** Domain-specific (created via pattern recognition ≥3)
+- **Outputs:** Reports, frameworks, guidelines
+
+### Architecture Design
+
+✅ **CORRECT:**
+- All Genie variants have Plan → Wish → Forge → Review workflow
+- Wish/forge adapted to domain (code vs research vs planning)
+- Pattern recognition (≥3 threshold) creates domain neurons
+- Evidence criteria differ by domain
+- Universal workflow + specialized neurons
+
+❌ **WRONG:**
+- Treating wishes as code-only concept
+- Removing workflow from non-code templates
+- Pattern recognition WITHOUT structured execution
+- Domain neurons WITHOUT workflow orchestration
+
+### Template Requirements
+
+**All templates MUST include:**
+- `.genie/agents/workflows/plan.md` (domain-adapted)
+- `.genie/agents/workflows/wish.md` (domain-adapted)
+- `.genie/agents/workflows/forge.md` (domain-adapted)
+- `.genie/agents/workflows/review.md` (domain-adapted)
+
+**Domain neurons created dynamically:**
+- Via pattern recognition (≥3 occurrences)
+- Stored in `.genie/agents/domain/` (create/NL) or `.genie/agents/neurons/` (code)
+- Invoked through forge execution groups
+
+### Example: Research Paper Wish
+
+```markdown
+# Wish: Adversarial Robustness Literature Review
+
+## Context Ledger
+- Topic: Adversarial examples in deep learning
+- Scope: Papers from 2018-2024
+- Output: Comprehensive literature review document
+- Timeline: 2 weeks
+
+## Execution Groups
+
+### Group A: Paper Collection
+- Identify 20-30 key papers
+- Download and organize PDFs
+- Create citation database
+
+### Group B: Analysis
+- Read and annotate each paper
+- Extract methodology, findings, limitations
+- Identify themes and gaps
+
+### Group C: Synthesis
+- Write literature review document
+- Create visual summaries (timelines, taxonomy)
+- Generate bibliography
+
+## Evidence Checklist
+- [ ] 25+ papers reviewed
+- [ ] Comprehensive coverage of subdomains
+- [ ] Clear narrative structure
+- [ ] All citations formatted correctly
+- [ ] Peer review by advisor
+```
+
+**Forge output (for research):**
+```
+Group A: Paper Collection → literature-reviewer neuron
+Group B: Analysis → literature-reviewer + synthesizer neurons
+Group C: Synthesis → outline-builder + technical-editor neurons
+```
+
+### Validation
+
+**Check template completeness:**
+```bash
+# All templates should have workflow agents
+for template in templates/*/; do
+  echo "Template: $template"
+  ls -1 "$template/.genie/agents/workflows/" 2>/dev/null || echo "❌ Missing workflows/"
+done
+```
+
+**Expected output:**
+```
+Template: templates/code/
+plan.md
+wish.md
+forge.md
+review.md
+✅
+
+Template: templates/create/
+plan.md
+wish.md
+forge.md
+review.md
+✅
+```
+
+**Context:** Discovered 2025-10-16 that `templates/create/` was missing workflow agents entirely, treating wish system as code-specific when it's actually universal. This violates core architecture: universal workflow + domain-specialized neurons.
+
+---
+
 ## Evidence & Storage Conventions
 - Wishes must declare where artefacts live; there is no default `qa/` directory. Capture metrics inline in the wish (e.g., tables under a **Metrics** section) or in clearly named companion files.
 - Every wish must complete the **Evidence Checklist** block in @.genie/agents/wish.md before implementation begins, spelling out validation commands, artefact locations, and approval checkpoints.
@@ -444,7 +534,7 @@ Genie: "Done! Here's what we built: [summary]. Want to create a PR?"
 - Background agent outputs are summarised in the wish context ledger; raw logs can be viewed with `mcp__genie__view` with sessionId parameter.
 
 ## Testing & Evaluation
-- Evaluation tooling is optional. If a project adds its own evaluator agent, `/review` or `/plan` can reference it; otherwise, evaluation steps default to manual validation.
+- Evaluation tooling is optional. If a project adds its own evaluator agent, the review or plan workflow can reference it; otherwise, evaluation steps default to manual validation.
 - Typical metrics: `{{METRICS}}` such as latency or quality. Domain-specific metrics should be added per project in the wish/forge plan.
 - Validation hooks should be captured in wishes/forge plans (e.g., `pnpm test`, `cargo test`, metrics scripts).
 
@@ -453,13 +543,13 @@ Genie: "Done! Here's what we built: [summary]. Want to create a PR?"
 - Always reference files with `@` to auto-load content.
 - Define success/failure boundaries explicitly.
 - Encourage concrete examples/snippets over abstractions.
-- Advanced prompting guidance lives in `@.genie/agents/core/prompt.md`.
+- Advanced prompting guidance lives in `@.genie/agents/neurons/prompt.md`.
 
 ## Branch & Tracker Guidance
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
 - **Existing branch** only with documented rationale (wish status log).
 - **Micro-task** for tiny updates; track in wish status and commit advisory.
-- Tracker IDs (from forge execution output) should be logged in the wish markdown once assigned. Capture them immediately after `/forge` reports IDs.
+- Tracker IDs (from forge execution output) should be logged in the wish markdown once assigned. Capture them immediately after forge reports IDs.
 
 A common snippet:
 
@@ -523,7 +613,7 @@ Genie can handle small, interactive requests without entering Plan → Wish when
 - `core/consensus` / `core/challenge` – pressure-test decisions or assumptions rapidly
 - `core/prompt` – rewrite instructions, wish sections, or prompts on the fly
 
-If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate into `/plan` to restart the full Plan → Wish → Forge pipeline. Bug investigations should use **debug** mode for root-cause analysis.
+If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate to natural planning to restart the full Plan → Wish → Forge pipeline. Bug investigations should use **debug** mode for root-cause analysis.
 
 ## Subagents & Genie via MCP
 - Start subagent: `mcp__genie__run` with agent and prompt parameters
@@ -672,6 +762,42 @@ Genie: *creates wish naturally, no commands exposed*
 - **Evidence**: Commits 0c6ef02, 30dce09, GitHub Actions runs 18506885592
 
 **Validation:** When user says "publish" or "release", immediately suggest release agent delegation via MCP, never direct commands or slash commands.
+
+### Delegation Discipline *(CRITICAL)*
+**NEVER** implement directly when orchestrating. **ALWAYS** delegate to specialist agents for multi-file work.
+
+**Forbidden actions:**
+- ❌ Using Edit tool for batch operations (>2 files)
+- ❌ Manual implementation of cleanup/refactoring work
+- ❌ Repetitive edits instead of delegating to implementor
+- ❌ "I'll just fix this quickly" mindset for multi-file changes
+
+**Required workflow:**
+
+**If you ARE an orchestrator (plan/orchestrator/vibe):**
+- ✅ Delegate to implementor: `mcp__genie__run with agent="implementor" and prompt="[clear spec with files, acceptance criteria]"`
+- ✅ Use Edit tool ONLY for single surgical fixes (≤2 files)
+- ✅ Track delegation vs manual work in context updates
+
+**If you ARE a specialist (implementor/tests/etc.):**
+- ✅ Execute implementation directly using available tools
+- ❌ NEVER delegate to yourself
+
+**Why:**
+- Token efficiency: Delegation uses specialist context, not bloated orchestrator context
+- Separation of concerns: Orchestrators route, specialists implement
+- Evidence trail: Specialist sessions = documentation
+- Scalability: Parallel specialist work vs sequential manual edits
+
+**Recent violation (2025-10-16):**
+- Made 11 Edit calls for path reference cleanup manually
+- Should have delegated to implementor with clear spec
+- Burned 13K tokens on repetitive edits
+- Pattern: See cleanup work → bypass delegation → implement directly
+- **Result**: Context bloat, poor separation of concerns
+- **Evidence**: Session 2025-10-16 22:30 UTC
+
+**Validation:** When encountering cleanup/refactoring/multi-file work, immediately create implementor session with clear spec, never use Edit tool for batch operations.
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
@@ -798,33 +924,44 @@ Execute your workflow directly per your agent instructions. Do NOT delegate to y
 - Test strategy: scope, layering, rollback/monitoring concerns.
 - Retrospective: extract wins/misses/lessons for future work.
 
-### Mode Usage
-Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
+### Neuron Consultation
 
-**Core Reasoning Modes (3):**
-- `challenge` – critical evaluation (auto-routes to socratic/debate/direct challenge)
-- `explore` – discovery-focused exploratory reasoning
-- `consensus` – multi-model perspective synthesis
+Genie operates through two cognitive layers: **strategic thinking modes** (via orchestrator neuron) and **execution specialists** (direct collaboration).
 
-**Specialized Modes (9):**
-- `plan` – pressure-test plans, map phases, uncover risks
-- `analyze` – system analysis and focused investigations with dependency mapping
-- `debug` – structured root-cause investigation
-- `audit` – risk assessment and security audit with impact/likelihood analysis
-- `tests` – test strategy, generation, authoring, and repair across all layers
-- `refactor` – design review and staged refactor planning with verification
-- `docgen` – audience-targeted outline
-- `tracer` – instrumentation/observability plan
-- `precommit` – validation gate and commit advisory
+**Strategic Thinking Modes (18 total - via orchestrator neuron):**
 
-**Custom-Only Modes (2):**
-- `compliance` – map controls, evidence, sign-offs
-- `retrospective` – capture wins, misses, lessons, next actions
+Use `mcp__genie__run` with `agent="orchestrator"` and include `Mode: <mode-name>` in the prompt to select the reasoning approach. Genie automatically loads `.genie/custom/<mode>.md` when present.
 
-**Delivery Agents (not modes):**
-- `git`, `implementor`, `polish`, `tests`, `review`
+**Core reasoning styles:**
+- `challenge` – Critical evaluation and adversarial pressure-testing
+- `explore` – Discovery-focused exploratory reasoning
+- `consensus` – Multi-model perspective synthesis
 
-> Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
+**Strategic analysis modes:**
+- `plan` – Plan pressure-testing, phase mapping, risk identification
+- `analyze` – System architecture audit and dependency mapping
+- `debug` – Root cause investigation with hypothesis testing
+- `audit` – Risk assessment and security audit with impact/likelihood analysis
+- `refactor` – Design review and refactor planning with verification
+- `docgen` – Documentation outline generation
+- `tracer` – Instrumentation/observability planning
+- `precommit` – Pre-commit validation gate and commit advisory
+
+**Custom modes (project-specific):**
+- `compliance` – Controls, evidence, sign-offs mapping
+- `retrospective` – Wins, misses, lessons capture
+
+**Execution Specialists (6 total - direct neurons):**
+
+Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
+- `implementor` – Feature implementation and code writing
+- `tests` – Test strategy, generation, authoring across all layers
+- `polish` – Code refinement and cleanup
+- `review` – Wish audits, code review, QA validation
+- `git` – ALL git and GitHub operations (branch, commit, PR, issues)
+- `release` – GitHub release and npm publish orchestration
+
+> Tip: Add project-specific guidance in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`; core files remain immutable.
 
 ### How To Run (MCP)
 - Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: plan. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
@@ -832,13 +969,20 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
-### Modes (quick reference)
-**Core (3):** challenge, explore, consensus
-**Specialized (6):** plan, analyze, debug, audit, refactor, docgen, tracer, precommit
-**Custom-only (2):** compliance, retrospective
+### Quick Reference
 
-- Full prompt templates live in `.genie/agents/orchestrator.md`
-- Project-specific adjustments belong in `.genie/custom/<mode>.md`; the core prompt auto-loads them
+**Strategic Thinking Modes (18 total):**
+- Core reasoning (3): challenge, explore, consensus
+- Analysis modes (8): plan, analyze, debug, audit, refactor, docgen, tracer, precommit
+- Custom modes (2): compliance, retrospective
+
+**Execution Specialists (6 total):**
+- Delivery: implementor, tests, polish, review
+- Infrastructure: git, release
+
+- Thinking mode templates live in `.genie/agents/neurons/orchestrator.md` and `.genie/agents/neurons/modes/`
+- Project-specific adjustments belong in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`
+- Core files remain immutable; extend via custom overrides only
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.
@@ -846,7 +990,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/core/refactor.md`). Customize them only by editing `.genie/custom/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the core prompt (`@.genie/agents/neurons/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/neurons/modes/refactor.md`). Customize them only by editing `.genie/custom/neurons/modes/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

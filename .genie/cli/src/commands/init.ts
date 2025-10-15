@@ -10,13 +10,15 @@ import {
   getPackageRoot,
   getTemplateGeniePath,
   getTemplateClaudePath,
+  getTemplateRootPath,
   getTemplateRelativeBlacklist,
   resolveTargetGeniePath,
   resolveWorkspaceProviderPath,
   resolveWorkspaceVersionPath,
   resolveBackupsRoot,
   resolveTempBackupsRoot,
-  resolveProviderStatusPath
+  resolveProviderStatusPath,
+  type TemplateType
 } from '../lib/paths';
 import {
   pathExists,
@@ -35,6 +37,7 @@ interface InitFlags {
   provider?: string;
   yes?: boolean;
   force?: boolean;
+  template?: TemplateType;
 }
 
 interface InitSummary {
@@ -74,8 +77,14 @@ export async function runInit(
     const flags = parseFlags(parsed.commandArgs);
     const cwd = process.cwd();
     const packageRoot = getPackageRoot();
-    const templateGenie = getTemplateGeniePath();
-    const templateClaude = getTemplateClaudePath();
+
+    // Determine template type
+    // Direct: genie init code/create (automation-friendly)
+    // Interactive: genie init (human discovery)
+    const template = flags.template || await promptTemplateChoice();
+
+    const templateGenie = getTemplateGeniePath(template);
+    const templateClaude = getTemplateClaudePath(template);
     const targetGenie = resolveTargetGeniePath(cwd);
 
     const templateExists = await pathExists(templateGenie);
@@ -221,7 +230,7 @@ export async function runInit(
       await copyTemplateClaude(templateClaude, claudeDir);
     }
 
-    await copyTemplateRootFiles(packageRoot, cwd);
+    await copyTemplateRootFiles(packageRoot, cwd, template);
 
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
     const templateInstallMd = path.join(templateGenie, 'INSTALL.md');
@@ -311,6 +320,8 @@ function parseFlags(args: string[]): InitFlags {
   const flags: InitFlags = {};
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
+
+    // Handle flags
     if (token === '--provider' && args[i + 1]) {
       flags.provider = args[i + 1];
       i++;
@@ -327,6 +338,13 @@ function parseFlags(args: string[]): InitFlags {
     if (token === '--force' || token === '-f') {
       flags.force = true;
       continue;
+    }
+
+    // Handle positional template argument (code | create)
+    if (!token.startsWith('-') && !flags.template) {
+      if (token === 'code' || token === 'create') {
+        flags.template = token as TemplateType;
+      }
     }
   }
   return flags;
@@ -355,12 +373,18 @@ async function copyTemplateClaude(templateClaude: string, targetClaude: string):
   await copyDirectory(templateClaude, targetClaude);
 }
 
-async function copyTemplateRootFiles(packageRoot: string, targetDir: string): Promise<void> {
-  const templatesBaseDir = path.join(packageRoot, 'templates', 'base');
+async function copyTemplateRootFiles(packageRoot: string, targetDir: string, template: TemplateType): Promise<void> {
+  // Code template: Copy AGENTS.md and CLAUDE.md to project root
+  // Create template: No root files needed (everything in .genie/)
+  if (template === 'create') {
+    return; // Create template has no root files
+  }
+
+  const templatesDir = path.join(packageRoot, 'templates', template);
   const rootFiles = ['AGENTS.md', 'CLAUDE.md'];
 
   for (const file of rootFiles) {
-    const sourcePath = path.join(templatesBaseDir, file);
+    const sourcePath = path.join(templatesDir, file);
     const targetPath = path.join(targetDir, file);
 
     if (await pathExists(sourcePath)) {
@@ -420,6 +444,23 @@ async function detectAvailableExecutors(): Promise<string[]> {
   }
 
   return available;
+}
+
+async function promptTemplateChoice(): Promise<TemplateType> {
+  // Template choice is mandatory - show help and exit
+  // User must run: genie init <template>
+  console.log('');
+  console.log('🧞 Genie Init - Choose Your Template');
+  console.log('');
+  console.log('Available templates:');
+  console.log('  genie init code      - Software development (full-stack, testing, git)');
+  console.log('  genie init create    - Research, writing, planning (self-adaptive AI)');
+  console.log('');
+  console.log('Example:');
+  console.log('  genie init code');
+  console.log('');
+
+  process.exit(0);
 }
 
 async function promptProvider(availableExecutors: string[]): Promise<string> {

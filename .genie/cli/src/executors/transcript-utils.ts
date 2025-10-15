@@ -5,8 +5,17 @@
  * and slicing message arrays for both Codex and Claude executors.
  */
 
-import { ChatMessage } from '../views/chat';
-import { Tone } from '../view';
+// ============================================================================
+// Types
+// ============================================================================
+
+export type ChatRole = 'assistant' | 'reasoning' | 'tool' | 'action';
+
+export interface ChatMessage {
+  role: ChatRole;
+  title: string;
+  body: string[];
+}
 
 // ============================================================================
 // Message Slicing Utilities
@@ -72,7 +81,7 @@ export function sliceForRecent(messages: ChatMessage[], count: number = 5): Chat
 export interface MetricItem {
   label: string;
   value: string;
-  tone?: Tone;
+  tone?: string; // Optional tone indicator (not used in markdown output)
 }
 
 /**

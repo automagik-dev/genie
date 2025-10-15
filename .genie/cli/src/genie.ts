@@ -13,7 +13,6 @@ import {
   clearStartupWarnings
 } from './lib/config';
 import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers';
-import { renderEnvelope } from './view';
 import {
   buildRunHelpView,
   buildResumeHelpView,
@@ -213,6 +212,6 @@ async function main(): Promise<void> {
 }
 
 async function emitEmergencyError(message: string): Promise<void> {
-  const envelope = buildErrorView('Fatal error', message);
-  await renderEnvelope(envelope, { json: false, stream: process.stderr });
+  const errorMessage = buildErrorView('Fatal error', message);
+  process.stderr.write(errorMessage + '\n');
 }

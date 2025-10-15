@@ -1,8 +1,7 @@
 import fs from 'fs';
 import { SessionStore, saveSessions } from '../session-store';
-import { ViewEnvelope, ViewStyle, LogLine, Tone } from '../view';
-import { buildChatView, ChatMessage } from '../views/chat';
-import { sliceForLatest, sliceForRecent, summarizeCodexMetrics, CodexMetrics } from './transcript-utils';
+import { ChatMessage, sliceForLatest, sliceForRecent, summarizeCodexMetrics, CodexMetrics } from './transcript-utils';
+import { formatTranscriptMarkdown, OutputMode, SessionMeta } from '../lib/markdown-formatter';
 
 export interface RenderOptions {
   entry: Record<string, any>;
@@ -17,7 +16,6 @@ export interface JsonlViewContext {
   store: SessionStore;
   save: typeof saveSessions;
   formatPathRelative: (targetPath: string, baseDir: string) => string;
-  style: ViewStyle;
 }
 
 export function readSessionIdFromLog(logFile: string): string | null {
@@ -245,8 +243,8 @@ function parseConversation(jsonl: Array<Record<string, any>>): ChatMessage[] {
  * Extract metrics from Codex JSONL events and format for header meta items.
  * Follows Metrics Summarization Specification from wish.
  */
-function extractMetrics(jsonl: Array<Record<string, any>>): Array<{ label: string; value: string; tone?: Tone }> {
-  const metrics: Array<{ label: string; value: string; tone?: Tone }> = [];
+function extractMetrics(jsonl: Array<Record<string, any>>): Array<{ label: string; value: string; tone?: string }> {
+  const metrics: Array<{ label: string; value: string; tone?: string }> = [];
 
   const byCall = new Map<string, { cmd?: string; mcp?: { server?: string; tool?: string } }>();
   const execs: Array<{ exit: number | null | undefined }> = [];
@@ -377,7 +375,7 @@ function extractMetrics(jsonl: Array<Record<string, any>>): Array<{ label: strin
   return metrics;
 }
 
-export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
+export function buildJsonlView(ctx: JsonlViewContext): string {
   const { render, parsed, paths, store, save } = ctx;
   const { entry, jsonl } = render;
 
@@ -405,32 +403,71 @@ export function buildJsonlView(ctx: JsonlViewContext): ViewEnvelope {
 
   // Determine slicing based on mode
   let messages: ChatMessage[];
-  let showFull = false;
+  let mode: OutputMode = 'recent';
 
   if (parsed.options.full) {
     // Full mode: show all messages
     messages = allMessages;
-    showFull = true;
+    mode = 'overview';
   } else if (parsed.options.live) {
     // Live mode: show latest assistant message (+ optional preceding reasoning)
     messages = sliceForLatest(allMessages);
+    mode = 'final';
   } else {
     // Default mode: show last 5 messages
     messages = allMessages.slice(-5);
+    mode = 'recent';
   }
 
   // Extract metrics for header
-  const metrics = extractMetrics(jsonl);
+  const metricsArray = extractMetrics(jsonl);
 
-  // Build and return conversation view
-  return buildChatView({
-    agent: entry.agent,
+  // Convert metrics array to SessionMeta format
+  const tokens = metricsArray.find(m => m.label === 'Tokens');
+  const mcpCalls = metricsArray.find(m => m.label === 'MCP Calls');
+
+  const meta: SessionMeta = {
     sessionId: entry.sessionId || null,
-    status: null,
-    messages,
-    meta: metrics,
-    showFull
-  });
+    agent: entry.agent || 'codex',
+    status: entry.status || null,
+    executor: 'codex',
+    tokens: tokens ? parseTokenString(tokens.value) : undefined,
+    toolCalls: mcpCalls ? parseMcpCallsString(mcpCalls.value) : undefined
+  };
+
+  // Build and return conversation as markdown
+  return formatTranscriptMarkdown(messages, meta, mode);
+}
+
+/**
+ * Parse "in:X out:Y total:Z" format into token object
+ */
+function parseTokenString(value: string): { input: number; output: number; total: number } | undefined {
+  const match = value.match(/in:(\d+) out:(\d+) total:(\d+)/);
+  if (!match) return undefined;
+  return {
+    input: parseInt(match[1], 10),
+    output: parseInt(match[2], 10),
+    total: parseInt(match[3], 10)
+  };
+}
+
+/**
+ * Parse "N calls (server1:M server2:K)" format into tool calls array
+ */
+function parseMcpCallsString(value: string): Array<{ name: string; count: number }> | undefined {
+  const match = value.match(/\(([^)]+)\)/);
+  if (!match) return undefined;
+
+  const serversStr = match[1];
+  const servers = serversStr.split(' ')
+    .filter(s => s.includes(':'))
+    .map(s => {
+      const [name, count] = s.split(':');
+      return { name, count: parseInt(count, 10) };
+    });
+
+  return servers.length > 0 ? servers : undefined;
 }
 
 export default {

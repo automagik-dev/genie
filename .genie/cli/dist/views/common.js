@@ -3,43 +3,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildErrorView = buildErrorView;
 exports.buildWarningView = buildWarningView;
 exports.buildInfoView = buildInfoView;
-const GENIE_STYLE = 'genie';
 function buildErrorView(title, message) {
-    return {
-        style: GENIE_STYLE,
-        title,
-        body: {
-            type: 'callout',
-            tone: 'danger',
-            icon: '❌',
-            title,
-            body: [message]
-        }
-    };
+    return `❌ **${title}**\n\n${message}`;
 }
 function buildWarningView(title, messages) {
-    return {
-        style: GENIE_STYLE,
-        title,
-        body: {
-            type: 'callout',
-            tone: 'warning',
-            icon: '⚠️',
-            title,
-            body: messages
-        }
-    };
+    const body = messages.map(m => `- ${m}`).join('\n');
+    return `⚠️ **${title}**\n\n${body}`;
 }
 function buildInfoView(title, messages) {
-    return {
-        style: GENIE_STYLE,
-        title,
-        body: {
-            type: 'callout',
-            tone: 'info',
-            icon: 'ℹ️',
-            title,
-            body: messages
-        }
-    };
+    const body = messages.map(m => `- ${m}`).join('\n');
+    return `ℹ️ **${title}**\n\n${body}`;
 }

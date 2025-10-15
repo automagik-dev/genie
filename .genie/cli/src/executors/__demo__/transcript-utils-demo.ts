@@ -12,9 +12,9 @@ import {
   summarizeClaudeMetrics,
   aggregateToolCalls,
   type CodexMetrics,
-  type ClaudeMetrics
+  type ClaudeMetrics,
+  type ChatMessage
 } from '../transcript-utils';
-import type { ChatMessage } from '../../views/chat';
 
 console.log('='.repeat(80));
 console.log('TRANSCRIPT UTILITIES DEMONSTRATION');
