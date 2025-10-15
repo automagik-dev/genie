@@ -8,9 +8,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const session_store_1 = require("../session-store");
 const session_helpers_1 = require("../lib/session-helpers");
-const view_helpers_1 = require("../lib/view-helpers");
-const common_1 = require("../views/common");
-const chat_1 = require("../views/chat");
+const markdown_formatter_js_1 = require("../lib/markdown-formatter.js");
 const transcript_utils_1 = require("../executors/transcript-utils");
 const executor_registry_1 = require("../lib/executor-registry");
 const executor_config_1 = require("../lib/executor-config");
@@ -19,7 +17,7 @@ const utils_1 = require("../lib/utils");
 async function runView(parsed, config, paths) {
     const [sessionId] = parsed.commandArgs;
     if (!sessionId) {
-        await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('View usage', ['Usage: genie view <sessionId> [--full]']), parsed.options);
+        console.log('Usage: genie view <sessionId> [--full]');
         return;
     }
     const warnings = [];
@@ -60,32 +58,25 @@ async function runView(parsed, config, paths) {
                         : parsed.options.live
                             ? (0, transcript_utils_1.sliceForLatest)(transcript)
                             : (0, transcript_utils_1.sliceForRecent)(transcript);
-                    const metaItems = [
-                        { label: 'Source', value: 'Orphaned session file', tone: 'warning' },
-                        { label: 'Session file', value: sessionFilePath }
-                    ];
-                    const envelope = (0, chat_1.buildChatView)({
-                        agent: 'unknown',
+                    // Determine output mode from flags
+                    const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+                    const meta = {
                         sessionId: sessionId,
-                        status: null,
-                        messages: displayTranscript,
-                        meta: metaItems,
-                        showFull: Boolean(parsed.options.full),
-                        hint: !parsed.options.full && transcript.length > displayTranscript.length
-                            ? parsed.options.live
-                                ? 'Add --full to replay the entire session or remove --live to see more messages.'
-                                : 'Add --full to replay the entire session.'
-                            : undefined
-                    });
-                    await (0, view_helpers_1.emitView)(envelope, parsed.options);
+                        agent: 'unknown',
+                        status: 'orphaned'
+                    };
+                    const markdown = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(displayTranscript, meta, mode);
+                    console.log(markdown);
                     if (warnings.length) {
-                        await (0, view_helpers_1.emitView)((0, common_1.buildWarningView)('Session warnings', warnings), parsed.options);
+                        console.log('\n⚠️  Warnings:');
+                        warnings.forEach(w => console.log(`  ${w}`));
                     }
                     return;
                 }
             }
         }
-        await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Run not found', `No run found with session id '${sessionId}'`), parsed.options, { stream: process.stderr });
+        console.error(`Error: No run found with session id '${sessionId}'`);
+        process.exitCode = 1;
         return;
     }
     const { entry } = found;
@@ -94,7 +85,8 @@ async function runView(parsed, config, paths) {
     const logViewer = executor.logViewer;
     const logFile = entry.logFile;
     if (!logFile || !fs_1.default.existsSync(logFile)) {
-        await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Log missing', '❌ Log not found for this run'), parsed.options, { stream: process.stderr });
+        console.error('Error: Log not found for this run');
+        process.exitCode = 1;
         return;
     }
     const raw = fs_1.default.readFileSync(logFile, 'utf8');
@@ -275,9 +267,9 @@ async function runView(parsed, config, paths) {
             formatPathRelative: utils_1.formatPathRelative,
             style
         });
-        await (0, view_helpers_1.emitView)(envelope, parsed.options);
+        await emitView(envelope, parsed.options);
         if (warnings.length) {
-            await (0, view_helpers_1.emitView)((0, common_1.buildWarningView)('Session warnings', warnings), parsed.options);
+            await emitView(buildWarningView('Session warnings', warnings), parsed.options);
         }
         return;
     }
@@ -301,30 +293,18 @@ async function runView(parsed, config, paths) {
         : parsed.options.live
             ? (0, transcript_utils_1.sliceForLatest)(transcript)
             : (0, transcript_utils_1.sliceForRecent)(transcript);
-    const metaItems = [];
-    if (entry.executor)
-        metaItems.push({ label: 'Executor', value: String(entry.executor) });
-    const executionMode = entry.mode || entry.preset;
-    if (executionMode)
-        metaItems.push({ label: 'Execution mode', value: String(executionMode) });
-    if (entry.background !== undefined) {
-        metaItems.push({ label: 'Background', value: entry.background ? 'detached' : 'attached' });
-    }
-    const envelope = (0, chat_1.buildChatView)({
-        agent: entry.agent ?? 'unknown',
+    // Determine output mode from flags
+    const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+    const meta = {
         sessionId: entry.sessionId ?? null,
+        agent: entry.agent ?? 'unknown',
         status: entry.status ?? null,
-        messages: displayTranscript,
-        meta: metaItems.length ? metaItems : undefined,
-        showFull: Boolean(parsed.options.full),
-        hint: !parsed.options.full && transcript.length > displayTranscript.length
-            ? parsed.options.live
-                ? 'Add --full to replay the entire session or remove --live to see more messages.'
-                : 'Add --full to replay the entire session.'
-            : undefined
-    });
-    await (0, view_helpers_1.emitView)(envelope, parsed.options);
+        executor: entry.executor ? String(entry.executor) : undefined
+    };
+    const markdown = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(displayTranscript, meta, mode);
+    console.log(markdown);
     if (warnings.length) {
-        await (0, view_helpers_1.emitView)((0, common_1.buildWarningView)('Session warnings', warnings), parsed.options);
+        console.log('\n⚠️  Warnings:');
+        warnings.forEach(w => console.log(`  ${w}`));
     }
 }

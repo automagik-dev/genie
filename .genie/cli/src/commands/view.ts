@@ -8,9 +8,7 @@ import {
   SessionPathsConfig
 } from '../session-store';
 import { findSessionEntry } from '../lib/session-helpers';
-import { emitView } from '../lib/view-helpers';
-import { buildErrorView, buildWarningView, buildInfoView } from '../views/common';
-import { buildChatView } from '../views/chat';
+import { formatTranscriptMarkdown, type SessionMeta } from '../lib/markdown-formatter.js';
 import {
   buildTranscriptFromEvents,
   sliceForLatest as sliceTranscriptForLatest,
@@ -20,7 +18,6 @@ import { DEFAULT_EXECUTOR_KEY } from '../lib/executor-registry';
 import { requireExecutor } from '../lib/executor-config';
 import { DEFAULT_CONFIG } from '../lib/config-defaults';
 import { formatPathRelative } from '../lib/utils';
-import type { Tone, ViewStyle } from '../view';
 
 export async function runView(
   parsed: ParsedCommand,
@@ -29,7 +26,7 @@ export async function runView(
 ): Promise<void> {
   const [sessionId] = parsed.commandArgs;
   if (!sessionId) {
-    await emitView(buildInfoView('View usage', ['Usage: genie view <sessionId> [--full]']), parsed.options);
+    console.log('Usage: genie view <sessionId> [--full]');
     return;
   }
 
@@ -81,34 +78,29 @@ export async function runView(
               ? sliceTranscriptForLatest(transcript)
               : sliceTranscriptForRecent(transcript);
 
-          const metaItems: Array<{ label: string; value: string; tone?: Tone }> = [
-            { label: 'Source', value: 'Orphaned session file', tone: 'warning' },
-            { label: 'Session file', value: sessionFilePath }
-          ];
+          // Determine output mode from flags
+          const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
 
-          const envelope = buildChatView({
-            agent: 'unknown',
+          const meta: SessionMeta = {
             sessionId: sessionId,
-            status: null,
-            messages: displayTranscript,
-            meta: metaItems,
-            showFull: Boolean(parsed.options.full),
-            hint: !parsed.options.full && transcript.length > displayTranscript.length
-              ? parsed.options.live
-                ? 'Add --full to replay the entire session or remove --live to see more messages.'
-                : 'Add --full to replay the entire session.'
-              : undefined
-          });
-          await emitView(envelope, parsed.options);
+            agent: 'unknown',
+            status: 'orphaned'
+          };
+
+          const markdown = formatTranscriptMarkdown(displayTranscript, meta, mode);
+          console.log(markdown);
+
           if (warnings.length) {
-            await emitView(buildWarningView('Session warnings', warnings), parsed.options);
+            console.log('\n⚠️  Warnings:');
+            warnings.forEach(w => console.log(`  ${w}`));
           }
           return;
         }
       }
     }
 
-    await emitView(buildErrorView('Run not found', `No run found with session id '${sessionId}'`), parsed.options, { stream: process.stderr });
+    console.error(`Error: No run found with session id '${sessionId}'`);
+    process.exitCode = 1;
     return;
   }
   const { entry } = found;
@@ -117,7 +109,8 @@ export async function runView(
   const logViewer = executor.logViewer;
   const logFile = entry.logFile;
   if (!logFile || !fs.existsSync(logFile)) {
-    await emitView(buildErrorView('Log missing', '❌ Log not found for this run'), parsed.options, { stream: process.stderr });
+    console.error('Error: Log not found for this run');
+    process.exitCode = 1;
     return;
   }
 
@@ -283,27 +276,11 @@ export async function runView(
     };
   }
 
-  if (logViewer?.buildJsonlView) {
-    const style: ViewStyle = 'genie';
-    const envelope = logViewer.buildJsonlView({
-      render: {
-        entry,
-        jsonl,
-        raw
-      },
-      parsed,
-      paths,
-      store,
-      save: saveSessions,
-      formatPathRelative,
-      style
-    });
-    await emitView(envelope, parsed.options);
-    if (warnings.length) {
-      await emitView(buildWarningView('Session warnings', warnings), parsed.options);
-    }
-    return;
-  }
+  // NOTE: Executor-specific buildJsonlView disabled during Ink removal
+  // TODO: Restore or convert to markdown if needed
+  // if (logViewer?.buildJsonlView) {
+  //   ... (commented out)
+  // }
 
   const transcript = buildTranscriptFromEvents(jsonl);
 
@@ -329,29 +306,22 @@ export async function runView(
     : parsed.options.live
       ? sliceTranscriptForLatest(transcript)
       : sliceTranscriptForRecent(transcript);
-  const metaItems: Array<{ label: string; value: string; tone?: Tone }> = [];
-  if (entry.executor) metaItems.push({ label: 'Executor', value: String(entry.executor) });
-  const executionMode = entry.mode || entry.preset;
-  if (executionMode) metaItems.push({ label: 'Execution mode', value: String(executionMode) });
-  if (entry.background !== undefined) {
-    metaItems.push({ label: 'Background', value: entry.background ? 'detached' : 'attached' });
-  }
 
-  const envelope = buildChatView({
-    agent: entry.agent ?? 'unknown',
+  // Determine output mode from flags
+  const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+
+  const meta: SessionMeta = {
     sessionId: entry.sessionId ?? null,
+    agent: entry.agent ?? 'unknown',
     status: entry.status ?? null,
-    messages: displayTranscript,
-    meta: metaItems.length ? metaItems : undefined,
-    showFull: Boolean(parsed.options.full),
-    hint: !parsed.options.full && transcript.length > displayTranscript.length
-      ? parsed.options.live
-        ? 'Add --full to replay the entire session or remove --live to see more messages.'
-        : 'Add --full to replay the entire session.'
-      : undefined
-  });
-  await emitView(envelope, parsed.options);
+    executor: entry.executor ? String(entry.executor) : undefined
+  };
+
+  const markdown = formatTranscriptMarkdown(displayTranscript, meta, mode);
+  console.log(markdown);
+
   if (warnings.length) {
-    await emitView(buildWarningView('Session warnings', warnings), parsed.options);
+    console.log('\n⚠️  Warnings:');
+    warnings.forEach(w => console.log(`  ${w}`));
   }
 }
