@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.3.7] - 2025-10-16
+
+### Added
+- Multi-template system: `genie init [code|create]` for specialized workflows
+- Token-efficient output: 99.0-99.6% reduction for AI-to-AI orchestration (16k → 122-168 tokens)
+- Neuron cognitive architecture: Clear separation of neurons/modes/workflows directories
+
+### Changed
+- Reorganized agent directory structure: `core/` → `neurons/` + `workflows/`
+- Session views now use lightweight markdown instead of Ink rendering
+- Custom overrides restructured to mirror cognitive architecture
+
+### Removed
+- Ink UI dependencies (~1,200 lines of rendering overhead)
+- ViewEnvelope abstraction layer (replaced with markdown formatter)
+
+### Performance
+- Enables 10+ concurrent AI agents without token budget explosion
+- Session monitoring: 36-48k tokens → <600 tokens (98.8% reduction)
+
 ## [2.0.1] - 2025-10-07
 
 ### Fixed
