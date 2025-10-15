@@ -551,13 +551,36 @@ async function handoffToExecutor(executor, cwd) {
     console.log(`[HANDOFF] Args: ${args.join(' ')}`);
     // Check if we have a real TTY or are in a subprocess (like npx)
     const hasRealTTY = process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY;
-    // Check if we're running under npx by looking at npm_execpath
-    const isNpxSubprocess = process.env.npm_execpath && process.env.npm_execpath.includes('npx');
+    // Improved npx detection - check multiple indicators
+    // When running via npx, the process appears to have TTY but can't actually use setRawMode
+    const isNpxSubprocess = !!((process.env.npm_execpath && process.env.npm_execpath.includes('npx')) ||
+        process.env.npm_command === 'exec' ||
+        process.env._ && process.env._.includes('npx') ||
+        // Check if we're in a temporary npx install directory
+        __dirname.includes('/_npx/') ||
+        __dirname.includes('\\_npx\\') ||
+        // Check process.argv[1] for npx paths
+        (process.argv[1] && process.argv[1].includes('/_npx/')) ||
+        (process.argv[1] && process.argv[1].includes('\\_npx\\')));
     console.log(`[HANDOFF] TTY status: stdin=${process.stdin.isTTY}, stdout=${process.stdout.isTTY}, stderr=${process.stderr.isTTY}`);
     console.log(`[HANDOFF] Running under npx: ${isNpxSubprocess}`);
+    console.log(`[HANDOFF] npm_execpath: ${process.env.npm_execpath || 'not set'}`);
+    console.log(`[HANDOFF] npm_command: ${process.env.npm_command || 'not set'}`);
+    console.log(`[HANDOFF] _: ${process.env._ || 'not set'}`);
+    console.log(`[HANDOFF] __dirname: ${__dirname}`);
+    console.log(`[HANDOFF] process.argv[0]: ${process.argv[0]}`);
+    console.log(`[HANDOFF] process.argv[1]: ${process.argv[1]}`);
+    // Additional fallback: if TTY appears available but we see "_npx" anywhere in the path, force script
+    const pathsHaveNpx = __dirname.includes('_npx') ||
+        (process.argv[1] && process.argv[1].includes('_npx')) ||
+        (process.env._ && process.env._.includes('_npx'));
+    if (pathsHaveNpx) {
+        console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
+    }
     // If no real TTY or running under npx, use script command to allocate pseudo-TTY
-    if (!hasRealTTY || isNpxSubprocess) {
-        console.log('[HANDOFF] No real TTY detected, using script command for pseudo-TTY...');
+    // IMPORTANT: Always use script fallback for npx, even if TTY appears to be available
+    if (!hasRealTTY || isNpxSubprocess || pathsHaveNpx) {
+        console.log('[HANDOFF] Using script fallback (no real TTY or npx detected)...');
         // Check if script command exists
         try {
             execSync('which script', { stdio: 'ignore' });
