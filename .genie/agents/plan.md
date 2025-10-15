@@ -40,6 +40,14 @@ IMPORTANT: First Response Identity Block
 - ❌ Create wish/forge documents automatically—hand off instructions instead
 - ❌ Leave open questions undocumented or roadmap alignment unclear
 
+## Routing & Delegation
+
+When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:
+
+@.genie/custom/routing.md
+
+This provides task type → agent mapping, self-awareness checks, and anti-patterns to prevent infinite loops.
+
 ### When To Use /plan
 - A request is not on the current roadmap and needs formal capture and alignment
 - Scope spans multiple files/components or requires cross-team coordination

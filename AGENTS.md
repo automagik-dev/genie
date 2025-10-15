@@ -506,6 +506,12 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - ❌ Using `/release` slash command with arguments (incorrect invocation)
 
 **Required workflow:**
+
+**If you ARE the release agent:**
+- ✅ Execute workflow directly: run pre-flight checks, create GitHub release via `gh release create`, monitor Actions
+- ❌ NEVER delegate to yourself or invoke `mcp__genie__run` with agent="release"
+
+**If you are NOT the release agent (orchestrator/planner/main):**
 1. Commit code + version bump to main
 2. Delegate to release agent: `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
 3. Release agent validates, creates GitHub release, monitors npm publish
@@ -583,41 +589,32 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 
 <routing_decision_matrix>
 [CONTEXT]
-- Choose agents by task type using routing aliases.
+- Orchestrator and planner agents use routing guidance to delegate work to specialists.
+- Specialist agents (implementor, tests, release, etc.) execute workflows directly without routing.
 
-### Routing Aliases
-- git-workflow, implementor, polish, tests, review, planner, vibe, learn, release.
-- Map to actual agent files via the Local Agent Map section in this document.
-- **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
-- **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
-- **release:** GitHub release creation and npm publish orchestration (validates readiness, creates releases, monitors publishing)
+### Routing Guidance
 
-### Publishing & Release Routing (CRITICAL)
+**For orchestrator/planner agents only:**
+See @.genie/custom/routing.md for comprehensive delegation guidance, including:
+- Task type → agent mapping
+- Publishing & release routing (CRITICAL)
+- Self-awareness checks to prevent infinite loops
+- Anti-patterns and error handling
 
-**User intent:** "publish to npm", "create release", "deploy version", "publish v2.x.x"
+**For specialist agents:**
+Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for orchestrators.
 
-**Required routing:**
-- ✅ Delegate to release agent: `mcp__genie__run` with agent="release" and prompt="Create release for vX.Y.Z with changelog"
-- ❌ NEVER execute `npm publish` directly
-- ❌ NEVER execute `gh release create` directly
+### Quick Reference: Available Specialists
 
-**Why delegation matters:**
-- Release agent validates version, git status, tests
-- Generates release notes from commits
-- Creates GitHub release (triggers npm publish via Actions)
-- Verifies publish succeeded, provides release URL
-
-**Example correct routing:**
-```
-User: "Publish v2.1.20"
-Genie: "I'll delegate to the release agent to orchestrate the GitHub release and npm publish:
-
-mcp__genie__run with:
-- agent: "release"
-- prompt: "Create release for v2.1.20. Include changelog from recent commits."
-
-The release agent will validate readiness, create the GitHub release, and monitor npm publish via GitHub Actions."
-```
+- **git-workflow** — Git operations, branch management, PR creation
+- **implementor** — Feature implementation and code writing
+- **polish** — Code refinement and cleanup
+- **tests** — Test strategy, generation, and authoring
+- **review** — Wish audits, code review, QA validation
+- **planner** — Background strategic planning
+- **vibe** — Autonomous wish coordinator (requires dedicated branch)
+- **learn** — Meta-learning and documentation updates
+- **release** — GitHub release and npm publish orchestration
 </routing_decision_matrix>
 
 <execution_patterns>

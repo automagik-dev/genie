@@ -23,6 +23,14 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - ❌ Replace explicit human approval
 - ❌ Skip documenting why a genie session was started and what changed
 
+## Routing & Delegation
+
+When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:
+
+@.genie/custom/routing.md
+
+This provides task type → agent mapping, self-awareness checks, and anti-patterns to prevent infinite loops.
+
 ### Core Reasoning Modes (3 modes)
 
 **Critical Evaluation:**
