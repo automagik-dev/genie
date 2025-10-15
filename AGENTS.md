@@ -798,33 +798,44 @@ Execute your workflow directly per your agent instructions. Do NOT delegate to y
 - Test strategy: scope, layering, rollback/monitoring concerns.
 - Retrospective: extract wins/misses/lessons for future work.
 
-### Mode Usage
-Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mode: planning` inside the prompt body to select the reasoning track. Genie automatically loads `.genie/custom/<mode>.md` when present, keeping the core prompt immutable while teams customize locally.
+### Neuron Consultation
 
-**Core Reasoning Modes (3):**
-- `challenge` – critical evaluation (auto-routes to socratic/debate/direct challenge)
-- `explore` – discovery-focused exploratory reasoning
-- `consensus` – multi-model perspective synthesis
+Genie operates through two cognitive layers: **strategic thinking modes** (via orchestrator neuron) and **execution specialists** (direct collaboration).
 
-**Specialized Modes (9):**
-- `plan` – pressure-test plans, map phases, uncover risks
-- `analyze` – system analysis and focused investigations with dependency mapping
-- `debug` – structured root-cause investigation
-- `audit` – risk assessment and security audit with impact/likelihood analysis
-- `tests` – test strategy, generation, authoring, and repair across all layers
-- `refactor` – design review and staged refactor planning with verification
-- `docgen` – audience-targeted outline
-- `tracer` – instrumentation/observability plan
-- `precommit` – validation gate and commit advisory
+**Strategic Thinking Modes (18 total - via orchestrator neuron):**
 
-**Custom-Only Modes (2):**
-- `compliance` – map controls, evidence, sign-offs
-- `retrospective` – capture wins, misses, lessons, next actions
+Use `mcp__genie__run` with `agent="orchestrator"` and include `Mode: <mode-name>` in the prompt to select the reasoning approach. Genie automatically loads `.genie/custom/<mode>.md` when present.
 
-**Delivery Agents (not modes):**
-- `git`, `implementor`, `polish`, `tests`, `review`
+**Core reasoning styles:**
+- `challenge` – Critical evaluation and adversarial pressure-testing
+- `explore` – Discovery-focused exploratory reasoning
+- `consensus` – Multi-model perspective synthesis
 
-> Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
+**Strategic analysis modes:**
+- `plan` – Plan pressure-testing, phase mapping, risk identification
+- `analyze` – System architecture audit and dependency mapping
+- `debug` – Root cause investigation with hypothesis testing
+- `audit` – Risk assessment and security audit with impact/likelihood analysis
+- `refactor` – Design review and refactor planning with verification
+- `docgen` – Documentation outline generation
+- `tracer` – Instrumentation/observability planning
+- `precommit` – Pre-commit validation gate and commit advisory
+
+**Custom modes (project-specific):**
+- `compliance` – Controls, evidence, sign-offs mapping
+- `retrospective` – Wins, misses, lessons capture
+
+**Execution Specialists (6 total - direct neurons):**
+
+Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
+- `implementor` – Feature implementation and code writing
+- `tests` – Test strategy, generation, authoring across all layers
+- `polish` – Code refinement and cleanup
+- `review` – Wish audits, code review, QA validation
+- `git` – ALL git and GitHub operations (branch, commit, PR, issues)
+- `release` – GitHub release and npm publish orchestration
+
+> Tip: Add project-specific guidance in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`; core files remain immutable.
 
 ### How To Run (MCP)
 - Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: plan. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
@@ -832,13 +843,20 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
 
-### Modes (quick reference)
-**Core (3):** challenge, explore, consensus
-**Specialized (6):** plan, analyze, debug, audit, refactor, docgen, tracer, precommit
-**Custom-only (2):** compliance, retrospective
+### Quick Reference
 
-- Full prompt templates live in `.genie/agents/orchestrator.md`
-- Project-specific adjustments belong in `.genie/custom/<mode>.md`; the core prompt auto-loads them
+**Strategic Thinking Modes (18 total):**
+- Core reasoning (3): challenge, explore, consensus
+- Analysis modes (8): plan, analyze, debug, audit, refactor, docgen, tracer, precommit
+- Custom modes (2): compliance, retrospective
+
+**Execution Specialists (6 total):**
+- Delivery: implementor, tests, polish, review
+- Infrastructure: git, release
+
+- Thinking mode templates live in `.genie/agents/orchestrator.md` and `.genie/agents/core/modes/`
+- Project-specific adjustments belong in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`
+- Core files remain immutable; extend via custom overrides only
 
 ### Outputs & Evidence
 - Low-stakes: append a short summary to the wish discovery section.

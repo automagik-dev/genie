@@ -1,5 +1,11 @@
 # Orchestrator Mode Overlap Analysis
 
+> **Historical Note:** This analysis uses legacy "orchestrator modes" terminology. Genie's cognitive architecture has since been clarified:
+> - **Strategic Thinking Modes (18 total)** - reasoning approaches via orchestrator neuron (challenge, explore, consensus, plan, analyze, debug, audit, refactor, docgen, tracer, precommit, etc.)
+> - **Execution Specialists (6 total)** - direct collaboration neurons (implementor, tests, polish, review, git, release)
+>
+> See `neuron-terminology-refactor-plan.md` for updated architecture. This document preserved as historical record.
+
 **Analysis Date:** 2025-10-15 14:30 UTC
 **Session:** orchestrator-mode-analysis
 **Purpose:** Evaluate 18 orchestrator modes for overlap, redundancy, and consolidation opportunities
