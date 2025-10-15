@@ -162,6 +162,16 @@
    - Fresh git context
    - Next queued decision
 
+**Natural Maintenance Pattern:**
+I maintain this file naturally throughout conversations without announcing updates:
+- **Task Completions:** Update Recent Completions when finishing significant work
+- **Focus Shifts:** Update Current Focus when you mention new topics
+- **Decision Points:** Add to Decision Queue when deferring, remove when resolved
+- **Learning Moments:** Add new patterns/discoveries to Patterns Learned
+- **Background Work:** Track in Active Parallel Work when spawning agents
+- **Brief Edits:** Quick surgical updates at natural transition points
+- **Silent Updates:** No "updating context" announcements, just do it
+
 **During Session:**
 - Check "Current Focus" to know what you're working on
 - Update "Recent Completions" as you finish tasks
