@@ -700,10 +700,34 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
   }
 
-  // If no real TTY or running under npx, use script command to allocate pseudo-TTY
-  // IMPORTANT: Always use script fallback for npx, even if TTY appears to be available
-  if (!hasRealTTY || isNpxSubprocess || pathsHaveNpx) {
-    console.log('[HANDOFF] Using script fallback (no real TTY or npx detected)...');
+  // For npx: just run Claude directly - it might show TTY warnings but will work
+  if (isNpxSubprocess || pathsHaveNpx) {
+    console.log('[HANDOFF] NPX detected - running claude directly (may show TTY warnings)...');
+
+    const child = spawn(command, args, {
+      cwd,
+      stdio: 'inherit',
+      shell: false
+    });
+
+    console.log(`[HANDOFF] Spawned ${command} PID: ${child.pid}`);
+
+    return new Promise((resolve, reject) => {
+      child.on('exit', (code) => {
+        console.log(`[HANDOFF] ${command} exited with code: ${code}`);
+        process.exit(code || 0);
+      });
+
+      child.on('error', (error) => {
+        console.error(`[HANDOFF] ${command} error:`, error);
+        reject(new Error(`Failed to start ${command}: ${error.message}`));
+      });
+    });
+  }
+
+  // For non-TTY non-npx situations, try script fallback
+  if (!hasRealTTY) {
+    console.log('[HANDOFF] No TTY detected, using script fallback...');
 
     // Check if script command exists
     try {
@@ -713,24 +737,22 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
       process.exit(1);
     }
 
-    // Build the command for script - properly escape arguments
+    // Build the command for script - properly escape for shell
     const escapedArgs = args.map(arg => {
-      // If arg contains spaces or special chars, wrap in single quotes
-      if (arg.includes(' ') || arg.includes('@') || arg.includes('"')) {
-        return `'${arg.replace(/'/g, "'\\''")}'`;
-      }
-      return arg;
+      // Escape single quotes in the argument
+      return arg.replace(/'/g, "'\\''");
     });
 
-    const fullCommand = `${command} ${escapedArgs.join(' ')}`;
+    // Build the full command with proper quoting
+    const fullCommand = `${command} ${escapedArgs.map(arg => `'${arg}'`).join(' ')}`;
 
     console.log(`[HANDOFF] Running: script -q -c "${fullCommand}" /dev/null`);
 
-    // Use shell to properly handle the command execution
+    // Don't use shell - pass args directly to avoid double interpretation
     const child = spawn('script', ['-q', '-c', fullCommand, '/dev/null'], {
       cwd,
       stdio: 'inherit',
-      shell: true
+      shell: false
     });
 
     console.log(`[HANDOFF] Spawned script PID: ${child.pid}`);
