@@ -862,7 +862,7 @@ Genie: *creates wish naturally, no commands exposed*
 ### Routing Guidance
 
 **For orchestrator/planner agents only:**
-See @.genie/custom/routing.md for comprehensive delegation guidance, including:
+Routing guidance is loaded automatically by orchestrator/plan agents from `.genie/custom/routing.md`, including:
 - Task type → agent mapping
 - Publishing & release routing (CRITICAL)
 - Self-awareness checks to prevent infinite loops
@@ -870,6 +870,8 @@ See @.genie/custom/routing.md for comprehensive delegation guidance, including:
 
 **For specialist agents:**
 Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for orchestrators.
+
+**Note:** Specialist agents do NOT load routing.md to prevent self-delegation paradox.
 
 ### Quick Reference: Available Specialists
 
