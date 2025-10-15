@@ -17,7 +17,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `forge.md` – breaks approved wish into execution groups + validation hooks (includes planner mode)
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
-- `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
+- `prompt.md` – advanced prompting guidance stored in `.genie/agents/neurons/prompt.md`
 - Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/` and load optional overrides from `.genie/custom/neurons/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
@@ -30,7 +30,8 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
 - `.genie/wishes/` – active wish folders (`<slug>/<slug>-wish.md`, `qa/`, `reports/`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
-- `.genie/agents/core/` – reusable helpers (genie, analyze, debug, commit workflow, prompt, etc.)
+- `.genie/agents/neurons/` – specialized agents (git, implementor, polish, tests, etc.)
+- `.genie/agents/workflows/` – orchestration workflows (plan, wish, forge, review, etc.)
 - `.genie/custom/` – project-specific overrides for core agents and Genie modes (kept outside `agents/` to avoid double registration)
 - Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
@@ -61,7 +62,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - Always reference files with `@` to auto-load content.
 - Define success/failure boundaries explicitly.
 - Encourage concrete examples/snippets over abstractions.
-- Advanced prompting guidance lives in `@.genie/agents/core/prompt.md`.
+- Advanced prompting guidance lives in `@.genie/agents/neurons/prompt.md`.
 
 ## Branch & Tracker Guidance
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
@@ -418,7 +419,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/core/refactor.md`). Customize them only by editing `.genie/custom/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the core prompt (`@.genie/agents/neurons/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/neurons/modes/refactor.md`). Customize them only by editing `.genie/custom/neurons/modes/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

@@ -610,6 +610,15 @@ Genie: "Great! I've captured this as a wish. Want me to break it down into tasks
 - If delegation fails 2+ times, stop and report error to user
 - Don't retry the same delegation pattern repeatedly
 
+❌ **Don't bypass delegation for "quick" multi-file work**
+- Never use Edit tool for batch operations (>2 files)
+- Never implement cleanup/refactoring work manually
+- Never fall into "I'll just fix this quickly" mindset
+- ALWAYS delegate to implementor/polish for multi-file changes
+- **Example violation:** Making 11 Edit calls to fix path references manually instead of delegating to implementor
+- **Result:** 13K tokens wasted, context bloat, poor separation of concerns
+- **Pattern to watch:** See cleanup work → jump to Edit tool → bypass delegation
+
 ---
 
 ## Self-Awareness Check
