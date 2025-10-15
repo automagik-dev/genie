@@ -75,34 +75,40 @@ For implementation work, Genie collaborates with specialized neurons:
 
 ```
 .genie/agents/               # Source of truth
-├── plan.md                  # Core workflow orchestrator (immutable)
-├── wish.md                  # Wish creation agent (immutable)
-├── forge.md                 # Execution planning agent (immutable)
-├── review.md                # QA validation agent (immutable)
-├── orchestrator.md          # Genie second-opinion interface (immutable)
-├── vibe.md                  # Autonomous coordinator (immutable)
-├── core/                    # Reusable core agents shipped with Genie
-│   ├── analyze.md
-│   ├── commit.md
-│   ├── docgen.md
-│   ├── git.md
+├── workflows/               # Core workflow agents (immutable)
+│   ├── plan.md              # Planning and discovery orchestration
+│   ├── wish.md              # Wish creation and blueprint
+│   ├── forge.md             # Execution breakdown and task planning
+│   ├── review.md            # Multi-mode validation (wish audit, code review, QA)
+│   ├── qa.md                # Self-improving QA validation
+│   └── vibe.md              # Autonomous wish coordinator
+├── neurons/                 # Execution specialists (immutable)
 │   ├── implementor.md
-│   ├── prompt.md
-│   ├── refactor.md
 │   ├── tests.md
-│   └── … (see AGENTS.md for the full list)
-├── qa/
-│   └── genie-qa.md
+│   ├── polish.md
+│   ├── git.md
+│   ├── release.md
+│   ├── learn.md
+│   ├── modes/               # Strategic thinking modes (18 total)
+│   │   ├── analyze.md
+│   │   ├── challenge.md
+│   │   ├── debug.md
+│   │   └── … (see AGENTS.md for full list)
+│   └── … (see AGENTS.md for complete list)
+├── orchestrator.md          # Thinking mode wrapper (immutable)
 └── README.md
 
+.genie/qa/                   # QA validation data
+├── checklist.md             # Living test scenarios (auto-updated via learn)
+└── evidence/                # Test outputs, logs, screenshots
+
 .genie/custom/               # Project-specific overrides consumed by core prompts
+├── qa.md                    # Project QA commands, baselines, scenarios
 ├── analyze.md
 ├── git.md
 ├── implementor.md
 ├── tests.md
-└── …
-
-.genie/custom/routing.md     # Routing triggers & neuron architecture (Genie only)
+└── routing.md               # Routing triggers & neuron architecture (Genie only)
 ```
 
 **Note:** `.claude/commands/` and `.claude/agents/` removed in natural language routing.

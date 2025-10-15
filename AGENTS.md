@@ -254,7 +254,7 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 **Implementation agents** (REQUIRE `permissionMode: default`):
 - Core delivery: `implementor`, `tests`, `polish`, `refactor`, `git`
 - Infrastructure: `install`, `learn`, `commit`, `review`
-- Workflow orchestrators: `wish`, `plan`, `forge`, `vibe`, `genie-qa`
+- Workflow orchestrators: `wish`, `plan`, `forge`, `vibe`, `qa`
 
 **Analysis agents** (READ-ONLY, no permissionMode needed):
 - `analyze`, `audit`, `debug`, `orchestrator`, `prompt`
