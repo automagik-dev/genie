@@ -700,6 +700,18 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
   }
 
+  const rawModeCheck = ensureRawModeSupport();
+  console.log(`[HANDOFF] Raw mode supported: ${rawModeCheck.supported}`);
+  if (!rawModeCheck.supported && rawModeCheck.message) {
+    console.log(`[HANDOFF] Raw mode check detail: ${rawModeCheck.message}`);
+  }
+
+  const fallbackMessage = rawModeCheck.supported
+    ? '[HANDOFF] Using script fallback to ensure TTY compatibility...'
+    : rawModeCheck.message === 'stdin is not a TTY'
+      ? '[HANDOFF] No TTY detected, using script fallback...'
+      : '[HANDOFF] Using script fallback due to raw mode limitations...';
+
   // For npx: Simply spawn Claude with inherited stdio
   if (isNpxSubprocess || pathsHaveNpx) {
     console.log('[HANDOFF] NPX detected - launching Claude...');
@@ -710,95 +722,122 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
 
     console.log('Starting Claude installation workflow...');
     console.log('');
+    console.log('[HANDOFF] Using script fallback for npx environment...');
 
-    // Just spawn Claude directly with inherited stdio
-    const child = spawn(command, args, {
-      cwd,
-      stdio: 'inherit',
-      env: { ...process.env, FORCE_TTY: '1' } // Try to force TTY
-    });
-
-    child.on('exit', (code: number | null) => {
-      process.exit(code || 0);
-    });
-
-    child.on('error', (error: Error) => {
-      console.error('Claude failed to start:', error.message);
-      console.log('');
-      console.log('Please run manually:');
-      console.log(`  ${command} ${args.join(' ')}`);
-      process.exit(1);
-    });
-
-    return new Promise(() => {}); // Keep alive
+    await runWithScriptOrExit(spawn, execSync, command, args, cwd);
+    return;
   }
 
-  // For non-TTY non-npx situations, try script fallback
-  if (!hasRealTTY) {
-    console.log('[HANDOFF] No TTY detected, using script fallback...');
+  console.log(fallbackMessage);
+  await runWithScriptOrExit(spawn, execSync, command, args, cwd);
+}
 
-    // Check if script command exists
+interface RawModeCheckResult {
+  supported: boolean;
+  message?: string;
+}
+
+function ensureRawModeSupport(): RawModeCheckResult {
+  if (!process.stdin.isTTY) {
+    return { supported: false, message: 'stdin is not a TTY' };
+  }
+
+  const setRawMode = process.stdin.setRawMode?.bind(process.stdin);
+  if (typeof setRawMode !== 'function') {
+    return { supported: false, message: 'stdin does not expose setRawMode' };
+  }
+
+  const wasRaw = process.stdin.isRaw;
+  try {
+    setRawMode(true);
+    setRawMode(wasRaw);
+    return { supported: true };
+  } catch (error: any) {
+    const code = error?.code;
+    const detail = code === 'EIO'
+      ? 'setRawMode failed with EIO'
+      : error?.message ?? String(error);
     try {
-      execSync('which script', { stdio: 'ignore' });
+      setRawMode(wasRaw);
     } catch {
-      console.error('ERROR: script command not found. Install it or run: npm install -g automagik-genie && genie init');
-      process.exit(1);
+      // ignore restore errors
     }
+    return { supported: false, message: detail };
+  }
+}
 
-    // Build the command for script - properly escape for shell
-    const escapedArgs = args.map(arg => {
-      // Escape single quotes in the argument
-      return arg.replace(/'/g, "'\\''");
-    });
-
-    // Build the full command with proper quoting
-    const fullCommand = `${command} ${escapedArgs.map(arg => `'${arg}'`).join(' ')}`;
-
-    console.log(`[HANDOFF] Running: script -q -c "${fullCommand}" /dev/null`);
-
-    // Don't use shell - pass args directly to avoid double interpretation
-    const child = spawn('script', ['-q', '-c', fullCommand, '/dev/null'], {
-      cwd,
-      stdio: 'inherit',
-      shell: false
-    });
-
-    console.log(`[HANDOFF] Spawned script PID: ${child.pid}`);
-
-    return new Promise((resolve, reject) => {
-      child.on('exit', (code) => {
-        console.log(`[HANDOFF] Script exited with code: ${code}`);
-        process.exit(code || 0);
-      });
-
-      child.on('error', (error) => {
-        console.error(`[HANDOFF] Script error:`, error);
-        reject(new Error(`Failed to start script: ${error.message}`));
-      });
-    });
+async function runWithScriptFallback(
+  spawnFn: typeof import('child_process').spawn,
+  execSyncFn: typeof import('child_process').execSync,
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<number> {
+  try {
+    execSyncFn('which script', { stdio: 'ignore' });
+  } catch {
+    console.error('ERROR: script command not found. Install it or run: npm install -g automagik-genie && genie init');
+    process.exit(1);
   }
 
-  // Normal spawn when we have a real TTY
-  console.log(`[HANDOFF] About to spawn: ${command}`);
-  const child = spawn(command, args, {
-    cwd,
-    stdio: 'inherit',
-    shell: false
-  });
+  const escapedArgs = args.map(arg => arg.replace(/'/g, "'\\''"));
+  const fullCommand = `${command} ${escapedArgs.map(arg => `'${arg}'`).join(' ')}`;
 
-  console.log(`[HANDOFF] Spawned child PID: ${child.pid}`);
+  console.log(`[HANDOFF] Running: script -q -c "${fullCommand}" /dev/null`);
 
-  // Wait for executor to complete, then exit with its code
-  return new Promise((resolve, reject) => {
-    child.on('exit', (code) => {
-      console.log(`[HANDOFF] Child exited with code: ${code}`);
-      process.exit(code || 0);
+  try {
+    const exitCode = await spawnWithPromise(spawnFn, 'script', ['-q', '-c', fullCommand, '/dev/null'], cwd, {
+      stdio: 'inherit',
+      shell: false,
+      env: { ...process.env, FORCE_TTY: '1' }
     });
+    return exitCode;
+  } catch (error: any) {
+    console.error(`[HANDOFF] Script error:`, error?.message ?? error);
+    throw new Error(`Failed to start script: ${error?.message ?? error}`);
+  }
+}
 
+async function spawnWithPromise(
+  spawnFn: typeof import('child_process').spawn,
+  command: string,
+  args: string[],
+  cwd: string,
+  options: import('child_process').SpawnOptions
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    console.log(`[HANDOFF] Spawning ${command} ${args.join(' ')} (cwd=${cwd})`);
+    const child = spawnFn(command, args, { cwd, ...options });
+    child.on('spawn', () => {
+      console.log(`[HANDOFF] ${command} started with PID ${child.pid}`);
+    });
+    child.on('exit', (code) => {
+      console.log(`[HANDOFF] ${command} exited with code: ${code}`);
+      resolve(code ?? 0);
+    });
     child.on('error', (error) => {
-      console.error(`[HANDOFF] Child error:`, error);
-      reject(new Error(`Failed to start ${command}: ${error.message}`));
+      reject(error);
     });
   });
 }
 
+async function runWithScriptOrExit(
+  spawnFn: typeof import('child_process').spawn,
+  execSyncFn: typeof import('child_process').execSync,
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<void> {
+  try {
+    const exitCode = await runWithScriptFallback(spawnFn, execSyncFn, command, args, cwd);
+    if (exitCode !== 0) {
+      throw new Error(`script exited with code ${exitCode}`);
+    }
+  } catch (error: any) {
+    console.error('Claude failed to start:', error?.message ?? error);
+    console.log('');
+    console.log('Please run manually:');
+    console.log(`  ${command} ${args.join(' ')}`);
+    process.exit(1);
+  }
+}
