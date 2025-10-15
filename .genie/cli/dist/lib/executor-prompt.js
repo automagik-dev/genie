@@ -1,43 +1,81 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.promptExecutorChoice = promptExecutorChoice;
+const readline = __importStar(require("readline"));
+/**
+ * Simple readline-based executor selection prompt (Group C - token-efficient output)
+ * Replaces Ink-based interactive UI with minimal terminal prompt
+ */
 async function promptExecutorChoice(availableExecutors, defaultExecutor) {
-    const React = await import('react');
-    const { render } = await import('ink');
-    const { Box, Text, useInput, useApp } = await import('ink');
-    const ExecutorSelector = ({ executors, defaultExecutor, onSelect }) => {
-        const [selectedIndex, setSelectedIndex] = React.useState(executors.indexOf(defaultExecutor) >= 0 ? executors.indexOf(defaultExecutor) : 0);
-        const { exit } = useApp();
-        useInput((input, key) => {
-            if (key.upArrow || input === 'k') {
-                setSelectedIndex((prev) => (prev > 0 ? prev - 1 : executors.length - 1));
-            }
-            if (key.downArrow || input === 'j') {
-                setSelectedIndex((prev) => (prev < executors.length - 1 ? prev + 1 : 0));
-            }
-            if (key.return) {
-                onSelect(executors[selectedIndex]);
-                exit();
-            }
-            if (key.escape || (key.ctrl && input === 'c')) {
-                onSelect(defaultExecutor);
-                exit();
-            }
-        });
-        return React.createElement(Box, { flexDirection: 'column', paddingY: 1 }, React.createElement(Box, { marginBottom: 1 }, React.createElement(Text, { bold: true }, 'Select executor:')), ...executors.map((executor, index) => {
-            const isSelected = index === selectedIndex;
-            const isDefault = executor === defaultExecutor;
-            return React.createElement(Box, { key: executor, marginLeft: 2 }, React.createElement(Text, { color: isSelected ? 'cyan' : 'white' }, isSelected ? '❯ ' : '  ', React.createElement(Text, { bold: isSelected }, executor), isDefault && React.createElement(Text, { dimColor: true }, ' (default)')));
-        }), React.createElement(Box, { marginTop: 1, marginLeft: 2 }, React.createElement(Text, { dimColor: true }, '↑↓: Navigate • Enter: Select • Esc: Use default')));
-    };
+    // If only one executor, return it immediately
+    if (availableExecutors.length === 1) {
+        return availableExecutors[0];
+    }
     return new Promise((resolve) => {
-        const { unmount } = render(React.createElement(ExecutorSelector, {
-            executors: availableExecutors,
-            defaultExecutor,
-            onSelect: (selected) => {
-                unmount();
-                resolve(selected);
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        console.log('\nSelect executor:');
+        availableExecutors.forEach((executor, index) => {
+            const isDefault = executor === defaultExecutor;
+            const marker = isDefault ? '(default)' : '';
+            console.log(`  ${index + 1}. ${executor} ${marker}`);
+        });
+        console.log('');
+        const defaultIndex = availableExecutors.indexOf(defaultExecutor);
+        const prompt = defaultIndex >= 0 ? `Choice [1-${availableExecutors.length}] (default: ${defaultIndex + 1}): ` : `Choice [1-${availableExecutors.length}]: `;
+        rl.question(prompt, (answer) => {
+            rl.close();
+            // Handle empty input (use default)
+            if (!answer.trim() && defaultIndex >= 0) {
+                console.log(`Using default: ${defaultExecutor}\n`);
+                resolve(defaultExecutor);
+                return;
             }
-        }));
+            // Parse numeric input
+            const choice = parseInt(answer.trim(), 10);
+            if (isNaN(choice) || choice < 1 || choice > availableExecutors.length) {
+                console.log(`Invalid choice. Using default: ${defaultExecutor}\n`);
+                resolve(defaultExecutor);
+                return;
+            }
+            const selected = availableExecutors[choice - 1];
+            console.log(`Selected: ${selected}\n`);
+            resolve(selected);
+        });
     });
 }
