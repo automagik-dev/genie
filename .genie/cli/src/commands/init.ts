@@ -356,11 +356,11 @@ async function copyTemplateClaude(templateClaude: string, targetClaude: string):
 }
 
 async function copyTemplateRootFiles(packageRoot: string, targetDir: string): Promise<void> {
-  const templatesDir = path.join(packageRoot, 'templates');
+  const templatesBaseDir = path.join(packageRoot, 'templates', 'base');
   const rootFiles = ['AGENTS.md', 'CLAUDE.md'];
 
   for (const file of rootFiles) {
-    const sourcePath = path.join(templatesDir, file);
+    const sourcePath = path.join(templatesBaseDir, file);
     const targetPath = path.join(targetDir, file);
 
     if (await pathExists(sourcePath)) {
