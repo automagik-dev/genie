@@ -143,9 +143,9 @@ See @AGENTS.md §GitHub Workflow Integration for:
 - **Template conventions**: Required `[Type]` title patterns for all issues
 - **Quick capture pattern**: Document bugs/ideas without losing focus
 - **Cross-referencing**: Link issues ↔ wishes ↔ PRs
-- **Agent reference**: `.genie/agents/core/github-workflow.md`
+- **Agent reference**: `.genie/agents/neurons/git.md`
 
-**Critical:** ALWAYS use `github-workflow` agent for issue creation. NEVER use `gh issue create` directly without template structure.
+**Critical:** ALWAYS use `git` agent for issue creation. NEVER use `gh issue create` directly without template structure.
 
 ## Slash Commands
 

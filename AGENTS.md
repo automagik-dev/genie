@@ -27,7 +27,7 @@ List all issues assigned to you:
 2. Present options:
    - **Continue existing work**: Pick from assigned issues
    - **Start new inquiry**: Use `/plan` for new feature/bug investigation
-   - **Quick task capture**: Use `github-workflow` agent to document idea without losing focus
+   - **Quick task capture**: Use `git` agent to document idea without losing focus
 
 **Example welcome:**
 ```
@@ -215,7 +215,7 @@ grep -A 10 "Welcome Pattern" AGENTS.md | grep "/plan"
 
 **Example experiments:**
 - "Let me try using /plan instead of MCP for this workflow and observe the difference..."
-- "Testing if github-workflow can handle bulk label updates..."
+- "Testing if git can handle bulk label updates..."
 - "Experimenting with combining orchestrator + implementor agents for this task..."
 
 ### Safe Experimentation Guidelines

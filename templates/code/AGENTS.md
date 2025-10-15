@@ -18,7 +18,7 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/core/prompt.md`
-- Specialized + delivery agents (git-workflow, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/core/` and load optional overrides from `.genie/custom/<agent>.md`.
+- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/` and load optional overrides from `.genie/custom/neurons/<agent>.md`.
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
@@ -324,7 +324,7 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Choose agents by task type using routing aliases.
 
 ### Routing Aliases
-- git-workflow, implementor, polish, tests, review, planner, vibe, learn.
+- git, implementor, polish, tests, review, planner, vibe, learn.
 - Map to actual agent files via the Local Agent Map section in this document.
 - **vibe:** Autonomous wish coordinator with Genie validation (requires dedicated branch `feat/<slug>`)
 - **learn:** Meta-learning agent for surgical documentation updates (violations, patterns, workflows, capabilities)
@@ -394,7 +394,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 - `retrospective` – capture wins, misses, lessons, next actions
 
 **Delivery Agents (not modes):**
-- `git-workflow`, `implementor`, `polish`, `tests`, `review`
+- `git`, `implementor`, `polish`, `tests`, `review`
 
 > Tip: add repo-specific guidance in `.genie/custom/<mode>.md`; no edits should be made to the core files.
 
