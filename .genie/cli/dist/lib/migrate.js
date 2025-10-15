@@ -13,19 +13,37 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 // Core agents that ship with npm package (should NOT be in user .genie/agents/)
+// Reflects current structure: workflows/, neurons/, neurons/modes/
 const CORE_AGENT_IDS = [
-    // Top-level orchestrators
-    'plan', 'wish', 'forge', 'review', 'orchestrator', 'vibe',
-    // Core delivery agents
-    'core/analyze', 'core/audit', 'core/commit', 'core/debug',
-    'core/git-workflow', 'core/github-workflow', 'core/implementor',
-    'core/install', 'core/learn', 'core/polish', 'core/prompt',
-    'core/refactor', 'core/tests',
-    // Orchestrator modes
-    'core/modes/challenge', 'core/modes/consensus', 'core/modes/docgen',
-    'core/modes/explore', 'core/modes/tracer',
-    // QA agents
-    'qa/genie-qa'
+    // Workflow orchestrators (.genie/agents/workflows/)
+    'workflows/plan',
+    'workflows/wish',
+    'workflows/forge',
+    'workflows/review',
+    'workflows/vibe',
+    'workflows/qa',
+    // Core neurons (.genie/agents/neurons/)
+    'neurons/orchestrator',
+    'neurons/commit',
+    'neurons/git',
+    'neurons/implementor',
+    'neurons/install',
+    'neurons/learn',
+    'neurons/polish',
+    'neurons/prompt',
+    'neurons/release',
+    'neurons/roadmap',
+    'neurons/tests',
+    // Strategic thinking modes (.genie/agents/neurons/modes/)
+    'neurons/modes/analyze',
+    'neurons/modes/audit',
+    'neurons/modes/challenge',
+    'neurons/modes/consensus',
+    'neurons/modes/debug',
+    'neurons/modes/docgen',
+    'neurons/modes/explore',
+    'neurons/modes/refactor',
+    'neurons/modes/tracer',
 ];
 /**
  * Detects if this is a clean install or needs migration
@@ -39,22 +57,36 @@ function detectInstallType() {
     if (!fs_1.default.existsSync(agentsDir)) {
         return 'clean';
     }
-    // Check if agents/core/ exists with proper structure
-    const coreDir = path_1.default.join(agentsDir, 'core');
-    if (fs_1.default.existsSync(coreDir)) {
-        // Has core/ subdirectory - likely new structure OR mid-migration
-        const coreAgents = fs_1.default.readdirSync(coreDir).filter(f => f.endsWith('.md'));
-        // If core/ has agents, this is old structure (agents in repo)
-        // New structure has empty .genie/agents/, core comes from npm
-        if (coreAgents.length > 0) {
+    // Check for new structure (workflows/ and neurons/ subdirectories)
+    const workflowsDir = path_1.default.join(agentsDir, 'workflows');
+    const neuronsDir = path_1.default.join(agentsDir, 'neurons');
+    if (fs_1.default.existsSync(workflowsDir) && fs_1.default.existsSync(neuronsDir)) {
+        // Has new structure - check if agents come from npm or are in repo
+        const workflowAgents = fs_1.default.existsSync(workflowsDir)
+            ? fs_1.default.readdirSync(workflowsDir).filter(f => f.endsWith('.md')).length
+            : 0;
+        const neuronAgents = fs_1.default.existsSync(neuronsDir)
+            ? fs_1.default.readdirSync(neuronsDir).filter(f => f.endsWith('.md')).length
+            : 0;
+        // If agents exist in repo, old structure (should come from npm)
+        if (workflowAgents > 0 || neuronAgents > 0) {
             return 'old_genie';
         }
         return 'already_new';
     }
-    // Check for top-level core agents (very old structure)
+    // Check for legacy core/ structure
+    const coreDir = path_1.default.join(agentsDir, 'core');
+    if (fs_1.default.existsSync(coreDir)) {
+        const coreAgents = fs_1.default.readdirSync(coreDir).filter(f => f.endsWith('.md'));
+        // If core/ has agents, this is old structure
+        if (coreAgents.length > 0) {
+            return 'old_genie';
+        }
+    }
+    // Check for very old structure (top-level agents)
     const topLevelAgents = fs_1.default.readdirSync(agentsDir).filter(f => f.endsWith('.md'));
-    const hasCoreAgents = topLevelAgents.some(f => CORE_AGENT_IDS.map(id => id.split('/').pop()).includes(f.replace('.md', '')));
-    return hasCoreAgents ? 'old_genie' : 'already_new';
+    const hasOldCoreAgents = topLevelAgents.some(f => ['plan', 'wish', 'forge', 'review', 'orchestrator', 'vibe'].includes(f.replace('.md', '')));
+    return hasOldCoreAgents ? 'old_genie' : 'already_new';
 }
 /**
  * Creates timestamped backup of .genie/ directory
@@ -253,8 +285,12 @@ async function runMigration(options = {}) {
                     (0, child_process_1.execSync)(`rm -rf "${dir}"`);
                 }
             };
+            // Clean up legacy structure directories (if they exist)
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'core'));
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'qa'));
+            // Clean up current structure directories (should be empty after core removal)
+            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'workflows'));
+            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'neurons'));
         }
         // Step 6: Copy new templates
         console.log('📦 Installing new template structure...');
