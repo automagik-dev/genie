@@ -7,8 +7,8 @@ exports.readSessionIdFromLog = readSessionIdFromLog;
 exports.extractSessionIdFromContent = extractSessionIdFromContent;
 exports.buildJsonlView = buildJsonlView;
 const fs_1 = __importDefault(require("fs"));
-const chat_1 = require("../views/chat");
 const transcript_utils_1 = require("./transcript-utils");
+const markdown_formatter_1 = require("../lib/markdown-formatter");
 function readSessionIdFromLog(logFile) {
     if (!logFile)
         return null;
@@ -206,26 +206,63 @@ function buildJsonlView(ctx) {
     }
     let allMessages = parseConversation(jsonl);
     let messages;
-    let showFull = false;
+    let mode = 'recent';
     if (parsed.options.full) {
         messages = allMessages;
-        showFull = true;
+        mode = 'overview';
     }
     else if (parsed.options.live) {
         messages = (0, transcript_utils_1.sliceForLatest)(allMessages);
+        mode = 'final';
     }
     else {
         messages = allMessages.slice(-5);
+        mode = 'recent';
     }
-    const metrics = extractMetrics(jsonl);
-    return (0, chat_1.buildChatView)({
-        agent: entry.agent,
+    const metricsArray = extractMetrics(jsonl);
+    // Convert metrics array to SessionMeta format
+    const tokens = metricsArray.find(m => m.label === 'Tokens');
+    const model = metricsArray.find(m => m.label === 'Model');
+    const toolCalls = metricsArray.find(m => m.label === 'Tool Calls');
+    const meta = {
         sessionId: entry.sessionId || null,
-        status: null,
-        messages,
-        meta: metrics,
-        showFull
+        agent: entry.agent || 'claude',
+        status: entry.status || null,
+        executor: 'claude',
+        model: model?.value || undefined,
+        tokens: tokens ? parseTokenString(tokens.value) : undefined,
+        toolCalls: toolCalls ? parseToolCallsString(toolCalls.value) : undefined
+    };
+    return (0, markdown_formatter_1.formatTranscriptMarkdown)(messages, meta, mode);
+}
+/**
+ * Parse "in:X out:Y total:Z" format into token object
+ */
+function parseTokenString(value) {
+    const match = value.match(/in:(\d+) out:(\d+) total:(\d+)/);
+    if (!match)
+        return undefined;
+    return {
+        input: parseInt(match[1], 10),
+        output: parseInt(match[2], 10),
+        total: parseInt(match[3], 10)
+    };
+}
+/**
+ * Parse "N calls (tool1:M tool2:K)" format into tool calls array
+ */
+function parseToolCallsString(value) {
+    const match = value.match(/\(([^)]+)\)/);
+    if (!match)
+        return undefined;
+    const toolsStr = match[1];
+    const tools = toolsStr.split(' ')
+        .filter(t => t.includes(':'))
+        .map(t => {
+        const [name, count] = t.split(':');
+        return { name, count: parseInt(count, 10) };
     });
+    return tools.length > 0 ? tools : undefined;
 }
 exports.default = {
     readSessionIdFromLog,

@@ -34,8 +34,8 @@ export async function runRuns(
     agent,
     status: resolveDisplayStatus(entry),
     executor: String(entry.executor || 'unknown'),
-    started: entry.created ? safeIsoString(entry.created) : undefined,
-    updated: entry.lastUsed ? safeIsoString(entry.lastUsed) : undefined
+    started: entry.created ? safeIsoString(entry.created) ?? undefined : undefined,
+    updated: entry.lastUsed ? safeIsoString(entry.lastUsed) ?? undefined : undefined
   }));
 
   const markdown = formatSessionList(sessions);

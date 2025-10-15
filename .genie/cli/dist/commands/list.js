@@ -18,8 +18,8 @@ async function runRuns(parsed, config, paths) {
         agent,
         status: (0, session_helpers_1.resolveDisplayStatus)(entry),
         executor: String(entry.executor || 'unknown'),
-        started: entry.created ? (0, utils_1.safeIsoString)(entry.created) : undefined,
-        updated: entry.lastUsed ? (0, utils_1.safeIsoString)(entry.lastUsed) : undefined
+        started: entry.created ? (0, utils_1.safeIsoString)(entry.created) ?? undefined : undefined,
+        updated: entry.lastUsed ? (0, utils_1.safeIsoString)(entry.lastUsed) ?? undefined : undefined
     }));
     const markdown = (0, markdown_formatter_js_1.formatSessionList)(sessions);
     console.log(markdown);

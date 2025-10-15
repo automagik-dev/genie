@@ -13,7 +13,6 @@ const transcript_utils_1 = require("../executors/transcript-utils");
 const executor_registry_1 = require("../lib/executor-registry");
 const executor_config_1 = require("../lib/executor-config");
 const config_defaults_1 = require("../lib/config-defaults");
-const utils_1 = require("../lib/utils");
 async function runView(parsed, config, paths) {
     const [sessionId] = parsed.commandArgs;
     if (!sessionId) {
@@ -252,27 +251,11 @@ async function runView(parsed, config, paths) {
             }
         };
     }
-    if (logViewer?.buildJsonlView) {
-        const style = 'genie';
-        const envelope = logViewer.buildJsonlView({
-            render: {
-                entry,
-                jsonl,
-                raw
-            },
-            parsed,
-            paths,
-            store,
-            save: session_store_1.saveSessions,
-            formatPathRelative: utils_1.formatPathRelative,
-            style
-        });
-        await emitView(envelope, parsed.options);
-        if (warnings.length) {
-            await emitView(buildWarningView('Session warnings', warnings), parsed.options);
-        }
-        return;
-    }
+    // NOTE: Executor-specific buildJsonlView disabled during Ink removal
+    // TODO: Restore or convert to markdown if needed
+    // if (logViewer?.buildJsonlView) {
+    //   ... (commented out)
+    // }
     const transcript = (0, transcript_utils_1.buildTranscriptFromEvents)(jsonl);
     if (!parsed.options.full && !parsed.options.live) {
         const lastMessage = transcript.length > 0 ? transcript[transcript.length - 1] : null;

@@ -16,7 +16,7 @@ import {
   type SessionEntry,
   type OutputMode
 } from '../markdown-formatter.js';
-import type { ChatMessage } from '../../views/chat.js';
+import type { ChatMessage } from '../../executors/transcript-utils.js';
 
 // Simple test framework
 let testCount = 0;

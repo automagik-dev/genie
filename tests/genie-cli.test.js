@@ -32,7 +32,7 @@ const { loadSessions } = require('../.genie/cli/dist/session-store.js');
     { type: 'item.completed', item: { id: 'item_1', item_type: 'assistant_message', text: 'Assistant output' } }
   ];
   const raw = jsonl.map((line) => JSON.stringify(line)).join('\n');
-  const envelope = buildJsonlView({
+  const markdown = buildJsonlView({
     render: {
       entry,
       jsonl,
@@ -42,22 +42,12 @@ const { loadSessions } = require('../.genie/cli/dist/session-store.js');
     paths: { baseDir: '.' },
     store: { version: 1, agents: { 'codex-test': entry } },
     save: () => {},
-    formatPathRelative: (targetPath) => targetPath,
-    style: 'compact'
+    formatPathRelative: (targetPath) => targetPath
   });
   assert.strictEqual(entry.sessionId, 'render-session-1', 'entry should capture new session id');
-  const transcriptSection = envelope.body.children.find(
-    (child) =>
-      child.type === 'layout' &&
-      child.direction === 'column' &&
-      Array.isArray(child.children) &&
-      child.children.some((nested) => nested.title === 'Assistant')
-  );
-  assert.ok(transcriptSection, 'transcript layout should be present');
-  const assistantBlock = transcriptSection.children.find(
-    (child) => child.title === 'Assistant' && Array.isArray(child.body) && child.body.includes('Assistant output')
-  );
-  assert.ok(assistantBlock, 'assistant callout should include assistant output text');
+  assert.strictEqual(typeof markdown, 'string', 'buildJsonlView should return markdown string');
+  assert.ok(markdown.length > 0, 'markdown output should not be empty');
+  assert.ok(markdown.includes('Assistant output'), 'markdown should include assistant output text');
 })();
 
 async function runCliCoreTests() {

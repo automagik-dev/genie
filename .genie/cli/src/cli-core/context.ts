@@ -2,10 +2,9 @@ import type BackgroundManager from '../background-manager';
 import type { Executor } from '../executors/types';
 import type { SessionService } from './session-service';
 import type { ConfigPaths, GenieConfig, CLIOptions, ParsedCommand } from './types';
-import type { ViewEnvelope } from '../view';
 
 export type EmitViewFn = (
-  envelope: ViewEnvelope,
+  content: string,
   options: CLIOptions,
   opts?: { stream?: NodeJS.WriteStream; forceJson?: boolean }
 ) => Promise<void>;
