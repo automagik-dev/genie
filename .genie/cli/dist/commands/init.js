@@ -577,21 +577,43 @@ async function handoffToExecutor(executor, cwd) {
     if (pathsHaveNpx) {
         console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
     }
-    // For npx: Complete init and tell user to run the command manually
+    // For npx: Launch in a new shell session to escape TTY jail
     if (isNpxSubprocess || pathsHaveNpx) {
-        console.log('[HANDOFF] NPX environment detected - cannot launch Claude directly from npx');
-        console.log('');
-        console.log('╭────────────────────────────────────────────────────╮');
-        console.log('│ ✅ Genie installation completed!                    │');
-        console.log('│                                                    │');
-        console.log('│ Now run this command to complete setup:           │');
-        console.log('│                                                    │');
-        console.log(`│   ${command} ${args.join(' ')}${' '.repeat(Math.max(0, 48 - command.length - args.join(' ').length))}│`);
-        console.log('│                                                    │');
-        console.log('╰────────────────────────────────────────────────────╯');
-        console.log('');
-        // Exit cleanly so user can run the command
-        process.exit(0);
+        console.log('[HANDOFF] NPX detected - launching in new shell to escape TTY issues...');
+        // Build the full command
+        const fullCommand = `${command} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+        // Use exec to replace the current process with a fresh shell running our command
+        // This escapes the npx TTY environment
+        const { exec } = require('child_process');
+        console.log(`[HANDOFF] Starting ${command} in fresh shell...`);
+        // Execute in a new bash session with proper TTY allocation
+        const shellCmd = process.platform === 'win32'
+            ? `cmd /c "${fullCommand}"`
+            : `bash -c "${fullCommand}"`;
+        const child = exec(shellCmd, {
+            cwd,
+            stdio: 'inherit',
+            shell: true
+        });
+        // Pipe all stdio
+        if (child.stdout)
+            child.stdout.pipe(process.stdout);
+        if (child.stderr)
+            child.stderr.pipe(process.stderr);
+        if (process.stdin.isTTY) {
+            process.stdin.pipe(child.stdin);
+        }
+        child.on('exit', (code) => {
+            process.exit(code || 0);
+        });
+        child.on('error', (err) => {
+            console.error(`[HANDOFF] Failed to launch ${command}:`, err);
+            console.log('');
+            console.log('Please run manually:');
+            console.log(`  ${fullCommand}`);
+            process.exit(1);
+        });
+        return new Promise(() => { }); // Keep process alive
     }
     // For non-TTY non-npx situations, try script fallback
     if (!hasRealTTY) {
