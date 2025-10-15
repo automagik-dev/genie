@@ -36,8 +36,10 @@ async function runInit(parsed, _config, _paths) {
         const flags = parseFlags(parsed.commandArgs);
         const cwd = process.cwd();
         const packageRoot = (0, paths_1.getPackageRoot)();
-        // Determine template type (default to 'code' for now, will add interactive selector later)
-        const template = flags.template || 'code';
+        // Determine template type
+        // Direct: genie init code/create (automation-friendly)
+        // Interactive: genie init (human discovery)
+        const template = flags.template || await promptTemplateChoice();
         const templateGenie = (0, paths_1.getTemplateGeniePath)(template);
         const templateClaude = (0, paths_1.getTemplateClaudePath)(template);
         const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
@@ -362,6 +364,21 @@ async function detectAvailableExecutors() {
         // Not available
     }
     return available;
+}
+async function promptTemplateChoice() {
+    // Show available templates and exit
+    // User picks by running: genie init <template>
+    console.log('');
+    console.log('🧞 Genie Init - Choose Your Template');
+    console.log('');
+    console.log('Available templates:');
+    console.log('  genie init code      - Software development (full-stack, testing, git)');
+    console.log('  genie init create    - Research, writing, planning (self-adaptive AI)');
+    console.log('');
+    console.log('Example:');
+    console.log('  genie init code');
+    console.log('');
+    process.exit(0);
 }
 async function promptProvider(availableExecutors) {
     if (availableExecutors.length === 0) {
