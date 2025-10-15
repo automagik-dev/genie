@@ -1,5 +1,6 @@
 # 🧞 MULTI-TEMPLATE ARCHITECTURE WISH
 **Status:** DRAFT
+**GitHub Issue:** #37 - Multi-template architecture for project-type scaffolds
 **Roadmap Item:** INIT-TEMPLATES – Separate framework dev from distribution templates + support project-type scaffolds
 **Mission Link:** @.genie/product/mission.md §Pitch
 **Standards:** @.genie/standards/best-practices.md §Core Principles

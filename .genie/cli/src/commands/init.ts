@@ -447,8 +447,8 @@ async function detectAvailableExecutors(): Promise<string[]> {
 }
 
 async function promptTemplateChoice(): Promise<TemplateType> {
-  // Show available templates and exit
-  // User picks by running: genie init <template>
+  // Template choice is mandatory - show help and exit
+  // User must run: genie init <template>
   console.log('');
   console.log('🧞 Genie Init - Choose Your Template');
   console.log('');

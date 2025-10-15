@@ -7,7 +7,7 @@
 
 ## Commit Message Standards
 - Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
-- Include the Genie co-author line: `Co-authored-by: Genie 🧞 <genie@{{YOUR_DOMAIN}}>`.
+- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
 - Reference the active wish slug/ID in the body when applicable.
 
 ## Evidence & Reporting

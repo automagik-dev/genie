@@ -1,5 +1,6 @@
 # 🧞 PROVIDER RUNTIME OVERRIDE WISH
 **Status:** DRAFT
+**GitHub Issue:** #40 - Provider runtime override with intelligent fallbacks
 **Roadmap Item:** EXEC-PROVIDER – Runtime provider selection with intelligent fallbacks
 **Mission Link:** @.genie/product/mission.md §Pitch
 **Standards:** @.genie/standards/best-practices.md §Core Principles

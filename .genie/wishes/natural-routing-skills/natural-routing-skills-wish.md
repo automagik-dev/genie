@@ -1,5 +1,6 @@
 # 🧞 Natural Routing Skills Enhancement WISH
 **Status:** COMPLETE ✅ (100/100)
+**GitHub Issue:** #47 - [Feature] Natural routing skills enhancement (closed)
 **Roadmap Item:** Phase 1 – @.genie/product/roadmap.md §Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md §Meta-Agent Feedback Harness
 **Standards:** @.genie/standards/best-practices.md §Core Principles

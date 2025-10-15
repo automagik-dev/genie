@@ -1,6 +1,7 @@
 # 🧞 CORE/TEMPLATE AGENT SEPARATION WISH
 
 **Status:** IN PROGRESS
+**GitHub Issue:** #41 - Core/Template Agent Separation
 **Roadmap Item:** NEW – Framework restructuring for clean core/template separation
 **Mission Link:** @.genie/product/mission.md §Framework Architecture
 **Standards:** @.genie/standards/best-practices.md §Code Organization

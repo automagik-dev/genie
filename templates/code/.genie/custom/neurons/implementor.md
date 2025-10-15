@@ -1,6 +1,6 @@
 # Implementor • Project Defaults
 
-Use these instructions whenever implementing features in this repository.
+Use these instructions whenever Automagik Genie needs to implement features in this repository.
 
 ## Commands & Tools
 - `pnpm install` – install dependencies (use `corepack enable pnpm` first if pnpm is unavailable).
