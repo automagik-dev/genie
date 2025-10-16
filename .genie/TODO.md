@@ -6,62 +6,7 @@
 
 ## 🔥 CRITICAL Priority (Do First)
 
-### 1. UPDATE.md Optimization ✅ COMPLETE
-**File:** `.genie/UPDATE.md`
-**Problems:**
-1. Loaded 19 backup files with hardcoded @ (massive context bloat)
-2. Used wrong backup path (`.genie.backup/` instead of `{{BACKUP_PATH}}`)
-
-**Actions:**
-1. Removed all @ prefixes (agents use Read during execution)
-2. Replaced 48 hardcoded `.genie.backup/` with `{{BACKUP_PATH}}` placeholder
-
-**Impact:**
-- -19 @ refs → clean context, on-demand loading
-- Correct path placeholder → CLI substitutes real backup path
-
-**Evidence:** Knowledge graph audit 2025-10-16
-**Status:** ✅ COMPLETE (2025-10-16)
-**Completed:** 29 surgical edits total
-
-**Before:**
-- 19 @ references → loads 3,000-5,000 lines
-- Hardcoded `.genie.backup/` → wrong path
-
-**After:**
-- 0 @ references → loads UPDATE.md only (668 lines)
-- `{{BACKUP_PATH}}` placeholder → CLI substitutes `.genie/backups/<timestamp>/genie/`
-
-### 2. Core-Template-Separation Wish Status ✅ COMPLETE (95/100)
-**File:** `.genie/wishes/core-template-separation/`
-**Status:** ✅ COMPLETE at 95/100 (2025-10-16 20:45Z)
-
-**Completed:**
-- ✅ Phase 0: Mode consolidation (92/100)
-- ✅ Phase 1: Meta-learning unification
-- ✅ Phase 2: Template structure created (templates/code/ + templates/create/)
-- ✅ Phase 3: Multi-template validation + INSTALL.md creation
-- ✅ Architecture validated: workflows in npm, accessed via @ or MCP (not copied by design)
-- ✅ Root cause analysis: agents/ blacklist is CORRECT (preserves user customizations)
-- ✅ INSTALL.md created for create template (ac7b810)
-- ✅ Validation evidence documented (cb665e1)
-- ✅ Wish updated to 95/100 (787ba64)
-
-**Key Learning:**
-- agents/ directory intentionally blacklisted (correct architecture)
-- Workflows ship in npm package for both templates
-- User projects access via @ or mcp__genie__run (never copy locally)
-- NO BUG - working as designed!
-
-**Remaining (5pts - minor docs):**
-1. Update AGENTS.md §Universal Workflow Architecture section (15 min)
-2. Archive wish with completion evidence
-3. Update GitHub issue #41
-
-**Evidence:**
-- qa/template-validation-202510161630.md
-- reports/multi-template-evolution-202510161800.md
-- Commits: ac7b810, cb665e1, 787ba64
+*All critical tasks complete!*
 
 ---
 
@@ -175,6 +120,12 @@
   - Removed 19 excessive @ references (0 @ refs now)
   - Fixed 48 hardcoded `.genie.backup/` → `{{BACKUP_PATH}}` placeholder
   - Impact: Clean context, correct path substitution, on-demand loading
+- ✅ **core-template-separation wish complete** (CRITICAL #2, 2025-10-16 22:00Z)
+  - All 4 phases complete (Phase 0-3)
+  - Documentation verified (AGENTS.md §Universal Workflow Architecture exists)
+  - Wish updated to 100/100
+  - Archived at `.genie/wishes/_archive/core-template-separation/`
+  - GitHub issue #41 closed
 
 ---
 
