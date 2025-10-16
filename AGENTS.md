@@ -545,6 +545,115 @@ review.md
 - Encourage concrete examples/snippets over abstractions.
 - Advanced prompting guidance lives in `@.genie/agents/neurons/prompt.md`.
 
+### @ / ! / Feature Reference (Claude Code)
+
+**Core capabilities added 2025-10-16:**
+
+#### @ (File/Directory Reference)
+```markdown
+@file.md          → Loads ENTIRE file content into context
+@directory/       → Lists directory structure with file info
+@mcp:server:resource → Fetches MCP data
+```
+
+**USE CASE:** Create "neural file networks" by attaching related files together
+- `@AGENTS.md` in CLAUDE.md → Loads agent knowledge into every session
+- `@.genie/CONTEXT.md` in CLAUDE.md → Loads user context
+- `@.genie/custom/agent.md` in agent prompts → Project-specific overrides
+- `@scripts/release.js` in release.md → Load existing tooling for reference
+
+**Pattern:** Chain files with @ to create knowledge graphs. When one file conceptually depends on another, use @ to establish the connection.
+
+#### ! (Bash Command Execution)
+```markdown
+!`command`  → Executes bash BEFORE processing, output in context
+```
+
+**USE CASE:** Dynamic context injection at runtime
+- `!date -u` → Current timestamp
+- `!git branch --show-current` → Active branch
+- `!git status --short` → Working tree state
+- `!node -p "require('./package.json').version"` → Package version
+- `!gh issue list --assignee @me` → Assigned issues
+
+**Pattern:** Use ! for information that changes between sessions (git state, dates, versions, file counts, etc.)
+
+#### / (Slash Commands)
+```markdown
+/command [args]              → Execute custom commands
+/mcp__server__tool [args]    → MCP tool invocation
+```
+
+**USE CASE:** Command execution within agent prompts
+- Used in agent frontmatter or allowed-tools sections
+- MCP commands: `/mcp__genie__run`, `/mcp__github__list_prs`
+- Custom commands: Define in `.claude/commands/`
+
+### Neural File Network Pattern
+
+**Example:** Agent loading strategy
+```markdown
+---
+name: release
+description: GitHub release orchestration
+---
+
+# Release Agent
+
+## Context Loading
+
+@.genie/custom/release.md    # Project customization
+@scripts/release.js           # Existing tooling reference
+
+**Current state:**
+- Version: !`node -p "require('./package.json').version"`
+- Branch: !`git branch --show-current`
+- Status: !`git status --porcelain | wc -l` uncommitted files
+
+## Workflow
+...
+```
+
+**Benefits:**
+- Agent automatically has access to project customization
+- Dynamic context (version, branch) fresh every invocation
+- Existing scripts loaded as reference (not duplicated)
+- Forms a knowledge graph: release.md ← custom/release.md ← scripts/release.js
+
+### Optimization Guidelines
+
+**When to use @:**
+- ✅ Load complete file content when agent needs full context
+- ✅ Attach related configuration/customization files
+- ✅ Create knowledge graph connections
+- ❌ NOT for selective content (use Read tool instead)
+- ❌ NOT for large files (>1000 lines) without good reason
+
+**When to use !:**
+- ✅ Dynamic data that changes between invocations
+- ✅ Git state, dates, versions, counts
+- ✅ Simple command output (<50 lines)
+- ❌ NOT for complex multi-step commands
+- ❌ NOT for operations that modify state
+
+**When to use /:**
+- ✅ Predefined command workflows
+- ✅ MCP tool invocations from within agents
+- ✅ Reusable command sequences
+- ❌ NOT for bash operations (use ! instead)
+
+### Audit Protocol
+
+**Ongoing maintenance:** Review ALL .md files in `.genie/agents/` and `templates/` for @ / ! optimization opportunities.
+
+**Check for:**
+1. Files that reference other files → Use @ to load them
+2. Files that need git state → Use `!git` commands
+3. Files that need versions → Use `!node -p` or `!cat VERSION`
+4. Files with duplicated content → Use @ to deduplicate
+
+**Evidence:** Track findings in `.genie/qa/evidence/file-network-audit-<timestamp>.md`
+
 ## Branch & Tracker Guidance
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
 - **Existing branch** only with documented rationale (wish status log).

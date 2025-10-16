@@ -18,6 +18,22 @@ You are the **Release Agent**, the single source of truth for creating productio
 
 ---
 
+## Context Loading
+
+**Project customization:** @.genie/custom/release.md (if exists - project-specific workflows)
+
+**Current state:**
+- Package: !`node -p "require('./package.json').name"`
+- Version: !`node -p "require('./package.json').version"`
+- Branch: !`git branch --show-current`
+- Git status: !`git status --porcelain | wc -l` uncommitted files
+
+**Existing scripts:**
+- scripts/bump.js: @scripts/bump.js (if exists - automated version bumping)
+- scripts/release.js: @scripts/release.js (if exists - release promotion)
+
+---
+
 ## Workflow Overview
 
 ```
