@@ -213,6 +213,29 @@ function buildTranscriptFromEvents(events) {
         if (!event || typeof event !== 'object')
             return;
         const type = String(event.type || '').toLowerCase();
+        // Handle filtered format from view.ts createFilteredEvent()
+        if ((type === 'assistant' || type === 'user' || type === 'reasoning') && event.message) {
+            const message = event.message;
+            const content = message.content;
+            if (Array.isArray(content)) {
+                const textParts = [];
+                content.forEach((part) => {
+                    if (part.type === 'text' && part.text) {
+                        textParts.push(part.text);
+                    }
+                });
+                if (textParts.length > 0) {
+                    const role = type === 'assistant' ? 'assistant' :
+                        type === 'user' ? 'action' :
+                            'reasoning';
+                    const title = type === 'assistant' ? 'Assistant' :
+                        type === 'user' ? 'User' :
+                            'Reasoning';
+                    pushMessage({ role, title, body: textParts });
+                }
+            }
+            return;
+        }
         // Handle codex session file format (response_item with payload)
         if (type === 'response_item') {
             const payload = event.payload;

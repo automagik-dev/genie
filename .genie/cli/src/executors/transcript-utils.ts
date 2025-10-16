@@ -276,6 +276,32 @@ export function buildTranscriptFromEvents(events: Array<Record<string, any>>): C
     if (!event || typeof event !== 'object') return;
     const type = String(event.type || '').toLowerCase();
 
+    // Handle filtered format from view.ts createFilteredEvent()
+    if ((type === 'assistant' || type === 'user' || type === 'reasoning') && event.message) {
+      const message = event.message as any;
+      const content = message.content;
+      if (Array.isArray(content)) {
+        const textParts: string[] = [];
+        content.forEach((part: any) => {
+          if (part.type === 'text' && part.text) {
+            textParts.push(part.text);
+          }
+        });
+        if (textParts.length > 0) {
+          const role: 'assistant' | 'reasoning' | 'tool' | 'action' =
+            type === 'assistant' ? 'assistant' :
+            type === 'user' ? 'action' :
+            'reasoning';
+          const title =
+            type === 'assistant' ? 'Assistant' :
+            type === 'user' ? 'User' :
+            'Reasoning';
+          pushMessage({ role, title, body: textParts });
+        }
+      }
+      return;
+    }
+
     // Handle codex session file format (response_item with payload)
     if (type === 'response_item') {
       const payload = (event as any).payload;
