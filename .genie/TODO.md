@@ -32,27 +32,36 @@
 - 0 @ references → loads UPDATE.md only (668 lines)
 - `{{BACKUP_PATH}}` placeholder → CLI substitutes `.genie/backups/<timestamp>/genie/`
 
-### 2. Core-Template-Separation Wish Status ✅ IN PROGRESS (70/100)
+### 2. Core-Template-Separation Wish Status ✅ COMPLETE (95/100)
 **File:** `.genie/wishes/core-template-separation/`
-**Progress:** Wish updated to 70/100, Phase 3 (multi-template validation) in progress
+**Status:** ✅ COMPLETE at 95/100 (2025-10-16 20:45Z)
+
 **Completed:**
-- ✅ Architecture updated: templates/base/ → templates/code/ + templates/create/
-- ✅ Evaluation matrix updated to reflect multi-template reality
-- ✅ Status log documents architecture evolution
-- ✅ Multi-template rationale captured in reports/multi-template-evolution-202510161800.md
-- ✅ Phase 3 scope defined (multi-template documentation + testing)
-- ✅ AGENTS.md §Universal Workflow Architecture already complete
-- ✅ Code template tested: `genie init code` creates correct structure (22 custom stubs, root files, product/standards)
+- ✅ Phase 0: Mode consolidation (92/100)
+- ✅ Phase 1: Meta-learning unification
+- ✅ Phase 2: Template structure created (templates/code/ + templates/create/)
+- ✅ Phase 3: Multi-template validation + INSTALL.md creation
+- ✅ Architecture validated: workflows in npm, accessed via @ or MCP (not copied by design)
+- ✅ Root cause analysis: agents/ blacklist is CORRECT (preserves user customizations)
+- ✅ INSTALL.md created for create template (ac7b810)
+- ✅ Validation evidence documented (cb665e1)
+- ✅ Wish updated to 95/100 (787ba64)
 
-**Remaining (Phase 3):**
-1. Test `genie init create` in clean repo (validation consistency)
-2. Capture validation evidence in wish qa/ folder
-3. Update wish to 100/100
-4. Archive wish with multi-template completion evidence
-5. Update GitHub issue #41
+**Key Learning:**
+- agents/ directory intentionally blacklisted (correct architecture)
+- Workflows ship in npm package for both templates
+- User projects access via @ or mcp__genie__run (never copy locally)
+- NO BUG - working as designed!
 
-**Status:** RESUME HERE - Template validation 70% done, final testing + archival pending
-**Effort:** ~30 minutes to complete
+**Remaining (5pts - minor docs):**
+1. Update AGENTS.md §Universal Workflow Architecture section (15 min)
+2. Archive wish with completion evidence
+3. Update GitHub issue #41
+
+**Evidence:**
+- qa/template-validation-202510161630.md
+- reports/multi-template-evolution-202510161800.md
+- Commits: ac7b810, cb665e1, 787ba64
 
 ---
 
