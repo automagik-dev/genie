@@ -2,7 +2,7 @@
 
 **Purpose:** Migrate context from previous Genie installation (any version, any structure) to current installation without data loss.
 
-**When to use:** After running `genie update` or manual framework upgrade when a `.genie.backup/` folder exists.
+**When to use:** After running `genie update` or manual framework upgrade when a backup folder exists at the path provided by the CLI.
 
 **How to invoke:** Reference this file when starting a new session after update:
 ```
@@ -25,7 +25,7 @@ This workflow compares your backed-up Genie installation with the new version, s
 
 <task_breakdown>
 1. [Discovery] Inventory and categorize backup contents
-   - List all files in `.genie.backup/`
+   - List all files in `{{BACKUP_PATH}}/`
    - Categorize by type (wishes, agents, config, docs, reports)
    - Identify new vs legacy structure patterns
    - Document version/structure differences
@@ -83,28 +83,28 @@ Depth:
 **Commands:**
 ```bash
 # List directory structure
-ls -R .genie.backup/ > /tmp/backup-inventory.txt
+ls -R {{BACKUP_PATH}}/ > /tmp/backup-inventory.txt
 
 # Count files by type
-find .genie.backup/ -type f -name "*.md" | wc -l  # Markdown files
-find .genie.backup/ -type f -name "*.json" | wc -l  # JSON files
-find .genie.backup/ -type f -name "*.yaml" | wc -l  # YAML files
+find {{BACKUP_PATH}}/ -type f -name "*.md" | wc -l  # Markdown files
+find {{BACKUP_PATH}}/ -type f -name "*.json" | wc -l  # JSON files
+find {{BACKUP_PATH}}/ -type f -name "*.yaml" | wc -l  # YAML files
 ```
 
 **Categorization matrix:**
 
 | Path Pattern | Category | Priority | Action |
 |--------------|----------|----------|--------|
-| `.genie.backup/wishes/**/*-wish.md` | Active wishes | HIGH | Migrate content + evidence |
-| `.genie.backup/wishes/**/reports/` | Wish reports | HIGH | Preserve completion evidence |
-| `.genie.backup/custom/*.md` | Custom agents | HIGH | Extract customizations |
-| `.genie.backup/agents/*.md` | Legacy custom agents | HIGH | Migrate to `.genie/custom/` |
-| `.genie.backup/config.yaml` | User config | HIGH | Merge with new config |
-| `.genie.backup/product/*.md` | Mission/roadmap/standards | MEDIUM | Merge updates |
-| `.genie.backup/state/agents/sessions.json` | Session tracking | LOW | Reference only (sessions expired) |
-| `.genie.backup/AGENTS.md` | Legacy behavior guide | HIGH | Extract learned patterns |
-| `.genie.backup/CLAUDE.md` | Legacy project instructions | HIGH | Extract project-specific rules |
-| `.genie.backup/.genie/context.md` | User context file | HIGH | Migrate to `.genie/context.md` |
+| `{{BACKUP_PATH}}/wishes/**/*-wish.md` | Active wishes | HIGH | Migrate content + evidence |
+| `{{BACKUP_PATH}}/wishes/**/reports/` | Wish reports | HIGH | Preserve completion evidence |
+| `{{BACKUP_PATH}}/custom/*.md` | Custom agents | HIGH | Extract customizations |
+| `{{BACKUP_PATH}}/agents/*.md` | Legacy custom agents | HIGH | Migrate to `.genie/custom/` |
+| `{{BACKUP_PATH}}/config.yaml` | User config | HIGH | Merge with new config |
+| `{{BACKUP_PATH}}/product/*.md` | Mission/roadmap/standards | MEDIUM | Merge updates |
+| `{{BACKUP_PATH}}/state/agents/sessions.json` | Session tracking | LOW | Reference only (sessions expired) |
+| `{{BACKUP_PATH}}/AGENTS.md` | Legacy behavior guide | HIGH | Extract learned patterns |
+| `{{BACKUP_PATH}}/CLAUDE.md` | Legacy project instructions | HIGH | Extract project-specific rules |
+| `{{BACKUP_PATH}}/context.md` | User context file | HIGH | Migrate to `.genie/context.md` |
 
 **Output:** Create working inventory at `/tmp/genie-migration-inventory.md` with file counts and categories.
 
@@ -114,15 +114,15 @@ find .genie.backup/ -type f -name "*.yaml" | wc -l  # YAML files
 
 **Read these files to understand backup structure:**
 ```
-.genie.backup/package.json (if exists - version info)
-.genie.backup/AGENTS.md (structure clues)
-.genie.backup/README.md (if exists)
+{{BACKUP_PATH}}/package.json (if exists - version info)
+{{BACKUP_PATH}}/AGENTS.md (structure clues)
+{{BACKUP_PATH}}/README.md (if exists)
 ```
 
 **Detect patterns:**
-- Flat wishes? (`.genie.backup/wishes/<slug>-wish.md`)
-- Folder wishes? (`.genie.backup/wishes/<slug>/<slug>-wish.md`)
-- Custom agents location? (`.genie.backup/custom/` vs `.genie.backup/agents/`)
+- Flat wishes? (`{{BACKUP_PATH}}/wishes/<slug>-wish.md`)
+- Folder wishes? (`{{BACKUP_PATH}}/wishes/<slug>/<slug>-wish.md`)
+- Custom agents location? (`{{BACKUP_PATH}}/custom/` vs `{{BACKUP_PATH}}/agents/`)
 - Config format? (`.yaml` vs `.json`)
 
 **Output:** Document structure differences in working notes.
@@ -138,14 +138,14 @@ find .genie.backup/ -type f -name "*.yaml" | wc -l  # YAML files
 **Process:**
 ```bash
 # List all wishes
-find .genie.backup/wishes/ -name "*-wish.md" -type f
+find {{BACKUP_PATH}}/wishes/ -name "*-wish.md" -type f
 ```
 
 **For each wish file:**
 
 1. **Read full content:**
    ```
-   .genie.backup/wishes/<slug>/<slug>-wish.md
+   {{BACKUP_PATH}}/wishes/<slug>/<slug>-wish.md
    ```
 
 2. **Extract key information:**
@@ -160,10 +160,10 @@ find .genie.backup/wishes/ -name "*-wish.md" -type f
 3. **Check for companion files:**
    ```bash
    # Evidence folder
-   ls .genie.backup/wishes/<slug>/qa/ 2>/dev/null
+   ls {{BACKUP_PATH}}/wishes/<slug>/qa/ 2>/dev/null
 
    # Reports folder
-   ls .genie.backup/wishes/<slug>/reports/ 2>/dev/null
+   ls {{BACKUP_PATH}}/wishes/<slug>/reports/ 2>/dev/null
    ```
 
 4. **Migration action:**
@@ -171,13 +171,13 @@ find .genie.backup/wishes/ -name "*-wish.md" -type f
    **If wish is COMPLETED:**
    ```bash
    # Move entire wish folder to new installation
-   cp -r .genie.backup/wishes/<slug>/ .genie/wishes/<slug>/
+   cp -r {{BACKUP_PATH}}/wishes/<slug>/ .genie/wishes/<slug>/
    ```
 
    **If wish is IN_PROGRESS or BLOCKED:**
    ```bash
    # Move folder + update status log
-   cp -r .genie.backup/wishes/<slug>/ .genie/wishes/<slug>/
+   cp -r {{BACKUP_PATH}}/wishes/<slug>/ .genie/wishes/<slug>/
    # Add status log entry:
    # [YYYY-MM-DD HH:MMZ] Migrated from v<old> to v<new> - resuming work
    ```
@@ -185,7 +185,7 @@ find .genie.backup/wishes/ -name "*-wish.md" -type f
    **If wish is DRAFT:**
    ```bash
    # Move folder, no changes needed
-   cp -r .genie.backup/wishes/<slug>/ .genie/wishes/<slug>/
+   cp -r {{BACKUP_PATH}}/wishes/<slug>/ .genie/wishes/<slug>/
    ```
 
 5. **Track migration:**
@@ -204,15 +204,15 @@ find .genie.backup/wishes/ -name "*-wish.md" -type f
 **Process:**
 ```bash
 # Find custom agent files (multiple possible locations)
-find .genie.backup/custom/ -name "*.md" -type f 2>/dev/null
-find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
+find {{BACKUP_PATH}}/custom/ -name "*.md" -type f 2>/dev/null
+find {{BACKUP_PATH}}/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 ```
 
 **For each custom agent file:**
 
 1. **Read full content:**
    ```
-   .genie.backup/custom/<agent>.md
+   {{BACKUP_PATH}}/custom/<agent>.md
    ```
 
 2. **Determine if customization or standalone:**
@@ -224,7 +224,7 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
    **If customization:**
    ```bash
    # Copy to new custom folder
-   cp .genie.backup/custom/<agent>.md .genie/custom/<agent>.md
+   cp {{BACKUP_PATH}}/custom/<agent>.md .genie/custom/<agent>.md
    ```
 
    **If standalone:**
@@ -250,8 +250,8 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Read backup config:**
    ```
-   .genie.backup/config.yaml
-   .genie.backup/.genie/cli/config.yaml (if exists)
+   {{BACKUP_PATH}}/config.yaml
+   {{BACKUP_PATH}}/cli/config.yaml (if exists)
    ```
 
 2. **Extract user preferences:**
@@ -294,10 +294,10 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Read backup docs:**
    ```
-   .genie.backup/product/mission.md
-   .genie.backup/product/roadmap.md
-   .genie.backup/product/tech-stack.md
-   .genie.backup/standards/best-practices.md
+   {{BACKUP_PATH}}/product/mission.md
+   {{BACKUP_PATH}}/product/roadmap.md
+   {{BACKUP_PATH}}/product/tech-stack.md
+   {{BACKUP_PATH}}/standards/best-practices.md
    ```
 
 2. **Read current docs:**
@@ -330,8 +330,8 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Find reports:**
    ```bash
-   find .genie.backup/wishes/ -path "*/reports/*.md" -type f
-   find .genie.backup/reports/ -name "*.md" -type f 2>/dev/null
+   find {{BACKUP_PATH}}/wishes/ -path "*/reports/*.md" -type f
+   find {{BACKUP_PATH}}/reports/ -name "*.md" -type f 2>/dev/null
    ```
 
 2. **For each report:**
@@ -355,9 +355,9 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 **Critical files to read:**
 ```
-.genie.backup/AGENTS.md
-.genie.backup/CLAUDE.md
-.genie.backup/.genie/context.md (if exists)
+{{BACKUP_PATH}}/AGENTS.md
+{{BACKUP_PATH}}/CLAUDE.md
+{{BACKUP_PATH}}/context.md (if exists)
 ```
 
 **Extract from AGENTS.md:**
@@ -382,7 +382,7 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 **Migration action:**
 ```bash
 # Preserve user context
-cp .genie.backup/.genie/context.md .genie/context.md 2>/dev/null
+cp {{BACKUP_PATH}}/context.md .genie/context.md 2>/dev/null
 
 # Note: AGENTS.md and CLAUDE.md patterns are now embedded in framework
 # Extract any project-specific rules and document in working notes
@@ -402,7 +402,7 @@ cp .genie.backup/.genie/context.md .genie/context.md 2>/dev/null
 
 1. **Generate backup file list:**
    ```bash
-   find .genie.backup/ -type f | sort > /tmp/backup-files.txt
+   find {{BACKUP_PATH}}/ -type f | sort > /tmp/backup-files.txt
    ```
 
 2. **Check against migration log:**
@@ -521,7 +521,7 @@ genie model show | grep "Default executor"
 ## Next Steps
 1. Review migrated wishes and resume active work
 2. Verify custom agent behavior in new version
-3. Remove backup folder: `rm -rf .genie.backup/`
+3. Remove backup folder when confident: `rm -rf {{BACKUP_PATH}}/`
 4. Continue work with new Genie version
 
 ## Notes
@@ -589,13 +589,13 @@ EOF
 
 ## Example Invocation
 
-**After `genie update` creates `.genie.backup/`:**
+**After `genie update` creates backup:**
 
 ```
 @.genie/UPDATE.md
 
 I just updated Genie and need to migrate my previous installation.
-The backup is at .genie.backup/
+The backup is at {{BACKUP_PATH}}/
 
 Please follow the UPDATE.md workflow to:
 1. Inventory all backup files
@@ -654,7 +654,7 @@ or missing critical information.
    📋 Next Steps:
    - Review migration summary at .genie/reports/migration-<timestamp>.md
    - Verify custom agents: genie list-agents
-   - Remove backup when confident: rm -rf .genie.backup/
+   - Remove backup when confident: rm -rf {{BACKUP_PATH}}/
 
    🎉 Your Genie installation is now up to date!
    ```

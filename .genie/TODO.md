@@ -6,17 +6,31 @@
 
 ## 🔥 CRITICAL Priority (Do First)
 
-### 1. UPDATE.md Excessive @ Usage ✅ COMPLETE
+### 1. UPDATE.md Optimization ✅ COMPLETE
 **File:** `.genie/UPDATE.md`
-**Problem:** Loaded 19 backup files with hardcoded @ (massive context bloat)
-**Impact:** -19 @ refs, clean context, files loaded on-demand via Read
-**Action:** Removed all @ prefixes, agents use Read during migration execution
+**Problems:**
+1. Loaded 19 backup files with hardcoded @ (massive context bloat)
+2. Used wrong backup path (`.genie.backup/` instead of `{{BACKUP_PATH}}`)
+
+**Actions:**
+1. Removed all @ prefixes (agents use Read during execution)
+2. Replaced 48 hardcoded `.genie.backup/` with `{{BACKUP_PATH}}` placeholder
+
+**Impact:**
+- -19 @ refs → clean context, on-demand loading
+- Correct path placeholder → CLI substitutes real backup path
+
 **Evidence:** Knowledge graph audit 2025-10-16
 **Status:** ✅ COMPLETE (2025-10-16)
-**Completed:** 8 surgical edits, 19 @ references removed
+**Completed:** 29 surgical edits total
 
-**Before:** 19 @ references → loads UPDATE.md + all backup files (3,000-5,000 lines)
-**After:** 0 @ references → loads UPDATE.md only (668 lines), Read on-demand
+**Before:**
+- 19 @ references → loads 3,000-5,000 lines
+- Hardcoded `.genie.backup/` → wrong path
+
+**After:**
+- 0 @ references → loads UPDATE.md only (668 lines)
+- `{{BACKUP_PATH}}` placeholder → CLI substitutes `.genie/backups/<timestamp>/genie/`
 
 ### 2. Core-Template-Separation Wish Status ✅ ACCEPTED
 **File:** `.genie/wishes/core-template-separation/`
@@ -137,10 +151,10 @@
   - Simplified implementor, tests, polish agents
   - Projected -3,700 lines when rolled out to all 21 agents
 - ✅ **Learn agent fixes** (./genie → mcp__genie__ pattern documented)
-- ✅ **UPDATE.md @ reference optimization** (CRITICAL #1)
-  - Removed 19 excessive @ references
-  - Changed from eager loading (3,000-5,000 lines) to on-demand Read
-  - Impact: Clean context, better token efficiency
+- ✅ **UPDATE.md optimization** (CRITICAL #1)
+  - Removed 19 excessive @ references (0 @ refs now)
+  - Fixed 48 hardcoded `.genie.backup/` → `{{BACKUP_PATH}}` placeholder
+  - Impact: Clean context, correct path substitution, on-demand loading
 
 ---
 
