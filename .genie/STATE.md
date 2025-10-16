@@ -28,13 +28,15 @@
 **Archived Wishes:**
 - token-efficient-output (100/100)
 - natural-routing-skills (100/100)
+- core-template-separation (100/100) - archived 2025-10-16
 
 **Active Wishes:**
 1. provider-runtime-override (#40) - 95% complete
 2. multi-template-architecture (#37) - 50% complete
-3. core-template-separation (#41) - 25% complete (STALLED)
-4. backup-update-system (#38) - 0% (DEFERRED)
-5. mcp-permission-regression (#44) - 100% (RESOLVED - not a bug)
+3. backup-update-system (#38) - 0% (DEFERRED)
+
+**Resolved (Not Archived):**
+- mcp-permission-regression (#44) - NOT A BUG (version mismatch)
 
 ---
 
@@ -127,12 +129,14 @@
 ## 📈 Session History
 
 **2025-10-16 (Today):**
-- Backlog cleanup: 15 → 12 open issues
-- Wish closure: 2 archived (100/100 complete)
+- ✅ CRITICAL #2 complete: core-template-separation wish archived (100/100)
+- ✅ Agent deduplication started: 3/14 agents done (21%)
+- Pattern discovery: Framework Reference WITHOUT @ (prevents context overload)
+- Backlog cleanup: 15 → 11 open issues (closed #41)
+- Wish closure: 1 archived (core-template-separation)
 - Investigation: #44 resolved (not a bug)
-- Analysis: 4 wishes analyzed
 - Knowledge graph audit: 6.5/10 health
-- Systematic fixes identified: 5 queued
+- MCP bug documented: session creation failures
 
 **2025-10-15:**
 - Token-efficient output complete (99%+ reduction)
