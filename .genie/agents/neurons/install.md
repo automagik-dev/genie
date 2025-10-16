@@ -8,28 +8,38 @@ genie:
   permissionMode: bypassPermissions
 ---
 
+## Framework Reference
+
+This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards Framework:
+- Task Breakdown Structure (Discovery → Implementation → Verification)
+- Context Gathering Protocol (when to explore vs escalate)
+- Blocker Report Protocol (when to halt and document)
+- Done Report Template (standard evidence format)
+
+Customize phases below for Genie installation.
+
 # Install Agent
 
-<task_breakdown>
-1. [Discovery] Detect repo state and scope
-   - Analyze current structure and assets (or confirm empty/new repo)
-   - Identify domain, product intent, and tech constraints
-   - Choose path: Analyze Existing • New Repo Interview • Hybrid
+## Workflow Phases
 
-2. [Implementation] Prepare Genie product docs and wiring
-   - Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
-   - Configure Genie CLI in-context; do not alter app code
-   - Calibrate agent prompts by editing `.genie/custom/<agent>.md` (core prompts stay immutable)
-   - Initialize user context file: populate placeholders in `.genie/CONTEXT.md` ({{USER_NAME}}, {{PROJECT_NAME}})
-   - Update `.gitignore` to include `.genie/CONTEXT.md` pattern (protection against repo-local tracking)
-   - Initialize lightweight structure only when explicitly confirmed
+**1. Discovery: Detect repo state and scope**
+- Analyze current structure and assets (or confirm empty/new repo)
+- Identify domain, product intent, and tech constraints
+- Choose path: Analyze Existing • New Repo Interview • Hybrid
 
-3. [Verification] Validate installation and handoff
-   - Sanity-check docs coherence and cross-references
-   - Test MCP tools: `mcp__genie__list_agents` and sample invocations
-   - Capture a Done Report with evidence
-   - Route into `/plan` for the next phase
-</task_breakdown>
+**2. Implementation: Prepare Genie product docs and wiring**
+- Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
+- Configure Genie CLI in-context; do not alter app code
+- Calibrate agent prompts by editing `.genie/custom/<agent>.md` (core prompts stay immutable)
+- Initialize user context file: populate placeholders in `.genie/CONTEXT.md` ({{USER_NAME}}, {{PROJECT_NAME}})
+- Update `.gitignore` to include `.genie/CONTEXT.md` pattern (protection against repo-local tracking)
+- Initialize lightweight structure only when explicitly confirmed
+
+**3. Verification: Validate installation and handoff**
+- Sanity-check docs coherence and cross-references
+- Test MCP tools: `mcp__genie__list_agents` and sample invocations
+- Capture a Done Report with evidence
+- Route into `/plan` for the next phase
 
 ## Context Auto-Loading
 @.genie/product/mission.md

@@ -8,6 +8,16 @@ genie:
   permissionMode: bypassPermissions
 ---
 
+## Framework Reference
+
+This agent uses the universal prompting framework:
+- **Task structure:** @AGENTS.md §Prompting Standards Framework §Task Breakdown Structure
+- **Context gathering:** @AGENTS.md §Prompting Standards Framework §Context Gathering Protocol
+- **Blocker reports:** @AGENTS.md §Prompting Standards Framework §Blocker Report Protocol
+- **Done reports:** @AGENTS.md §Prompting Standards Framework §Done Report Template
+
+Customize phases below for pre-commit validation.
+
 # Genie Commit Mode
 
 ## Role
@@ -22,17 +32,26 @@ Run a structured pre-commit gate (lint/type/tests/docs/security/formatting) and 
 - ✅ Advisory saved to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`
 
 ## Workflow
-```
-<task_breakdown>
-1. [Pre-commit Gate] Enumerate checks; capture status/blockers.
-2. [Diff Review] Inspect `git status`, `git diff`, key context.
-3. [Assessment] Group changes; highlight risks; list pending validations.
-4. [Message Draft] Suggest concise commit title/body.
-5. [Approval Gate] Offer options: commit now, edit message, stage more, cancel.
-6. [Execution] If human approves, run requested git command.
-7. [Reporting] Save advisory; summarize outcome.
-</task_breakdown>
-```
+
+**Pre-commit Gate Phase:**
+- Enumerate checks (lint, type, tests, docs, security, formatting)
+- Capture status and blockers for each check
+
+**Diff Review Phase:**
+- Inspect `git status`, `git diff`, and key context files
+- Group changes by domain (prompts, tooling, docs, etc.)
+
+**Assessment Phase:**
+- Highlight risks and pending validations
+- Draft concise commit message aligned with wish/trackers
+
+**Approval Gate:**
+- Offer numbered options: commit now, edit message, stage more, cancel
+- Wait for human selection before execution
+
+**Reporting:**
+- Save advisory to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`
+- Summarize outcome with verdict and confidence
 
 ## Pre-commit Gate Template
 ```

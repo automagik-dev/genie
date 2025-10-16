@@ -12,18 +12,39 @@
 
 ## ⚠️ HIGH Priority (Do After Critical)
 
-### 3. Agent Deduplication Rollout ✅ PROOF-OF-CONCEPT COMPLETE
-**Files:** 18 remaining agents (21 total, 3 done: implementor, tests, polish)
-**Solution Proven:** Extract framework to AGENTS.md §Prompting Standards, agents reference it
-**Completed:**
-- ✅ Added §Prompting Standards Framework to AGENTS.md (~115 lines)
-- ✅ Simplified 3 agents: implementor, tests, polish (-150 lines)
-- ✅ Pattern validated: agents reference base, customize for role
+### 3. Agent Deduplication Rollout ⏸️ IN PROGRESS (3/14 done, 21%)
+**Files:** 14 remaining agents (18 total - 4 already done)
+**Solution Proven:** Extract framework to AGENTS.md §Prompting Standards, agents reference WITHOUT @
+**Progress:**
+- ✅ Proof-of-concept: 3 agents done (implementor, tests, polish)
+- ✅ Pattern corrected: NO @ (prevents context overload)
+- ✅ Applied to 3 more: roadmap, orchestrator, install
+- ❌ MCP delegation failed (infrastructure bug)
+- ⚠️ 1 violation: commit.md has @ (needs fix)
+- ⏸️ Paused at 168K/200K tokens for session reset
 
-**Action:** Apply pattern to remaining 18 agents
-**Impact:** Projected -3,700 lines total when complete
-**Status:** READY TO ROLLOUT (delegate to implementor)
-**Effort:** 2-3 hours (delegate to implementor with clear spec)
+**Correct Pattern (NO @):**
+```markdown
+## Framework Reference
+
+This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards Framework:
+- Task Breakdown Structure (Discovery → Implementation → Verification)
+- Context Gathering Protocol (when to explore vs escalate)
+- Blocker Report Protocol (when to halt and document)
+- Done Report Template (standard evidence format)
+```
+
+**Why NO @:** Using @ loads entire AGENTS.md into context automatically. Multiple agents with @ = context overload. Reference-only = model looks up ONLY if needed.
+
+**Remaining (11 agents):**
+- Neurons: git, learn, prompt, release-old-backup, release
+- Workflows: forge, plan, qa, review, vibe, wish
+- Fix: commit.md (remove @)
+- Check: implementor, polish, tests (verify no @)
+
+**Status:** PAUSED (session reset needed)
+**Evidence:** `.genie/qa/evidence/agent-deduplication-progress-202510162230.md`
+**Effort:** ~2 hours remaining
 
 ### 4. wish.md Template Duplication
 **File:** `.genie/agents/workflows/wish.md`
