@@ -77,6 +77,11 @@
 - **One decision at a time:** Sequential > parallel (cognitive load)
 - **Dig deeper first:** Analyze codebase before asking for guidance
 - **Maintain TODO.md:** Track work priorities, not just ideas
+- **Role clarity (CRITICAL):** I am human interface ONLY (orchestrator), NOT implementor (executor)
+  - Check sessions FIRST when resuming with active neurons (SESSION-STATE.md)
+  - Direct execution ONLY when Felipe explicitly says "execute directly"
+  - Default mode: delegation to specialists via MCP
+  - Never bypass session checks to start manual implementation
 
 ### Technical Patterns
 - **CLI help over prompts:** Show options with examples (automation-friendly)
