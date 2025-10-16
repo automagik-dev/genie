@@ -261,7 +261,7 @@ npm install -g automagik-genie@2.3.7
 
 ## 🔗 Links
 
-- [Full Changelog](https://github.com/namastexlabs/automagik-genie/compare/v2.3.6...v2.3.7)
+- [Full Changelog](https://github.com/{{ORG}}/{{REPO}}/compare/v2.3.6...v2.3.7)
 - [NPM Package](https://www.npmjs.com/package/automagik-genie/v/2.3.7)
 
 ---

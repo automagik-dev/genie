@@ -36,7 +36,7 @@ THE specialist for documenting strategic initiatives in the `automagik-roadmap` 
 - ✅ All required fields populated with clear, actionable content
 - ✅ RASCI roles properly assigned (R+A always required)
 - ✅ Timeline and phases structured logically
-- ✅ GitHub issue created in `namastexlabs/automagik-roadmap` with proper labels
+- ✅ GitHub issue created in `{{ROADMAP_REPO}}` with proper labels
 - ✅ Done Report saved to `.genie/wishes/<slug>/reports/done-roadmap-<slug>-<YYYYMMDDHHmm>.md`
 - ✅ Initiative URL returned to user with optional follow-up suggestions
 
@@ -402,23 +402,23 @@ EOF
 
 # Create issue in automagik-roadmap
 gh issue create \
-  --repo namastexlabs/automagik-roadmap \
+  --repo {{ROADMAP_REPO}} \
   --title "{one-line summary}" \
   --body-file /tmp/initiative-{slug}.md
 
 # Get issue number from output
-ISSUE_NUM=$(gh issue list --repo namastexlabs/automagik-roadmap --limit 1 --json number --jq '.[0].number')
+ISSUE_NUM=$(gh issue list --repo {{ROADMAP_REPO}} --limit 1 --json number --jq '.[0].number')
 
 # Apply labels manually (GitHub limitation workaround)
 gh issue edit $ISSUE_NUM \
-  --repo namastexlabs/automagik-roadmap \
+  --repo {{ROADMAP_REPO}} \
   --add-label "initiative,stage:{stage},priority:{priority},type:{type},project:{project}"
 
 # Clean up temp file
 rm /tmp/initiative-{slug}.md
 
 # Return issue URL
-echo "Initiative created: https://github.com/namastexlabs/automagik-roadmap/issues/$ISSUE_NUM"
+echo "Initiative created: https://github.com/{{ROADMAP_REPO}}/issues/$ISSUE_NUM"
 ```
 
 ## Cross-Repo Linking
@@ -442,12 +442,12 @@ echo "Initiative created: https://github.com/namastexlabs/automagik-roadmap/issu
 2. For each affected repo:
    a. Invoke git neuron: "Create wish document at .genie/wishes/{slug}/{slug}-wish.md"
    b. Populate wish with:
-      - **Roadmap Item:** {INITIATIVE-ID} – [namastexlabs/automagik-roadmap#{number}](URL)
+      - **Roadmap Item:** {INITIATIVE-ID} – [{{ROADMAP_REPO}}#{number}](URL)
       - Context from initiative (problem, solution, scope)
       - Execution groups (repo-specific breakdown)
    c. Commit wish document
 3. Update initiative with wish references:
-   gh issue comment {number} --repo namastexlabs/automagik-roadmap \
+   gh issue comment {number} --repo {{ROADMAP_REPO}} \
      --body "## 🔗 Related Wishes\n\n- genie: .genie/wishes/{slug}/\n- omni: .genie/wishes/{slug}/"
 4. Return: Initiative URL + list of wish paths
 ```
@@ -456,7 +456,7 @@ echo "Initiative created: https://github.com/namastexlabs/automagik-roadmap/issu
 Before attempting cross-repo wish creation, validate:
 ```bash
 # Check repo access
-gh repo view namastexlabs/{repo} --json name 2>&1
+gh repo view {{ORG_NAME}}/{repo} --json name 2>&1
 
 # If access denied → graceful fallback
 echo "⚠️ Cannot create wish in {repo} (access denied). Manual creation needed."
@@ -511,7 +511,7 @@ Who would you like for each role?"
 Agent: "No problem! We can use 'backlog' for quarter and leave target date blank.
 You can update these later via:
 
-gh issue edit {number} --repo namastexlabs/automagik-roadmap \\
+gh issue edit {number} --repo {{ROADMAP_REPO}} \\
   --add-label "quarter:2025-q2"
 ```
 
@@ -528,7 +528,7 @@ Agent: "Initiative #{number} created successfully!
 - ✅ forge: .genie/wishes/{slug}/ (created)
 
 For omni, create wish manually:
-1. Clone repo: git clone https://github.com/namastexlabs/automagik-omni
+1. Clone repo: git clone https://github.com/{{ORG_NAME}}/{{REPO_NAME}}
 2. Create: .genie/wishes/{slug}/{slug}-wish.md
 3. Link back: **Roadmap Item:** #{number} – [URL]
 ```
@@ -591,7 +591,7 @@ Creating initiative in automagik-roadmap..."
 
 [Creates issue]
 
-Agent: "✅ Initiative created: https://github.com/namastexlabs/automagik-roadmap/issues/42
+Agent: "✅ Initiative created: https://github.com/{{ROADMAP_REPO}}/issues/42
 
 Summary:
 - Template: MINIMAL
@@ -716,7 +716,7 @@ Creating initiative in automagik-roadmap..."
 
 [Creates issue with full structure]
 
-Agent: "✅ Initiative created: https://github.com/namastexlabs/automagik-roadmap/issues/29
+Agent: "✅ Initiative created: https://github.com/{{ROADMAP_REPO}}/issues/29
 
 Summary:
 - Template: COMPREHENSIVE
@@ -743,7 +743,7 @@ Agent: "Creating wishes in genie and omni..."
 [Invokes git neuron for each repo]
 
 Agent: "✅ Done!
-- Initiative: #29 (https://github.com/namastexlabs/automagik-roadmap/issues/29)
+- Initiative: #29 (https://github.com/{{ROADMAP_REPO}}/issues/29)
 - Wish (genie): .genie/wishes/chatgpt-genie-integration/
 - Wish (omni): .genie/wishes/chatgpt-genie-integration/
 
@@ -771,9 +771,9 @@ Save to: `.genie/wishes/<slug>/reports/done-roadmap-<slug>-<YYYYMMDDHHmm>.md`
 - **Type:** {type}
 
 ## GitHub Issue
-- **Repository:** namastexlabs/automagik-roadmap
+- **Repository:** {{ROADMAP_REPO}}
 - **Issue:** #{number}
-- **URL:** https://github.com/namastexlabs/automagik-roadmap/issues/{number}
+- **URL:** https://github.com/{{ROADMAP_REPO}}/issues/{number}
 - **Labels:** {applied labels}
 
 ## Template Fields Populated
@@ -845,8 +845,8 @@ Load project-specific roadmap conventions:
 
 ## RASCI Shortcuts
 For solo development:
-- Responsible: @felipe
-- Accountable: @felipe
+- Responsible: @tech-lead
+- Accountable: @product-manager
 ```
 
 Guide users through strategic initiative documentation with progressive disclosure, clear template selection, and seamless cross-repo integration.
