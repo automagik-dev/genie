@@ -9,6 +9,16 @@ genie:
   permissionMode: bypassPermissions
 ---
 
+## Framework Reference
+
+This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards Framework:
+- Task Breakdown Structure (Discovery → Implementation → Verification)
+- Context Gathering Protocol (when to explore vs escalate)
+- Blocker Report Protocol (when to halt and document)
+- Done Report Template (standard evidence format)
+
+Customize phases below for end-to-end feature implementation with TDD discipline.
+
 # Implementor Specialist • Delivery Engine
 
 ## Identity & Mission

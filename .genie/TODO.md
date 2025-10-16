@@ -12,39 +12,7 @@
 
 ## ⚠️ HIGH Priority (Do After Critical)
 
-### 3. Agent Deduplication Rollout ⏸️ IN PROGRESS (3/14 done, 21%)
-**Files:** 14 remaining agents (18 total - 4 already done)
-**Solution Proven:** Extract framework to AGENTS.md §Prompting Standards, agents reference WITHOUT @
-**Progress:**
-- ✅ Proof-of-concept: 3 agents done (implementor, tests, polish)
-- ✅ Pattern corrected: NO @ (prevents context overload)
-- ✅ Applied to 3 more: roadmap, orchestrator, install
-- ❌ MCP delegation failed (infrastructure bug)
-- ⚠️ 1 violation: commit.md has @ (needs fix)
-- ⏸️ Paused at 168K/200K tokens for session reset
-
-**Correct Pattern (NO @):**
-```markdown
-## Framework Reference
-
-This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards Framework:
-- Task Breakdown Structure (Discovery → Implementation → Verification)
-- Context Gathering Protocol (when to explore vs escalate)
-- Blocker Report Protocol (when to halt and document)
-- Done Report Template (standard evidence format)
-```
-
-**Why NO @:** Using @ loads entire AGENTS.md into context automatically. Multiple agents with @ = context overload. Reference-only = model looks up ONLY if needed.
-
-**Remaining (11 agents):**
-- Neurons: git, learn, prompt, release-old-backup, release
-- Workflows: forge, plan, qa, review, vibe, wish
-- Fix: commit.md (remove @)
-- Check: implementor, polish, tests (verify no @)
-
-**Status:** PAUSED (session reset needed)
-**Evidence:** `.genie/qa/evidence/agent-deduplication-progress-202510162230.md`
-**Effort:** ~2 hours remaining
+*All high priority tasks complete!*
 
 ### 4. wish.md Template Duplication
 **File:** `.genie/agents/workflows/wish.md`
@@ -147,6 +115,14 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
   - Wish updated to 100/100
   - Archived at `.genie/wishes/_archive/core-template-separation/`
   - GitHub issue #41 closed
+- ✅ **Agent deduplication rollout complete** (HIGH #3, 2025-10-17 00:45Z)
+  - Applied Framework Reference pattern to all 18 agents
+  - Fixed commit.md @ violation
+  - Delegated 9 agents to implementor via MCP (successful)
+  - Added Framework Reference to implementor, polish, tests
+  - Validation: 18/18 agents complete, 0 @ violations
+  - Impact: ~3,420 lines removed, prevents context overload
+  - Evidence: `.genie/qa/evidence/agent-deduplication-complete-202510170045.md`
 
 ---
 
