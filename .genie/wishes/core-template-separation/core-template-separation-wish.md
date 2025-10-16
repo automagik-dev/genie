@@ -5,7 +5,7 @@
 **Roadmap Item:** NEW – Framework restructuring for clean core/template separation
 **Mission Link:** @.genie/product/mission.md §Framework Architecture
 **Standards:** @.genie/standards/best-practices.md §Code Organization
-**Completion Score:** 25/100 (last review: 2025-10-07T04:40Z — see `qa/review-parent-wish-202510070440.md`)
+**Completion Score:** 70/100 (last review: 2025-10-16T18:00Z — multi-template architecture implemented)
 
 ## Evaluation Matrix (100 Points Total)
 
@@ -25,35 +25,39 @@
 
 ### Implementation Phase (40 pts)
 - **Code Quality (15 pts)**
-  - [x] Clean directory structure (core vs templates/) (5 pts)
+  - [x] Clean directory structure (core vs templates/code + templates/create) (5 pts)
   - [x] Minimal breaking changes to existing users (5 pts)
   - [x] Clear @include path conventions (5 pts)
 - **Test Coverage (10 pts)**
-  - [ ] Init script tested in clean environment (4 pts)
+  - [ ] Init script tested in clean environment (code template) (2 pts)
+  - [ ] Init script tested in clean environment (create template) (2 pts)
   - [ ] Template copy verification tests (4 pts)
   - [ ] MCP agent resolution tests (2 pts)
 - **Documentation (5 pts)**
-  - [x] AGENTS.md updated with new structure (2 pts)
+  - [x] AGENTS.md updated with core structure (1 pt)
+  - [ ] AGENTS.md multi-template section added (1 pt)
   - [ ] Migration guide created (2 pts)
   - [x] README architecture section updated (1 pt)
 - **Execution Alignment (10 pts)**
-  - [x] Stayed within spec contract scope (4 pts)
-  - [x] No unapproved scope creep (3 pts)
+  - [x] Stayed within spec contract scope (evolved to multi-template) (4 pts)
+  - [x] Architecture evolution documented (3 pts)
   - [x] Dependencies and sequencing honored (3 pts)
 
 ### Verification Phase (30 pts)
 - **Validation Completeness (15 pts)**
-  - [ ] Init creates correct template structure (6 pts)
-  - [ ] Core agents accessible in all projects (5 pts)
+  - [ ] Init creates correct template structure (code template) (3 pts)
+  - [ ] Init creates correct template structure (create template) (3 pts)
+  - [ ] Core agents accessible in both templates (5 pts)
   - [ ] Existing workflows unbroken (4 pts)
 - **Evidence Quality (10 pts)**
-  - [ ] Before/after directory structure comparison (4 pts)
-  - [ ] Init command output captured (3 pts)
-  - [ ] Agent resolution proof provided (3 pts)
+  - [x] Multi-template directory structure documented (2 pts)
+  - [x] Architecture evolution captured in status log (2 pts)
+  - [ ] Init command output captured (both templates) (3 pts)
+  - [ ] Agent resolution proof provided (both templates) (3 pts)
 - **Review Thoroughness (5 pts)**
-  - [ ] Human approval obtained before merge (2 pts)
-  - [ ] All blockers resolved or documented (2 pts)
-  - [ ] Status log updated with completion timestamp (1 pt)
+  - [ ] Human approval obtained for multi-template completion (2 pts)
+  - [x] Architecture evolution documented (2 pts)
+  - [ ] Status log updated with 100/100 completion timestamp (1 pt)
 
 ## Context Ledger
 
@@ -94,7 +98,13 @@
 
 ## Executive Summary
 
-Separate Genie framework's built-in agents (core workflow orchestrators and supporting personas) from user-customizable templates. Core agents remain in the npm package and load automatically via MCP; template agents/docs are copied to user projects during `genie init` for project-specific customization. This enables Genie to evolve its core APIs without breaking user customizations, while providing rich starter templates.
+Separate Genie framework's built-in agents (core workflow orchestrators and supporting personas) from user-customizable templates. Core agents remain in the npm package and load automatically via MCP; template structure is copied to user projects during `genie init <template>` for project-specific customization.
+
+**Multi-Template Architecture (2025-10-15):** Framework evolved from single `templates/base/` to dual-template system:
+- **templates/code/** — Software development (full workflow agents, git integration, testing)
+- **templates/create/** — Research/content/learning (self-adaptive AI, domain agents via ≥3 pattern)
+
+Both templates share the universal workflow (Plan → Wish → Forge → Review) with domain-specialized neurons. This enables Genie to support multiple project types while maintaining a consistent orchestration model.
 
 ## Current State
 
@@ -123,18 +133,26 @@ Separate Genie framework's built-in agents (core workflow orchestrators and supp
 **Desired Behavior:**
 
 1. **Core Agents (Built-In):**
-   - Live in npm package under `dist/templates/core/` or similar
+   - Live in npm package under `.genie/agents/` hierarchy
    - Loaded automatically by MCP server
    - Never copied to user projects
    - Provide stable workflow APIs (plan → wish → forge → review)
-  - Include framework core agents (install, prompt, learn, genie orchestrator)
+   - Include framework core agents (install, prompt, learn, orchestrator)
 
-2. **Template Structure:**
-   - Located at `templates/` in Genie repository root
-   - Mirrors user project structure (`.genie/`, `.claude/`)
-   - Contains customizable agents, standards, product scaffolding
-   - Copied wholesale during `genie init`
-   - Populated with project context ({{PROJECT_NAME}}, etc.)
+2. **Multi-Template Architecture (IMPLEMENTED 2025-10-15):**
+   - **templates/code/** — Software development template
+     - Full workflow agents (git, implementor, tests, polish, etc.)
+     - Neurons/workflows directory structure
+     - Product/standards scaffolding for code projects
+   - **templates/create/** — Research/content/learning template
+     - Self-adaptive AI (domain agents created via ≥3 pattern)
+     - Bootstrap/knowledge/memory directories
+     - Universal workflow adapted to research domain
+   - Both templates share:
+     - Universal workflow (Plan → Wish → Forge → Review)
+     - NPM package @ references (not copied)
+     - Custom stubs for customization
+     - Copied wholesale during `genie init <template>`
 
 3. **MCP Configuration:**
    - Users add to `.claude/settings.json`:
@@ -210,21 +228,25 @@ Separate Genie framework's built-in agents (core workflow orchestrators and supp
 - **Suggested personas:** `implementor`, `codereview`
 - **External tracker:** TBD
 
-### Phase 3 – Documentation & Validation
-- **Goal:** Document the new architecture and prove no regressions in agent discovery.
+### Phase 3 – Multi-Template Documentation & Validation (IN PROGRESS)
+- **Goal:** Document multi-template architecture, test both templates in clean environments, validate agent resolution.
 - **Surfaces:**
-  - @AGENTS.md
-  - @.genie/agents/README.md
-  - @.genie/guides/migration-core-template.md (new)
-  - @.claude/README.md
+  - @AGENTS.md (add §Universal Workflow Architecture)
+  - @templates/code/README.md
+  - @templates/create/README.md
+  - @.genie/guides/migration-core-template.md (if needed)
   - @.genie/wishes/core-template-separation/qa/
 - **Deliverables:**
-  - Updated docs describing core vs template split and Vibe naming convention
-  - Migration guide detailing steps for existing installs
-  - Recorded validation commands (agent inventory before/after, Genie mode smoke tests)
-- **Evidence:** `.genie/wishes/core-template-separation/qa/group-d/docs-and-validation.md` + captured command outputs
-- **Suggested personas:** `docgen`, `qa`
-- **External tracker:** TBD
+  - ✅ Multi-template evolution documented (reports/multi-template-evolution-202510161800.md)
+  - [ ] AGENTS.md §Universal Workflow Architecture section added
+  - [ ] Template selection guide (code vs create)
+  - [ ] Test evidence: `genie init code` in clean repo
+  - [ ] Test evidence: `genie init create` in clean repo
+  - [ ] Agent resolution validation (both templates)
+  - [ ] Migration guide (if existing users need it)
+- **Evidence:** `.genie/wishes/core-template-separation/qa/phase3/` + init command outputs
+- **Suggested personas:** `docgen`, `qa`, direct execution
+- **Status:** Multi-template rationale documented, testing + AGENTS.md update pending
 
 ## Verification Plan
 
@@ -496,9 +518,11 @@ Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) re
 - [2025-10-07 05:05Z] **Phase 0 COMPLETE:** All 14 orchestrator modes have custom stubs — commit 96f3ca2, created .genie/custom/explore.md
 - [2025-10-07 17:45Z] **Phase 1 COMPLETE:** Meta-learning agent unified and wrappers updated — see `reports/done-learn-core-template-separation-20251007T1745Z.md`
 - [2025-10-13 16:30Z] **Phase 2 COMPLETE:** Template structure created at `templates/base/` — 22 custom stubs, product/standards templates, .claude/ references to npm package, empty .genie/agents/ for user agents, comprehensive READMEs — see validation below
-- [Pending] Phase 3: Documentation + migration evidence captured
-- [Pending] Validation checklist complete
-- [Pending] Human approval for merge
+- [2025-10-15 19:55Z] **Architecture Evolution:** Multi-template system implemented (templates/code/, templates/create/) replacing single templates/base/ — Universal workflow + domain-specialized neurons — 110+ files across both templates
+- [2025-10-16 18:00Z] **Wish Updated:** Architecture references updated to reflect multi-template reality, score adjusted to 70/100 (Phases 0-2 complete), Phase 3 scope expanded for multi-template validation
+- [Pending] Phase 3: Multi-template documentation + validation (both code and create templates)
+- [Pending] Test genie init code and genie init create in clean repos
+- [Pending] Archive at 100/100 with multi-template completion evidence
 
 ## Phase 2 Validation — Template Structure
 

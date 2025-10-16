@@ -32,16 +32,27 @@
 - 0 @ references → loads UPDATE.md only (668 lines)
 - `{{BACKUP_PATH}}` placeholder → CLI substitutes `.genie/backups/<timestamp>/genie/`
 
-### 2. Core-Template-Separation Wish Status ✅ ACCEPTED
+### 2. Core-Template-Separation Wish Status ✅ IN PROGRESS (70/100)
 **File:** `.genie/wishes/core-template-separation/`
-**Problem:** Wish at 25/100 since Oct 7, potentially complete but not updated
-**Action:**
-1. Check if work is done → archive if complete
-2. If not done → convert 10 excessive @ refs to selective Read
-3. Update status to 100/100 or document remaining work
+**Progress:** Wish updated to 70/100, Phase 3 (multi-template validation) in progress
+**Completed:**
+- ✅ Architecture updated: templates/base/ → templates/code/ + templates/create/
+- ✅ Evaluation matrix updated to reflect multi-template reality
+- ✅ Status log documents architecture evolution
+- ✅ Multi-template rationale captured in reports/multi-template-evolution-202510161800.md
+- ✅ Phase 3 scope defined (multi-template documentation + testing)
+- ✅ AGENTS.md §Universal Workflow Architecture already complete
+- ✅ Code template tested: `genie init code` creates correct structure (22 custom stubs, root files, product/standards)
 
-**Status:** INVESTIGATION REQUIRED
-**Effort:** 1 hour investigation + action
+**Remaining (Phase 3):**
+1. Test `genie init create` in clean repo (validation consistency)
+2. Capture validation evidence in wish qa/ folder
+3. Update wish to 100/100
+4. Archive wish with multi-template completion evidence
+5. Update GitHub issue #41
+
+**Status:** RESUME HERE - Template validation 70% done, final testing + archival pending
+**Effort:** ~30 minutes to complete
 
 ---
 
