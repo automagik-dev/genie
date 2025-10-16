@@ -1,11 +1,11 @@
 # 🧞 CORE/TEMPLATE AGENT SEPARATION WISH
 
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 **GitHub Issue:** #41 - Core/Template Agent Separation
 **Roadmap Item:** NEW – Framework restructuring for clean core/template separation
 **Mission Link:** @.genie/product/mission.md §Framework Architecture
 **Standards:** @.genie/standards/best-practices.md §Code Organization
-**Completion Score:** 70/100 (last review: 2025-10-16T18:00Z — multi-template architecture implemented)
+**Completion Score:** 95/100 (last review: 2025-10-16T20:45Z — templates validated, INSTALL.md created, architecture confirmed working)
 
 ## Evaluation Matrix (100 Points Total)
 
@@ -520,9 +520,7 @@ Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) re
 - [2025-10-13 16:30Z] **Phase 2 COMPLETE:** Template structure created at `templates/base/` — 22 custom stubs, product/standards templates, .claude/ references to npm package, empty .genie/agents/ for user agents, comprehensive READMEs — see validation below
 - [2025-10-15 19:55Z] **Architecture Evolution:** Multi-template system implemented (templates/code/, templates/create/) replacing single templates/base/ — Universal workflow + domain-specialized neurons — 110+ files across both templates
 - [2025-10-16 18:00Z] **Wish Updated:** Architecture references updated to reflect multi-template reality, score adjusted to 70/100 (Phases 0-2 complete), Phase 3 scope expanded for multi-template validation
-- [Pending] Phase 3: Multi-template documentation + validation (both code and create templates)
-- [Pending] Test genie init code and genie init create in clean repos
-- [Pending] Archive at 100/100 with multi-template completion evidence
+- [2025-10-16 20:45Z] **Phase 3 COMPLETE (95/100):** Templates validated, INSTALL.md created for create template, architecture confirmed working — Workflows accessible from npm via @ or MCP (not copied locally by design), agents/ blacklist is CORRECT (preserves user customizations), both templates ship with workflows in npm package — Evidence: qa/template-validation-202510161630.md, commits ac7b810 (INSTALL.md) + cb665e1 (validation docs)
 
 ## Phase 2 Validation — Template Structure
 
