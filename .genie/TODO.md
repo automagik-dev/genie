@@ -6,27 +6,17 @@
 
 ## 🔥 CRITICAL Priority (Do First)
 
-### 1. UPDATE.md Excessive @ Usage ✅ ACCEPTED
-**File:** `.genie/agents/neurons/update.md`
-**Problem:** Loads 17 backup files with hardcoded @
-**Impact:** -17 @ refs, -40% file size, poor maintainability
-**Action:** Replace `.genie.backup/@...` with dynamic discovery (Glob + Read)
+### 1. UPDATE.md Excessive @ Usage ✅ COMPLETE
+**File:** `.genie/UPDATE.md`
+**Problem:** Loaded 19 backup files with hardcoded @ (massive context bloat)
+**Impact:** -19 @ refs, clean context, files loaded on-demand via Read
+**Action:** Removed all @ prefixes, agents use Read during migration execution
 **Evidence:** Knowledge graph audit 2025-10-16
-**Status:** READY TO IMPLEMENT
-**Effort:** 30 minutes
+**Status:** ✅ COMPLETE (2025-10-16)
+**Completed:** 8 surgical edits, 19 @ references removed
 
-```markdown
-# Before (17 hardcoded @):
-@.genie.backup/@.genie/agents/workflows/plan.md
-@.genie.backup/@.genie/agents/workflows/wish.md
-... (15 more)
-
-# After (dynamic discovery):
-**Backup contents:**
-!`find .genie/backups/latest -name "*.md" | sort`
-
-# Then use Glob + Read to load selectively based on what changed
-```
+**Before:** 19 @ references → loads UPDATE.md + all backup files (3,000-5,000 lines)
+**After:** 0 @ references → loads UPDATE.md only (668 lines), Read on-demand
 
 ### 2. Core-Template-Separation Wish Status ✅ ACCEPTED
 **File:** `.genie/wishes/core-template-separation/`
@@ -43,17 +33,18 @@
 
 ## ⚠️ HIGH Priority (Do After Critical)
 
-### 3. Agent Redundancy Investigation
-**Files:** implementor.md, install.md, modes/audit.md, modes/challenge.md
-**Problem:** Duplicate Discovery/Implementation/Verification blocks
-**Question:** WHY are these duplicated? What's the root cause?
-**Action:**
-1. Analyze pattern origins
-2. Determine if extraction is appropriate
-3. Propose @ reference strategy OR document intentional duplication
+### 3. Agent Deduplication Rollout ✅ PROOF-OF-CONCEPT COMPLETE
+**Files:** 18 remaining agents (21 total, 3 done: implementor, tests, polish)
+**Solution Proven:** Extract framework to AGENTS.md §Prompting Standards, agents reference it
+**Completed:**
+- ✅ Added §Prompting Standards Framework to AGENTS.md (~115 lines)
+- ✅ Simplified 3 agents: implementor, tests, polish (-150 lines)
+- ✅ Pattern validated: agents reference base, customize for role
 
-**Status:** DEEP DIVE NEEDED
-**Effort:** 2 hours
+**Action:** Apply pattern to remaining 18 agents
+**Impact:** Projected -3,700 lines total when complete
+**Status:** READY TO ROLLOUT (delegate to implementor)
+**Effort:** 2-3 hours (delegate to implementor with clear spec)
 
 ### 4. wish.md Template Duplication
 **File:** `.genie/agents/workflows/wish.md`
@@ -138,8 +129,18 @@
 - ✅ Investigation wish #44 complete (NOT a bug - version issue)
 - ✅ Issue #44 closed
 - ✅ Wish analysis: #40, #37, #41, #38
-- ✅ Knowledge graph audit (6.5/10 health score)
-- ✅ Identified systematic fixes
+- ✅ **Knowledge graph audit complete** (132 files, 6.5/10 health)
+  - Report: `.genie/qa/evidence/knowledge-graph-audit-20251016123107.md`
+  - Visual graph: `.genie/qa/evidence/knowledge-graph-visual.mermaid`
+- ✅ **Agent deduplication proof-of-concept** (3 agents done)
+  - Added §Prompting Standards Framework to AGENTS.md
+  - Simplified implementor, tests, polish agents
+  - Projected -3,700 lines when rolled out to all 21 agents
+- ✅ **Learn agent fixes** (./genie → mcp__genie__ pattern documented)
+- ✅ **UPDATE.md @ reference optimization** (CRITICAL #1)
+  - Removed 19 excessive @ references
+  - Changed from eager loading (3,000-5,000 lines) to on-demand Read
+  - Impact: Clean context, better token efficiency
 
 ---
 

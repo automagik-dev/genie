@@ -114,9 +114,9 @@ find .genie.backup/ -type f -name "*.yaml" | wc -l  # YAML files
 
 **Read these files to understand backup structure:**
 ```
-@.genie.backup/package.json (if exists - version info)
-@.genie.backup/AGENTS.md (structure clues)
-@.genie.backup/README.md (if exists)
+.genie.backup/package.json (if exists - version info)
+.genie.backup/AGENTS.md (structure clues)
+.genie.backup/README.md (if exists)
 ```
 
 **Detect patterns:**
@@ -145,7 +145,7 @@ find .genie.backup/wishes/ -name "*-wish.md" -type f
 
 1. **Read full content:**
    ```
-   @.genie.backup/wishes/<slug>/<slug>-wish.md
+   .genie.backup/wishes/<slug>/<slug>-wish.md
    ```
 
 2. **Extract key information:**
@@ -212,7 +212,7 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Read full content:**
    ```
-   @.genie.backup/custom/<agent>.md
+   .genie.backup/custom/<agent>.md
    ```
 
 2. **Determine if customization or standalone:**
@@ -250,8 +250,8 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Read backup config:**
    ```
-   @.genie.backup/config.yaml
-   @.genie.backup/.genie/cli/config.yaml (if exists)
+   .genie.backup/config.yaml
+   .genie.backup/.genie/cli/config.yaml (if exists)
    ```
 
 2. **Extract user preferences:**
@@ -263,7 +263,7 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 3. **Read current config:**
    ```
-   @.genie/cli/config.yaml
+   .genie/cli/config.yaml
    ```
 
 4. **Merge preferences:**
@@ -294,18 +294,18 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 1. **Read backup docs:**
    ```
-   @.genie.backup/product/mission.md
-   @.genie.backup/product/roadmap.md
-   @.genie.backup/product/tech-stack.md
-   @.genie.backup/standards/best-practices.md
+   .genie.backup/product/mission.md
+   .genie.backup/product/roadmap.md
+   .genie.backup/product/tech-stack.md
+   .genie.backup/standards/best-practices.md
    ```
 
 2. **Read current docs:**
    ```
-   @.genie/product/mission.md
-   @.genie/product/roadmap.md
-   @.genie/product/tech-stack.md
-   @.genie/standards/best-practices.md
+   .genie/product/mission.md
+   .genie/product/roadmap.md
+   .genie/product/tech-stack.md
+   .genie/standards/best-practices.md
    ```
 
 3. **Compare and merge:**
@@ -355,9 +355,9 @@ find .genie.backup/agents/ -name "*.md" -type f 2>/dev/null | grep -v "core/"
 
 **Critical files to read:**
 ```
-@.genie.backup/AGENTS.md
-@.genie.backup/CLAUDE.md
-@.genie.backup/.genie/context.md (if exists)
+.genie.backup/AGENTS.md
+.genie.backup/CLAUDE.md
+.genie.backup/.genie/context.md (if exists)
 ```
 
 **Extract from AGENTS.md:**
