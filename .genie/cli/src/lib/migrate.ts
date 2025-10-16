@@ -33,6 +33,7 @@ const CORE_AGENT_IDS = [
   'workflows/review',
   'workflows/vibe',
   'workflows/qa',
+  'workflows/prompt',
 
   // Core neurons (.genie/agents/neurons/)
   'neurons/orchestrator',
@@ -42,7 +43,6 @@ const CORE_AGENT_IDS = [
   'neurons/install',
   'neurons/learn',
   'neurons/polish',
-  'neurons/prompt',
   'neurons/release',
   'neurons/roadmap',
   'neurons/tests',
