@@ -35,31 +35,23 @@ Plan comprehensive test strategies, propose minimal high-value tests, author fai
 - ❌ Ignore `.claude/commands/prompt.md` structure or omit code examples
 
 ## Operating Framework
-```
-<task_breakdown>
-1. [Discovery]
-   - Determine mode: strategy (layered planning) vs generation (propose tests) vs authoring (write/repair tests)
-   - For strategy: Map feature scope, user flows, failure modes, rollback requirements
-   - For generation: Identify targets, frameworks, and existing patterns
-   - For authoring: Read wish/task context, acceptance criteria, and current failures
-   - Inspect referenced test modules, fixtures, and related helpers
-   - Determine environment prerequisites or data seeds
 
-2. [Implementation]
-   - For strategy: Design test layers (unit/integration/E2E/manual/monitoring/rollback) with specific scenarios and tooling
-   - For generation: Propose framework-specific tests with names, locations, assertions; identify minimal set
-   - For authoring: Write failing tests that express desired behaviour
-   - Repair fixtures/mocks/snapshots when suites break
-   - Limit edits to testing assets unless explicitly told otherwise
+Uses standard task breakdown (see AGENTS.md §Prompting Standards Framework) with test-specific adaptations for 3 modes:
 
-3. [Verification]
-   - For strategy: Validate coverage targets, identify blockers, deliver go/no-go + confidence verdict
-   - For generation: Record coverage gaps and follow-ups; produce minimal set to unblock implementation
-   - For authoring: Run test commands; save test outputs to wish `qa/`
-   - Capture fail ➜ pass progression showing both states
-   - Summarize remaining gaps or deferred scenarios
-</task_breakdown>
-```
+**Mode 1: Strategy (layered planning)**
+- Discovery: Map feature scope, user flows, failure modes, rollback requirements
+- Implementation: Design test layers (unit/integration/E2E/manual/monitoring/rollback) with specific scenarios and tooling
+- Verification: Validate coverage targets, identify blockers, deliver go/no-go + confidence verdict
+
+**Mode 2: Generation (propose tests)**
+- Discovery: Identify targets, frameworks, and existing patterns
+- Implementation: Propose framework-specific tests with names, locations, assertions; identify minimal set
+- Verification: Record coverage gaps and follow-ups; produce minimal set to unblock implementation
+
+**Mode 3: Authoring (write/repair tests)**
+- Discovery: Read wish/task context, acceptance criteria, and current failures; inspect test modules, fixtures, helpers
+- Implementation: Write failing tests that express desired behaviour; repair fixtures/mocks/snapshots when suites break; limit edits to testing assets unless explicitly told otherwise
+- Verification: Run test commands; save test outputs to wish `qa/`; capture fail → pass progression showing both states; summarize remaining gaps
 
 ---
 
@@ -354,23 +346,13 @@ Suggested: <one line>
 Returning control for fixes.
 ```
 
-### Context Exploration Pattern
-```
-<context_gathering>
-Goal: Understand existing coverage and gaps before editing tests.
+### Context Exploration
 
-Method:
-- Read the tests referenced by @ markers and related fixtures/data builders.
-- Use `rg` to locate existing scenarios or helper utilities to extend.
-- Examine previous failures via logs or CI artefacts when available.
+Uses standard context_gathering protocol (AGENTS.md §Context Gathering Protocol) with test-specific focus:
 
-Early stop criteria:
-- You can explain which behaviours lack coverage and how new tests will fail initially.
-- You understand whether tests should be unit (in src with #[cfg(test)]) or integration (in tests/).
-
-Test Organization (Rust):
-- Unit tests: In source files with #[cfg(test)] modules
-- Integration tests: In crates/<crate>/tests/
+**Test Organization (Rust):**
+- Unit tests: In source files with `#[cfg(test)]` modules
+- Integration tests: In `crates/<crate>/tests/`
 - Test naming: `test_<what>_<when>_<expected_outcome>`
 - Folder structure:
   ```
@@ -382,8 +364,10 @@ Test Organization (Rust):
       integration_test.rs
     benches/         # Benchmarks
   ```
-</context_gathering>
-```
+
+**Early stop criteria (tests-specific):**
+- You can explain which behaviours lack coverage and how new tests will fail initially
+- You understand whether tests should be unit (in src with #[cfg(test)]) or integration (in tests/)
 
 ### Concrete Test Examples
 
@@ -443,35 +427,16 @@ describe('sum', () => {
 ```
 Use explicit assertions and meaningful messages so implementers know exactly what to satisfy.
 
-### Done Report Structure
-```markdown
-# Done Report: {{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>
+### Done Report & Evidence
 
-## Working Tasks
-- [x] Write unit test for auth validation
-- [x] Write integration test for full flow
-- [x] Save outputs to qa/group-<letter>/
-- [ ] Add benchmark tests (deferred: needs baseline)
+Uses standard Done Report structure (AGENTS.md §Done Report Template) with test-specific evidence:
 
-## Tests Created/Modified
-[List of test files and their purpose]
-
-## Evidence Saved
+**Tests-specific evidence:**
 - Failing/Passing logs: wish `qa/` directory
 - Coverage reports: wish `qa/` directory (if generated)
-- Additional artefacts: list any other evidence locations
-
-## Command Outputs
-[Key excerpts showing fail -> pass progression]
-
-## Coverage Gaps
-[What still needs test coverage]
-```
-
-### Validation & Reporting
-- Execute the agreed commands and copy relevant output into the Done Report.
-- Save the Done Report at `.genie/wishes/<slug>/reports/done-{{AGENT_SLUG}}-<slug>-<YYYYMMDDHHmm>.md` (UTC) and link it in chat.
-- Track deferred work in the Done Report's working tasks section.
+- Command outputs showing fail → pass progression
+- Test files created/modified with their purpose
+- Coverage gaps and deferred scenarios
 
 ---
 

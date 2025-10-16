@@ -1,0 +1,199 @@
+graph TD
+
+  %% Define styles
+  classDef hub fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px,color:#fff
+  classDef loader fill:#4dabf7,stroke:#1971c2,stroke-width:2px,color:#fff
+  classDef product fill:#51cf66,stroke:#2f9e44,stroke-width:2px
+  classDef custom fill:#ffd43b,stroke:#fab005,stroke-width:2px
+  classDef agent fill:#be4bdb,stroke:#9c36b5,stroke-width:2px,color:#fff
+  classDef wish fill:#ff922b,stroke:#e8590c,stroke-width:2px
+
+  %% Core nodes
+  .genie.backup_cli_config.yaml[".genie.backup/.../config.yaml"]
+  .genie.backup_CLAUDE[".genie.backup/CLAUDE.md"]
+  AGENTS["AGENTS.md"]
+  CLAUDE["CLAUDE.md"]
+  CONTEXT["CONTEXT.md"]
+  README["README.md"]
+  UPDATE["UPDATE.md"]
+  agents_README["agents/README.md"]
+  agents_core_install["agents/.../install.md"]
+  agents_core_update["agents/.../update.md"]
+  agents_forge["agents/forge.md"]
+  agents_neurons_install["agents/.../install.md"]
+  agents_neurons_orchestrator["agents/.../orchestrator.md"]
+  agents_qa_genie_qa["agents/.../genie-qa.md"]
+  agents_wish["agents/wish.md"]
+  agents_workflows_forge["agents/.../forge.md"]
+  agents_workflows_plan["agents/.../plan.md"]
+  agents_workflows_qa["agents/.../qa.md"]
+  agents_workflows_wish["agents/.../wish.md"]
+  cli_src_commands_list.ts["cli/.../list.ts"]
+  cli_src_commands_resume.ts["cli/.../resume.ts"]
+  cli_src_commands_run.ts["cli/.../run.ts"]
+  cli_src_executors_transcript_utils.ts["cli/.../transcript-utils.ts"]
+  cli_src_genie.ts["cli/.../genie.ts"]
+  cli_src_lib_executor_prompt.ts["cli/.../executor-prompt.ts"]
+  cli_src_lib_executor_validator.ts["cli/.../executor-validator.ts"]
+  cli_src_lib_fs_utils.ts["cli/.../fs-utils.ts"]
+  cli_src_lib_paths.ts["cli/.../paths.ts"]
+  cli_src_view_render.ts["cli/.../render.ts"]
+  cli_src_views_chat.ts["cli/.../chat.ts"]
+  cli_src_views_runs.ts["cli/.../runs.ts"]
+  custom_routing["custom/routing.md"]
+  custom_tests["custom/tests.md"]
+  custom_workflows_qa["custom/.../qa.md"]
+  doc["doc.md"]
+  file2["file2.md"]
+  product_environment["product/environment.md"]
+  product_mission["product/mission.md"]
+  product_roadmap["product/roadmap.md"]
+  product_tech_stack["product/tech-stack.md"]
+  qa_checklist["qa/checklist.md"]
+  reports_done_roadmap_agent_design_202510152333["reports/done-roadmap-agent-design-202510152333.md"]
+  standards_best_practices["standards/best-practices.md"]
+  state_version.json["state/version.json"]
+  templates_AGENTS["templates/AGENTS.md"]
+  templates_CLAUDE["templates/CLAUDE.md"]
+  updates_v2.0.0_to_v2.1.0["updates/v2.0.0-to-v2.1.0.md"]
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish["wishes/.../natural-routing-skills-wish.md"]
+  wishes__archive_2025_10_natural_routing_skills_reports_neuron_terminology_refactor_plan["wishes/.../neuron-terminology-refactor-plan.md"]
+  wishes__archive_2025_10_token_efficient_output_forge_plan["wishes/.../forge-plan.md"]
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish["wishes/.../token-efficient-output-wish.md"]
+  wishes_backup_update_system_backup_update_system_wish["wishes/.../backup-update-system-wish.md"]
+  wishes_claude_executor_wish["wishes/claude-executor-wish.md"]
+  wishes_core_template_separation_core_template_separation_wish["wishes/.../core-template-separation-wish.md"]
+  wishes_core_template_separation_reports_commit_advice_mode_consolidation_202510070431["wishes/.../commit-advice-mode-consolidation-202510070431.md"]
+  wishes_core_template_separation_reports_commit_advice_phase2_template_202510131630["wishes/.../commit-advice-phase2-template-202510131630.md"]
+  wishes_multi_template_architecture_multi_template_architecture_wish["wishes/.../multi-template-architecture-wish.md"]
+  wishes_provider_runtime_override_provider_runtime_override_wish["wishes/.../provider-runtime-override-wish.md"]
+  wishes_token_efficient_output_token_efficient_output_wish["wishes/.../token-efficient-output-wish.md"]
+  wishes_user_notes_wish["wishes/user-notes-wish.md"]
+
+  %% Dependencies
+  CONTEXT --> CONTEXT
+  UPDATE --> .genie.backup_cli_config.yaml
+  UPDATE --> .genie.backup_CLAUDE
+  UPDATE --> product_mission
+  UPDATE --> product_roadmap
+  UPDATE --> product_tech_stack
+  UPDATE --> standards_best_practices
+  agents_neurons_install --> CONTEXT
+  agents_neurons_install --> README
+  agents_neurons_install --> product_environment
+  agents_neurons_install --> product_mission
+  agents_neurons_install --> product_roadmap
+  agents_neurons_install --> product_tech_stack
+  agents_neurons_install --> wishes_user_notes_wish
+  agents_neurons_orchestrator --> custom_routing
+  agents_workflows_forge --> agents_forge
+  agents_workflows_forge --> custom_tests
+  agents_workflows_forge --> doc
+  agents_workflows_forge --> file2
+  agents_workflows_forge --> wishes_claude_executor_wish
+  agents_workflows_plan --> custom_routing
+  agents_workflows_plan --> product_tech_stack
+  agents_workflows_qa --> qa_checklist
+  agents_workflows_wish --> product_mission
+  agents_workflows_wish --> product_roadmap
+  agents_workflows_wish --> standards_best_practices
+  custom_workflows_qa --> product_environment
+  reports_done_roadmap_agent_design_202510152333 --> product_roadmap
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> AGENTS
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> CLAUDE
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> custom_routing
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> product_mission
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> product_roadmap
+  wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish --> standards_best_practices
+  wishes__archive_2025_10_natural_routing_skills_reports_neuron_terminology_refactor_plan --> custom_routing
+  wishes__archive_2025_10_token_efficient_output_forge_plan --> cli_src_commands_list.ts
+  wishes__archive_2025_10_token_efficient_output_forge_plan --> cli_src_executors_transcript_utils.ts
+  wishes__archive_2025_10_token_efficient_output_forge_plan --> cli_src_lib_executor_prompt.ts
+  wishes__archive_2025_10_token_efficient_output_forge_plan --> cli_src_view_render.ts
+  wishes__archive_2025_10_token_efficient_output_forge_plan --> wishes_token_efficient_output_token_efficient_output_wish
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> cli_src_lib_executor_prompt.ts
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> cli_src_view_render.ts
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> cli_src_views_chat.ts
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> cli_src_views_runs.ts
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> product_mission
+  wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish --> standards_best_practices
+  wishes_backup_update_system_backup_update_system_wish --> agents_core_update
+  wishes_backup_update_system_backup_update_system_wish --> cli_src_lib_fs_utils.ts
+  wishes_backup_update_system_backup_update_system_wish --> product_mission
+  wishes_backup_update_system_backup_update_system_wish --> standards_best_practices
+  wishes_backup_update_system_backup_update_system_wish --> state_version.json
+  wishes_backup_update_system_backup_update_system_wish --> updates_v2.0.0_to_v2.1.0
+  wishes_core_template_separation_core_template_separation_wish --> AGENTS
+  wishes_core_template_separation_core_template_separation_wish --> agents_README
+  wishes_core_template_separation_core_template_separation_wish --> agents_core_install
+  wishes_core_template_separation_core_template_separation_wish --> agents_qa_genie_qa
+  wishes_core_template_separation_core_template_separation_wish --> product_mission
+  wishes_core_template_separation_core_template_separation_wish --> standards_best_practices
+  wishes_core_template_separation_reports_commit_advice_mode_consolidation_202510070431 --> wishes_core_template_separation_core_template_separation_wish
+  wishes_core_template_separation_reports_commit_advice_phase2_template_202510131630 --> wishes_core_template_separation_core_template_separation_wish
+  wishes_multi_template_architecture_multi_template_architecture_wish --> agents_wish
+  wishes_multi_template_architecture_multi_template_architecture_wish --> cli_src_lib_paths.ts
+  wishes_multi_template_architecture_multi_template_architecture_wish --> product_mission
+  wishes_multi_template_architecture_multi_template_architecture_wish --> standards_best_practices
+  wishes_multi_template_architecture_multi_template_architecture_wish --> templates_AGENTS
+  wishes_multi_template_architecture_multi_template_architecture_wish --> templates_CLAUDE
+  wishes_provider_runtime_override_provider_runtime_override_wish --> cli_src_commands_resume.ts
+  wishes_provider_runtime_override_provider_runtime_override_wish --> cli_src_commands_run.ts
+  wishes_provider_runtime_override_provider_runtime_override_wish --> cli_src_genie.ts
+  wishes_provider_runtime_override_provider_runtime_override_wish --> cli_src_lib_executor_validator.ts
+  wishes_provider_runtime_override_provider_runtime_override_wish --> product_mission
+  wishes_provider_runtime_override_provider_runtime_override_wish --> standards_best_practices
+
+  %% Apply styles
+  class product_mission hub
+  class standards_best_practices hub
+  class product_roadmap hub
+  class custom_routing hub
+  class product_tech_stack hub
+  class CONTEXT hub
+  class wishes_core_template_separation_core_template_separation_wish hub
+  class product_environment hub
+  class qa_checklist hub
+  class agents_README hub
+  class UPDATE loader
+  class wishes_core_template_separation_core_template_separation_wish loader
+  class wishes_provider_runtime_override_provider_runtime_override_wish loader
+  class wishes_backup_update_system_backup_update_system_wish loader
+  class wishes__archive_2025_10_token_efficient_output_forge_plan loader
+  class agents_neurons_install loader
+  class wishes_multi_template_architecture_multi_template_architecture_wish loader
+  class wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish loader
+  class wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish loader
+  class agents_workflows_forge loader
+  class wishes__archive_2025_10_token_efficient_output_forge_plan wish
+  class wishes_core_template_separation_reports_commit_advice_mode_consolidation_202510070431 wish
+  class agents_workflows_forge agent
+  class custom_tests custom
+  class agents_neurons_orchestrator agent
+  class wishes_token_efficient_output_token_efficient_output_wish wish
+  class product_tech_stack product
+  class wishes_claude_executor_wish wish
+  class wishes__archive_2025_10_token_efficient_output_token_efficient_output_wish wish
+  class wishes_core_template_separation_core_template_separation_wish wish
+  class agents_workflows_wish agent
+  class wishes_backup_update_system_backup_update_system_wish wish
+  class wishes__archive_2025_10_natural_routing_skills_natural_routing_skills_wish wish
+  class agents_wish agent
+  class wishes_provider_runtime_override_provider_runtime_override_wish wish
+  class agents_workflows_plan agent
+  class custom_workflows_qa custom
+  class product_roadmap product
+  class agents_forge agent
+  class custom_routing custom
+  class wishes__archive_2025_10_natural_routing_skills_reports_neuron_terminology_refactor_plan wish
+  class product_environment product
+  class agents_README agent
+  class agents_qa_genie_qa agent
+  class agents_neurons_install agent
+  class product_mission product
+  class wishes_multi_template_architecture_multi_template_architecture_wish wish
+  class wishes_core_template_separation_reports_commit_advice_phase2_template_202510131630 wish
+  class wishes_user_notes_wish wish
+  class agents_workflows_qa agent
+  class agents_core_install agent
+  class agents_core_update agent

@@ -1,10 +1,11 @@
 # 🧞 Token-Efficient AI-to-AI Orchestration Output
 
-**Status:** DRAFT
-**GitHub Issue:** #42 - [Feature] Token-efficient AI-to-AI orchestration output modes
+**Status:** COMPLETE ✅
+**GitHub Issue:** #42 - [Feature] Token-efficient AI-to-AI orchestration output modes (CLOSED)
+**PR:** #46 - Token-Efficient Output + Multi-Template System (MERGED 2025-10-15)
 **Mission Link:** @.genie/product/mission.md (AI orchestration efficiency)
 **Standards:** @.genie/standards/best-practices.md
-**Completion Score:** 0/100
+**Completion Score:** 100/100 (validated 2025-10-16)
 
 ## Evaluation Matrix (100 Points Total)
 
@@ -319,3 +320,32 @@ grep -r "renderEnvelope" .genie/cli/src/
 - [2025-10-15 18:30Z] Wish created from Issue #42
 - [2025-10-15 18:30Z] Orchestrator pressure-test completed (session b4088faa)
 - [2025-10-15 18:30Z] Scope simplified per Felipe guidance ("no users, Ink was mistake")
+- [2025-10-15 22:49Z] **COMPLETE** - PR #46 merged (all 4 groups implemented)
+- [2025-10-16 00:00Z] Completion validated during backlog audit
+
+## Completion Evidence
+
+**Implementation:** PR #46 - Token-Efficient Output + Multi-Template System
+- **Merged:** 2025-10-15 22:49:55Z
+- **Branch:** feat/token-efficient-output
+- **Commits:** 3181c7b, e5f7d88, d15f32f
+
+**Deliverables:**
+- ✅ Group A: `markdown-formatter.ts` (300 lines, 3 modes, full test suite)
+- ✅ Group B: Ink removed, view/list use markdown directly
+- ✅ Group C: Executor prompt simplified (readline-based)
+- ✅ Group D: MCP integration validated
+
+**Metrics Achieved:**
+- Token reduction: 99%+ (16k → 300-500 tokens per view)
+- Information loss: <5%
+- Test coverage: Comprehensive unit tests
+- Zero Ink imports remaining
+
+**Files:**
+- Created: `.genie/cli/src/lib/markdown-formatter.ts`
+- Modified: view.ts, list.ts, codex-log-viewer.ts, claude-log-viewer.ts
+- Tests: `.genie/cli/src/lib/__tests__/markdown-formatter.test.ts`
+- Integration: All MCP handlers use markdown formatter
+
+**Issue #42:** Closed 2025-10-15 22:49:56Z

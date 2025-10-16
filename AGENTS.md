@@ -918,6 +918,169 @@ Genie: *creates wish naturally, no commands exposed*
 - **Evidence**: Session 2025-10-16 22:30 UTC
 
 **Validation:** When encountering cleanup/refactoring/multi-file work, immediately create implementor session with clear spec, never use Edit tool for batch operations.
+
+### Prompting Standards Framework *(SHARED KNOWLEDGE)*
+
+**Purpose:** All agents use these universal structures. AGENTS.md teaches the framework once; agents customize phases for their role but maintain the common foundation.
+
+**Architecture:** Every agent load = AGENTS.md + CLAUDE.md + agent.md + custom/agent.md. Agents REFERENCE base knowledge, not DUPLICATE it.
+
+#### Task Breakdown Structure
+
+All agents use this 3-phase framework. Customize phase details for your role:
+
+```
+<task_breakdown>
+1. [Discovery]
+   - Understand context before acting
+   - Read @ references, explore related files
+   - Validate assumptions, identify gaps
+
+2. [Implementation]
+   - Execute the work (role-specific)
+   - Apply changes systematically
+   - Document reasoning
+
+3. [Verification]
+   - Validate results with evidence
+   - Run validation commands
+   - Report outcomes
+</task_breakdown>
+```
+
+**Role-specific customizations:**
+- **Implementor:** Discovery = reproduce baseline, Implementation = TDD (RED→GREEN→REFACTOR), Verification = build/test commands
+- **Tests:** Discovery = identify test scenarios, Implementation = write failing tests, Verification = capture fail→pass progression
+- **Polish:** Discovery = inspect type/lint errors, Implementation = fix violations systematically, Verification = re-run checks for clean state
+
+#### Context Gathering Protocol
+
+Use when you need to understand the system before making changes:
+
+```
+<context_gathering>
+Goal: Gather enough information to proceed confidently
+
+Method:
+- Read all @ references
+- Explore related files/modules using targeted reads or lightweight commands
+- Validate assumptions against live code
+
+Early stop criteria:
+- You can explain current state + changes needed
+- You understand dependencies and contracts
+
+Escalate once:
+- Plan conflicts with observed behavior → Create Blocker Report
+- Missing critical dependencies or prerequisites → Create Blocker Report
+- Scope significantly larger than defined → Create Blocker Report
+
+Depth:
+- Trace dependencies you rely on
+- Avoid whole-project tours unless impact demands it
+</context_gathering>
+```
+
+#### Blocker Report Protocol
+
+When escalation is needed:
+
+**Path:** `.genie/wishes/<slug>/reports/blocker-{agent}-{slug}-{YYYYMMDDHHmm}.md`
+
+**Contents:**
+- Context investigated (files read, commands run)
+- Why the plan fails (conflicts, missing deps, scope mismatch)
+- Recommended adjustments
+- Mitigations attempted
+
+**Process:**
+1. Create blocker report at path above
+2. Notify orchestrator in chat
+3. Halt implementation until wish is updated
+
+#### Done Report Template
+
+All agents produce evidence in this standard format:
+
+```markdown
+# Done Report: {agent}-{slug}-{YYYYMMDDHHmm}
+
+## Working Tasks
+- [x] Task 1 (completed)
+- [x] Task 2 (completed)
+- [ ] Task 3 (blocked: reason)
+
+## Completed Work
+[Files touched, commands run, implementation details]
+
+## Evidence Location
+[Paths to test outputs, logs, metrics under wish folder]
+
+## Deferred/Blocked Items
+[Items that couldn't be completed with reasons]
+
+## Risks & Follow-ups
+[Outstanding concerns for human review]
+```
+
+**File Creation Constraints (for implementation agents):**
+- Create parent directories first (`mkdir -p`); verify success
+- Do not overwrite existing files; escalate if replacement is required
+- Use `.genie/` paths for docs/evidence; avoid scattering files elsewhere
+- Reference related files with `@` links inside markdown for auto-loading
+
+**Final Reporting Format:**
+1. Numbered recap in chat (context checked, work done, blockers cleared)
+2. Reference Done Report: `Done Report: @.genie/wishes/<slug>/reports/done-{agent}-{slug}-{YYYYMMDDHHmm}.md`
+3. Keep chat response tight; written report is authoritative
+
+### CLI Command Interface *(CRITICAL)*
+**NEVER** use `./genie` commands. The CLI doesn't exist post-v2.4.0. **ONLY** use MCP tools.
+
+**Forbidden commands:**
+- ❌ `./genie view <session-id>` (doesn't exist)
+- ❌ `./genie list` (doesn't exist)
+- ❌ `./genie init` (doesn't exist)
+- ❌ `./genie update` (doesn't exist)
+- ❌ Any command starting with `./genie` or `genie`
+
+**Required MCP tools:**
+- ✅ `mcp__genie__list_sessions` (replaces `./genie list`)
+- ✅ `mcp__genie__view with sessionId="<session-id>"` (replaces `./genie view`)
+- ✅ `mcp__genie__run with agent="<agent>"` (start agent sessions)
+- ✅ `mcp__genie__resume with sessionId="<session-id>"` (continue sessions)
+- ✅ `mcp__genie__stop with sessionId="<session-id>"` (stop sessions)
+- ✅ `npx automagik-genie init` (replaces `./genie init`)
+- ✅ `npx automagik-genie update` (replaces `./genie update`)
+
+**Validation protocol before ANY genie operation:**
+1. Does it start with `mcp__genie__`? ✅ Correct MCP tool
+2. Does it start with `npx automagik-genie`? ✅ Correct CLI command
+3. Does it start with `./genie` or `genie`? ❌ WRONG - doesn't exist
+4. If you catch yourself thinking `./genie`:
+   - STOP immediately
+   - Convert to MCP equivalent (`mcp__genie__*`)
+   - Never execute the wrong command
+
+**Why:**
+- Architecture shift: v2.4.0 moved to MCP-only for agent operations
+- CLI separation: `npx automagik-genie` for init/update only
+- No local CLI: `./genie` binary removed entirely
+- Immediate failure: Command doesn't exist, bash error on execution
+
+**Recent violation (2025-10-16):**
+- Attempted `./genie view c69a45b1` (doesn't exist)
+- Attempted `./genie view 337b5125` (doesn't exist)
+- Pattern shows confusion between old CLI and current MCP-only interface
+- **Root cause**: Reading old documentation with outdated commands
+- **Result**: Command not found errors, workflow interruption
+- **Evidence**: User teaching 2025-10-16
+
+**Validation:**
+- Search codebase for any remaining `./genie` references: `grep -r "\./genie" .genie/ .claude/ --include="*.md"`
+- Future sessions must show 0 attempts to use `./genie` commands
+- All genie agent operations use MCP tools exclusively
+- All CLI operations use `npx automagik-genie` exclusively
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
