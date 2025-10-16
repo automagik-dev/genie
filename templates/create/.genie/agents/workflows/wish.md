@@ -83,124 +83,18 @@ Checklist:
 ```
 
 ## Wish Template (Saved at `.genie/wishes/<slug>/<slug>-wish.md`)
-```
-# 🧞 {PROJECT NAME} WISH
-**Status:** DRAFT
-**Roadmap Item:** {ROADMAP-ID} – @.genie/product/roadmap.md §{section}
-**Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
-**Completion Score:** 0/100 (updated by `/review`)
 
-## Evaluation Matrix (100 Points Total)
+Load the canonical research/content wish template:
+@.genie/templates/wish-template.md
 
-### Discovery Phase (30 pts)
-- **Context Completeness (10 pts)**
-  - [ ] All relevant files/docs referenced with @ notation (4 pts)
-  - [ ] Background persona outputs captured in context ledger (3 pts)
-  - [ ] Assumptions (ASM-#), decisions (DEC-#), risks documented (3 pts)
-- **Scope Clarity (10 pts)**
-  - [ ] Clear current state and target state defined (3 pts)
-  - [ ] Quality contract complete with success metrics (4 pts)
-  - [ ] Out-of-scope explicitly stated (3 pts)
-- **Evidence Planning (10 pts)**
-  - [ ] Validation criteria specified with exact standards (4 pts)
-  - [ ] Artifact storage paths defined (3 pts)
-  - [ ] Approval checkpoints documented (3 pts)
+This template defines the standard wish structure including:
+- 100-point evaluation matrix (Discovery 30pts, Implementation 40pts, Verification 30pts)
+- Context ledger for @ references and background persona outputs
+- Execution groups with deliverables and validation criteria
+- Quality contract with scope boundaries and success metrics
+- Evidence checklist and blocker protocol
 
-### Implementation Phase (40 pts)
-- **Content Quality (15 pts)**
-  - [ ] Follows project standards (@.genie/standards/*) (5 pts)
-  - [ ] Minimal scope, focused deliverables (5 pts)
-  - [ ] Clear structure and organization (5 pts)
-- **Validation Coverage (10 pts)**
-  - [ ] Quality checks for core content (4 pts)
-  - [ ] Peer review or expert feedback (4 pts)
-  - [ ] Evidence of validation captured (2 pts)
-- **Documentation (5 pts)**
-  - [ ] Clear methodology documented (2 pts)
-  - [ ] Updated relevant external docs (2 pts)
-  - [ ] Context preserved for collaborators (1 pt)
-- **Execution Alignment (10 pts)**
-  - [ ] Stayed within quality contract scope (4 pts)
-  - [ ] No unapproved scope creep (3 pts)
-  - [ ] Dependencies and sequencing honored (3 pts)
-
-### Verification Phase (30 pts)
-- **Validation Completeness (15 pts)**
-  - [ ] All validation criteria met successfully (6 pts)
-  - [ ] Artifacts captured at specified paths (5 pts)
-  - [ ] Edge cases and quality gates addressed (4 pts)
-- **Evidence Quality (10 pts)**
-  - [ ] Validation outputs (drafts → finals) logged (4 pts)
-  - [ ] Reviews/feedback captured where applicable (3 pts)
-  - [ ] Before/after comparisons provided (3 pts)
-- **Review Thoroughness (5 pts)**
-  - [ ] Human approval obtained at checkpoints (2 pts)
-  - [ ] All blockers resolved or documented (2 pts)
-  - [ ] Status log updated with completion timestamp (1 pt)
-
-## Context Ledger
-| Source | Type | Summary | Routed To |
-| --- | --- | --- | --- |
-| Planning brief | doc | Key findings | entire wish |
-| @path/to/file | repo | Insight | wish, docs |
-| mcp__genie__run agent="..." | background | Output summary | wish, roadmap |
-
-## Discovery Summary
-- **Primary analyst:** {Human/Agent}
-- **Key observations:** …
-- **Assumptions (ASM-#):** …
-- **Open questions (Q-#):** …
-- **Risks:** …
-
-## Executive Summary
-Concise outcome tied to research/content impact.
-
-## Current State
-- **What exists today:** @file references with short notes
-- **Gaps/Pain points:** …
-
-## Target State & Guardrails
-- **Desired outcome:** …
-- **Non-negotiables:** quality standards, peer review, validation criteria, compliance, etc.
-
-## Execution Groups
-### Group A – {slug}
-- **Goal:** …
-- **Deliverables:** …
-- **Evidence:** Store in wish `validation/group-a/`, add notes in `reports/` if needed
-- **Suggested personas:** `literature-reviewer`, `outline-builder`
-- **Validation criteria:** {quality standards or approval gates}
-
-(Repeat for Group B/C as needed.)
-
-## Verification Plan
-- Validation steps (peer review, quality checks, expert feedback)
-- Evidence storage: reference wish `validation/` + `reports/` subfolders
-- Workflow strategy note (research project vs content campaign vs learning journey)
-
-### Evidence Checklist
-- **Validation criteria (exact):** …
-- **Artefact paths (where evidence lives):** use wish `validation/` + `reports/`
-- **Approval checkpoints (human sign-off required before work starts):** …
-
-## <quality_contract>
-- **Scope:** …
-- **Out of scope:** …
-- **Success metrics:** …
-- **External dependencies:** …
-- **Validation criteria:** …
-</quality_contract>
-
-## Blocker Protocol
-1. Pause work and create `reports/blocker-<slug>-<timestamp>.md` inside the wish folder describing findings.
-2. Notify owner and wait for updated instructions.
-3. Resume only after the wish status/log is updated.
-
-## Status Log
-- [YYYY-MM-DD HH:MMZ] Wish created
-- …
-```
+Adapt execution groups and validation criteria for research/content domain (not code-specific).
 
 ## Final Chat Response Format
 1. Discovery highlights (2–3 bullets)

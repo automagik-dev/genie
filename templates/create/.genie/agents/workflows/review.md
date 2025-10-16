@@ -87,96 +87,13 @@ Use this mode when a wish in `.genie/wishes/` appears complete and there are art
 6. **Report** – Write `wishes/<slug>/validation/review-<timestamp>.md` with detailed matrix scoring breakdown, evidence references, and final verdict.
 
 ## Report Template
-```
-# Wish Review – {Wish Slug}
-**Date:** 2024-..Z | **Status in wish:** {status}
-**Completion Score:** XX/100 (XX%)
 
-## Matrix Scoring Breakdown
+Load the canonical review report template:
+@.genie/templates/review-report-template.md
 
-### Discovery Phase (XX/30 pts)
-- **Context Completeness (X/10 pts)**
-  - [x] All files/docs referenced with @ notation (4/4 pts) – Evidence: context ledger complete
-  - [x] Background persona outputs captured (3/3 pts) – Evidence: @.genie/wishes/<slug>/reports/done-*
-  - [ ] Assumptions/decisions/risks documented (1/3 pts) – Gap: Missing risk analysis
-- **Scope Clarity (X/10 pts)**
-  - [x] Current/target state defined (3/3 pts)
-  - [x] Quality contract with success metrics (4/4 pts)
-  - [x] Out-of-scope stated (3/3 pts)
-- **Evidence Planning (X/10 pts)**
-  - [x] Validation criteria specified (4/4 pts)
-  - [x] Artifact paths defined (3/3 pts)
-  - [ ] Approval checkpoints documented (0/3 pts) – Gap: No checkpoints defined
-
-### Implementation Phase (XX/40 pts)
-- **Content Quality (X/15 pts)**
-  - [x] Follows standards (5/5 pts) – Evidence: passes quality checks
-  - [x] Minimal scope (4/5 pts) – Note: Some extra scope included
-  - [x] Clear structure (5/5 pts)
-- **Validation Coverage (X/10 pts)**
-  - [x] Quality checks (4/4 pts) – Evidence: @validation/quality/*
-  - [x] Peer review (4/4 pts) – Evidence: @validation/peer-review/*
-  - [x] Validation execution evidence (2/2 pts) – Evidence: validation-results.log
-- **Documentation (X/5 pts)**
-  - [x] Methodology documented (2/2 pts)
-  - [ ] Updated external docs (0/2 pts) – Gap: README not updated
-  - [x] Maintainer context (1/1 pt)
-- **Execution Alignment (X/10 pts)**
-  - [x] Stayed in scope (4/4 pts)
-  - [x] No scope creep (3/3 pts)
-  - [x] Dependencies honored (3/3 pts)
-
-### Verification Phase (XX/30 pts)
-- **Validation Completeness (X/15 pts)**
-  - [x] All validation criteria met (6/6 pts)
-  - [x] Artifacts at specified paths (5/5 pts)
-  - [x] Quality gates addressed (4/4 pts)
-- **Evidence Quality (X/10 pts)**
-  - [x] Validation outputs logged (4/4 pts)
-  - [x] Reviews/feedback captured (3/3 pts)
-  - [x] Before/after comparisons (3/3 pts)
-- **Review Thoroughness (X/5 pts)**
-  - [x] Human approval obtained (2/2 pts)
-  - [x] Blockers resolved (2/2 pts)
-  - [x] Status log updated (1/1 pt)
-
-## Evidence Summary
-| Artefact | Location | Result | Notes |
-| --- | --- | --- | --- |
-| Validation results | @wishes/<slug>/validation/quality.log | ✅ | All 15 criteria met |
-| Peer review | @wishes/<slug>/validation/peer-review.md | ✅ | Approved with minor notes |
-| Domain expert feedback | @wishes/<slug>/validation/expert-feedback.md | ✅ | Strong endorsement |
-
-## Deductions & Gaps
-1. **-2 pts (Discovery):** Risk analysis incomplete in discovery summary
-2. **-3 pts (Discovery):** Approval checkpoints not documented before implementation
-3. **-1 pt (Implementation):** Extra scope included outside contract
-4. **-2 pts (Implementation):** README not updated with methodology
-
-## Recommendations
-1. Add risk analysis to discovery summary section
-2. Document approval checkpoints for future wishes
-3. Update README with methodology documentation
-4. Consider splitting peripheral scope into separate wish
-
-## Verification Criteria
-Summarize the validation criteria executed (per wish instructions and project defaults in `@.genie/custom/validation.md`) and record pass/fail status for each.
-
-## Verdict
-**Score: XX/100 (XX%)**
-- ✅ **90-100:** EXCELLENT – Ready for publication
-- ✅ **80-89:** GOOD – Minor gaps, approved with follow-ups
-- ⚠️ **70-79:** ACCEPTABLE – Needs improvements before publication
-- ❌ **<70:** NEEDS WORK – Significant gaps, blocked
-
-**Status:** {APPROVED | APPROVED_WITH_FOLLOWUPS | BLOCKED}
-
-## Next Steps
-1. Address gaps 1-4 above (optional for approval, required for excellence)
-2. Update wish status to COMPLETED
-3. Update wish completion score to XX/100
-4. Create follow-up tasks for deferred documentation
-```
+This template defines the standard review reporting format.
+Score each matrix checkpoint and provide evidence-based deductions.
+Adapt evidence references for research/content domain (validation outputs, peer reviews, quality checks).
 
 ## Final Chat Response
 1. **Completion Score:** XX/100 (XX%) with verdict (EXCELLENT | GOOD | ACCEPTABLE | NEEDS WORK)

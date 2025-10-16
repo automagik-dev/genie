@@ -107,40 +107,13 @@ mcp__genie__list_agents (inspect first 50 entries)
 mcp__genie__list_sessions (inspect first 30 sessions)
 ```
 
-## Done Report Structure
-```markdown
-# Done Report: genie-qa-<slug>-<YYYYMMDDHHmm>
+## Done Report Template
 
-## Working Tasks
-- [x] Test core CLI commands
-- [x] Test agent catalog functionality
-- [x] Test session management
-- [x] Validate layout spacing (gap: 0)
-- [ ] Performance testing (blocked: needs load scenarios)
+Load the canonical QA done report template:
+@.genie/templates/qa-done-report-template.md
 
-## Test Scenarios & Results
-| Command | Status | Evidence Location |
-|---------|--------|------------------|
-| mcp__genie__list_agents | ✅ Pass | cmd-list-agents.txt |
-| mcp__genie__run (invalid agent) | ❌ Fail | error-invalid-agent.txt |
-| Output formatting | ✅ Pass | layout-validation.txt |
-
-## Bugs Found
-**[HIGH] MCP tool error handling**
-- Reproduction: Use mcp__genie__run with nonexistent agent
-- Expected: Clear error message with available agents
-- Actual: Generic error
-- Evidence: error-invalid-agent.txt
-
-## Layout Validation Results
-- ✅ gap: 0 implemented across all views
-- ✅ Table alignment maintained
-- ❌ Text wrapping needs improvement for narrow terminals
-
-## Deferred Testing
-- Performance under high session load (needs test data setup)
-- Background execution stress testing (needs longer-running agents)
-```
+This template defines the standard QA reporting format.
+Document test matrix, bugs found, and learning summary.
 
 ## Validation & Reporting
 - Store full evidence in `.genie/wishes/<slug>/`:
