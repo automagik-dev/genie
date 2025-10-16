@@ -161,6 +161,23 @@
 
 ---
 
+## 🔥 Last Session Context (2025-10-17 00:45 UTC)
+
+**Active Work:** Template extraction - eliminating duplication across framework
+**Status:** Implementor session running (e38398a3-42fe-4e1c-acec-c6025d0b1112)
+**Completed:** Closed wish #40 (provider runtime override) at 100/100, moved prompt agent to workflows
+**Next:** Monitor implementor, then tackle INVESTIGATION #5 (MCP session bugs)
+
+**Active Sessions:**
+- Implementor: e38398a3-42fe-4e1c-acec-c6025d0b1112 (template extraction)
+- Scope: 4 groups (extract templates, update 9 workflow agents across core/code/create)
+- Expected: ~828 lines duplication eliminated
+
+**Key pattern applied:**
+> "Wish is our bible - consistency is critical. Template duplication = architectural fix, not manual edits."
+
+---
+
 **System Status:** ✅ ACTIVE
 
 **File locations:**

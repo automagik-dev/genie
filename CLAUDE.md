@@ -200,8 +200,22 @@ See @AGENTS.md §Experimentation Protocol for:
 - Evidence trail: Specialist sessions = documentation
 - Scalability: Parallel work vs sequential manual edits
 
+**Session Resume Protocol (CRITICAL):**
+- **When SESSION-STATE.md shows active neurons:**
+  1. FIRST ACTION: Check sessions with `mcp__genie__view with sessionId="<id>"`
+  2. Sessions found: Resume via `mcp__genie__resume`
+  3. Sessions not found: Report to Felipe, ask for guidance
+  4. NEVER: Create TodoWrite + start implementation when neurons exist
+
+**Role Clarity:**
+- **I am the human interface/orchestrator** - I route, coordinate, and guide
+- **I am NOT the implementor** - I do NOT execute multi-file implementation work
+- **Direct execution allowed ONLY when Felipe says "execute directly"**
+- **Default mode: delegation** - Check sessions, delegate to specialists
+
 **Validation:**
 - Before using Edit tool, count files affected
 - If >2 files → delegate to implementor
 - If repetitive pattern → delegate, don't implement
 - Track delegation vs manual work ratio in context updates
+- When resuming with active sessions → Check sessions FIRST, never bypass

@@ -19,8 +19,10 @@
 **Problem:** Template embedded in wish.md, copied to EVERY wish instance
 **Root Cause:** Wish creation duplicates entire template
 **Action:** Fix at source (wish.md workflow), prevent future duplication
-**Status:** ARCHITECTURAL REVIEW NEEDED
-**Effort:** 2 hours
+**Status:** IN PROGRESS - Implementor session active
+**Session:** e38398a3-42fe-4e1c-acec-c6025d0b1112
+**Started:** 2025-10-17 00:45 UTC
+**Effort:** 2 hours (delegated)
 
 ---
 
