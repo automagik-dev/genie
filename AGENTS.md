@@ -881,7 +881,14 @@ Genie: *creates wish naturally, no commands exposed*
 - **Result**: Inconsistent state, manual cleanup required
 - **Evidence**: Commits 0c6ef02, 30dce09, GitHub Actions runs 18506885592
 
-**Validation:** When user says "publish" or "release", immediately suggest release agent delegation via MCP, never direct commands or slash commands.
+**Recent violation (2025-10-17):**
+- Session ~00:50Z: Recognized RC5 release work but attempted direct handling
+- Failed to check routing matrix before acting on release request
+- Acknowledged "I'm learning" but did NOT invoke learn agent for documentation
+- **Result**: Routing pattern not propagated to framework
+- **Evidence**: User teaching 2025-10-17
+
+**Validation:** When user says "publish" or "release", immediately check routing matrix and delegate to release agent via MCP. When user identifies routing failures, invoke learn agent immediately to document correction.
 
 ### Delegation Discipline *(CRITICAL)*
 **NEVER** implement directly when orchestrating. **ALWAYS** delegate to specialist agents for multi-file work.
@@ -1156,6 +1163,37 @@ Execute your workflow directly per your agent instructions. Do NOT delegate to y
 
 **Note:** Specialist agents do NOT load routing.md to prevent self-delegation paradox.
 
+### Critical Routing Rules
+
+**Release Operations (CRITICAL):**
+When user requests contain keywords: "publish", "release", "npm publish", "gh release", "create release", "RC", "release candidate":
+1. **STOP**: Do NOT attempt release operations directly
+2. **CHECK**: Consult routing matrix for release agent delegation
+3. **DELEGATE**: `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
+4. **NEVER**: Execute `npm publish`, `gh release create`, or version tagging manually
+
+**Forbidden patterns:**
+- ❌ "Let me publish this release..." → WRONG (bypasses specialist)
+- ❌ "I'll create the GitHub release..." → WRONG (bypasses specialist)
+- ❌ "Running npm publish..." → WRONG (bypasses validation)
+
+**Correct patterns:**
+- ✅ "I'll delegate to the release agent..." → CORRECT
+- ✅ "Let me route this to our release specialist..." → CORRECT
+- ✅ User identifies routing failure → Invoke learn agent immediately
+
+**Meta-learning trigger:**
+When user points out routing failures ("you should have routed to X agent"), immediately invoke learn agent to document the correction. Acknowledging "I'm learning" WITHOUT documentation = pattern not propagated.
+
+**Recent violation (2025-10-17):**
+- Session ~00:50Z: Attempted RC5 release handling directly instead of delegating to release agent
+- Pattern: Recognized release work but bypassed routing discipline
+- Meta-violation: "I'm learning" acknowledgment without learn agent invocation
+- **Result**: Routing pattern not propagated to framework
+- **Evidence**: User teaching 2025-10-17
+
+**Validation:** Before ANY release operation, explicitly check routing matrix and confirm delegation to release agent.
+
 ### Quick Reference: Available Specialists
 
 - **git** — ALL git and GitHub operations (branch, commit, PR, issues)
@@ -1166,7 +1204,7 @@ Execute your workflow directly per your agent instructions. Do NOT delegate to y
 - **planner** — Background strategic planning
 - **vibe** — Autonomous wish coordinator (requires dedicated branch)
 - **learn** — Meta-learning and documentation updates
-- **release** — GitHub release and npm publish orchestration
+- **release** — GitHub release and npm publish orchestration (NEVER bypass)
 </routing_decision_matrix>
 
 <execution_patterns>
