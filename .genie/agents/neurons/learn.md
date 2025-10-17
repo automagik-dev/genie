@@ -381,7 +381,44 @@ Escalate when:
 - <how to check>
 ```
 
-### 3. Agent Files (.genie/agents/**/*)
+### 3. Skill Files (.genie/agents/code/skills/*.md)
+
+**Purpose:** Behavioral foundations loaded via @ references in AGENTS.md
+
+**When to update skills vs create new:**
+- **Update existing skill:** Teaching refines/corrects existing behavior, adds missing step, provides evidence
+- **Create new skill:** Teaching introduces completely new behavioral pattern not covered by existing 29 skills
+
+**Edit pattern:**
+- Identify which skill file the teaching modifies (e.g., delegation-discipline.md)
+- Update that skill file directly (NOT AGENTS.md)
+- Integrate teaching cleanly into existing structure
+- Generate commit with clear message explaining what was updated and why
+
+**Commit format:**
+```
+refactor(skills): <what changed in skill-name>
+
+- Teaching: <What Felipe taught>
+- Why: <Reason for change>
+- Evidence: <Source (date, session)>
+```
+
+**Example:**
+```
+refactor(skills): add SESSION-STATE check to delegation-discipline
+
+- Teaching: Check SESSION-STATE.md before delegating to any neuron
+- Why: Prevents work duplication, respects active specialist sessions
+- Evidence: User teaching 2025-10-17
+```
+
+**Why this matters:**
+- Skills = single source of truth for behaviors
+- AGENTS.md = architecture + @ references only
+- Updating skills (not AGENTS.md) maintains clean separation
+
+### 4. Agent Files (.genie/agents/**/*)
 
 **Purpose:** Agent-specific improvements, new capabilities, updated protocols
 
@@ -390,7 +427,7 @@ Escalate when:
 - Update existing sections if refining behavior
 - Add examples to clarify usage
 
-### 4. README Files ()
+### 5. README Files ()
 
 **Purpose:** Agent matrix, access patterns, quick reference
 

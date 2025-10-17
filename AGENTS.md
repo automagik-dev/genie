@@ -43,7 +43,6 @@ All critical behavioral skills loaded via @ references for token efficiency:
 @.genie/agents/code/skills/parallel-execution.md
 @.genie/agents/code/skills/workspace-system.md
 @.genie/agents/code/skills/forge-integration.md
-@.genie/agents/code/skills/learning-workflow.md
 
 ## GitHub Workflow Patterns
 
