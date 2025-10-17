@@ -985,6 +985,92 @@ Genie: *creates wish naturally, no commands exposed*
 - Direct execution: ONLY when Felipe explicitly says so
 - Document "checked session first" in response
 
+### Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
+**NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md/TODO.md.
+
+**Root cause:** Files load automatically via @ in CLAUDE.md, but updates happened ad-hoc (forgotten). Now **ENFORCED** by git.
+
+**Automatic enforcement:**
+- ✅ Pre-commit hook runs `.genie/scripts/check-triad.sh` before EVERY commit
+- ✅ Cannot commit with stale files (git rejects)
+- ✅ Self-validating metadata in STATE.md/TODO.md
+- ✅ Clear error messages show exactly what needs updating
+
+**Forbidden patterns:**
+- ❌ Completing TODO task without marking complete in TODO.md
+- ❌ Publishing release without updating STATE.md version info
+- ❌ Saying "I'm learning" without invoking learn agent to document
+- ❌ Claiming "done" when triad files are stale
+
+**Triad files:**
+
+**TODO.md (task status changes):**
+- Update when: Task starts (pending → in progress) or completes (in progress → complete)
+- Before claiming "done" in chat, verify TODO.md updated
+- Metadata tracks: active_tasks, completed_tasks
+- Validation: completed count, priority sections exist
+
+**STATE.md (version/milestone changes):**
+- Update when: Version changes, major feature commit, release published
+- Metadata tracks: last_version, last_commit, last_updated
+- Validation: version matches package.json, not stale (< 5 commits behind)
+
+**USERCONTEXT.md (behavioral patterns):**
+- Update when: Significant behavioral patterns emerge (rarely)
+- Pattern documented with evidence from teaching session
+
+**Automatic validation system:**
+
+**Files:**
+- `.genie/scripts/check-triad.sh` - Self-validating checker
+- `.git/hooks/pre-commit` - Automatic enforcement
+- STATE.md/TODO.md - Embedded validation metadata
+
+**How it works:**
+1. Before commit, pre-commit hook runs check-triad.sh
+2. Script extracts validation commands from file metadata
+3. Checks version match (STATE.md vs package.json)
+4. Validates task counts, priority sections, staleness
+5. If ANY check fails → commit BLOCKED with clear error
+6. Fix files, stage them, retry commit
+
+**Example error:**
+```
+❌ version_match failed (metadata: 2.4.0-rc.7, package.json: 999.0.0)
+
+Fix with:
+  1. Update .genie/STATE.md (version, commits)
+  2. Update .genie/TODO.md (mark tasks COMPLETE)
+  3. Run: git add .genie/{STATE,TODO}.md
+  4. Retry commit
+```
+
+**Completion checklist (AUTOMATED BY GIT):**
+- Git enforces STATE.md/TODO.md freshness automatically
+- Pre-commit hook cannot be bypassed (except `--no-verify` emergency)
+- No memory required - system enforces correctness
+
+**Why this works:**
+- ✅ Automatic: Git enforces, not Claude memory
+- ✅ Catches mistakes: Version mismatches, stale files detected
+- ✅ Self-correcting: Clear error messages guide fixes
+- ✅ Low overhead: Only runs on commit attempt
+- ✅ Definite: Can't commit without passing validation
+
+**Manual validation (for testing):**
+```bash
+bash .genie/scripts/check-triad.sh
+# Checks STATE.md and TODO.md without committing
+```
+
+**Bypass (emergency only):**
+```bash
+git commit --no-verify
+# Skips all git hooks - USE SPARINGLY
+```
+
+**Context:** Discovered 2025-10-17 that triad files loaded but never maintained. Felipe demanded "definite solution" - result is automatic enforcement via git hooks with self-validating file metadata.
+
 ### Prompting Standards Framework *(SHARED KNOWLEDGE)*
 
 **Purpose:** All agents use these universal structures. AGENTS.md teaches the framework once; agents customize phases for their role but maintain the common foundation.
