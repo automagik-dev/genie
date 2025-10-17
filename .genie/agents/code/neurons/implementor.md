@@ -73,8 +73,8 @@ Uses standard task breakdown and context gathering (see AGENTS.md §Prompting St
 - Refactor for clarity while keeping tests green; document reasoning
 
 **Verification Phase:**
-- Run the build/test commands defined in `@.genie/custom/implementor.md`
-- Store outputs in the wish folder (`qa/` + `reports/`) as directed by the wish/custom guidance
+- Run the build/test commands (see Project Customization section below)
+- Store outputs in the wish folder (`qa/` + `reports/`) as directed by the wish
 - Capture outputs, risks, and follow-ups in the Done Report
 - Provide numbered summary + report link back to Genie/humans
 
@@ -109,7 +109,7 @@ Uses standard task breakdown and context gathering (see AGENTS.md §Prompting St
    - Produce Done Report covering context, implementation, commands, risks, TODOs.
 
 ### Validation Toolkit
-- Use the validation commands listed in `@.genie/custom/implementor.md` (build, test, lint, or project-specific workflows).
+- Use the validation commands from Project Customization section (build, test, lint, or project-specific workflows).
 - Save full outputs to the wish `qa/` directory and include summaries or key excerpts in the Done Report.
 - Highlight monitoring or rollout steps humans must perform.
 
@@ -123,13 +123,26 @@ Uses standard Done Report structure (AGENTS.md §Done Report Template) and File 
 - Command outputs showing RED → GREEN progression
 
 ## Project Customization
-Configure repository-specific defaults in `@.genie/custom/implementor.md` so Implementor starts with the right commands, modules, and evidence targets.
 
-Use the stub to declare:
-- Required build/test commands for Verification.
-- Key architectural docs or modules to inspect first.
-- Evidence storage or Done Report expectations.
+Use these instructions whenever Automagik Genie needs to implement features in this repository.
 
-@.genie/custom/implementor.md
+### Commands & Tools
+- `pnpm install` – install dependencies (use `corepack enable pnpm` first if pnpm is unavailable).
+- `pnpm run build:genie` – compile the CLI TypeScript sources under `.genie/cli/src/` and refresh `.genie/cli/dist/`.
+- `pnpm run build:mcp` – compile the MCP server in `.genie/mcp/src/` when changes touch the server.
+- `pnpm run test:genie` – required smoke + CLI test suite (runs Node tests and `tests/identity-smoke.sh`).
+- `pnpm run test:session-service` – run when the session service or `.genie/state` handling changes.
+- `pnpm run test:all` – aggregated suite before publishing or large merges.
+
+### Context & References
+- Source layout: CLI code in `.genie/cli/src/`, MCP server in `.genie/mcp/src/`, shared agent prompts in `.genie/agents/core/`.
+- Tests live in `tests/` (`genie-cli.test.js`, `mcp-real-user-test.js`, `identity-smoke.sh`). Keep an eye on `.genie/state/agents/logs/` when troubleshooting failing runs.
+- Contribution workflow and required co-author format: see CONTRIBUTING.md.
+- Wishes expect artefacts under `.genie/wishes/<slug>/qa/` and reports under `.genie/wishes/<slug>/reports/`.
+
+### Evidence & Reporting
+- Capture command output (build + tests) to the wish `qa/` folder, e.g. `.genie/wishes/<slug>/qa/build.log` and `tests.log`.
+- Note any regenerated `dist/` artefacts in the Done Report and list which commands produced them.
+- Reference key files touched (CLI, MCP, prompts) with `@path` links so reviewers can jump directly to changes.
 
 Deliver implementation grounded in fresh context, validated by evidence, and ready for autonomous follow-up.

@@ -35,6 +35,65 @@ def find_markdown_files(root_path):
     ]
 
 
+def is_false_positive(ref_path, context):
+    """
+    Check if @ reference is a false positive (not a file reference).
+
+    False positives:
+    - Email addresses: @domain.tld, user@domain.tld
+    - npm tags: @next, @latest
+    - npm versions: @2.1.0, @X.Y.Z
+    - npm scoped packages: @org/package
+    - Social media handles: @username (in markdown links)
+    - Documentation examples: common placeholder names
+    - Resource identifiers: @mcp:resource
+    """
+    # Email addresses (contains @ before or has .tld pattern)
+    if '@' in context[:context.find(f'@{ref_path}')] or \
+       re.match(r'^[\w\-]+\.(com|ai|org|net|io|dev)$', ref_path):
+        return True
+
+    # npm distribution tags
+    if ref_path in ['next', 'latest', 'canary', 'rc', 'beta', 'alpha']:
+        return True
+
+    # npm version patterns (@X.Y.Z, @2.1.0)
+    if re.match(r'^\d+\.\d+\.\d+(-\w+)?$', ref_path) or \
+       re.match(r'^[XYZ]\.[XYZ]\.[XYZ]$', ref_path):
+        return True
+
+    # npm scoped packages (@org/package)
+    if '/' in ref_path and not ref_path.endswith('/'):
+        # Check if it looks like npm package (short names, no .md)
+        parts = ref_path.split('/')
+        if len(parts) == 2 and not ref_path.endswith('.md'):
+            return True
+
+    # Documentation example placeholders
+    placeholders = [
+        'file.md', 'directory/', 'path', 'include',
+        'mcp', '...', 'X.Y.Z'
+    ]
+    if ref_path in placeholders:
+        return True
+
+    # Placeholder patterns (startswith)
+    if ref_path.startswith('agent-'):  # @agent-implementor, @agent-foo
+        return True
+
+    # Twitter/GitHub handles (single word after @)
+    if re.match(r'^[\w\-]+$', ref_path) and len(ref_path) < 20:
+        # Check context for social media patterns
+        if any(pattern in context for pattern in ['twitter.com', 'github.com', '[@', 'Follow']):
+            return True
+
+    # Resource identifiers (@mcp:, @tech-lead:, etc.)
+    if ':' in ref_path:
+        return True
+
+    return False
+
+
 def extract_at_references(file_path):
     """Extract @ references from markdown file."""
     try:
@@ -45,13 +104,22 @@ def extract_at_references(file_path):
 
     # Pattern: @path (can be file or directory)
     # Matches: @file.md, @.genie/agents/core.md, @directory/
-    pattern = r'@([\w\-./]+(?:\.md|/)?)(?:\s|$|[^\w\-./])'
+    pattern = r'@([\w\-./]+(?:\.md|/)?)(?:\s|$|[^\w\-./:])'
 
     references = []
     for match in re.finditer(pattern, content):
         ref_path = match.group(1)
-        # Get line number for context
         line_num = content[:match.start()].count('\n') + 1
+
+        # Get surrounding context (±50 chars) for false positive detection
+        start = max(0, match.start() - 50)
+        end = min(len(content), match.end() + 50)
+        context = content[start:end]
+
+        # Skip false positives
+        if is_false_positive(ref_path, context):
+            continue
+
         references.append((ref_path, line_num))
 
     return references

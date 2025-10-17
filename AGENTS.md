@@ -40,9 +40,7 @@
 
 ## GitHub Workflow Patterns
 
-For developer welcome flow, quick capture workflow, and complete GitHub integration patterns, see:
-
-**@.genie/agents/genie/neurons/git/git.md** (GitHub workflow patterns section)
+For developer welcome flow, quick capture workflow, and complete GitHub integration patterns, see GitHub workflow sections in code/neurons/git/ directory.
 
 ## Experimentation Protocol
 
@@ -170,8 +168,8 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 **Correct pattern:**
 ```markdown
 # ✅ RIGHT (lightweight pointer to supplementary)
-# Project Customization
-@.genie/custom/implementor.md
+# Additional Context
+@.genie/agents/code/qa.md
 
 # Validation Commands
 @.genie/qa/checklist.md
@@ -731,7 +729,7 @@ review.md
 
 ## Evidence & Storage Conventions
 - Wishes must declare where artefacts live; there is no default `qa/` directory. Capture metrics inline in the wish (e.g., tables under a **Metrics** section) or in clearly named companion files.
-- Every wish must complete the **Evidence Checklist** block in @.genie/agents/wish.md before implementation begins, spelling out validation commands, artefact locations, and approval checkpoints.
+- Every wish must complete the **Evidence Checklist** block before implementation begins, spelling out validation commands, artefact locations, and approval checkpoints.
 - External tracker IDs live in the wish markdown (for example a **Tracking** section with `Forge task: FORGE-123`).
 - Background agent outputs are summarised in the wish context ledger; raw logs can be viewed with `mcp__genie__view` with sessionId parameter.
 
@@ -1318,7 +1316,7 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/neurons/genie.md`) and the specialized skill files (e.g., `@.genie/agents/neurons/skills/refactor.md`). Customize them only by editing `.genie/custom/neurons/skills/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the specialized skill files (e.g., `.genie/agents/neurons/refactor.md`). Core files remain immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

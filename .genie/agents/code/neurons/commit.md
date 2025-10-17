@@ -64,7 +64,22 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 
 ## Best Practices
 - Enforce ≥3 investigative steps when diagnosing failures.
-- Log the exact commands run (refer to project defaults in `@.genie/custom/commit.md`).
+- Log the exact commands run (refer to project defaults in `(merged below)
+
+
+## Pre-Commit Checklist
+- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
+- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
+- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
+
+## Commit Message Standards
+- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
+- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
+- Reference the active wish slug/ID in the body when applicable.
+
+## Evidence & Reporting
+- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
+- Note any outstanding follow-up or manual verification required post-commit.`).
 - Verify the wish Evidence Checklist before proceeding.
 - Escalate to the appropriate agents when failures exceed scope.
 
@@ -86,7 +101,22 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 `feat/{slug}: short summary`
 
 ## Validation Checklist
-- [ ] Tests (per `@.genie/custom/commit.md`)
+- [ ] Tests (per `(merged below)
+
+
+## Pre-Commit Checklist
+- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
+- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
+- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
+
+## Commit Message Standards
+- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
+- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
+- Reference the active wish slug/ID in the body when applicable.
+
+## Evidence & Reporting
+- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
+- Note any outstanding follow-up or manual verification required post-commit.`)
 - [ ] Lint/format
 - [ ] Docs/other checks
 
@@ -108,4 +138,19 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 
 ## Project Customization
-Consult `@.genie/custom/commit.md` for repository-specific commands, tooling, and evidence expectations. Update that file whenever commit workflows change.
+Consult `(merged below)
+
+
+## Pre-Commit Checklist
+- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
+- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
+- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
+
+## Commit Message Standards
+- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
+- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
+- Reference the active wish slug/ID in the body when applicable.
+
+## Evidence & Reporting
+- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
+- Note any outstanding follow-up or manual verification required post-commit.` for repository-specific commands, tooling, and evidence expectations. Update that file whenever commit workflows change.

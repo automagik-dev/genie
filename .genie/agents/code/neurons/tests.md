@@ -340,7 +340,27 @@ Use this mode when writing actual test code or fixing broken test suites.
    - Limit edits to testing assets unless explicitly told otherwise
 
 3. [Verification]
-   - Run the test commands specified in `@.genie/custom/tests.md`
+   - Run the test commands specified in `(merged below)
+
+
+## Commands & Tools
+- `pnpm run test:genie` – primary CLI + smoke suite, runs Node tests and `tests/identity-smoke.sh` (verifies the `**Identity**` banner and MCP tooling).
+- `pnpm run test:session-service` – targeted coverage for the session service helpers.
+- `pnpm run test:all` – convenience wrapper when both suites must pass.
+- `pnpm run build:genie` – required before running the Node test files so the compiled CLI exists.
+
+## Context & References
+- Test sources live under `@tests/`:
+  - `genie-cli.test.js` – CLI command coverage.
+  - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
+  - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
+- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
+
+## Evidence & Reporting
+- Store test output in the wish folder: `.genie/wishes/<slug>/qa/test-genie.log`, `.genie/wishes/<slug>/qa/test-session-service.log`, etc.
+- When MCP tests fail, attach the relevant log file from `.genie/state/agents/logs/` plus any captured stdout/stderr.
+- Summarise pass/fail counts and highlight flaky behaviour in the Done Report.`
    - On failures, report succinct analysis:
      • Test name and location
      • Expected vs actual
@@ -472,13 +492,53 @@ Uses standard Done Report structure (AGENTS.md §Done Report Template) with test
 ---
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/tests.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in (merged below)
+
+
+## Commands & Tools
+- `pnpm run test:genie` – primary CLI + smoke suite, runs Node tests and `tests/identity-smoke.sh` (verifies the `**Identity**` banner and MCP tooling).
+- `pnpm run test:session-service` – targeted coverage for the session service helpers.
+- `pnpm run test:all` – convenience wrapper when both suites must pass.
+- `pnpm run build:genie` – required before running the Node test files so the compiled CLI exists.
+
+## Context & References
+- Test sources live under `@tests/`:
+  - `genie-cli.test.js` – CLI command coverage.
+  - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
+  - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
+- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
+
+## Evidence & Reporting
+- Store test output in the wish folder: `.genie/wishes/<slug>/qa/test-genie.log`, `.genie/wishes/<slug>/qa/test-session-service.log`, etc.
+- When MCP tests fail, attach the relevant log file from `.genie/state/agents/logs/` plus any captured stdout/stderr.
+- Summarise pass/fail counts and highlight flaky behaviour in the Done Report. so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
 
-@.genie/custom/tests.md
+(merged below)
+
+
+## Commands & Tools
+- `pnpm run test:genie` – primary CLI + smoke suite, runs Node tests and `tests/identity-smoke.sh` (verifies the `**Identity**` banner and MCP tooling).
+- `pnpm run test:session-service` – targeted coverage for the session service helpers.
+- `pnpm run test:all` – convenience wrapper when both suites must pass.
+- `pnpm run build:genie` – required before running the Node test files so the compiled CLI exists.
+
+## Context & References
+- Test sources live under `@tests/`:
+  - `genie-cli.test.js` – CLI command coverage.
+  - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
+  - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
+- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
+
+## Evidence & Reporting
+- Store test output in the wish folder: `.genie/wishes/<slug>/qa/test-genie.log`, `.genie/wishes/<slug>/qa/test-session-service.log`, etc.
+- When MCP tests fail, attach the relevant log file from `.genie/state/agents/logs/` plus any captured stdout/stderr.
+- Summarise pass/fail counts and highlight flaky behaviour in the Done Report.
 
 Testing keeps wishes honest—fail first, validate thoroughly, and document every step for the rest of the team.
