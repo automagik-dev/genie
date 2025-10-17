@@ -986,38 +986,66 @@ Genie: *creates wish naturally, no commands exposed*
 - Document "checked session first" in response
 
 ### Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
-**NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md/TODO.md.
+**NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md.
 
 **Root cause:** Files load automatically via @ in CLAUDE.md, but updates happened ad-hoc (forgotten). Now **ENFORCED** by git.
 
+**Architecture: Shared vs Per-User**
+
+**Shared (committed, always validated):**
+- `.genie/STATE.md` - Repository health, version, production status
+- Everyone sees same state
+- Pre-commit ALWAYS validates
+
+**Per-user (gitignored, validated if exists):**
+- `.genie/TODO.md` - Your work queue (from TODO.template.md)
+- `.genie/USERCONTEXT.md` - Your preferences (from USERCONTEXT.template.md)
+- Each developer maintains their own
+- Pre-commit validates IF EXISTS
+
+**Natural Context Acquisition:**
+- Hook teaches setup on first commit
+- Hook validates gitignored files (doesn't commit them)
+- Clear setup instructions in error messages
+- Files load automatically via @ in CLAUDE.md
+
 **Automatic enforcement:**
 - ✅ Pre-commit hook runs `.genie/scripts/check-triad.sh` before EVERY commit
-- ✅ Cannot commit with stale files (git rejects)
-- ✅ Self-validating metadata in STATE.md/TODO.md
-- ✅ Clear error messages show exactly what needs updating
+- ✅ Cannot commit with stale STATE.md (git rejects)
+- ✅ Validates per-user files if present (optional)
+- ✅ Self-validating metadata in all files
+- ✅ Clear error messages with setup instructions
 
 **Forbidden patterns:**
 - ❌ Completing TODO task without marking complete in TODO.md
 - ❌ Publishing release without updating STATE.md version info
 - ❌ Saying "I'm learning" without invoking learn agent to document
-- ❌ Claiming "done" when triad files are stale
+- ❌ Claiming "done" when STATE.md is stale
 
-**Triad files:**
+**File details:**
 
-**TODO.md (task status changes):**
-- Update when: Task starts (pending → in progress) or completes (in progress → complete)
-- Before claiming "done" in chat, verify TODO.md updated
-- Metadata tracks: active_tasks, completed_tasks
-- Validation: completed count, priority sections exist
-
-**STATE.md (version/milestone changes):**
+**STATE.md (shared repository state):**
+- **Committed**: Yes (shared across team)
+- **Validated**: Always (pre-commit blocks if stale)
 - Update when: Version changes, major feature commit, release published
 - Metadata tracks: last_version, last_commit, last_updated
 - Validation: version matches package.json, not stale (< 5 commits behind)
 
-**USERCONTEXT.md (behavioral patterns):**
+**TODO.md (per-user work queue):**
+- **Committed**: No (gitignored)
+- **Validated**: If exists (optional per developer)
+- Update when: Task starts (pending → in progress) or completes (in progress → complete)
+- Before claiming "done" in chat, verify TODO.md updated
+- Metadata tracks: active_tasks, completed_tasks
+- Validation: completed count, priority sections exist
+- Initialize: `cp .genie/TODO.template.md .genie/TODO.md`
+
+**USERCONTEXT.md (per-user preferences):**
+- **Committed**: No (gitignored)
+- **Validated**: Not validated (free-form per user)
 - Update when: Significant behavioral patterns emerge (rarely)
 - Pattern documented with evidence from teaching session
+- Initialize: `cp .genie/USERCONTEXT.template.md .genie/USERCONTEXT.md`
 
 **Automatic validation system:**
 
@@ -1034,15 +1062,25 @@ Genie: *creates wish naturally, no commands exposed*
 5. If ANY check fails → commit BLOCKED with clear error
 6. Fix files, stage them, retry commit
 
-**Example error:**
+**Example errors:**
+
+**Version mismatch (STATE.md):**
 ```
 ❌ version_match failed (metadata: 2.4.0-rc.7, package.json: 999.0.0)
 
 Fix with:
   1. Update .genie/STATE.md (version, commits)
-  2. Update .genie/TODO.md (mark tasks COMPLETE)
-  3. Run: git add .genie/{STATE,TODO}.md
+  2. Update .genie/TODO.md (mark tasks COMPLETE) [if you have one]
+  3. Run: git add .genie/STATE.md
   4. Retry commit
+```
+
+**First time setup (colleague clones repo):**
+```
+ℹ️  TODO.md not found (optional per-user file)
+   Initialize: cp .genie/TODO.template.md .genie/TODO.md
+
+✅ Triad validation passed
 ```
 
 **Completion checklist (AUTOMATED BY GIT):**
@@ -1069,7 +1107,19 @@ git commit --no-verify
 # Skips all git hooks - USE SPARINGLY
 ```
 
-**Context:** Discovered 2025-10-17 that triad files loaded but never maintained. Felipe demanded "definite solution" - result is automatic enforcement via git hooks with self-validating file metadata.
+**Context:**
+- 2025-10-17: Discovered triad files loaded but never maintained
+- Felipe demanded "definite solution" - result is automatic enforcement
+- Architecture evolved: shared STATE.md (committed) vs per-user TODO.md/USERCONTEXT.md (gitignored)
+- Hook validates ALL files (even gitignored) but only commits shared state
+- Natural context acquisition: hook teaches setup, validates optionally
+
+**Your colleague's experience:**
+1. Clones repo → gets STATE.md automatically
+2. First commit → hook shows "Initialize: cp .genie/TODO.template.md .genie/TODO.md"
+3. Creates TODO.md → hook validates it going forward
+4. Each developer has their own work queue
+5. Everyone shares same STATE.md
 
 ### Prompting Standards Framework *(SHARED KNOWLEDGE)*
 
