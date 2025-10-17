@@ -1,3 +1,14 @@
+<!--
+Triad Validation Metadata
+last_updated: 2025-10-17T01:04:00Z
+last_commit: 61c3622
+last_version: 2.4.0-rc.7
+validation_commands:
+  version_exists: test -f package.json && jq -e .version package.json >/dev/null
+  state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
+  has_version_line: grep -q "Version:" .genie/STATE.md
+-->
+
 # 🗂️ Genie System State
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** System state snapshot (read-only reference)
