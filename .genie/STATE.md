@@ -20,16 +20,16 @@
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.5 on npm@next (2025-10-17)
-**Next Release:** v2.4.0-rc.6 (triad redesign + template perfection)
+**Published:** v2.4.0-rc.7 on npm@next (2025-10-17)
+**Latest:** Autonomous Vibe mode session completed TODO #4 + #5
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Improvements in rc.5:**
-- ✅ Agent deduplication complete (18/18 agents)
-- ✅ Framework Reference pattern (~3,420 lines removed)
-- ✅ Routing violation documented and learned
-- ✅ Planning documents added (triad redesign, merge strategy)
+**Critical Improvements in rc.7:**
+- ✅ Template extraction complete (-261 lines duplication)
+- ✅ MCP bug fix (filtered event format parser)
+- ✅ Autonomous Vibe mode (completed 2 TODOs unattended)
+- ✅ Role clarity + version awareness learning documented
 
 ---
 

@@ -14,29 +14,37 @@
 
 *All high priority tasks complete!*
 
-### 4. wish.md Template Duplication
+### 4. wish.md Template Duplication ✅ COMPLETE
 **File:** `.genie/agents/workflows/wish.md`
 **Problem:** Template embedded in wish.md, copied to EVERY wish instance
 **Root Cause:** Wish creation duplicates entire template
 **Action:** Fix at source (wish.md workflow), prevent future duplication
-**Status:** IN PROGRESS - Implementor session active
-**Session:** e38398a3-42fe-4e1c-acec-c6025d0b1112
-**Started:** 2025-10-17 00:45 UTC
-**Effort:** 2 hours (delegated)
+**Status:** COMPLETE
+**Session:** e38398a3-42fe-4e1c-acec-c6025d0b1112, f7e1bf8b-8823-47df-b714-347c8ad379f1
+**Completed:** 2025-10-17 01:04 UTC (Vibe mode)
+**Effort:** 30 minutes (autonomous)
+**Result:** 8 files changed (+347, -608 = net -261 lines)
+**Commit:** 06f5a7a
+**Evidence:** All @ references validated, build passes
 
 ---
 
 ## 🔍 INVESTIGATION Queue
 
-### 5. MCP Session Creation Bugs
+### 5. MCP Session Creation Bugs ✅ COMPLETE
 **Evidence:**
 - Prompt agent session `c69a45b1` - failed to start (no run found)
 - Orchestrator agent session `337b5125` - failed to start (no run found)
+- Implementor sessions showing "lastMessage: No messages yet" despite execution
 
-**Question:** Why did `mcp__genie__run` return session IDs that don't exist?
-**Action:** Debug MCP session creation flow
-**Status:** NEEDS INVESTIGATION
-**Effort:** 1-2 hours
+**Root Cause:** buildTranscriptFromEvents didn't handle filtered event format
+**Fix:** Added handler for assistant/user/reasoning events with message.content structure
+**Status:** COMPLETE
+**Completed:** 2025-10-17 01:03 UTC (Vibe mode)
+**Effort:** 21 minutes (investigation + fix)
+**Result:** transcript-utils.ts +26 lines (event parser fix)
+**Commit:** b46b915
+**Evidence:** Build passes, fix deployed in RC7
 
 ---
 
