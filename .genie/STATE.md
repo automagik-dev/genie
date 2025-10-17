@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.13
+last_version: 2.4.0-rc.15
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,37 +18,38 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** Agent architecture reorganization + token optimization
+**Focus:** Self-updating ecosystem + squeaky clean repository
 **Branch:** !`git branch --show-current`
 
 **Completed Work:**
-- ✅ Group A: Folder reorganization (genie/* → flat structure)
-- ✅ Group B: Skills extraction (7 files, ~528 lines saved)
-- ✅ Group C: Display transformation (clean agent names)
-- ✅ Committed: d63d397 (175 files, -25,556 lines net)
-- ✅ All QA validation passed
+- ✅ Fixed 305 broken @ references → 0 (squeaky clean)
+- ✅ Deleted .claude/ directory (natural routing complete)
+- ✅ Enhanced validator (code block + inline code detection)
+- ✅ Created agent neural tree generator script
+- ✅ Committed: b0b94bd (108 files, +2,582/-999 lines)
+- ✅ All cross-references validated
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.13 on npm@next (2025-10-17)
-**Latest:** Bug #90 full transcript fix
+**Published:** v2.4.0-rc.15 on npm@next (2025-10-17)
+**Latest:** Squeaky clean repository + agent neural tree
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Fixes in RC13:**
-- ✅ Bug #90: full=true returns complete transcript (not checkpoints)
-- ✅ Added 'full' OutputMode with formatFullMode()
-- ✅ Clean QA validation from scratch (all sessions cleared)
-- ✅ No truncation when --full flag used
+**Key Improvements in RC15:**
+- ✅ 305 broken @ references fixed → 0 (100% valid)
+- ✅ Validator enhanced (code block + inline code detection)
+- ✅ Agent neural tree generator script created
+- ✅ .claude/ directory removed (natural routing complete)
+- ✅ 108 files cleaned, all cross-references validated
 
-**Previous RC12 Fixes:**
-- Genie neuron self-delegation paradox (removed routing.md reference)
-- list_sessions showing zero sessions (store.agents → store.sessions)
-- Session visibility (running + last 10 completed sessions)
-- End-to-end MCP validation passed
+**Previous RC Fixes:**
+- RC13: Bug #90 full transcript fix
+- RC12: Session visibility + delegation paradox fixes
+- RC9: 4 confirmed MCP bugs patched
 
 ---
 
