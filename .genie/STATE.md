@@ -18,13 +18,15 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** RC13 release - Bug #90 full transcript fix
+**Focus:** Agent architecture reorganization + token optimization
 **Branch:** !`git branch --show-current`
 
-**Active Work:**
-- Bug #90: full=true returns complete transcript (not checkpoints)
-- Added formatFullMode() with no truncation
-- Clean QA validation from scratch
+**Completed Work:**
+- ✅ Group A: Folder reorganization (genie/* → flat structure)
+- ✅ Group B: Skills extraction (7 files, ~528 lines saved)
+- ✅ Group C: Display transformation (clean agent names)
+- ✅ Committed: d63d397 (175 files, -25,556 lines net)
+- ✅ All QA validation passed
 
 ---
 
