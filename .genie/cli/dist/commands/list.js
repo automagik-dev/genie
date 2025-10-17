@@ -12,10 +12,33 @@ const config_defaults_1 = require("../lib/config-defaults");
 async function runRuns(parsed, config, paths) {
     const warnings = [];
     const store = (0, session_store_1.loadSessions)(paths, config, config_defaults_1.DEFAULT_CONFIG, { onWarning: (message) => warnings.push(message) });
-    const entries = Object.entries(store.agents || {});
-    const sessions = entries.map(([agent, entry]) => ({
-        sessionId: entry.sessionId || 'pending',
-        agent,
+    // Cleanup zombie sessions (stuck in "running" for >24h with no live processes)
+    const now = Date.now();
+    const ZOMBIE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+    let zombieCount = 0;
+    for (const [sessionId, entry] of Object.entries(store.sessions || {})) {
+        if (entry.status === 'running' && entry.lastUsed) {
+            const lastUsedTime = new Date(entry.lastUsed).getTime();
+            const age = now - lastUsedTime;
+            if (age > ZOMBIE_THRESHOLD_MS) {
+                // Check if processes are actually dead
+                const status = (0, session_helpers_1.resolveDisplayStatus)(entry);
+                if (status !== 'running') {
+                    entry.status = 'abandoned';
+                    entry.lastUsed = new Date().toISOString();
+                    zombieCount++;
+                }
+            }
+        }
+    }
+    if (zombieCount > 0) {
+        (0, session_store_1.saveSessions)(paths, store);
+        warnings.push(`Cleaned up ${zombieCount} zombie session(s)`);
+    }
+    const entries = Object.entries(store.sessions || {});
+    const sessions = entries.map(([sessionId, entry]) => ({
+        sessionId: entry.sessionId || sessionId,
+        agent: entry.agent,
         status: (0, session_helpers_1.resolveDisplayStatus)(entry),
         executor: String(entry.executor || 'unknown'),
         started: entry.created ? (0, utils_1.safeIsoString)(entry.created) ?? undefined : undefined,

@@ -162,19 +162,19 @@ export class SessionService {
     const dir = path.dirname(target);
     await fsPromises.mkdir(dir, { recursive: true });
     if (!fs.existsSync(target)) {
-      const initial: SessionStore = { version: 1, agents: {} };
+      const initial: SessionStore = { version: 2, sessions: {} };
       await fsPromises.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
     }
   }
 
   private mergeStores(base: SessionStore, incoming: SessionStore): SessionStore {
     const merged: SessionStore = {
-      version: incoming.version ?? base.version ?? 1,
-      agents: { ...base.agents }
+      version: incoming.version ?? base.version ?? 2,
+      sessions: { ...base.sessions }
     };
 
-    Object.entries(incoming.agents || {}).forEach(([agent, entry]) => {
-      merged.agents[agent] = { ...(base.agents?.[agent] || {}), ...entry };
+    Object.entries(incoming.sessions || {}).forEach(([sessionId, entry]) => {
+      merged.sessions[sessionId] = { ...(base.sessions?.[sessionId] || {}), ...entry };
     });
 
     return merged;

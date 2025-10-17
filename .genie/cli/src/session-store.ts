@@ -22,7 +22,9 @@ export interface SessionEntry {
 
 export interface SessionStore {
   version: number;
-  agents: Record<string, SessionEntry>;
+  sessions: Record<string, SessionEntry>; // keyed by sessionId, not agent name
+  // Legacy format compatibility (will be migrated on load)
+  agents?: Record<string, SessionEntry>;
 }
 
 export interface SessionPathsConfig {
@@ -51,9 +53,9 @@ export function loadSessions(
   let store: SessionStore;
 
   if (storePath && fs.existsSync(storePath)) {
-    store = normalizeSessionStore(readJson(storePath, callbacks));
+    store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
   } else {
-    store = { version: 1, agents: {} };
+    store = { version: 2, sessions: {} };
   }
 
   const defaultExecutor = resolveDefaultExecutor(config, defaults);
@@ -78,34 +80,67 @@ function readJson(filePath: string, callbacks: { onWarning?: (message: string) =
   }
 }
 
-function normalizeSessionStore(data: unknown): SessionStore {
+function normalizeSessionStore(
+  data: unknown,
+  callbacks: { onWarning?: (message: string) => void } = {}
+): SessionStore {
   if (!data || typeof data !== 'object') {
-    return { version: 1, agents: {} };
+    return { version: 2, sessions: {} };
   }
-  const incoming = data as Partial<SessionStore> & { agents?: Record<string, SessionEntry> };
-  if (incoming.agents) {
+
+  const incoming = data as Partial<SessionStore> & {
+    agents?: Record<string, SessionEntry>;
+    sessions?: Record<string, SessionEntry>;
+  };
+
+  // Version 2 format (sessions keyed by sessionId)
+  if (incoming.sessions) {
     return {
-      version: incoming.version ?? 1,
-      agents: incoming.agents
+      version: 2,
+      sessions: incoming.sessions
     };
   }
+
+  // Version 1 format (agents keyed by agent name) - MIGRATE
+  if (incoming.agents) {
+    callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v2 (sessionId-keyed)');
+
+    const sessions: Record<string, SessionEntry> = {};
+    Object.entries(incoming.agents).forEach(([agentName, entry]) => {
+      // Generate sessionId if missing (fallback to agent name for old entries)
+      const sessionId = entry.sessionId || `legacy-${agentName}-${Date.now()}`;
+      sessions[sessionId] = {
+        ...entry,
+        agent: agentName,
+        sessionId
+      };
+    });
+
+    return {
+      version: 2,
+      sessions
+    };
+  }
+
+  // Empty or malformed
   return {
-    version: 1,
-    agents: incoming as unknown as Record<string, SessionEntry>
+    version: 2,
+    sessions: {}
   };
 }
 
 function migrateSessionEntries(store: SessionStore, defaultExecutor: string): SessionStore {
   const result: SessionStore = {
-    version: store.version ?? 1,
-    agents: { ...store.agents }
+    version: store.version ?? 2,
+    sessions: { ...store.sessions }
   };
 
-  Object.entries(result.agents || {}).forEach(([agent, entry]) => {
+  // Migrate session entries (apply defaults)
+  Object.entries(result.sessions || {}).forEach(([sessionId, entry]) => {
     if (!entry || typeof entry !== 'object') return;
-    if (!entry.mode && entry.preset) result.agents[agent].mode = entry.preset;
-    if (!entry.preset && entry.mode) result.agents[agent].preset = entry.mode;
-    if (!entry.executor) result.agents[agent].executor = defaultExecutor;
+    if (!entry.mode && entry.preset) result.sessions[sessionId].mode = entry.preset;
+    if (!entry.preset && entry.mode) result.sessions[sessionId].preset = entry.mode;
+    if (!entry.executor) result.sessions[sessionId].executor = defaultExecutor;
   });
 
   return result;

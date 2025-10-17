@@ -35,14 +35,15 @@ function createRunHandler(ctx) {
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const startTime = (0, shared_1.deriveStartTime)();
         const logFile = (0, shared_1.deriveLogFile)(resolvedAgentName, startTime, ctx.paths);
+        // Generate temporary session ID for tracking (will be updated with real sessionId later)
+        const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
         const entry = {
-            ...(store.agents[resolvedAgentName] || {}),
             agent: resolvedAgentName,
             preset: modeName,
             mode: modeName,
             logFile,
             lastPrompt: prompt.slice(0, 200),
-            created: (store.agents[resolvedAgentName] && store.agents[resolvedAgentName].created) || new Date().toISOString(),
+            created: new Date().toISOString(),
             lastUsed: new Date().toISOString(),
             status: 'starting',
             background: parsed.options.background,
@@ -52,9 +53,9 @@ function createRunHandler(ctx) {
             exitCode: null,
             signal: null,
             startTime: new Date(startTime).toISOString(),
-            sessionId: null
+            sessionId: tempSessionId // Will be updated with real sessionId from executor
         };
-        store.agents[resolvedAgentName] = entry;
+        store.sessions[tempSessionId] = entry;
         await (0, shared_1.persistStore)(ctx, store);
         const handledBackground = await (0, shared_1.maybeHandleBackgroundLaunch)(ctx, {
             parsed,

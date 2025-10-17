@@ -131,17 +131,17 @@ class SessionService {
         const dir = path_1.default.dirname(target);
         await promises_1.default.mkdir(dir, { recursive: true });
         if (!fs_1.default.existsSync(target)) {
-            const initial = { version: 1, agents: {} };
+            const initial = { version: 2, sessions: {} };
             await promises_1.default.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
         }
     }
     mergeStores(base, incoming) {
         const merged = {
-            version: incoming.version ?? base.version ?? 1,
-            agents: { ...base.agents }
+            version: incoming.version ?? base.version ?? 2,
+            sessions: { ...base.sessions }
         };
-        Object.entries(incoming.agents || {}).forEach(([agent, entry]) => {
-            merged.agents[agent] = { ...(base.agents?.[agent] || {}), ...entry };
+        Object.entries(incoming.sessions || {}).forEach(([sessionId, entry]) => {
+            merged.sessions[sessionId] = { ...(base.sessions?.[sessionId] || {}), ...entry };
         });
         return merged;
     }

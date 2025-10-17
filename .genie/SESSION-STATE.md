@@ -6,71 +6,87 @@
 
 ## 🎯 Active Sessions
 
-### Orchestrator - MCP Agent Start Failure Bug Report ✅
-**Session ID:** `orchestrator-mcp-bug-101`
-**Started:** 2025-10-17 ~23:30 UTC
-**Completed:** 2025-10-17 ~23:35 UTC
-**Status:** completed
-**Purpose:** Create GitHub issue for MCP agent start failures
+### Implementor - MCP Bug Patches for RC9
+**Session ID:** `36459be4-79e5-4673-8d48-0be8a81259ba`
+**Started:** 2025-10-17 18:40 UTC
+**Status:** active (background)
+**Purpose:** Patch 4 confirmed MCP bugs (version metadata, #90, #102, #92)
 **Context:**
-- Bug discovered: Learn agent start failed 2025-10-17 18:45 UTC with "Command failed" error
-- Attempted delegation to git neuron → FAILED (same error on git agent start - recursive bug!)
-- Direct execution via bash + gh CLI: ✅ SUCCESS
-**Outcome:** Issue #101 created with comprehensive bug report
-**Details:**
-- Issue: [Bug] MCP agent start failures with "Command failed" error
-- URL: https://github.com/namastexlabs/automagik-genie/issues/101
-- Evidence: MCP CLI error showing permission flag issues, prompt size threshold (~700 line threshold)
-- Impact: HIGH (blocks all agent-based workflows with large prompts)
-- Labels: type:bug, area:mcp, priority:high
-- Related: #90 (full=true), #91 (session persistence), #92 (zombie sessions)
-- Note: Demonstrates recursive nature of bug (can't report it via agents due to the bug itself)
-- Reproduction: Tried to use git neuron to create issue → FAILED with same error → used direct bash/gh CLI
-**Key Learning:** When delegation fails due to system bug, emergency bypass to direct tools is correct path
+- Bug #102: Session collision (agent name as key → sessionId as key)
+- Bug #90: full=true truncation (checkpoints → full log)
+- Bug #92: Zombie sessions (add cleanup/abandonment marking)
+- Version metadata: Add version header to log files
+**Patches Priority:** 1) Version metadata, 2) Bug #90, 3) Bug #102, 4) Bug #92
+**Next:** Await patch completion, test, commit, publish RC9
 
-<!--
-No other active sessions - most recent work completed via emergency bypass
--->
-
-### Learn - Delegation Instinct vs. Direct Implementation ✅
-**Session ID:** `4946bad6-98f4-4822-b90b-6abc09d21fc7`
-**Started:** 2025-10-17 18:05 UTC
-**Completed:** 2025-10-17 18:15 UTC
+### Debug Neuron - Root Cause Investigation ✅
+**Session ID:** `5c6d3ec5-b953-49a3-bff9-48edd8f17176`
+**Started:** 2025-10-17 18:33 UTC
+**Completed:** 2025-10-17 18:39 UTC
 **Status:** completed
-**Purpose:** Document pattern: honest instinct (do it myself) vs. correct behavior (delegate to specialist)
-**Outcome:** Successfully demonstrated and reinforced delegation discipline
-**Context:**
-- Investigated MCP bugs, found clear evidence for 3 GitHub issues
-- Initial instinct: Create them directly (fast, know syntax)
-- Correct behavior applied: Delegated to git neuron (role clarity, specialist knowledge, evidence trail)
-- Pattern reinforcement: 2025-10-16 (11 Edit calls violation), 2025-10-17 22:45 (bypassed sessions violation)
-- Learning: Consciously chose delegation despite instinct to implement directly
-**Details:**
-- Git neuron created 3 well-formed issues with proper evidence
-- Delegation discipline strengthened through conscious choice
-- Pattern documented for future reinforcement
-
-### Git - Create 4 MCP Bug Issues ✅
-**Session ID:** `3e80b4ee-95be-4b9b-9a7c-285028d9ec16`
-**Started:** 2025-10-17 18:06 UTC
-**Completed:** 2025-10-17 18:15 UTC (Issue #98 added via direct execution 2025-10-17 ~18:30 UTC)
-**Status:** completed
-**Purpose:** Create GitHub issues for MCP bugs discovered during investigation
+**Mode:** debug
+**Purpose:** Identified root cause - MCP spawn race conditions + silent failures
 **Outcome:**
-- Issue #90: [Bug] mcp__genie__view with full=true returns truncated snippets (priority:high)
-- Issue #91: [Bug] Sessions referenced in documentation missing from sessions.json (priority:high)
-- Issue #92: [Bug] Sessions stuck in 'running' status despite completion (priority:medium)
-- Issue #98: [Bug] Session ID collision in list_sessions output (priority:high) ✅
+- Found Bug #102 root cause: sessions.json uses agent name as key (collision)
+- Found Bug #90 root cause: View returns checkpoints not full transcript
+- Found Bug #66/91 pattern: Background launcher timeout + silent spawn failures
+- Comprehensive analysis in log file (500+ lines)
+
+### Debug Neuron - Bug #93 (Agent Start Failures)
+**Session ID:** `7f0e4379-be45-4944-82dd-317207154119`
+**Started:** 2025-10-17 ~23:50 UTC
+**Status:** active (background)
+**Mode:** debug
+**Purpose:** Investigate MCP agent start failures with "Command failed" error
 **Context:**
-- All issues created with bug-report template
-- Evidence included: session IDs, file paths, expected vs actual behavior, timestamps
-- Labels applied: type:bug, area:mcp, priority levels
-**Details:**
-- Bug 1: full=true doesn't return full transcript (truncated snippets)
-- Bug 2: Missing session persistence (5 sessions disappeared)
-- Bug 3: Zombie sessions stuck "running" (2+ days)
-- Bug 4: Session ID collision - same ID for different agents (session 4946bad6)
-- Evidence: sessions.json, raw log files, mcp__genie__view tests, list_sessions output
+- Issue #93: Agents fail with ~700 line prompt threshold
+- Evidence: Learn agent failed 2025-10-17 18:45 UTC, permission flag issues
+- Tasks: Read issue, reproduce with large prompts, test threshold hypothesis
+**Next:** Await investigation results, check for Genie Verdict
+
+### Debug Neuron - Bug #92 (Zombie Sessions)
+**Session ID:** `2104e928-2f7c-4642-93e3-c383f3bb80fc`
+**Started:** 2025-10-17 ~23:50 UTC
+**Status:** active (background)
+**Mode:** debug
+**Purpose:** Investigate sessions stuck in 'running' status despite completion
+**Context:**
+- Issue #92: Sessions show "running" for 2+ days after completion
+- Tasks: Read issue, check current sessions.json for zombies, review lifecycle code
+**Next:** Await investigation results, check for Genie Verdict
+
+### Debug Neuron - Bug #91 (Missing Sessions)
+**Session ID:** `2bd0abb6-39bc-4a68-bcca-4fb24faa00dc`
+**Started:** 2025-10-17 ~23:50 UTC
+**Status:** active (background)
+**Mode:** debug
+**Purpose:** Investigate sessions missing from sessions.json and MCP list
+**Context:**
+- Issue #91: 5 sessions disappeared from persistence
+- Tasks: Read issue, compare SESSION-STATE.md with sessions.json, check raw logs
+**Next:** Await investigation results, check for Genie Verdict
+
+### Debug Neuron - Bug #90 (full=true Truncation)
+**Session ID:** `0499321a-72bf-44fd-8af7-fb8a0a48d259`
+**Started:** 2025-10-17 ~23:50 UTC
+**Status:** active (background)
+**Mode:** debug
+**Purpose:** Investigate mcp__genie__view full=true truncation issue
+**Context:**
+- Issue #90: full=true doesn't return complete transcript, only snippets
+- Tasks: Read issue, test on known session, compare to raw log, review implementation
+**Next:** Await investigation results, check for Genie Verdict
+
+### Debug Neuron - Bug #66 (Session Disappears)
+**Session ID:** `1a0fab28-a40f-40e1-8bd7-39f8ce297deb`
+**Started:** 2025-10-17 ~23:50 UTC
+**Status:** active (background)
+**Mode:** debug
+**Purpose:** Investigate "No run found" error on resume
+**Context:**
+- Issue #66: Session exists, resume returns error (8 duplicates consolidated)
+- Tasks: Read consolidated issues, attempt reproduction, check relationship to #91
+**Next:** Await investigation results, check for Genie Verdict
 
 <!--
 Session format:

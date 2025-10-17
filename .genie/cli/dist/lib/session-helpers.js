@@ -61,12 +61,14 @@ function findSessionEntry(store, sessionId, paths) {
     const trimmed = sessionId.trim();
     if (!trimmed)
         return null;
-    for (const [agentName, entry] of Object.entries(store.agents || {})) {
-        if (entry && entry.sessionId === trimmed) {
-            return { agentName, entry };
+    // Direct lookup by sessionId (v2 schema)
+    for (const [sid, entry] of Object.entries(store.sessions || {})) {
+        if (entry && (entry.sessionId === trimmed || sid === trimmed)) {
+            return { agentName: entry.agent, entry };
         }
     }
-    for (const [agentName, entry] of Object.entries(store.agents || {})) {
+    // Fallback: scan log files for session_id markers
+    for (const [sid, entry] of Object.entries(store.sessions || {})) {
         const logFile = entry.logFile;
         if (!logFile || !fs_1.default.existsSync(logFile))
             continue;
@@ -74,10 +76,17 @@ function findSessionEntry(store, sessionId, paths) {
             const content = fs_1.default.readFileSync(logFile, 'utf8');
             const marker = new RegExp(`"session_id":"${trimmed}"`);
             if (marker.test(content)) {
+                // Update session entry with discovered sessionId
+                const oldSessionId = sid;
                 entry.sessionId = trimmed;
                 entry.lastUsed = new Date().toISOString();
+                // Re-key the session if needed
+                if (oldSessionId !== trimmed) {
+                    delete store.sessions[oldSessionId];
+                    store.sessions[trimmed] = entry;
+                }
                 (0, session_store_1.saveSessions)(paths, store);
-                return { agentName, entry };
+                return { agentName: entry.agent, entry };
             }
         }
         catch (error) {

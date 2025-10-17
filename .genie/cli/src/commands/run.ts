@@ -64,14 +64,16 @@ export async function runChat(
   const startTime = deriveStartTime(isBackgroundRunner);
   const logFile = deriveLogFile(resolvedAgentName, startTime, paths, isBackgroundRunner);
 
+  // Generate temporary session ID for tracking (will be updated with real sessionId later)
+  const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
+
   const entry: SessionEntry = {
-    ...(store.agents[resolvedAgentName] || {}),
     agent: resolvedAgentName,
     preset: modeName,
     mode: modeName,
     logFile,
     lastPrompt: prompt.slice(0, 200),
-    created: (store.agents[resolvedAgentName] && store.agents[resolvedAgentName].created) || new Date().toISOString(),
+    created: new Date().toISOString(),
     lastUsed: new Date().toISOString(),
     status: 'starting',
     background: parsed.options.background,
@@ -81,9 +83,9 @@ export async function runChat(
     exitCode: null,
     signal: null,
     startTime: new Date(startTime).toISOString(),
-    sessionId: null
+    sessionId: tempSessionId // Will be updated with real sessionId from executor
   };
-  store.agents[resolvedAgentName] = entry;
+  store.sessions[tempSessionId] = entry;
   saveSessions(paths as SessionPathsConfig, store);
 
   // Show executor info to user
@@ -176,7 +178,16 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
+
+  // Write version header if log file is new
+  const isNewLog = !fs.existsSync(logFile);
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  if (isNewLog) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
+    const timestamp = new Date().toISOString();
+    logStream.write(`# Genie CLI v${pkg.version} - ${timestamp}\n\n`);
+  }
   const spawnOptions: SpawnOptionsWithoutStdio = {
     stdio: ['ignore', 'pipe', 'pipe'] as any,
     ...(command.spawnOptions || {})

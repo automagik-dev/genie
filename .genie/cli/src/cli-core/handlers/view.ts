@@ -119,13 +119,15 @@ function findSessionEntry(
   const trimmed = sessionId.trim();
   if (!trimmed) return null;
 
-  for (const [agentName, entry] of Object.entries(store.agents || {})) {
-    if (entry && (entry as any).sessionId === trimmed) {
-      return { agentName, entry };
+  // Direct lookup by sessionId (v2 schema)
+  for (const [sid, entry] of Object.entries(store.sessions || {})) {
+    if (entry && ((entry as any).sessionId === trimmed || sid === trimmed)) {
+      return { agentName: (entry as any).agent, entry };
     }
   }
 
-  for (const [agentName, entry] of Object.entries(store.agents || {})) {
+  // Fallback: scan log files for session_id markers
+  for (const [sid, entry] of Object.entries(store.sessions || {})) {
     const logFile = (entry as any).logFile;
     if (!logFile || !fs.existsSync(logFile)) continue;
     try {
@@ -134,7 +136,7 @@ function findSessionEntry(
       if (marker.test(content)) {
         (entry as any).sessionId = trimmed;
         (entry as any).lastUsed = new Date().toISOString();
-        return { agentName, entry };
+        return { agentName: (entry as any).agent, entry };
       }
     } catch {
       // skip

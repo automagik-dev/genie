@@ -1,6 +1,7 @@
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import {
   loadSessions,
+  saveSessions,
   SessionLoadConfig,
   SessionPathsConfig
 } from '../session-store';
@@ -28,10 +29,37 @@ export async function runRuns(
     { onWarning: (message) => warnings.push(message) }
   );
 
-  const entries = Object.entries(store.agents || {});
-  const sessions: SessionEntry[] = entries.map(([agent, entry]) => ({
-    sessionId: entry.sessionId || 'pending',
-    agent,
+  // Cleanup zombie sessions (stuck in "running" for >24h with no live processes)
+  const now = Date.now();
+  const ZOMBIE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+  let zombieCount = 0;
+
+  for (const [sessionId, entry] of Object.entries(store.sessions || {})) {
+    if (entry.status === 'running' && entry.lastUsed) {
+      const lastUsedTime = new Date(entry.lastUsed).getTime();
+      const age = now - lastUsedTime;
+
+      if (age > ZOMBIE_THRESHOLD_MS) {
+        // Check if processes are actually dead
+        const status = resolveDisplayStatus(entry);
+        if (status !== 'running') {
+          entry.status = 'abandoned';
+          entry.lastUsed = new Date().toISOString();
+          zombieCount++;
+        }
+      }
+    }
+  }
+
+  if (zombieCount > 0) {
+    saveSessions(paths as SessionPathsConfig, store);
+    warnings.push(`Cleaned up ${zombieCount} zombie session(s)`);
+  }
+
+  const entries = Object.entries(store.sessions || {});
+  const sessions: SessionEntry[] = entries.map(([sessionId, entry]) => ({
+    sessionId: entry.sessionId || sessionId,
+    agent: entry.agent,
     status: resolveDisplayStatus(entry),
     executor: String(entry.executor || 'unknown'),
     started: entry.created ? safeIsoString(entry.created) ?? undefined : undefined,

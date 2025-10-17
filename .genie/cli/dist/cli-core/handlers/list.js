@@ -23,13 +23,13 @@ function createListHandler(ctx) {
         }
         if (target === 'sessions') {
             const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-            const entries = Object.entries(store.agents || {});
-            const sessions = entries.map(([agent, entry]) => {
+            const entries = Object.entries(store.sessions || {});
+            const sessions = entries.map(([sessionId, entry]) => {
                 const iso = entry.lastUsed || entry.created;
                 return {
-                    agent,
+                    agent: entry.agent,
                     status: resolveDisplayStatus(entry, ctx),
-                    sessionId: entry.sessionId || null,
+                    sessionId: entry.sessionId || sessionId,
                     created: entry.created || null,
                     lastUsed: entry.lastUsed || entry.created || null,
                     mode: entry.mode || entry.preset,

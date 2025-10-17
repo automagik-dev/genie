@@ -52,8 +52,9 @@ async function runView(parsed, config, paths) {
                         catch { /* skip */ }
                     }
                     const transcript = (0, transcript_utils_1.buildTranscriptFromEvents)(jsonl);
+                    // When --full flag is used, return complete transcript without slicing
                     const displayTranscript = parsed.options.full
-                        ? transcript
+                        ? transcript // Full transcript, no slicing
                         : parsed.options.live
                             ? (0, transcript_utils_1.sliceForLatest)(transcript)
                             : (0, transcript_utils_1.sliceForRecent)(transcript);
@@ -271,8 +272,10 @@ async function runView(parsed, config, paths) {
         process.stdout.write(conciseOutput + '\n');
         return;
     }
+    // When --full flag is used, return complete transcript without slicing
+    // Otherwise apply mode-specific slicing
     const displayTranscript = parsed.options.full
-        ? transcript
+        ? transcript // Full transcript, no slicing
         : parsed.options.live
             ? (0, transcript_utils_1.sliceForLatest)(transcript)
             : (0, transcript_utils_1.sliceForRecent)(transcript);

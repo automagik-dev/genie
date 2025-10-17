@@ -43,14 +43,15 @@ async function runChat(parsed, config, paths) {
     const isBackgroundRunner = parsed.options.backgroundRunner === true;
     const startTime = (0, utils_1.deriveStartTime)(isBackgroundRunner);
     const logFile = (0, utils_1.deriveLogFile)(resolvedAgentName, startTime, paths, isBackgroundRunner);
+    // Generate temporary session ID for tracking (will be updated with real sessionId later)
+    const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
     const entry = {
-        ...(store.agents[resolvedAgentName] || {}),
         agent: resolvedAgentName,
         preset: modeName,
         mode: modeName,
         logFile,
         lastPrompt: prompt.slice(0, 200),
-        created: (store.agents[resolvedAgentName] && store.agents[resolvedAgentName].created) || new Date().toISOString(),
+        created: new Date().toISOString(),
         lastUsed: new Date().toISOString(),
         status: 'starting',
         background: parsed.options.background,
@@ -60,9 +61,9 @@ async function runChat(parsed, config, paths) {
         exitCode: null,
         signal: null,
         startTime: new Date(startTime).toISOString(),
-        sessionId: null
+        sessionId: tempSessionId // Will be updated with real sessionId from executor
     };
-    store.agents[resolvedAgentName] = entry;
+    store.sessions[tempSessionId] = entry;
     (0, session_store_1.saveSessions)(paths, store);
     // Show executor info to user
     if (!parsed.options.backgroundRunner) {
@@ -128,7 +129,14 @@ function executeRun(args) {
     if (!fs_1.default.existsSync(logDir)) {
         fs_1.default.mkdirSync(logDir, { recursive: true });
     }
+    // Write version header if log file is new
+    const isNewLog = !fs_1.default.existsSync(logFile);
     const logStream = fs_1.default.createWriteStream(logFile, { flags: 'a' });
+    if (isNewLog) {
+        const pkg = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
+        const timestamp = new Date().toISOString();
+        logStream.write(`# Genie CLI v${pkg.version} - ${timestamp}\n\n`);
+    }
     const spawnOptions = {
         stdio: ['ignore', 'pipe', 'pipe'],
         ...(command.spawnOptions || {})

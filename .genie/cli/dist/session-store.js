@@ -11,10 +11,10 @@ function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
     const storePath = paths.sessionsFile;
     let store;
     if (storePath && fs_1.default.existsSync(storePath)) {
-        store = normalizeSessionStore(readJson(storePath, callbacks));
+        store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
     }
     else {
-        store = { version: 1, agents: {} };
+        store = { version: 2, sessions: {} };
     }
     const defaultExecutor = resolveDefaultExecutor(config, defaults);
     return migrateSessionEntries(store, defaultExecutor);
@@ -38,36 +38,57 @@ function readJson(filePath, callbacks) {
         return {};
     }
 }
-function normalizeSessionStore(data) {
+function normalizeSessionStore(data, callbacks = {}) {
     if (!data || typeof data !== 'object') {
-        return { version: 1, agents: {} };
+        return { version: 2, sessions: {} };
     }
     const incoming = data;
-    if (incoming.agents) {
+    // Version 2 format (sessions keyed by sessionId)
+    if (incoming.sessions) {
         return {
-            version: incoming.version ?? 1,
-            agents: incoming.agents
+            version: 2,
+            sessions: incoming.sessions
         };
     }
+    // Version 1 format (agents keyed by agent name) - MIGRATE
+    if (incoming.agents) {
+        callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v2 (sessionId-keyed)');
+        const sessions = {};
+        Object.entries(incoming.agents).forEach(([agentName, entry]) => {
+            // Generate sessionId if missing (fallback to agent name for old entries)
+            const sessionId = entry.sessionId || `legacy-${agentName}-${Date.now()}`;
+            sessions[sessionId] = {
+                ...entry,
+                agent: agentName,
+                sessionId
+            };
+        });
+        return {
+            version: 2,
+            sessions
+        };
+    }
+    // Empty or malformed
     return {
-        version: 1,
-        agents: incoming
+        version: 2,
+        sessions: {}
     };
 }
 function migrateSessionEntries(store, defaultExecutor) {
     const result = {
-        version: store.version ?? 1,
-        agents: { ...store.agents }
+        version: store.version ?? 2,
+        sessions: { ...store.sessions }
     };
-    Object.entries(result.agents || {}).forEach(([agent, entry]) => {
+    // Migrate session entries (apply defaults)
+    Object.entries(result.sessions || {}).forEach(([sessionId, entry]) => {
         if (!entry || typeof entry !== 'object')
             return;
         if (!entry.mode && entry.preset)
-            result.agents[agent].mode = entry.preset;
+            result.sessions[sessionId].mode = entry.preset;
         if (!entry.preset && entry.mode)
-            result.agents[agent].preset = entry.mode;
+            result.sessions[sessionId].preset = entry.mode;
         if (!entry.executor)
-            result.agents[agent].executor = defaultExecutor;
+            result.sessions[sessionId].executor = defaultExecutor;
     });
     return result;
 }

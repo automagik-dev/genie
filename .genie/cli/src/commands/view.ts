@@ -72,8 +72,9 @@ export async function runView(
 
           const transcript = buildTranscriptFromEvents(jsonl);
 
+          // When --full flag is used, return complete transcript without slicing
           const displayTranscript = parsed.options.full
-            ? transcript
+            ? transcript // Full transcript, no slicing
             : parsed.options.live
               ? sliceTranscriptForLatest(transcript)
               : sliceTranscriptForRecent(transcript);
@@ -301,8 +302,10 @@ export async function runView(
     return;
   }
 
+  // When --full flag is used, return complete transcript without slicing
+  // Otherwise apply mode-specific slicing
   const displayTranscript = parsed.options.full
-    ? transcript
+    ? transcript // Full transcript, no slicing
     : parsed.options.live
       ? sliceTranscriptForLatest(transcript)
       : sliceTranscriptForRecent(transcript);

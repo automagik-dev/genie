@@ -33,8 +33,14 @@ function createSessionUpdateHandler(entry, store, paths) {
     return (line) => {
         const sessionId = parseSessionUpdate(line);
         if (sessionId && entry.sessionId !== sessionId) {
+            const oldSessionId = entry.sessionId;
             entry.sessionId = sessionId;
             entry.lastUsed = new Date().toISOString();
+            // Re-key session in store (v2 schema: sessions keyed by sessionId)
+            if (oldSessionId && store.sessions[oldSessionId]) {
+                delete store.sessions[oldSessionId];
+                store.sessions[sessionId] = entry;
+            }
             (0, session_store_1.saveSessions)(paths, store);
         }
     };
@@ -67,8 +73,14 @@ function createLogPollingHandler(entry, store, paths, logFile, logViewer) {
         try {
             const fromLog = logViewer?.readSessionIdFromLog?.(logFile) ?? null;
             if (fromLog && entry.sessionId !== fromLog) {
+                const oldSessionId = entry.sessionId;
                 entry.sessionId = fromLog;
                 entry.lastUsed = new Date().toISOString();
+                // Re-key session in store (v2 schema: sessions keyed by sessionId)
+                if (oldSessionId && store.sessions[oldSessionId]) {
+                    delete store.sessions[oldSessionId];
+                    store.sessions[fromLog] = entry;
+                }
                 (0, session_store_1.saveSessions)(paths, store);
                 pollingActive = false;
                 return;
