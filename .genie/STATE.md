@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.8
+last_version: 2.4.0-rc.9
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -31,16 +31,16 @@ validation_commands:
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.7 on npm@next (2025-10-17)
-**Latest:** Autonomous Vibe mode session completed TODO #4 + #5
+**Published:** v2.4.0-rc.9 on npm@next (2025-10-17)
+**Latest:** MCP bug fixes (4 critical bugs patched)
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Improvements in rc.7:**
-- ✅ Template extraction complete (-261 lines duplication)
-- ✅ MCP bug fix (filtered event format parser)
-- ✅ Autonomous Vibe mode (completed 2 TODOs unattended)
-- ✅ Role clarity + version awareness learning documented
+**Critical Improvements in rc.9:**
+- ✅ Bug #102: Session ID collision fixed (v1→v2 schema migration)
+- ✅ Bug #90: full=true truncation fixed (complete transcript)
+- ✅ Bug #92: Zombie session cleanup (>24h auto-abandonment)
+- ✅ Enhancement: Version metadata in all log files
 
 ---
 
