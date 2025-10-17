@@ -1,8 +1,8 @@
 <!--
 Triad Validation Metadata
-last_updated: 2025-10-17T01:04:00Z
-last_commit: 61c3622
-last_version: 2.4.0-rc.7
+last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
+last_commit: !`git log -1 --format=%h`
+last_version: 2.4.0-rc.8
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
