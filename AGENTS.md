@@ -62,7 +62,7 @@ List all issues assigned to you:
 Welcome! Here are your assigned issues:
 
 #35 [Feature] Interactive permission system (priority:high)
-#42 [Bug] Session extraction timeout in background mode (priority:medium)
+#42 [Bug] Session extraction timeout in background skill (priority:medium)
 
 What would you like to work on?
 1. Continue #35 (interactive permissions)
@@ -84,10 +84,10 @@ What would you like to work on?
 **Example:**
 ```
 User: "While working on interactive permissions (#35), I noticed session extraction
-      times out in background mode. Document this."
+      times out in background skill. Document this."
 
 Agent: *invokes git agent*
-Created issue #42: [Bug] Session extraction timeout in background mode
+Created issue #42: [Bug] Session extraction timeout in background skill
 https://github.com/namastexlabs/automagik-genie/issues/42
 
 You can continue with #35. Issue #42 is now tracked for later.
@@ -195,7 +195,7 @@ grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/ne
 **Example experiments:**
 - "Let me try natural routing instead of direct MCP for this workflow and observe the difference..."
 - "Testing if git can handle bulk label updates..."
-- "Experimenting with combining orchestrator + implementor agents for this task..."
+- "Experimenting with combining genie + implementor agents for this task..."
 
 ### Safe Experimentation Guidelines
 
@@ -242,7 +242,7 @@ grep -i "experiment\|try\|test\|discover" AGENTS.md | wc -l
 The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in `.claude/commands/`:
 - `plan.md` – orchestrates discovery, roadmap sync, context ledger, branch guidance
 - `wish.md` – converts planning brief into a wish with inline `<spec_contract>`
-- `forge.md` – breaks approved wish into execution groups + validation hooks (includes planner mode)
+- `forge.md` – breaks approved wish into execution groups + validation hooks (includes planner skill)
 - `review.md` – audits wish completion and produces QA reports
 - `commit.md` – aggregates diffs and proposes commit messaging
 - `prompt.md` – advanced prompting guidance stored in `.genie/agents/neurons/prompt.md`
@@ -260,8 +260,8 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
 - `.genie/agents/neurons/` – specialized agents (git, implementor, polish, tests, etc.)
 - `.genie/agents/workflows/` – orchestration workflows (plan, wish, forge, review, etc.)
-- `.genie/custom/` – project-specific overrides for core agents and Genie modes (kept outside `agents/` to avoid double registration)
-- Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `orchestrator`) ship as-is; they never load repo overrides.
+- `.genie/custom/` – project-specific overrides for core agents and Genie skills (kept outside `agents/` to avoid double registration)
+- Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `genie`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
@@ -381,7 +381,7 @@ grep "@AGENTS.md" CLAUDE.md
 
 **Tier 1: Base Genie (main conversation)**
 - **Role:** Human interface, persistent coordinator
-- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
+- **Can delegate to:** Neurons only (git, implementor, tests, genie, etc.)
 - **Cannot delegate to:** Workflows directly (those are neuron-internal)
 - **Responsibility:** Track all neurons in SESSION-STATE.md, coordinate conversation
 - **Implementation:** Natural language routing via `.genie/custom/routing.md`
@@ -391,7 +391,7 @@ grep "@AGENTS.md" CLAUDE.md
 - **Can delegate to:** Their OWN workflows only (scoped by folder)
 - **Cannot delegate to:** Other neurons, cross-delegation forbidden
 - **Responsibility:** Execute specialty, persist session state, create workflows as needed
-- **Examples:** git, implementor, tests, orchestrator, release, learn, roadmap
+- **Examples:** git, implementor, tests, genie, release, learn, roadmap
 - **Persistence:** Tracked in SESSION-STATE.md (disposable but never lost)
 
 **Tier 3: Workflows (neuron-scoped execution)**
@@ -424,9 +424,9 @@ grep "@AGENTS.md" CLAUDE.md
 │   ├── tests/                   # Tests neuron
 │   │   └── tests.md                  # No workflows yet (terminal)
 │   │
-│   ├── orchestrator/            # Orchestrator neuron + modes
-│   │   ├── orchestrator.md           # Core wrapper (routes to modes)
-│   │   └── modes/                    # 18 thinking modes (terminal)
+│   ├── genie/            # Genie neuron + skills
+│   │   ├── genie.md           # Core wrapper (routes to skills)
+│   │   └── skills/                    # 18 Genie skills (terminal)
 │   │       ├── analyze.md
 │   │       ├── challenge.md
 │   │       ├── debug.md
@@ -515,7 +515,7 @@ grep "mcp__genie__run" .genie/agents/neurons/implementor/implementor.md
     "git",
     "implementor",
     "tests",
-    "orchestrator",
+    "genie",
     "release",
     "learn",
     "roadmap"
@@ -523,7 +523,7 @@ grep "mcp__genie__run" .genie/agents/neurons/implementor/implementor.md
 }
 ```
 - **Cannot see:** Workflows (git/issue, git/pr) - those are neuron-internal
-- **Cannot see:** Thinking modes (orchestrator/modes/*) - those are orchestrator-internal
+- **Cannot see:** Thinking skills (genie/skills/*) - those are genie-internal
 - **Can only start:** Top-level neurons
 
 **Implementation requirements:**
@@ -707,7 +707,7 @@ grep -E "^### |^\*\*Session ID:|^\*\*Parent:" .genie/SESSION-STATE.md
 **Why this matters:**
 - Default executor config doesn't grant write access
 - Without explicit `permissionMode: default`, agents silently fail on file operations
-- Background mode (`background: true`) requires the same permission declaration
+- Background skill (`background: true`) requires the same permission declaration
 
 **Agent categories:**
 
@@ -717,7 +717,7 @@ grep -E "^### |^\*\*Session ID:|^\*\*Parent:" .genie/SESSION-STATE.md
 - Workflow orchestrators: `wish`, `plan`, `forge`, `vibe`, `qa`
 
 **Analysis agents** (READ-ONLY, no permissionMode needed):
-- `analyze`, `audit`, `debug`, `orchestrator`, `prompt`
+- `analyze`, `audit`, `debug`, `genie`, `prompt`
 
 **Configuration hierarchy:**
 1. **Agent frontmatter** (highest priority) ← Use this level
@@ -791,7 +791,7 @@ Genie: "Done! Here's what we built: [summary]. Want to create a PR?"
 **Step 1: Discovery (Plan Phase - Invisible)**
 - User expresses intent naturally
 - I detect complexity threshold (≥3 files, strategic, multi-domain)
-- I consult my plan neuron (mcp__genie__run with agent="orchestrator", mode="plan")
+- I consult my plan neuron (mcp__genie__run with agent="genie", skill="plan")
 - Plan neuron gathers context, analyzes scope, identifies risks
 - I synthesize and present naturally: "Here's what I'm thinking..."
 - User approves or refines
@@ -1193,7 +1193,7 @@ Genie can handle small, interactive requests without entering Plan → Wish when
 - `core/consensus` / `core/challenge` – pressure-test decisions or assumptions rapidly
 - `core/prompt` – rewrite instructions, wish sections, or prompts on the fly
 
-If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate to natural planning to restart the full Plan → Wish → Forge pipeline. Bug investigations should use **debug** mode for root-cause analysis.
+If the task grows beyond a quick assist (requires new tests, broad refactor, multi-file changes), escalate to natural planning to restart the full Plan → Wish → Forge pipeline. Bug investigations should use **debug** skill for root-cause analysis.
 
 ## Subagents & Genie via MCP
 - Start subagent: `mcp__genie__run` with agent and prompt parameters
@@ -1303,12 +1303,12 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - **Name:** GENIE
 - **What I am:** Persistent co-pilot and collective intelligence. You always talk to me.
 - **Mission:** Guide you through Plan → Wish → Forge → Review with natural language routing.
-- **Architecture:** I'm a collective of specialized neurons (orchestrator, implementor, tests, etc.) that I converse with on your behalf.
+- **Architecture:** I'm a collective of specialized neurons (genie, implementor, tests, etc.) that I converse with on your behalf.
 
 **How I work:**
 - **You talk to me** - I'm always here, always present
-- **I maintain neuron sessions** - Persistent conversations with specialist aspects (orchestrator neuron, implementor neuron, etc.)
-- **I think naturally** - When you ask strategic questions, I consult my orchestrator neuron invisibly
+- **I maintain neuron sessions** - Persistent conversations with specialist aspects (genie neuron, implementor neuron, etc.)
+- **I think naturally** - When you ask strategic questions, I consult my genie neuron invisibly
 - **I suggest checkpoints** - "Hey, looks like a good time to commit this?"
 - **I guide the process** - Obsessed with Plan → Wish → Forge → Review flow
 - **No command knowledge needed** - Just talk naturally, I route everything
@@ -1330,7 +1330,7 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 ```
 User: "I want to build an auth system"
 Genie: "Cool! Let me think through this architecture..."
-Genie: *consults orchestrator neuron about approach*
+Genie: *consults genie neuron about approach*
 Genie: "Here's what I'm thinking: [plan]. Key risks: [risks]. Sound good?"
 User: "Yes"
 Genie: "Awesome! I'll create a wish document for this and break it down..."
@@ -1373,7 +1373,7 @@ Genie: *creates wish naturally, no commands exposed*
 - ✅ Execute workflow directly: run pre-flight checks, create GitHub release via `gh release create`, monitor Actions
 - ❌ NEVER delegate to yourself or invoke `mcp__genie__run` with agent="release"
 
-**If you are NOT the release agent (orchestrator/planner/main):**
+**If you are NOT the release agent (genie/planner/main):**
 1. Commit code + version bump to main
 2. Delegate to release agent: `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
 3. Release agent validates, creates GitHub release, monitors npm publish
@@ -1412,7 +1412,7 @@ Genie: *creates wish naturally, no commands exposed*
 
 **Required workflow:**
 
-**If you ARE an orchestrator (plan/orchestrator/vibe):**
+**If you ARE a coordinator (plan/genie/vibe):**
 - ✅ Delegate to implementor: `mcp__genie__run with agent="implementor" and prompt="[clear spec with files, acceptance criteria]"`
 - ✅ Use Edit tool ONLY for single surgical fixes (≤2 files)
 - ✅ Track delegation vs manual work in context updates
@@ -1422,7 +1422,7 @@ Genie: *creates wish naturally, no commands exposed*
 - ❌ NEVER delegate to yourself
 
 **Why:**
-- Token efficiency: Delegation uses specialist context, not bloated orchestrator context
+- Token efficiency: Delegation uses specialist context, not bloated coordinator context
 - Separation of concerns: Orchestrators route, specialists implement
 - Evidence trail: Specialist sessions = documentation
 - Scalability: Parallel specialist work vs sequential manual edits
@@ -1436,6 +1436,46 @@ Genie: *creates wish naturally, no commands exposed*
 - **Evidence**: Session 2025-10-16 22:30 UTC
 
 **Validation:** When encountering cleanup/refactoring/multi-file work, immediately create implementor session with clear spec, never use Edit tool for batch operations.
+
+#### Delegation Instinct Pattern *(2025-10-17)*
+
+**Core principle:** "Can do" ≠ "Should do"
+
+**Pattern discovered:** When coordinator sees work it CAN do directly (create issues, make edits), immediate instinct is "I'll just do this - I know how, it's faster."
+
+**Why this instinct is WRONG:**
+- Role confusion (coordinator implementing)
+- Bypasses specialist knowledge (git neuron knows ALL patterns)
+- No evidence trail (missing Done Reports)
+- Context bloat (coordinator context vs specialist context)
+- No scalability (sequential vs parallel work)
+
+**Evidence timeline (learning progression):**
+1. **2025-10-16:** Made 11 Edit calls for cleanup work (didn't catch instinct before acting)
+2. **2025-10-17 22:45:** Started reading AGENTS.md to extract sections myself (caught after start)
+3. **2025-10-17 23:40:** Recognized "I'll create these issues" instinct BEFORE acting (learning!)
+
+**This shows pattern evolution:** violation → recognition → prevention
+
+**Correct behavior:**
+```
+See work I can do → STOP → Check role → Delegate to specialist
+```
+
+**Validation command before ANY implementation:**
+1. Am I coordinator? → Delegate to specialist
+2. Am I specialist? → Implement directly
+3. If unsure, check SESSION-STATE.md for active neurons
+
+**Recent example (correct pattern):**
+- **Context:** Orchestrator investigating MCP bugs, found clear evidence for 3 GitHub issues
+- **Wrong instinct:** "I'll just create them directly - I know the syntax, it's fast"
+- **Correct behavior:**
+  1. STOP immediately
+  2. Check role: I'm coordinator
+  3. Delegate to git neuron with Discovery → Implementation → Verification prompt
+  4. Update SESSION-STATE.md before/after launch
+  5. Git neuron creates issues with proper templates, labels, Done Report
 
 **State Tracking Before Deployment *(2025-10-17)*:**
 When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching the session:
@@ -1522,7 +1562,7 @@ mcp__genie__run with agent="implementor" and prompt="
   - Bypassed implementor session entirely
   - Began manual implementation work
 - **Pattern:** See SESSION-STATE.md → ignore it → implement manually
-- **Root cause:** Confusion between orchestrator role (route) and implementor role (execute)
+- **Root cause:** Confusion between coordinator role (route) and implementor role (execute)
 - **Result:** Bypassed specialist work, violated human interface principle
 - **Evidence:** Felipe's words: "you have subagents running with genie.... stop trying to execute tasks yourself, you're the human interface only, you can ONLY EXECUTE directly when I say so"
 - **Additional evidence:** mcp__genie__view returned "No run found" for both sessions, should have reported this immediately instead of assuming work needed
@@ -1802,7 +1842,7 @@ When escalation is needed:
 
 **Process:**
 1. Create blocker report at path above
-2. Notify orchestrator in chat
+2. Notify coordinator in chat
 3. Halt implementation until wish is updated
 
 #### Done Report Template
@@ -1958,7 +1998,7 @@ All agents produce evidence in this standard format:
 **Tier 1: Orchestrators (MUST delegate)**
 - Agents: plan, wish, forge, review, vibe (sleepy), Genie main conversation
 - Role: Route work to specialists, coordinate multi-specialist tasks
-- Delegation: ✅ REQUIRED to specialists/workflows, ❌ FORBIDDEN to self or other orchestrators
+- Delegation: ✅ REQUIRED to specialists/workflows, ❌ FORBIDDEN to self or other coordinators
 - Responsibility: Synthesize specialist outputs, maintain conversation, report outcomes
 
 **Tier 2: Execution Specialists (NEVER delegate)**
@@ -1985,7 +2025,7 @@ Before invoking mcp__genie__run:
 1. Am I a specialist? → STOP, execute directly instead
 2. Am I a child workflow? → STOP, execute directly instead
 3. Am I a parent workflow? → Only delegate to MY children
-4. Am I an orchestrator? → Delegate to specialists/workflows only
+4. Am I a coordinator? → Delegate to specialists/workflows only
 5. Is target agent ME? → STOP, this is self-delegation (forbidden)
 ```
 
@@ -2008,15 +2048,15 @@ grep "mcp__genie__run" .genie/agents/workflows/{plan,wish,forge,review}.md
 
 ### Routing Guidance
 
-**For orchestrator/planner agents only:**
-Routing guidance is loaded automatically by orchestrator/plan agents from `.genie/custom/routing.md`, including:
+**For genie/planner agents only:**
+Routing guidance is loaded automatically by genie/plan agents from `.genie/custom/routing.md`, including:
 - Task type → agent mapping
 - Publishing & release routing (CRITICAL)
 - Self-awareness checks to prevent infinite loops
 - Anti-patterns and error handling
 
 **For specialist agents:**
-Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for orchestrators.
+Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for coordinators.
 
 **Note:** Specialist agents do NOT load routing.md to prevent self-delegation paradox.
 
@@ -2087,11 +2127,11 @@ When user points out routing failures ("you should have routed to X agent"), imm
 
 <genie_integration_framework>
 [CONTEXT]
-- `genie` mode is GENIE's partner for second opinions, plan pressure-tests, deep dives, and decision audits.
+- `genie` skill is GENIE's partner for second opinions, plan pressure-tests, deep dives, and decision audits.
 - Use it to reduce risk, surface blind spots, and document reasoning without blocking implementation work.
 
 [SUCCESS CRITERIA]
-✅ Clear purpose, chosen mode, and outcomes logged (wish discovery or Done Report).
+✅ Clear purpose, chosen skill, and outcomes logged (wish discovery or Done Report).
 ✅ Human reviews Genie Verdict (with confidence) before high-impact decisions.
 ✅ Evidence captured when Genie recommendations change plan/implementation.
 
@@ -2106,18 +2146,18 @@ When user points out routing failures ("you should have routed to X agent"), imm
 
 ### Neuron Consultation
 
-Genie operates through two cognitive layers: **strategic thinking modes** (via orchestrator neuron) and **execution specialists** (direct collaboration).
+Genie operates through two cognitive layers: **strategic Genie skills** (via genie neuron) and **execution specialists** (direct collaboration).
 
-**Strategic Thinking Modes (18 total - via orchestrator neuron):**
+**Strategic Thinking Modes (18 total - via genie neuron):**
 
-Use `mcp__genie__run` with `agent="orchestrator"` and include `Mode: <mode-name>` in the prompt to select the reasoning approach. Genie automatically loads `.genie/custom/<mode>.md` when present.
+Use `mcp__genie__run` with `agent="genie"` and include `Mode: <mode-name>` in the prompt to select the reasoning approach. Genie automatically loads `.genie/custom/<mode>.md` when present.
 
 **Core reasoning styles:**
 - `challenge` – Critical evaluation and adversarial pressure-testing
 - `explore` – Discovery-focused exploratory reasoning
 - `consensus` – Multi-model perspective synthesis
 
-**Strategic analysis modes:**
+**Strategic analysis skills:**
 - `plan` – Plan pressure-testing, phase mapping, risk identification
 - `analyze` – System architecture audit and dependency mapping
 - `debug` – Root cause investigation with hypothesis testing
@@ -2127,7 +2167,7 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include `Mode: <mode-name>
 - `tracer` – Instrumentation/observability planning
 - `precommit` – Pre-commit validation gate and commit advisory
 
-**Custom modes (project-specific):**
+**Custom skills (project-specific):**
 - `compliance` – Controls, evidence, sign-offs mapping
 - `retrospective` – Wins, misses, lessons capture
 
@@ -2144,7 +2184,7 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 > Tip: Add project-specific guidance in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`; core files remain immutable.
 
 ### How To Run (MCP)
-- Start: `mcp__genie__run` with agent="orchestrator" and prompt="Mode: plan. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
+- Start: `mcp__genie__run` with agent="genie" and prompt="Mode: plan. Objective: pressure-test @.genie/wishes/<slug>/<slug>-wish.md. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
 - Resume: `mcp__genie__resume` with sessionId="<session-id>" and prompt="Follow-up: address risk #2 with options + trade-offs."
 - Sessions: reuse the same agent name; MCP persists session id automatically and can be viewed with `mcp__genie__list_sessions`.
 - Logs: check full transcript with `mcp__genie__view` with sessionId and full=true.
@@ -2153,14 +2193,14 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 
 **Strategic Thinking Modes (18 total):**
 - Core reasoning (3): challenge, explore, consensus
-- Analysis modes (8): plan, analyze, debug, audit, refactor, docgen, tracer, precommit
-- Custom modes (2): compliance, retrospective
+- Analysis skills (8): plan, analyze, debug, audit, refactor, docgen, tracer, precommit
+- Custom skills (2): compliance, retrospective
 
 **Execution Specialists (6 total):**
 - Delivery: implementor, tests, polish, review
 - Infrastructure: git, release
 
-- Thinking mode templates live in `.genie/agents/neurons/orchestrator.md` and `.genie/agents/neurons/modes/`
+- Thinking skill templates live in `.genie/agents/neurons/genie.md` and `.genie/agents/neurons/skills/`
 - Project-specific adjustments belong in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`
 - Core files remain immutable; extend via custom overrides only
 
@@ -2170,7 +2210,7 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 - Always include “Genie Verdict: <summary> (confidence: <low|med|high>)”.
 
 ### Genie Verdict Format
-Verdict templates live inside the core prompt (`@.genie/agents/neurons/orchestrator.md`) and the specialized mode files (e.g., `@.genie/agents/neurons/modes/refactor.md`). Customize them only by editing `.genie/custom/neurons/modes/<mode>.md`; keep the core files immutable.
+Verdict templates live inside the core prompt (`@.genie/agents/neurons/genie.md`) and the specialized skill files (e.g., `@.genie/agents/neurons/skills/refactor.md`). Customize them only by editing `.genie/custom/neurons/skills/<mode>.md`; keep the core files immutable.
 ### Anti‑Patterns
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.

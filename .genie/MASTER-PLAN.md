@@ -127,7 +127,7 @@
 5. Maintain collective intelligence state
 
 **Session patterns:**
-- Strategic thinking → orchestrator neuron (modes: plan, analyze, debug, etc.)
+- Strategic thinking → genie neuron (modes: plan, analyze, debug, etc.)
 - Implementation → implementor neuron
 - Testing → tests neuron
 - Prompting → prompt neuron (MANDATORY for all instruction writing)
@@ -184,7 +184,7 @@
 - Authority: Master orchestrator
 
 **Tier 2: Neurons (persistent subagent sessions)**
-- Role: Specialized execution (git, implementor, tests, orchestrator, release, learn)
+- Role: Specialized execution (git, implementor, tests, genie, release, learn)
 - Can start: Their OWN workflows only
 - Cannot start: Other neurons, cross-delegate
 - Persistent: Tracked in SESSION-STATE.md, disposable but never lost
@@ -209,9 +209,9 @@
 │   │   └── report.md       # Git's workflow
 │   ├── implementor/
 │   │   └── implementor.md
-│   ├── orchestrator/
-│   │   ├── orchestrator.md
-│   │   └── modes/          # Thinking modes
+│   ├── genie/
+│   │   ├── genie.md
+│   │   └── skills/          # Thinking skills
 │   └── ...
 ```
 
@@ -254,7 +254,7 @@
 **Reference:** `.genie/SESSION-STATE.md`
 
 **Current active:**
-- Orchestrator neuron (analyze mode): `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3` → Natural context audit
+- Genie neuron (analyze skill): `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3` → Natural context audit
 - Prompt neuron: `4d4c76a7-e58a-487a-b66f-7ff408dafb37` → AGENTS/CLAUDE merge planning
 
 **Completed:**

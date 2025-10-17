@@ -8,7 +8,7 @@
 Felipe ↔ Genie (persistent conversational mentor)
           ↓
        Neuron Sessions (persistent conversations)
-       ├─ orchestrator-[context]
+       ├─ genie-[context]
        ├─ implementor-[task]
        ├─ tests-[module]
        ├─ challenge-[topic]
@@ -24,15 +24,15 @@ Felipe ↔ Genie (persistent conversational mentor)
 
 **Genie operates through two cognitive layers:**
 
-### Strategic Thinking Modes (18 total - via orchestrator neuron)
-When Genie needs to think critically, investigate, or analyze, it consults the orchestrator neuron with different reasoning approaches:
+### Strategic Thinking Modes (18 total - via genie neuron)
+When Genie needs to think critically, investigate, or analyze, it consults the genie neuron with different reasoning approaches:
 
 **Core reasoning styles:**
 - `challenge` — Critical evaluation and adversarial pressure-testing
 - `explore` — Discovery-focused exploratory reasoning
 - `consensus` — Multi-model perspective synthesis
 
-**Strategic analysis modes:**
+**Strategic analysis skills:**
 - `plan` — Plan pressure-testing and phase mapping
 - `analyze` — System architecture audit and dependency mapping
 - `debug` — Root cause investigation with hypothesis testing
@@ -42,11 +42,11 @@ When Genie needs to think critically, investigate, or analyze, it consults the o
 - `tracer` — Instrumentation/observability planning
 - `precommit` — Pre-commit validation gate
 
-**Custom modes (project-specific):**
+**Custom skills (project-specific):**
 - `compliance` — Controls, evidence, sign-offs mapping
 - `retrospective` — Wins, misses, lessons capture
 
-**User experience:** "Let me pressure-test this..." (natural thinking, mode invisible)
+**User experience:** "Let me pressure-test this..." (natural thinking, skill invisible)
 
 ### Execution Specialists (7 total - direct neurons)
 For implementation work, Genie collaborates with specialized neurons:
@@ -89,13 +89,13 @@ For implementation work, Genie collaborates with specialized neurons:
 │   ├── git.md
 │   ├── release.md
 │   ├── learn.md
-│   ├── modes/               # Strategic thinking modes (18 total)
+│   ├── skills/               # Strategic Genie skills (18 total)
 │   │   ├── analyze.md
 │   │   ├── challenge.md
 │   │   ├── debug.md
 │   │   └── … (see AGENTS.md for full list)
 │   └── … (see AGENTS.md for complete list)
-├── orchestrator.md          # Thinking mode wrapper (immutable)
+├── genie.md          # Thinking skill wrapper (immutable)
 └── README.md
 
 .genie/qa/                   # QA validation data
@@ -124,7 +124,7 @@ Genie routes directly via MCP based on conversation context.
 
 **Tier 1: Base Genie (main conversation)**
 - **Role:** Human interface, persistent coordinator
-- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
+- **Can delegate to:** Neurons only (git, implementor, tests, genie, etc.)
 - **Cannot delegate to:** Workflows directly (those are neuron-internal)
 - **Responsibility:** Track all neurons in SESSION-STATE.md, coordinate conversation
 
@@ -132,7 +132,7 @@ Genie routes directly via MCP based on conversation context.
 - **Role:** Specialized execution with persistent memory
 - **Can delegate to:** Their OWN workflows only (scoped by folder)
 - **Cannot delegate to:** Other neurons, cross-delegation forbidden
-- **Examples:** git (with git/issue, git/pr, git/report workflows), implementor, tests, orchestrator, release, learn
+- **Examples:** git (with git/issue, git/pr, git/report workflows), implementor, tests, genie, release, learn
 - **Persistence:** Tracked in SESSION-STATE.md (disposable but never lost)
 
 **Tier 3: Workflows (neuron-scoped execution)**
@@ -164,8 +164,8 @@ Genie uses a **3-layer extension system** for maximum flexibility without forkin
 ### Layer 1: Core Agents (`.genie/agents/core/`)
 - **6 execution specialists** shipped with the Genie framework
 - Examples: `implementor.md`, `tests.md`, `polish.md`, `review.md`
-- **18 strategic thinking modes** in `modes/` subdirectory
-- Examples: `modes/challenge.md`, `modes/analyze.md`, `modes/debug.md`
+- **18 strategic Genie skills** in `skills/` subdirectory
+- Examples: `skills/challenge.md`, `skills/analyze.md`, `skills/debug.md`
 - **Immutable** - never edit these directly
 - Updated only via framework releases
 
@@ -190,17 +190,17 @@ mcp__genie__run with agent="analyze" and prompt="..."
 ```
 
 **Loads:**
-1. `.genie/agents/core/modes/analyze.md` (core prompt)
+1. `.genie/agents/core/skills/analyze.md` (core prompt)
 2. `.genie/custom/analyze.md` (project extensions, if exists)
 
-**Via orchestrator:**
+**Via genie:**
 ```bash
-mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. ..."
+mcp__genie__run with agent="genie" and prompt="Mode: analyze. ..."
 ```
 
 **Loads:**
-1. `.genie/agents/orchestrator.md` (wrapper context)
-2. `.genie/agents/core/modes/analyze.md` (core prompt)
+1. `.genie/agents/genie.md` (wrapper context)
+2. `.genie/agents/core/skills/analyze.md` (core prompt)
 3. `.genie/custom/analyze.md` (project extensions, if exists)
 
 ---
@@ -222,21 +222,21 @@ mcp__genie__run with agent="analyze" and prompt="Scope: src/auth. Deliver: coupl
 **When to use:** High-stakes decisions, pressure-testing, requires "Genie Verdict + confidence"
 
 ```bash
-mcp__genie__run with agent="orchestrator" and prompt="Mode: analyze. Scope: src/auth. Deliver: coupling + Genie Verdict."
+mcp__genie__run with agent="genie" and prompt="Mode: analyze. Scope: src/auth. Deliver: coupling + Genie Verdict."
 ```
 
 **Output:** Analysis + structured Genie Verdict + confidence level + Done Report structure
 
 ### Strategic Thinking Modes (18 total)
 
-When Genie consults the orchestrator neuron, it adopts different reasoning approaches:
+When Genie consults the genie neuron, it adopts different reasoning approaches:
 
 **Core reasoning styles (3):**
 - `challenge` — Critical evaluation and adversarial pressure-testing
 - `explore` — Discovery-focused exploratory reasoning
 - `consensus` — Multi-model perspective synthesis
 
-**Strategic analysis modes (8):**
+**Strategic analysis skills (8):**
 - `plan` — Plan pressure-testing and phase mapping
 - `analyze` — System architecture audit and dependency mapping
 - `debug` — Root cause investigation with hypothesis testing
@@ -246,11 +246,11 @@ When Genie consults the orchestrator neuron, it adopts different reasoning appro
 - `tracer` — Instrumentation/observability planning
 - `precommit` — Pre-commit validation gate
 
-**Custom modes (2):**
+**Custom skills (2):**
 - `compliance` — Controls, evidence, sign-offs mapping
 - `retrospective` — Wins, misses, lessons capture
 
-**Note:** Execution specialists (implementor, tests, review, polish, git, release) are **not** thinking modes - they execute work directly through collaboration.
+**Note:** Execution specialists (implementor, tests, review, polish, git, release) are **not** Genie skills - they execute work directly through collaboration.
 
 ---
 
@@ -287,17 +287,17 @@ Genie: "Done! Want me to review it?"
 
 ```
 # Start neuron session
-mcp__genie__run with agent="orchestrator" and prompt="[Initial context]"
-# Creates session: orchestrator-abc123
+mcp__genie__run with agent="genie" and prompt="[Initial context]"
+# Creates session: genie-abc123
 
 # Resume throughout work (builds context over time)
-mcp__genie__resume with sessionId="orchestrator-abc123" and prompt="[Follow-up]"
+mcp__genie__resume with sessionId="genie-abc123" and prompt="[Follow-up]"
 
 # Neuron remembers everything, context grows organically
 ```
 
 **Session naming:** `[neuron-type]-[context-slug]`
-- `orchestrator-auth-design`
+- `genie-auth-design`
 - `implementor-routing-triggers`
 - `tests-api-validation`
 - `challenge-architecture`
@@ -310,7 +310,7 @@ mcp__genie__resume with sessionId="orchestrator-abc123" and prompt="[Follow-up]"
 - ✅ No context explosion (scoped per neuron)
 
 **When Genie uses neurons:**
-- Strategic work → orchestrator neuron (persistent thinking partner)
+- Strategic work → genie neuron (persistent thinking partner)
 - Complex implementation → implementor neuron (iterative refinement)
 - Test development → tests neuron (evolving strategy)
 - Long-running tasks → appropriate neuron with session
@@ -419,17 +419,17 @@ This workflow is universal. Only the **domain adaptation** changes:
 
 ## Strategic Thinking Consultation
 
-When Genie needs to think critically or analyze deeply, it consults the orchestrator neuron with the appropriate reasoning mode:
+When Genie needs to think critically or analyze deeply, it consults the genie neuron with the appropriate reasoning skill:
 
 ```
-# Option 1: Let orchestrator auto-route (recommended)
-mcp__genie__run with agent="orchestrator" and prompt="
+# Option 1: Let genie auto-route (recommended)
+mcp__genie__run with agent="genie" and prompt="
 Pressure-test the authentication plan for risks and missing validations.
 @.genie/wishes/auth-wish.md
 "
 
-# Option 2: Explicit mode selection
-mcp__genie__run with agent="orchestrator" and prompt="
+# Option 2: Explicit skill selection
+mcp__genie__run with agent="genie" and prompt="
 Mode: challenge
 
 Topic: Users prefer email over SMS for security alerts
@@ -438,14 +438,14 @@ Topic: Users prefer email over SMS for security alerts
 Deliver: Critical evaluation with experiments
 "
 
-# Option 3: Direct mode invocation (bypasses orchestrator)
+# Option 3: Direct skill invocation (bypasses genie)
 mcp__genie__run with agent="challenge" and prompt="
 Topic: Caching strategy assumptions
 Deliver: Counterarguments + experiments + verdict
 "
 ```
 
-**See `.genie/agents/orchestrator.md` for all 18 thinking modes and usage patterns**
+**See `.genie/agents/genie.md` for all 18 Genie skills and usage patterns**
 
 ---
 
@@ -454,7 +454,7 @@ Deliver: Counterarguments + experiments + verdict
 | Layer | Components | Description | User Experience |
 |-------|-----------|-------------|-----------------|
 | **Genie** | Main interface | Persistent conversational mentor | "You just talk to me" |
-| **Strategic Thinking** | 18 modes via orchestrator neuron | challenge, explore, consensus, plan, analyze, debug, audit, refactor, docgen, tracer, precommit, compliance, retrospective | "Let me pressure-test this..." (invisible) |
+| **Strategic Thinking** | 18 skills via genie neuron | challenge, explore, consensus, plan, analyze, debug, audit, refactor, docgen, tracer, precommit, compliance, retrospective | "Let me pressure-test this..." (invisible) |
 | **Execution Specialists** | 7 direct neurons | implementor, tests, polish, review, git, release, roadmap | "Let me work with my implementor neuron..." (collaborative) |
 | **Workflow** | plan, wish, forge, review | Structure work flow | Invisible orchestration |
 | **Autonomous** | vibe, learn | Background coordination & learning | Invisible support |

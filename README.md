@@ -143,7 +143,7 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 2. **Connect:** Configure your tool (Claude Code, Cursor, etc.) with the MCP command
 3. **Just talk:** "I want to build an auth system"
 4. **Genie guides you:** Through Plan → Wish → Forge → Review naturally
-5. **Neuron sessions:** Genie maintains persistent conversations with specialist agents (orchestrator, implementor, tests) that remember context and iterate over time
+5. **Neuron sessions:** Genie maintains persistent conversations with specialist agents (genie, implementor, tests) that remember context and iterate over time
 
 **No slash commands. No agent names. Just conversation.**
 
@@ -158,7 +158,7 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 | `mcp__genie__view` | Fetch session transcript | View conversation history with neurons |
 | `mcp__genie__stop` | Halt a running session | Stop long-running neuron work |
 
-**Neuron Sessions:** Genie creates persistent conversations with specialist agents (orchestrator, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
+**Neuron Sessions:** Genie creates persistent conversations with specialist agents (genie, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
 
 ### Claude Code Configuration
 
