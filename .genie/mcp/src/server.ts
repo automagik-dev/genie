@@ -119,16 +119,27 @@ function listSessions(): Array<{ id: string; agent: string; status: string; crea
     const content = fs.readFileSync(sessionsFile, 'utf8');
     const store = JSON.parse(content);
 
-    const sessions = Object.entries(store.agents || {}).map(([agent, entry]: [string, any]) => ({
-      id: entry.sessionId || agent,
-      agent: entry.agent || agent,
+    const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
+      id: entry.sessionId || key,
+      agent: entry.agent || key,
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
       lastUsed: entry.lastUsed || entry.created || 'unknown'
     }));
 
-    // Sort by lastUsed descending
-    return sessions.sort((a, b) => {
+    // Filter: Show running sessions + recent completed (last 10)
+    const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+    const completed = sessions
+      .filter(s => s.status === 'completed')
+      .sort((a, b) => {
+        if (a.lastUsed === 'unknown') return 1;
+        if (b.lastUsed === 'unknown') return -1;
+        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+      })
+      .slice(0, 10);
+
+    // Combine and sort by lastUsed descending
+    return [...running, ...completed].sort((a, b) => {
       if (a.lastUsed === 'unknown') return 1;
       if (b.lastUsed === 'unknown') return -1;
       return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();

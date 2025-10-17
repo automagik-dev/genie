@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.11
+last_version: 2.4.0-rc.12
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,35 +18,34 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** RC11 release - Package root vs workspace root separation
+**Focus:** RC12 release - MCP session management fixes
 **Branch:** !`git branch --show-current`
 
 **Active Work:**
-- Definitive path resolution fix (package root vs workspace root)
-- Version header ENOENT fix
-- End-user npm mode compatibility
+- Genie neuron self-delegation paradox fix
+- list_sessions store.agents → store.sessions fix
+- Session visibility (running + last 10 completed)
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.11 on npm@next (2025-10-17)
-**Latest:** Package root vs workspace root separation
+**Published:** v2.4.0-rc.12 on npm@next (2025-10-17)
+**Latest:** MCP session management fixes
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Fixes in RC11:**
-- ✅ Separate getPackageRoot() from findWorkspaceRoot()
-- ✅ Version header ENOENT fix (package.json read)
-- ✅ NPM mode compatibility (npx automagik-genie from any directory)
-- ✅ Verified in dev mode AND external test project
+**Critical Fixes in RC12:**
+- ✅ Genie neuron self-delegation paradox (removed routing.md reference)
+- ✅ list_sessions showing zero sessions (store.agents → store.sessions)
+- ✅ Session visibility (running + last 10 completed sessions)
+- ✅ End-to-end MCP validation passed
 
-**Previous RC10 Fixes:**
-- Background agent launch failure (detach config + workspace root)
-- MCP server workspace detection (search upward for .genie/)
-- Absolute path resolution (cross-process cwd compatibility)
-- Executor spawn cwd override (explicit workspace root)
+**Previous RC11 Fixes:**
+- Separate getPackageRoot() from findWorkspaceRoot()
+- Version header ENOENT fix (package.json read)
+- NPM mode compatibility (npx automagik-genie from any directory)
 
 ---
 
