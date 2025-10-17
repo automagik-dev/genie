@@ -926,6 +926,45 @@ Genie: *creates wish naturally, no commands exposed*
 
 **Validation:** When encountering cleanup/refactoring/multi-file work, immediately create implementor session with clear spec, never use Edit tool for batch operations.
 
+**State Tracking Before Deployment *(2025-10-17)*:**
+When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching the session:
+1. Update SESSION-STATE.md with pending session entry
+2. Launch implementor with prompt.md framework (Discovery → Implementation → Verification)
+3. Update SESSION-STATE.md with actual session ID after launch
+4. Pattern ensures session tracking discipline
+
+**Example workflow:**
+```markdown
+# 1. Update SESSION-STATE.md (before launch)
+### Implementor - Task Description
+**Session ID:** `[pending]`
+**Status:** starting
+**Purpose:** Brief task description
+**Context:** Key details
+**Next:** What implementor will do
+
+# 2. Launch implementor with clear prompt
+mcp__genie__run with agent="implementor" and prompt="
+## [Discovery] Context & Analysis
+...
+## [Implementation] File Extraction Plan
+...
+## [Verification] Success Criteria
+..."
+
+# 3. Update SESSION-STATE.md (after launch)
+**Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`
+**Status:** active (background)
+```
+
+**Why:**
+- Session coordination: SESSION-STATE.md stays current
+- Resume capability: Can resume after restart
+- Visibility: Human knows what's running
+- Prompt discipline: Forces clear Discovery/Implementation/Verification structure
+
+**Evidence:** Felipe teaching 2025-10-17: "update your state before deploying it too... learn this as a behavior"
+
 ### Role Clarity Protocol *(CRITICAL)*
 **NEVER** bypass session checks when resuming work. **ALWAYS** check session results before assuming work needs to be done.
 

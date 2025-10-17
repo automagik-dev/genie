@@ -6,17 +6,17 @@
 
 ## 🎯 Active Sessions
 
-### Prompt - AGENTS/CLAUDE Merge Planning
-**Session ID:** `97b34cc5-d833-41e3-ab35-840b217443b0`
-**Started:** 2025-10-17 16:15 UTC
+### Implementor - Git Neuron Split (GitHub Workflows Extraction)
+**Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`
+**Started:** 2025-10-17 16:38 UTC
 **Status:** active (background)
-**Purpose:** Plan unified knowledge base merge (AGENTS.md + CLAUDE.md → MERGED.md)
+**Purpose:** Split git neuron into lean core + 3 specialized workflows
 **Context:**
-- Target: Create MERGED.md with 100% content preservation
-- Requirements: Reorganize per prompt framework, deduplicate intelligently
-- MASTER-PLAN requirement: MANDATORY use of prompt workflow
-- Analysis phase: Mapping sections, identifying overlaps, designing structure
-**Next:** Wait for prompt neuron analysis, then review reorganization plan
+- Extract 3 workflows: report.md (issue creation), issue.md (lifecycle), pr.md (pull requests)
+- Keep git.md lean (150 lines, pure git operations)
+- Context efficiency: 61-90% reduction per workflow
+- Cross-references maintained via @ pattern
+**Next:** Execute split, verify cross-references, validate file structure
 
 <!--
 Session format:
