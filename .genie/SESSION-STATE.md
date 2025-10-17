@@ -6,18 +6,7 @@
 
 ## 🎯 Active Sessions
 
-### Implementor - Git Neuron Split (GitHub Workflows Extraction)
-**Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`
-**Started:** 2025-10-17 16:38 UTC
-**Status:** running in background (session reset, will check on next startup)
-**Purpose:** Split git neuron into lean core + 3 specialized workflows
-**Context:**
-- Extract 3 workflows: report.md (issue creation), issue.md (lifecycle), pr.md (pull requests)
-- Keep git.md lean (150 lines, pure git operations)
-- Context efficiency: 61-90% reduction per workflow
-- Cross-references maintained via @ pattern
-- State tracking pattern learned and documented (AGENTS.md lines 929-966)
-**Next:** On resume - check session completion status with mcp__genie__view, extract results if complete
+*No active sessions*
 
 <!--
 Session format:
@@ -34,6 +23,19 @@ Session format:
 ---
 
 ## 🔄 Session History (Recent)
+
+### Implementor - Git Neuron Split ✅
+**Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`
+**Started:** 2025-10-17 16:38 UTC
+**Completed:** 2025-10-17 16:42 UTC (executed directly per user override)
+**Outcome:** Successfully split git neuron into 4 focused files
+**Details:**
+- Files modified: 1 (git.md: 514 → 165 lines, 68% reduction)
+- Files created: 3 (report.md 295 lines, issue.md 212 lines, pr.md 148 lines)
+- Context efficiency: 43-71% reduction per operation type
+- Cross-references: ✅ All @ patterns validated
+- Agent registration: ✅ All 4 agents registered successfully
+- Done report: `.genie/wishes/git-split/reports/done-implementor-git-split-202510171642.md`
 
 ### Release - RC8 GitHub Release ✅
 **Session ID:** `12285bf7-2310-4193-9da8-31a7dd3b52e4`
