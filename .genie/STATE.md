@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.10
+last_version: 2.4.0-rc.11
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,34 +18,35 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** RC10 release - Background agent launch fixes
+**Focus:** RC11 release - Package root vs workspace root separation
 **Branch:** !`git branch --show-current`
 
 **Active Work:**
-- Critical workspace root resolution fixes
-- MCP server path detection improvements
-- Background agent spawn debugging
+- Definitive path resolution fix (package root vs workspace root)
+- Version header ENOENT fix
+- End-user npm mode compatibility
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.10 on npm@next (2025-10-17)
-**Latest:** Background agent launch critical fixes
+**Published:** v2.4.0-rc.11 on npm@next (2025-10-17)
+**Latest:** Package root vs workspace root separation
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Fixes in rc.10:**
-- ✅ Background agent launch failure (detach config + workspace root)
-- ✅ MCP server workspace detection (search upward for .genie/)
-- ✅ Absolute path resolution (cross-process cwd compatibility)
-- ✅ Executor spawn cwd override (explicit workspace root)
+**Critical Fixes in RC11:**
+- ✅ Separate getPackageRoot() from findWorkspaceRoot()
+- ✅ Version header ENOENT fix (package.json read)
+- ✅ NPM mode compatibility (npx automagik-genie from any directory)
+- ✅ Verified in dev mode AND external test project
 
-**Previous RC9 Fixes:**
-- Bug #102: Session ID collision (v1→v2 schema)
-- Bug #90: full=true truncation (complete transcript)
-- Bug #92: Zombie session cleanup (>24h auto-abandonment)
+**Previous RC10 Fixes:**
+- Background agent launch failure (detach config + workspace root)
+- MCP server workspace detection (search upward for .genie/)
+- Absolute path resolution (cross-process cwd compatibility)
+- Executor spawn cwd override (explicit workspace root)
 
 ---
 

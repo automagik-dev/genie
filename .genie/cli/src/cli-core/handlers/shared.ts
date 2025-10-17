@@ -398,8 +398,8 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
 
   const spawnOptions: SpawnOptionsWithoutStdio = {
     stdio: ['ignore', 'pipe', 'pipe'] as any,
-    cwd: process.cwd(),
-    ...(command.spawnOptions || {})
+    ...(command.spawnOptions || {}),
+    cwd: paths.baseDir  // Use workspace root, not inherited process.cwd()
   };
   const proc = spawn(command.command, command.args, spawnOptions);
 

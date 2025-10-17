@@ -5,6 +5,7 @@ import type { Executor } from '../executors/types';
 import type { CLIOptions, ParsedCommand, ConfigPaths, GenieConfig, ExecuteRunArgs } from '../lib/types';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { deriveStartTime, deriveLogFile } from '../lib/utils';
+import { getPackageRoot } from '../lib/paths';
 import {
   loadSessions,
   saveSessions,
@@ -184,7 +185,7 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
   if (isNewLog) {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(getPackageRoot(), 'package.json'), 'utf8'));
     const timestamp = new Date().toISOString();
     logStream.write(`# Genie CLI v${pkg.version} - ${timestamp}\n\n`);
   }
@@ -193,8 +194,6 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
     ...(command.spawnOptions || {}),
     cwd: paths.baseDir  // Use workspace root, not inherited process.cwd()
   };
-  console.error(`[DEBUG] paths.baseDir = ${paths.baseDir}`);
-  console.error(`[DEBUG] spawnOptions.cwd = ${spawnOptions.cwd}`);
   const proc = spawn(command.command, command.args, spawnOptions);
 
   entry.status = 'running';

@@ -76,10 +76,8 @@ function buildRunCommand({ config = {}, instructions, agentPath, prompt }: { con
 
   return {
     command,
-    args,
-    spawnOptions: {
-      cwd: process.cwd()  // Use user's project directory, not npm package directory
-    }
+    args
+    // Note: cwd is handled by shared.ts (paths.baseDir with workspace root detection)
   };
 }
 

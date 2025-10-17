@@ -1,6 +1,26 @@
+import fs from 'fs';
 import path from 'path';
 
+// Find workspace root by searching upward for .genie/ directory
+// This locates the USER'S project root (where they run genie)
+export function findWorkspaceRoot(): string {
+  let dir = process.cwd();
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.genie'))) {
+      return dir;
+    }
+    dir = path.dirname(dir);
+  }
+  // Fallback to cwd if .genie not found
+  return process.cwd();
+}
+
+// Get Genie framework package root (where automagik-genie package.json lives)
+// This is DIFFERENT from workspace root!
+// Works in both dev mode and npm mode (npx automagik-genie)
 export function getPackageRoot(): string {
+  // __dirname = .genie/cli/dist/lib/
+  // ../../../../ = workspace root (dev) or package root (npm)
   return path.resolve(__dirname, '../../../..');
 }
 

@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.findWorkspaceRoot = findWorkspaceRoot;
 exports.getPackageRoot = getPackageRoot;
 exports.getTemplateGeniePath = getTemplateGeniePath;
 exports.getTemplateClaudePath = getTemplateClaudePath;
@@ -15,8 +16,27 @@ exports.resolveWorkspaceProviderPath = resolveWorkspaceProviderPath;
 exports.resolveWorkspaceVersionPath = resolveWorkspaceVersionPath;
 exports.resolveProviderStatusPath = resolveProviderStatusPath;
 exports.resolveTempBackupsRoot = resolveTempBackupsRoot;
+const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+// Find workspace root by searching upward for .genie/ directory
+// This locates the USER'S project root (where they run genie)
+function findWorkspaceRoot() {
+    let dir = process.cwd();
+    while (dir !== path_1.default.dirname(dir)) {
+        if (fs_1.default.existsSync(path_1.default.join(dir, '.genie'))) {
+            return dir;
+        }
+        dir = path_1.default.dirname(dir);
+    }
+    // Fallback to cwd if .genie not found
+    return process.cwd();
+}
+// Get Genie framework package root (where automagik-genie package.json lives)
+// This is DIFFERENT from workspace root!
+// Works in both dev mode and npm mode (npx automagik-genie)
 function getPackageRoot() {
+    // __dirname = .genie/cli/dist/lib/
+    // ../../../../ = workspace root (dev) or package root (npm)
     return path_1.default.resolve(__dirname, '../../../..');
 }
 function getTemplateGeniePath(template = 'code') {

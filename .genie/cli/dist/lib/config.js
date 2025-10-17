@@ -15,6 +15,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const executors_1 = require("../executors");
 const utils_1 = require("./utils");
+const paths_1 = require("./paths");
 let YAML = null;
 try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -30,7 +31,7 @@ const BASE_CONFIG = {
         executor: executors_1.DEFAULT_EXECUTOR_KEY
     },
     paths: {
-        baseDir: '.',
+        baseDir: undefined, // Triggers findWorkspaceRoot() in resolvePaths()
         sessionsFile: '.genie/state/agents/sessions.json',
         logsDir: '.genie/state/agents/logs',
         backgroundDir: '.genie/state/agents/background'
@@ -160,7 +161,8 @@ function loadConfig() {
     return config;
 }
 function resolvePaths(paths) {
-    const baseDir = path_1.default.resolve(paths.baseDir || '.'); // Convert to absolute path
+    // Use findWorkspaceRoot() to detect actual workspace, not process.cwd()
+    const baseDir = paths.baseDir ? path_1.default.resolve(paths.baseDir) : (0, paths_1.findWorkspaceRoot)();
     return {
         baseDir,
         sessionsFile: paths.sessionsFile || path_1.default.join(baseDir, '.genie/state/agents/sessions.json'),

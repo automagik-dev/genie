@@ -3,6 +3,7 @@ import path from 'path';
 import type { GenieConfig, ConfigPaths, CLIOptions } from './types';
 import { loadExecutors, DEFAULT_EXECUTOR_KEY } from '../executors';
 import { deepClone, mergeDeep } from './utils';
+import { findWorkspaceRoot } from './paths';
 
 let YAML: typeof import('yaml') | null = null;
 try {
@@ -20,7 +21,7 @@ const BASE_CONFIG: GenieConfig = {
     executor: DEFAULT_EXECUTOR_KEY
   },
   paths: {
-    baseDir: '.',
+    baseDir: undefined,  // Triggers findWorkspaceRoot() in resolvePaths()
     sessionsFile: '.genie/state/agents/sessions.json',
     logsDir: '.genie/state/agents/logs',
     backgroundDir: '.genie/state/agents/background'
@@ -161,7 +162,8 @@ export function loadConfig(): GenieConfig {
 
 
 export function resolvePaths(paths: ConfigPaths): Required<ConfigPaths> {
-  const baseDir = path.resolve(paths.baseDir || '.');  // Convert to absolute path
+  // Use findWorkspaceRoot() to detect actual workspace, not process.cwd()
+  const baseDir = paths.baseDir ? path.resolve(paths.baseDir) : findWorkspaceRoot();
   return {
     baseDir,
     sessionsFile: paths.sessionsFile || path.join(baseDir, '.genie/state/agents/sessions.json'),

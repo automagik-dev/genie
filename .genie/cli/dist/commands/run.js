@@ -10,6 +10,7 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const agent_resolver_1 = require("../lib/agent-resolver");
 const utils_1 = require("../lib/utils");
+const paths_1 = require("../lib/paths");
 const session_store_1 = require("../session-store");
 const config_defaults_1 = require("../lib/config-defaults");
 const view_helpers_1 = require("../lib/view-helpers");
@@ -133,7 +134,7 @@ function executeRun(args) {
     const isNewLog = !fs_1.default.existsSync(logFile);
     const logStream = fs_1.default.createWriteStream(logFile, { flags: 'a' });
     if (isNewLog) {
-        const pkg = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
+        const pkg = JSON.parse(fs_1.default.readFileSync(path_1.default.join((0, paths_1.getPackageRoot)(), 'package.json'), 'utf8'));
         const timestamp = new Date().toISOString();
         logStream.write(`# Genie CLI v${pkg.version} - ${timestamp}\n\n`);
     }
@@ -142,8 +143,6 @@ function executeRun(args) {
         ...(command.spawnOptions || {}),
         cwd: paths.baseDir // Use workspace root, not inherited process.cwd()
     };
-    console.error(`[DEBUG] paths.baseDir = ${paths.baseDir}`);
-    console.error(`[DEBUG] spawnOptions.cwd = ${spawnOptions.cwd}`);
     const proc = (0, child_process_1.spawn)(command.command, command.args, spawnOptions);
     entry.status = 'running';
     entry.executorPid = proc.pid || null;
