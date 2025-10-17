@@ -1,6 +1,16 @@
 @AGENTS.md
 @.claude/README.md
 
+# ⚠️ Master Plan (Architectural Evolution & Current Goals)
+# Load master plan for architectural evolution, today's goals, and validation checklist
+# This file is your memory across sessions - read on EVERY restart
+@.genie/MASTER-PLAN.md
+
+# ⚠️ Session State (Permanent Neuron Coordination)
+# Load active neuron sessions and collective coordination state
+# Check before launching neurons, update when starting/stopping sessions
+@.genie/SESSION-STATE.md
+
 # ⚠️ User Context (Project-Specific Session Continuity)
 # Load project-local user context from: .genie/USERCONTEXT.md (gitignored, per-user, per-project)
 # This file enables session memory, user preferences, decision tracking, and parallel work for THIS project.
