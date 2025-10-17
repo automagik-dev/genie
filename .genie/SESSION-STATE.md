@@ -6,18 +6,7 @@
 
 ## 🎯 Active Sessions
 
-### Release - RC8 GitHub Release
-**Session ID:** `12285bf7-2310-4193-9da8-31a7dd3b52e4`
-**Started:** 2025-10-17 12:56 UTC (resumed 2025-10-17 13:15 UTC)
-**Status:** active
-**Purpose:** Create GitHub release v2.4.0-rc.8 and monitor npm publish
-**Context:**
-- Version: 2.4.0-rc.8 (package.json ready)
-- Commit: d19e386
-- npm@next currently: 2.4.0-rc.7 (stale)
-- GitHub releases: Latest is RC6 (RC7, RC8 missing)
-- Key features: Triad validation, SESSION-STATE.md, MASTER-PLAN.md, shared vs per-user architecture
-**Next:** Pre-flight checks → GitHub release → Monitor Actions → Verify npm@next
+**None currently**
 
 <!--
 Session format:
@@ -35,7 +24,18 @@ Session format:
 
 ## 🔄 Session History (Recent)
 
-**None yet**
+### Release - RC8 GitHub Release ✅
+**Session ID:** `12285bf7-2310-4193-9da8-31a7dd3b52e4`
+**Started:** 2025-10-17 12:56 UTC (resumed 2025-10-17 13:15 UTC)
+**Completed:** 2025-10-17 16:08 UTC
+**Outcome:** Successfully published v2.4.0-rc.8 to npm@next
+**Details:**
+- Pre-flight: ✅ Tests passed (19/19), working tree clean, version validated
+- GitHub release: ✅ Created with comprehensive notes
+- Workflow: ✅ Completed in 43s (18598273595)
+- npm publish: ✅ Published to @next (2.4.0-rc.8)
+- Installation: ✅ Verified working (`npx automagik-genie --version`)
+- Key features: Triad validation, SESSION-STATE.md, MASTER-PLAN.md, shared vs per-user architecture
 
 <!--
 Completed sessions move here with outcomes
