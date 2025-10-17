@@ -6,7 +6,17 @@
 
 ## 🎯 Active Sessions
 
-**None currently**
+### Prompt - AGENTS/CLAUDE Merge Planning
+**Session ID:** `97b34cc5-d833-41e3-ab35-840b217443b0`
+**Started:** 2025-10-17 16:15 UTC
+**Status:** active (background)
+**Purpose:** Plan unified knowledge base merge (AGENTS.md + CLAUDE.md → MERGED.md)
+**Context:**
+- Target: Create MERGED.md with 100% content preservation
+- Requirements: Reorganize per prompt framework, deduplicate intelligently
+- MASTER-PLAN requirement: MANDATORY use of prompt workflow
+- Analysis phase: Mapping sections, identifying overlaps, designing structure
+**Next:** Wait for prompt neuron analysis, then review reorganization plan
 
 <!--
 Session format:
