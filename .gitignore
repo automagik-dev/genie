@@ -188,3 +188,7 @@ docs/ag-ui/*.html
 !docs/**/*.md
 .genie/cli/snapshots/
 !.genie/cli/snapshots/archived/
+
+# Per-user triad files (use templates to initialize)
+.genie/TODO.md
+.genie/USERCONTEXT.md

@@ -1,6 +1,17 @@
 #!/bin/bash
 # Self-validating triad checker
-# Reads embedded validation commands from STATE.md and TODO.md
+# Validates STATE.md (required) + TODO.md/USERCONTEXT.md (optional per-user files)
+#
+# Natural Context Acquisition:
+# - STATE.md = Shared repository state (ALWAYS validated, committed)
+# - TODO.md = Your work queue (validated if exists, gitignored)
+# - USERCONTEXT.md = Your preferences (validated if exists, gitignored)
+#
+# First time setup:
+#   cp .genie/TODO.template.md .genie/TODO.md
+#   cp .genie/USERCONTEXT.template.md .genie/USERCONTEXT.md
+#
+# These files load automatically via @ in CLAUDE.md for natural context
 
 set -e
 
@@ -72,28 +83,43 @@ check_file() {
   return 0
 }
 
-# Check STATE.md
+# Check STATE.md (REQUIRED - shared repository state)
 if ! check_file ".genie/STATE.md"; then
   NEEDS_UPDATE=1
 fi
 
 echo ""
 
-# Check TODO.md
-if ! check_file ".genie/TODO.md"; then
-  NEEDS_UPDATE=1
+# Check TODO.md (OPTIONAL - per-user work queue)
+if [[ -f ".genie/TODO.md" ]]; then
+  if ! check_file ".genie/TODO.md"; then
+    NEEDS_UPDATE=1
+  fi
+  echo ""
+else
+  echo "ℹ️  TODO.md not found (optional per-user file)"
+  echo "   Initialize: cp .genie/TODO.template.md .genie/TODO.md"
+  echo ""
 fi
 
-echo ""
+# Check USERCONTEXT.md (OPTIONAL - per-user preferences)
+if [[ -f ".genie/USERCONTEXT.md" ]]; then
+  echo "ℹ️  USERCONTEXT.md found (optional, not validated by default)"
+  echo ""
+fi
 
 if [[ $NEEDS_UPDATE -eq 1 ]]; then
   echo "❌ Triad validation failed"
   echo ""
   echo "Fix with:"
   echo "  1. Update .genie/STATE.md (version, commits)"
-  echo "  2. Update .genie/TODO.md (mark tasks COMPLETE)"
-  echo "  3. Run: git add .genie/{STATE,TODO}.md"
+  echo "  2. Update .genie/TODO.md (mark tasks COMPLETE) [if you have one]"
+  echo "  3. Run: git add .genie/STATE.md"
   echo "  4. Retry commit"
+  echo ""
+  echo "First time setup:"
+  echo "  cp .genie/TODO.template.md .genie/TODO.md"
+  echo "  cp .genie/USERCONTEXT.template.md .genie/USERCONTEXT.md"
   exit 1
 else
   echo "✅ Triad validation passed"
