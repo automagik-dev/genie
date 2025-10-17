@@ -186,12 +186,12 @@
 **Reference:** `.genie/SESSION-STATE.md`
 
 **Current active:**
-- Release neuron: `12285bf7-2310-4193-9da8-31a7dd3b52e4` (RC8 GitHub release)
+- Orchestrator neuron (analyze mode): `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3` → Natural context audit
+- Prompt neuron: `4d4c76a7-e58a-487a-b66f-7ff408dafb37` → AGENTS/CLAUDE merge planning
 
-**Pending launches:**
-- Orchestrator neuron (mode: analyze) → Natural context audit
-- Prompt neuron → AGENTS/CLAUDE merge planning
-- Git neuron → GitHub issues/PRs cleanup
+**Completed:**
+- Release neuron: `12285bf7-2310-4193-9da8-31a7dd3b52e4` (RC8 GitHub release) ✅
+- Implementor neuron: `79fecfb5-2532-4e73-9d4a-00a33a1863ab` (Git neuron split) ✅
 
 ---
 
@@ -242,10 +242,10 @@ Before considering .genie "ready for templates":
 **Today:**
 - ✅ RC8 published
 - ✅ SESSION-STATE.md created and used
-- 🔄 Release agent running
-- ⏳ Natural context audit in progress
-- ⏳ Prompt workflow for AGENTS/CLAUDE merge
-- ⏳ GitHub cleanup
+- ✅ Git neuron split complete (4 focused files, 43-71% context reduction)
+- 🔄 Natural context audit in progress (orchestrator session 2d19c1e2)
+- 🔄 AGENTS/CLAUDE merge planning (prompt session 4d4c76a7)
+- ⏳ GitHub cleanup (deferred until after merge)
 
 **This Week:**
 - Smooth RC iterations (no critical bugs)

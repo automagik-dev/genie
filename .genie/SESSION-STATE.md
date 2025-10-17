@@ -6,7 +6,31 @@
 
 ## 🎯 Active Sessions
 
-*No active sessions*
+### Orchestrator - Natural Context Acquisition Audit
+**Session ID:** `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3`
+**Started:** 2025-10-17 17:15 UTC
+**Status:** active (background)
+**Mode:** analyze
+**Purpose:** Audit ALL .md files for @ / ! / usage opportunities
+**Context:**
+- Analyze all .md files in `.genie/`, `.claude/`, root
+- Find @ reference opportunities (neural file networks)
+- Find ! command opportunities (dynamic data injection)
+- Document findings with file paths and recommendations
+**Next:** Wait ~60s then check results with mcp__genie__view
+
+### Prompt - AGENTS/CLAUDE Merge Planning
+**Session ID:** `4d4c76a7-e58a-487a-b66f-7ff408dafb37`
+**Started:** 2025-10-17 17:15 UTC
+**Status:** active (background)
+**Mode:** merge analysis
+**Purpose:** Design unified AGENTS.md + CLAUDE.md structure with zero content loss
+**Context:**
+- Read both files completely
+- Identify overlapping sections and unique content
+- Propose unified structure per prompt framework
+- Show deduplication strategy
+**Next:** Wait ~60s then check results with mcp__genie__view
 
 <!--
 Session format:
