@@ -8,6 +8,13 @@ NEEDS_UPDATE=0
 
 echo "🔍 Validating triad files..."
 
+# Helper: Extract metadata value
+extract_metadata() {
+  local file=$1
+  local key=$2
+  grep "^${key}:" "$file" | head -1 | cut -d: -f2- | xargs
+}
+
 # Helper: Extract and run validation commands from metadata
 check_file() {
   local file=$1
@@ -19,6 +26,19 @@ check_file() {
   fi
 
   echo "Checking $name..."
+
+  # Special check for STATE.md: version consistency
+  if [[ "$name" == "STATE.md" ]]; then
+    local meta_version=$(extract_metadata "$file" "last_version")
+    local pkg_version=$(jq -r .version package.json 2>/dev/null || echo "")
+
+    if [[ -n "$pkg_version" && "$meta_version" != "$pkg_version" ]]; then
+      echo "  ❌ version_match failed (metadata: $meta_version, package.json: $pkg_version)"
+      NEEDS_UPDATE=1
+    else
+      echo "  ✅ version_match passed"
+    fi
+  fi
 
   # Extract validation commands from HTML comment block
   local in_validation=0
