@@ -26,6 +26,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const util_1 = require("util");
+const display_transform_1 = require("./lib/display-transform");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
@@ -42,36 +43,7 @@ function findWorkspaceRoot() {
     return process.cwd();
 }
 const WORKSPACE_ROOT = findWorkspaceRoot();
-// Helper: Transform agent paths for display
-function transformDisplayPath(normalizedId) {
-    const parts = normalizedId.split('/');
-    // Template folders: code/, create/ (strip entirely)
-    const templateFolders = ['code', 'create'];
-    if (templateFolders.includes(parts[0])) {
-        const displayId = parts.slice(1).join('/');
-        const displayFolder = parts.length > 2 ? parts.slice(1, -1).join('/') : null;
-        return { displayId, displayFolder };
-    }
-    // Category folders: neurons/, workflows/
-    const categoryFolders = ['neurons', 'workflows'];
-    if (categoryFolders.includes(parts[0])) {
-        if (parts.length === 2) {
-            // Top-level agent (e.g., neurons/git.md, workflows/plan.md)
-            return { displayId: parts[1], displayFolder: null };
-        }
-        if (parts.length === 3 && parts[1] === parts[2]) {
-            // Parent neuron (e.g., neurons/git/git.md)
-            return { displayId: parts[1], displayFolder: null };
-        }
-        // Child workflow (e.g., neurons/git/issue.md)
-        const displayId = parts.slice(1).join('/');
-        const displayFolder = parts[1]; // Parent folder name
-        return { displayId, displayFolder };
-    }
-    // Fallback: no transformation (backward compatibility)
-    const displayFolder = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
-    return { displayId: normalizedId, displayFolder };
-}
+// transformDisplayPath imported from ./lib/display-transform (single source of truth)
 // Helper: List available agents from .genie/agents directory
 function listAgents() {
     const baseDir = '.genie/agents';
@@ -107,7 +79,7 @@ function listAgents() {
                     description = descMatch[1].trim();
             }
             // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = transformDisplayPath(normalizedId);
+            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
             agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
         });
     };

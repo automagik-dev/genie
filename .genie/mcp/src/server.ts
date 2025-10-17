@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
+import { transformDisplayPath } from './lib/display-transform';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,39 +55,7 @@ interface CliResult {
   commandLine: string;
 }
 
-// Helper: Transform agent paths for display
-function transformDisplayPath(normalizedId: string): { displayId: string; displayFolder: string | null } {
-  const parts = normalizedId.split('/');
-
-  // Template folders: code/, create/ (strip entirely)
-  const templateFolders = ['code', 'create'];
-  if (templateFolders.includes(parts[0])) {
-    const displayId = parts.slice(1).join('/');
-    const displayFolder = parts.length > 2 ? parts.slice(1, -1).join('/') : null;
-    return { displayId, displayFolder };
-  }
-
-  // Category folders: neurons/, workflows/
-  const categoryFolders = ['neurons', 'workflows'];
-  if (categoryFolders.includes(parts[0])) {
-    if (parts.length === 2) {
-      // Top-level agent (e.g., neurons/git.md, workflows/plan.md)
-      return { displayId: parts[1], displayFolder: null };
-    }
-    if (parts.length === 3 && parts[1] === parts[2]) {
-      // Parent neuron (e.g., neurons/git/git.md)
-      return { displayId: parts[1], displayFolder: null };
-    }
-    // Child workflow (e.g., neurons/git/issue.md)
-    const displayId = parts.slice(1).join('/');
-    const displayFolder = parts[1]; // Parent folder name
-    return { displayId, displayFolder };
-  }
-
-  // Fallback: no transformation (backward compatibility)
-  const displayFolder = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
-  return { displayId: normalizedId, displayFolder };
-}
+// transformDisplayPath imported from ./lib/display-transform (single source of truth)
 
 // Helper: List available agents from .genie/agents directory
 function listAgents(): Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> {
