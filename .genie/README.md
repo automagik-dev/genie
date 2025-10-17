@@ -51,6 +51,68 @@ mcp__genie__list_sessions
 - **refactorer** – Prompt refactoring agent (`.genie/agents/refactorer.md`)
 - **rules-integrator** – Minimal, non-destructive rules updater (`.genie/agents/rules-integrator.md`)
 
+---
+
+<!-- NEURAL_TREE_START -->
+## Agent Neural Tree
+
+**Auto-generated** from `.genie/agents/` folder structure
+
+**Summary:**
+- Universal neurons: 17
+- Code neurons: 8
+- Git workflows: 3
+- Create neurons: 1
+- Orchestrators: 2
+- **Total: 31 agents**
+
+### Universal Neurons (Shared)
+
+- **analyze**
+- **audit**
+- **challenge**
+- **consensus**
+- **debug**
+- **docgen**
+- **explore**
+- **forge** → `forge`
+- **learn** → `learn`
+- **plan** → `...`, `genie`, `plan`
+- **polish** → `polish`
+- **prompt**
+- **qa** → `learn`
+- **refactor**
+- **review** → `review`
+- **roadmap** → `roadmap`
+- **vibe** → `sleepy`, `$agent`
+
+### Code Template
+
+**Orchestrator:** `code`
+
+**Neurons:**
+- **commit**
+- **git** → `git`, `report`, `pr`, `issue`
+- **implementor** → `implementor`
+- **install** → `review`, `forge`, `wish`, `plan`
+- **release** → `release`, `commit`
+- **tests** → `tests`
+- **tracer**
+- **wish** → `wish`
+
+**Git workflows:** `issue`, `pr`, `report`
+
+### Create Template
+
+**Orchestrator:** `create`
+
+**Neurons:**
+- **wish**
+
+<!-- NEURAL_TREE_END -->
+
+---
+
 ### For AI Agents (Claude, etc.)
 
 Instead of using one-shot Task tools, use MCP for full conversations:

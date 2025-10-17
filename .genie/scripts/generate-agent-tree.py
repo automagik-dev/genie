@@ -2,16 +2,12 @@
 """
 Generate Agent Neural Tree
 
-Creates a visual representation of the agent hierarchy and relationships.
-Part of Genie self-updating ecosystem.
+Creates visual Mermaid diagram and markdown documentation of agent hierarchy.
+Auto-updates sections in README.md and .genie/README.md.
 
-Shows:
-- Universal neurons (shared across all templates)
-- Template-specific neurons (code/create)
-- Delegation relationships (agent → subagent)
-- Knowledge connections (@ references between agents)
-
-Output: Markdown tree with hierarchy and metadata
+Outputs:
+- Mermaid flowchart → README.md (visual for users)
+- Markdown tree → .genie/README.md (documentation for developers)
 """
 
 import sys
@@ -125,203 +121,217 @@ def extract_delegations(agent_file):
     return list(set(matches))  # Deduplicate
 
 
-def extract_references(agent_file):
-    """Extract @ references to other agents."""
-    try:
-        content = agent_file.read_text(encoding='utf-8')
-    except Exception:
-        return []
+def generate_mermaid(agents):
+    """Generate Mermaid flowchart diagram."""
+    lines = []
 
-    # Pattern: @.genie/agents/<path>.md
-    pattern = r'@\.genie/agents/([\w\-./]+\.md)'
-    matches = re.findall(pattern, content)
+    lines.append("```mermaid")
+    lines.append("graph TB")
+    lines.append("    %% Genie Agent Neural Tree")
+    lines.append("")
 
-    # Simplify to agent names
-    agent_refs = []
-    for match in matches:
-        # Extract agent name from path
-        parts = Path(match).parts
-        if len(parts) > 0:
-            name = Path(match).stem
-            agent_refs.append(name)
+    # Universal neurons
+    lines.append("    %% Universal Neurons (17)")
+    lines.append("    UNIVERSAL[Universal Neurons]:::universal")
+    for agent in sorted(agents['universal_neurons'], key=lambda x: x['name'])[:5]:
+        lines.append(f"    {agent['name']}[{agent['name']}]:::neuron")
+        lines.append(f"    UNIVERSAL --> {agent['name']}")
+    if len(agents['universal_neurons']) > 5:
+        lines.append(f"    more_universal[...{len(agents['universal_neurons']) - 5} more]:::more")
+        lines.append("    UNIVERSAL --> more_universal")
+    lines.append("")
 
-    return list(set(agent_refs))  # Deduplicate
-
-
-def generate_tree(agents, root_path):
-    """Generate markdown tree representation."""
-    output = []
-
-    output.append("# Genie Agent Neural Tree")
-    output.append("")
-    output.append("**Generated:** Automatic scan of `.genie/agents/`")
-    output.append("")
-    output.append("---")
-    output.append("")
-
-    # Universal Neurons
-    output.append("## Universal Neurons (Shared Across All Templates)")
-    output.append("")
-    output.append(f"**Count:** {len(agents['universal_neurons'])}")
-    output.append("")
-
-    for agent in sorted(agents['universal_neurons'], key=lambda x: x['name']):
-        delegations = extract_delegations(agent['full_path'])
-        references = extract_references(agent['full_path'])
-
-        output.append(f"### {agent['name']}")
-        output.append(f"- **Path:** `{agent['path']}`")
-
-        if delegations:
-            output.append(f"- **Delegates to:** {', '.join(f'`{d}`' for d in delegations)}")
-
-        if references:
-            output.append(f"- **References:** {', '.join(f'`{r}`' for r in references)}")
-
-        output.append("")
-
-    # Code Template
-    output.append("---")
-    output.append("")
-    output.append("## Code Template")
-    output.append("")
-
-    # Code orchestrator
-    output.append("### Orchestrator")
-    for agent in agents['orchestrators']:
-        if agent['name'] == 'code':
-            delegations = extract_delegations(agent['full_path'])
-            references = extract_references(agent['full_path'])
-
-            output.append(f"- **{agent['name']}** (`{agent['path']}`)")
-            if delegations:
-                output.append(f"  - Delegates to: {', '.join(f'`{d}`' for d in delegations)}")
-            if references:
-                output.append(f"  - References: {', '.join(f'`{r}`' for r in references)}")
-    output.append("")
-
-    # Code neurons
-    output.append(f"### Code-Specific Neurons ({len(agents['code_neurons'])})")
-    output.append("")
-
-    for agent in sorted(agents['code_neurons'], key=lambda x: x['name']):
-        delegations = extract_delegations(agent['full_path'])
-        references = extract_references(agent['full_path'])
-
-        output.append(f"#### {agent['name']}")
-        output.append(f"- **Path:** `{agent['path']}`")
-
-        if delegations:
-            output.append(f"- **Delegates to:** {', '.join(f'`{d}`' for d in delegations)}")
-
-        if references:
-            output.append(f"- **References:** {', '.join(f'`{r}`' for r in references)}")
-
-        output.append("")
+    # Code template
+    lines.append("    %% Code Template")
+    lines.append("    CODE[Code Orchestrator]:::orchestrator")
+    for agent in sorted(agents['code_neurons'], key=lambda x: x['name'])[:4]:
+        lines.append(f"    code_{agent['name']}[{agent['name']}]:::code_neuron")
+        lines.append(f"    CODE --> code_{agent['name']}")
+    if len(agents['code_neurons']) > 4:
+        lines.append(f"    more_code[...{len(agents['code_neurons']) - 4} more]:::more")
+        lines.append("    CODE --> more_code")
 
     # Git workflows
     if agents['git_workflows']:
-        output.append(f"### Git Workflows ({len(agents['git_workflows'])})")
-        output.append("")
+        lines.append("")
+        lines.append("    %% Git Workflows")
+        git_agent = next((a for a in agents['code_neurons'] if a['name'] == 'git'), None)
+        if git_agent:
+            lines.append("    code_git --> git_issue[issue]:::workflow")
+            lines.append("    code_git --> git_pr[pr]:::workflow")
+            lines.append("    code_git --> git_report[report]:::workflow")
 
-        for agent in sorted(agents['git_workflows'], key=lambda x: x['name']):
-            delegations = extract_delegations(agent['full_path'])
-            references = extract_references(agent['full_path'])
+    lines.append("")
 
-            output.append(f"#### {agent['name']}")
-            output.append(f"- **Path:** `{agent['path']}`")
-
-            if delegations:
-                output.append(f"- **Delegates to:** {', '.join(f'`{d}`' for d in delegations)}")
-
-            if references:
-                output.append(f"- **References:** {', '.join(f'`{r}`' for r in references)}")
-
-            output.append("")
-
-    # Create Template
-    output.append("---")
-    output.append("")
-    output.append("## Create Template")
-    output.append("")
-
-    # Create orchestrator
-    output.append("### Orchestrator")
-    for agent in agents['orchestrators']:
-        if agent['name'] == 'create':
-            delegations = extract_delegations(agent['full_path'])
-            references = extract_references(agent['full_path'])
-
-            output.append(f"- **{agent['name']}** (`{agent['path']}`)")
-            if delegations:
-                output.append(f"  - Delegates to: {', '.join(f'`{d}`' for d in delegations)}")
-            if references:
-                output.append(f"  - References: {', '.join(f'`{r}`' for r in references)}")
-    output.append("")
-
-    # Create neurons
-    if agents['create_neurons']:
-        output.append(f"### Create-Specific Neurons ({len(agents['create_neurons'])})")
-        output.append("")
-
+    # Create template
+    if any(a['name'] == 'create' for a in agents['orchestrators']):
+        lines.append("    %% Create Template")
+        lines.append("    CREATE[Create Orchestrator]:::orchestrator")
         for agent in sorted(agents['create_neurons'], key=lambda x: x['name']):
-            delegations = extract_delegations(agent['full_path'])
-            references = extract_references(agent['full_path'])
+            lines.append(f"    create_{agent['name']}[{agent['name']}]:::create_neuron")
+            lines.append(f"    CREATE --> create_{agent['name']}")
 
-            output.append(f"#### {agent['name']}")
-            output.append(f"- **Path:** `{agent['path']}`")
+    lines.append("")
+    lines.append("    %% Styling")
+    lines.append("    classDef universal fill:#e1f5ff,stroke:#0288d1,stroke-width:2px")
+    lines.append("    classDef orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:3px")
+    lines.append("    classDef neuron fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px")
+    lines.append("    classDef code_neuron fill:#e8f5e9,stroke:#388e3c,stroke-width:2px")
+    lines.append("    classDef create_neuron fill:#fce4ec,stroke:#c2185b,stroke-width:2px")
+    lines.append("    classDef workflow fill:#fff9c4,stroke:#fbc02d,stroke-width:1px")
+    lines.append("    classDef more fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray: 5 5")
+    lines.append("```")
 
-            if delegations:
-                output.append(f"- **Delegates to:** {', '.join(f'`{d}`' for d in delegations)}")
+    return '\n'.join(lines)
 
-            if references:
-                output.append(f"- **References:** {', '.join(f'`{r}`' for r in references)}")
 
-            output.append("")
+def generate_markdown_tree(agents):
+    """Generate detailed markdown tree documentation."""
+    lines = []
+
+    lines.append("## Agent Neural Tree")
+    lines.append("")
+    lines.append("**Auto-generated** from `.genie/agents/` folder structure")
+    lines.append("")
 
     # Summary
-    output.append("---")
-    output.append("")
-    output.append("## Summary")
-    output.append("")
-    output.append(f"- **Universal neurons:** {len(agents['universal_neurons'])}")
-    output.append(f"- **Code neurons:** {len(agents['code_neurons'])}")
-    output.append(f"- **Git workflows:** {len(agents['git_workflows'])}")
-    output.append(f"- **Create neurons:** {len(agents['create_neurons'])}")
-    output.append(f"- **Orchestrators:** {len(agents['orchestrators'])}")
-    output.append(f"- **Total agents:** {sum(len(v) for v in agents.values())}")
-    output.append("")
+    total = sum(len(v) for v in agents.values())
+    lines.append("**Summary:**")
+    lines.append(f"- Universal neurons: {len(agents['universal_neurons'])}")
+    lines.append(f"- Code neurons: {len(agents['code_neurons'])}")
+    lines.append(f"- Git workflows: {len(agents['git_workflows'])}")
+    lines.append(f"- Create neurons: {len(agents['create_neurons'])}")
+    lines.append(f"- Orchestrators: {len(agents['orchestrators'])}")
+    lines.append(f"- **Total: {total} agents**")
+    lines.append("")
 
-    return '\n'.join(output)
+    # Universal neurons
+    lines.append("### Universal Neurons (Shared)")
+    lines.append("")
+    for agent in sorted(agents['universal_neurons'], key=lambda x: x['name']):
+        delegations = extract_delegations(agent['full_path'])
+        if delegations:
+            lines.append(f"- **{agent['name']}** → {', '.join(f'`{d}`' for d in delegations)}")
+        else:
+            lines.append(f"- **{agent['name']}**")
+    lines.append("")
+
+    # Code template
+    lines.append("### Code Template")
+    lines.append("")
+    lines.append("**Orchestrator:** `code`")
+    lines.append("")
+    lines.append("**Neurons:**")
+    for agent in sorted(agents['code_neurons'], key=lambda x: x['name']):
+        delegations = extract_delegations(agent['full_path'])
+        if delegations:
+            lines.append(f"- **{agent['name']}** → {', '.join(f'`{d}`' for d in delegations)}")
+        else:
+            lines.append(f"- **{agent['name']}**")
+
+    if agents['git_workflows']:
+        lines.append("")
+        lines.append("**Git workflows:** `issue`, `pr`, `report`")
+
+    lines.append("")
+
+    # Create template
+    if agents['create_neurons']:
+        lines.append("### Create Template")
+        lines.append("")
+        lines.append("**Orchestrator:** `create`")
+        lines.append("")
+        lines.append("**Neurons:**")
+        for agent in sorted(agents['create_neurons'], key=lambda x: x['name']):
+            lines.append(f"- **{agent['name']}**")
+        lines.append("")
+
+    return '\n'.join(lines)
+
+
+def update_file_section(file_path, marker_start, marker_end, new_content):
+    """Update section between markers in file."""
+    if not file_path.exists():
+        print(f"⚠️  File not found: {file_path}")
+        return False
+
+    content = file_path.read_text(encoding='utf-8')
+
+    # Find markers
+    start_pattern = re.escape(marker_start)
+    end_pattern = re.escape(marker_end)
+    pattern = f"({start_pattern}).*?({end_pattern})"
+
+    if not re.search(pattern, content, re.DOTALL):
+        print(f"⚠️  Markers not found in {file_path}")
+        print(f"   Expected: {marker_start} ... {marker_end}")
+        return False
+
+    # Replace content between markers
+    replacement = f"\\1\n{new_content}\n\\2"
+    new_file_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+
+    file_path.write_text(new_file_content, encoding='utf-8')
+    return True
 
 
 def main():
-    """Generate agent neural tree."""
+    """Generate and update agent neural tree."""
     repo_root = Path(__file__).parent.parent.parent
 
     print("🔍 Scanning .genie/agents/ structure...")
     agents = scan_agents(repo_root)
 
-    print(f"   Found {sum(len(v) for v in agents.values())} agents total")
+    total = sum(len(v) for v in agents.values())
+    print(f"   Found {total} agents total")
     print(f"   - Universal neurons: {len(agents['universal_neurons'])}")
     print(f"   - Code neurons: {len(agents['code_neurons'])}")
     print(f"   - Git workflows: {len(agents['git_workflows'])}")
     print(f"   - Create neurons: {len(agents['create_neurons'])}")
     print(f"   - Orchestrators: {len(agents['orchestrators'])}")
 
-    print("\n🌲 Generating neural tree...")
-    tree = generate_tree(agents, repo_root)
+    # Generate outputs
+    print("\n🌲 Generating Mermaid diagram...")
+    mermaid_chart = generate_mermaid(agents)
 
-    # Save to file
-    output_path = repo_root / '.genie' / 'reports' / 'agent-neural-tree.md'
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(tree, encoding='utf-8')
+    print("📝 Generating markdown tree...")
+    markdown_tree = generate_markdown_tree(agents)
 
-    print(f"✅ Agent neural tree generated: {output_path.relative_to(repo_root)}")
+    # Update README.md with Mermaid chart
+    readme_path = repo_root / 'README.md'
+    print(f"\n📄 Updating {readme_path.relative_to(repo_root)}...")
 
-    # Also print to stdout
-    print("\n" + "="*60)
-    print(tree)
+    success = update_file_section(
+        readme_path,
+        "<!-- AGENT_TREE_START -->",
+        "<!-- AGENT_TREE_END -->",
+        mermaid_chart
+    )
+
+    if success:
+        print(f"   ✅ Mermaid chart updated")
+    else:
+        print(f"   ⚠️  Could not update Mermaid chart (markers missing)")
+
+    # Update .genie/README.md with markdown tree
+    genie_readme_path = repo_root / '.genie' / 'README.md'
+    print(f"\n📄 Updating {genie_readme_path.relative_to(repo_root)}...")
+
+    success = update_file_section(
+        genie_readme_path,
+        "<!-- NEURAL_TREE_START -->",
+        "<!-- NEURAL_TREE_END -->",
+        markdown_tree
+    )
+
+    if success:
+        print(f"   ✅ Markdown tree updated")
+    else:
+        print(f"   ⚠️  Could not update markdown tree (markers missing)")
+
+    print("\n✨ Agent neural tree generation complete!")
+    print(f"   - README.md: Mermaid flowchart")
+    print(f"   - .genie/README.md: Detailed markdown tree")
 
     return 0
 
