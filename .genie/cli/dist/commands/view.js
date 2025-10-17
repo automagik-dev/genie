@@ -59,7 +59,7 @@ async function runView(parsed, config, paths) {
                             ? (0, transcript_utils_1.sliceForLatest)(transcript)
                             : (0, transcript_utils_1.sliceForRecent)(transcript);
                     // Determine output mode from flags
-                    const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+                    const mode = parsed.options.full ? 'full' : parsed.options.live ? 'final' : 'recent';
                     const meta = {
                         sessionId: sessionId,
                         agent: 'unknown',
@@ -280,7 +280,7 @@ async function runView(parsed, config, paths) {
             ? (0, transcript_utils_1.sliceForLatest)(transcript)
             : (0, transcript_utils_1.sliceForRecent)(transcript);
     // Determine output mode from flags
-    const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+    const mode = parsed.options.full ? 'full' : parsed.options.live ? 'final' : 'recent';
     const meta = {
         sessionId: entry.sessionId ?? null,
         agent: entry.agent ?? 'unknown',

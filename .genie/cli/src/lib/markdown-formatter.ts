@@ -11,7 +11,7 @@ import { ChatMessage } from '../executors/transcript-utils.js';
 // Types
 // ============================================================================
 
-export type OutputMode = 'final' | 'recent' | 'overview';
+export type OutputMode = 'final' | 'recent' | 'overview' | 'full';
 
 export interface SessionMeta {
   sessionId: string | null;
@@ -39,7 +39,8 @@ export interface SessionEntry {
 const TOKEN_BUDGET = {
   final: 500,      // ~2000 chars
   recent: 300,     // ~1200 chars
-  overview: 400    // ~1600 chars
+  overview: 400,   // ~1600 chars
+  full: Infinity   // No truncation - complete transcript
 };
 
 const CHARS_PER_TOKEN = 4; // Rough estimate for token counting
@@ -74,6 +75,8 @@ export function formatTranscriptMarkdown(
       return formatRecentMode(messages, meta, parts);
     case 'overview':
       return formatOverviewMode(messages, meta, parts);
+    case 'full':
+      return formatFullMode(messages, meta, parts);
     default:
       return formatRecentMode(messages, meta, parts); // Default to recent
   }
@@ -239,6 +242,56 @@ function formatOverviewMode(
   }
 
   return enforceTokenBudget(parts.join('\n'), 'overview');
+}
+
+/**
+ * Full mode: Complete transcript with all messages
+ * Target: No limit (Infinity)
+ * Use case: Debugging, full context review, --full flag
+ */
+function formatFullMode(
+  messages: ChatMessage[],
+  meta: SessionMeta,
+  parts: string[]
+): string {
+  parts.push(`**Agent:** ${meta.agent}`);
+  parts.push(`**Status:** ${meta.status || 'unknown'}`);
+
+  if (meta.executor) {
+    parts.push(`**Executor:** ${meta.executor}`);
+  }
+
+  if (meta.model) {
+    parts.push(`**Model:** ${meta.model}`);
+  }
+
+  // Message count
+  parts.push(`**Messages:** ${messages.length}\n`);
+
+  if (messages.length === 0) {
+    parts.push('*No messages available*\n');
+    return parts.join('\n');
+  }
+
+  // Show all messages with full content
+  parts.push('### Full Transcript\n');
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    parts.push(`#### Message ${i + 1}: ${msg.title}`);
+
+    // Show complete message body without truncation
+    const body = formatMessageBody(msg.body);
+    parts.push(body + '\n');
+  }
+
+  // Add metrics if available (no token budget enforcement)
+  if (meta.tokens) {
+    const { input, output, total } = meta.tokens;
+    parts.push(`\n**Tokens:** ${total} (in: ${input}, out: ${output})`);
+  }
+
+  return parts.join('\n'); // No budget enforcement
 }
 
 // ============================================================================

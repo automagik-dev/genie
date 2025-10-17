@@ -80,7 +80,7 @@ export async function runView(
               : sliceTranscriptForRecent(transcript);
 
           // Determine output mode from flags
-          const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+          const mode = parsed.options.full ? 'full' : parsed.options.live ? 'final' : 'recent';
 
           const meta: SessionMeta = {
             sessionId: sessionId,
@@ -311,7 +311,7 @@ export async function runView(
       : sliceTranscriptForRecent(transcript);
 
   // Determine output mode from flags
-  const mode = parsed.options.full ? 'overview' : parsed.options.live ? 'final' : 'recent';
+  const mode = parsed.options.full ? 'full' : parsed.options.live ? 'final' : 'recent';
 
   const meta: SessionMeta = {
     sessionId: entry.sessionId ?? null,
