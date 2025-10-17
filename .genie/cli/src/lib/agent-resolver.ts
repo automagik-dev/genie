@@ -72,9 +72,59 @@ const resolveAgentPath = (id: string): string | null => {
 
 interface ListedAgent {
   id: string;
+  displayId: string;
   label: string;
   meta: any;
   folder: string | null;
+}
+
+/**
+ * Transforms agent paths for display by stripping template/category folders
+ * while preserving parent/child workflow relationships.
+ *
+ * Template folders (code/, create/): Stripped entirely
+ * Category folders (neurons/, workflows/): Stripped for top-level, preserved for children
+ *
+ * @param {string} normalizedId - Full agent path (e.g., "code/implementor", "neurons/git/issue")
+ * @returns {{ displayId: string; displayFolder: string | null }} - Transformed path for display
+ *
+ * @example
+ * transformDisplayPath("code/implementor") // { displayId: "implementor", displayFolder: null }
+ * transformDisplayPath("neurons/git/git") // { displayId: "git", displayFolder: null }
+ * transformDisplayPath("neurons/git/issue") // { displayId: "git/issue", displayFolder: "git" }
+ * transformDisplayPath("workflows/plan") // { displayId: "plan", displayFolder: null }
+ */
+function transformDisplayPath(normalizedId: string): { displayId: string; displayFolder: string | null } {
+  const parts = normalizedId.split('/');
+
+  // Template folders: code/, create/ (strip entirely)
+  const templateFolders = ['code', 'create'];
+  if (templateFolders.includes(parts[0])) {
+    const displayId = parts.slice(1).join('/');
+    const displayFolder = parts.length > 2 ? parts.slice(1, -1).join('/') : null;
+    return { displayId, displayFolder };
+  }
+
+  // Category folders: neurons/, workflows/
+  const categoryFolders = ['neurons', 'workflows'];
+  if (categoryFolders.includes(parts[0])) {
+    if (parts.length === 2) {
+      // Top-level agent (e.g., neurons/git.md, workflows/plan.md)
+      return { displayId: parts[1], displayFolder: null };
+    }
+    if (parts.length === 3 && parts[1] === parts[2]) {
+      // Parent neuron (e.g., neurons/git/git.md)
+      return { displayId: parts[1], displayFolder: null };
+    }
+    // Child workflow (e.g., neurons/git/issue.md)
+    const displayId = parts.slice(1).join('/');
+    const displayFolder = parts[1]; // Parent folder name
+    return { displayId, displayFolder };
+  }
+
+  // Fallback: no transformation (backward compatibility)
+  const displayFolder = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+  return { displayId: normalizedId, displayFolder };
 }
 
 /**
@@ -111,9 +161,12 @@ export function listAgents(): ListedAgent[] {
       const { meta } = extractFrontMatter(content);
       const metaObj = meta || {};
       if (metaObj.hidden === true || metaObj.disabled === true) return;
-      const label = (metaObj.name || normalizedId.split('/').pop() || normalizedId).trim();
-      const folder = normalizedId.includes('/') ? normalizedId.split('/').slice(0, -1).join('/') : null;
-      records.push({ id: normalizedId, label, meta: metaObj, folder });
+
+      // Transform display path (strip template/category folders)
+      const { displayId, displayFolder } = transformDisplayPath(normalizedId);
+      const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
+
+      records.push({ id: normalizedId, displayId, label, meta: metaObj, folder: displayFolder });
     });
   };
 

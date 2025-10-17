@@ -6,9 +6,47 @@
 
 ## 🎯 Active Sessions
 
-**Clean slate for RC9 testing** - All prior sessions cleared.
+### Architecture Rebrand - Group A Complete ✅
+**Started:** 2025-10-17 18:46 UTC
+**Status:** Group A complete, Groups B-D pending
+**Wish:** `.genie/wishes/genie-arch-rebrand/genie-arch-rebrand-wish.md`
 
-Any bugs that reappear = confirmed RC9 bugs (reproducible).
+**Completed (Group A):**
+- ✅ A1-A7: Folder structure reorganized
+- ✅ Universal neurons → `.genie/agents/neurons/` (17 files: plan, forge, review, analyze, challenge, consensus, debug, explore, audit, refactor, docgen, polish, learn, roadmap, prompt, qa, vibe)
+- ✅ Code-specific → `code/neurons/` (8 files + git/: wish, implementor, tests, release, install, commit, tracer, git/)
+- ✅ Create-specific → `create/neurons/` (1 file: wish)
+- ✅ Templates folder deleted (will recreate boilerplate method later)
+- ✅ Old genie/ structure cleaned up (including empty genie folder removal)
+- ✅ Git neuron structure corrected (git.md + workflows/ with issue.md, pr.md, report.md)
+
+**Current structure:**
+```
+.genie/agents/
+├── neurons/ (17 universal)
+├── code/
+│   ├── code.md
+│   ├── skills/ (empty)
+│   └── neurons/ (8 + git/)
+│       └── git/
+│           ├── git.md
+│           └── workflows/ (issue, pr, report)
+└── create/
+    ├── create.md
+    ├── skills/ (empty)
+    └── neurons/ (1)
+```
+
+**Remaining work:**
+- Group B: Skills extraction from AGENTS.md
+- Group C: Display transformation logic
+- Group D: QA validation
+
+**Next steps:**
+1. Extract skills from AGENTS.md → code/skills/ and create/skills/
+2. Implement display transformation (universal vs template neurons)
+3. Update agent registration for new paths
+4. Run QA validation suite
 
 <!--
 Session format:

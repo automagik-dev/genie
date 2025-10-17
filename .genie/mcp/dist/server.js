@@ -42,6 +42,36 @@ function findWorkspaceRoot() {
     return process.cwd();
 }
 const WORKSPACE_ROOT = findWorkspaceRoot();
+// Helper: Transform agent paths for display
+function transformDisplayPath(normalizedId) {
+    const parts = normalizedId.split('/');
+    // Template folders: code/, create/ (strip entirely)
+    const templateFolders = ['code', 'create'];
+    if (templateFolders.includes(parts[0])) {
+        const displayId = parts.slice(1).join('/');
+        const displayFolder = parts.length > 2 ? parts.slice(1, -1).join('/') : null;
+        return { displayId, displayFolder };
+    }
+    // Category folders: neurons/, workflows/
+    const categoryFolders = ['neurons', 'workflows'];
+    if (categoryFolders.includes(parts[0])) {
+        if (parts.length === 2) {
+            // Top-level agent (e.g., neurons/git.md, workflows/plan.md)
+            return { displayId: parts[1], displayFolder: null };
+        }
+        if (parts.length === 3 && parts[1] === parts[2]) {
+            // Parent neuron (e.g., neurons/git/git.md)
+            return { displayId: parts[1], displayFolder: null };
+        }
+        // Child workflow (e.g., neurons/git/issue.md)
+        const displayId = parts.slice(1).join('/');
+        const displayFolder = parts[1]; // Parent folder name
+        return { displayId, displayFolder };
+    }
+    // Fallback: no transformation (backward compatibility)
+    const displayFolder = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
+    return { displayId: normalizedId, displayFolder };
+}
 // Helper: List available agents from .genie/agents directory
 function listAgents() {
     const baseDir = '.genie/agents';
@@ -76,10 +106,9 @@ function listAgents() {
                 if (descMatch)
                     description = descMatch[1].trim();
             }
-            const folder = normalizedId.includes('/')
-                ? normalizedId.split('/').slice(0, -1).join('/')
-                : undefined;
-            agents.push({ id: normalizedId, name, description, folder });
+            // Transform display path (strip template/category folders)
+            const { displayId, displayFolder } = transformDisplayPath(normalizedId);
+            agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
         });
     };
     visit(baseDir, null);
@@ -191,8 +220,8 @@ server.addTool({
         Object.entries(grouped).forEach(([folder, folderAgents]) => {
             response += `**${folder}:**\n`;
             folderAgents.forEach(agent => {
-                response += `  • ${agent.id}`;
-                if (agent.name !== agent.id)
+                response += `  • ${agent.displayId}`;
+                if (agent.name !== agent.displayId)
                     response += ` (${agent.name})`;
                 if (agent.description)
                     response += ` - ${agent.description}`;

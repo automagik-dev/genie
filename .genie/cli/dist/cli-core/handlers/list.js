@@ -15,6 +15,7 @@ function createListHandler(ctx) {
                 type: 'agents',
                 agents: agents.map(agent => ({
                     id: agent.id,
+                    displayId: agent.displayId,
                     label: agent.label,
                     folder: agent.folder,
                     meta: agent.meta
