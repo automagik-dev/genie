@@ -53,11 +53,11 @@ async function testBasicLoadSave() {
 
   // Initial load should create empty store
   const store1 = service.load();
-  assert(store1.version === 1, 'Initial store has version 1');
-  assert(Object.keys(store1.agents || {}).length === 0, 'Initial store has no agents');
+  assert(store1.version === 2, 'Initial store has version 2');
+  assert(Object.keys(store1.sessions || store1.agents || {}).length === 0, 'Initial store has no sessions');
 
   // Add an agent and save
-  store1.agents['test-agent'] = {
+  store1.sessions['test-agent'] = {
     agent: 'test-agent',
     status: 'running',
     sessionId: 'test-123',
@@ -65,11 +65,11 @@ async function testBasicLoadSave() {
   };
 
   const result = await service.save(store1);
-  assert(result.store.agents['test-agent'].status === 'running', 'Agent saved with correct status');
+  assert(result.store.sessions['test-agent'].status === 'running', 'Agent saved with correct status');
 
   // Load again and verify persistence
   const store2 = service.load();
-  assert(store2.agents['test-agent'].sessionId === 'test-123', 'Agent persisted correctly');
+  assert(store2.sessions['test-agent'].sessionId === 'test-123', 'Agent persisted correctly');
 
   cleanupTestDir();
   console.log('✅ Test 1 passed');
@@ -86,7 +86,7 @@ async function testAtomicWrites() {
   });
 
   const store = service.load();
-  store.agents['agent1'] = { agent: 'agent1', status: 'running' };
+  store.sessions['agent1'] = { agent: 'agent1', status: 'running' };
 
   // Save and immediately check file integrity
   await service.save(store);
@@ -101,7 +101,7 @@ async function testAtomicWrites() {
     assert(false, `File should contain complete JSON, got parse error: ${err.message}`);
   }
 
-  assert(parsed.agents['agent1'].status === 'running', 'Atomic write preserves complete data');
+  assert(parsed.sessions['agent1'].status === 'running', 'Atomic write preserves complete data');
 
   // Verify no .tmp file left behind
   const tmpFile = TEST_SESSION_FILE + '.tmp';
@@ -136,7 +136,7 @@ async function testStaleLockReclamation() {
 
   // Save should reclaim the stale lock
   const store = service.load();
-  store.agents['agent1'] = { agent: 'agent1', status: 'running' };
+  store.sessions['agent1'] = { agent: 'agent1', status: 'running' };
 
   await service.save(store);
   assert(true, 'Save succeeded despite stale lock file');
@@ -160,21 +160,21 @@ async function testFreshReloadBeforeMerge() {
 
   // Initial save with agent1
   const store1 = service.load();
-  store1.agents['agent1'] = { agent: 'agent1', status: 'running', data: 'original' };
+  store1.sessions['agent1'] = { agent: 'agent1', status: 'running', data: 'original' };
   await service.save(store1);
 
   // Simulate concurrent modification directly to file
   const diskStore = JSON.parse(fs.readFileSync(TEST_SESSION_FILE, 'utf8'));
-  diskStore.agents['agent2'] = { agent: 'agent2', status: 'completed' };
+  diskStore.sessions['agent2'] = { agent: 'agent2', status: 'completed' };
   fs.writeFileSync(TEST_SESSION_FILE, JSON.stringify(diskStore, null, 2), 'utf8');
 
   // Now save with stale store1 (should reload and merge)
-  store1.agents['agent1'].status = 'completed'; // Update agent1
+  store1.sessions['agent1'].status = 'completed'; // Update agent1
   const result = await service.save(store1);
 
   // Both agents should be present (fresh reload preserved agent2)
-  assert(result.store.agents['agent1'].status === 'completed', 'agent1 updated correctly');
-  assert(result.store.agents['agent2'].status === 'completed', 'agent2 preserved from disk');
+  assert(result.store.sessions['agent1'].status === 'completed', 'agent1 updated correctly');
+  assert(result.store.sessions['agent2'].status === 'completed', 'agent2 preserved from disk');
 
   cleanupTestDir();
   console.log('✅ Test 4 passed');
@@ -194,10 +194,11 @@ async function testConcurrentWrites() {
   const promises = [];
   for (let i = 1; i <= 5; i++) {
     const store = service.load();
-    store.agents[`agent${i}`] = {
+    store.sessions[`agent${i}`] = {
       agent: `agent${i}`,
       status: 'running',
-      data: `data-${i}`
+      data: `data-${i}`,
+      sessionId: `agent${i}`
     };
     promises.push(service.save(store));
   }
@@ -211,12 +212,12 @@ async function testConcurrentWrites() {
   // All 5 agents should be present (no data loss)
   for (let i = 1; i <= 5; i++) {
     assert(
-      finalStore.agents[`agent${i}`] !== undefined,
+      finalStore.sessions[`agent${i}`] !== undefined,
       `agent${i} preserved in concurrent writes`
     );
   }
 
-  assert(Object.keys(finalStore.agents).length === 5, 'All 5 agents persisted');
+  assert(Object.keys(finalStore.sessions).length === 5, 'All 5 agents persisted');
 
   cleanupTestDir();
   console.log('✅ Test 5 passed');
@@ -249,7 +250,7 @@ async function testLockRetry() {
 
   // This save should retry and eventually succeed
   const store = service.load();
-  store.agents['agent1'] = { agent: 'agent1', status: 'running' };
+  store.sessions['agent1'] = { agent: 'agent1', status: 'running' };
 
   const startTime = Date.now();
   await service.save(store);
