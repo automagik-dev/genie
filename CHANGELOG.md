@@ -1,5 +1,12 @@
 # Changelog
 
+**Current Version:** !`node -p "require('./package.json').version"`
+**Generated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
+All notable changes to this project will be documented in this file.
+
+---
+
 ## [2.3.7] - 2025-10-16
 
 ### Added

@@ -116,6 +116,47 @@ Genie routes directly via MCP based on conversation context.
 
 ---
 
+## Neuron Delegation Hierarchy
+
+**Architecture principle:** Folder structure = Delegation hierarchy = Enforcement boundary
+
+**Three-tier model:**
+
+**Tier 1: Base Genie (main conversation)**
+- **Role:** Human interface, persistent coordinator
+- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
+- **Cannot delegate to:** Workflows directly (those are neuron-internal)
+- **Responsibility:** Track all neurons in SESSION-STATE.md, coordinate conversation
+
+**Tier 2: Neurons (persistent subagent sessions)**
+- **Role:** Specialized execution with persistent memory
+- **Can delegate to:** Their OWN workflows only (scoped by folder)
+- **Cannot delegate to:** Other neurons, cross-delegation forbidden
+- **Examples:** git (with git/issue, git/pr, git/report workflows), implementor, tests, orchestrator, release, learn
+- **Persistence:** Tracked in SESSION-STATE.md (disposable but never lost)
+
+**Tier 3: Workflows (neuron-scoped execution)**
+- **Role:** Specialized sub-tasks within neuron domain
+- **Can delegate to:** NOTHING (execute directly with Edit/Write/Bash)
+- **Examples:** git/issue.md, git/pr.md, git/report.md
+
+**Application enforcement:**
+- `mcp__genie__list_agents` returns DIFFERENT results based on caller context
+- Git neuron sees only: git/issue, git/pr, git/report
+- Implementor neuron sees only: implementor (no workflows)
+- Base Genie sees only: top-level neurons
+- Prevents self-delegation and cross-delegation at system level
+
+**Parent-child tracking:**
+- SESSION-STATE.md tracks parent-child relationships
+- Neurons list their workflow children
+- Workflows reference their parent neuron
+- No "orphaned children" after context reset
+
+**See @AGENTS.md §Architectural Foundations for complete details.**
+
+---
+
 ## Architecture Layers
 
 Genie uses a **3-layer extension system** for maximum flexibility without forking core prompts:

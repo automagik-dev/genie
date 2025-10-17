@@ -1,5 +1,9 @@
 # 🧞 Genie Release Guide
 
+**Current Version:** !`node -p "require('./package.json').version"`
+**Branch:** !`git branch --show-current`
+**Status:** !`git status --porcelain | wc -l` uncommitted files
+
 Quick reference for releasing Automagik Genie to npm.
 
 ## 📋 Quick Commands

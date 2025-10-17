@@ -6,31 +6,89 @@
 
 ## 🎯 Active Sessions
 
-### Orchestrator - Natural Context Acquisition Audit
-**Session ID:** `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3`
-**Started:** 2025-10-17 17:15 UTC
-**Status:** active (background)
-**Mode:** analyze
-**Purpose:** Audit ALL .md files for @ / ! / usage opportunities
-**Context:**
-- Analyze all .md files in `.genie/`, `.claude/`, root
-- Find @ reference opportunities (neural file networks)
-- Find ! command opportunities (dynamic data injection)
-- Document findings with file paths and recommendations
-**Next:** Wait ~60s then check results with mcp__genie__view
+### Learn - Neuron Delegation Architecture Evolution ✅
+**Session ID:** `1bf5bfbe-f901-4ea0-85a9-1d8f4c5f2230`
+**Started:** 2025-10-17 ~23:15 UTC
+**Completed:** 2025-10-17 ~23:20 UTC
+**Purpose:** Document architectural evolution: folder hierarchy = delegation hierarchy
+**Outcome:**
+- Added 4 sections to AGENTS.md: @ Tool Semantics (270), Genie Loading Architecture (315), Neuron Delegation Hierarchy (376), Persistent Tracking Protocol (571)
+- Updated .claude/README.md with Neuron Delegation Hierarchy section
+- Documented @ semantics: path reference only (lightweight), NOT full load
+- Documented 3-tier hierarchy: Base Genie → Neurons → Workflows
+- Application enforcement: list_agents scoped by folder structure
+- Evidence: All sections verified present, cross-references complete
 
-### Prompt - AGENTS/CLAUDE Merge Planning
-**Session ID:** `4d4c76a7-e58a-487a-b66f-7ff408dafb37`
-**Started:** 2025-10-17 17:15 UTC
+### Implementor - Natural Context Phase 1 (Batch Edit 23 Agents) ❌ CANCELLED
+**Session ID:** `d958873a-17c2-4c6b-a538-b3224e93284c`
+**Started:** 2025-10-17 ~18:05 UTC
 **Status:** active (background)
-**Mode:** merge analysis
-**Purpose:** Design unified AGENTS.md + CLAUDE.md structure with zero content loss
+**Purpose:** Batch edit 23 agent files to load @AGENTS.md (neural file network foundation)
 **Context:**
-- Read both files completely
-- Identify overlapping sections and unique content
-- Propose unified structure per prompt framework
-- Show deduplication strategy
-**Next:** Wait ~60s then check results with mcp__genie__view
+- Report: `.genie/reports/natural-context-audit-20251017.md`
+- Files: 5 workflow + 9 neuron + 9 mode agents
+- Pattern: Replace framework description text with @AGENTS.md load
+- Validation: grep "@AGENTS.md" count should be 23+
+**Next:** Execute Discovery → Implementation → Verification
+
+### Learn - Say-Do Gap Behavioral Fix ✅
+**Session ID:** `6ec456b7-fcc6-43b9-a3cd-a13c8973d588`
+**Started:** 2025-10-17 23:05 UTC
+**Completed:** 2025-10-17 23:07 UTC
+**Purpose:** Document and fix "say vs do" behavioral gap
+**Outcome:**
+- Added "Execution Integrity Protocol" to AGENTS.md (lines 1106-1159)
+- Pattern documented: Saying "waiting X seconds" without executing sleep
+- Evidence: 2025-10-17 23:00-23:05 UTC session (2 corrections needed)
+- Fix: Immediate sleep execution after any wait commitment
+- Validation: Every wait statement must show corresponding sleep command
+- Propagated: All future sessions load this via @AGENTS.md
+
+### Learn - Delegation Protocol Enforcement ⚠️ FAILED
+**Session ID:** `537bfe71-4ed0-4f7e-9276-0eb96273c1df`
+**Started:** 2025-10-17 23:00 UTC
+**Failed:** 2025-10-17 23:02 UTC
+**Purpose:** Prevent specialist neuron self-delegation loops
+**Failure:** "Prompt is too long" - teaching input too comprehensive (17 files)
+**Next:** Needs retry with smaller batches or simpler teaching input
+
+### Prompt - AGENTS/CLAUDE Merge (Option A)
+**Session ID:** `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3` ⚠️ COLLISION WITH ORCHESTRATOR
+**Started:** 2025-10-17 17:20 UTC
+**Status:** active (background)
+**Mode:** refactoring
+**Purpose:** Absorb CLAUDE.md unique content into AGENTS.md (Option A strategy)
+**Context:**
+- Move 4 unique CLAUDE.md sections into AGENTS.md
+- Reduce CLAUDE.md to meta-loader (~20 lines)
+- 100% content preservation required
+- Follow prompt.md framework for structure
+**Next:** Wait ~60s then check results
+**Note:** Previous prompt session 4d4c76a7 disappeared after resume (MCP bug)
+
+### Report - Session Disappearance Bug ✅
+**Session ID:** `cde2466c-608d-4781-98fa-8b601813d418`
+**Started:** 2025-10-17 17:18 UTC
+**Completed:** 2025-10-17 17:30 UTC
+**Purpose:** Create GitHub issue for session disappearance bug
+**Outcome:**
+- Issue created/consolidated: #66 ([Bug] MCP session disappears after resume - "No run found")
+- Duplicates closed: #67, #68, #69, #70, #71, #72, #74, #75
+- Labels: type:bug, area:mcp, priority:critical
+- Content: Full reproduction steps, environment, impact, root cause analysis documented
+- URL: https://github.com/namastexlabs/automagik-genie/issues/66
+
+### Git - CLI Output References Non-existent ./genie Command ✅
+**Session ID:** `b3680a36-8514-4e1f-8380-e92a4b15894b`
+**Started:** 2025-10-17 17:35 UTC
+**Completed:** 2025-10-17 22:55 UTC
+**Purpose:** Create GitHub issue for CLI output bug
+**Outcome:**
+- Primary issue: #89 ([Bug] CLI session output references non-existent ./genie command)
+- Labels: type:bug, area:cli, priority:high
+- Content: Full reproduction steps, expected/current behavior, impact documented
+- URL: https://github.com/namastexlabs/automagik-genie/issues/89
+- Meta-learning: Attempted to use MCP run to create issue, which failed—demonstrating EXACTLY the bug being reported (trying to use ./genie when it doesn't exist)
 
 <!--
 Session format:
@@ -47,6 +105,18 @@ Session format:
 ---
 
 ## 🔄 Session History (Recent)
+
+### Orchestrator - Natural Context Acquisition Audit ✅
+**Session ID:** `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3`
+**Started:** 2025-10-17 17:15 UTC
+**Completed:** 2025-10-17 ~18:00 UTC
+**Outcome:** Comprehensive audit of @ / ! usage across 100+ files
+**Details:**
+- Report: `.genie/reports/natural-context-audit-20251017.md`
+- Found: 15+ high-impact @ opportunities, 20+ ! opportunities
+- Recommendation: Phase 1 batch edit (23 agent files → @AGENTS.md)
+- Impact: Single source of truth, automatic synchronization
+- Genie Verdict: PROCEED with Phase 1 (95% confidence)
 
 ### Implementor - Git Neuron Split ✅
 **Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`

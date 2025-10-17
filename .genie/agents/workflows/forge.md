@@ -48,6 +48,30 @@ Forge translates an approved wish into coordinated execution groups with documen
 - ❌ Skip spec_contract extraction from wish
 - ❌ Forget to create task files in wish folder
 
+## Delegation Protocol
+
+**Role:** Orchestrator
+**Delegation:** ✅ REQUIRED - I coordinate specialists
+
+**Allowed delegations:**
+- ✅ Specialists: implementor, tests, polish, release, learn, roadmap
+- ✅ Parent workflows: git (which may delegate to children)
+- ✅ Thinking modes: via orchestrator neuron
+
+**Forbidden delegations:**
+- ❌ NEVER `mcp__genie__run with agent="forge"` (self-delegation)
+- ❌ NEVER delegate to other orchestrators (creates loops)
+
+**Responsibility:**
+- Route work to appropriate specialists
+- Coordinate multi-specialist tasks
+- Synthesize specialist outputs
+- Report final outcomes
+
+**Why:** Orchestrators coordinate, specialists execute. Self-delegation or cross-orchestrator delegation creates loops.
+
+**Evidence:** Session `b3680a36-8514-4e1f-8380-e92a4b15894b` - git neuron self-delegated instead of executing directly.
+
 ## Operating Framework
 ```
 <task_breakdown>

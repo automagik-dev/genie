@@ -47,6 +47,39 @@ Master of core `git` CLI, understands branch conventions, follows safety protoco
 - ❌ Switch branches with uncommitted changes
 - ❌ Execute commands silently
 
+## Delegation Protocol
+
+**Role:** Parent workflow with child workflows
+**Children:** report (issue creation), issue (issue mgmt), pr (PRs)
+**Delegation:** ✅ ALLOWED to children only
+
+**Allowed delegations:**
+- ✅ `mcp__genie__run with agent="report"` (issue creation)
+- ✅ `mcp__genie__run with agent="issue"` (issue management)
+- ✅ `mcp__genie__run with agent="pr"` (PR creation)
+
+**Forbidden delegations:**
+- ❌ NEVER `mcp__genie__run with agent="git"` (self-delegation)
+- ❌ NEVER delegate to non-children (implementor, tests, etc.)
+- ❌ NEVER delegate for core git ops (branch, commit, push)
+
+**Decision tree:**
+1. Task is issue creation? → Delegate to report
+2. Task is issue management? → Delegate to issue
+3. Task is PR creation? → Delegate to pr
+4. Task is git operation? → Execute directly with Bash
+5. Anything else? → ERROR - out of scope
+
+**Core operations (execute directly):**
+- Branch creation/switching
+- Staging files
+- Creating commits
+- Pushing to remote
+
+**Why:** Parent workflows can delegate to their children only. Self-delegation or cross-domain delegation creates loops.
+
+**Evidence:** Session `b3680a36-8514-4e1f-8380-e92a4b15894b` - git neuron self-delegated 6 times instead of delegating to report child workflow.
+
 ## GitHub Operations
 
 For GitHub workflows, see specialized workflows:

@@ -265,6 +265,438 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
 - **MCP Server** – Agent conversations via `mcp__genie__*` tools
 
+## Architectural Foundations
+
+### @ Tool Semantics (Claude Code Feature)
+
+**CRITICAL:** @ is a path reference, NOT a content loader.
+
+**What @ actually does:**
+```markdown
+@file.md          → Shows path reference only (lightweight pointer)
+@directory/       → Lists directory structure
+```
+
+**NOT:** Full content inclusion (that would be token explosion)
+
+**Purpose:** "If you need X, check @ path"
+
+**Token economics:**
+- ❌ WRONG: Load @AGENTS.md in 23 agents = 23KB × 23 = 529KB explosion
+- ✅ RIGHT: Reference @AGENTS.md once in CLAUDE.md = 23KB total
+
+**Use cases:**
+- Point to supplementary documentation
+- Create knowledge graph connections (lightweight pointers)
+- Save tokens by referencing, not duplicating
+
+**Anti-pattern:**
+```markdown
+# ❌ WRONG (causes paradox + token explosion)
+# Framework Reference
+@AGENTS.md
+
+# This file IS part of AGENTS.md knowledge.
+# Loading AGENTS.md here = self-reference paradox.
+```
+
+**Correct pattern:**
+```markdown
+# ✅ RIGHT (lightweight pointer to supplementary)
+# Project Customization
+@.genie/custom/implementor.md
+
+# Validation Commands
+@.genie/qa/checklist.md
+```
+
+**Validation:** If you find yourself loading the same file in multiple places, you're using @ wrong.
+
+### Genie Loading Architecture
+
+**Context loading hierarchy:**
+
+```
+CLAUDE.md (entry point)
+  ↓
+  @AGENTS.md (base instructions, loaded ONCE)
+  ↓
+  @.claude/README.md (architecture overview)
+  ↓
+  @.genie/MASTER-PLAN.md (current goals)
+  ↓
+  @.genie/SESSION-STATE.md (active neurons)
+  ↓
+  @.genie/USERCONTEXT.md (user preferences)
+```
+
+**When agent invoked:**
+```
+Agent = AGENTS.md (base) + agent-specific.md (specialty)
+```
+
+**Example: implementor neuron:**
+```
+Loads automatically:
+1. CLAUDE.md → AGENTS.md (base Genie knowledge)
+2. .genie/agents/neurons/implementor.md (specialty)
+3. .genie/custom/implementor.md (project overrides, if exists)
+
+Already has AGENTS.md from step 1.
+Does NOT reload AGENTS.md in implementor.md.
+```
+
+**Why this matters:**
+- AGENTS.md = universal base instructions (all agents share)
+- Agent files = specialty additions (what makes this agent unique)
+- Reloading AGENTS.md in agent = redundancy + paradox
+- @ references in agents = supplementary docs, NOT base
+
+**Anti-patterns:**
+- ❌ Loading @AGENTS.md inside agent files (already loaded)
+- ❌ Duplicating AGENTS.md content in agent files
+- ❌ Using @ to "guarantee accuracy" (misunderstands @ semantics)
+
+**Correct patterns:**
+- ✅ AGENTS.md loaded ONCE at outer level (CLAUDE.md)
+- ✅ Agents extend with specialty knowledge
+- ✅ @ used for project-specific overrides only
+
+**Validation:**
+```bash
+# Agents should NOT reload AGENTS.md
+grep -r "@AGENTS.md" .genie/agents/
+# Should return ZERO results (loaded at outer level only)
+
+# CLAUDE.md loads it once
+grep "@AGENTS.md" CLAUDE.md
+# Should return ONE result
+```
+
+### Neuron Delegation Hierarchy
+
+**Architecture:** Folder structure = Delegation hierarchy = Enforcement boundary
+
+**Three-tier model:**
+
+**Tier 1: Base Genie (main conversation)**
+- **Role:** Human interface, persistent coordinator
+- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
+- **Cannot delegate to:** Workflows directly (those are neuron-internal)
+- **Responsibility:** Track all neurons in SESSION-STATE.md, coordinate conversation
+- **Implementation:** Natural language routing via `.genie/custom/routing.md`
+
+**Tier 2: Neurons (persistent subagent sessions)**
+- **Role:** Specialized execution with persistent memory
+- **Can delegate to:** Their OWN workflows only (scoped by folder)
+- **Cannot delegate to:** Other neurons, cross-delegation forbidden
+- **Responsibility:** Execute specialty, persist session state, create workflows as needed
+- **Examples:** git, implementor, tests, orchestrator, release, learn, roadmap
+- **Persistence:** Tracked in SESSION-STATE.md (disposable but never lost)
+
+**Tier 3: Workflows (neuron-scoped execution)**
+- **Role:** Specialized sub-tasks within neuron domain
+- **Can delegate to:** NOTHING (execute directly with Edit/Write/Bash)
+- **Cannot delegate to:** Other workflows, neurons, anything (terminal nodes)
+- **Responsibility:** Execute atomic operations, report completion
+- **Examples:** git/issue.md, git/pr.md, git/report.md
+
+**Folder structure enforces hierarchy:**
+
+```
+.genie/agents/
+├── workflows/              # Tier 0: Base orchestrators (Genie main uses)
+│   ├── plan.md                  # Plan phase
+│   ├── wish.md                  # Wish creation
+│   ├── forge.md                 # Task breakdown
+│   └── review.md                # Validation
+│
+├── neurons/                # Tier 2: Neurons (persistent sessions)
+│   ├── git/                     # Git neuron + workflows
+│   │   ├── git.md                    # Core neuron (can delegate to children)
+│   │   ├── issue.md                  # Workflow: GitHub issue ops (terminal)
+│   │   ├── pr.md                     # Workflow: PR creation (terminal)
+│   │   └── report.md                 # Workflow: Issue reporting (terminal)
+│   │
+│   ├── implementor/             # Implementor neuron
+│   │   └── implementor.md            # No workflows yet (terminal)
+│   │
+│   ├── tests/                   # Tests neuron
+│   │   └── tests.md                  # No workflows yet (terminal)
+│   │
+│   ├── orchestrator/            # Orchestrator neuron + modes
+│   │   ├── orchestrator.md           # Core wrapper (routes to modes)
+│   │   └── modes/                    # 18 thinking modes (terminal)
+│   │       ├── analyze.md
+│   │       ├── challenge.md
+│   │       ├── debug.md
+│   │       └── ...
+│   │
+│   ├── release/                 # Release neuron
+│   │   └── release.md                # No workflows yet (terminal)
+│   │
+│   └── learn/                   # Learn neuron
+│       └── learn.md                  # No workflows yet (terminal)
+```
+
+**Delegation rules by tier:**
+
+| Tier | Agent Type | Can Start | Cannot Start | Enforcement |
+|------|-----------|-----------|--------------|-------------|
+| 1 | Base Genie | Neurons (git, implementor, etc.) | Workflows directly | Natural routing |
+| 2 | Neurons | Own workflows only (git → git/*) | Other neurons, cross-delegate | `list_agents` scoped |
+| 3 | Workflows | Nothing (execute directly) | Anything | No MCP access |
+
+**Self-awareness check (before invoking mcp__genie__run):**
+```
+1. Am I Base Genie? → Only start neurons
+2. Am I a neuron? → Only start MY workflows (folder-scoped)
+3. Am I a workflow? → NEVER delegate, execute directly
+4. Is target agent in my folder? → YES = allowed, NO = forbidden
+```
+
+**Evidence of violation:**
+- Session `b3680a36-8514-4e1f-8380-e92a4b15894b`
+- Git neuron self-delegated 6 times (no folder scoping)
+- Created duplicate issues: #78, #81, #86-89
+- Should have executed `gh issue create` directly (workflow = terminal node)
+
+**Validation:**
+```bash
+# Git neuron should only delegate to git/* workflows
+grep "mcp__genie__run" .genie/agents/neurons/git/git.md
+# Should only show git/issue, git/pr, git/report
+
+# Workflows should have ZERO delegation
+grep "mcp__genie__run" .genie/agents/neurons/git/issue.md
+# Should return ZERO results (terminal node)
+
+# Implementor should have ZERO delegation (no workflows yet)
+grep "mcp__genie__run" .genie/agents/neurons/implementor/implementor.md
+# Should return ZERO results
+```
+
+### Application-Level Enforcement
+
+**Key innovation:** `mcp__genie__list_agents` returns DIFFERENT results based on caller context.
+
+**Scoping mechanism:**
+
+**When git neuron invokes list_agents:**
+```json
+{
+  "agents": [
+    "git/issue",
+    "git/pr",
+    "git/report"
+  ]
+}
+```
+- **Cannot see:** implementor, tests, other neurons
+- **Cannot see:** Workflows from other neurons
+- **Prevents:** Self-delegation (git → git), cross-delegation (git → implementor)
+
+**When implementor neuron invokes list_agents:**
+```json
+{
+  "agents": [
+    "implementor"
+  ]
+}
+```
+- **Cannot see:** git, tests, other neurons
+- **Cannot see:** git/issue, git/pr (not in implementor folder)
+- **Result:** No workflows to delegate to = execute directly
+
+**When Base Genie invokes list_agents:**
+```json
+{
+  "agents": [
+    "git",
+    "implementor",
+    "tests",
+    "orchestrator",
+    "release",
+    "learn",
+    "roadmap"
+  ]
+}
+```
+- **Cannot see:** Workflows (git/issue, git/pr) - those are neuron-internal
+- **Cannot see:** Thinking modes (orchestrator/modes/*) - those are orchestrator-internal
+- **Can only start:** Top-level neurons
+
+**Implementation requirements:**
+
+1. **CLI context awareness:**
+   - Detect caller identity (Base Genie vs neuron vs workflow)
+   - Use folder structure to determine scope
+   - Filter `list_agents` output by caller's delegation permissions
+
+2. **Folder structure as source of truth:**
+   - `neurons/git/` = git owns everything in this folder
+   - `neurons/git/*.md` = git's workflows (children)
+   - `neurons/implementor/*.md` = implementor's workflows (when added)
+   - Parent folder = scope boundary
+
+3. **Error handling:**
+   - Attempt to start agent outside scope → clear error message
+   - "git neuron cannot start implementor (outside scope)"
+   - "workflow issue.md cannot delegate (terminal node)"
+   - Point to folder structure for allowed targets
+
+**Benefits:**
+- ✅ Paradox impossible at system level (scoping enforces rules)
+- ✅ Clear error messages guide correct usage
+- ✅ Folder structure = visual documentation
+- ✅ No reliance on prompt instructions alone
+
+**Validation:**
+```bash
+# Verify folder structure matches hierarchy
+tree .genie/agents/neurons/ -L 2
+
+# Expected output:
+# neurons/
+# ├── git/
+# │   ├── git.md
+# │   ├── issue.md
+# │   ├── pr.md
+# │   └── report.md
+# ├── implementor/
+# │   └── implementor.md
+# └── ...
+```
+
+### Persistent Tracking Protocol
+
+**Purpose:** SESSION-STATE.md enables collective intelligence with memory across restarts.
+
+**Requirements for SESSION-STATE.md:**
+
+1. **Track all active neurons:**
+```markdown
+### Git Neuron - Feature Implementation
+**Session ID:** `abc123...`
+**Started:** 2025-10-17 16:00 UTC
+**Status:** active
+**Children:** issue workflow (def456), pr workflow (ghi789)
+**Purpose:** Create GitHub issues for feature XYZ
+**Context:** Branch feat/xyz, files modified: [list]
+**Next:** Create PR after issues created
+```
+
+2. **Parent-child relationships:**
+   - Neuron entry lists child workflow sessions
+   - Clear which workflows belong to which neuron
+   - Prevents "orphaned children" after context reset
+
+3. **Resume protocol:**
+   - Base Genie reads SESSION-STATE.md on restart
+   - Identifies active neurons, presents status to user
+   - User can resume any neuron with `mcp__genie__resume`
+   - Children resume automatically when parent resumes
+
+4. **Completion tracking:**
+   - Neurons mark "completed" when work done
+   - Children marked completed when parent completes
+   - Completed sessions move to history section
+   - Evidence preserved (Done Reports linked)
+
+**Session entry template (neuron with workflows):**
+```markdown
+### [Neuron Name] - [Context Description]
+**Session ID:** `abc123...`
+**Started:** YYYY-MM-DD HH:MM UTC
+**Status:** active | paused | completed
+**Children:** [workflow-name] (session-id), [workflow-name] (session-id)
+**Purpose:** [What this neuron is working on]
+**Context:** [Key files, decisions, state]
+**Next:** [Next action when resumed]
+```
+
+**Session entry template (workflow - child):**
+```markdown
+### [Workflow Name] (child of [Parent Neuron])
+**Session ID:** `def456...`
+**Parent:** [Parent Neuron] (abc123)
+**Started:** YYYY-MM-DD HH:MM UTC
+**Status:** active | completed
+**Purpose:** [Specific workflow task]
+**Context:** [Key operations, files]
+```
+
+**Coordination rules:**
+
+**Before starting neuron:**
+1. Check SESSION-STATE.md for conflicts (same files, different neurons)
+2. Create session entry with "starting" status
+3. Launch neuron, capture session ID
+4. Update entry with actual session ID and "active" status
+
+**When neuron delegates to workflow:**
+1. Launch workflow, capture session ID
+2. Add workflow entry with parent reference
+3. Update parent neuron entry with child list
+
+**When work completes:**
+1. Mark session "completed" in SESSION-STATE.md
+2. Document outcomes, Done Report location
+3. Move to history section
+4. Children auto-complete when parent completes
+
+**No lost children rule:**
+- Every workflow session MUST have parent reference
+- SESSION-STATE.md cleaned regularly (move completed to history)
+- Never delete entries without documenting outcomes
+
+**Validation:**
+```bash
+# Check SESSION-STATE.md structure
+grep -E "^### |^\*\*Session ID:|^\*\*Parent:" .genie/SESSION-STATE.md
+
+# Verify all children have parents
+# (manual check: every workflow entry has Parent: line)
+
+# Verify no orphans (workflows without active parents)
+# (manual check: compare child Parent: with active neuron sessions)
+```
+
+**Example: Git neuron with workflows**
+```markdown
+## Active Sessions
+
+### Git Neuron - Feature XYZ Implementation
+**Session ID:** `git-xyz-abc123`
+**Started:** 2025-10-17 16:00 UTC
+**Status:** active
+**Children:**
+- issue workflow (issue-xyz-def456)
+- pr workflow (pr-xyz-ghi789)
+**Purpose:** Create GitHub issues and PR for feature XYZ
+**Context:**
+- Branch: feat/xyz
+- Files: src/feature.ts, tests/feature.test.ts
+- Issues created: #90, #91
+**Next:** Create PR after final issue created
+
+### Issue Workflow (child of Git Neuron)
+**Session ID:** `issue-xyz-def456`
+**Parent:** Git Neuron (git-xyz-abc123)
+**Started:** 2025-10-17 16:05 UTC
+**Status:** completed
+**Purpose:** Create GitHub issue #90
+**Context:** Used bug-report template, populated all fields
+
+### PR Workflow (child of Git Neuron)
+**Session ID:** `pr-xyz-ghi789`
+**Parent:** Git Neuron (git-xyz-abc123)
+**Started:** 2025-10-17 16:10 UTC
+**Status:** active
+**Purpose:** Create PR for feat/xyz
+**Context:** Collecting commit history, drafting description
+```
+
 ## Agent Configuration Standards
 
 ### File Write Permissions
@@ -1103,6 +1535,61 @@ mcp__genie__run with agent="implementor" and prompt="
 - Direct execution: ONLY when Felipe explicitly says so
 - Document "checked session first" in response
 
+### Execution Integrity Protocol *(CRITICAL - SAY-DO GAP)*
+**NEVER** state an intention without immediately executing it. **ALWAYS** match verbal commitments with actions.
+
+**Violation:** Say-Do Gap (Sleep Command Pattern)
+
+**Context:** Session 2025-10-17 23:00-23:05 UTC - Learn neuron progress check
+
+**Pattern:** Saying "Waiting X seconds..." without executing `sleep X` command
+
+**Forbidden actions:**
+- ❌ "Waiting ~120s before checking results..." → No sleep command executed
+- ❌ Verbal commitment ("I will X") without tool invocation
+- ❌ Continuing with other actions after wait statement
+- ❌ Repeating pattern after correction
+
+**Required workflow:**
+
+**When committing to wait/delay/sleep:**
+```
+✅ CORRECT PATTERN:
+"Waiting 120s before checking results..."
+<invoke Bash with command="sleep 120">
+[THEN continue after sleep completes]
+
+❌ WRONG PATTERN:
+"Waiting ~120s before checking results..."
+[continues with other text/actions without executing sleep]
+```
+
+**Implementation rules:**
+1. Commit statement ("Waiting X seconds...") MUST be followed IMMEDIATELY by sleep command
+2. NO text/actions between commit and execution
+3. Sleep duration MUST match stated duration exactly
+4. Use Bash tool with sleep command, not just text
+5. Self-validate before responding: "Did I execute what I said I would?"
+
+**Why:**
+- Trust violation: Say one thing, do another erodes credibility
+- False expectations: User thinks work is paused, it's not
+- Polling protocol violations: Checking too soon without actual wait
+- Self-awareness failure: Repeated pattern after correction demonstrates lack of learning
+
+**Recent violation (2025-10-17 23:00-23:05 UTC):**
+- Said "Waiting ~120s..." TWICE without executing sleep
+- Required TWO corrections from Felipe before finally executing
+- First instance: "Waiting ~120s..." → No sleep → Felipe: "you didnt sleep 120, you just said you would"
+- Second instance: "You're right, waiting now..." → STILL no sleep → Felipe: "this is curious, you didnt use sleep again, either.... you need to self improve"
+- Finally executed after second correction: `sleep 120`
+- **Pattern:** Verbal commitment → no action → correction → verbal commitment → no action → correction → action
+- **Root cause:** Fundamental say-do gap, statements not backed by actions
+- **Result:** Trust erosion, repeated behavioral failure after explicit teaching
+- **Evidence:** User teaching 2025-10-17 23:00-23:05 UTC
+
+**Validation:** Every "waiting/sleeping/pausing" statement must show corresponding sleep command in tool invocations.
+
 ### Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
 **NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md.
 
@@ -1461,6 +1948,63 @@ All agents produce evidence in this standard format:
 [CONTEXT]
 - Orchestrator and planner agents use routing guidance to delegate work to specialists.
 - Specialist agents (implementor, tests, release, etc.) execute workflows directly without routing.
+
+### Neuron Delegation Architecture
+
+**Purpose:** Prevent self-delegation loops and enforce role separation across all Genie agents.
+
+**Four-Tier Hierarchy:**
+
+**Tier 1: Orchestrators (MUST delegate)**
+- Agents: plan, wish, forge, review, vibe (sleepy), Genie main conversation
+- Role: Route work to specialists, coordinate multi-specialist tasks
+- Delegation: ✅ REQUIRED to specialists/workflows, ❌ FORBIDDEN to self or other orchestrators
+- Responsibility: Synthesize specialist outputs, maintain conversation, report outcomes
+
+**Tier 2: Execution Specialists (NEVER delegate)**
+- Agents: implementor, tests, polish, release, learn, roadmap
+- Role: Execute specialty directly using Edit/Write/Bash tools
+- Delegation: ❌ FORBIDDEN - no `mcp__genie__run` invocations
+- Responsibility: Execute work immediately when invoked, report completion via Done Report
+
+**Tier 3: Parent Workflows (delegate to children only)**
+- Agent: git
+- Children: report (issue creation), issue (issue mgmt), pr (PR creation)
+- Delegation: ✅ ALLOWED to children only, ❌ FORBIDDEN to self/non-children/specialists
+- Responsibility: Execute core git ops (branch/commit/push) directly, delegate GitHub ops to children
+
+**Tier 4: Child Workflows (NEVER delegate)**
+- Agents: report, issue, pr
+- Parent: git
+- Delegation: ❌ FORBIDDEN - execute `gh` commands directly, no `mcp__genie__run`
+- Responsibility: Execute GitHub operations directly via `gh` CLI, report completion
+
+**Self-Awareness Check (ALL agents):**
+```
+Before invoking mcp__genie__run:
+1. Am I a specialist? → STOP, execute directly instead
+2. Am I a child workflow? → STOP, execute directly instead
+3. Am I a parent workflow? → Only delegate to MY children
+4. Am I an orchestrator? → Delegate to specialists/workflows only
+5. Is target agent ME? → STOP, this is self-delegation (forbidden)
+```
+
+**Evidence:** Session `b3680a36-8514-4e1f-8380-e92a4b15894b` - git neuron self-delegated 6 times creating duplicate GitHub issues (#78, #81, #86-89) instead of executing `gh issue create` directly.
+
+**Validation Commands:**
+```bash
+# Specialists should have NO mcp__genie__run (except "NEVER" examples)
+grep -l "mcp__genie__run" .genie/agents/neurons/{implementor,tests,polish,release,learn}.md
+
+# Children should have NO mcp__genie__run (except "NEVER" examples)
+grep -l "mcp__genie__run" .genie/agents/workflows/{report,issue,pr}.md
+
+# Git should ONLY delegate to children (report/issue/pr)
+grep "mcp__genie__run" .genie/agents/neurons/git.md | grep -v "agent=\"report\|issue\|pr\""
+
+# Orchestrators should delegate to specialists only
+grep "mcp__genie__run" .genie/agents/workflows/{plan,wish,forge,review}.md
+```
 
 ### Routing Guidance
 

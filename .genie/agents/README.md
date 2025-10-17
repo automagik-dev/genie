@@ -27,16 +27,80 @@ Genie uses a layered architecture for extensibility without forking:
 
 > **Note:** `learn` is the unified meta-learning agent; the legacy `self-learn` prompt has been retired.
 
+### Neuron Delegation Hierarchy
+
+**Architecture principle:** Folder structure = Delegation hierarchy = Enforcement boundary
+
+**Three-tier model:**
+
+**Tier 1: Base Genie (main conversation)**
+- **Folder:** Root level (`.genie/agents/workflows/`)
+- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
+- **Cannot delegate to:** Workflows directly (those are neuron-internal)
+- **Agents:** plan, wish, forge, review, vibe (orchestrator workflows)
+
+**Tier 2: Neurons (persistent subagent sessions)**
+- **Folder:** `.genie/agents/neurons/[neuron-name]/`
+- **Can delegate to:** Their OWN workflows only (scoped by folder)
+- **Cannot delegate to:** Other neurons, cross-delegation forbidden
+- **Examples:** git (with git/issue, git/pr, git/report workflows), implementor, tests, orchestrator, release, learn
+
+**Tier 3: Workflows (neuron-scoped execution)**
+- **Folder:** `.genie/agents/neurons/[neuron-name]/*.md`
+- **Can delegate to:** NOTHING (execute directly with Edit/Write/Bash)
+- **Examples:** git/issue.md, git/pr.md, git/report.md
+
+**Proposed folder structure (migration in progress):**
+```
+.genie/agents/
+├── workflows/              # Tier 1: Base orchestrators (Genie main uses)
+│   ├── plan.md
+│   ├── wish.md
+│   ├── forge.md
+│   └── review.md
+│
+├── neurons/                # Tier 2: Neurons (persistent sessions)
+│   ├── git/                     # Git neuron + workflows
+│   │   ├── git.md                    # Core neuron (can delegate to children)
+│   │   ├── issue.md                  # Workflow: GitHub issue ops (terminal)
+│   │   ├── pr.md                     # Workflow: PR creation (terminal)
+│   │   └── report.md                 # Workflow: Issue reporting (terminal)
+│   │
+│   ├── implementor/             # Implementor neuron
+│   │   └── implementor.md            # No workflows yet (terminal)
+│   │
+│   ├── orchestrator/            # Orchestrator neuron + modes
+│   │   ├── orchestrator.md           # Core wrapper (routes to modes)
+│   │   └── modes/                    # 18 thinking modes (terminal)
+│   │       ├── analyze.md
+│   │       ├── challenge.md
+│   │       └── ...
+│   │
+│   └── ... (other neurons)
+```
+
+**Application enforcement:**
+- `mcp__genie__list_agents` scoped per caller context
+- Git neuron sees only: git/issue, git/pr, git/report
+- Implementor neuron sees only: implementor (no workflows)
+- Base Genie sees only: top-level neurons
+- Prevents self-delegation and cross-delegation at system level
+
+**See @AGENTS.md §Architectural Foundations for complete details.**
+
 ### How Extensions Work
 
 When an agent is invoked, the system loads:
 ```
-1. Neuron agent prompt
+1. CLAUDE.md → AGENTS.md (base instructions, loaded ONCE)
+2. Neuron agent prompt
    - Delivery/infrastructure: .genie/agents/neurons/<agent>.md
    - Strategic modes: .genie/agents/neurons/modes/<mode>.md
    - Orchestrator: .genie/agents/neurons/orchestrator.md
-2. Custom extensions (.genie/custom/neurons/<agent>.md) - if exists
+3. Custom extensions (.genie/custom/neurons/<agent>.md) - if exists
 ```
+
+**Critical:** Neuron agents do NOT reload @AGENTS.md (already loaded at outer level via CLAUDE.md).
 
 This allows projects to add domain-specific context, preferred commands, or evidence paths without modifying shipped prompts.
 

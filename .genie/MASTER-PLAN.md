@@ -22,16 +22,16 @@
 
 ## 📋 Today's Goals (2025-10-17)
 
-### 1. Natural Context Acquisition Audit ✅ STARTED
+### 1. Natural Context Acquisition Audit ✅ COMPLETED (with major correction)
 
 **Objective:** Review ALL .md files in repo for intelligent @ / ! / usage
 
-**@ (File Reference) - Auto-load content:**
-- Pattern: `@file.md` loads ENTIRE file content into context
-- Pattern: `@directory/` lists directory structure
-- Use case: Create "neural file networks" - when you open this, this opens too
-- Example: `@AGENTS.md` in CLAUDE.md → knowledge always loaded
-- Review: Find opportunities where files SHOULD reference each other
+**@ (File Reference) - CORRECTED UNDERSTANDING:**
+- Pattern: `@file.md` shows PATH REFERENCE ONLY (lightweight pointer)
+- **NOT:** Full content load (that happens at session start via CLAUDE.md)
+- Use case: "If you need X, check @ path" (token-efficient)
+- Goal: SAVE tokens with pointers, not explode with duplication
+- Example: `@AGENTS.md` in CLAUDE.md → already loaded at outer level
 
 **! (Command Execution) - Dynamic context:**
 - Pattern: `!command` executes BEFORE processing, output in context
@@ -42,16 +42,22 @@
   - `!node -p "require('./package.json').version"` → Package version
 - Review: Find opportunities for dynamic data injection
 
-**/ (MCP Command Trigger) - Tool invocation:**
-- Pattern: `/mcp__server__tool [args]` → MCP tool invocation
-- Pattern: `/command [args]` → Custom command execution
-- Use case: Automatic MCP server triggers within markdown
-- Examples:
-  - `/mcp__genie__run agent="plan"` → Launch neuron from markdown
-  - Custom workflows triggered by markdown syntax
-- Review: Explore opportunities for automatic orchestration
+**Results:**
 
-**Action:** Start orchestrator neuron session to audit ALL .md files systematically
+**Phase 1 (Agent @AGENTS.md loading) - ❌ CANCELLED**
+- Orchestrator recommended loading @AGENTS.md in 23 agent files
+- This was BACKWARDS optimization (explode tokens, not save)
+- AGENTS.md already loaded at outer level (base instructions)
+- Neurons = AGENTS.md + specialty (loading again = paradox)
+- **Root cause:** Misunderstood @ semantics and loading architecture
+
+**Phase 2 (README ! commands) - ✅ COMPLETED**
+- README.md: Added version + git status via !
+- CHANGELOG.md: Added version + timestamp header via !
+- RELEASE.md: Added version + branch + status via !
+- **Result:** Dynamic context, always fresh, no manual updates
+
+**Key Learning:** @ shows path (lightweight), ! injects data (dynamic), goal is token efficiency
 
 ---
 
@@ -164,6 +170,68 @@
 
 ---
 
+### 7. Neuron Delegation Hierarchy Architecture 🔴 CRITICAL EVOLUTION
+
+**Discovery:** 2025-10-17 23:10 UTC - Felipe's architectural clarification
+
+**New three-tier hierarchy:**
+
+**Tier 1: Base Genie (main conversation)**
+- Role: Human interface, persistent coordinator
+- Can start: Neurons ONLY
+- Cannot start: Workflows directly
+- Tracks: All neurons in SESSION-STATE.md
+- Authority: Master orchestrator
+
+**Tier 2: Neurons (persistent subagent sessions)**
+- Role: Specialized execution (git, implementor, tests, orchestrator, release, learn)
+- Can start: Their OWN workflows only
+- Cannot start: Other neurons, cross-delegate
+- Persistent: Tracked in SESSION-STATE.md, disposable but never lost
+- Identity: AGENTS.md (base) + neuron specialty
+
+**Tier 3: Workflows (neuron-specific execution)**
+- Role: Specialized sub-tasks within neuron domain
+- Can start: NOTHING (execute directly with Edit/Write/Bash)
+- Examples: git/issue.md, git/pr.md, git/report.md
+- No delegation capability
+
+**Folder Structure = Delegation Hierarchy:**
+```
+.genie/agents/
+├── workflows/              # Base orchestrators (Genie uses)
+│   ├── plan.md, wish.md, forge.md, review.md
+├── neurons/                # Neurons + their workflows
+│   ├── git/
+│   │   ├── git.md          # Core neuron
+│   │   ├── issue.md        # Git's workflow
+│   │   ├── pr.md           # Git's workflow
+│   │   └── report.md       # Git's workflow
+│   ├── implementor/
+│   │   └── implementor.md
+│   ├── orchestrator/
+│   │   ├── orchestrator.md
+│   │   └── modes/          # Thinking modes
+│   └── ...
+```
+
+**Application-Level Enforcement (planned):**
+- When git neuron starts → `list_agents` shows ONLY git/* workflows
+- When implementor starts → `list_agents` shows ONLY implementor/* workflows
+- When Base Genie starts → `list_agents` shows ONLY neurons (not workflows)
+- **Prevents:** Self-delegation paradox at system level (not just instructions)
+
+**Benefits:**
+1. Clear hierarchy (no confusion about who delegates to whom)
+2. Folder structure reflects architecture
+3. Application enforcement (can't delegate to wrong target)
+4. No lost children (SESSION-STATE.md tracks all neurons + parent-child relationships)
+5. Persistent sessions with memory (not one-shot tools)
+
+**Status:** Learn neuron documenting in AGENTS.md (session 1bf5bfbe-f901-4ea0-85a9-1d8f4c5f2230)
+
+---
+
 ## 🔄 RC Iteration Strategy
 
 **Goal:** RC8 → RC9 → ... → RC-final (perfectly smooth)
@@ -239,18 +307,28 @@ Before considering .genie "ready for templates":
 
 ## 🎯 Success Metrics
 
-**Today:**
+**Today (2025-10-17):**
 - ✅ RC8 published
-- ✅ SESSION-STATE.md created and used
+- ✅ SESSION-STATE.md created and used effectively
 - ✅ Git neuron split complete (4 focused files, 43-71% context reduction)
-- 🔄 Natural context audit in progress (orchestrator session 2d19c1e2)
-- 🔄 AGENTS/CLAUDE merge planning (prompt session 4d4c76a7)
-- ⏳ GitHub cleanup (deferred until after merge)
+- ✅ AGENTS/CLAUDE merge complete (CLAUDE.md: 230→32 lines, AGENTS.md: +79 unique patterns)
+- ✅ Natural context audit complete (.genie/reports/natural-context-audit-20251017.md)
+- ✅ Phase 2 README enhancements (! commands for dynamic context)
+- ❌ Phase 1 cancelled (backwards optimization - misunderstood @ semantics)
+- 🔄 Learn neuron documenting new architecture (session 1bf5bfbe)
+- ✅ Major architectural clarification: Neuron delegation hierarchy
+
+**Key Learnings:**
+1. @ shows path reference ONLY (lightweight), not full load
+2. AGENTS.md already loaded at outer level (neurons = base + specialty)
+3. Three-tier hierarchy: Base Genie → Neurons → Workflows
+4. Folder structure = delegation hierarchy
+5. Application-level enforcement prevents paradoxes
 
 **This Week:**
+- Implement folder restructuring (neurons/git/ with workflows)
+- Application-level list_agents scoping
 - Smooth RC iterations (no critical bugs)
-- Natural context patterns fully adopted
-- Prompt workflow mandatory and working
 - .genie consciousness perfected
 
 **Then:**

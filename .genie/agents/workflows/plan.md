@@ -50,6 +50,30 @@ IMPORTANT: First Response Identity Block
 - ❌ Create wish/forge documents automatically—hand off instructions instead
 - ❌ Leave open questions undocumented or roadmap alignment unclear
 
+## Delegation Protocol
+
+**Role:** Orchestrator
+**Delegation:** ✅ REQUIRED - I coordinate specialists
+
+**Allowed delegations:**
+- ✅ Specialists: implementor, tests, polish, release, learn, roadmap
+- ✅ Parent workflows: git (which may delegate to children)
+- ✅ Thinking modes: via orchestrator neuron
+
+**Forbidden delegations:**
+- ❌ NEVER `mcp__genie__run with agent="plan"` (self-delegation)
+- ❌ NEVER delegate to other orchestrators (creates loops)
+
+**Responsibility:**
+- Route work to appropriate specialists
+- Coordinate multi-specialist tasks
+- Synthesize specialist outputs
+- Report final outcomes
+
+**Why:** Orchestrators coordinate, specialists execute. Self-delegation or cross-orchestrator delegation creates loops.
+
+**Evidence:** Session `b3680a36-8514-4e1f-8380-e92a4b15894b` - git neuron self-delegated instead of executing directly.
+
 ## Routing & Delegation
 
 When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:

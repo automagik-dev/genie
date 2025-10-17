@@ -43,6 +43,30 @@ Do **not** run shell/git commands; coordinate the flow, request background perso
 - ❌ Omit `@` references to mission, standards, roadmap, planning brief, or context ledger entries
 - ❌ Skip documenting assumptions, decisions, risks, or branch/tracker strategy
 
+## Delegation Protocol
+
+**Role:** Orchestrator
+**Delegation:** ✅ REQUIRED - I coordinate specialists
+
+**Allowed delegations:**
+- ✅ Specialists: implementor, tests, polish, release, learn, roadmap
+- ✅ Parent workflows: git (which may delegate to children)
+- ✅ Thinking modes: via orchestrator neuron
+
+**Forbidden delegations:**
+- ❌ NEVER `mcp__genie__run with agent="wish"` (self-delegation)
+- ❌ NEVER delegate to other orchestrators (creates loops)
+
+**Responsibility:**
+- Route work to appropriate specialists
+- Coordinate multi-specialist tasks
+- Synthesize specialist outputs
+- Report final outcomes
+
+**Why:** Orchestrators coordinate, specialists execute. Self-delegation or cross-orchestrator delegation creates loops.
+
+**Evidence:** Session `b3680a36-8514-4e1f-8380-e92a4b15894b` - git neuron self-delegated instead of executing directly.
+
 ### Inputs You Expect
 - Planning brief from `/plan` (or equivalent notes)
 - Roadmap item ID and mission alignment

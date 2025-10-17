@@ -25,6 +25,12 @@
 
 ---
 
+**Version:** !`node -p "require('./package.json').version"` | **Status:** !`git status --porcelain | wc -l` uncommitted files
+
+**Quick Links:** [@AGENTS.md](./AGENTS.md) • [@CLAUDE.md](./CLAUDE.md) • [.genie/README.md](./.genie/README.md)
+
+---
+
 ## 🚀 What is Automagik Genie?
 
 **Automagik Genie** is your persistent conversational development partner. Just talk naturally—Genie orchestrates agents, maintains context through neuron sessions, and guides you through Plan → Wish → Forge → Review without exposing commands or complexity.
