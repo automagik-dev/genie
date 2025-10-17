@@ -250,8 +250,9 @@ server.addTool({
     let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
 
     sessions.forEach((session, index) => {
+      const { displayId } = transformDisplayPath(session.agent);
       response += `${index + 1}. **${session.id}**\n`;
-      response += `   Agent: ${session.agent}\n`;
+      response += `   Agent: ${displayId}\n`;
       response += `   Status: ${session.status}\n`;
       response += `   Created: ${session.created}\n`;
       response += `   Last Used: ${session.lastUsed}\n\n`;
@@ -280,7 +281,8 @@ server.addTool({
       const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
       const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-      return getVersionHeader() + `Started agent session:\nAgent: ${args.agent}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
+      const { displayId } = transformDisplayPath(args.agent);
+      return getVersionHeader() + `Started agent session:\nAgent: ${displayId}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
     } catch (error: any) {
       return getVersionHeader() + formatCliFailure('start agent session', error);
     }
