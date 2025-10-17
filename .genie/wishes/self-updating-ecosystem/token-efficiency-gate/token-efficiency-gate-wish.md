@@ -118,9 +118,9 @@ function countTokensWithReferences(file: string, visited: Set<string>): number {
 ```
 CLAUDE.md (1,234 tokens)
 ├─ @AGENTS.md (23,456 tokens)
-│  ├─ @.genie/agents/workflows/plan.md (2,345 tokens)
-│  ├─ @.genie/agents/workflows/wish.md (1,987 tokens)
-│  ├─ @.genie/agents/neurons/implementor.md (3,210 tokens)
+│  ├─  (2,345 tokens)
+│  ├─  (1,987 tokens)
+│  ├─ @.genie/agents/code/neurons/implementor.md (3,210 tokens)
 │  └─ ... (15 more neurons)
 ├─ @.genie/MASTER-PLAN.md (4,567 tokens)
 ├─ @.genie/SESSION-STATE.md (890 tokens)

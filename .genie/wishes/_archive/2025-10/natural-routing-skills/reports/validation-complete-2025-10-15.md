@@ -43,7 +43,7 @@ The natural routing system has been **completely validated through actual MCP us
 1. **Identity transformation** - AGENTS.md now positions Genie as persistent conversational mentor
 2. **Natural flow protocol** - Plan → Wish → Forge → Review flow documented
 3. **Conversation templates** - Natural mentor personality patterns created
-4. **README updates** - Both .claude/README.md and root README reflect natural routing
+4. **README updates** - Both  and root README reflect natural routing
 
 **Evidence:**
 - AGENTS.md lines 564-604: Identity transformation complete
@@ -221,7 +221,7 @@ I validated the natural routing system BY USING IT to validate itself.
 | B | Identity shift | ✅ Complete | AGENTS.md lines 564-604 |
 | B | Natural flow | ✅ Complete | AGENTS.md lines 327-424 |
 | B | Conversation patterns | ✅ Complete | routing.md lines 448-502 |
-| B | README updates | ✅ Complete | .claude/README.md + root README.md |
+| B | README updates | ✅ Complete |  + root README.md |
 | C | Mode overlap analysis | ✅ Complete | reports/mode-overlap-analysis-202510151430.md |
 | C | Keyword triggers | ✅ Complete | routing.md lines 340-346 + decision-trees.md |
 | C | Consolidation plan | ✅ Complete | Orchestrator report with 3 phases |

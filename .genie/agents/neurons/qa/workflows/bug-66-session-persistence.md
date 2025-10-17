@@ -222,9 +222,6 @@ grep "<session-id>" .genie/qa/evidence/bug-66-after-resumes-<timestamp>.txt
 ```
 
 ## Related Tests
-- @qa/workflows/bug-102-session-collision.md (Session ID uniqueness)
-- @qa/workflows/session-lifecycle.md (Context Preservation, Multi-Turn Conversation)
-
 ## Maintenance
 **Test Frequency:** Every RC release
 **Last Tested:** [Date]

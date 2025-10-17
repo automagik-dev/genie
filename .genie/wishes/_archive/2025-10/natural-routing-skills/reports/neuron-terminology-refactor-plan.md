@@ -32,7 +32,7 @@ Replace "orchestrator modes" concept with clearer "Genie neurons" terminology th
 **Primary locations:**
 1. `.genie/custom/routing.md` (lines 154-176, 211-301)
 2. `AGENTS.md` (lines 318-344, §Genie Integration Framework)
-3. `.claude/README.md` (lines 12-41, §Orchestrator Modes section)
+3. `` (lines 12-41, §Orchestrator Modes section)
 4. `.genie/wishes/natural-routing-skills/reports/mode-overlap-analysis-202510151430.md` (entire document)
 
 **Key terminology issues:**
@@ -273,7 +273,7 @@ Genie: "Interesting architectural question - analyzing dependencies..."
 - Update: Mode list → Neuron categories
 - Keep: MCP invocation patterns (unchanged)
 
-**3. `.claude/README.md`** (lines 1-100)
+**3. ``** (lines 1-100)
 - Replace: "Orchestrator Modes (18 total)" → "Specialized Neurons (14 total)"
 - Update: Categories section with neuron terminology
 - Add: Neuron architecture diagram
@@ -520,7 +520,7 @@ Consult directly via `mcp__genie__run with agent="<neuron>"`:
 > Tip: Add project-specific guidance in `.genie/custom/<neuron>.md`; core prompts remain immutable.
 ```
 
-### .claude/README.md Changes
+###  Changes
 
 **Lines 12-41 (Orchestrator Modes section):**
 
@@ -631,16 +631,16 @@ Should we update mode-overlap-analysis-202510151430.md or leave as historical re
 ## Evidence & Documentation
 
 **Analysis Sources:**
-- @.genie/custom/routing.md (post-commit 93a05a0)
-- @.genie/wishes/natural-routing-skills/reports/mode-overlap-analysis-202510151430.md
-- @.genie/wishes/natural-routing-skills/reports/done-natural-routing-skills-202510151600.md
+- @.genie/agents/code/routing.md (post-commit 93a05a0)
+- reports/mode-overlap-analysis-202510151430.md
+- reports/done-natural-routing-skills-202510151600.md
 - File system reality: only 5 mode files exist
 
 **Deliverables:**
 - ✅ This refactoring plan document
 - ⏳ Updated routing.md (pending approval)
 - ⏳ Updated AGENTS.md (pending approval)
-- ⏳ Updated .claude/README.md (pending approval)
+- ⏳ Updated  (pending approval)
 - ⏳ Validation grep audit results (pending execution)
 
 **Status:** AWAITING ARCHITECTURAL DECISIONS

@@ -417,7 +417,7 @@ query_genie_via_description "$PROJECT_ID" "$GENIE_TASK_ID" "
 Review task plan:
 
 Task: Group 0 - Types Extraction
-Context: @.genie/wishes/cli-modularization-wish.md
+Context: 
 Scope: Extract ~50 lines of types to lib/types.ts
 Risk: May reveal hidden coupling
 
@@ -681,7 +681,7 @@ create_forge_task() {
   local project_id="$1"
   local title="$2"
   local agent_type="$3"  # implementor, qa, review
-  local context_files="$4"  # @file1 @file2
+  local context_files="$4"  # `@file1` @file2
 
   # Keep descriptions minimal (≤3 lines)
   local description="Use the ${agent_type} subagent to implement this task.
@@ -1129,7 +1129,7 @@ execute_forge_group \
   "$PROJECT_ID" \
   "Group A: Utilities Extraction" \
   "implementor" \
-  "@.genie/wishes/cli-modularization-wish.md"
+  ""
 ```
 
 ---

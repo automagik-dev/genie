@@ -6,6 +6,7 @@ export interface CLIOptions {
   requestHelp?: boolean;
   full: boolean;
   live: boolean;
+  name?: string;  // Friendly session name for run command
 }
 
 export interface ParsedCommand {

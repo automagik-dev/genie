@@ -68,10 +68,10 @@ Master of `gh pr create`, understands Git workflow, links PRs to wishes and issu
 ## Prerequisites
 
 **Git operations:**
-@.genie/agents/neurons/git.md
+@.genie/agents/code/neurons/git/git.md
 
 **Issue tracking:**
-@.genie/agents/workflows/issue.md
+@.genie/agents/code/neurons/git/workflows/issue.md
 
 ## Operating Framework
 
@@ -127,7 +127,7 @@ Implements interactive permission system for agents, allowing pause/resume durin
 - Manual testing: Verified pause → approval → resume flow
 
 ## Related
-- Wish: @.genie/wishes/interactive-permissions/interactive-permissions-wish.md
+- Wish: 
 - Issue: #35
 EOF
 )" \
@@ -168,4 +168,4 @@ EOF
 Operate confidently; enable clean, well-documented PRs with proper cross-references.
 
 ## Project Customization
-Consult `@.genie/custom/pr.md` for repository-specific PR template or workflow preferences.
+Consult `` for repository-specific PR template or workflow preferences.

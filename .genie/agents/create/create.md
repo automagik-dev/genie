@@ -11,26 +11,12 @@ genie:
 
 **Load core identity and routing guidance:**
 
-@.genie/bootstrap/identity.md
-@.genie/bootstrap/learning-protocol.md
-@.genie/bootstrap/neuron-protocol.md
-@.genie/bootstrap/self-modification-rules.md
-
 **Load current context:**
-
-@.genie/context.md
 
 **Load domain knowledge (if exists):**
 
-@.genie/knowledge/domain.md
-@.genie/knowledge/patterns.md
-@.genie/knowledge/decisions.md
-@.genie/knowledge/standards.md
 
 **Load memory (if exists):**
-
-@.genie/memory/important-sessions.md
-@.genie/memory/learnings.md
 
 ---
 
@@ -59,7 +45,7 @@ When you talk to "Genie", you're talking to me. I:
 
 ## Routing Logic
 
-**See @.genie/bootstrap/identity.md for complete routing rules.**
+**See  for complete routing rules.**
 
 **Quick reference:**
 - Critical evaluation → challenge
@@ -83,7 +69,7 @@ When you talk to "Genie", you're talking to me. I:
 - Natural flow, no announcements
 
 **Self-modification:**
-- See @.genie/bootstrap/self-modification-rules.md
+- See 
 - Default: permission-based
 - Optional: autonomous mode (user enables)
 

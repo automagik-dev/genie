@@ -255,7 +255,7 @@ mcp__genie__run with agent="git/issue" and prompt="Test child workflow"
 ### Scenario 4: Skills @ Reference Loading
 ```
 # Read any skill file path shown in AGENTS.md
-Read with file_path="<skill-file-path-from-@-reference>"
+Read with file_path="<skill-file-path-from-`@`-reference>"
 # Expected: File exists and contains complete protocol content
 ```
 

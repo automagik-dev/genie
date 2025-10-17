@@ -62,7 +62,7 @@
 | @.genie/cli/src/lib/fs-utils.ts:64-72 | code | Atomic snapshot implementation | implementation |
 | @.genie/cli/src/commands/rollback.ts | code | Existing rollback command | implementation |
 | User clarification (items #1-3) | requirements | Always backup, tailored update agent per version | entire wish |
-| @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
+|  | template | Wish structure requirements | wish structure |
 
 ## Discovery Summary
 - **Primary analyst:** Human (namastex) + Genie planning agent
@@ -180,8 +180,6 @@ ls -la .genie/backups/<timestamp>/root-docs/
 
 **Surfaces:**
 - @.genie/cli/src/commands/update.ts:73-77 – Post-backup, pre-template-copy hook point
-- @.genie/agents/core/update.md – New update agent (to be created in Group C)
-
 **Current behavior:**
 ```typescript
 // update.ts:73-77
@@ -242,10 +240,6 @@ cat .genie/state/version.json | jq .version
 **Goal:** Create `update.md` agent that intelligently merges framework updates with user customizations
 
 **Surfaces:**
-- @.genie/agents/core/update.md – new agent (core framework agent)
-- @.claude/commands/update.md – slash command wrapper
-- @.claude/agents/update.md – Task tool alias
-
 **Deliverables:**
 1. Create `update.md` agent with sections:
    - **Discovery:** Analyze backup vs current framework files, detect customizations
@@ -253,9 +247,8 @@ cat .genie/state/version.json | jq .version
    - **Verification:** Validate merged files, report conflicts
 2. Agent receives context via prompt:
    ```
-   @.genie/state/version.json
-   @.genie/backups/<timestamp>/root-docs/AGENTS.md
-   @.genie/backups/<timestamp>/root-docs/CLAUDE.md
+   <timestamp>/root-docs/AGENTS.md
+   <timestamp>/root-docs/CLAUDE.md
    [VERSION_SPECIFIC_INSTRUCTIONS]
    ```
 3. Migration strategies:
@@ -293,7 +286,7 @@ cat .genie/state/version.json | jq .version
 **Validation:**
 ```bash
 # Test agent directly
-genie run update "@.genie/state/version.json" --mode debug
+genie run update "" --mode debug
 
 # Test via update command (integrated)
 genie update --target-version 2.1.0
@@ -318,8 +311,7 @@ genie update --interactive
 **Goal:** Create template system for embedding version-specific update instructions in releases
 
 **Surfaces:**
-- @.genie/updates/ – new directory for version transition guides
-- @.genie/updates/v2.0.0-to-v2.1.0.md – example migration guide
+- v2.0.0-to-v2.1.0.md – example migration guide
 - @.genie/cli/src/commands/update.ts – instruction loading logic
 
 **Deliverables:**

@@ -208,9 +208,6 @@ diff .genie/qa/evidence/bug-92-before-stop-<timestamp>.txt .genie/qa/evidence/bu
 ```
 
 ## Related Tests
-- @qa/workflows/session-lifecycle.md (Graceful Session Stop)
-- @qa/workflows/mcp-operations.md (Stop Session)
-
 ## Maintenance
 **Test Frequency:** Every RC release
 **Last Tested:** [Date]

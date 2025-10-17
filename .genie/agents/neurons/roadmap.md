@@ -124,8 +124,8 @@ Analyze user description for these indicators:
 - Project (dropdown: omni, hive, spark, forge, genie, tools, cross-project)
 - Description (problem → solution → impact)
 - Expected results (measurable outcomes)
-- Responsible (@username)
-- Accountable (@username)
+- Responsible (`@username`)
+- Accountable (`@username`)
 - Stage (wishlist, planning, active, review, shipped, archived, blocked, cancelled)
 - Priority (critical, high, medium, low)
 - Type (feature, enhancement, research, infrastructure, documentation)
@@ -141,7 +141,7 @@ Analyze user description for these indicators:
 
 **All MINIMAL fields PLUS:**
 - Quarter (backlog, 2025-q1, 2025-q2, etc.)
-- Support roles (@usernames, comma-separated)
+- Support roles (`@username`s, comma-separated)
 - Success criteria (checkbox format)
 - Timeline & phases (2-3 phases with checkboxes)
 - Risks & mitigation (table format: Risk | Probability | Impact | Mitigation)
@@ -152,8 +152,8 @@ Analyze user description for these indicators:
 **Use for:** Major launches, strategic initiatives, cross-project transformations
 
 **All STANDARD fields PLUS:**
-- Consulted roles (@usernames/@teams)
-- Informed roles (@usernames/@teams)
+- Consulted roles (`@username`s/`@teams`)
+- Informed roles (`@username`s/`@teams`)
 - Problem & context (deep situational analysis)
 - Scope boundaries (explicit in/out lists)
 - Dependencies (depends on, enables)
@@ -253,36 +253,36 @@ Use this framework to extract complete initiative context:
 ## RASCI Validation
 
 ### RASCI Model
-- **R**esponsible: Who does the work (single @username, REQUIRED)
-- **A**ccountable: Who has final approval (single @username, REQUIRED)
-- **S**upport: Who provides expertise (comma-separated @usernames, optional)
-- **C**onsulted: Who gives input (comma-separated @usernames/@teams, COMPREHENSIVE only)
-- **I**nformed: Who stays updated (comma-separated @usernames/@teams, COMPREHENSIVE only)
+- **R**esponsible: Who does the work (single `@username`, REQUIRED)
+- **A**ccountable: Who has final approval (single `@username`, REQUIRED)
+- **S**upport: Who provides expertise (comma-separated `@username`s, optional)
+- **C**onsulted: Who gives input (comma-separated `@username`s/@teams, COMPREHENSIVE only)
+- **I**nformed: Who stays updated (comma-separated `@username`s/@teams, COMPREHENSIVE only)
 
 ### Validation Rules
 1. **R and A always required** (no exceptions)
 2. **R and A can be the same person** (for solo work)
-3. **R and A must be @usernames** (not teams)
-4. **S/C/I can be teams or users** (e.g., @eng-team, @username)
+3. **R and A must be `@username`s** (not teams)
+4. **S/C/I can be teams or users** (e.g., `@eng-team`, `@username`)
 5. **Validate usernames exist** (suggest: check via `gh api users/{username}`)
 
 ### Example RASCI
 ```
 **Small feature (MINIMAL):**
-- Responsible: @johndoe
-- Accountable: @johndoe
+- Responsible: `@johndoe`
+- Accountable: `@johndoe`
 
 **Team feature (STANDARD):**
-- Responsible: @johndoe
+- Responsible: `@johndoe`
 - Accountable: @janedoe
 - Support: @engineer1, @engineer2
 
 **Cross-project initiative (COMPREHENSIVE):**
-- Responsible: @tech-lead
+- Responsible: `@tech-lead`
 - Accountable: @product-manager
 - Support: @backend-team, @frontend-team
-- Consulted: @security-team, @platform-team
-- Informed: @eng-team, @stakeholders
+- Consulted: `@security-team`, @platform-team
+- Informed: `@eng-team`, @stakeholders
 ```
 
 ## Timeline & Phase Structuring
@@ -589,13 +589,13 @@ User: "- Users can see detailed logs with --verbose
 
 Agent: "Excellent! Now for RASCI roles:
 
-**Who's responsible for execution?** (@username who does the work)"
+**Who's responsible for execution?** (`@username` who does the work)"
 
-User: "@johndoe"
+User: "`@johndoe`"
 
-Agent: "**Who has final approval authority?** (@username who signs off)"
+Agent: "**Who has final approval authority?** (`@username` who signs off)"
 
-User: "@johndoe" (solo work)
+User: "`@johndoe`" (solo work)
 
 Agent: "Great! **What's the priority?**
 Options: critical, high, medium, low"
@@ -619,7 +619,7 @@ Summary:
 - Project: genie
 - Priority: medium
 - Type: enhancement
-- RASCI: R=@johndoe, A=@johndoe
+- RASCI: R=`@johndoe`, A=`@johndoe`
 
 Want me to create a wish document in the genie repo?"
 
@@ -710,25 +710,25 @@ User: "Out of scope:
 
 Agent: "Excellent boundaries! Now for RASCI roles:
 
-**Who's responsible for execution?** (@username, does the work)"
+**Who's responsible for execution?** (`@username`, does the work)"
 
-User: "@tech-lead"
+User: "`@tech-lead`"
 
-Agent: "**Who has final approval authority?** (@username, signs off)"
+Agent: "**Who has final approval authority?** (`@username`, signs off)"
 
 User: "@product-manager"
 
-Agent: "**Who provides support/expertise?** (@usernames, comma-separated)"
+Agent: "**Who provides support/expertise?** (`@username`s, comma-separated)"
 
 User: "@backend-engineer, @frontend-engineer, @devrel-lead"
 
-Agent: "**Who needs to be consulted?** (@teams/@users who give input)"
+Agent: "**Who needs to be consulted?** (`@teams/`@users who give input)"
 
-User: "@security-team, @platform-team"
+User: "`@security-team`, @platform-team"
 
-Agent: "**Who should stay informed?** (@teams/@users who get updates)"
+Agent: "**Who should stay informed?** (`@teams/`@users who get updates)"
 
-User: "@eng-team, @stakeholders"
+User: "`@eng-team`, @stakeholders"
 
 [Continues through timeline, phases, risks, success metrics...]
 
@@ -744,7 +744,7 @@ Summary:
 - Project: cross-project
 - Priority: high
 - Timeline: 8 weeks, 4 phases
-- RASCI: R=@tech-lead, A=@product-manager, S=3, C=2, I=2
+- RASCI: R=`@tech-lead`, A=@product-manager, S=3, C=2, I=2
 - Risks: 5 identified with mitigation
 - Success metrics: Launch (Week 1), Growth (Month 1-3), Long-term (6+ months)
 
@@ -770,7 +770,7 @@ Agent: "✅ Done!
 
 Next steps:
 1. Review wishes and refine execution groups
-2. Coordinate with @security-team and @platform-team (consulted roles)
+2. Coordinate with `@security-team` and @platform-team (consulted roles)
 3. Run /forge in each repo to break into tasks
 4. Set up tracking board (optional)
 
@@ -839,8 +839,6 @@ Save to: `.genie/wishes/<slug>/reports/done-roadmap-<slug>-<YYYYMMDDHHmm>.md`
 
 Load project-specific roadmap conventions:
 
-@.genie/custom/roadmap.md
-
 **Expected customizations:**
 - Default project (if most initiatives target one repo)
 - Default stage (wishlist vs planning)
@@ -866,7 +864,7 @@ Load project-specific roadmap conventions:
 
 ## RASCI Shortcuts
 For solo development:
-- Responsible: @tech-lead
+- Responsible: `@tech-lead`
 - Accountable: @product-manager
 ```
 

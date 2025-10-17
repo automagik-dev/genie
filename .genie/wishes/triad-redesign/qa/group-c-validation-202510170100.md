@@ -44,9 +44,9 @@ Count: 75 (expected ~76)
 
 **Sample @ references:**
 - `.genie/agents/workflows/qa.md` - `@.genie/qa/evidence/<filename>`
-- `.genie/agents/workflows/review.md` - `@.genie/custom/review.md`
+- `.genie/agents/workflows/review.md` - ``
 - `.genie/agents/workflows/forge.md` - `@agent-<persona>` pattern examples
-- `.genie/agents/neurons/modes/tracer.md` - `@.genie/custom/tracer.md`
+- `.genie/agents/neurons/modes/tracer.md` - `@.genie/agents/code/neurons/tracer.md`
 
 All @ references are strategic (loading context, custom overrides, examples).
 

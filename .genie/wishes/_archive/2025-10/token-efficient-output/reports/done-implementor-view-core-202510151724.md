@@ -4,8 +4,8 @@
 **Agent:** implementor
 **Task:** Fix view index and core helper files (Group B partial)
 **Date:** 2025-10-15 18:40 UTC
-**Wish:** @.genie/wishes/token-efficient-output/token-efficient-output-wish.md
-**Task Spec:** @.genie/wishes/token-efficient-output/task-b.md
+**Wish:** token-efficient-output-wish.md
+**Task Spec:** task-b.md
 
 ## Working Tasks
 

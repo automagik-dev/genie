@@ -289,4 +289,4 @@ Dependencies satisfied:
 
 ---
 
-**Done Report Reference:** `@.genie/wishes/token-efficient-output/reports/done-implementor-group-a-202510151645.md`
+**Done Report Reference:** `reports/done-implementor-group-a-202510151645.md`

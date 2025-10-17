@@ -125,7 +125,7 @@ git tag -d vX.Y.Z-rc.N
 
 # Remote rollback (after push, careful!)
 git push --delete origin vX.Y.Z-rc.N
-npm unpublish automagik-genie@X.Y.Z-rc.N
+npm unpublish automagik-genie`@X.Y.Z-rc.N`
 ```
 
 ## Future Enhancements

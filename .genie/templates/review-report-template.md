@@ -24,8 +24,8 @@
   - [x] Minimal surface area (4/5 pts) – Note: Some extra files modified
   - [x] Clean abstractions (5/5 pts)
 - **Test Coverage (X/10 pts)**
-  - [x] Unit tests (4/4 pts) – Evidence: @tests/unit/*
-  - [x] Integration tests (4/4 pts) – Evidence: @tests/integration/*
+  - [x] Unit tests (4/4 pts) – Evidence: `@tests/unit/`*
+  - [x] Integration tests (4/4 pts) – Evidence: `@tests/integration/`*
   - [x] Test execution evidence (2/2 pts) – Evidence: test-results.log
 - **Documentation (X/5 pts)**
   - [x] Inline comments (2/2 pts)
@@ -53,9 +53,9 @@
 ## Evidence Summary
 | Artefact | Location | Result | Notes |
 | --- | --- | --- | --- |
-| Test results | @wishes/<slug>/qa/tests.log | ✅ | All 47 tests passing |
-| Metrics | @wishes/<slug>/qa/metrics.json | ✅ | TTFB avg 410ms (target <500ms) |
-| Screenshots | @wishes/<slug>/qa/screenshots/ | ✅ | 8 workflow screenshots captured |
+| Test results | `@wishes/`<slug>/qa/tests.log | ✅ | All 47 tests passing |
+| Metrics | `@wishes/`<slug>/qa/metrics.json | ✅ | TTFB avg 410ms (target <500ms) |
+| Screenshots | `@wishes/`<slug>/qa/screenshots/ | ✅ | 8 workflow screenshots captured |
 
 ## Deductions & Gaps
 1. **-2 pts (Discovery):** Risk analysis incomplete in discovery summary
@@ -70,7 +70,7 @@
 4. Consider splitting peripheral file changes into separate PR
 
 ## Verification Commands
-Summarize the validation commands executed (per wish instructions and project defaults in `@.genie/custom/tests.md` / `@.genie/custom/commit.md`) and record pass/fail status for each.
+Summarize the validation commands executed (per wish instructions and project defaults in `@.genie/agents/code/neurons/tests.md` / `@.genie/agents/code/neurons/commit.md`) and record pass/fail status for each.
 
 ## Verdict
 **Score: XX/100 (XX%)**

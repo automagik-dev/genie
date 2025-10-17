@@ -61,9 +61,9 @@
 | @.genie/cli/src/lib/config.ts:154-157 | code | Runtime provider.json loading (already works!) | implementation |
 | @.genie/cli/src/lib/config.ts:188-204 | code | loadWorkspaceProvider() and applyProviderOverrides() | implementation |
 | @.genie/cli/src/commands/run.ts | code | Run command (needs --provider flag integration) | implementation |
-| @.genie/state/provider.json | state | Provider selected at init, read at runtime | implementation |
+|  | state | Provider selected at init, read at runtime | implementation |
 | User clarification (items #7-9) | requirements | Runtime override with fallbacks, binary detection | entire wish |
-| @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
+|  | template | Wish structure requirements | wish structure |
 
 ## Discovery Summary
 - **Primary analyst:** Human (namastex) + Genie planning agent
@@ -147,9 +147,6 @@ This accommodates users with limited provider access while maintaining backward 
 
 **Surfaces:**
 - @.genie/cli/src/lib/executor-config.ts:9-15 – `resolveExecutorKey()` function
-- @.genie/cli/src/lib/provider-resolver.ts – new module for provider logic
-- @.genie/state/provider.json – runtime state file
-
 **Deliverables:**
 1. Create `provider-resolver.ts` module:
    ```typescript
@@ -320,7 +317,7 @@ DEBUG=1 genie run plan "test"
 
    Examples:
      genie run plan "Add auth" --provider claude
-     genie run implementor "@wish.md" --provider codex --mode careful
+     genie run implementor "" --provider codex --mode careful
    ```
 4. Repeat for `resume.ts` (same flag threading)
 
@@ -359,7 +356,6 @@ genie resume plan --provider claude
 **Goal:** Validate provider availability before execution
 
 **Surfaces:**
-- @.genie/cli/src/lib/executor-validator.ts – new module for binary checks
 - @.genie/cli/src/commands/run.ts – validation integration
 
 **Deliverables:**
@@ -482,9 +478,6 @@ mv $(which claude).bak $(which claude)
 **Goal:** Allow `genie config set provider <type>` to update state file
 
 **Surfaces:**
-- @.genie/cli/src/commands/config.ts – new config command
-- @.genie/state/provider.json – state file update
-
 **Deliverables:**
 1. Create `config.ts` command:
    ```typescript

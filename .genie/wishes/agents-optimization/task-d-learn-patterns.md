@@ -34,7 +34,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1260-1279
-   - Insert @ reference: `@.genie/agents/genie/neurons/learn/learn.md (meta-learning)`
+   - Insert @ reference: `@.genie/agents/neurons/learn.md (meta-learning)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -61,7 +61,7 @@ grep -q "done-learn-" .genie/agents/genie/neurons/learn/learn.md && echo "✅ Ev
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/genie/neurons/learn/learn.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/agents/neurons/learn.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Meta-Learn & Behavioral Corrections" AGENTS.md && echo "✅ Content removed"

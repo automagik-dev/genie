@@ -57,7 +57,7 @@ Instead of using one-shot Task tools, use MCP for full conversations:
 
 ```
 # Start implementing a wish
-mcp__genie__run with agent="template-implementor" and prompt="@.genie/wishes/auth-wish.md implement Group A"
+mcp__genie__run with agent="template-implementor" and prompt=" implement Group A"
 
 # Continue with error handling
 mcp__genie__resume with sessionId="<session-id>" and prompt="tests failing, debug the issue"

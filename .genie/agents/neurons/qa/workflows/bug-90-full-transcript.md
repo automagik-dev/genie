@@ -169,9 +169,6 @@ echo "Full: $(wc -l < .genie/qa/evidence/bug-90-full-<timestamp>.txt) lines"
 ```
 
 ## Related Tests
-- @qa/workflows/session-lifecycle.md (Post-Stop Transcript Access)
-- @qa/workflows/mcp-operations.md (View Session Summary, View Full Session)
-
 ## Maintenance
 **Test Frequency:** Every RC release
 **Last Tested:** [Date]

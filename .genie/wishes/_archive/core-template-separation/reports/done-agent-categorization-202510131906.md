@@ -278,7 +278,7 @@ grep "19 user-facing + 6 Genie-internal" .genie/wishes/core-template-separation/
 
 **NPM package = master prompts (users reference, NOT copy)**
 - 19 user-facing agents ship in npm package
-- Users access via `@.genie/agents/core/<agent>.md`
+- Users access via `@.genie/agents/neurons/<agent>.md`
 
 **Templates = custom stubs only (users copy)**
 - `.genie/custom/` stubs (22 files)
@@ -299,7 +299,7 @@ templates/base/
 │   └── state/           # State files
 ├── .claude/
 │   ├── commands/        # Slash commands → npm package
-│   └── agents/          # @.genie/agents/core/<agent>.md
+│   └── agents/          # @.genie/agents/neurons/<agent>.md
 ├── AGENTS.md
 └── CLAUDE.md
 ```

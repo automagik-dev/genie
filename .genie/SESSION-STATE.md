@@ -6,25 +6,30 @@
 
 ## 🎯 Active Sessions
 
-### Self-Updating Ecosystem - Group A Foundation ⚙️
-**Session ID:** `[pending - about to launch]`
-**Started:** 2025-10-17 19:20 UTC
-**Status:** Starting (live MCP QA session)
-**Wish:** `.genie/wishes/self-updating-ecosystem/self-updating-ecosystem-wish.md`
-**GitHub Issue:** #103
-**Related:** #49 (telemetry/metrics)
+### Implementor - RC16 Bug Fixes
+**Session ID:** `[about to launch - rc16-fixes]`
+**Started:** 2025-10-17 23:35 UTC
+**Status:** Starting
+**Purpose:** Fix session collision (#102) + add friendly session names
+**Scope:**
+- Session collision fix (run.ts, session-helpers.ts, resume.ts)
+- Friendly session names feature (user-provided or auto-generated)
+- SessionEntry schema update (add name field)
+- MCP server updates for name support
+- Active vs running concept clarification
 
-**Purpose:** Implement git hook infrastructure as live MCP validation
-**Scope:** Group A - Git hook foundation
-- Pre-commit orchestrator (Python script)
-- Pre-push orchestrator (Python script)
-- Post-merge orchestrator (Python script)
-- Hook installation + testing
+**Bug Fixes:**
+- #102: Session key collision (temp-* → UUID causes log file fragmentation)
+- #90: History fragmentation (auto-fixed by #102)
 
-**MCP Pattern:** Orchestrator → Implementor neuron (proper delegation)
-**QA Focus:** Validate MCP works end-to-end, fix bugs immediately if found
+**Files to modify:**
+- `.genie/cli/src/session-store.ts` (add name field)
+- `.genie/cli/src/cli-core/handlers/run.ts` (use sessionId not temp)
+- `.genie/cli/src/cli-core/handlers/resume.ts` (lookup by name or ID)
+- `.genie/cli/src/commands/run.ts` (accept name parameter)
+- `.genie/mcp/src/server.ts` (expose name in tools)
 
-**Next:** Launch implementor neuron with Discovery → Implementation → Verification prompt
+**Next:** Launch implementor with detailed spec
 
 <!--
 Session format:
@@ -91,7 +96,7 @@ Session format:
 **Outcome:** Documented architectural evolution: folder hierarchy = delegation hierarchy
 **Details:**
 - Added 4 sections to AGENTS.md: @ Tool Semantics (270), Genie Loading Architecture (315), Neuron Delegation Hierarchy (376), Persistent Tracking Protocol (571)
-- Updated .claude/README.md with Neuron Delegation Hierarchy section
+- Updated  with Neuron Delegation Hierarchy section
 - Documented @ semantics: path reference only (lightweight), NOT full load
 - Documented 3-tier hierarchy: Base Genie → Neurons → Workflows
 - Application enforcement: list_agents scoped by folder structure

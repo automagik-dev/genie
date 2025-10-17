@@ -10,7 +10,7 @@ This review covers the **orchestrator mode consolidation** work completed in com
 ### Discovery Phase (28/30 pts)
 
 - **Context Completeness (10/10 pts)**
-  - [x] All files/docs referenced (4/4 pts) – Evidence: orchestrator.md, AGENTS.md, .claude/README.md, challenge.md analyzed
+  - [x] All files/docs referenced (4/4 pts) – Evidence: orchestrator.md, AGENTS.md, , challenge.md analyzed
   - [x] Mode overlap analysis complete (3/3 pts) – Evidence: socratic/debate/challenge redundancy documented
   - [x] Decisions documented (3/3 pts) – Evidence: 3-mode architecture justified, auto-routing strategy defined
 
@@ -38,7 +38,7 @@ This review covers the **orchestrator mode consolidation** work completed in com
 
 - **Documentation (5/5 pts)**
   - [x] Inline mode selection guide (2/2 pts) – Evidence: orchestrator.md lines 58-183
-  - [x] Updated routing docs (2/2 pts) – Evidence: AGENTS.md, .claude/README.md
+  - [x] Updated routing docs (2/2 pts) – Evidence: AGENTS.md, 
   - [x] Maintainer context (1/1 pt) – Evidence: commit advisory comprehensive
 
 - **Execution Alignment (10/10 pts)**
@@ -69,7 +69,7 @@ This review covers the **orchestrator mode consolidation** work completed in com
 | --- | --- | --- | --- |
 | Commit | 544bd0d | ✅ | Clean commit on wish/core-template-separation |
 | Mode files | .genie/agents/core/modes/ | ✅ | 14 files (was 17), renamed/merged correctly |
-| Documentation | AGENTS.md, .claude/README.md | ✅ | All references updated |
+| Documentation | AGENTS.md,  | ✅ | All references updated |
 | Commit advisory | reports/commit-advice-mode-consolidation-202510070431.md | ✅ | Comprehensive evidence |
 | Grep verification | N/A | ✅ | Zero old mode references remain |
 
@@ -105,7 +105,7 @@ This review covers the **orchestrator mode consolidation** work completed in com
 **Executed:**
 - `git log -1 --name-status` → verified file deletions/renames
 - `ls .genie/agents/core/modes/ | wc -l` → 14 modes (correct count)
-- `grep -r "socratic\|debate\|thinkdeep" AGENTS.md .claude/README.md` → 0 results (clean)
+- `grep -r "socratic\|debate\|thinkdeep" AGENTS.md ` → 0 results (clean)
 - `git show 544bd0d --stat` → -20 LOC net (matches claim)
 
 **Not Executed (Gaps):**

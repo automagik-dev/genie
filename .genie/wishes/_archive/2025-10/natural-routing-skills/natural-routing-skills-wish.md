@@ -58,9 +58,9 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | Planning brief | doc | Orchestrator session 36e0999a insights on routing, delegation, mode selection | entire wish |
-| @.genie/custom/routing.md | repo | Orchestrator-specific routing guidance (new from infinite loop fix) | wish, Group A |
-| @.genie/agents/orchestrator.md | repo | 18 strategic thinking modes via orchestrator neuron | wish, Group C |
-| @.genie/agents/core/commit.md | repo | Underutilized commit agent, needs routing triggers | wish, Group A |
+| @.genie/agents/code/routing.md | repo | Orchestrator-specific routing guidance (new from infinite loop fix) | wish, Group A |
+|  | repo | 18 strategic thinking modes via orchestrator neuron | wish, Group C |
+| @.genie/agents/code/neurons/commit.md | repo | Underutilized commit agent, needs routing triggers | wish, Group A |
 | @AGENTS.md | repo | Global context loaded by ALL agents (routing paradox risk) | wish, risk analysis |
 | @CLAUDE.md | repo | Project-specific patterns | wish, documentation |
 | Commit 0f45945 | git | Infinite loop fix via routing.md and self-reference guards | wish, risk mitigation |
@@ -94,9 +94,8 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 
 ## Current State
 - **What exists today:**
-  - @.genie/custom/routing.md (NEW from infinite loop fix) - orchestrator-specific routing guidance
-  - @.genie/agents/orchestrator.md - 18 modes (challenge, explore, consensus, plan, analyze, debug, etc.)
-  - @.genie/agents/core/commit.md - commit agent with pre-commit gate workflow
+  - @.genie/agents/code/routing.md (NEW from infinite loop fix) - orchestrator-specific routing guidance
+  - @.genie/agents/code/neurons/commit.md - commit agent with pre-commit gate workflow
   - @AGENTS.md - global context loaded by ALL agents
   - Recent self-reference guards prevent infinite delegation loops
 - **Gaps/Pain points:**
@@ -123,7 +122,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 ## Execution Groups
 ### Group A – Routing Trigger System (scoped to routing.md)
 - **Goal:** Create routing triggers that suggest commit agent, orchestrator modes, and specialist delegation WITHOUT causing routing paradox
-- **Surfaces:** `@.genie/custom/routing.md`, `@.genie/agents/core/commit.md`
+- **Surfaces:** `@.genie/agents/code/routing.md`, `@.genie/agents/code/neurons/commit.md`
 - **Deliverables:**
   - Routing trigger definitions in routing.md ONLY (NOT AGENTS.md)
   - Commit agent trigger: multi-file commits, complex diffs, cross-domain changes
@@ -136,7 +135,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 
 ### Group B – Orchestrator Discoverability
 - **Goal:** Reframe orchestrator as primary strategic interface with natural conversation patterns
-- **Surfaces:** `@.genie/agents/orchestrator.md`, `@AGENTS.md` (careful - global context!), `@CLAUDE.md`
+- **Surfaces:** ``, `@AGENTS.md` (careful - global context!), `@CLAUDE.md`
 - **Deliverables:**
   - Updated orchestrator.md positioning (user-facing strategic interface)
   - Proactive suggestion patterns for orchestrator invocation
@@ -148,7 +147,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 
 ### Group C – Mode Selection Heuristics
 - **Goal:** Simplify 18 orchestrator modes with clear "when to use" heuristics and keyword triggers
-- **Surfaces:** `@.genie/agents/orchestrator.md`
+- **Surfaces:** ``
 - **Deliverables:**
   - Analysis of 18 modes identifying overlap/redundancy
   - Keyword/pattern triggers for each mode (e.g., "pressure-test" → challenge, "root cause" → debug)
@@ -161,7 +160,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 
 ### Group D – Delegation Threshold Framework
 - **Goal:** Define concrete delegation thresholds with decision tree and examples
-- **Surfaces:** `@.genie/custom/routing.md`, `@AGENTS.md` (if safe - verify no paradox)
+- **Surfaces:** `@.genie/agents/code/routing.md`, `@AGENTS.md` (if safe - verify no paradox)
 - **Deliverables:**
   - Complexity threshold criteria (≥3 files, ≥2 domains, strategic vs tactical)
   - Task type classification (simple edit, refactor, feature, investigation)
@@ -247,7 +246,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 - **External tasks:** None (all work self-contained in wish)
 - **Dependencies:**
   - Commit 0f45945 architecture (routing.md, self-reference guards) must remain intact
-  - @.genie/custom/routing.md must remain orchestrator-scoped (never global)
+  - @.genie/agents/code/routing.md must remain orchestrator-scoped (never global)
   - AGENTS.md routing guidance must be carefully scoped to prevent paradox
 </spec_contract>
 

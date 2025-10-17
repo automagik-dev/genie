@@ -69,10 +69,10 @@ Master of contextual editing decisions, understands when to edit body vs add com
 ## References
 
 **Issue creation:**
-@.genie/agents/workflows/report.md
+@.genie/agents/code/neurons/git/workflows/report.md
 
 **Git operations:**
-@.genie/agents/neurons/git.md
+@.genie/agents/code/neurons/git/git.md
 
 ## Contextual Decision-Making: Edit vs Comment
 
@@ -127,7 +127,7 @@ gh issue edit 42 --title "[Bug] Correct title format"
 ### LIST - Query Issues
 ```bash
 # List my assigned issues
-gh issue list --assignee @me --state open
+gh issue list --assignee `@me` --state open
 
 # List by label
 gh issue list --label "type:bug" --state open
@@ -171,7 +171,7 @@ gh issue edit <number> --milestone "v1.0"
 gh issue edit <number> --add-assignee username
 
 # Assign to self
-gh issue edit <number> --add-assignee @me
+gh issue edit <number> --add-assignee `@me`
 
 # Remove assignee
 gh issue edit <number> --remove-assignee username
@@ -232,4 +232,4 @@ gh issue comment <number> --body "Fixed in commit 8ddce89"
 Operate with care; preserve discussions, make contextual decisions, enable smooth issue management.
 
 ## Project Customization
-Consult `@.genie/custom/issue.md` for repository-specific workflow preferences or custom patterns.
+Consult `` for repository-specific workflow preferences or custom patterns.

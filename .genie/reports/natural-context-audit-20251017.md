@@ -37,7 +37,7 @@
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 @.genie/agents/README.md   # Load agent architecture
-@.claude/README.md         # Load routing patterns
+         # Load routing patterns
 ```
 
 **Impact:** Auto-synchronized with package.json, always fresh context
@@ -45,7 +45,7 @@
 
 ---
 
-### 2. .claude/README.md
+### 2. 
 **Current State:** 431 lines, references AGENTS.md conceptually but doesn't load it
 **Line 1:** Static title without version info
 
@@ -64,12 +64,11 @@
 ```
 
 **Why This Matters:**
-- .claude/README.md is loaded by CLAUDE.md (line 2 of CLAUDE.md)
 - By adding @AGENTS.md here, every Claude session automatically gets AGENTS.md
 - Currently CLAUDE.md loads AGENTS.md directly (line 1), creating duplication opportunity
-- Better: .claude/README.md becomes "router" that loads framework knowledge
+- Better:  becomes "router" that loads framework knowledge
 
-**Impact:** Creates knowledge graph: CLAUDE.md → .claude/README.md → AGENTS.md
+**Impact:** Creates knowledge graph: CLAUDE.md →  → AGENTS.md
 **Effort:** 10 minutes
 
 ---
@@ -86,11 +85,11 @@
 
 ## Universal Standards
 @AGENTS.md                           # Prompting Standards Framework
-@.genie/agents/workflows/prompt.md  # Prompt crafting workflow
+@.genie/agents/neurons/prompt.md  # Prompt crafting workflow
 
 ## Agent Types
 ### Workflow Orchestrators
-@.genie/agents/workflows/plan.md    # Plan → Wish → Forge → Review
+    # Plan → Wish → Forge → Review
 <!-- rest of structure -->
 ```
 
@@ -172,24 +171,24 @@ This agent uses the universal prompting framework (see above):
 
 When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:
 
-@.genie/custom/routing.md
+@.genie/agents/code/routing.md
 ```
 
-**Status:** ✅ ALREADY OPTIMAL (line 58 has @.genie/custom/routing.md)
+**Status:** ✅ ALREADY OPTIMAL (line 58 has @.genie/agents/code/routing.md)
 
 ---
 
 ### 7. orchestrator.md Routing Reference
 **Current State:** Line 36-42 references routing.md
 
-**Status:** ✅ ALREADY OPTIMAL (line 40 has @.genie/custom/routing.md)
+**Status:** ✅ ALREADY OPTIMAL (line 40 has @.genie/agents/code/routing.md)
 
 ---
 
 ### 8. implementor.md Custom Reference
 **Current State:** Line 104-112 references custom file
 
-**Status:** ✅ ALREADY OPTIMAL (line 112 has @.genie/custom/implementor.md)
+**Status:** ✅ ALREADY OPTIMAL (line 112 has @.genie/agents/code/neurons/implementor.md)
 
 ---
 
@@ -301,7 +300,7 @@ This mode uses the universal prompting framework (see above):
 **Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ## Core Agent Reference
-@.genie/agents/neurons/implementor.md
+@.genie/agents/code/neurons/implementor.md
 
 ## Project-Specific Configuration
 <!-- overrides here -->
@@ -324,7 +323,7 @@ This mode uses the universal prompting framework (see above):
 
 ## Neuron Architecture
 @.genie/agents/README.md       # Agent structure reference
-@.claude/README.md             # Natural language routing patterns
+             # Natural language routing patterns
 
 ## Task Type → Agent Mapping
 <!-- routing rules -->
@@ -340,25 +339,25 @@ This mode uses the universal prompting framework (see above):
 ### @ (File Reference) Patterns Discovered
 
 **Already Optimal (4 patterns):**
-1. ✅ orchestrator.md:40 → @.genie/custom/routing.md
-2. ✅ plan.md:58 → @.genie/custom/routing.md
-3. ✅ implementor.md:112 → @.genie/custom/implementor.md
+1. ✅ orchestrator.md:40 → @.genie/agents/code/routing.md
+2. ✅ plan.md:58 → @.genie/agents/code/routing.md
+3. ✅ implementor.md:112 → @.genie/agents/code/neurons/implementor.md
 4. ✅ wish.md:97 → @.genie/templates/wish-template.md
 
 **High-Impact Additions (15 patterns):**
-1. 🟡 .claude/README.md → @AGENTS.md, @.genie/MASTER-PLAN.md
-2. 🟡 .genie/README.md → @.genie/agents/README.md, @.claude/README.md
-3. 🟡 .genie/agents/README.md → @AGENTS.md, @.genie/agents/workflows/prompt.md
+1. 🟡  → @AGENTS.md, @.genie/MASTER-PLAN.md
+2. 🟡 .genie/README.md → @.genie/agents/README.md, 
+3. 🟡 .genie/agents/README.md → @AGENTS.md, @.genie/agents/neurons/prompt.md
 4. 🟡 5 workflow agents → @AGENTS.md (plan, wish, forge, review, qa)
 5. 🟡 9 neuron agents → @AGENTS.md (implementor, tests, polish, etc.)
 6. 🟡 9 mode files → @AGENTS.md (analyze, challenge, debug, etc.)
 7. 🟡 5+ custom files → @.genie/agents/neurons/<agent>.md
-8. 🟡 .genie/custom/routing.md → @.genie/agents/README.md, @.claude/README.md
+8. 🟡 .genie/custom/routing.md → @.genie/agents/README.md, 
 
 **Neural File Network Map:**
 ```
 CLAUDE.md
-  ↓ @.claude/README.md (line 2)
+  ↓  (line 2)
     ↓ @AGENTS.md (proposed)
     ↓ @.genie/MASTER-PLAN.md (proposed)
   ↓ @AGENTS.md (line 1, current)
@@ -370,7 +369,7 @@ CLAUDE.md
 
 .genie/custom/routing.md
   ↓ @.genie/agents/README.md (proposed)
-  ↓ @.claude/README.md (proposed)
+  ↓  (proposed)
 ```
 
 ---
@@ -394,7 +393,6 @@ CLAUDE.md
 - CHANGELOG.md → `!node -p "require('./package.json').version"`
 - RELEASE.md → `!node -p "require('./package.json').version"`
 - .genie/README.md → `!node -p "require('./package.json').version"`
-- .claude/README.md → `!node -p "require('./package.json').version"`
 - .genie/agents/README.md → `!node -p "require('./package.json').version"`
 - All custom override files (5+) → version
 
@@ -441,13 +439,13 @@ CLAUDE.md
    - 9 mode files (analyze, challenge, debug, etc.)
    - Pattern: Replace framework reference text with `@AGENTS.md` + minimal description
 
-2. **.claude/README.md → Load framework** (10 min)
+2. ** → Load framework** (10 min)
    - Add @AGENTS.md after title
    - Add @.genie/MASTER-PLAN.md for architectural context
    - Add version + timestamp via !
 
 3. **.genie/agents/README.md → Neural hub** (10 min)
-   - Add @AGENTS.md, @.genie/agents/workflows/prompt.md at top
+   - Add @AGENTS.md, @.genie/agents/neurons/prompt.md at top
    - Add version + timestamp via !
 
 4. **.genie/README.md → Auto-sync** (10 min)
@@ -588,7 +586,7 @@ grep -r "!\`" .genie/ .claude/ | wc -l
 3. `.genie/MASTER-PLAN.md` - 1 ! command, timestamp dynamic
 
 ### High-Impact Targets (15)
-1. `.claude/README.md` - 431 lines, central routing doc
+1. `` - 431 lines, central routing doc
 2. `.genie/README.md` - 164 lines, agent architecture
 3. `.genie/agents/README.md` - 164 lines, agent hub
 4-8. Workflow agents (5 files) - plan, wish, forge, review, qa

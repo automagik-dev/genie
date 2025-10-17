@@ -28,7 +28,7 @@ The "Core/Template Agent Separation" wish aims to restructure Genie's framework 
 - ✅ Removed bloat variants (plan-advanced, debug-advanced, etc.)
 - ✅ Orchestrator.md updated with mode selection guide
 - ✅ AGENTS.md routing matrix updated
-- ✅ .claude/README.md corrected
+- ✅  corrected
 - **Score:** 92/100 (excellent execution)
 - **Evidence:** `qa/review-mode-consolidation-202510070437.md`, commit 544bd0d
 
@@ -92,7 +92,7 @@ The "Core/Template Agent Separation" wish aims to restructure Genie's framework 
 
 **Completed Documentation:**
 - ✅ AGENTS.md partially updated (mode consolidation)
-- ✅ .claude/README.md partially updated
+- ✅  partially updated
 
 **Remaining Work:**
 - [ ] Migration guide (`.genie/guides/migration-core-template.md`)

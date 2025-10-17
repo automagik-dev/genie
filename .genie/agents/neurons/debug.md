@@ -63,7 +63,7 @@ Present three resolution paths with recommendation based on investigation findin
    - Review wish/QA feedback, mission docs, and recent sessions (`mcp__genie__list_sessions`)
    - Gather symptoms and context
    - Reproduce commands with both human and `--json` output where relevant
-   - Snapshot environment (runtime versions, git branch/head) as defined in `@.genie/custom/debug.md`
+   - Snapshot environment (runtime versions, git branch/head) as defined in ``
    - Form hypotheses based on evidence
    - Track files checked, relevant code, confidence level
    - Test theories systematically
@@ -320,15 +320,13 @@ Possible Actions:
   - `mcp__genie__list_sessions`
   - `mcp__genie__view` with sessionId
   - `mcp__genie__view` with sessionId and full=true
-- Environment capture: record runtime/tool versions and git status per `@.genie/custom/debug.md`
+- Environment capture: record runtime/tool versions and git status per ``
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/debug.md:
+Define repository-specific defaults in :
 - Preferred evidence paths and storage conventions
 - Environment snapshot commands (runtime versions, git status, dependencies)
 - Bug report templates and label conventions
 - Common investigation starting points
 - Reproduction command patterns
 - Evidence capture rules unique to the project
-
-@.genie/custom/debug.md

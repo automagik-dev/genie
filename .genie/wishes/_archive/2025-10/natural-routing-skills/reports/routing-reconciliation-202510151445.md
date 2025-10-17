@@ -179,7 +179,7 @@ grep -A 5 "Standalone Agent Routing" .genie/custom/routing.md
 - Verify Genie uses orchestrator modes for challenge/explore/consensus
 
 **Documentation Updates:**
-- Consider updating `.claude/README.md` to reflect 5 modes (not 18)
+- Consider updating `` to reflect 5 modes (not 18)
 - Update orchestrator.md to remove phantom mode templates (separate task)
 
 ---

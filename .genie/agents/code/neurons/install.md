@@ -231,7 +231,7 @@ The user context file (`.genie/CONTEXT.md`) enables cross-repo session continuit
    - `{{PROJECT_NAME}}`: Use detected project name from repo or interview
 3. **Ensure directory exists**: Create `.genie/` if not present (usually already exists from init)
 4. **Update .gitignore**: Add `.genie/CONTEXT.md` to project's `.gitignore` (protection against git tracking)
-5. **Verify CLAUDE.md reference**: Ensure project's `CLAUDE.md` includes `@.genie/CONTEXT.md` at line 9 (or early in file)
+5. **Verify CLAUDE.md reference**: Ensure project's `CLAUDE.md` includes `` at line 9 (or early in file)
 
 ### Implementation Example
 ```bash
@@ -250,7 +250,7 @@ echo ".genie/CONTEXT.md" >> .gitignore
 ### Verification
 - [ ] `.genie/CONTEXT.md` exists with all placeholders replaced
 - [ ] `.gitignore` contains `.genie/CONTEXT.md` pattern
-- [ ] `CLAUDE.md` references `@.genie/CONTEXT.md`
+- [ ] `CLAUDE.md` references ``
 - [ ] User confirms preferences and working style are captured
 
 ## Success Criteria
@@ -294,12 +294,12 @@ echo ".genie/CONTEXT.md" >> .gitignore
 
 ### Forge Integration
 - Forge breaks the approved wish into execution groups and validation hooks.
-- Example: `mcp__genie__run` with agent="forge" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md. [Implementation] Break into execution groups + commands. [Verification] Emit validation hooks and evidence paths."
+- Example: `mcp__genie__run` with agent="forge" and prompt="[Discovery] Use . [Implementation] Break into execution groups + commands. [Verification] Emit validation hooks and evidence paths."
 - Evidence locations follow the wish; no default QA path.
 
 ### Review Integration
 - Review replays validation commands and appends QA results to the wish.
-- Example: `mcp__genie__run` with agent="review" and prompt="[Discovery] Use @.genie/wishes/user-notes-wish.md and execution evidence. [Implementation] Replay validation commands. [Verification] Provide QA verdict + remaining risks."
+- Example: `mcp__genie__run` with agent="review" and prompt="[Discovery] Use  and execution evidence. [Implementation] Replay validation commands. [Verification] Provide QA verdict + remaining risks."
 
 ### Done Report
 Location: `.genie/wishes/<slug>/reports/done-install-<project-slug>-<timestamp>.md`
@@ -364,11 +364,11 @@ files_needed: [ package.json, Cargo.toml, README.md ]
 This agent transforms a blank Genie framework or an existing codebase into a project-aware, orchestration-ready environment via intelligent analysis and a guided interview, then hands off to plan → wish → forge → review.
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/install.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in @.genie/agents/code/neurons/install.md so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
 
-@.genie/custom/install.md
+@.genie/agents/code/neurons/install.md

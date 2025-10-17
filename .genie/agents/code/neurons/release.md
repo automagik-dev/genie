@@ -813,7 +813,7 @@ Agent: "Running pre-flight checks..."
        ✅ Version not published
        ✅ Release doesn't exist
 
-       "Ready to release v2.3.7 to @latest. Continue?"
+       "Ready to release v2.3.7 to `@latest` Continue?"
 
 User: "yes"
 

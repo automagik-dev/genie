@@ -80,7 +80,7 @@ Capability enhancement - new "absorption" mode for learn agent
 +**Mapping Rules (violation_type → target files):**
 +- `DOC_INTEGRITY` → affected agent prompts, AGENTS.md guidance sections
 +- `FILE_DELETION` → affected agent prompts, AGENTS.md critical_behavioral_overrides
-+- `CLI_DESIGN` → affected agent prompts, .claude/README.md
++- `CLI_DESIGN` → affected agent prompts, 
 +- `WORKFLOW` → AGENTS.md workflows, affected agent prompts
 +- `POLLING` → AGENTS.md MCP sections, affected agent prompts
 +- `TWIN_VALIDATION` → vibe.md, orchestrator.md
@@ -189,7 +189,7 @@ Capability enhancement - new "absorption" mode for learn agent
 +Entries absorbed:
 +- DOC_INTEGRITY (2025-09-29) → learn.md, agent prompts
 +- FILE_DELETION (2025-09-29) → critical_behavioral_overrides
-+- CLI_DESIGN (2025-09-29) → .claude/README.md
++- CLI_DESIGN (2025-09-29) → 
 +- WORKFLOW (2025-09-29) → AGENTS.md workflows
 +- POLLING (2025-09-30) → vibe.md
 +- TWIN_VALIDATION (2025-09-30) → vibe.md, orchestrator.md
@@ -217,7 +217,7 @@ Capability enhancement - new "absorption" mode for learn agent
  Usage: /learn '<teaching input>'
 -Formats: violation, pattern, workflow, capability
 +Formats: violation, pattern, workflow, capability, absorption
- Target: AGENTS.md routing, .claude/README.md agent matrix
+ Target: AGENTS.md routing,  agent matrix
 
  Example: /learn 'Violation: ... Evidence: ... Correction: ... Target: ...'
 

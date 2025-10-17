@@ -51,8 +51,6 @@ IF current task involves writing or updating HTML, CSS, or TailwindCSS:
         PROCESS: Returned style rules
       ELSE:
         READ the following style guides (only if not already in context):
-        - @.agent-os/standards/code-style/html-style.md (if not in context)
-        - @.agent-os/standards/code-style/css-style.md (if not in context)
     </context_fetcher_strategy>
 ELSE:
   SKIP: HTML/CSS style guides not relevant to current task
@@ -70,7 +68,7 @@ IF current task involves writing or updating JavaScript:
         REQUEST: "Get JavaScript style rules from code-style/javascript-style.md"
         PROCESS: Returned style rules
       ELSE:
-        READ: @.agent-os/standards/code-style/javascript-style.md
+        READ: 
     </context_fetcher_strategy>
 ELSE:
   SKIP: JavaScript style guide not relevant to current task

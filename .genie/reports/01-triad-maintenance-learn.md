@@ -18,7 +18,7 @@ Evidence: Vibe mode session 2025-10-17
 - Published RC7 - DIDN'T update STATE.md version info
 - Said "I'm learning" about version awareness - DIDN'T invoke learn agent
 
-Pattern: Load triad files (@TODO.md, @STATE.md, @USERCONTEXT.md) but NEVER maintain them
+Pattern: Load triad files (`@TODO.md`, @STATE.md, @USERCONTEXT.md) but NEVER maintain them
 
 Felipe's ask: "definite solution for this" = permanent fix, not promises
 

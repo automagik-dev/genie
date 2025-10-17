@@ -50,7 +50,7 @@ Validation protocol before ANY genie command:
 Target Files:
 - AGENTS.md (add to critical_behavioral_overrides section with CRITICAL severity)
 - Any agent documentation in .genie/agents/ mentioning genie CLI
-- README files (.claude/README.md, .genie/agents/README.md)
+- README files (, .genie/agents/README.md)
 - CLAUDE.md MCP Quick Reference section
 ```
 

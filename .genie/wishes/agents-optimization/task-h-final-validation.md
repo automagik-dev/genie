@@ -48,14 +48,12 @@
    ## Neuron Delegation Hierarchy (critical)
 
    # Natural Flow Protocol (~20 lines summary)
-   @.genie/agents/genie/neurons/plan/plan.md
+   @.genie/agents/neurons/plan.md
    @.genie/agents/genie/neurons/wish/wish.md
-   @.genie/agents/genie/neurons/forge/forge.md
+   @.genie/agents/neurons/forge.md
    @.genie/agents/genie/neurons/review/review.md
 
    # Universal Workflow Architecture (~20 lines summary)
-   @.genie/docs/universal-workflow.md
-
    # Critical Behavioral Overrides (~150 lines)
    - Evidence-Based Thinking
    - Delegation Discipline (critical)

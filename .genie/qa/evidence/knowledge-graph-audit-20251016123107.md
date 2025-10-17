@@ -245,7 +245,7 @@ Only 5 files use ! commands for dynamic context:
 - **Issue:** Hub file with excessive @ usage (15 files loaded, 2 incoming)
 - **Impact:** HIGH - affects dependent files, bloats context
 - **Action:** Convert non-essential @ refs to Read tool calls
-- **Specifics:** Keep @mission, @roadmap, @standards; use Read for evidence
+- **Specifics:** Keep `@mission`, @roadmap, @standards; use Read for evidence
 
 ### HIGH Priority
 
@@ -308,7 +308,7 @@ Only 5 files use ! commands for dynamic context:
 **27-29. Leaf Agents Without Context**
 - **Issue:** Agents with no @ references
 - **Impact:** LOW - isolated knowledge
-- **Action:** Consider loading @mission, @standards
+- **Action:** Consider loading `@mission`, @standards
 - **Specifics:** Agents benefit from product context
 
 ---
@@ -374,7 +374,7 @@ Only 5 files use ! commands for dynamic context:
    - Monitor file sizes
 
 10. **Agent context loading**
-    - Add @mission, @standards to 15 leaf agents
+    - Add `@mission`, @standards to 15 leaf agents
     - **Estimated impact:** Better context awareness
 
 ### Success Metrics

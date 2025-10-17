@@ -53,11 +53,13 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const startTime = deriveStartTime();
     const logFile = deriveLogFile(resolvedAgentName, startTime, ctx.paths);
 
-    // Generate temporary session ID for tracking (will be updated with real sessionId later)
-    const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
+    // Import generateSessionName from session-store
+    const { generateSessionName } = require('../../session-store');
 
+    // Don't persist with temp key - wait for real sessionId from extraction
     const entry: SessionEntry = {
       agent: resolvedAgentName,
+      name: parsed.options.name || generateSessionName(resolvedAgentName),
       preset: modeName,
       mode: modeName,
       logFile,
@@ -72,11 +74,10 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       exitCode: null,
       signal: null,
       startTime: new Date(startTime).toISOString(),
-      sessionId: tempSessionId // Will be updated with real sessionId from executor
+      sessionId: null // Will be filled by extraction
     };
 
-    store.sessions[tempSessionId] = entry;
-    await persistStore(ctx, store);
+    // Don't persist yet - wait for sessionId extraction
 
     const handledBackground = await maybeHandleBackgroundLaunch(ctx, {
       parsed,

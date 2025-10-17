@@ -56,7 +56,7 @@ Genie in Genie repo building Genie for general audience. Fix base prompts → pe
    - Minimal: Pointers only (no task details)
 
 4. Update CLAUDE.md
-   - Change `@.genie/CONTEXT.md` → `@.genie/USERCONTEXT.md`
+   - Change `` → `@.genie/USERCONTEXT.md`
 
 **Evidence:**
 ```bash

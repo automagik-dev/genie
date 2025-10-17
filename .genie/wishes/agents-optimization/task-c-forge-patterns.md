@@ -34,7 +34,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1209-1258
-   - Insert @ reference: `@.genie/agents/genie/neurons/forge/forge.md (forge patterns)`
+   - Insert @ reference: `@.genie/agents/neurons/forge.md (forge patterns)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -61,7 +61,7 @@ grep -q "Critical Distinction" .genie/agents/genie/neurons/forge/forge.md && ech
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/genie/neurons/forge/forge.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/agents/neurons/forge.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Forge MCP Task Pattern" AGENTS.md && echo "✅ Content removed"

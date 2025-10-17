@@ -8,7 +8,7 @@ The genie-dev branch is the laboratory for Genie’s self-improvement program. P
 - Establish `pnpm run build:genie` + smoke tests as the minimum verification gate
 
 ## Phase 1 — Instrumentation & Telemetry (in progress)
-- Treat the wish **Evidence Checklist** as the gating deliverable before other instrumentation tasks proceed (see @.genie/agents/wish.md).
+- Treat the wish **Evidence Checklist** as the gating deliverable before other instrumentation tasks proceed (see ).
 - Add branch-specific checklists to every wish to log evidence paths and validation commands
 - Expand done-report coverage so each experiment stores scope, risks, and follow-ups
 - Wire CLI diagnostics to surface missing sessions or misconfigured presets

@@ -41,7 +41,7 @@
 ### Group A: Extract GitHub Workflow Patterns
 **Target:** `.genie/agents/genie/neurons/git/git.md`
 **Lines to extract:** 41-179 (Developer Welcome Flow, GitHub integration)
-**Replace with:** `@.genie/agents/genie/neurons/git/git.md` (GitHub workflow reference)
+**Replace with:** `@.genie/agents/code/neurons/git/git.md` (GitHub workflow reference)
 
 **Sections:**
 - Developer Welcome Flow (41-72)
@@ -51,7 +51,7 @@
 ### Group B: Extract Prompting Standards
 **Target:** `.genie/agents/genie/neurons/prompt/prompt.md`
 **Lines to extract:** 1001-1115, 1769-1882 (@ / ! / patterns, Task Breakdown Structure)
-**Replace with:** `@.genie/agents/genie/neurons/prompt/prompt.md` (prompting framework reference)
+**Replace with:** `@.genie/agents/neurons/prompt.md` (prompting framework reference)
 
 **Sections:**
 - @ / ! / Feature Reference (1008-1115)
@@ -63,7 +63,7 @@
 ### Group C: Extract Forge Patterns
 **Target:** `.genie/agents/genie/neurons/forge/forge.md`
 **Lines to extract:** 1209-1258 (Forge MCP Task Pattern)
-**Replace with:** `@.genie/agents/genie/neurons/forge/forge.md` (forge patterns reference)
+**Replace with:** `@.genie/agents/neurons/forge.md` (forge patterns reference)
 
 **Sections:**
 - Forge MCP Task Pattern (1209-1258)
@@ -71,7 +71,7 @@
 ### Group D: Extract Learn Patterns
 **Target:** `.genie/agents/genie/neurons/learn/learn.md`
 **Lines to extract:** 1260-1279 (Meta-Learn & Behavioral Corrections)
-**Replace with:** `@.genie/agents/genie/neurons/learn/learn.md` (meta-learning reference)
+**Replace with:** `@.genie/agents/neurons/learn.md` (meta-learning reference)
 
 **Sections:**
 - Meta-Learn & Behavioral Corrections (1260-1279)
@@ -79,7 +79,7 @@
 ### Group E: Extract Release Protocol
 **Target:** `.genie/agents/genie/neurons/release/release.md`
 **Lines to extract:** 1361-1402 (Publishing Protocol)
-**Replace with:** `@.genie/agents/genie/neurons/release/release.md` (release protocol reference)
+**Replace with:** `@.genie/agents/code/neurons/release.md` (release protocol reference)
 
 **Sections:**
 - Publishing Protocol (1361-1402)
@@ -87,7 +87,7 @@
 ### Group F: Extract Supporting Docs
 **Targets:** `.genie/docs/` (create supporting documentation)
 **Lines to extract:** 479-569, 571-698, 1633-1767, 1884-1930
-**Replace with:** `@.genie/docs/<file>.md` references
+**Replace with:** `<file>.md` references
 
 **Files to create:**
 - `delegation-enforcement.md` (479-569) - Application-Level Enforcement
@@ -132,16 +132,11 @@
 ## Universal Workflow Architecture (condensed)
 
 # Core references (@ pointers):
-@.genie/agents/genie/neurons/git/git.md (GitHub patterns)
-@.genie/agents/genie/neurons/prompt/prompt.md (prompting standards)
-@.genie/agents/genie/neurons/forge/forge.md (forge patterns)
-@.genie/agents/genie/neurons/learn/learn.md (meta-learning)
-@.genie/agents/genie/neurons/release/release.md (release protocol)
-@.genie/docs/delegation-enforcement.md
-@.genie/docs/session-state-protocol.md
-@.genie/docs/triad-protocol.md
-@.genie/docs/mcp-interface.md
-
+@.genie/agents/code/neurons/git/git.md (GitHub patterns)
+@.genie/agents/neurons/prompt.md (prompting standards)
+@.genie/agents/neurons/forge.md (forge patterns)
+@.genie/agents/neurons/learn.md (meta-learning)
+@.genie/agents/code/neurons/release.md (release protocol)
 # Critical behavioral overrides (stays):
 - Delegation Discipline
 - Role Clarity Protocol

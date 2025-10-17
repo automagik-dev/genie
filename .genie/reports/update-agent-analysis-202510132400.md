@@ -465,10 +465,10 @@ fi
 
 ### What Changed
 **Deleted (moved to npm):**
-- `.genie/agents/plan.md` (257 lines) → `npm:@automagik/genie/agents/plan.md`
-- `.genie/agents/wish.md` (198 lines) → `npm:@automagik/genie/agents/wish.md`
-- `.genie/agents/forge.md` (643 lines) → `npm:@automagik/genie/agents/forge.md`
-- `.genie/agents/review.md` (160 lines) → `npm:@automagik/genie/agents/review.md`
+- `.genie/agents/plan.md` (257 lines) → `npm:`
+- `.genie/agents/wish.md` (198 lines) → `npm:`
+- `.genie/agents/forge.md` (643 lines) → `npm:`
+- `.genie/agents/review.md` (160 lines) → `npm:`
 
 **Created (project-specific):**
 - `.genie/custom/plan.md` (21 lines) - Forge planning overrides

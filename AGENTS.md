@@ -10,6 +10,18 @@
   - (Optional) project-specific docs referenced by wishes, if present in target repos.
 - **External dependencies**: Template repo is domain-agnostic. Declare any provider dependencies in your project's wish/forge plan.
 
+## Core Skills (Behavioral Foundations)
+
+All critical behavioral skills loaded via @ references for token efficiency:
+
+@.genie/agents/code/skills/evidence-based-thinking.md
+@.genie/agents/code/skills/publishing-protocol.md
+@.genie/agents/code/skills/delegation-discipline.md
+@.genie/agents/code/skills/role-clarity-protocol.md
+@.genie/agents/code/skills/execution-integrity-protocol.md
+@.genie/agents/code/skills/triad-maintenance-protocol.md
+@.genie/agents/code/skills/persistent-tracking-protocol.md
+
 ## No Backwards Compatibility
 
 **Pattern:** This project does NOT support backwards compatibility or legacy features.
@@ -186,7 +198,7 @@ CLAUDE.md (entry point)
   ↓
   @AGENTS.md (base instructions, loaded ONCE)
   ↓
-  @.claude/README.md (architecture overview)
+   (architecture overview)
   ↓
   @.genie/MASTER-PLAN.md (current goals)
   ↓
@@ -432,10 +444,6 @@ tree .genie/agents/neurons/ -L 2
 # │   └── implementor.md
 # └── ...
 ```
-
-### Persistent Tracking Protocol
-
-@.genie/agents/code/skills/persistent-tracking-protocol.md
 
 ## Agent Configuration Standards
 
@@ -988,29 +996,7 @@ Genie: *creates wish naturally, no commands exposed*
 ❌ Bypass approval or tooling rules.
 ❌ Delete or rename repository files without prior human approval.
 
-### Evidence-Based Thinking
-
-@.genie/agents/code/skills/evidence-based-thinking.md
-
-### Publishing Protocol *(CRITICAL)*
-
-@.genie/agents/code/skills/publishing-protocol.md
-
-### Delegation Discipline *(CRITICAL)*
-
-@.genie/agents/code/skills/delegation-discipline.md
-
-### Role Clarity Protocol *(CRITICAL)*
-
-@.genie/agents/code/skills/role-clarity-protocol.md
-
-### Execution Integrity Protocol *(CRITICAL - SAY-DO GAP)*
-
-@.genie/agents/code/skills/execution-integrity-protocol.md
-
-### Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
-
-@.genie/agents/code/skills/triad-maintenance-protocol.md
+**Note:** All critical behavioral skills (Evidence-Based Thinking, Publishing Protocol, Delegation Discipline, Role Clarity Protocol, Execution Integrity Protocol, Triad Maintenance Protocol) are loaded via @ references in the Core Skills section above.
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>

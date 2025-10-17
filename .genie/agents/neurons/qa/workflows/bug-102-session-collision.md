@@ -124,9 +124,6 @@ cat .genie/state/agents/sessions.json | jq '.sessions | keys | length'
 ```
 
 ## Related Tests
-- @qa/workflows/session-lifecycle.md (Session Creation, Concurrent Sessions)
-- @qa/workflows/mcp-operations.md (List Sessions)
-
 ## Maintenance
 **Test Frequency:** Every RC release
 **Last Tested:** [Date]

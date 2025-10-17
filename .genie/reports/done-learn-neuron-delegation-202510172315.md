@@ -27,7 +27,7 @@
 - [x] Document Application Enforcement (scoped list_agents per neuron)
 - [x] Document Persistent Tracking Protocol (SESSION-STATE.md requirements)
 - [x] Update .genie/agents/README.md with folder hierarchy
-- [x] Update .claude/README.md with neuron model clarification
+- [x] Update  with neuron model clarification
 - [x] Validate documentation accuracy
 
 ---
@@ -116,7 +116,7 @@
 - Added loading hierarchy: CLAUDE.md → AGENTS.md → agent.md → custom overrides
 - **CRITICAL NOTE:** Neuron agents do NOT reload @AGENTS.md (already loaded at outer level)
 
-### 3. .claude/README.md - New Section: Neuron Delegation Hierarchy (lines 119-156)
+### 3.  - New Section: Neuron Delegation Hierarchy (lines 119-156)
 
 **Added:**
 - Three-tier model with clear role definitions
@@ -133,7 +133,7 @@
 ### Files Modified (3)
 1. **AGENTS.md** - 431 lines added (section: Architectural Foundations)
 2. **.genie/agents/README.md** - 65 lines added (section: Neuron Delegation Hierarchy)
-3. **.claude/README.md** - 38 lines added (section: Neuron Delegation Hierarchy)
+3. **** - 38 lines added (section: Neuron Delegation Hierarchy)
 
 ### Total Addition: ~534 lines of architectural documentation
 
@@ -241,12 +241,11 @@ CLAUDE.md (entry point)
 ✅ **Validated:** All validation commands executed, results match documentation
 
 ### Propagation Completeness
-✅ **Complete:** AGENTS.md (foundation), .genie/agents/README.md (technical), .claude/README.md (user-facing)
+✅ **Complete:** AGENTS.md (foundation), .genie/agents/README.md (technical),  (user-facing)
 
 ### Cross-Reference Integrity
 ✅ **Verified:** All three files reference each other appropriately
 - .genie/agents/README.md → @AGENTS.md §Architectural Foundations
-- .claude/README.md → @AGENTS.md §Architectural Foundations
 - AGENTS.md provides complete details
 
 ### Implementation Readiness
@@ -302,7 +301,7 @@ $ grep "^### Persistent Tracking Protocol" AGENTS.md
 $ grep "@AGENTS.md §Architectural Foundations" .genie/agents/README.md
 **See @AGENTS.md §Architectural Foundations for complete details.**
 
-$ grep "@AGENTS.md §Architectural Foundations" .claude/README.md
+$ grep "@AGENTS.md §Architectural Foundations" 
 **See @AGENTS.md §Architectural Foundations for complete details.**
 ```
 
@@ -315,7 +314,7 @@ $ grep "@AGENTS.md §Architectural Foundations" .claude/README.md
 **Files modified:**
 - AGENTS.md:268-698 (431 lines)
 - .genie/agents/README.md:30-107 (78 lines)
-- .claude/README.md:119-156 (38 lines)
+- :119-156 (38 lines)
 
 **Total:** 547 lines of architectural documentation added
 

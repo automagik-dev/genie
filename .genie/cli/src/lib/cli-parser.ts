@@ -31,7 +31,8 @@ export function parseArguments(argv: string[]): ParsedCommand {
     full: false,
     live: false,
     executor: undefined,
-    mode: undefined
+    mode: undefined,
+    name: undefined
   };
 
   const filtered: string[] = [];
@@ -66,6 +67,14 @@ export function parseArguments(argv: string[]): ParsedCommand {
       const nextToken = raw[i + 1];
       if (nextToken && !nextToken.startsWith('-')) {
         options.mode = nextToken;
+        i++; // Skip next token
+        continue;
+      }
+    }
+    if (token === '--name' || token === '-n') {
+      const nextToken = raw[i + 1];
+      if (nextToken && !nextToken.startsWith('-')) {
+        options.name = nextToken;
         i++; // Skip next token
         continue;
       }

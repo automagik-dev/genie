@@ -1,7 +1,7 @@
 # Commit Advisory – Phase 2 Template Structure
 
 **Generated:** 2025-10-13T16:30Z
-**Related Wish:** @.genie/wishes/core-template-separation/core-template-separation-wish.md
+**Related Wish:** core-template-separation-wish.md
 
 ## Pre-commit Gate
 
@@ -22,7 +22,7 @@
 ## Snapshot
 
 - **Branch:** main
-- **Related Wish:** @.genie/wishes/core-template-separation/core-template-separation-wish.md
+- **Related Wish:** core-template-separation-wish.md
 - **Phase:** 2 (Template Structure Creation)
 - **Scope:** Create `templates/base/` directory with complete Genie starter template
 
@@ -32,7 +32,7 @@
 **Created `templates/base/` structure:**
 
 1. **`.claude/` (36 files):**
-   - 25 agent aliases → `@.genie/agents/core/` npm package references
+   - 25 agent aliases → `@.genie/agents/neurons/` npm package references
    - 10 command aliases → `@.genie/agents/` npm package references
    - 1 README explaining architecture
 

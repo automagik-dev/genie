@@ -146,7 +146,7 @@ export function getTemplateRelativeBlacklist(): Set<string> {
 ### Task 4: Update Documentation
 **Files to Update:**
 - `AGENTS.md` - Note that core agents live in NPM package
-- `.claude/README.md` - Architecture diagram
+- `` - Architecture diagram
 - Templates `AGENTS.md` - User-facing version explaining customization
 
 ### Task 5: Test & Validate

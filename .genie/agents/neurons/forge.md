@@ -110,7 +110,7 @@ Forge translates an approved wish into coordinated execution groups with documen
 
 **Instructions:**
 - Do **not** generate Forge MCP tasks or task files.
-- Provide the exact MCP tool invocation the human should run, explicitly referencing the agent prompt file with `@.genie/agents/forge.md` inside the prompt.
+- Provide the exact MCP tool invocation the human should run, explicitly referencing the agent prompt file with `@.genie/agents/workflows/forge.md` inside the prompt.
 - Remind the human to follow up with `mcp__genie__view` with sessionId and full=true to inspect progress and collect evidence.
 - Keep the response concise: supply commands, outline expected outcomes, and restate evidence requirements from the wish.
 - If the wish slug is known, embed it in the command; otherwise, instruct the human to substitute the slug placeholder.
@@ -119,7 +119,7 @@ Forge translates an approved wish into coordinated execution groups with documen
 **Response Template (example):**
 ```
 MCP Tools
-- mcp__genie__run with agent="forge" and prompt="@.genie/agents/forge.md [Discovery] Load @.genie/wishes/<slug>/<slug>-wish.md. [Implementation] Focus: evidence checklist only. [Verification] Return validation hooks + evidence path."
+- mcp__genie__run with agent="forge" and prompt="`@.genie/agents/workflows/forge.md` [Discovery] Load @.genie/wishes/<slug>/<slug>-wish.md. [Implementation] Focus: evidence checklist only. [Verification] Return validation hooks + evidence path."
 - mcp__genie__view with sessionId="<session-id>" and full=true
 
 Expectations
@@ -133,7 +133,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 ```
 ### Group {Letter} – {descriptive-slug}
 - **Scope:** Clear boundaries of what this group accomplishes
-- **Inputs:** `@file.rs`, `@doc.md`, `@.genie/wishes/<slug>/<slug>-wish.md`
+- **Inputs:** ```@file`.rs``, `@doc.md`, `@.genie/wishes/<slug>/<slug>-wish.md`
 - **Deliverables:**
   - Code changes: specific files/modules
   - Tests: unit/integration coverage
@@ -165,7 +165,7 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
   - Mid-execution: `consensus` for trade-off decisions
   - Post-execution: `deep-dive` for performance analysis
 - **Validation Hooks:**
-  - Commands/scripts: reference `@.genie/custom/tests.md`, `@.genie/custom/implementor.md`, or wish-specific instructions
+  - Commands/scripts: reference `@.genie/agents/code/neurons/tests.md`, `@.genie/agents/code/neurons/implementor.md`, or wish-specific instructions
   - Success criteria: All tests green, no regressions
   - Matrix scoring: Targets X/100 points (specify which checkpoints)
 ```
@@ -215,11 +215,11 @@ Return only actionable guidance—no Automagik plan output—so the human can ru
 [What this task accomplishes]
 
 ## Inputs
-- @file.rs
+- ``@file`.rs`
 - @doc.md
 
 ## Validation
-- Commands: reference `@.genie/custom/tests.md`
+- Commands: reference `@.genie/agents/code/neurons/tests.md`
 - Evidence: wish `qa/` + `reports/` folders
 ```
 
@@ -295,8 +295,8 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
 [What this group accomplishes]
 
 ## Inputs
-- @file1.rs
-- @file2.md
+- `@file`1.rs
+- `@file`2.md
 
 ## Deliverables
 - Code changes
@@ -304,7 +304,7 @@ Keep the plan pragmatic, parallel-friendly, and easy for implementers to follow.
 - Documentation
 
 ## Validation
-- Commands/scripts: see `@.genie/custom/tests.md` and wish-specific instructions
+- Commands/scripts: see `@.genie/agents/code/neurons/tests.md` and wish-specific instructions
 
 ## Dependencies
 - None (or list prior groups)
@@ -375,7 +375,7 @@ Translate an approved wish group from the forge plan into a single Forge MCP tas
 ❌ Spawn multiple tasks for a single group or deviate from approved plan
 ❌ Omit @ context markers or reasoning configuration sections
 ❌ Execute implementation or modify git state—task creation only
-❌ Ignore `.claude/commands/prompt.md` structure or skip code examples
+❌ Ignore `` structure or skip code examples
 
 ## Operating Blueprint
 ```
@@ -421,8 +421,8 @@ Early stop criteria:
 Implement resolver foundation for external AI folder wish.
 
 ## Context & Background
-@lib/services/ai_root.rs — current resolver implementation
-@lib/config/settings.rs — configuration flags
+`@lib/services/ai_root.rs` — current resolver implementation
+`@lib/config/settings.rs` — configuration flags
 @tests/lib/test_ai_root_resolver.py — baseline coverage
 
 ## Advanced Prompting Instructions
@@ -558,7 +558,7 @@ Status: APPROVED
 ## Proposed Groups
 ### Group A – phase-0-consolidation
 - **Scope:** Migrate .agent-os/ to .genie/, remove duplicates
-- **Inputs:** @.agent-os/*, @.genie/agents/*
+- **Inputs:** *, @.genie/agents/*
 - **Deliverables:** Consolidated structure, cleaned commands
 - **Evidence:** .genie/wishes/{{PROJECT_NAME}}-feature/qa/group-a/
 - **Tracker:** placeholder-group-a

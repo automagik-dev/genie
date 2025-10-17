@@ -123,7 +123,7 @@ validation_commands:
 **Core Docs:**
 - `AGENTS.md` - Agent documentation (23KB)
 - `CLAUDE.md` - Claude Code patterns (4KB)
-- `.claude/README.md` - Routing & architecture
+- `` - Routing & architecture
 - `.genie/agents/README.md` - Agent structure
 
 ---

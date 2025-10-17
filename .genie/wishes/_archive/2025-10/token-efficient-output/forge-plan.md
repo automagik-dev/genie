@@ -1,7 +1,7 @@
 # Forge Plan – Token-Efficient Output
 
 **Generated:** 2025-10-15 18:45Z
-**Wish:** @.genie/wishes/token-efficient-output/token-efficient-output-wish.md
+**Wish:** token-efficient-output-wish.md
 **Branch:** feat/token-efficient-output
 **Target:** 96-98% token reduction (16k → 0.3-0.5k tokens per view)
 
@@ -43,7 +43,7 @@ Replace verbose 4-layer Ink rendering pipeline with simple 2-layer markdown form
 
 **Inputs:**
 - `@.genie/cli/src/executors/transcript-utils.ts:253-378` (ChatMessage[] structure)
-- `@.genie/cli/src/views/chat.ts` (current ViewEnvelope structure for reference)
+- `` (current ViewEnvelope structure for reference)
 - Wish specification for 3 modes (final, recent, overview)
 
 **Deliverables:**
@@ -111,8 +111,8 @@ cat .genie/wishes/token-efficient-output/qa/markdown-samples.md | wc -c
 - `@.genie/cli/src/lib/markdown-formatter.ts` (completed from Group A)
 - `@.genie/cli/src/commands/view.ts` (current implementation)
 - `@.genie/cli/src/commands/list.ts` (current implementation)
-- `@.genie/cli/src/view/render.tsx` (delete target)
-- `@.genie/cli/src/views/chat.ts` (delete target)
+- `` (delete target)
+- `` (delete target)
 - `@.genie/cli/src/views/runs.ts` (delete target)
 
 **Deliverables:**
@@ -207,7 +207,7 @@ grep -r "formatTranscriptMarkdown" .genie/cli/src/commands/
 **Scope:** Rewrite executor-prompt without Ink dependency, update all consumers
 
 **Inputs:**
-- `@.genie/cli/src/lib/executor-prompt.tsx` (current Ink implementation)
+- `` (current Ink implementation)
 - `@.genie/cli/src/commands/init.ts` (consumer)
 - `@.genie/cli/src/commands/update.ts` (consumer)
 - `@.genie/cli/src/commands/model.ts` (consumer, if exists)

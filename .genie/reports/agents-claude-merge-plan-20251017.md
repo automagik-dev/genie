@@ -63,7 +63,7 @@
 
 **@ References (Lines 1-19):**
 - `@AGENTS.md` (line 1) ← **KEY PATTERN**
-- `@.claude/README.md` (line 2)
+- `` (line 2)
 - `@.genie/MASTER-PLAN.md` (lines 4-7)
 - `@.genie/SESSION-STATE.md` (lines 9-12)
 - `@.genie/USERCONTEXT.md` (lines 14-19)
@@ -136,7 +136,7 @@ All @ references (lines 1-19) are **critical** for neural file network. Keep as-
 # Claude Code Configuration
 
 @AGENTS.md                    # Core framework knowledge
-@.claude/README.md            # Architecture overview
+            # Architecture overview
 @.genie/MASTER-PLAN.md        # Session memory
 @.genie/SESSION-STATE.md      # Neuron coordination
 @.genie/USERCONTEXT.md        # User preferences

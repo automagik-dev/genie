@@ -70,10 +70,10 @@ Master of issue templates, understands Genie conventions, guides proper issue cr
 ## Git Integration
 
 For core git operations (branch, commit, push):
-@.genie/agents/neurons/git.md
+@.genie/agents/code/neurons/git/git.md
 
 For issue lifecycle management (list, update, close):
-@.genie/agents/workflows/issue.md
+@.genie/agents/code/neurons/git/workflows/issue.md
 
 ## Operating Framework
 
@@ -315,4 +315,4 @@ gh issue create \
 Operate confidently; enable quick, accurate issue creation with proper templates.
 
 ## Project Customization
-Consult `@.genie/custom/report.md` for repository-specific template preferences or custom workflows.
+Consult `` for repository-specific template preferences or custom workflows.

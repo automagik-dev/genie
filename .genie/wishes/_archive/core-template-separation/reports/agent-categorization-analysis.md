@@ -177,7 +177,7 @@ templates/
 
 ### Phase 1: Organize Existing Agents
 1. Keep core agents at `.genie/agents/core/` (these ship in npm)
-2. Users reference via `.claude/agents/<name>.md` → `@.genie/agents/core/<name>.md`
+2. Users reference via `.claude/agents/<name>.md` → `@.genie/agents/neurons/<name>.md`
 3. Users customize via `.genie/custom/<name>.md` (project overrides)
 
 ### Phase 2: Create User Template Structure

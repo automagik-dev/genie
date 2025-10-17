@@ -61,10 +61,10 @@
 | Issue #42 | github | Token explosion problem (36-48k for 3-4 subagents) | wish |
 | Orchestrator session b4088faa | neuron | Pressure-test findings, risks identified | wish |
 | Felipe guidance | session | "No users, Ink was mistake, keep it simple" | implementation |
-| @.genie/cli/src/view/render.tsx | repo | Current Ink rendering (560 lines, delete target) | Group A |
-| @.genie/cli/src/views/chat.ts | repo | ViewEnvelope builders (delete target) | Group A |
+|  | repo | Current Ink rendering (560 lines, delete target) | Group A |
+|  | repo | ViewEnvelope builders (delete target) | Group A |
 | @.genie/cli/src/executors/transcript-utils.ts | repo | ChatMessage[] parsing (keep, it's clean) | Group B |
-| @.genie/cli/src/lib/executor-prompt.tsx | repo | Ink-based executor selection (replace) | Group C |
+|  | repo | Ink-based executor selection (replace) | Group C |
 
 ## Discovery Summary
 
@@ -100,9 +100,8 @@ Replace verbose 4-layer Ink rendering pipeline with simple 2-layer markdown form
 
 **What exists today:**
 - JSONL events parsed to `ChatMessage[]` (@.genie/cli/src/executors/transcript-utils.ts:253-378)
-- ViewEnvelope abstraction layer (@.genie/cli/src/views/chat.ts, @.genie/cli/src/views/runs.ts)
-- Ink rendering with React components (@.genie/cli/src/view/render.tsx, 560 lines)
-- Executor selection using Ink (@.genie/cli/src/lib/executor-prompt.tsx)
+- Ink rendering with React components (, 560 lines)
+- Executor selection using Ink ()
 
 **Token costs (measured):**
 - Session view: 16k tokens per view

@@ -85,18 +85,18 @@ Master of core `git` CLI, understands branch conventions, follows safety protoco
 For GitHub workflows, see specialized workflows:
 
 **Issue reporting:**
-@.genie/agents/workflows/report.md
+@.genie/agents/code/neurons/git/workflows/report.md
 - Create issues with proper templates
 - Template selection decision tree
 - Quick capture pattern
 
 **Issue management:**
-@.genie/agents/workflows/issue.md
+@.genie/agents/code/neurons/git/workflows/issue.md
 - List, update, assign, close, link issues
 - Contextual editing (edit body vs add comment)
 
 **Pull requests:**
-@.genie/agents/workflows/pr.md
+@.genie/agents/code/neurons/git/workflows/pr.md
 - Create PRs with proper descriptions
 - Link to wishes and issues
 
@@ -131,7 +131,7 @@ For pure git operations (branch, commit, push), continue with sections below.
 ## Branch & Commit Conventions
 
 - Default branches: `feat/<wish-slug>` (or `fix/<issue>`, `chore/<task>`)
-- Follow naming rules from `@.genie/custom/git.md` when a project overrides the defaults
+- Follow naming rules from `` when a project overrides the defaults
 - Commit messages: short title, optional body; reference wish slug or tracker ID
 
 Example commit (adjust to project convention):
@@ -145,7 +145,7 @@ Refs: <TRACKER-ID> (if applicable)
 
 ## Command Sequences (Advisory)
 
-Use these as a baseline; consult `@.genie/custom/git.md` for project-specific variations (base branch, CLI helpers, required checks).
+Use these as a baseline; consult `` for project-specific variations (base branch, CLI helpers, required checks).
 
 ```bash
 # Status & safety checks
@@ -195,7 +195,7 @@ Operate visibly and safely; enable humans to complete Git workflows confidently.
 
 ## Project Customization
 
-Consult `@.genie/custom/git.md` for repository-specific branch naming, base branches, hooks, or required commands. Update that file whenever workflows change.
+Consult `` for repository-specific branch naming, base branches, hooks, or required commands. Update that file whenever workflows change.
 
 ---
 
@@ -206,7 +206,7 @@ When starting a new session, help developers triage their work by listing assign
 ### My Current Tasks
 List all issues assigned to you:
 ```bash
-!gh issue list --assignee @me --state open --limit 20
+!gh issue list --assignee `@me` --state open --limit 20
 ```
 
 ### Welcome Pattern

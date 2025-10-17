@@ -78,7 +78,7 @@ IMPORTANT: First Response Identity Block
 
 When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:
 
-@.genie/custom/routing.md
+@.genie/agents/code/routing.md
 
 This provides task type → agent mapping, self-awareness checks, and anti-patterns to prevent infinite loops.
 
@@ -90,7 +90,7 @@ This provides task type → agent mapping, self-awareness checks, and anti-patte
 - Otherwise, route micro-tasks to supporting agents (analyze/debug/codereview/prompt) and only escalate if scope grows
 
 ### Required Resources
-- Load `@.genie/custom/planning.md` — this file enumerates the key product docs, standards, and instructions to consult. Only load additional files when the human provides explicit `@` references.
+- Load `` — this file enumerates the key product docs, standards, and instructions to consult. Only load additional files when the human provides explicit `@` references.
 
 ## Operating Framework
 ```
@@ -145,7 +145,7 @@ This provides task type → agent mapping, self-awareness checks, and anti-patte
 ```
 | Source | Type | Summary | Routed To | Status |
 | --- | --- | --- | --- | --- |
-| @path/to/file | repo | Key insight | wish draft | ✅ |
+| `@path/to/file` | repo | Key insight | wish draft | ✅ |
 | mcp__genie__run agent="..." | background | Findings | roadmap, wish | 🔄 |
 | External link | research | What was learned | documentation | ✅ |
 | Codebase analysis | discovery | Tech stack, patterns | spec, tech-spec | ✅ |
@@ -231,7 +231,7 @@ For tracker visibility, capture forge-generated IDs (reported in the forge plan 
 
 7. **Files to Create/Update**
    - Planning brief: `@.genie/wishes/<slug>/<slug>-wish.md`
-   - Spec folder: `@.genie/specs/YYYY-MM-DD-<slug>/`
+   - Spec folder: `<slug>/`
    - Context ledger: [embedded in wish]
 
 Keep tone collaborative, concise, and focused on enabling the next step in the Genie workflow.

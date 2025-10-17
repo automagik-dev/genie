@@ -14,16 +14,16 @@
 
 ## Tasks
 - [x] Analyze wish requirements and prior self-learn guidance
-- [x] Update `@.genie/agents/core/learn.md` with violation/pattern workflows + reporting rules
-- [x] Refresh documentation (`AGENTS.md`, `.claude/README.md`, product/guides) to remove `self-learn`
-- [x] Add repository override stub `@.genie/custom/learn.md`
+- [x] Update `@.genie/agents/neurons/learn.md` with violation/pattern workflows + reporting rules
+- [x] Refresh documentation (`AGENTS.md`, ``, product/guides) to remove `self-learn`
+- [x] Add repository override stub ``
 - [x] Record QA evidence in `qa/group-b/meta-learn-merge.md`
 - [ ] Monitor first `/learn` execution post-merge
 
 ## Changes
-- `@.genie/agents/core/learn.md` — merged operating framework, context gathering, done-report template, and project customization guidance.
+- `@.genie/agents/neurons/learn.md` — merged operating framework, context gathering, done-report template, and project customization guidance.
 - `@AGENTS.md` — behavioural corrections section reworded for `/learn`; routing aliases cleaned up.
-- `.claude/README.md` — infrastructure/agent matrix updated; legacy command mappings removed.
+- `` — infrastructure/agent matrix updated; legacy command mappings removed.
 - `.genie/custom/learn.md` — new stub for repo-specific defaults.
 - `.genie/product/{environment,tech-stack,roadmap}.md`, `.genie/guides/getting-started.md`, `.genie/README.md`, `.genie/agents/README.md` — terminology sweep.
 - `.genie/wishes/core-template-separation/qa/group-b/meta-learn-merge.md` — evidence capture.

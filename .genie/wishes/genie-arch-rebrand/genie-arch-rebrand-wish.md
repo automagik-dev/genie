@@ -409,7 +409,7 @@ mcp__genie__list_agents
 
 **Documentation:**
 - [ ] AGENTS.md updated for base + template structure
-- [ ] .claude/README.md updated with universal neurons concept
+- [ ]  updated with universal neurons concept
 - [ ] MASTER-PLAN.md reflects architecture evolution
 
 ---

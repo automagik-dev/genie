@@ -55,10 +55,10 @@
 6. **Replace in AGENTS.md:**
    - Remove all 4 sections (lines 479-569, 571-698, 1633-1767, 1884-1930)
    - Insert @ references for each:
-     - `@.genie/docs/delegation-enforcement.md`
-     - `@.genie/docs/session-state-protocol.md`
-     - `@.genie/docs/triad-protocol.md`
-     - `@.genie/docs/mcp-interface.md`
+     - ``
+     - ``
+     - ``
+     - ``
    - Keep surrounding sections intact
 
 7. **Validation:**
@@ -97,10 +97,10 @@ grep -q "mcp__genie__" .genie/docs/mcp-interface.md && echo "✅ MCP patterns pr
 **AGENTS.md update:**
 ```bash
 # @ references added
-grep -q "@.genie/docs/delegation-enforcement.md" AGENTS.md && echo "✅ Delegation ref"
-grep -q "@.genie/docs/session-state-protocol.md" AGENTS.md && echo "✅ Session ref"
-grep -q "@.genie/docs/triad-protocol.md" AGENTS.md && echo "✅ Triad ref"
-grep -q "@.genie/docs/mcp-interface.md" AGENTS.md && echo "✅ MCP ref"
+grep -q "" AGENTS.md && echo "✅ Delegation ref"
+grep -q "" AGENTS.md && echo "✅ Session ref"
+grep -q "" AGENTS.md && echo "✅ Triad ref"
+grep -q "" AGENTS.md && echo "✅ MCP ref"
 
 # Old content removed
 ! grep -q "Application-Level Enforcement" AGENTS.md && echo "✅ Content removed"

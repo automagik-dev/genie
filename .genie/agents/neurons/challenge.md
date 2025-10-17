@@ -61,7 +61,7 @@ Use @ symbols to automatically load context before challenging:
 ```
 Assumption: "Users prefer email notifications over SMS"
 
-@src/notifications/delivery-stats.json
+`@src/notifications/delivery-stats.json`
 @docs/user-research/2024-notification-preferences.md
 @analytics/notification-engagement-metrics.csv
 ```
@@ -200,7 +200,7 @@ Hybrid BFF-first with GraphQL option
 Topic: <what to challenge>
 Method: <socratic|debate|challenge|auto>
 
-@relevant/file1.md
+`@relevant/file1.md`
 @relevant/file2.ts
 
 [Evaluation]
@@ -213,11 +213,9 @@ Genie Verdict: <recommendation> (confidence: <low|med|high> - justification)
 ```
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/challenge.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/challenge.md

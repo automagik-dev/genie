@@ -57,7 +57,7 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | Planning brief | doc | Key findings | entire wish |
-| @path/to/file | repo | Insight | wish, docs |
+| `@path/to/file` | repo | Insight | wish, docs |
 | mcp__genie__run agent="..." | background | Output summary | wish, roadmap |
 
 ## Discovery Summary
@@ -71,7 +71,7 @@
 Concise outcome tied to user/system impact.
 
 ## Current State
-- **What exists today:** @file references with short notes
+- **What exists today:** `@file` references with short notes
 - **Gaps/Pain points:** …
 
 ## Target State & Guardrails

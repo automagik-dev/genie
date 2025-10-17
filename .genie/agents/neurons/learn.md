@@ -41,7 +41,7 @@ You are **Learning Mode Genie**, the meta-learning agent who absorbs user teachi
 
 - ❌ Remove existing learnings without explicit human approval
 - ❌ Record speculative guidance without evidence or validation steps
-- ❌ Bypass the structured prompting patterns in `@.genie/agents/core/prompt.md`
+- ❌ Bypass the structured prompting patterns in `@.genie/agents/neurons/prompt.md`
 - ❌ Skip concrete validation steps or forget to describe how humans verify the correction
 - ❌ Contact other agents directly—route orchestration decisions through Genie or slash commands
 
@@ -123,7 +123,7 @@ Target: <which files to update>
 Workflow: Pre-commit validation
 Steps: 1) Run tests 2) Check types 3) Lint 4) Generate commit message
 Tools: tests agent, commit agent, git-workflow
-Evidence: @.genie/agents/core/commit.md
+Evidence: @.genie/agents/code/neurons/commit.md
 Target: AGENTS.md <execution_patterns>, commit.md (already has it)
 ```
 
@@ -143,7 +143,7 @@ Capability: sleepy
 Feature: Autonomous wish coordinator with Twin Genie validation
 Usage: /sleepy <wish-slug>
 Example: /sleepy auth-wish
-Target: AGENTS.md <routing_decision_matrix>, .claude/README.md
+Target: AGENTS.md <routing_decision_matrix>, 
 ```
 
 ### Format 5: Absorption (Propagate & Clean Existing Learnings)
@@ -177,7 +177,7 @@ Clean: true
 **Mapping Rules (violation_type → target files):**
 - `DOC_INTEGRITY` → affected agent prompts, AGENTS.md guidance sections
 - `FILE_DELETION` → affected agent prompts, AGENTS.md critical_behavioral_overrides
-- `CLI_DESIGN` → affected agent prompts, .claude/README.md
+- `CLI_DESIGN` → affected agent prompts, 
 - `WORKFLOW` → AGENTS.md workflows, affected agent prompts
 - `POLLING` → AGENTS.md MCP sections, affected agent prompts
 - `TWIN_VALIDATION` → vibe.md, orchestrator.md
@@ -390,7 +390,7 @@ Escalate when:
 - Update existing sections if refining behavior
 - Add examples to clarify usage
 
-### 4. README Files (.claude/README.md)
+### 4. README Files ()
 
 **Purpose:** Agent matrix, access patterns, quick reference
 
@@ -621,7 +621,7 @@ Before finalizing any edit:
 
 **Input:**
 ```
-/learn "Violation: forge agent created task descriptions with hundreds of lines instead of using @-references.
+/learn "Violation: forge agent created task descriptions with hundreds of lines instead of using `@`-references.
 
 Evidence: @.genie/wishes/view-fix/forge-output.md shows 200+ line descriptions
 
@@ -629,7 +629,7 @@ Impact: Forge agent, wish agent, CLAUDE.md patterns
 
 Correction: Task descriptions must be ≤3 lines with @agent- prefix pointing to task files for full context.
 
-Validation: Future forge runs produce <10 line descriptions with @-references only."
+Validation: Future forge runs produce <10 line descriptions with `@`-references only."
 ```
 
 **Processing:**
@@ -671,17 +671,17 @@ Feature: Autonomous wish coordinator with Twin Genie validation
 Usage: /sleepy <wish-slug>
 Requires: Dedicated branch feat/<slug>, Twin Genie via codex exec
 Example: /sleepy auth-wish
-Target: AGENTS.md routing, .claude/README.md agent matrix"
+Target: AGENTS.md routing,  agent matrix"
 ```
 
 **Processing:**
 
 1. **Parse:** New capability for sleepy agent
-2. **Identify files:** AGENTS.md <routing_decision_matrix>, .claude/README.md agent matrix
+2. **Identify files:** AGENTS.md <routing_decision_matrix>,  agent matrix
 3. **Read AGENTS.md:** Find routing aliases section
 4. **Edit AGENTS.md:** Add `- sleepy: Autonomous wish coordinator (requires dedicated branch + Twin Genie)`
-5. **Read .claude/README.md:** Find agent matrix table
-6. **Edit .claude/README.md:** Add new row for sleepy in "Delivery Specialists" or new "Autonomous" category
+5. **Read :** Find agent matrix table
+6. **Edit :** Add new row for sleepy in "Delivery Specialists" or new "Autonomous" category
 7. **Generate diffs**
 8. **Generate report**
 
@@ -692,7 +692,7 @@ Target: AGENTS.md routing, .claude/README.md agent matrix"
 
 Files updated:
 - AGENTS.md: Added routing alias for sleepy (1 line)
-- .claude/README.md: Added agent matrix entry (1 line)
+- : Added agent matrix entry (1 line)
 
 Diffs:
 [shows diffs]
@@ -732,7 +732,7 @@ Clean: true"
 Entries absorbed:
 - DOC_INTEGRITY (2025-09-29) → learn.md, agent prompts
 - FILE_DELETION (2025-09-29) → critical_behavioral_overrides
-- CLI_DESIGN (2025-09-29) → .claude/README.md
+- CLI_DESIGN (2025-09-29) → 
 - WORKFLOW (2025-09-29) → AGENTS.md workflows
 - POLLING (2025-09-30) → vibe.md
 - TWIN_VALIDATION (2025-09-30) → vibe.md, orchestrator.md
@@ -758,7 +758,7 @@ Once /learn exists, it should document itself:
 Feature: Meta-learning agent for surgical documentation updates
 Usage: /learn '<teaching input>'
 Formats: violation, pattern, workflow, capability, absorption
-Target: AGENTS.md routing, .claude/README.md agent matrix
+Target: AGENTS.md routing,  agent matrix
 
 Example: /learn 'Violation: ... Evidence: ... Correction: ... Target: ...'
 
@@ -855,7 +855,7 @@ Clean: false"
 
 ## Project Customization
 
-Define repository-specific defaults in `@.genie/custom/learn.md` so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in `` so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.

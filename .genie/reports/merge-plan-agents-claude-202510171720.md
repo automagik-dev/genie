@@ -190,9 +190,7 @@ No exact duplicates found.
 **Why:** These @ references auto-load critical context files. Any modification breaks session continuity.
 
 ```markdown
-@AGENTS.md
-@.claude/README.md
-
+`@AGENTS.md`.md
 # ⚠️ Master Plan (Architectural Evolution & Current Goals)
 ...
 @.genie/MASTER-PLAN.md
@@ -250,7 +248,7 @@ No exact duplicates found.
 [Insert CLAUDE.md 179-211 examples here]
 
 **For complete violation history and state tracking protocol, see:**
-@AGENTS.md §Critical Behavioral Overrides > Delegation Discipline
+`@AGENTS.md`.md §Critical Behavioral Overrides > Delegation Discipline
 ```
 
 ### Phase 4: Update Cross-References
@@ -258,10 +256,10 @@ No exact duplicates found.
 
 | Current Reference | New Location in Merged File |
 |-------------------|----------------------------|
-| "See @AGENTS.md §Agent Configuration Standards" | "See §Agent Configuration Standards" |
-| "See @AGENTS.md §GitHub Workflow Integration" | "See §Developer Welcome Flow > Git & GitHub Workflow Integration" |
-| "See @AGENTS.md §Slash Command Reference" | "See §MCP Quick Reference" |
-| "See @AGENTS.md §Experimentation Protocol" | "See §Experimentation Protocol" |
+| "See `@AGENTS.md`.md §Agent Configuration Standards" | "See §Agent Configuration Standards" |
+| "See `@AGENTS.md`.md §GitHub Workflow Integration" | "See §Developer Welcome Flow > Git & GitHub Workflow Integration" |
+| "See `@AGENTS.md`.md §Slash Command Reference" | "See §MCP Quick Reference" |
+| "See `@AGENTS.md`.md §Experimentation Protocol" | "See §Experimentation Protocol" |
 
 ### Phase 5: Remove Duplicate References
 **CLAUDE.md lines to REMOVE (replaced by direct content):**
@@ -289,7 +287,7 @@ grep -i "evidence-based challenge" MERGED.md
 grep -i "delegation discipline" MERGED.md
 
 # Critical @ references preserved
-grep "^@AGENTS.md" MERGED.md
+grep "^`@AGENTS.md`.md" MERGED.md
 grep "@.genie/MASTER-PLAN.md" MERGED.md
 grep "@.genie/SESSION-STATE.md" MERGED.md
 grep "@.genie/USERCONTEXT.md" MERGED.md
@@ -419,7 +417,7 @@ cat /tmp/header.md \
 
 ```bash
 # Update @ references that point to sections within same file
-sed -i 's/@AGENTS\.md §/§/g' MERGED.md
+sed -i 's/`@AGENTS.md`\.md §/§/g' MERGED.md
 ```
 
 ### Step 10: Validate Completeness
@@ -512,16 +510,16 @@ echo ""
 echo "=== @ Reference Preservation ==="
 
 # Critical context loading preserved
-echo -n "@AGENTS.md reference: "
-grep -q "^@AGENTS.md" MERGED.md && echo "✅" || echo "❌"
+echo -n "`@AGENTS.md`.md reference: "
+grep -q "^`@AGENTS.md`.md" MERGED.md && echo "✅" || echo "❌"
 
-echo -n "@MASTER-PLAN.md reference: "
+echo -n "`@MASTER-PLAN.md` reference: "
 grep -q "@.genie/MASTER-PLAN.md" MERGED.md && echo "✅" || echo "❌"
 
-echo -n "@SESSION-STATE.md reference: "
+echo -n "`@SESSION-STATE.md` reference: "
 grep -q "@.genie/SESSION-STATE.md" MERGED.md && echo "✅" || echo "❌"
 
-echo -n "@USERCONTEXT.md reference: "
+echo -n "`@USERCONTEXT.md` reference: "
 grep -q "@.genie/USERCONTEXT.md" MERGED.md && echo "✅" || echo "❌"
 
 echo ""

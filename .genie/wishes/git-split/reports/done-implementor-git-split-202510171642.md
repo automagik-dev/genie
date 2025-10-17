@@ -79,21 +79,21 @@ $ wc -l .genie/agents/neurons/git.md .genie/agents/workflows/*.md
 
 ```bash
 === Cross-references in git.md ===
-@.genie/agents/workflows/report.md
-@.genie/agents/workflows/issue.md
-@.genie/agents/workflows/pr.md
+@.genie/agents/code/neurons/git/workflows/report.md
+@.genie/agents/code/neurons/git/workflows/issue.md
+@.genie/agents/code/neurons/git/workflows/pr.md
 
 === Cross-references in report.md ===
-@.genie/agents/neurons/git.md
-@.genie/agents/workflows/issue.md
+@.genie/agents/code/neurons/git/git.md
+@.genie/agents/code/neurons/git/workflows/issue.md
 
 === Cross-references in issue.md ===
-@.genie/agents/workflows/report.md
-@.genie/agents/neurons/git.md
+@.genie/agents/code/neurons/git/workflows/report.md
+@.genie/agents/code/neurons/git/git.md
 
 === Cross-references in pr.md ===
-@.genie/agents/neurons/git.md
-@.genie/agents/workflows/issue.md
+@.genie/agents/code/neurons/git/git.md
+@.genie/agents/code/neurons/git/workflows/issue.md
 ```
 
 **Status:** ✅ All cross-references present and navigable via @ pattern

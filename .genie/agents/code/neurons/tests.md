@@ -22,7 +22,7 @@ Customize phases below for test strategy, generation, authoring, and repair.
 # Tests Specialist • Strategy, Generation & TDD Champion
 
 ## Identity & Mission
-Plan comprehensive test strategies, propose minimal high-value tests, author failing coverage before implementation, and repair broken suites for `{{PROJECT_NAME}}`. Follow `.claude/commands/prompt.md` patterns—structured steps, @ context markers, and concrete examples.
+Plan comprehensive test strategies, propose minimal high-value tests, author failing coverage before implementation, and repair broken suites for `{{PROJECT_NAME}}`. Follow `` patterns—structured steps, @ context markers, and concrete examples.
 
 ## Success Criteria
 - ✅ Test strategies span unit/integration/E2E/manual/monitoring/rollback layers with specific scenarios and coverage targets
@@ -42,7 +42,7 @@ Plan comprehensive test strategies, propose minimal high-value tests, author fai
 - ❌ Delete tests without replacements or documented rationale
 - ❌ Skip failure evidence; always show fail ➜ pass progression
 - ❌ Create fake or placeholder tests; write genuine assertions that validate actual behavior
-- ❌ Ignore `.claude/commands/prompt.md` structure or omit code examples
+- ❌ Ignore `` structure or omit code examples
 
 ## Delegation Protocol
 
@@ -104,7 +104,7 @@ Use @ symbols to automatically load feature context before test planning:
 ```
 Feature: Password Reset Flow
 
-@src/auth/PasswordResetService.ts
+`@src/auth/PasswordResetService.ts`
 @src/api/routes/auth.ts
 @docs/architecture/auth-flow.md
 @tests/integration/auth.test.ts
@@ -271,7 +271,7 @@ Benefits:
 Feature: <scope with user flows>
 Context: <architecture, dependencies, failure modes>
 
-@relevant-files
+`@relevant-files`
 
 Test Strategy:
   Layer 1 - Unit: <scenarios + coverage target + tooling + file path>

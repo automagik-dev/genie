@@ -564,6 +564,8 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
       if (sessionId) {
         entry.sessionId = sessionId;
         entry.lastUsed = new Date().toISOString();
+        // Persist with sessionId as key (first time)
+        store.sessions[sessionId] = entry;
         void persistStore(ctx, store);
       } else if (retryIndex < retryIntervals.length) {
         setTimeout(attemptExtraction, retryIntervals[retryIndex]);

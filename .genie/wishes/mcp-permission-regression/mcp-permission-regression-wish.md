@@ -62,7 +62,7 @@
 | @.genie/reports/debug-model-permissions-202510140145.md | report | Oct 14 debug analysis | investigation |
 | Test logs | evidence | 8+ permission test runs | investigation |
 | @.genie/cli/src/cli-core/handlers/shared.ts:391 | code | stdin='ignore' causing prompt auto-skip | investigation |
-| @.genie/agents/core/*.md | config | All agents use bypassPermissions now | verification |
+| @.genie/agents/neurons/*.md | config | All agents use bypassPermissions now | verification |
 
 ## Discovery Summary
 

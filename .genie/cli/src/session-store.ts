@@ -2,6 +2,7 @@ import fs from 'fs';
 
 export interface SessionEntry {
   agent: string;
+  name?: string;  // Friendly session name (user-provided or auto-generated)
   preset?: string;
   mode?: string;
   logFile?: string;
@@ -41,6 +42,19 @@ export interface SessionDefaults {
   defaults?: {
     executor?: string;
   };
+}
+
+/**
+ * Generate a friendly session name from agent name and timestamp.
+ * Format: "{agent}-{YYMMDDHHmm}"
+ * Example: "analyze-2310171530"
+ */
+export function generateSessionName(agentName: string): string {
+  const now = new Date();
+  const timestamp = now.toISOString()
+    .replace(/[-:T]/g, '')
+    .slice(2, 12); // YYMMDDHHmm
+  return `${agentName}-${timestamp}`;
 }
 
 export function loadSessions(

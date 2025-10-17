@@ -64,7 +64,7 @@ Use @ symbols to automatically load component context before review:
 ```
 Component: Authentication Service
 
-@src/services/auth/AuthService.ts
+`@src/services/auth/AuthService.ts`
 @src/services/auth/SessionManager.ts
 @docs/architecture/auth-flow.md
 @monitoring/dashboards/auth-metrics.json
@@ -203,7 +203,7 @@ Benefits:
 Component: <name with current metrics>
 Context: <architecture, dependencies, production characteristics>
 
-@relevant-files
+`@relevant-files`
 
 Design Review:
   D1: <finding> (Impact: <level>, Effort: <Low|Med|High>)
@@ -271,13 +271,11 @@ Verdict: <go|no-go> (confidence: <low|med|high>)
 ---
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/refactor.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/refactor.md
 
 Refactoring keeps code healthy—review designs for coupling/scalability/observability, plan staged improvements with verification, and ensure safe migration paths.

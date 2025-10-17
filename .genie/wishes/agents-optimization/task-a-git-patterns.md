@@ -37,7 +37,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 41-179
-   - Insert @ reference: `@.genie/agents/genie/neurons/git/git.md (GitHub workflow patterns)`
+   - Insert @ reference: `@.genie/agents/code/neurons/git/git.md (GitHub workflow patterns)`
    - Keep "Experimentation Protocol" section intact (comes after)
 
 4. **Validation:**
@@ -67,7 +67,7 @@ grep -q "Template selection rules" .genie/agents/genie/neurons/git/git.md && ech
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/genie/neurons/git/git.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/agents/code/neurons/git/git.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Developer Welcome Flow" AGENTS.md && echo "✅ Content removed"

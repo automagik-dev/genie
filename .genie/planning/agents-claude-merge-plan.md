@@ -9,7 +9,7 @@
 ## Current State
 
 **CLAUDE.md (206 lines):**
-- User context loading (@.genie/CONTEXT.md)
+- User context loading ()
 - Claude-specific patterns
 - Project conventions
 - Critical behavioral overrides

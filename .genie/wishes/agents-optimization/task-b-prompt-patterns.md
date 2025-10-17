@@ -39,7 +39,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1001-1115, 1769-1882
-   - Insert @ reference: `@.genie/agents/genie/neurons/prompt/prompt.md (prompting standards)`
+   - Insert @ reference: `@.genie/agents/neurons/prompt.md (prompting standards)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -69,7 +69,7 @@ grep -q "Blocker Report Protocol" .genie/agents/genie/neurons/prompt/prompt.md &
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/genie/neurons/prompt/prompt.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/agents/neurons/prompt.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "@ / ! / Feature Reference" AGENTS.md && echo "✅ Content removed"

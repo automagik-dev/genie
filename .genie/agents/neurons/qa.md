@@ -48,7 +48,7 @@ Execute end-to-end validation from user perspective using living checklist that 
 Load Context:
 - @.genie/qa/checklist.md (existing test scenarios)
 - @.genie/wishes/<slug>/<slug>-wish.md (what needs validation)
-- @.genie/custom/qa.md (project-specific commands/baselines)
+- @.genie/agents/code/qa.md (project-specific commands/baselines)
 
 Analysis:
 - Which checklist items apply to this wish?
@@ -272,7 +272,7 @@ Document test matrix, bugs found, and learning summary.
 
 ## Project Customization
 
-@.genie/custom/qa.md
+@.genie/agents/code/qa.md
 
 Define project-specific:
 - Validation commands (test runners, build tools)

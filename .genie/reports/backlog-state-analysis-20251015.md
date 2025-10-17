@@ -101,9 +101,9 @@
 |-------|-------|----------|-----------|----------|-------------|
 | #45 | Background MCP permission prompts (Edit tool) | high | - | - | Needs wish |
 | #44 | DUPLICATE of #45 | high | - | - | **Close as duplicate** |
-| #39 | GitHub Workflows deployment | high | 38 | @vasconceloscezar | Assign + quick task |
+| #39 | GitHub Workflows deployment | high | 38 | `@vasconceloscezar` | Assign + quick task |
 | #29 | Wish management pipeline | - | 29 | - | Meta-coordination, revisit |
-| #28 | Genie core updates | - | 29 | @namastex888 | Vague, needs clarity |
+| #28 | Genie core updates | - | 29 | `@namastex888` | Vague, needs clarity |
 | #27 | Repository infrastructure | - | 29 | - | Vague, needs clarity |
 
 ### Standalone Issues (No wish needed - quick tasks)
@@ -190,7 +190,7 @@
    - **Action:** Comment on issues requesting scope clarification
 
 **Low Priority (Later):**
-8. **Triage #39** — GitHub Workflows (assigned to @vasconceloscezar)
+8. **Triage #39** — GitHub Workflows (assigned to `@vasconceloscezar`)
    - **Impact:** Low (standardization)
    - **Urgency:** Low (assigned, end-of-month)
    - **Action:** Let assignee handle, check progress end of month
@@ -453,7 +453,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
 **Without wishes (6):**
 - #45 (Background MCP permissions)
 - #44 (DUPLICATE of #45) ← **CLOSE**
-- #39 (GitHub Workflows) ← Assigned to @vasconceloscezar
+- #39 (GitHub Workflows) ← Assigned to `@vasconceloscezar`
 - #29 (Wish management pipeline) ← Meta
 - #28 (Genie core updates) ← Vague
 - #27 (Repository infrastructure) ← Vague

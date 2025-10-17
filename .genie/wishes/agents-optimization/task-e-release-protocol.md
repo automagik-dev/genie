@@ -34,7 +34,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1361-1402
-   - Insert @ reference: `@.genie/agents/genie/neurons/release/release.md (publishing protocol - CRITICAL)`
+   - Insert @ reference: `@.genie/agents/code/neurons/release.md (publishing protocol - CRITICAL)`
    - Keep surrounding behavioral overrides
 
 4. **Validation:**
@@ -64,7 +64,7 @@ grep -q "Recent violation" .genie/agents/genie/neurons/release/release.md && ech
 **AGENTS.md update:**
 ```bash
 # @ reference added (must include "CRITICAL")
-grep -q "@.genie/agents/genie/neurons/release/release.md.*CRITICAL" AGENTS.md && echo "✅ Reference added"
+grep -q "`@.genie/agents/code/neurons/release.md`*CRITICAL" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Publishing Protocol.*CRITICAL" AGENTS.md && echo "✅ Content removed"

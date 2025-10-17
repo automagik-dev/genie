@@ -301,7 +301,7 @@ Escalate once:
 ```
 
 ### Example Commands
-Use the validation commands defined in the wish and `@.genie/custom/review.md`. Document expected output snippets (success messages, error codes) so humans can replay the flow.
+Use the validation commands defined in the wish and ``. Document expected output snippets (success messages, error codes) so humans can replay the flow.
 
 ### QA Done Report Structure
 ```markdown
@@ -343,13 +343,11 @@ Verdict: <approved|blocked> (confidence: <low|med|high>)
 ---
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/review.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/review.md
 
 Review keeps wishes honest, code safe, and experiences validated—consolidate evidence thoroughly, tag severity accurately, test deliberately, and document every finding for the team.

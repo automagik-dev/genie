@@ -11,7 +11,7 @@
 1. ✅ Comprehensive design exploration (4 viable approaches analyzed)
 2. ✅ Roadmap agent implementation (`.genie/agents/neurons/roadmap.md`)
 3. ✅ Routing trigger integration (`.genie/custom/routing.md`)
-4. ✅ Documentation updates (`.claude/README.md` cognitive architecture)
+4. ✅ Documentation updates (`` cognitive architecture)
 5. ✅ Strategic recommendations for phased rollout
 
 **Recommendation:** Hybrid approach (progressive disclosure + Genie-native integration)
@@ -235,7 +235,7 @@ Forge/Review reference initiative context
 ```
 
 ### 3. Documentation Updates
-**File:** `.claude/README.md`
+**File:** ``
 **Updates:**
 - Execution Specialists: 6 → 7 (added `roadmap`)
 - New category: "Strategic documentation specialists"
@@ -585,7 +585,7 @@ User: "STANDARD"
 
 ### Modified
 - `.genie/custom/routing.md` (+90 lines: Roadmap Initiative Routing section)
-- `.claude/README.md` (2 edits: Execution Specialists 6→7, Cognitive Architecture table)
+- `` (2 edits: Execution Specialists 6→7, Cognitive Architecture table)
 
 ---
 

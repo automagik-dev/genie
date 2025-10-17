@@ -57,9 +57,9 @@ def is_false_positive(ref_path, context):
     if ref_path in ['next', 'latest', 'canary', 'rc', 'beta', 'alpha']:
         return True
 
-    # npm version patterns (@X.Y.Z, @2.1.0)
-    if re.match(r'^\d+\.\d+\.\d+(-\w+)?$', ref_path) or \
-       re.match(r'^[XYZ]\.[XYZ]\.[XYZ]$', ref_path):
+    # npm version patterns (@X.Y.Z, @2.1.0, @X.Y.Z-rc.N, @X.Y.Z-rc.1)
+    if re.match(r'^\d+\.\d+\.\d+(-[\w.]+)?$', ref_path) or \
+       re.match(r'^[XYZ]\.[XYZ]\.[XYZ](-rc\.[XYZ\d]+)?$', ref_path):
         return True
 
     # npm scoped packages (@org/package)
@@ -94,6 +94,50 @@ def is_false_positive(ref_path, context):
     return False
 
 
+def is_in_code_block(content, match_start):
+    """Check if position is inside a code fence or inline code."""
+    # Check for code fences (``` or ~~~)
+    before_match = content[:match_start]
+
+    # Count code fences before this position
+    triple_backticks = before_match.count('```')
+    triple_tildes = before_match.count('~~~')
+
+    # If odd number of fences, we're inside a code block
+    if triple_backticks % 2 == 1 or triple_tildes % 2 == 1:
+        return True
+
+    # Check for inline code (backticks on same line)
+    # Find the line containing this match
+    last_newline = before_match.rfind('\n')
+    if last_newline == -1:
+        last_newline = 0
+    line_start = last_newline
+
+    # Look ahead to find line end
+    after_match = content[match_start:]
+    next_newline = after_match.find('\n')
+    if next_newline == -1:
+        line_end = len(content)
+    else:
+        line_end = match_start + next_newline
+
+    # Get the full line
+    line = content[line_start:line_end]
+
+    # Find position of @ within the line
+    match_pos_in_line = match_start - line_start
+
+    # Count backticks before the @ on this line
+    backticks_before = line[:match_pos_in_line].count('`')
+
+    # If odd number of backticks before, we're inside inline code
+    if backticks_before % 2 == 1:
+        return True
+
+    return False
+
+
 def extract_at_references(file_path):
     """Extract @ references from markdown file."""
     try:
@@ -108,6 +152,10 @@ def extract_at_references(file_path):
 
     references = []
     for match in re.finditer(pattern, content):
+        # Skip if inside code block or inline code
+        if is_in_code_block(content, match.start()):
+            continue
+
         ref_path = match.group(1)
         line_num = content[:match.start()].count('\n') + 1
 

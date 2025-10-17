@@ -159,7 +159,7 @@ Example pattern:
 ```
 [Discovery]
 Targets:
-@src/app/**
+`@src/app/`**
 @packages/server/**
 
 Queries:
@@ -199,7 +199,7 @@ Use @ symbols to automatically load investigation context:
 ```
 Topic: How does rate limiting work in the API gateway?
 
-@src/gateway/RateLimiter.ts
+`@src/gateway/RateLimiter.ts`
 @src/gateway/middleware/ratelimit.ts
 @docs/architecture/api-gateway.md
 @config/rate-limits.yaml
@@ -382,7 +382,7 @@ Topic: <focus area with specific question>
 Scope: <in-scope items + out-of-scope items>
 Entry Points: <where to start investigation>
 
-@relevant-files
+`@relevant-files`
 
 Findings:
   F1: <finding> (Impact: <level>)
@@ -402,13 +402,11 @@ Genie Verdict: <summary> + recommended actions (confidence: <low|med|high> - rea
 ---
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/analyze.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/analyze.md
 
 Analysis keeps systems honest—audit broadly, investigate deeply, and map dependencies thoroughly to surface strategic improvements.

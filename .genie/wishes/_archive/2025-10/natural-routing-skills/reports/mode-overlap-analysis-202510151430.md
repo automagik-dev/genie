@@ -390,7 +390,7 @@ Remove template references from orchestrator.md for: plan, codereview, precommit
 #### Short-term (Phase 2 - 1 hour)
 4. Update orchestrator.md: Clarify agent vs mode distinction in header
 5. Update routing.md: Document when to invoke agents directly vs via orchestrator
-6. Update .claude/README.md: Reflect new mode count (5 modes, not 18)
+6. Update : Reflect new mode count (5 modes, not 18)
 
 #### Medium-term (Phase 3 - 1 hour)
 7. Remove phantom mode templates from orchestrator.md (plan, codereview, precommit, compliance, retrospective)

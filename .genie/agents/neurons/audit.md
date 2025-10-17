@@ -61,7 +61,7 @@ Use @ symbols to automatically load initiative context before risk analysis:
 ```
 Scope: Production migration to Kubernetes
 
-@docs/architecture/deployment-strategy.md
+`@docs/architecture/deployment-strategy.md`
 @infrastructure/terraform/prod-config.tf
 @docs/team-runbook.md
 @incidents/postmortems/2024-Q1.md
@@ -182,7 +182,7 @@ Benefits:
 Scope: <initiative with timeline and constraints>
 Context: <current state, target state, dependencies>
 
-@relevant-files
+`@relevant-files`
 
 Risk Analysis:
   R1: <risk> (Impact: <level>, Likelihood: <%)
@@ -242,13 +242,11 @@ Verdict: <risk posture> (confidence: <low|med|high>)
 ---
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/audit.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/audit.md
 
 Auditing keeps systems safe—enumerate risks systematically, quantify impact × likelihood, propose concrete mitigations, and document residual risk for transparency.

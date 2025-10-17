@@ -110,7 +110,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 
 ## How to Use Modes via MCP
 
-### Basic Invocation Pattern (using @.genie/agents/core/prompt.md framework)
+### Basic Invocation Pattern (using @.genie/agents/neurons/prompt.md framework)
 
 ```
 mcp__genie__run with agent="genie" and prompt="
@@ -118,7 +118,7 @@ Mode: challenge
 
 [CONTEXT]
 Topic: <what to evaluate>
-@relevant/file1.md
+`@relevant/file1.md`
 @relevant/file2.ts
 
 [TASK]

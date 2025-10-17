@@ -69,7 +69,7 @@
 | User clarification | feedback | Templates are one-way: Genie → user projects | implementation |
 | Agent inventory | discovery | 30 agents total: 6 top-level + 10 core + 14 modes | categorization |
 | Reality check | validation | CLI: `genie list agents` (not `genie agents list`) | verification |
-| @.genie/agents/core/install.md | repo | Current init logic and setup modes | implementation |
+| @.genie/agents/code/neurons/install.md | repo | Current init logic and setup modes | implementation |
 | templates/ directory | discovery | Already exists with templates/.claude/commands/ | implementation |
 | .genie/ directories | discovery | entrypoints, core prompts, custom overrides, qa, guides, standards, product, instructions | audit |
 
@@ -175,7 +175,7 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 
 ### Commands Updated:
 - Root agents: `plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe` → `@.genie/agents/<name>.md`
-- Core helpers: `commit`, `codereview`, `docgen`, `refactor`, `secaudit`, `testgen`, `tracer`, along with support agents (`analyze`, `debug`, etc.) → `@.genie/agents/core/<name>.md`
+- Core helpers: `commit`, `codereview`, `docgen`, `refactor`, `secaudit`, `testgen`, `tracer`, along with support agents (`analyze`, `debug`, etc.) → `@.genie/agents/neurons/<name>.md`
 - Custom stubs: `.genie/custom/<mode>.md` auto-load with each core prompt for repository-specific guidance
 - Genie-only: `genie-qa` → `@.genie/agents/qa/genie-qa.md`
 
@@ -184,9 +184,6 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 ### Phase 0 – Genie Mode Consolidation
 - **Goal:** Enumerate all Genie modes with core prompts and matching project configuration includes, and keep orchestrator/MCP routing consistent.
 - **Surfaces:**
-  - @.genie/agents/orchestrator.md
-  - @.genie/custom/orchestrator.md
-  - @.genie/agents/core/modes/<mode>.md and @.genie/custom/<mode>.md for analyze, challenge, codereview, consensus, deep-dive, design-review, docgen, explore, refactor, risk-audit, secaudit, test-strategy, testgen, tracer
   - @.genie/mcp/src/server.ts (orchestrator prompt helper)
 - **Deliverables:**
   - ✅ Mode consolidation (socratic/debate/challenge merged, thinkdeep→explore, bloat variants removed) — commit 544bd0d, score 92/100
@@ -201,9 +198,8 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 ### Phase 1 – Meta-Learning Unification
 - **Goal:** Merge the legacy self-learn behaviours into the unified learn agent while preserving violation logging.
 - **Surfaces:**
-  - @.genie/agents/core/learn.md
-  - @.genie/custom/learn.md
-  - @.claude/commands/learn.md
+  - @.genie/agents/neurons/learn.md
+  - commands/learn.md
   - @AGENTS.md §behavioral_learnings
 - **Deliverables:**
   - ✅ Unified `learn` agent replaces legacy self-learn behaviour with violation + pattern support
@@ -216,9 +212,8 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 ### Phase 2 – Core Delivery Catalog Rationalization
 - **Goal:** Collapse legacy delivery prompts into the `core/` directory with matching `.genie/custom/<name>.md` includes for project overrides.
 - **Surfaces:**
-  - Core delivery/utility prompts: @.genie/agents/core/{commit,debug,git-workflow,implementor,install,learn,polish,prompt,qa,tests}.md
-  - Core modes: @.genie/agents/core/modes/{analyze,challenge,codereview,consensus,deep-dive,design-review,docgen,explore,refactor,risk-audit,secaudit,test-strategy,testgen,tracer}.md
-  - Custom configuration files: @.genie/custom/<name>.md for the same set
+  - Core delivery/utility prompts: @.genie/agents/neurons/{commit,debug,git-workflow,implementor,install,learn,polish,prompt,qa,tests}.md
+  - Core modes: {analyze,challenge,codereview,consensus,deep-dive,design-review,docgen,explore,refactor,risk-audit,secaudit,test-strategy,testgen,tracer}.md
   - `.claude/` aliases referencing these prompts
 - **Deliverables:**
   - All delivery/utility prompts live under `.genie/agents/core/` with project customization in `.genie/custom/`
@@ -232,10 +227,7 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 - **Goal:** Document multi-template architecture, test both templates in clean environments, validate agent resolution.
 - **Surfaces:**
   - @AGENTS.md (add §Universal Workflow Architecture)
-  - @templates/code/README.md
-  - @templates/create/README.md
-  - @.genie/guides/migration-core-template.md (if needed)
-  - @.genie/wishes/core-template-separation/qa/
+  - qa/
 - **Deliverables:**
   - ✅ Multi-template evolution documented (reports/multi-template-evolution-202510161800.md)
   - ✅ AGENTS.md §Universal Workflow Architecture section verified (exists at line 392)
@@ -343,7 +335,7 @@ Both templates share the universal workflow (Plan → Wish → Forge → Review)
 - 1 QA agent: genie-qa (framework self-validation)
 
 **Architecture Pattern:**
-- **NPM package ships 19 user-facing agents** - Users reference via `@.genie/agents/core/`, NOT copy
+- **NPM package ships 19 user-facing agents** - Users reference via `@.genie/agents/neurons/`, NOT copy
 - **Templates copy `.genie/custom/` stubs only** - Customization injection points
 - **Two agent inventories:**
   1. **NPM inventory:** 19 agents in package (users reference)
@@ -435,7 +427,7 @@ Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) re
 
 **User workflow:**
 1. `genie init` copies `.genie/custom/` stubs to project
-2. `.claude/agents/` wrappers reference npm package: `@.genie/agents/core/<agent>.md`
+2. `.claude/agents/` wrappers reference npm package: `@.genie/agents/neurons/<agent>.md`
 3. Master prompts auto-include `.genie/custom/<agent>.md` when present
 4. Users add project agents in `.genie/agents/` (custom inventory)
 
@@ -468,7 +460,7 @@ Entry-point files (`plan`, `wish`, `forge`, `review`, `orchestrator`, `vibe`) re
 ## <spec_contract>
 
 **Scope:**
-- ✅ Update orchestrator prompt to delegate to modes via `@.genie/agents/core/modes/*` references
+- ✅ Update orchestrator prompt to delegate to modes via `*` references
 - ✅ Merge the legacy self-learn flow into a single meta-learning learn agent and command wrapper
 - Consolidate core delivery catalog (verify all 10 core agents + 14 modes documented)
 - Refresh documentation (AGENTS.md, agents README, migration guide) and capture validation evidence
@@ -572,7 +564,7 @@ ls -1 templates/base/.claude/commands/*.md | wc -l
 
 # Example agent reference
 head -10 templates/base/.claude/agents/implementor.md
-# Contains: @.genie/agents/core/implementor.md ✅
+# Contains: @.genie/agents/code/neurons/implementor.md ✅
 ```
 
 ### Architecture Compliance
@@ -597,5 +589,5 @@ head -10 templates/base/.claude/agents/implementor.md
 - **Core prompt customization routed through `.genie/custom/`:** Entry-point agents remain immutable while each core delivery persona now exposes a `Project Customization` block wired to `.genie/custom/<agent>.md`; legacy `.genie/agents/custom/` references removed.
 - **Template export pending:** `templates/` remains empty; distributable copies of the core/custom structure still need to be staged.
 - **CLI smoke passing:** `pnpm run test:genie` succeeds with identity smoke test verifying the `**Identity**` block and the MCP integration invoking the installed `genie` binary; see `scripts/qa/bug1-validate.sh`, `tests/identity-smoke.sh`, `tests/mcp-*.js`.
-- **Meta-learn merge completed (2025-10-07):** Legacy self-learn prompt retired; `learn.md` now embeds violation/pattern workflows, docs updated (`AGENTS.md`, `.claude/README.md`, `.genie/custom/learn.md`), and new `done-learn` reporting convention recorded.
+- **Meta-learn merge completed (2025-10-07):** Legacy self-learn prompt retired; `learn.md` now embeds violation/pattern workflows, docs updated (`AGENTS.md`, ``, `.genie/custom/learn.md`), and new `done-learn` reporting convention recorded.
 - **Documentation drift (resolved 2025-10-06):** `AGENTS.md:32` and `@.genie/agents/README.md:6` now call out that entrypoints stay immutable while core prompts load `.genie/custom/` overrides.

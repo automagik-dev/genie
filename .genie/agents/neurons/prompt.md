@@ -89,7 +89,7 @@ Use @ symbols to automatically trigger file reading, eliminating manual context 
 ```
 [TASK]
 Update authentication system
-@src/auth/middleware.ts
+`@src/auth/middleware.ts`
 @src/auth/config.json
 @tests/auth.test.ts
 ```
@@ -104,7 +104,7 @@ Example usage:
 ```
 [CONTEXT]
 Files to update:
-@src/mastra/index.ts - Main configuration
+`@src/mastra/index.ts` - Main configuration
 @src/mastra/agents/*.ts - All agent files
 Changes needed: Use consistent DB paths
 ```
@@ -738,11 +738,9 @@ When a date is needed or requested:
 This keeps time semantics unambiguous across agents and logs.
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/prompt.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/prompt.md

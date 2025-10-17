@@ -101,7 +101,7 @@ Felipe mentioned ability to parallelize non-conflicting work:
 
 3. **Migration path:** How do we migrate current CONTEXT.md content? Script? Manual? Document process?
 
-4. **CLAUDE.md references:** Currently loads `@.genie/CONTEXT.md` - needs update to load `@.genie/USERCONTEXT.md` + STATE separately?
+4. **CLAUDE.md references:** Currently loads `` - needs update to load `@.genie/USERCONTEXT.md` + STATE separately?
 
 5. **@ audit scope:** All .md files? Only agents? Only CLAUDE.md/AGENTS.md?
 

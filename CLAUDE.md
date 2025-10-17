@@ -1,6 +1,4 @@
 @AGENTS.md
-@.claude/README.md
-
 # ⚠️ Master Plan (Architectural Evolution & Current Goals)
 # Load master plan for architectural evolution, today's goals, and validation checklist
 # This file is your memory across sessions - read on EVERY restart

@@ -187,11 +187,9 @@ KeyTakeaways: [k1, k2, k3]
 
 
 ## Project Customization
-Define repository-specific defaults in @.genie/custom/consensus.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in  so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/custom/consensus.md

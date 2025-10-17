@@ -246,9 +246,6 @@ ls -lhR .genie/state/agents/logs/ > .genie/qa/evidence/bug-xxx-log-files-<timest
 ```
 
 ## Related Tests
-- @qa/workflows/session-lifecycle.md (Session Creation)
-- @qa/workflows/bug-92-zombie-sessions.md (Status transitions)
-
 ## Maintenance
 **Test Frequency:** Every RC release (until fixed)
 **Last Tested:** 2025-10-17 (RC9)

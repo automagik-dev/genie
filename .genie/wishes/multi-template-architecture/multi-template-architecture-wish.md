@@ -59,12 +59,12 @@
 | --- | --- | --- | --- |
 | @.genie/cli/src/commands/init.ts:77-209 | code | Current init copies from package `.genie/` | implementation |
 | @.genie/cli/src/lib/paths.ts:7-13 | code | Template path resolution (.claude already migrated) | implementation |
-| @templates/.claude/ | existing | Claude templates already moved (20+ files) | Group A (partial complete) |
-| @templates/AGENTS.md | existing | Root doc already moved (23KB) | Group A (partial complete) |
-| @templates/CLAUDE.md | existing | Root doc already moved (4KB) | Group A (partial complete) |
+|  | existing | Claude templates already moved (20+ files) | Group A (partial complete) |
+|  | existing | Root doc already moved (23KB) | Group A (partial complete) |
+|  | existing | Root doc already moved (4KB) | Group A (partial complete) |
 | @package.json:15-34 | config | Files bundled in npm package | implementation |
 | User clarification (items #4-6) | requirements | Separate templates, support Next.js/Rust, version independently | entire wish |
-| @.genie/agents/wish.md | template | Wish structure requirements | wish structure |
+|  | template | Wish structure requirements | wish structure |
 
 ## Discovery Summary
 - **Primary analyst:** Human (namastex) + Genie planning agent
@@ -320,7 +320,6 @@ genie run plan "@.genie/product/mission.md"
 
 **Surfaces:**
 - @.genie/cli/src/commands/init.ts – add `--template` flag
-- @.genie/cli/src/lib/template-discovery.ts – new module for template enumeration
 - @.genie/cli/src/lib/paths.ts – update `getTemplateGeniePath()` to accept template type
 
 **Deliverables:**
