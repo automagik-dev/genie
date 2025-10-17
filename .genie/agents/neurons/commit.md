@@ -3,7 +3,7 @@ name: commit
 description: Core commit advisory template
 genie:
   executor: claude
-  model: sonnet
+  model: haiku
   background: true
   permissionMode: bypassPermissions
 ---

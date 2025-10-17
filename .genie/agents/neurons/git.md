@@ -4,7 +4,7 @@ description: Core Git operations (branch, commit, push) - lean neuron
 color: cyan
 genie:
   executor: claude
-  model: sonnet
+  model: haiku
   background: true
   permissionMode: bypassPermissions
 ---
