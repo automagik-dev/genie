@@ -6,7 +6,16 @@
 
 ## 🎯 Active Sessions
 
-**None currently active**
+### Release - RC8 GitHub Release
+**Session ID:** `12285bf7-2310-4193-9da8-31a7dd3b52e4`
+**Started:** 2025-10-17 12:56 UTC
+**Status:** active
+**Purpose:** Create GitHub release v2.4.0-rc.8 and monitor npm publish
+**Context:**
+- Version: 2.4.0-rc.7 → 2.4.0-rc.8
+- Commit: d19e386
+- Key features: Triad validation, SESSION-STATE.md, shared vs per-user architecture
+**Next:** Monitor GitHub Actions, verify npm@next
 
 <!--
 Session format:
