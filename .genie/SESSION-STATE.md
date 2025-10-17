@@ -6,87 +6,9 @@
 
 ## 🎯 Active Sessions
 
-### Implementor - MCP Bug Patches for RC9
-**Session ID:** `36459be4-79e5-4673-8d48-0be8a81259ba`
-**Started:** 2025-10-17 18:40 UTC
-**Status:** active (background)
-**Purpose:** Patch 4 confirmed MCP bugs (version metadata, #90, #102, #92)
-**Context:**
-- Bug #102: Session collision (agent name as key → sessionId as key)
-- Bug #90: full=true truncation (checkpoints → full log)
-- Bug #92: Zombie sessions (add cleanup/abandonment marking)
-- Version metadata: Add version header to log files
-**Patches Priority:** 1) Version metadata, 2) Bug #90, 3) Bug #102, 4) Bug #92
-**Next:** Await patch completion, test, commit, publish RC9
+**Clean slate for RC9 testing** - All prior sessions cleared.
 
-### Debug Neuron - Root Cause Investigation ✅
-**Session ID:** `5c6d3ec5-b953-49a3-bff9-48edd8f17176`
-**Started:** 2025-10-17 18:33 UTC
-**Completed:** 2025-10-17 18:39 UTC
-**Status:** completed
-**Mode:** debug
-**Purpose:** Identified root cause - MCP spawn race conditions + silent failures
-**Outcome:**
-- Found Bug #102 root cause: sessions.json uses agent name as key (collision)
-- Found Bug #90 root cause: View returns checkpoints not full transcript
-- Found Bug #66/91 pattern: Background launcher timeout + silent spawn failures
-- Comprehensive analysis in log file (500+ lines)
-
-### Debug Neuron - Bug #93 (Agent Start Failures)
-**Session ID:** `7f0e4379-be45-4944-82dd-317207154119`
-**Started:** 2025-10-17 ~23:50 UTC
-**Status:** active (background)
-**Mode:** debug
-**Purpose:** Investigate MCP agent start failures with "Command failed" error
-**Context:**
-- Issue #93: Agents fail with ~700 line prompt threshold
-- Evidence: Learn agent failed 2025-10-17 18:45 UTC, permission flag issues
-- Tasks: Read issue, reproduce with large prompts, test threshold hypothesis
-**Next:** Await investigation results, check for Genie Verdict
-
-### Debug Neuron - Bug #92 (Zombie Sessions)
-**Session ID:** `2104e928-2f7c-4642-93e3-c383f3bb80fc`
-**Started:** 2025-10-17 ~23:50 UTC
-**Status:** active (background)
-**Mode:** debug
-**Purpose:** Investigate sessions stuck in 'running' status despite completion
-**Context:**
-- Issue #92: Sessions show "running" for 2+ days after completion
-- Tasks: Read issue, check current sessions.json for zombies, review lifecycle code
-**Next:** Await investigation results, check for Genie Verdict
-
-### Debug Neuron - Bug #91 (Missing Sessions)
-**Session ID:** `2bd0abb6-39bc-4a68-bcca-4fb24faa00dc`
-**Started:** 2025-10-17 ~23:50 UTC
-**Status:** active (background)
-**Mode:** debug
-**Purpose:** Investigate sessions missing from sessions.json and MCP list
-**Context:**
-- Issue #91: 5 sessions disappeared from persistence
-- Tasks: Read issue, compare SESSION-STATE.md with sessions.json, check raw logs
-**Next:** Await investigation results, check for Genie Verdict
-
-### Debug Neuron - Bug #90 (full=true Truncation)
-**Session ID:** `0499321a-72bf-44fd-8af7-fb8a0a48d259`
-**Started:** 2025-10-17 ~23:50 UTC
-**Status:** active (background)
-**Mode:** debug
-**Purpose:** Investigate mcp__genie__view full=true truncation issue
-**Context:**
-- Issue #90: full=true doesn't return complete transcript, only snippets
-- Tasks: Read issue, test on known session, compare to raw log, review implementation
-**Next:** Await investigation results, check for Genie Verdict
-
-### Debug Neuron - Bug #66 (Session Disappears)
-**Session ID:** `1a0fab28-a40f-40e1-8bd7-39f8ce297deb`
-**Started:** 2025-10-17 ~23:50 UTC
-**Status:** active (background)
-**Mode:** debug
-**Purpose:** Investigate "No run found" error on resume
-**Context:**
-- Issue #66: Session exists, resume returns error (8 duplicates consolidated)
-- Tasks: Read consolidated issues, attempt reproduction, check relationship to #91
-**Next:** Await investigation results, check for Genie Verdict
+Any bugs that reappear = confirmed RC9 bugs (reproducible).
 
 <!--
 Session format:
@@ -103,6 +25,48 @@ Session format:
 ---
 
 ## 🔄 Session History (Recent)
+
+### Implementor - MCP Bug Patches for RC9 ✅
+**Session ID:** `36459be4-79e5-4673-8d48-0be8a81259ba`
+**Started:** 2025-10-17 18:40 UTC
+**Completed:** 2025-10-17 (RC9 published)
+**Outcome:** Successfully patched 4 confirmed MCP bugs and published RC9
+**Details:**
+- Bug #102: Session collision fixed (agent name as key → sessionId as key)
+- Bug #90: full=true truncation fixed (checkpoints → full log)
+- Bug #92: Zombie sessions fixed (add cleanup/abandonment marking)
+- Version metadata: Added version header to log files
+- Release: v2.4.0-rc.9 published to npm@next
+- GitHub: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.9
+- npm: https://www.npmjs.com/package/automagik-genie/v/2.4.0-rc.9
+- Commits: 904d223, db658ce, f76df1f, 5043aed
+
+### Debug Neuron - Bugs #90, #92, #66, #91 (Fixed in RC9) ✅
+**Sessions:**
+- #90: `0499321a-72bf-44fd-8af7-fb8a0a48d259`
+- #92: `2104e928-2f7c-4642-93e3-c383f3bb80fc`
+- #66: `1a0fab28-a40f-40e1-8bd7-39f8ce297deb`
+- #91: `2bd0abb6-39bc-4a68-bcca-4fb24faa00dc`
+**Started:** 2025-10-17 ~23:50 UTC
+**Completed:** 2025-10-17 (fixed in RC9)
+**Outcome:** All bugs addressed in RC9 patches
+**Details:**
+- Bug #90 (full=true truncation) → Fixed in RC9
+- Bug #92 (zombie sessions) → Fixed in RC9
+- Bug #66 (session disappears) → Likely fixed via #102 patch (session collision)
+- Bug #91 (missing sessions) → Likely fixed via #102 patch
+- Root cause session (5c6d3ec5) identified core issues for patches
+
+### Debug Neuron - Root Cause Investigation ✅
+**Session ID:** `5c6d3ec5-b953-49a3-bff9-48edd8f17176`
+**Started:** 2025-10-17 18:33 UTC
+**Completed:** 2025-10-17 18:39 UTC
+**Outcome:** Identified root causes enabling RC9 patches
+**Details:**
+- Found Bug #102 root cause: sessions.json uses agent name as key (collision)
+- Found Bug #90 root cause: View returns checkpoints not full transcript
+- Found Bug #66/91 pattern: Background launcher timeout + silent spawn failures
+- Comprehensive analysis in log file (500+ lines)
 
 ### Learn - Neuron Delegation Architecture Evolution ✅
 **Session ID:** `1bf5bfbe-f901-4ea0-85a9-1d8f4c5f2230`

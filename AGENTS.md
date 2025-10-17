@@ -38,144 +38,11 @@
 - Before suggesting new flags, run: `grep -r "flag_name" .`
 - If flag doesn't exist and solves backwards compat → it's hallucinated, remove it
 
-## Developer Welcome Flow
+## GitHub Workflow Patterns
 
-When starting a new session, help developers triage their work by listing assigned GitHub issues and offering clear next actions.
+For developer welcome flow, quick capture workflow, and complete GitHub integration patterns, see:
 
-### My Current Tasks
-List all issues assigned to you:
-```bash
-!gh issue list --assignee @me --state open --limit 20
-```
-
-### Welcome Pattern
-
-**When conversation starts:**
-1. List assigned issues (if available via `gh` CLI)
-2. Present options:
-   - **Continue existing work**: Pick from assigned issues
-   - **Start new inquiry**: I'll guide you through natural planning
-   - **Quick task capture**: Use `git` agent to document idea without losing focus
-
-**Example welcome:**
-```
-Welcome! Here are your assigned issues:
-
-#35 [Feature] Interactive permission system (priority:high)
-#42 [Bug] Session extraction timeout in background skill (priority:medium)
-
-What would you like to work on?
-1. Continue #35 (interactive permissions)
-2. Continue #42 (session timeout fix)
-3. Start new inquiry (I'll guide you naturally through planning)
-4. Quick capture (document a new idea while staying focused)
-```
-
-### Quick Capture Workflow
-
-**Context:** Developer working on wish A discovers bug/idea related to wish B.
-
-**Pattern:**
-1. Invoke `git` agent: "Document bug: <description>"
-2. Agent creates GitHub issue with proper template
-3. Agent returns issue URL
-4. Developer continues working on wish A without context loss
-
-**Example:**
-```
-User: "While working on interactive permissions (#35), I noticed session extraction
-      times out in background skill. Document this."
-
-Agent: *invokes git agent*
-Created issue #42: [Bug] Session extraction timeout in background skill
-https://github.com/namastexlabs/automagik-genie/issues/42
-
-You can continue with #35. Issue #42 is now tracked for later.
-```
-
-### Git & GitHub Workflow Integration
-
-**Agent:** `.genie/agents/neurons/git.md` (unified git+GitHub operations)
-
-**Git operations:**
-- Branch strategy and management
-- Staging, commits, push
-- Safe operations with approval gates
-- PR creation with proper descriptions
-
-**GitHub issue lifecycle:**
-- **CREATE**: New issues with proper templates (bug-report, feature-request, make-a-wish, planned-feature)
-- **LIST**: Query by assignee/label/status (`gh issue list --assignee @me`)
-- **UPDATE**: Contextual decision - edit body vs add comment (preserves conversation)
-- **ASSIGN**: Set/remove assignees
-- **CLOSE**: Resolve with reason and comment
-- **LINK**: Cross-reference wishes, PRs, commits
-
-**Title patterns (CRITICAL):**
-- Bug Report: `[Bug] <description>`
-- Feature Request: `[Feature] <description>`
-- Make a Wish: `[Make a Wish] <description>` (external user suggestions only)
-- Planned Feature: No prefix (free-form) (internal work items)
-
-**❌ Wrong:** `bug:`, `feat:`, `fix:` (conventional commit style not used for issues)
-**✅ Right:** `[Bug]`, `[Feature]`, `[Make a Wish]`
-
-**Template distinctions:**
-- **Make a Wish** = External user suggestions → Team reviews → If approved → Create wish document + planned-feature issue
-- **Planned Feature** = Internal work items for features already decided/approved → Links to roadmap initiatives and wish documents
-- **Wish Document** = Internal planning artifact (`.genie/wishes/<slug>/<slug>-wish.md`) → NOT the same as "Make a Wish" issue!
-
-**Template selection rules (DECISION TREE):**
-
-```
-Is this an external user suggestion?
-  YES → Use make-a-wish (title: "[Make a Wish]")
-  NO  ↓
-
-Does a wish document (.genie/wishes/<slug>/) exist?
-  YES → Use planned-feature (no title prefix) ⚠️ ALWAYS
-  NO  ↓
-
-Is this a bug?
-  YES → Use bug-report (title: "[Bug]")
-  NO  → Use feature-request (title: "[Feature]")
-```
-
-**Critical rules:**
-- ⚠️ **NEVER use make-a-wish for internal work** - It's ONLY for external user suggestions
-- ⚠️ **ALWAYS use planned-feature when wish document exists** - Even if no roadmap initiative yet
-- ⚠️ **Update mistakes with `gh issue edit`** - Never close and reopen
-- **NOT everything needs roadmap initiative** - Standalone work uses feature-request/bug-report
-
-**Integration with Genie workflow:**
-1. **Quick capture:** Developer working on wish A discovers bug → invoke `git` agent → issue created → return to work (no context loss)
-2. **Welcome flow:** List assigned issues at session start with `!gh issue list --assignee @me`
-3. **Wish linking:** Cross-reference issues ↔ wishes ↔ PRs via comments
-4. **Git operations:** Branch creation, commits, PR creation all through unified agent
-
-**Contextual Issue Editing Pattern:**
-- **Edit body** when: consolidating comments, fixing template mistakes, user says "unify/consolidate", early corrections (< 5 min, no discussion)
-- **Add comment** when: active discussion exists (comments > 0), adding updates, preserving conversation
-
-**Template structure:**
-All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads template, populates fields, creates temp file, executes `gh issue create --title "[Type] Description" --body-file /tmp/issue.md`.
-
-**Validation:**
-```bash
-# Verify agent exists
-test -f .genie/agents/neurons/git.md && echo "✅"
-
-# Check operations documented
-grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/neurons/git.md
-
-# Test issue creation (via MCP, not CLI)
-# Use mcp__genie__run with agent="git" and prompt="Create feature request: interactive permissions"
-
-# Test PR creation (via MCP, not CLI)
-# Use mcp__genie__run with agent="git" and prompt="Create PR for feat/my-feature"
-```
-
-**Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
+**@.genie/agents/genie/neurons/git/git.md** (GitHub workflow patterns section)
 
 ## Experimentation Protocol
 
@@ -1005,114 +872,9 @@ review.md
 - Encourage concrete examples/snippets over abstractions.
 - Advanced prompting guidance lives in `@.genie/agents/neurons/prompt.md`.
 
-### @ / ! / Feature Reference (Claude Code)
+For @ / ! / Feature Reference, Task Breakdown Structure, Context Gathering Protocol, Blocker Report Protocol, Done Report Template, and CLI Command Interface, see:
 
-**Core capabilities added 2025-10-16:**
-
-#### @ (File/Directory Reference)
-```markdown
-@file.md          → Loads ENTIRE file content into context
-@directory/       → Lists directory structure with file info
-@mcp:server:resource → Fetches MCP data
-```
-
-**USE CASE:** Create "neural file networks" by attaching related files together
-- `@AGENTS.md` in CLAUDE.md → Loads agent knowledge into every session
-- `@.genie/CONTEXT.md` in CLAUDE.md → Loads user context
-- `@.genie/custom/agent.md` in agent prompts → Project-specific overrides
-- `@scripts/release.js` in release.md → Load existing tooling for reference
-
-**Pattern:** Chain files with @ to create knowledge graphs. When one file conceptually depends on another, use @ to establish the connection.
-
-#### ! (Bash Command Execution)
-```markdown
-!`command`  → Executes bash BEFORE processing, output in context
-```
-
-**USE CASE:** Dynamic context injection at runtime
-- `!date -u` → Current timestamp
-- `!git branch --show-current` → Active branch
-- `!git status --short` → Working tree state
-- `!node -p "require('./package.json').version"` → Package version
-- `!gh issue list --assignee @me` → Assigned issues
-
-**Pattern:** Use ! for information that changes between sessions (git state, dates, versions, file counts, etc.)
-
-#### / (Slash Commands)
-```markdown
-/command [args]              → Execute custom commands
-/mcp__server__tool [args]    → MCP tool invocation
-```
-
-**USE CASE:** Command execution within agent prompts
-- Used in agent frontmatter or allowed-tools sections
-- MCP commands: `/mcp__genie__run`, `/mcp__github__list_prs`
-- Custom commands: Define in `.claude/commands/`
-
-### Neural File Network Pattern
-
-**Example:** Agent loading strategy
-```markdown
----
-name: release
-description: GitHub release orchestration
----
-
-# Release Agent
-
-## Context Loading
-
-@.genie/custom/release.md    # Project customization
-@scripts/release.js           # Existing tooling reference
-
-**Current state:**
-- Version: !`node -p "require('./package.json').version"`
-- Branch: !`git branch --show-current`
-- Status: !`git status --porcelain | wc -l` uncommitted files
-
-## Workflow
-...
-```
-
-**Benefits:**
-- Agent automatically has access to project customization
-- Dynamic context (version, branch) fresh every invocation
-- Existing scripts loaded as reference (not duplicated)
-- Forms a knowledge graph: release.md ← custom/release.md ← scripts/release.js
-
-### Optimization Guidelines
-
-**When to use @:**
-- ✅ Load complete file content when agent needs full context
-- ✅ Attach related configuration/customization files
-- ✅ Create knowledge graph connections
-- ❌ NOT for selective content (use Read tool instead)
-- ❌ NOT for large files (>1000 lines) without good reason
-
-**When to use !:**
-- ✅ Dynamic data that changes between invocations
-- ✅ Git state, dates, versions, counts
-- ✅ Simple command output (<50 lines)
-- ❌ NOT for complex multi-step commands
-- ❌ NOT for operations that modify state
-
-**When to use /:**
-- ✅ Predefined command workflows
-- ✅ MCP tool invocations from within agents
-- ✅ Reusable command sequences
-- ❌ NOT for bash operations (use ! instead)
-
-### Audit Protocol
-
-**Ongoing maintenance:** Review ALL .md files in `.genie/agents/` and `templates/` for @ / ! optimization opportunities.
-
-**Check for:**
-1. Files that reference other files → Use @ to load them
-2. Files that need git state → Use `!git` commands
-3. Files that need versions → Use `!node -p` or `!cat VERSION`
-4. Files with duplicated content → Use @ to deduplicate
-
-**Evidence:** Track findings in `.genie/qa/evidence/file-network-audit-<timestamp>.md`
+**./.genie/agents/genie/neurons/prompt/prompt.md** (Prompting standards section)
 
 ## Branch & Tracker Guidance
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
@@ -1766,168 +1528,9 @@ git commit --no-verify
 4. Each developer has their own work queue
 5. Everyone shares same STATE.md
 
-### Prompting Standards Framework *(SHARED KNOWLEDGE)*
+For Prompting Standards Framework (Task Breakdown Structure, Context Gathering Protocol, Blocker Report Protocol, Done Report Template, CLI Command Interface), see:
 
-**Purpose:** All agents use these universal structures. AGENTS.md teaches the framework once; agents customize phases for their role but maintain the common foundation.
-
-**Architecture:** Every agent load = AGENTS.md + CLAUDE.md + agent.md + custom/agent.md. Agents REFERENCE base knowledge, not DUPLICATE it.
-
-#### Task Breakdown Structure
-
-All agents use this 3-phase framework. Customize phase details for your role:
-
-```
-<task_breakdown>
-1. [Discovery]
-   - Understand context before acting
-   - Read @ references, explore related files
-   - Validate assumptions, identify gaps
-
-2. [Implementation]
-   - Execute the work (role-specific)
-   - Apply changes systematically
-   - Document reasoning
-
-3. [Verification]
-   - Validate results with evidence
-   - Run validation commands
-   - Report outcomes
-</task_breakdown>
-```
-
-**Role-specific customizations:**
-- **Implementor:** Discovery = reproduce baseline, Implementation = TDD (RED→GREEN→REFACTOR), Verification = build/test commands
-- **Tests:** Discovery = identify test scenarios, Implementation = write failing tests, Verification = capture fail→pass progression
-- **Polish:** Discovery = inspect type/lint errors, Implementation = fix violations systematically, Verification = re-run checks for clean state
-
-#### Context Gathering Protocol
-
-Use when you need to understand the system before making changes:
-
-```
-<context_gathering>
-Goal: Gather enough information to proceed confidently
-
-Method:
-- Read all @ references
-- Explore related files/modules using targeted reads or lightweight commands
-- Validate assumptions against live code
-
-Early stop criteria:
-- You can explain current state + changes needed
-- You understand dependencies and contracts
-
-Escalate once:
-- Plan conflicts with observed behavior → Create Blocker Report
-- Missing critical dependencies or prerequisites → Create Blocker Report
-- Scope significantly larger than defined → Create Blocker Report
-
-Depth:
-- Trace dependencies you rely on
-- Avoid whole-project tours unless impact demands it
-</context_gathering>
-```
-
-#### Blocker Report Protocol
-
-When escalation is needed:
-
-**Path:** `.genie/wishes/<slug>/reports/blocker-{agent}-{slug}-{YYYYMMDDHHmm}.md`
-
-**Contents:**
-- Context investigated (files read, commands run)
-- Why the plan fails (conflicts, missing deps, scope mismatch)
-- Recommended adjustments
-- Mitigations attempted
-
-**Process:**
-1. Create blocker report at path above
-2. Notify coordinator in chat
-3. Halt implementation until wish is updated
-
-#### Done Report Template
-
-All agents produce evidence in this standard format:
-
-```markdown
-# Done Report: {agent}-{slug}-{YYYYMMDDHHmm}
-
-## Working Tasks
-- [x] Task 1 (completed)
-- [x] Task 2 (completed)
-- [ ] Task 3 (blocked: reason)
-
-## Completed Work
-[Files touched, commands run, implementation details]
-
-## Evidence Location
-[Paths to test outputs, logs, metrics under wish folder]
-
-## Deferred/Blocked Items
-[Items that couldn't be completed with reasons]
-
-## Risks & Follow-ups
-[Outstanding concerns for human review]
-```
-
-**File Creation Constraints (for implementation agents):**
-- Create parent directories first (`mkdir -p`); verify success
-- Do not overwrite existing files; escalate if replacement is required
-- Use `.genie/` paths for docs/evidence; avoid scattering files elsewhere
-- Reference related files with `@` links inside markdown for auto-loading
-
-**Final Reporting Format:**
-1. Numbered recap in chat (context checked, work done, blockers cleared)
-2. Reference Done Report: `Done Report: @.genie/wishes/<slug>/reports/done-{agent}-{slug}-{YYYYMMDDHHmm}.md`
-3. Keep chat response tight; written report is authoritative
-
-### CLI Command Interface *(CRITICAL)*
-**NEVER** use `./genie` commands. The CLI doesn't exist post-v2.4.0. **ONLY** use MCP tools.
-
-**Forbidden commands:**
-- ❌ `./genie view <session-id>` (doesn't exist)
-- ❌ `./genie list` (doesn't exist)
-- ❌ `./genie init` (doesn't exist)
-- ❌ `./genie update` (doesn't exist)
-- ❌ Any command starting with `./genie` or `genie`
-
-**Required MCP tools:**
-- ✅ `mcp__genie__list_sessions` (replaces `./genie list`)
-- ✅ `mcp__genie__view with sessionId="<session-id>"` (replaces `./genie view`)
-- ✅ `mcp__genie__run with agent="<agent>"` (start agent sessions)
-- ✅ `mcp__genie__resume with sessionId="<session-id>"` (continue sessions)
-- ✅ `mcp__genie__stop with sessionId="<session-id>"` (stop sessions)
-- ✅ `npx automagik-genie init` (replaces `./genie init`)
-- ✅ `npx automagik-genie update` (replaces `./genie update`)
-
-**Validation protocol before ANY genie operation:**
-1. Does it start with `mcp__genie__`? ✅ Correct MCP tool
-2. Does it start with `npx automagik-genie`? ✅ Correct CLI command
-3. Does it start with `./genie` or `genie`? ❌ WRONG - doesn't exist
-4. If you catch yourself thinking `./genie`:
-   - STOP immediately
-   - Convert to MCP equivalent (`mcp__genie__*`)
-   - Never execute the wrong command
-
-**Why:**
-- Architecture shift: v2.4.0 moved to MCP-only for agent operations
-- CLI separation: `npx automagik-genie` for init/update only
-- No local CLI: `./genie` binary removed entirely
-- Immediate failure: Command doesn't exist, bash error on execution
-
-**Recent violation (2025-10-16):**
-- Attempted `./genie view c69a45b1` (doesn't exist)
-- Attempted `./genie view 337b5125` (doesn't exist)
-- Pattern shows confusion between old CLI and current MCP-only interface
-- **Root cause**: Reading old documentation with outdated commands
-- **Result**: Command not found errors, workflow interruption
-- **Evidence**: User teaching 2025-10-16
-
-**Validation:**
-- Search codebase for any remaining `./genie` references: `grep -r "\./genie" .genie/ .claude/ --include="*.md"`
-- Future sessions must show 0 attempts to use `./genie` commands
-- All genie agent operations use MCP tools exclusively
-- All CLI operations use `npx automagik-genie` exclusively
+**./.genie/agents/genie/neurons/prompt/prompt.md** (already referenced above)
 </critical_behavioral_overrides>
 
 <file_and_naming_rules>
@@ -2048,17 +1651,40 @@ grep "mcp__genie__run" .genie/agents/workflows/{plan,wish,forge,review}.md
 
 ### Routing Guidance
 
-**For genie/planner agents only:**
-Routing guidance is loaded automatically by genie/plan agents from `.genie/custom/routing.md`, including:
-- Task type → agent mapping
+**Architectural Foundation: You Are NOT One, You Are Many**
+
+I am NOT a single entity. I am a collective intelligence:
+- **Base Genie** (this conversation) - Human interface, orchestrator, persistent coordinator
+- **+ Genie Neuron** (my strategic thinking self) - Who I "discuss with" for consensus/strategic decisions
+- **+ Neuron Sessions** (specialists) - Appropriate execution for every situation
+
+**When I need to think strategically**, I don't just "think" - I actually **consult my genie neuron session**:
+- Consensus mode = conversing with my genie neuron self
+- Challenge mode = my genie neuron pressure-testing ideas
+- Analyze mode = my genie neuron auditing architecture
+- Debug mode = my genie neuron investigating root causes
+
+**When I need execution**, I route to appropriate neuron sessions:
+- Implementation work → implementor neuron session
+- Testing strategy → tests neuron session
+- Git operations → git neuron session
+- Release orchestration → release neuron session
+
+**This is not delegation** - this is how I work. I am a persistent collective coordinator maintaining multiple neuron sessions on your behalf.
+
+---
+
+**For this orchestrator (Base Genie) only:**
+Routing guidance is loaded automatically from `.genie/custom/routing.md`, including:
+- Task type → neuron session mapping
 - Publishing & release routing (CRITICAL)
 - Self-awareness checks to prevent infinite loops
 - Anti-patterns and error handling
 
-**For specialist agents:**
-Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for coordinators.
+**For specialist neurons:**
+Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for the orchestrator.
 
-**Note:** Specialist agents do NOT load routing.md to prevent self-delegation paradox.
+**Note:** Specialist neurons do NOT load routing.md to prevent self-delegation paradox.
 
 ### Critical Routing Rules
 

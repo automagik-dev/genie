@@ -78,7 +78,7 @@ const BASE_CONFIG = {
     },
     background: {
         enabled: true,
-        detach: true,
+        detach: false,
         pollIntervalMs: 1500,
         sessionExtractionDelayMs: 5000
     }
@@ -160,7 +160,7 @@ function loadConfig() {
     return config;
 }
 function resolvePaths(paths) {
-    const baseDir = paths.baseDir || '.';
+    const baseDir = path_1.default.resolve(paths.baseDir || '.'); // Convert to absolute path
     return {
         baseDir,
         sessionsFile: paths.sessionsFile || path_1.default.join(baseDir, '.genie/state/agents/sessions.json'),

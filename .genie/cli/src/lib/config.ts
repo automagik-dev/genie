@@ -68,7 +68,7 @@ const BASE_CONFIG: GenieConfig = {
   },
   background: {
     enabled: true,
-    detach: true,
+    detach: false,
     pollIntervalMs: 1500,
     sessionExtractionDelayMs: 5000
   }
@@ -161,7 +161,7 @@ export function loadConfig(): GenieConfig {
 
 
 export function resolvePaths(paths: ConfigPaths): Required<ConfigPaths> {
-  const baseDir = paths.baseDir || '.';
+  const baseDir = path.resolve(paths.baseDir || '.');  // Convert to absolute path
   return {
     baseDir,
     sessionsFile: paths.sessionsFile || path.join(baseDir, '.genie/state/agents/sessions.json'),

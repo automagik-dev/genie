@@ -29,9 +29,19 @@ const util_1 = require("util");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
-// Use process.cwd() instead of __dirname to get user's project directory
-// __dirname would resolve to npm package install location
-const WORKSPACE_ROOT = process.cwd();
+// Find actual workspace root by searching upward for .genie/ directory
+function findWorkspaceRoot() {
+    let dir = process.cwd();
+    while (dir !== path_1.default.dirname(dir)) {
+        if (fs_1.default.existsSync(path_1.default.join(dir, '.genie'))) {
+            return dir;
+        }
+        dir = path_1.default.dirname(dir);
+    }
+    // Fallback to process.cwd() if .genie not found
+    return process.cwd();
+}
+const WORKSPACE_ROOT = findWorkspaceRoot();
 // Helper: List available agents from .genie/agents directory
 function listAgents() {
     const baseDir = '.genie/agents';

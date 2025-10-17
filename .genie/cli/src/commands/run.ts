@@ -190,8 +190,11 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
   }
   const spawnOptions: SpawnOptionsWithoutStdio = {
     stdio: ['ignore', 'pipe', 'pipe'] as any,
-    ...(command.spawnOptions || {})
+    ...(command.spawnOptions || {}),
+    cwd: paths.baseDir  // Use workspace root, not inherited process.cwd()
   };
+  console.error(`[DEBUG] paths.baseDir = ${paths.baseDir}`);
+  console.error(`[DEBUG] spawnOptions.cwd = ${spawnOptions.cwd}`);
   const proc = spawn(command.command, command.args, spawnOptions);
 
   entry.status = 'running';

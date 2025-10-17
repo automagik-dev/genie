@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.9
+last_version: 2.4.0-rc.10
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,29 +18,34 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** Triad redesign (RC6 release preparation)
+**Focus:** RC10 release - Background agent launch fixes
 **Branch:** !`git branch --show-current`
 
 **Active Work:**
-- Triad context system redesign (USERCONTEXT, STATE, TODO separation)
-- Agent generalization (removing Felipe-specific refs)
-- Template preparation for general audience
+- Critical workspace root resolution fixes
+- MCP server path detection improvements
+- Background agent spawn debugging
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.9 on npm@next (2025-10-17)
-**Latest:** MCP bug fixes (4 critical bugs patched)
+**Published:** v2.4.0-rc.10 on npm@next (2025-10-17)
+**Latest:** Background agent launch critical fixes
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Improvements in rc.9:**
-- ✅ Bug #102: Session ID collision fixed (v1→v2 schema migration)
-- ✅ Bug #90: full=true truncation fixed (complete transcript)
-- ✅ Bug #92: Zombie session cleanup (>24h auto-abandonment)
-- ✅ Enhancement: Version metadata in all log files
+**Critical Fixes in rc.10:**
+- ✅ Background agent launch failure (detach config + workspace root)
+- ✅ MCP server workspace detection (search upward for .genie/)
+- ✅ Absolute path resolution (cross-process cwd compatibility)
+- ✅ Executor spawn cwd override (explicit workspace root)
+
+**Previous RC9 Fixes:**
+- Bug #102: Session ID collision (v1→v2 schema)
+- Bug #90: full=true truncation (complete transcript)
+- Bug #92: Zombie session cleanup (>24h auto-abandonment)
 
 ---
 

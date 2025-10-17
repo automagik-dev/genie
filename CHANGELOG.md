@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.4.0-rc.10] - 2025-10-17
+
+### Fixed
+- **CRITICAL**: Background agent launch failure - Changed `detach: true` to `detach: false` in config to fix executor spawn
+- **CRITICAL**: Workspace root resolution - MCP server now searches upward for `.genie/` directory instead of using `process.cwd()`
+- **CRITICAL**: Absolute path resolution - `paths.baseDir` now uses `path.resolve()` for cross-process compatibility
+- Executor spawn now explicitly uses workspace root for `cwd` option
+
+### Context
+- Root cause: MCP server running from `/tmp/test-genie` (Claude Code temp dir) caused all spawned processes to inherit wrong cwd
+- Impact: Background agents timed out with `executorPid=null`, tried to open `.genie/package.json` from wrong directory
+- Solution: Three-layer fix ensuring workspace root correctly propagates from MCP → CLI → executor spawn
+
+### Files Changed
+- `.genie/cli/src/lib/config.ts:164` - Convert baseDir to absolute path
+- `.genie/cli/src/commands/run.ts:194` - Override spawn cwd with baseDir
+- `.genie/mcp/src/server.ts:31-44` - Search upward for workspace root
+
+---
+
 ## [2.3.7] - 2025-10-16
 
 ### Added

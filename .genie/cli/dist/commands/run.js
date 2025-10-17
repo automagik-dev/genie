@@ -139,8 +139,11 @@ function executeRun(args) {
     }
     const spawnOptions = {
         stdio: ['ignore', 'pipe', 'pipe'],
-        ...(command.spawnOptions || {})
+        ...(command.spawnOptions || {}),
+        cwd: paths.baseDir // Use workspace root, not inherited process.cwd()
     };
+    console.error(`[DEBUG] paths.baseDir = ${paths.baseDir}`);
+    console.error(`[DEBUG] spawnOptions.cwd = ${spawnOptions.cwd}`);
     const proc = (0, child_process_1.spawn)(command.command, command.args, spawnOptions);
     entry.status = 'running';
     entry.executorPid = proc.pid || null;

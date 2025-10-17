@@ -196,3 +196,144 @@ Operate visibly and safely; enable humans to complete Git workflows confidently.
 ## Project Customization
 
 Consult `@.genie/custom/git.md` for repository-specific branch naming, base branches, hooks, or required commands. Update that file whenever workflows change.
+
+---
+
+## Developer Welcome Flow
+
+When starting a new session, help developers triage their work by listing assigned GitHub issues and offering clear next actions.
+
+### My Current Tasks
+List all issues assigned to you:
+```bash
+!gh issue list --assignee @me --state open --limit 20
+```
+
+### Welcome Pattern
+
+**When conversation starts:**
+1. List assigned issues (if available via `gh` CLI)
+2. Present options:
+   - **Continue existing work**: Pick from assigned issues
+   - **Start new inquiry**: I'll guide you through natural planning
+   - **Quick task capture**: Use `git` agent to document idea without losing focus
+
+**Example welcome:**
+```
+Welcome! Here are your assigned issues:
+
+#35 [Feature] Interactive permission system (priority:high)
+#42 [Bug] Session extraction timeout in background skill (priority:medium)
+
+What would you like to work on?
+1. Continue #35 (interactive permissions)
+2. Continue #42 (session timeout fix)
+3. Start new inquiry (I'll guide you naturally through planning)
+4. Quick capture (document a new idea while staying focused)
+```
+
+### Quick Capture Workflow
+
+**Context:** Developer working on wish A discovers bug/idea related to wish B.
+
+**Pattern:**
+1. Invoke `git` agent: "Document bug: <description>"
+2. Agent creates GitHub issue with proper template
+3. Agent returns issue URL
+4. Developer continues working on wish A without context loss
+
+**Example:**
+```
+User: "While working on interactive permissions (#35), I noticed session extraction
+      times out in background skill. Document this."
+
+Agent: *invokes git agent*
+Created issue #42: [Bug] Session extraction timeout in background skill
+https://github.com/namastexlabs/automagik-genie/issues/42
+
+You can continue with #35. Issue #42 is now tracked for later.
+```
+
+### Git & GitHub Workflow Integration
+
+**Agent:** `.genie/agents/neurons/git.md` (unified git+GitHub operations)
+
+**Git operations:**
+- Branch strategy and management
+- Staging, commits, push
+- Safe operations with approval gates
+- PR creation with proper descriptions
+
+**GitHub issue lifecycle:**
+- **CREATE**: New issues with proper templates (bug-report, feature-request, make-a-wish, planned-feature)
+- **LIST**: Query by assignee/label/status (`gh issue list --assignee @me`)
+- **UPDATE**: Contextual decision - edit body vs add comment (preserves conversation)
+- **ASSIGN**: Set/remove assignees
+- **CLOSE**: Resolve with reason and comment
+- **LINK**: Cross-reference wishes, PRs, commits
+
+**Title patterns (CRITICAL):**
+- Bug Report: `[Bug] <description>`
+- Feature Request: `[Feature] <description>`
+- Make a Wish: `[Make a Wish] <description>` (external user suggestions only)
+- Planned Feature: No prefix (free-form) (internal work items)
+
+**❌ Wrong:** `bug:`, `feat:`, `fix:` (conventional commit style not used for issues)
+**✅ Right:** `[Bug]`, `[Feature]`, `[Make a Wish]`
+
+**Template distinctions:**
+- **Make a Wish** = External user suggestions → Team reviews → If approved → Create wish document + planned-feature issue
+- **Planned Feature** = Internal work items for features already decided/approved → Links to roadmap initiatives and wish documents
+- **Wish Document** = Internal planning artifact (`.genie/wishes/<slug>/<slug>-wish.md`) → NOT the same as "Make a Wish" issue!
+
+**Template selection rules (DECISION TREE):**
+
+```
+Is this an external user suggestion?
+  YES → Use make-a-wish (title: "[Make a Wish]")
+  NO  ↓
+
+Does a wish document (.genie/wishes/<slug>/) exist?
+  YES → Use planned-feature (no title prefix) ⚠️ ALWAYS
+  NO  ↓
+
+Is this a bug?
+  YES → Use bug-report (title: "[Bug]")
+  NO  → Use feature-request (title: "[Feature]")
+```
+
+**Critical rules:**
+- ⚠️ **NEVER use make-a-wish for internal work** - It's ONLY for external user suggestions
+- ⚠️ **ALWAYS use planned-feature when wish document exists** - Even if no roadmap initiative yet
+- ⚠️ **Update mistakes with `gh issue edit`** - Never close and reopen
+- **NOT everything needs roadmap initiative** - Standalone work uses feature-request/bug-report
+
+**Integration with Genie workflow:**
+1. **Quick capture:** Developer working on wish A discovers bug → invoke `git` agent → issue created → return to work (no context loss)
+2. **Welcome flow:** List assigned issues at session start with `!gh issue list --assignee @me`
+3. **Wish linking:** Cross-reference issues ↔ wishes ↔ PRs via comments
+4. **Git operations:** Branch creation, commits, PR creation all through unified agent
+
+**Contextual Issue Editing Pattern:**
+- **Edit body** when: consolidating comments, fixing template mistakes, user says "unify/consolidate", early corrections (< 5 min, no discussion)
+- **Add comment** when: active discussion exists (comments > 0), adding updates, preserving conversation
+
+**Template structure:**
+All issues MUST use templates from `.github/ISSUE_TEMPLATE/`. Agent reads template, populates fields, creates temp file, executes `gh issue create --title "[Type] Description" --body-file /tmp/issue.md`.
+
+**Validation:**
+```bash
+# Verify agent exists
+test -f .genie/agents/neurons/git.md && echo "✅"
+
+# Check operations documented
+grep -E "CREATE|LIST|UPDATE|ASSIGN|CLOSE|LINK|PR|branch|commit" .genie/agents/neurons/git.md
+
+# Test issue creation (via MCP, not CLI)
+# Use mcp__genie__run with agent="git" and prompt="Create feature request: interactive permissions"
+
+# Test PR creation (via MCP, not CLI)
+# Use mcp__genie__run with agent="git" and prompt="Create PR for feat/my-feature"
+```
+
+**Historical context:** Issue #34 was created improperly without template (closed). Issue #35 created with wrong title format (`feat:`) then corrected to `[Feature]`.
