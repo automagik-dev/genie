@@ -19,7 +19,7 @@ const { loadSessions } = require('../.genie/cli/dist/session-store.js');
   const tempSessionsPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json');
   const store = loadSessions({ sessionsFile: tempSessionsPath }, { defaults: { executor: 'codex' } }, { defaults: { executor: 'codex' } });
   assert.ok(store && typeof store === 'object', 'loadSessions returns an object');
-  Object.values(store.agents).forEach((entry) => {
+  Object.values(store.sessions || store.agents || {}).forEach((entry) => {
     assert.ok(entry.executor, 'each session entry should have an executor');
   });
 })();
@@ -40,7 +40,7 @@ const { loadSessions } = require('../.genie/cli/dist/session-store.js');
     },
     parsed: { options: { lines: 10, full: false, live: false } },
     paths: { baseDir: '.' },
-    store: { version: 1, agents: { 'codex-test': entry } },
+    store: { version: 2, sessions: { 'codex-test': entry } },
     save: () => {},
     formatPathRelative: (targetPath) => targetPath
   });
@@ -61,9 +61,9 @@ async function runCliCoreTests() {
     sessionsFile,
     JSON.stringify(
       {
-        version: 1,
-        agents: {
-          genieA: { agent: 'genieA', executor: 'codex' }
+        version: 2,
+        sessions: {
+          genieA: { agent: 'genieA', executor: 'codex', sessionId: 'genieA' }
         }
       },
       null,
@@ -79,16 +79,16 @@ async function runCliCoreTests() {
     });
 
     const store = service.load();
-    store.agents.genieB = { agent: 'genieB', executor: 'codex' };
+    store.sessions.genieB = { agent: 'genieB', executor: 'codex', sessionId: 'genieB' };
 
     fs.writeFileSync(
       sessionsFile,
       JSON.stringify(
         {
-          version: 1,
-          agents: {
-            genieA: { agent: 'genieA', executor: 'codex' },
-            genieC: { agent: 'genieC', executor: 'codex' }
+          version: 2,
+          sessions: {
+            genieA: { agent: 'genieA', executor: 'codex', sessionId: 'genieA' },
+            genieC: { agent: 'genieC', executor: 'codex', sessionId: 'genieC' }
           }
         },
         null,
@@ -99,9 +99,9 @@ async function runCliCoreTests() {
     await service.save(store);
 
     const merged = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-    assert.ok(merged.agents.genieA, 'should retain original entries');
-    assert.ok(merged.agents.genieB, 'should include newly saved agent');
-    assert.ok(merged.agents.genieC, 'should merge concurrent agent additions');
+    assert.ok(merged.sessions.genieA, 'should retain original entries');
+    assert.ok(merged.sessions.genieB, 'should include newly saved agent');
+    assert.ok(merged.sessions.genieC, 'should merge concurrent agent additions');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
