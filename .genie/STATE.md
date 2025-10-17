@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.12
+last_version: 2.4.0-rc.13
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,34 +18,35 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-17
-**Focus:** RC12 release - MCP session management fixes
+**Focus:** RC13 release - Bug #90 full transcript fix
 **Branch:** !`git branch --show-current`
 
 **Active Work:**
-- Genie neuron self-delegation paradox fix
-- list_sessions store.agents → store.sessions fix
-- Session visibility (running + last 10 completed)
+- Bug #90: full=true returns complete transcript (not checkpoints)
+- Added formatFullMode() with no truncation
+- Clean QA validation from scratch
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.12 on npm@next (2025-10-17)
-**Latest:** MCP session management fixes
+**Published:** v2.4.0-rc.13 on npm@next (2025-10-17)
+**Latest:** Bug #90 full transcript fix
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Critical Fixes in RC12:**
-- ✅ Genie neuron self-delegation paradox (removed routing.md reference)
-- ✅ list_sessions showing zero sessions (store.agents → store.sessions)
-- ✅ Session visibility (running + last 10 completed sessions)
-- ✅ End-to-end MCP validation passed
+**Critical Fixes in RC13:**
+- ✅ Bug #90: full=true returns complete transcript (not checkpoints)
+- ✅ Added 'full' OutputMode with formatFullMode()
+- ✅ Clean QA validation from scratch (all sessions cleared)
+- ✅ No truncation when --full flag used
 
-**Previous RC11 Fixes:**
-- Separate getPackageRoot() from findWorkspaceRoot()
-- Version header ENOENT fix (package.json read)
-- NPM mode compatibility (npx automagik-genie from any directory)
+**Previous RC12 Fixes:**
+- Genie neuron self-delegation paradox (removed routing.md reference)
+- list_sessions showing zero sessions (store.agents → store.sessions)
+- Session visibility (running + last 10 completed sessions)
+- End-to-end MCP validation passed
 
 ---
 
