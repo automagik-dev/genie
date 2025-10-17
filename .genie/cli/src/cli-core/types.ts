@@ -7,6 +7,8 @@ export interface CLIOptions {
   full: boolean;
   live: boolean;
   name?: string;  // Friendly session name for run command
+  executor?: string;  // Executor override
+  mode?: string;  // Mode override
 }
 
 export interface ParsedCommand {

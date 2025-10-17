@@ -55,21 +55,28 @@ export function clearRuntimeWarnings(): void {
  */
 export function findSessionEntry(
   store: SessionStore,
-  sessionId: string,
+  sessionIdOrName: string,
   paths: Required<ConfigPaths>
 ) {
-  if (!sessionId || typeof sessionId !== 'string') return null;
-  const trimmed = sessionId.trim();
+  if (!sessionIdOrName || typeof sessionIdOrName !== 'string') return null;
+  const trimmed = sessionIdOrName.trim();
   if (!trimmed) return null;
 
-  // Direct lookup by sessionId (v2 schema)
+  // 1. Direct lookup by sessionId (UUID) or session key
   for (const [sid, entry] of Object.entries(store.sessions || {})) {
     if (entry && (entry.sessionId === trimmed || sid === trimmed)) {
       return { agentName: entry.agent, entry };
     }
   }
 
-  // Fallback: scan log files for session_id markers
+  // 2. Lookup by friendly name
+  for (const [sid, entry] of Object.entries(store.sessions || {})) {
+    if (entry && entry.name === trimmed) {
+      return { agentName: entry.agent, entry };
+    }
+  }
+
+  // 3. Fallback: scan log files for session_id markers
   for (const [sid, entry] of Object.entries(store.sessions || {})) {
     const logFile = entry.logFile;
     if (!logFile || !fs.existsSync(logFile)) continue;
@@ -77,17 +84,9 @@ export function findSessionEntry(
       const content = fs.readFileSync(logFile, 'utf8');
       const marker = new RegExp(`"session_id":"${trimmed}"`);
       if (marker.test(content)) {
-        // Update session entry with discovered sessionId
-        const oldSessionId = sid;
+        // Update session entry with discovered sessionId (but keep same key)
         entry.sessionId = trimmed;
         entry.lastUsed = new Date().toISOString();
-
-        // Re-key the session if needed
-        if (oldSessionId !== trimmed) {
-          delete store.sessions[oldSessionId];
-          store.sessions[trimmed] = entry;
-        }
-
         saveSessions(paths as any, store);
         return { agentName: entry.agent, entry };
       }

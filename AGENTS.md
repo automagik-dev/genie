@@ -14,6 +14,7 @@
 
 All critical behavioral skills loaded via @ references for token efficiency:
 
+@.genie/agents/code/skills/know-yourself.md
 @.genie/agents/code/skills/evidence-based-thinking.md
 @.genie/agents/code/skills/publishing-protocol.md
 @.genie/agents/code/skills/delegation-discipline.md

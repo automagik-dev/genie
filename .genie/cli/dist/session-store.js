@@ -4,9 +4,22 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports._internals = void 0;
+exports.generateSessionName = generateSessionName;
 exports.loadSessions = loadSessions;
 exports.saveSessions = saveSessions;
 const fs_1 = __importDefault(require("fs"));
+/**
+ * Generate a friendly session name from agent name and timestamp.
+ * Format: "{agent}-{YYMMDDHHmm}"
+ * Example: "analyze-2310171530"
+ */
+function generateSessionName(agentName) {
+    const now = new Date();
+    const timestamp = now.toISOString()
+        .replace(/[-:T]/g, '')
+        .slice(2, 12); // YYMMDDHHmm
+    return `${agentName}-${timestamp}`;
+}
 function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
     const storePath = paths.sessionsFile;
     let store;

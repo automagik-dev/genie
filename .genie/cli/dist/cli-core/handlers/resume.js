@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createResumeHandler = createResumeHandler;
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
+const session_helpers_1 = require("../../lib/session-helpers");
 const shared_1 = require("./shared");
 function createResumeHandler(ctx) {
     return async (parsed) => {
@@ -16,7 +17,7 @@ function createResumeHandler(ctx) {
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const sessionIdArg = cmdArgs[0];
         const prompt = cmdArgs.slice(1).join(' ').trim();
-        const found = findSessionEntry(store, sessionIdArg, ctx.paths);
+        const found = (0, session_helpers_1.findSessionEntry)(store, sessionIdArg, ctx.paths);
         if (!found) {
             // Check if session file exists but is orphaned
             const executorKey = ctx.config.defaults?.executor || ctx.defaultExecutorKey;
@@ -124,34 +125,4 @@ function createResumeHandler(ctx) {
             executionMode: modeName
         });
     };
-}
-function findSessionEntry(store, sessionId, paths) {
-    if (!sessionId || typeof sessionId !== 'string')
-        return null;
-    const trimmed = sessionId.trim();
-    if (!trimmed)
-        return null;
-    for (const [agentName, entry] of Object.entries(store.agents || {})) {
-        if (entry && entry.sessionId === trimmed) {
-            return { agentName, entry: entry };
-        }
-    }
-    for (const [agentName, entry] of Object.entries(store.agents || {})) {
-        const logFile = entry.logFile;
-        if (!logFile || !fs_1.default.existsSync(logFile))
-            continue;
-        try {
-            const content = fs_1.default.readFileSync(logFile, 'utf8');
-            const marker = new RegExp(`"session_id":"${trimmed}"`);
-            if (marker.test(content)) {
-                entry.sessionId = trimmed;
-                entry.lastUsed = new Date().toISOString();
-                return { agentName, entry: entry };
-            }
-        }
-        catch {
-            // skip
-        }
-    }
-    return null;
 }

@@ -11,6 +11,7 @@ export interface CLIOptions {
   live: boolean;
   executor?: string;
   mode?: string;
+  name?: string;  // Friendly session name for run command
 }
 
 export interface ParsedCommand {

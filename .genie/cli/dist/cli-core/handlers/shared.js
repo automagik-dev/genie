@@ -361,6 +361,8 @@ async function executeRun(ctx, args) {
                     if (entry.sessionId !== sessionId) {
                         entry.sessionId = sessionId;
                         entry.lastUsed = new Date().toISOString();
+                        // Persist with sessionId as key (first time)
+                        store.sessions[sessionId] = entry;
                         void persistStore(ctx, store);
                     }
                 }
@@ -477,6 +479,8 @@ async function executeRun(ctx, args) {
             if (sessionId) {
                 entry.sessionId = sessionId;
                 entry.lastUsed = new Date().toISOString();
+                // Persist with sessionId as key (first time)
+                store.sessions[sessionId] = entry;
                 void persistStore(ctx, store);
             }
             else if (retryIndex < retryIntervals.length) {

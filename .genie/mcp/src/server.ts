@@ -110,7 +110,7 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
 }
 
 // Helper: List recent sessions
-function listSessions(): Array<{ id: string; agent: string; status: string; created: string; lastUsed: string }> {
+function listSessions(): Array<{ id: string; name?: string | null; agent: string; status: string; created: string; lastUsed: string }> {
   const sessionsFile = '.genie/state/agents/sessions.json';
 
   if (!fs.existsSync(sessionsFile)) {
@@ -123,6 +123,7 @@ function listSessions(): Array<{ id: string; agent: string; status: string; crea
 
     const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
       id: entry.sessionId || key,
+      name: entry.name || null,
       agent: entry.agent || key,
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
@@ -252,6 +253,9 @@ server.addTool({
     sessions.forEach((session, index) => {
       const { displayId } = transformDisplayPath(session.agent);
       response += `${index + 1}. **${session.id}**\n`;
+      if (session.name) {
+        response += `   Name: ${session.name}\n`;
+      }
       response += `   Agent: ${displayId}\n`;
       response += `   Status: ${session.status}\n`;
       response += `   Created: ${session.created}\n`;
@@ -270,11 +274,15 @@ server.addTool({
   description: 'Start a new Genie agent session. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.',
   parameters: z.object({
     agent: z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
-    prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.')
+    prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
+    name: z.string().optional().describe('Friendly session name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
   }),
   execute: async (args) => {
     try {
       const cliArgs = ['run', args.agent];
+      if (args.name?.length) {
+        cliArgs.push('--name', args.name);
+      }
       if (args.prompt?.length) {
         cliArgs.push(args.prompt);
       }
@@ -294,7 +302,7 @@ server.addTool({
   name: 'resume',
   description: 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID to resume (get from list_sessions tool)'),
+    sessionId: z.string().describe('Session ID (UUID) or friendly name to resume (get from list_sessions tool)'),
     prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
   }),
   execute: async (args) => {
@@ -318,7 +326,7 @@ server.addTool({
   name: 'view',
   description: 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID to view (get from list_sessions tool)'),
+    sessionId: z.string().describe('Session ID (UUID) or friendly name to view (get from list_sessions tool)'),
     full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
   }),
   execute: async (args) => {
@@ -342,7 +350,7 @@ server.addTool({
   name: 'stop',
   description: 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID to stop (get from list_sessions tool)')
+    sessionId: z.string().describe('Session ID (UUID) or friendly name to stop (get from list_sessions tool)')
   }),
   execute: async (args) => {
     try {

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
+import { findSessionEntry } from '../../lib/session-helpers';
 import { persistStore } from './shared';
 
 export function createStopHandler(ctx: HandlerContext): Handler {
@@ -65,39 +66,4 @@ export function createStopHandler(ctx: HandlerContext): Handler {
       events
     };
   };
-}
-
-function findSessionEntry(
-  store: any,
-  sessionId: string,
-  paths: any
-): { agentName: string; entry: any } | null {
-  if (!sessionId || typeof sessionId !== 'string') return null;
-  const trimmed = sessionId.trim();
-  if (!trimmed) return null;
-
-  // Direct lookup by sessionId (v2 schema)
-  for (const [sid, entry] of Object.entries(store.sessions || {})) {
-    if (entry && ((entry as any).sessionId === trimmed || sid === trimmed)) {
-      return { agentName: (entry as any).agent, entry };
-    }
-  }
-
-  // Fallback: scan log files for session_id markers
-  for (const [sid, entry] of Object.entries(store.sessions || {})) {
-    const logFile = (entry as any).logFile;
-    if (!logFile || !fs.existsSync(logFile)) continue;
-    try {
-      const content = fs.readFileSync(logFile, 'utf8');
-      const marker = new RegExp(`"session_id":"${trimmed}"`);
-      if (marker.test(content)) {
-        (entry as any).sessionId = trimmed;
-        (entry as any).lastUsed = new Date().toISOString();
-        return { agentName: (entry as any).agent, entry };
-      }
-    } catch {
-      // skip
-    }
-  }
-  return null;
 }

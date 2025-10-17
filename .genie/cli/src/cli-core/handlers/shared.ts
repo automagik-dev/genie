@@ -438,6 +438,8 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
           if (entry.sessionId !== sessionId) {
             entry.sessionId = sessionId;
             entry.lastUsed = new Date().toISOString();
+            // Persist with sessionId as key (first time)
+            store.sessions[sessionId] = entry;
             void persistStore(ctx, store);
           }
         }

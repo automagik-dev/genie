@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createViewHandler = createViewHandler;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const session_helpers_1 = require("../../lib/session-helpers");
 function createViewHandler(ctx) {
     return async (parsed) => {
         const [sessionId] = parsed.commandArgs;
@@ -14,7 +15,7 @@ function createViewHandler(ctx) {
         }
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         // Try sessions.json first
-        let found = findSessionEntry(store, sessionId, ctx.paths);
+        let found = (0, session_helpers_1.findSessionEntry)(store, sessionId, ctx.paths);
         let orphanedSession = false;
         // If not found in sessions.json, try direct session file lookup
         if (!found) {
@@ -95,36 +96,4 @@ function createViewHandler(ctx) {
             logFile
         };
     };
-}
-function findSessionEntry(store, sessionId, paths) {
-    if (!sessionId || typeof sessionId !== 'string')
-        return null;
-    const trimmed = sessionId.trim();
-    if (!trimmed)
-        return null;
-    // Direct lookup by sessionId (v2 schema)
-    for (const [sid, entry] of Object.entries(store.sessions || {})) {
-        if (entry && (entry.sessionId === trimmed || sid === trimmed)) {
-            return { agentName: entry.agent, entry };
-        }
-    }
-    // Fallback: scan log files for session_id markers
-    for (const [sid, entry] of Object.entries(store.sessions || {})) {
-        const logFile = entry.logFile;
-        if (!logFile || !fs_1.default.existsSync(logFile))
-            continue;
-        try {
-            const content = fs_1.default.readFileSync(logFile, 'utf8');
-            const marker = new RegExp(`"session_id":"${trimmed}"`);
-            if (marker.test(content)) {
-                entry.sessionId = trimmed;
-                entry.lastUsed = new Date().toISOString();
-                return { agentName: entry.agent, entry };
-            }
-        }
-        catch {
-            // skip
-        }
-    }
-    return null;
 }

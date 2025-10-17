@@ -3,6 +3,7 @@ import fs from 'fs';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import type { SessionEntry } from '../../session-store';
+import { findSessionEntry } from '../../lib/session-helpers';
 import {
   resolveAgentIdentifier,
   loadAgentSpec,
@@ -151,37 +152,4 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
       executionMode: modeName
     });
   };
-}
-
-function findSessionEntry(
-  store: any,
-  sessionId: string,
-  paths: any
-): { agentName: string; entry: SessionEntry } | null {
-  if (!sessionId || typeof sessionId !== 'string') return null;
-  const trimmed = sessionId.trim();
-  if (!trimmed) return null;
-
-  for (const [agentName, entry] of Object.entries(store.agents || {})) {
-    if (entry && (entry as any).sessionId === trimmed) {
-      return { agentName, entry: entry as SessionEntry };
-    }
-  }
-
-  for (const [agentName, entry] of Object.entries(store.agents || {})) {
-    const logFile = (entry as any).logFile;
-    if (!logFile || !fs.existsSync(logFile)) continue;
-    try {
-      const content = fs.readFileSync(logFile, 'utf8');
-      const marker = new RegExp(`"session_id":"${trimmed}"`);
-      if (marker.test(content)) {
-        (entry as any).sessionId = trimmed;
-        (entry as any).lastUsed = new Date().toISOString();
-        return { agentName, entry: entry as SessionEntry };
-      }
-    } catch {
-      // skip
-    }
-  }
-  return null;
 }

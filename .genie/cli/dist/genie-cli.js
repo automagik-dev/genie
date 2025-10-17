@@ -28,6 +28,7 @@ program
     .description('Run an agent with a prompt')
     .option('-b, --background', 'Run in background mode')
     .option('-e, --executor <executor>', 'Override executor (codex or claude)')
+    .option('-n, --name <name>', 'Friendly session name for easy identification')
     .action((agent, prompt, options) => {
     const args = ['run', agent, prompt];
     if (options.background) {
@@ -35,6 +36,9 @@ program
     }
     if (options.executor) {
         args.push('--executor', options.executor);
+    }
+    if (options.name) {
+        args.push('--name', options.name);
     }
     execGenie(args);
 });
