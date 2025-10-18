@@ -61,18 +61,69 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
+## Neuron Architecture (Include Pattern)
+
+### Universal vs Domain-Specific
+
+**Universal Neurons** work across ALL domains (code, research, legal, medical, finance):
+- **analyze** - System analysis & focused investigation (173 lines)
+- **audit** - Risk & impact assessment framework (138 lines)
+- **vibe** - Autonomous execution mode
+- **reasoning/** - 4 reasoning modes (challenge, explore, consensus, socratic)
+
+**Domain-Specific Neurons** extend universal frameworks with examples:
+- **code/neurons/analyze.md** - Includes universal + TypeScript/performance examples
+- **code/neurons/** - git, implementor, tests, polish, refactor, debug, etc.
+
+### Include Pattern Architecture
+
+**Domain extensions INCLUDE universal base:**
+```markdown
+# Analyze Neuron - Code Domain
+
+@.genie/agents/neurons/analyze.md  # Universal framework
+
+## Code-Specific Extensions
+[TypeScript examples, performance patterns, etc.]
+```
+
+**Benefits:**
+- ✅ Zero duplication (universal defined once)
+- ✅ Token-efficient (load only needed extensions)
+- ✅ Clear separation (universal concepts vs domain patterns)
+- ✅ Organic growth (add legal.md, medical.md as learned)
+
+### Workflow System
+
+**Audit workflows extend universal framework:**
+- `audit/risk.md` - General risk audit (Kubernetes migration example)
+- `audit/security.md` - Security audit (OWASP, CVE patterns)
+- **Future:** audit/legal.md, audit/medical.md, audit/financial.md
+
+**Reasoning modes for selective loading:**
+- `reasoning/challenge.md` - Adversarial pressure-testing
+- `reasoning/explore.md` - Discovery-focused investigation
+- `reasoning/consensus.md` - Multi-perspective synthesis
+- `reasoning/socratic.md` - Question-driven inquiry
+
+---
+
 ## Agent Registry (Auto-Generated)
 <!-- AUTO-GENERATED-START: Do not edit manually -->
-**Last Updated:** 2025-10-18 06:05:46 UTC
+**Last Updated:** 2025-10-18 07:25:00 UTC
 
-**Universal Neurons:** 17 total
-- analyze, audit, challenge, consensus, debug, docgen, explore, forge, learn, plan, polish, prompt, qa, refactor, review, roadmap, vibe
+**Universal Neurons:** 3 base + 4 reasoning modes = 7 total
+- **Base:** analyze, audit, vibe
+- **Reasoning:** challenge, explore, consensus, socratic
 
-**Code Neurons:** 8 total
-- commit, git, implementor, install, release, tests, tracer, wish
+**Code Neurons:** 7 total
+- commit, git, implementor, polish, refactor, release, tests
 
-**Create Neurons:** 1 total
-- wish
+**Code-Extended Universal:** 1 total
+- analyze (includes neurons/analyze.md + code examples)
+
+**Audit Workflows:** 2 total
+- risk, security
 
 **Code Skills:** 30 total
 - agent-configuration, blocker-protocol, branch-tracker-guidance, chat-mode-helpers, delegation-discipline, evidence-based-thinking, evidence-storage, execution-integrity-protocol, execution-patterns, experimentation-protocol, file-naming-rules, forge-integration, forge-mcp-pattern, genie-integration, know-yourself, meta-learn-protocol, missing-context-protocol, no-backwards-compatibility, orchestration-protocols, parallel-execution, persistent-tracking-protocol, prompting-standards, publishing-protocol, role-clarity-protocol, routing-decision-matrix, sequential-questioning, tool-requirements, triad-maintenance-protocol, wish-document-management, workspace-system
@@ -87,8 +138,9 @@ All commands in `.claude/commands/` simply `@include` the corresponding `.genie/
 - `.genie/state/` – Session data (e.g., `agents/sessions.json` for session tracking, agent logs, forge plans, commit advisories). Inspect via `mcp__genie__list_sessions` or `mcp__genie__view` rather than manual edits.
 - `.genie/wishes/` – active wish folders (`<slug>/<slug>-wish.md`, `qa/`, `reports/`)
 - `.genie/agents/` – entrypoint agents (`plan.md`, `wish.md`, `forge.md`, `review.md`)
-- `.genie/agents/neurons/` – specialized agents (git, implementor, polish, tests, etc.)
-- `.genie/agents/workflows/` – orchestration workflows (plan, wish, forge, review, etc.)
+- `.genie/agents/neurons/` – **universal** neurons (analyze, audit, vibe) + reasoning/ + audit/ workflows
+- `.genie/agents/code/neurons/` – **code-specific** neurons (git, implementor, tests, polish, etc.) + code-extended universal (analyze)
+- `.genie/agents/workflows/` – orchestration workflows (plan, wish, forge, review, install, update)
 - `.genie/custom/` – project-specific overrides for core agents and Genie skills (kept outside `agents/` to avoid double registration)
 - Entry-point agents (`plan`, `wish`, `forge`, `review`, `vibe`, `genie`) ship as-is; they never load repo overrides.
 - `templates/` – will mirror the distributable starter kit once populated (currently empty pending Phase 2+ of the wish).
@@ -238,34 +290,37 @@ grep "@AGENTS.md" CLAUDE.md
 │   ├── plan.md                  # Plan phase
 │   ├── wish.md                  # Wish creation
 │   ├── forge.md                 # Task breakdown
-│   └── review.md                # Validation
+│   ├── review.md                # Validation
+│   ├── install/                 # Install workflows
+│   └── update/                  # Update migrations
 │
-├── neurons/                # Tier 2: Neurons (persistent sessions)
-│   ├── git/                     # Git neuron + workflows
-│   │   ├── git.md                    # Core neuron (can delegate to children)
-│   │   ├── issue.md                  # Workflow: GitHub issue ops (terminal)
-│   │   ├── pr.md                     # Workflow: PR creation (terminal)
-│   │   └── report.md                 # Workflow: Issue reporting (terminal)
+├── neurons/                # Universal neurons + reasoning modes
+│   ├── analyze.md               # Universal system analysis (173 lines)
+│   ├── audit.md                 # Universal risk framework (138 lines)
+│   ├── vibe.md                  # Autonomous execution
 │   │
-│   ├── implementor/             # Implementor neuron
-│   │   └── implementor.md            # No workflows yet (terminal)
+│   ├── reasoning/               # Reasoning modes (selective loading)
+│   │   ├── README.md                 # Reasoning framework overview
+│   │   ├── challenge.md              # Adversarial pressure-testing
+│   │   ├── explore.md                # Discovery-focused investigation
+│   │   ├── consensus.md              # Multi-perspective synthesis
+│   │   └── socratic.md               # Question-driven inquiry
 │   │
-│   ├── tests/                   # Tests neuron
-│   │   └── tests.md                  # No workflows yet (terminal)
-│   │
-│   ├── genie/            # Genie neuron + skills
-│   │   ├── genie.md           # Core wrapper (routes to skills)
-│   │   └── skills/                    # 18 Genie skills (terminal)
-│   │       ├── analyze.md
-│   │       ├── challenge.md
-│   │       ├── debug.md
-│   │       └── ...
-│   │
-│   ├── release/                 # Release neuron
-│   │   └── release.md                # No workflows yet (terminal)
-│   │
-│   └── learn/                   # Learn neuron
-│       └── learn.md                  # No workflows yet (terminal)
+│   └── audit/                   # Audit workflows (extend audit.md)
+│       ├── risk.md                   # General risk audit
+│       └── security.md               # Security audit (OWASP, CVE)
+│
+├── code/neurons/           # Code-specific neurons + extensions
+│   ├── analyze.md               # Includes neurons/analyze.md + code examples
+│   ├── git.md                   # Git operations neuron
+│   ├── implementor.md           # Implementation neuron
+│   ├── tests.md                 # Testing neuron
+│   ├── polish.md                # Code refinement
+│   ├── refactor.md              # Refactoring
+│   ├── debug.md                 # Debugging
+│   ├── release.md               # Release orchestration
+│   ├── commit.md                # Commit messaging
+│   └── ...
 ```
 
 **Delegation rules by tier:**
