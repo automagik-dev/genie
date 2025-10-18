@@ -176,6 +176,27 @@ A wish can be generated when:
 
 If any item is missing, capture action items and remain in planning mode.
 
+### Multi-Stage Investigation Pattern (For Complex Features)
+
+**When to use:** Features requiring architectural decisions, significant risk assessment, or major implementation effort.
+
+**Recommended workflow:** Investigation → Pre-Wish → Wish Creation
+
+See @.genie/agents/code/skills/wish-document-management.md for detailed guidance.
+
+**Quick reference:**
+1. **Investigation Phase:** Deep analysis (reports, POC, risk assessment) documented in `.genie/reports/`
+2. **Pre-Wish Summary:** Decision checkpoint (TL;DR, decision matrix, Go/No-Go with confidence score)
+3. **Wish Creation:** Comprehensive blueprint (implementation groups, timeline, success criteria)
+
+**Benefits:**
+- Surface all risks and trade-offs before commitment
+- Enable stakeholder buy-in with decision matrix
+- Create comprehensive single source of truth
+- Track learning throughout process
+
+**Evidence:** Pattern validated in Issue #120 (9.2/10 confidence, 7 reports, successful POC)
+
 #### Effort Scale Reference
 - Use relative sizes only: XS / S / M / L / XL
 - Do not map to time; use phases for planning
