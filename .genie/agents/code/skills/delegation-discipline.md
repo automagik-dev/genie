@@ -80,10 +80,21 @@ When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching 
 - **Result**: Context bloat, poor separation of concerns
 - **Evidence**: Session 2025-10-16 22:30 UTC
 
+**2025-10-18 - CRITICAL: Bypassed Forge for Implementation**
+- Forge executed 2 discovery tasks correctly (commits 131af786, 0b4114c6)
+- User said "proceed" after discoveries completed
+- **VIOLATION**: Directly edited view.ts and resume.ts myself (commit caf65641)
+- Should have created Forge implementation task and delegated
+- Pattern: "Proceed" after discovery → self-execute instead of creating next Forge task
+- **Root cause**: Perceived simplicity (2 files) led to delegation bypass
+- **Skills violated**: forge-integration.md, delegation-discipline.md, role-clarity-protocol.md
+- **Evidence**: Commit caf65641, wish #120-A, learn session 4b35e28c-f64e-48e3-aeb8-549e90718f21
+
 **Evidence timeline (learning progression):**
 1. **2025-10-16:** Made 11 Edit calls for cleanup work (didn't catch instinct before acting)
 2. **2025-10-17 22:45:** Started reading AGENTS.md to extract sections myself (caught after start)
 3. **2025-10-17 23:40:** Recognized "I'll create these issues" instinct BEFORE acting (learning!)
+4. **2025-10-18:** Bypassed Forge for implementation despite using it correctly for discoveries (REGRESSION!)
 
 ## Validation
 
@@ -118,6 +129,45 @@ Blocker? → Ask Felipe
   ↓
 Work complete → Update Forge task + Push PR
 ```
+
+### "Proceed" Interpretation Rules (Added 2025-10-18)
+
+**When user says "proceed" after discoveries complete:**
+- ❌ WRONG: "Proceed = implement the changes yourself"
+- ✅ CORRECT: "Proceed = create Forge implementation task"
+
+**Pattern:**
+```
+Discovery tasks complete
+  ↓
+User says "proceed"
+  ↓
+Create NEW Forge implementation task (reference discoveries)
+  ↓
+Forge executor implements
+  ↓
+Forge executor creates commit + PR
+```
+
+**Exception:** User explicitly says "bypass Forge" or "do it yourself"
+
+### Pre-Execution Checklist (Added 2025-10-18)
+
+**Before editing ANY code file, ask:**
+1. ✅ Is this part of an active Forge task?
+2. ✅ If not, should I create one?
+3. ✅ Am I orchestrating or implementing?
+4. ✅ Is this work covered by a wish document?
+
+**Before creating ANY commit, ask:**
+1. ✅ Was this work delegated to Forge?
+2. ✅ Or am I the Forge executor for this task?
+
+**Size is NOT an exception:**
+- 1 file = Forge task
+- 10 files = Forge task
+- 100 files = Forge task
+- **Delegation discipline matters more than size**
 
 ### Forbidden (After 2025-10-18)
 - ❌ Creating parallel genie sessions for "coordination"
