@@ -131,6 +131,11 @@ async function runUpdate(parsed, _config, _paths) {
         console.log('');
         // Update version file
         await touchVersionFile(cwd);
+        // Run update neuron for version transition guidance
+        console.log('🧞 Consulting update neuron for migration guidance...');
+        console.log('');
+        await runUpdateNeuron(backupId, cwd);
+        console.log('');
         console.log(`📝 Generating migration orchestration prompt...`);
         console.log('');
         const updatePrompt = buildUpdateOrchestrationPrompt(diff, installType, cwd, executor, backupPath);
@@ -392,6 +397,71 @@ async function createBackup(targetGenie) {
         }
     }
     return backupId;
+}
+async function runUpdateNeuron(backupId, cwd) {
+    try {
+        // Read version information
+        const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
+        const newVersion = (0, package_1.getPackageVersion)();
+        // Try to get old version from backup
+        const backupVersionPath = path_1.default.join(cwd, '.genie/backups', backupId, 'genie/state/version.json');
+        let oldVersion = 'unknown';
+        if (await (0, fs_utils_1.pathExists)(backupVersionPath)) {
+            try {
+                const backupVersionData = JSON.parse(await fs_1.promises.readFile(backupVersionPath, 'utf8'));
+                oldVersion = backupVersionData.version || 'unknown';
+            }
+            catch {
+                // If backup version file missing or corrupt, that's okay
+                oldVersion = 'unknown';
+            }
+        }
+        const backupPath = `.genie/backups/${backupId}/`;
+        console.log(`📊 Version transition: ${oldVersion} → ${newVersion}`);
+        console.log(`💾 Backup location: ${backupPath}`);
+        console.log('');
+        console.log('💡 Update neuron guidance:');
+        console.log('');
+        // Determine which transition guide to use
+        const majorMinor = (v) => {
+            const match = v.match(/^(\d+)\.(\d+)/);
+            return match ? `${match[1]}.${match[2]}` : null;
+        };
+        const oldMM = majorMinor(oldVersion);
+        const newMM = majorMinor(newVersion);
+        let guideFile = 'generic-update.md';
+        if (oldMM && newMM && oldMM !== newMM) {
+            const specificGuide = `v${oldMM}.x-to-v${newMM}.0.md`;
+            const specificPath = path_1.default.join(cwd, '.genie/agents/neurons/update/versions', specificGuide);
+            if (await (0, fs_utils_1.pathExists)(specificPath)) {
+                guideFile = specificGuide;
+            }
+        }
+        // Output guide summary
+        const guidePath = path_1.default.join(cwd, '.genie/agents/neurons/update/versions', guideFile);
+        if (await (0, fs_utils_1.pathExists)(guidePath)) {
+            console.log(`   Using transition guide: ${guideFile}`);
+            console.log(`   Full guide at: .genie/agents/neurons/update/versions/${guideFile}`);
+            console.log('');
+            console.log('   Key points:');
+            console.log('   • Your previous configuration is safely backed up');
+            console.log('   • Fresh framework templates have been installed');
+            console.log('   • Check the transition guide for version-specific changes');
+            console.log('   • Manually merge any customizations you want to preserve');
+            console.log('');
+        }
+        else {
+            console.log(`   ⚠️  Transition guide not found: ${guideFile}`);
+            console.log('   Generic guidance: Review backup and manually merge customizations');
+            console.log('');
+        }
+        console.log('✅ Update neuron guidance provided');
+    }
+    catch (error) {
+        // Non-fatal - log warning and continue
+        console.log(`⚠️  Update neuron unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        console.log('   Continuing with update...');
+    }
 }
 async function copyTemplateGenie(templateGenie, targetGenie) {
     const blacklist = (0, paths_1.getTemplateRelativeBlacklist)();
