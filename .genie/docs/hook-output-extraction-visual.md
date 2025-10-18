@@ -1,5 +1,5 @@
 # Genie Hook Integration: Visual Reference
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Quick diagram of how Genie workflow outputs flow into git hooks**
 
 ---

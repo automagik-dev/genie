@@ -1,5 +1,5 @@
 # QA Report: Genie Git Hook Integration
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 07:45 UTC
 **Feature:** Genie workflow integration with git hooks (commit advisory + output extraction)
 **Status:** ✅ READY FOR IMPLEMENTATION

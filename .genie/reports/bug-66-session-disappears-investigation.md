@@ -1,5 +1,5 @@
 # Bug #66 Investigation Report: MCP Session Disappears After Resume
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Bug ID:** #66
 **Status:** ✅ RESOLVED
 **Fixed in:** v2.4.0-rc.9

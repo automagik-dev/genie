@@ -16,5 +16,8 @@
   },
   "include": [
     "src/**/*"
+  ],
+  "exclude": [
+    "src/lib/forge-executor.ts"
   ]
 }

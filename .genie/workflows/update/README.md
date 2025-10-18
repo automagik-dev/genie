@@ -1,5 +1,5 @@
 # Update Workflows
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Sequential update migrations for Genie framework.
 
 **How it works:**

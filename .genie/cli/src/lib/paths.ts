@@ -26,18 +26,20 @@ export function getPackageRoot(): string {
 
 export type TemplateType = 'code' | 'create';
 
-export function getTemplateGeniePath(template: TemplateType = 'code'): string {
-  // templates/code/.genie/ - Software development template
-  // templates/create/.genie/ - Adaptive learning template
-  return path.join(getPackageRoot(), 'templates', template, '.genie');
+export function getTemplateGeniePath(_template: TemplateType = 'code'): string {
+  // Copy directly from framework's .genie/ directory
+  // Template variants (code vs create) handled by install/update neurons
+  return path.join(getPackageRoot(), '.genie');
 }
 
-export function getTemplateClaudePath(template: TemplateType = 'code'): string {
-  return path.join(getPackageRoot(), 'templates', template, '.claude');
+export function getTemplateClaudePath(_template: TemplateType = 'code'): string {
+  // .claude/ not used - Claude Code wraps core agents directly
+  return path.join(getPackageRoot(), '.claude');
 }
 
-export function getTemplateRootPath(template: TemplateType = 'code'): string {
-  return path.join(getPackageRoot(), 'templates', template);
+export function getTemplateRootPath(_template: TemplateType = 'code'): string {
+  // Root files (AGENTS.md, CLAUDE.md) copied from framework root
+  return getPackageRoot();
 }
 
 export function getTemplateRelativeBlacklist(): Set<string> {

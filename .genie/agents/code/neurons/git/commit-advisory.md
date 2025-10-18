@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: git/commit-advisory
 genie:

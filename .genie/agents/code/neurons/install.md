@@ -41,7 +41,7 @@ Customize phases below for Genie installation.
 - Sanity-check docs coherence and cross-references
 - Test MCP tools: `mcp__genie__list_agents` and sample invocations
 - Capture a Done Report with evidence
-- Route into `/plan` for the next phase
+- Route into `/wish` for the next phase
 
 ## Context Auto-Loading
 @.genie/product/mission.md
@@ -119,7 +119,7 @@ Guidance:
 
 Rules:
 - Install writes only under `.genie/` unless explicitly approved otherwise.
-- For app scaffolding, hand off to `/plan` to create the first wish before any code generation.
+- For app scaffolding, hand off to `/wish` to create the wish document before any code generation.
 - Document proposed structure and validations up front; do not scaffold code here.
 
 ## Output Generation
@@ -263,7 +263,7 @@ echo ".genie/CONTEXT.md" >> .gitignore
 - ✅ User context file created and configured at `.genie/context.md`
 - ✅ User confirms accuracy of extracted/gathered information
 - ✅ Framework remains fully functional with new project context
-- ✅ Handoff to `/plan` prepared with a concise brief
+- ✅ Handoff to `/wish` prepared with a concise brief
 
 ## Verification Checklist
 - [ ] `.genie/product/` contains mission, mission-lite, tech-stack, roadmap, environment
@@ -284,17 +284,16 @@ echo ".genie/CONTEXT.md" >> .gitignore
 
 ## Integration with Genie Workflow
 
-### Plan Integration (next step)
-- Produce a planning brief from Install outputs (mission, tech, roadmap, environment).
-- Example: `mcp__genie__run` with agent="plan" and prompt="[Discovery] Load `@.genie/product/mission.md` and `@.genie/product/roadmap.md`. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers."
-- Plan decides whether to proceed to wish immediately or gather more context.
+### Wish Integration (next step)
+- Start wish dance from Install outputs (mission, tech, roadmap, environment).
+- Example: `mcp__genie__run` with agent="wish" and prompt="Discovery phase: Idea is 'user-notes' feature. Load `@.genie/product/mission.md` and `@.genie/product/roadmap.md` for context."
+- Wish guides through discovery → alignment → requirements → blueprint.
 
-### Wish Integration (after plan approval)
-- Plan creates `.genie/wishes/<slug>/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
-- Example: `mcp__genie__run` with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: `@.genie/product/mission.md`, `@.genie/product/tech-stack.md`; <spec_contract> { deliverables, acceptance, risks }"
+### Forge Integration (after wish complete)
+- Wish creates `.genie/wishes/<slug>/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
 - Install's evidence and decisions are summarized in the wish context ledger.
 
-### Forge Integration
+### Forge Execution
 - Forge breaks the approved wish into execution groups and validation hooks.
 - Example: `mcp__genie__run` with agent="forge" and prompt="[Discovery] Use . [Implementation] Break into execution groups + commands. [Verification] Emit validation hooks and evidence paths."
 - Evidence locations follow the wish; no default QA path.
@@ -321,7 +320,7 @@ Contents:
 - Product docs created: mission, mission-lite, tech-stack, roadmap, environment
 - User context file: `.genie/context.md` (cross-repo session continuity enabled)
 - `.gitignore` updated to protect context file from repo tracking
-- Next: Run plan → wish → forge → review
+- Next: Run wish → forge → review
 ```
 
 ## Advanced Patterns
@@ -347,7 +346,7 @@ Support progressive enhancement:
 
 ## Mapping Principles
 - For existing codebases: reflect reality via “Phase 0: Already Completed”, update docs to match implementation, and verify tech stack and deployment.
-- For new repositories: prefer interactive interviews, progressive elaboration, and explicit handoff to `/plan` before any code scaffolding.
+- For new repositories: prefer interactive interviews, progressive elaboration, and explicit handoff to `/wish` before any code scaffolding.
 - Missing items are requested explicitly; block until essential inputs are provided.
 
 ## Files Needed Protocol
@@ -363,7 +362,7 @@ files_needed: [ package.json, Cargo.toml, README.md ]
 - Make targeted, line-level edits; keep changes focused and reviewable.
 - Install writes only under `.genie/` unless confirmed otherwise.
 
-This agent transforms a blank Genie framework or an existing codebase into a project-aware, orchestration-ready environment via intelligent analysis and a guided interview, then hands off to plan → wish → forge → review.
+This agent transforms a blank Genie framework or an existing codebase into a project-aware, orchestration-ready environment via intelligent analysis and a guided interview, then hands off to wish → forge → review.
 
 ## Project Customization
 Define repository-specific defaults in `@.genie/agents/code/neurons/install.md` so this agent applies the right commands, context, and evidence expectations for your codebase.

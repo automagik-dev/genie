@@ -23,9 +23,6 @@ importers:
       ink:
         specifier: ^5.0.1
         version: 5.2.1(@types/react@18.3.24)(react@18.3.1)
-      js-tiktoken:
-        specifier: ^1.0.21
-        version: 1.0.21
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -42,6 +39,9 @@ importers:
       '@types/react':
         specifier: ^18.3.3
         version: 18.3.24
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
       typescript:
         specifier: ^5.9.2
         version: 5.9.2

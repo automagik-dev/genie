@@ -1,5 +1,5 @@
 # Generic Update Guide
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Guidance for users upgrading from older versions without specific transition guides
 **Applies to:** Any version transition not covered by specific guides
 

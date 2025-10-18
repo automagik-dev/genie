@@ -10,6 +10,7 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const agent_resolver_1 = require("../lib/agent-resolver");
 const utils_1 = require("../lib/utils");
+const display_transform_1 = require("../lib/display-transform");
 const background_manager_1 = require("../background-manager");
 const paths_1 = require("../lib/paths");
 const session_store_1 = require("../session-store");
@@ -87,7 +88,7 @@ async function runChat(parsed, config, paths) {
         const model = executorConfig.exec?.model || executorConfig.model || 'default';
         const permissionMode = executorConfig.exec?.permissionMode || executorConfig.permissionMode || 'default';
         const executorSource = parsed.options.executor ? 'flag' : (agentGenie.executor ? 'agent' : 'config');
-        console.error(`🧞 Starting agent: ${resolvedAgentName}`);
+        console.error((0, display_transform_1.getSemanticDisplayMessage)(resolvedAgentName));
         console.error(`   Executor: ${executorKey} (from ${executorSource})`);
         console.error(`   Mode: ${modeName}`);
         console.error(`   Model: ${model}`);

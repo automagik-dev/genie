@@ -1,5 +1,5 @@
 # Wish: Skills Prioritization & Architecture Automation
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-18 07:30 UTC
 **Status:** In Progress → Completed
 **Branch:** None (framework work, main)

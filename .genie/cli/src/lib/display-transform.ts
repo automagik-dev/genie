@@ -63,3 +63,64 @@ export function transformDisplayPath(normalizedId: string): TransformResult {
   const displayFolder = remaining.length > 1 ? remaining.slice(0, -1).join('/') : null;
   return { displayId, displayFolder };
 }
+
+/**
+ * Generates a semantic display message for agent startup.
+ *
+ * Provides context-aware messages that indicate whether an agent is a template
+ * orchestrator, universal neuron, template-specific neuron, or workflow.
+ *
+ * @param normalizedId - Full agent path (e.g., "code/code", "neurons/plan", "code/neurons/implementor")
+ * @returns Semantic display message
+ *
+ * @example
+ * getSemanticDisplayMessage("code/code") // "🧞 Starting code orchestrator"
+ * getSemanticDisplayMessage("neurons/plan") // "🧞 Starting neuron: plan"
+ * getSemanticDisplayMessage("code/neurons/implementor") // "🧞 Starting code neuron: implementor"
+ * getSemanticDisplayMessage("code/neurons/git/workflows/issue") // "🧞 Starting git workflow: issue"
+ */
+export function getSemanticDisplayMessage(normalizedId: string): string {
+  const parts = normalizedId.split('/');
+
+  // Template base orchestrators
+  if (normalizedId === 'code/code') {
+    return '🧞 Starting code orchestrator';
+  }
+  if (normalizedId === 'create/create') {
+    return '🧞 Starting create orchestrator';
+  }
+
+  // Universal neurons (neurons/*)
+  if (parts[0] === 'neurons' && parts.length === 2) {
+    return `🧞 Starting neuron: ${parts[1]}`;
+  }
+
+  // Code template neurons (code/neurons/*)
+  if (parts[0] === 'code' && parts[1] === 'neurons') {
+    if (parts.length === 3) {
+      return `🧞 Starting code neuron: ${parts[2]}`;
+    }
+    // Git workflows (code/neurons/git/workflows/*)
+    if (parts.length === 5 && parts[2] === 'git' && parts[3] === 'workflows') {
+      return `🧞 Starting git workflow: ${parts[4]}`;
+    }
+    // Git neuron parent (code/neurons/git/git)
+    if (parts.length === 4 && parts[2] === 'git' && parts[3] === 'git') {
+      return '🧞 Starting code neuron: git';
+    }
+  }
+
+  // Create template neurons (create/neurons/*)
+  if (parts[0] === 'create' && parts[1] === 'neurons' && parts.length === 3) {
+    return `🧞 Starting create neuron: ${parts[2]}`;
+  }
+
+  // Universal neuron workflows (neurons/*/workflows/*)
+  if (parts[0] === 'neurons' && parts.length === 4 && parts[2] === 'workflows') {
+    return `🧞 Starting ${parts[1]} workflow: ${parts[3]}`;
+  }
+
+  // Fallback to generic agent message
+  const { displayId } = transformDisplayPath(normalizedId);
+  return `🧞 Starting agent: ${displayId}`;
+}

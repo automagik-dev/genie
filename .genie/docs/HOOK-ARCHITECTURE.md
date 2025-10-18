@@ -1,5 +1,5 @@
 # Git Hook Architecture: Genie Integration
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Complete reference for git hook system with Genie workflow integration**
 
 **Updated:** 2025-10-18

@@ -5,6 +5,7 @@ import type { Executor } from '../executors/types';
 import type { CLIOptions, ParsedCommand, ConfigPaths, GenieConfig, ExecuteRunArgs } from '../lib/types';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { deriveStartTime, deriveLogFile } from '../lib/utils';
+import { getSemanticDisplayMessage } from '../lib/display-transform';
 import { INTERNAL_SESSION_ID_ENV } from '../background-manager';
 import { getPackageRoot } from '../lib/paths';
 import {
@@ -109,7 +110,7 @@ export async function runChat(
     const permissionMode = executorConfig.exec?.permissionMode || executorConfig.permissionMode || 'default';
     const executorSource = parsed.options.executor ? 'flag' : (agentGenie.executor ? 'agent' : 'config');
 
-    console.error(`🧞 Starting agent: ${resolvedAgentName}`);
+    console.error(getSemanticDisplayMessage(resolvedAgentName));
     console.error(`   Executor: ${executorKey} (from ${executorSource})`);
     console.error(`   Mode: ${modeName}`);
     console.error(`   Model: ${model}`);
