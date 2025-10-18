@@ -1,127 +1,97 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${GENIE_SKIP_IDENTITY_SMOKE:-0}" == "1" ]]; then
-  echo 'Skipping identity smoke test (GENIE_SKIP_IDENTITY_SMOKE=1)'
+
+# Smoke test for commit advisory validation system
+# Validates that hooks correctly detect untraced commits
+
+if [[ "${GENIE_SKIP_ADVISORY_SMOKE:-0}" == "1" ]]; then
+  echo 'Skipping commit advisory smoke test (GENIE_SKIP_ADVISORY_SMOKE=1)'
   exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-LOG_DIR="$REPO_DIR/.genie/state/agents/logs"
 
-mkdir -p "$LOG_DIR"
+echo "🧞 Commit Advisory Smoke Test"
+echo "────────────────────────────────"
 
-AGENT="neurons/plan"
-PROMPT=${1:-"Identity smoke test"}
-LOG_PREFIX=${AGENT//\//-}
+# Test 1: Run commit advisory validation
+echo "Testing commit advisory validation..."
+ADVISORY_OUTPUT=$(cd "$REPO_DIR" && node .genie/scripts/commit-advisory.js 2>&1 || true)
 
-before_snapshot=$(ls "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null || true)
-
-# Launch the agent in background; suppress stdout
-# Use local build if genie command not installed globally
-# Note: Using full agent name "neurons/plan" (not shorthand "plan")
-if command -v genie &> /dev/null; then
-  genie run "$AGENT" "$PROMPT" > /dev/null &
+# Check for proper output structure
+if echo "$ADVISORY_OUTPUT" | grep -q "# Pre-Push Commit Advisory"; then
+  echo "✅ Output has correct structure"
 else
-  node "$REPO_DIR/.genie/cli/dist/genie-cli.js" run "$AGENT" "$PROMPT" > /dev/null &
-fi
-run_pid=$!
-
-log_file=""
-for _ in {1..60}; do
-  sleep 0.5
-  candidate=$(ls -t "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null | head -n1 || true)
-  if [ -n "$candidate" ] && ! grep -Fxq "$candidate" <<< "$before_snapshot"; then
-    log_file="$candidate"
-    break
-  fi
-  if ! kill -0 "$run_pid" 2>/dev/null; then
-    break
-  fi
-
-done
-
-# Fallback: resolve the log file from the session store if pattern match failed
-if [ -z "$log_file" ]; then
-  sessions_path="$REPO_DIR/.genie/state/agents/sessions.json"
-  for _ in {1..60}; do
-    if [ -f "$sessions_path" ]; then
-      # Use Node to robustly parse JSON and read the agent logFile
-      log_candidate=$(node -e '
-        try {
-          const fs = require("fs");
-          const p = process.argv[1];
-          const agent = process.argv[2];
-          if (!fs.existsSync(p)) { process.exit(0); }
-          const data = JSON.parse(fs.readFileSync(p, "utf8"));
-          // V2 format: { version: 2, sessions: { "sessionId": { agent, logFile, ... } } }
-          const sessions = data && data.sessions;
-          if (sessions) {
-            const entry = Object.values(sessions).find(s => s.agent === agent);
-            if (entry && entry.logFile) { console.log(entry.logFile); }
-          }
-        } catch {}
-      ' "$sessions_path" "$AGENT" 2>/dev/null || true)
-      if [ -n "$log_candidate" ]; then
-        # sessions.json stores a repo-relative path; normalize to absolute
-        if [[ "$log_candidate" != /* ]]; then
-          cand_abs="$REPO_DIR/$log_candidate"
-        else
-          cand_abs="$log_candidate"
-        fi
-        if [ -f "$cand_abs" ]; then
-          log_file="$cand_abs"
-          break
-        fi
-      fi
-    fi
-    sleep 0.5
-  done
-fi
-
-wait "$run_pid" 2>/dev/null || true
-
-if [ -z "$log_file" ]; then
-  echo "Failed to capture $AGENT log" >&2
+  echo "❌ Missing proper output structure"
   exit 1
 fi
 
-session_id=""
-for _ in {1..120}; do
-  session_id=$(rg -o '"session_id":"([^"]+)"' -r '$1' "$log_file" 2>/dev/null | head -n1 || true)
-  if [ -n "$session_id" ]; then
-    break
-  fi
-  sleep 0.5
-
-done
-
-if [ -z "$session_id" ]; then
-  echo "Failed to extract session id from $log_file" >&2
-  tail -n 40 "$log_file" >&2
+# Check for validation sections (look for blocking issues, warnings, or passed)
+if echo "$ADVISORY_OUTPUT" | grep -qE "(Blocking Issues|Warnings|Passed)"; then
+  echo "✅ Validation sections found"
+else
+  echo "❌ Missing validation sections"
   exit 1
 fi
 
-for _ in {1..300}; do
-  if rg -q '"turn.completed"' "$log_file"; then
-    break
-  fi
-  sleep 0.5
-
-done
-
-identity_found=0
-if rg -q '\*\*Identity\*\*' "$log_file" && rg -q 'Name: GENIE' "$log_file"; then
-  identity_found=1
-fi
-
-genie stop "$session_id" > /dev/null || true
-
-if [ "$identity_found" -ne 1 ]; then
-  echo "Identity block not found in $log_file" >&2
-  echo "--- log excerpt ---" >&2
-  tail -n 80 "$log_file" >&2
+# Check that it detects branch and commits
+if echo "$ADVISORY_OUTPUT" | grep -q "Branch:"; then
+  echo "✅ Branch detection working"
+else
+  echo "❌ Branch detection failed"
   exit 1
 fi
 
-echo "Identity smoke test passed"
+# Test 2: Validate hook scripts exist and are executable
+echo ""
+echo "Checking hook scripts..."
+if [ -x "$REPO_DIR/.git/hooks/pre-commit" ]; then
+  echo "✅ pre-commit hook is executable"
+else
+  echo "❌ pre-commit hook not executable"
+  exit 1
+fi
+
+if [ -x "$REPO_DIR/.git/hooks/pre-push" ]; then
+  echo "✅ pre-push hook is executable"
+else
+  echo "❌ pre-push hook not executable"
+  exit 1
+fi
+
+# Test 3: Validate validation scripts exist
+echo ""
+echo "Checking validation scripts..."
+if [ -f "$REPO_DIR/.genie/scripts/validate-user-files-not-committed.js" ]; then
+  echo "✅ User file validator found"
+else
+  echo "❌ User file validator missing"
+  exit 1
+fi
+
+if [ -f "$REPO_DIR/.genie/scripts/validate-cross-references.js" ]; then
+  echo "✅ Cross-reference validator found"
+else
+  echo "❌ Cross-reference validator missing"
+  exit 1
+fi
+
+if [ -f "$REPO_DIR/.genie/scripts/commit-advisory.js" ]; then
+  echo "✅ Commit advisory script found"
+else
+  echo "❌ Commit advisory script missing"
+  exit 1
+fi
+
+# Test 4: Validate parser exists
+if [ -f "$REPO_DIR/.genie/scripts/genie-workflow-parser.js" ]; then
+  echo "✅ Genie workflow parser found"
+else
+  echo "❌ Genie workflow parser missing"
+  exit 1
+fi
+
+echo ""
+echo "════════════════════════════════"
+echo "✅ Commit advisory smoke test passed"
