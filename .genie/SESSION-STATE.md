@@ -6,20 +6,24 @@
 
 ## 🎯 Active Sessions
 
-### NONE - RC17 Published, Ready for Fresh QA ✅
+### NONE - RC18 Published, Critical Bug Fixed ✅
 
-**Status:** RC17 published, clean state established
+**Status:** RC18 published, Bug #4 resolved
 **Context:**
-- RC17 commit: `50f752e` (fix: background polling V2 format + RC17 prep)
-- Bug #1 (background polling): FIXED in commit ee07ea8
-- Bug #2 (name field): Deeper investigation revealed sessions.json corruption bug
-- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.17
-- npm publish: Completed (exit 0), registry may be cached
-- All session state cleaned for fresh start
+- RC18 commits: `63f49d0` (migration fix), `4f1c2dc` (version bump)
+- Bug #4 (sessions.json corruption): ✅ FIXED - V1 migration now skips metadata
+- Bug #102 (session collision): ✅ VERIFIED FIXED - UUIDs working correctly
+- Bug #1 (background polling): ✅ FIXED (RC17)
+- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.18
+- npm@next: v2.4.0-rc.18 verified live
+- Testing: 2 sessions created, no collision, clean V2 format
+**Remaining Issues:**
+- Bug #3: Temp keys still used (entries stored as `temp-*` instead of UUID keys)
+- Bug #90: Name field missing (related to Bug #3)
 **Next:**
-1. Verify RC17 on npm@next (after registry cache refresh)
-2. Begin fresh QA validation with clean state
-3. Investigate sessions.json corruption bug (low priority)
+1. Investigate Bug #3 root cause (sessionId extraction works, but temp→UUID replacement fails)
+2. Fix temp key replacement logic
+3. Verify name field appears after Bug #3 fixed
 
 ---
 
