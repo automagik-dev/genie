@@ -339,11 +339,15 @@ npx automagik-genie view b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b --full
 - **Session:** f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f (complete)
 
 ### Task #6: Enhanced Backup & Update System
-**Status:** BLOCKED - Massive scope underestimation
-**Root Cause:** Wish describes architectural overhaul, not enhancement
-- ✅ Group A (backup expansion): 1-2 hours, implementable
-- ❌ Groups B-D (agent + versioning): 15-20 hours, requires architectural decisions
-- **Realistic:** 16-22 hours total, NOT 2-3 hours
+**Status:** PARTIAL - Group A COMPLETE ✅
+- ✅ **Group A (backup expansion):** IMPLEMENTED - Commits 38d9c69
+  - Backs up `.genie/` directory
+  - Backs up root `AGENTS.md` and `CLAUDE.md`
+  - Rollback restores all three
+  - Clean, framework-agnostic approach
+- ❌ **Groups B-D:** Deferred for architectural review
+  - Agent + versioning system requires decisions
+  - Estimated 15-20 hours if pursued
 - **Session:** b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b (complete)
 
 ### Task #5: Genie Architecture Rebranding
