@@ -11,7 +11,7 @@ LOG_DIR="$REPO_DIR/.genie/state/agents/logs"
 
 mkdir -p "$LOG_DIR"
 
-AGENT="plan"
+AGENT="neurons/plan"
 PROMPT=${1:-"Identity smoke test"}
 LOG_PREFIX=${AGENT//\//-}
 
@@ -19,6 +19,7 @@ before_snapshot=$(ls "$LOG_DIR"/"$LOG_PREFIX"-*.log 2>/dev/null || true)
 
 # Launch the agent in background; suppress stdout
 # Use local build if genie command not installed globally
+# Note: Using full agent name "neurons/plan" (not shorthand "plan")
 if command -v genie &> /dev/null; then
   genie run "$AGENT" "$PROMPT" > /dev/null &
 else
@@ -53,8 +54,8 @@ if [ -z "$log_file" ]; then
           const agent = process.argv[2];
           if (!fs.existsSync(p)) { process.exit(0); }
           const data = JSON.parse(fs.readFileSync(p, "utf8"));
-          // V2 format: { sessions: { "key": { agent, logFile, ... } } }
-          const sessions = data && data.sessions;
+          // V2 format: { agents: { sessions: { "key": { agent, logFile, ... } } } }
+          const sessions = data && data.agents && data.agents.sessions;
           if (sessions) {
             const entry = Object.values(sessions).find(s => s.agent === agent);
             if (entry && entry.logFile) { console.log(entry.logFile); }
