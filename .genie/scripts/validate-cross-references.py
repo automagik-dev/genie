@@ -39,55 +39,59 @@ def is_false_positive(ref_path, context):
     """
     Check if @ reference is a false positive (not a file reference).
 
-    DISABLED FOR ANALYSIS - All exceptions commented out to see real violations
+    Returns True for:
+    - Email addresses (@domain.tld)
+    - npm scoped packages (@org/package)
+    - npm distribution tags (@next, @latest)
+    - Documentation placeholders (@file.md, @agent-)
+    - Social handles (@teams, @username in RASCI context)
     """
-    # ALL EXCEPTIONS DISABLED - ANALYZING VIOLATIONS
+    # Email addresses (contains TLD: .com, .ai, .org, etc.)
+    if re.match(r'^[\w\-]+\.(com|ai|org|net|io|dev|co|edu|gov)$', ref_path):
+        return True
+
+    # npm distribution tags
+    if ref_path in ['next', 'latest', 'canary', 'rc', 'beta', 'alpha']:
+        return True
+
+    # npm version patterns (@X.Y.Z, @2.1.0, @X.Y.Z-rc.N)
+    if re.match(r'^\d+\.\d+\.\d+(-[\w.]+)?$', ref_path):
+        return True
+
+    # npm scoped packages (@org/package)
+    if '/' in ref_path and not ref_path.endswith('/'):
+        # Check if it looks like npm package (short names, no .md extension)
+        parts = ref_path.split('/')
+        if len(parts) == 2 and not ref_path.endswith('.md'):
+            return True
+
+    # Documentation example placeholders
+    placeholders = [
+        'file.md', 'directory/', 'path', 'include',
+        'mcp', '...', 'X.Y.Z', 'roadmap', 'standards'
+    ]
+    if ref_path in placeholders:
+        return True
+
+    # Placeholder patterns (startswith)
+    if ref_path.startswith('agent-'):  # @agent-implementor, @agent-foo
+        return True
+
+    # Social/team handles (single word, used in RASCI or social context)
+    if re.match(r'^[\w\-]+$', ref_path) and len(ref_path) < 30:
+        # Check context for RASCI or social media patterns
+        rasci_patterns = ['RASCI', 'Responsible:', 'Accountable:', 'Support:', 'Consulted:', 'Informed:',
+                          '@username', '@teams', '@eng-team', '@stakeholders']
+        social_patterns = ['twitter.com', 'github.com', 'Follow', 'Discord']
+
+        if any(pattern in context for pattern in rasci_patterns + social_patterns):
+            return True
+
+    # Resource identifiers (@mcp:, @tech-lead:, etc.)
+    if ':' in ref_path:
+        return True
+
     return False
-
-    # # Email addresses (contains @ before or has .tld pattern)
-    # if '@' in context[:context.find(f'@{ref_path}')] or \
-    #    re.match(r'^[\w\-]+\.(com|ai|org|net|io|dev)$', ref_path):
-    #     return True
-
-    # # npm distribution tags
-    # if ref_path in ['next', 'latest', 'canary', 'rc', 'beta', 'alpha']:
-    #     return True
-
-    # # npm version patterns (@X.Y.Z, @2.1.0, @X.Y.Z-rc.N, @X.Y.Z-rc.1)
-    # if re.match(r'^\d+\.\d+\.\d+(-[\w.]+)?$', ref_path) or \
-    #    re.match(r'^[XYZ]\.[XYZ]\.[XYZ](-rc\.[XYZ\d]+)?$', ref_path):
-    #     return True
-
-    # # npm scoped packages (@org/package)
-    # if '/' in ref_path and not ref_path.endswith('/'):
-    #     # Check if it looks like npm package (short names, no .md)
-    #     parts = ref_path.split('/')
-    #     if len(parts) == 2 and not ref_path.endswith('.md'):
-    #         return True
-
-    # # Documentation example placeholders
-    # placeholders = [
-    #     'file.md', 'directory/', 'path', 'include',
-    #     'mcp', '...', 'X.Y.Z'
-    # ]
-    # if ref_path in placeholders:
-    #     return True
-
-    # # Placeholder patterns (startswith)
-    # if ref_path.startswith('agent-'):  # @agent-implementor, @agent-foo
-    #     return True
-
-    # # Twitter/GitHub handles (single word after @)
-    # if re.match(r'^[\w\-]+$', ref_path) and len(ref_path) < 20:
-    #     # Check context for social media patterns
-    #     if any(pattern in context for pattern in ['twitter.com', 'github.com', '[@', 'Follow']):
-    #         return True
-
-    # # Resource identifiers (@mcp:, @tech-lead:, etc.)
-    # if ':' in ref_path:
-    #     return True
-
-    # return False
 
 
 def is_in_code_block(content, match_start):

@@ -334,9 +334,9 @@ When creating Forge MCP tasks via `mcp__forge__create_task` with Claude as execu
 ```
 Use the <persona> subagent to [action verb] this task.
 
-@agent-<persona>
-@.genie/wishes/<slug>/task-<group>.md
-@.genie/wishes/<slug>/<slug>-wish.md
+`@.genie/agents/code/neurons/<persona>.md`
+`@.genie/wishes/<slug>/task-<group>.md`
+`@.genie/wishes/<slug>/<slug>-wish.md`
 
 Load all context from the referenced files above. Do not duplicate content here.
 ```
@@ -345,18 +345,23 @@ Load all context from the referenced files above. Do not duplicate content here.
 ```
 Use the implementor subagent to implement this task.
 
-@agent-implementor
-@.genie/wishes/claude-executor/task-a.md
-@.genie/wishes/claude-executor-wish.md
+`@.genie/agents/code/neurons/implementor.md`
+`@.genie/wishes/claude-executor/task-a.md`
+`@.genie/wishes/claude-executor-wish.md`
 
 Load all context from the referenced files above. Do not duplicate content here.
 ```
 
 **Why:**
 - Explicit instruction tells Claude to spawn the subagent
-- `@agent-` prefix triggers subagent loading
+- Agent reference points to actual agent prompt file
 - File references provide context paths
 - Avoids token waste from duplicating task file contents
+
+**Agent reference pattern:**
+- Code neurons: `@.genie/agents/code/neurons/<agent>.md`
+- Universal neurons: `@.genie/agents/neurons/<agent>.md`
+- Workflows: `@.genie/agents/workflows/<workflow>.md`
 
 **Note:** This pattern is ONLY for Forge MCP task descriptions when using Claude executor. Task file creation (task-*.md) remains unchanged with full context.
 
@@ -423,7 +428,7 @@ Implement resolver foundation for external AI folder wish.
 ## Context & Background
 `@lib/services/ai_root.rs` — current resolver implementation
 `@lib/config/settings.rs` — configuration flags
-@tests/lib/test_ai_root_resolver.py — baseline coverage
+`@tests/lib/test_ai_root_resolver.py` — baseline coverage
 
 ## Advanced Prompting Instructions
 <context_gathering>

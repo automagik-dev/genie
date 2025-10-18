@@ -176,7 +176,7 @@ Contributors are:
 
 ## 🔒 Security Issues
 
-If you discover a security vulnerability, email security@namastex.ai instead of opening a public issue. We’ll respond promptly.
+If you discover a security vulnerability, email genie@namastex.ai instead of opening a public issue. We'll respond promptly.
 
 ## 📄 License
 

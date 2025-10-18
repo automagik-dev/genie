@@ -341,7 +341,11 @@ export async function maybeHandleBackgroundLaunch(ctx: HandlerContext, params: B
   while (Date.now() - pollStart < pollTimeout) {
     await sleep(pollInterval);
     const liveStore = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-    const liveEntry = liveStore.agents?.[agentName];
+
+    // V2 format: search sessions by agent name (sessions are keyed by sessionId)
+    const liveEntry = Object.values(liveStore.sessions || {}).find(
+      s => s.agent === agentName && s.status === 'running' && s.sessionId
+    );
 
     if (liveEntry?.sessionId) {
       const elapsed = ((Date.now() - pollStart) / 1000).toFixed(1);

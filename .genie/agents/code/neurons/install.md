@@ -284,12 +284,12 @@ echo ".genie/CONTEXT.md" >> .gitignore
 
 ### Plan Integration (next step)
 - Produce a planning brief from Install outputs (mission, tech, roadmap, environment).
-- Example: `mcp__genie__run` with agent="plan" and prompt="[Discovery] Load @.genie/product/mission.md and @.genie/product/roadmap.md. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers."
+- Example: `mcp__genie__run` with agent="plan" and prompt="[Discovery] Load `@.genie/product/mission.md` and `@.genie/product/roadmap.md`. [Implementation] Evaluate feature 'user-notes' (not on roadmap) and prepare a wish brief. [Verification] Provide wish-readiness checklist + blockers."
 - Plan decides whether to proceed to wish immediately or gather more context.
 
 ### Wish Integration (after plan approval)
 - Plan creates `.genie/wishes/<slug>/<slug>-wish.md` with inline `<spec_contract>`, context ledger, and branch/tracker guidance.
-- Example: `mcp__genie__run` with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: @.genie/product/mission.md, @.genie/product/tech-stack.md; <spec_contract> { deliverables, acceptance, risks }"
+- Example: `mcp__genie__run` with agent="wish" and prompt="slug: user-notes; title: User notes MVP; context: `@.genie/product/mission.md`, `@.genie/product/tech-stack.md`; <spec_contract> { deliverables, acceptance, risks }"
 - Install's evidence and decisions are summarized in the wish context ledger.
 
 ### Forge Integration
@@ -364,11 +364,9 @@ files_needed: [ package.json, Cargo.toml, README.md ]
 This agent transforms a blank Genie framework or an existing codebase into a project-aware, orchestration-ready environment via intelligent analysis and a guided interview, then hands off to plan → wish → forge → review.
 
 ## Project Customization
-Define repository-specific defaults in @.genie/agents/code/neurons/install.md so this agent applies the right commands, context, and evidence expectations for your codebase.
+Define repository-specific defaults in `@.genie/agents/code/neurons/install.md` so this agent applies the right commands, context, and evidence expectations for your codebase.
 
 Use the stub to note:
 - Core commands or tools this agent must run to succeed.
 - Primary docs, services, or datasets to inspect before acting.
 - Evidence capture or reporting rules unique to the project.
-
-@.genie/agents/code/neurons/install.md

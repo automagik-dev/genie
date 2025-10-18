@@ -1,51 +1,68 @@
 # 🧞 Genie Session State
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-18 00:14 UTC
 **Purpose:** Track active neuron sessions and workflow states for collective coordination
 
 ---
 
 ## 🎯 Active Sessions
 
-### Implementor - RC16 Bug Fixes
-**Session ID:** `[about to launch - rc16-fixes]`
-**Started:** 2025-10-17 23:35 UTC
-**Status:** Starting
-**Purpose:** Fix session collision (#102) + add friendly session names
-**Scope:**
-- Session collision fix (run.ts, session-helpers.ts, resume.ts)
-- Friendly session names feature (user-provided or auto-generated)
-- SessionEntry schema update (add name field)
-- MCP server updates for name support
-- Active vs running concept clarification
+### NONE - Ready for restart
 
-**Bug Fixes:**
-- #102: Session key collision (temp-* → UUID causes log file fragmentation)
-- #90: History fragmentation (auto-fixed by #102)
-
-**Files to modify:**
-- `.genie/cli/src/session-store.ts` (add name field)
-- `.genie/cli/src/cli-core/handlers/run.ts` (use sessionId not temp)
-- `.genie/cli/src/cli-core/handlers/resume.ts` (lookup by name or ID)
-- `.genie/cli/src/commands/run.ts` (accept name parameter)
-- `.genie/mcp/src/server.ts` (expose name in tools)
-
-**Next:** Launch implementor with detailed spec
-
-<!--
-Session format:
-### [Neuron Name] - [Session ID]
-**Started:** YYYY-MM-DD HH:MM UTC
-**Status:** active | paused | completed
-**Purpose:** [What this neuron is working on]
-**Context:** [Key files, decisions, state]
-**Next:** [Next action when resumed]
-
-**Session ID:** `abc123...`
--->
+**Status:** Awaiting session restart for MCP testing
+**Context:** CLI testing completed, found discrepancy between package and local source
+**Next:** Session restart to enable MCP tools for proper RC16 validation
 
 ---
 
 ## 🔄 Session History (Recent)
+
+### Learn - Sequential Questioning Protocol ✅
+**Session ID:** `0991ac69-082a-4d9b-861a-24729e801aba`
+**Started:** 2025-10-18 00:10:04 UTC
+**Completed:** 2025-10-18 00:13:30 UTC
+**Outcome:** Added sequential-questioning.md skill
+**Details:**
+- Teaching: Present ONE decision per message (never ABCD parallel)
+- Violation: 2025-10-17 validation review (6 questions simultaneously)
+- Pattern: Sequential decision queue protocol
+- File: `.genie/agents/code/skills/sequential-questioning.md`
+- Skill loaded via @AGENTS.md
+
+### CLI Test - RC16 Validation (INCOMPLETE) ⚠️
+**Started:** 2025-10-18 00:07 UTC
+**Status:** Needs MCP for complete testing
+**Findings:**
+- RC16 commit: `0a843e8` (includes fix commit `e78c8d1`)
+- Fix commit modifies 44 files (1165 additions, 247 deletions)
+- Global package HAS --name option in genie-cli.js
+- Source code (run.ts) HAS name implementation
+- CLI test showed collision behavior (needs verification with proper setup)
+- **Blocker:** MCP tools not available in current session
+- **Next:** Session restart for MCP-based testing
+
+### Release - RC16 GitHub Release ✅
+**Session ID:** `250fd0d5-d1fc-4f20-b0f9-cecaf67b62c7`
+**Started:** 2025-10-17 23:55:47 UTC
+**Completed:** 2025-10-18 00:02:30 UTC
+**Outcome:** v2.4.0-rc.16 published to npm@next
+**Details:**
+- GitHub release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.16
+- npm: https://www.npmjs.com/package/automagik-genie/v/2.4.0-rc.16
+- Commit: 0a843e8 (includes e78c8d1 fix for Bug #102, #90)
+- Features: Session collision fix, friendly names, CLI improvements
+
+### Implementor - RC16 Bug Fixes ✅
+**Session ID:** `2c76f282-2068-4c02-8256-f83e313ddf4a`
+**Started:** 2025-10-17 23:36:32 UTC
+**Completed:** 2025-10-17 23:44:21 UTC
+**Outcome:** Implemented fixes for Bug #102 (collision) and #90 (fragmentation)
+**Details:**
+- Fixed session key collision (use sessionId from start, no temp keys)
+- Added friendly names feature (--name option)
+- Updated CLI handlers: run.ts, resume.ts, stop.ts, view.ts
+- Updated session-store.ts, session-helpers.ts
+- Added name parameter to MCP server
+- Done report: `.genie/wishes/rc16-bug-fixes/reports/done-implementor-rc16-bug-fixes-202510172342.md`
 
 ### Implementor - MCP Bug Patches for RC9 ✅
 **Session ID:** `36459be4-79e5-4673-8d48-0be8a81259ba`
@@ -58,9 +75,6 @@ Session format:
 - Bug #92: Zombie sessions fixed (add cleanup/abandonment marking)
 - Version metadata: Added version header to log files
 - Release: v2.4.0-rc.9 published to npm@next
-- GitHub: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.9
-- npm: https://www.npmjs.com/package/automagik-genie/v/2.4.0-rc.9
-- Commits: 904d223, db658ce, f76df1f, 5043aed
 
 ### Debug Neuron - Bugs #90, #92, #66, #91 (Fixed in RC9) ✅
 **Sessions:**
@@ -71,56 +85,30 @@ Session format:
 **Started:** 2025-10-17 ~23:50 UTC
 **Completed:** 2025-10-17 (fixed in RC9)
 **Outcome:** All bugs addressed in RC9 patches
-**Details:**
-- Bug #90 (full=true truncation) → Fixed in RC9
-- Bug #92 (zombie sessions) → Fixed in RC9
-- Bug #66 (session disappears) → Likely fixed via #102 patch (session collision)
-- Bug #91 (missing sessions) → Likely fixed via #102 patch
-- Root cause session (5c6d3ec5) identified core issues for patches
 
 ### Debug Neuron - Root Cause Investigation ✅
 **Session ID:** `5c6d3ec5-b953-49a3-bff9-48edd8f17176`
 **Started:** 2025-10-17 18:33 UTC
 **Completed:** 2025-10-17 18:39 UTC
 **Outcome:** Identified root causes enabling RC9 patches
-**Details:**
-- Found Bug #102 root cause: sessions.json uses agent name as key (collision)
-- Found Bug #90 root cause: View returns checkpoints not full transcript
-- Found Bug #66/91 pattern: Background launcher timeout + silent spawn failures
-- Comprehensive analysis in log file (500+ lines)
 
 ### Learn - Neuron Delegation Architecture Evolution ✅
 **Session ID:** `1bf5bfbe-f901-4ea0-85a9-1d8f4c5f2230`
 **Started:** 2025-10-17 ~23:15 UTC
 **Completed:** 2025-10-17 ~23:20 UTC
 **Outcome:** Documented architectural evolution: folder hierarchy = delegation hierarchy
-**Details:**
-- Added 4 sections to AGENTS.md: @ Tool Semantics (270), Genie Loading Architecture (315), Neuron Delegation Hierarchy (376), Persistent Tracking Protocol (571)
-- Updated  with Neuron Delegation Hierarchy section
-- Documented @ semantics: path reference only (lightweight), NOT full load
-- Documented 3-tier hierarchy: Base Genie → Neurons → Workflows
-- Application enforcement: list_agents scoped by folder structure
-- Evidence: All sections verified present, cross-references complete
 
 ### Learn - Say-Do Gap Behavioral Fix ✅
 **Session ID:** `6ec456b7-fcc6-43b9-a3cd-a13c8973d588`
 **Started:** 2025-10-17 23:05 UTC
 **Completed:** 2025-10-17 23:07 UTC
 **Outcome:** Documented and fixed "say vs do" behavioral gap
-**Details:**
-- Added "Execution Integrity Protocol" to AGENTS.md (lines 1106-1159)
-- Pattern documented: Saying "waiting X seconds" without executing sleep
-- Evidence: 2025-10-17 23:00-23:05 UTC session (2 corrections needed)
-- Fix: Immediate sleep execution after any wait commitment
-- Validation: Every wait statement must show corresponding sleep command
-- Propagated: All future sessions load this via @AGENTS.md
 
 ### Learn - Delegation Protocol Enforcement ⚠️ FAILED
 **Session ID:** `537bfe71-4ed0-4f7e-9276-0eb96273c1df`
 **Started:** 2025-10-17 23:00 UTC
 **Failed:** 2025-10-17 23:02 UTC
 **Outcome:** Prompt too long error - teaching input too comprehensive (17 files)
-**Note:** May need retry with smaller batches if issue resurfaces
 
 ### Report - Session Disappearance Bug ✅
 **Session ID:** `cde2466c-608d-4781-98fa-8b601813d418`
@@ -130,8 +118,6 @@ Session format:
 **Details:**
 - Issue created/consolidated: #66 ([Bug] MCP session disappears after resume - "No run found")
 - Duplicates closed: #67, #68, #69, #70, #71, #72, #74, #75
-- Labels: type:bug, area:mcp, priority:critical
-- URL: https://github.com/namastexlabs/automagik-genie/issues/66
 
 ### Git - CLI Output References Non-existent ./genie Command ✅
 **Session ID:** `b3680a36-8514-4e1f-8380-e92a4b15894b`
@@ -140,62 +126,30 @@ Session format:
 **Outcome:** GitHub issue created for CLI output bug
 **Details:**
 - Primary issue: #89 ([Bug] CLI session output references non-existent ./genie command)
-- Labels: type:bug, area:cli, priority:high
-- URL: https://github.com/namastexlabs/automagik-genie/issues/89
-- Meta-learning: Attempted to use MCP run to create issue, demonstrating the bug being reported
 
 ### Implementor - Natural Context Phase 1 ❌ CANCELLED
 **Session ID:** `d958873a-17c2-4c6b-a538-b3224e93284c`
 **Started:** 2025-10-17 ~18:05 UTC
 **Cancelled:** 2025-10-17 ~23:30 UTC
 **Outcome:** Backwards optimization detected - would cause token explosion
-**Details:**
-- Original plan: Batch edit 23 agent files to load @AGENTS.md
-- Reason for cancellation: Misunderstood @ semantics (path reference vs full load)
-- Learning: @ shows path only; AGENTS.md already loaded at outer level
-- Correct approach: Neurons = AGENTS.md (base) + specialty (no reload needed)
 
 ### Genie - Natural Context Acquisition Audit ✅
 **Session ID:** `2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3`
 **Started:** 2025-10-17 17:15 UTC
 **Completed:** 2025-10-17 ~18:00 UTC
 **Outcome:** Comprehensive audit of @ / ! usage across 100+ files
-**Details:**
-- Report: `.genie/reports/natural-context-audit-20251017.md`
-- Found: 15+ high-impact @ opportunities, 20+ ! opportunities
-- Recommendation: Phase 1 batch edit (23 agent files → @AGENTS.md) - LATER CANCELLED
-- Impact: Single source of truth, automatic synchronization
-- Genie Verdict: PROCEED with Phase 1 (95% confidence) - verdict correct but implementation approach flawed
 
 ### Implementor - Git Neuron Split ✅
 **Session ID:** `79fecfb5-2532-4e73-9d4a-00a33a1863ab`
 **Started:** 2025-10-17 16:38 UTC
 **Completed:** 2025-10-17 16:42 UTC (executed directly per user override)
 **Outcome:** Successfully split git neuron into 4 focused files
-**Details:**
-- Files modified: 1 (git.md: 514 → 165 lines, 68% reduction)
-- Files created: 3 (report.md 295 lines, issue.md 212 lines, pr.md 148 lines)
-- Context efficiency: 43-71% reduction per operation type
-- Cross-references: ✅ All @ patterns validated
-- Agent registration: ✅ All 4 agents registered successfully
-- Done report: `.genie/wishes/git-split/reports/done-implementor-git-split-202510171642.md`
 
 ### Release - RC8 GitHub Release ✅
 **Session ID:** `12285bf7-2310-4193-9da8-31a7dd3b52e4`
 **Started:** 2025-10-17 12:56 UTC (resumed 2025-10-17 13:15 UTC)
 **Completed:** 2025-10-17 16:08 UTC
 **Outcome:** Successfully published v2.4.0-rc.8 to npm@next
-**Details:**
-- Pre-flight: ✅ Tests passed (19/19), working tree clean, version validated
-- GitHub release: ✅ Created with comprehensive notes
-- Workflow: ✅ Completed in 43s (18598273595)
-- npm publish: ✅ Published to @next (2.4.0-rc.8)
-- Installation: ✅ Verified working (`npx automagik-genie --version`)
-- Key features: Triad validation, SESSION-STATE.md, MASTER-PLAN.md, shared vs per-user architecture
-
-<!--
-Completed sessions move here with outcomes
--->
 
 ---
 
@@ -219,12 +173,35 @@ Completed sessions move here with outcomes
 
 ---
 
-## 📋 Session Templates
+## 📋 RC16 Validation Status
+
+**Test incomplete** - needs MCP tools for proper validation
+
+**What we know:**
+- RC16 published: commit 0a843e8 (includes fix e78c8d1)
+- Fix commit shows 44 files changed (proper implementation)
+- Source code (run.ts) has name field and sessionId handling
+- Global package has --name option in genie-cli.js
+- CLI test showed unexpected behavior but may be setup issue
+
+**What needs verification (after MCP session restart):**
+1. Create two sessions with MCP run tool
+2. Verify sessionId keys (not temp-* keys)
+3. Verify name field present in session entries
+4. Check no collision when same agent runs twice
+5. Verify single log file per session (no fragmentation)
+6. Test resume/view/stop with both UUID and name
+
+**Next:** Felipe restarting session to enable MCP testing
+
+---
+
+## 📊 Session Templates
 
 **Genie neuron template:**
-\`\`\`markdown
+```markdown
 ### Genie - [context-description]
-**Session ID:** \`genie-abc123\`
+**Session ID:** `genie-abc123`
 **Started:** YYYY-MM-DD HH:MM UTC
 **Status:** active
 **Mode:** plan | analyze | debug | etc.
@@ -234,12 +211,12 @@ Completed sessions move here with outcomes
 - Key findings: [summary]
 - Decisions made: [list]
 **Next:** [Next investigation step]
-\`\`\`
+```
 
 **Implementor neuron template:**
-\`\`\`markdown
+```markdown
 ### Implementor - [task-description]
-**Session ID:** \`implementor-abc123\`
+**Session ID:** `implementor-abc123`
 **Started:** YYYY-MM-DD HH:MM UTC
 **Status:** active
 **Purpose:** Implementation task
@@ -248,12 +225,12 @@ Completed sessions move here with outcomes
 - Tests status: [status]
 - Blockers: [any blockers]
 **Next:** [Next implementation step]
-\`\`\`
+```
 
 **Prompt neuron template:**
-\`\`\`markdown
+```markdown
 ### Prompt - [prompt-subject]
-**Session ID:** \`prompt-abc123\`
+**Session ID:** `prompt-abc123`
 **Started:** YYYY-MM-DD HH:MM UTC
 **Status:** active
 **Purpose:** Prompt crafting/refactoring
@@ -262,7 +239,7 @@ Completed sessions move here with outcomes
 - Prompt type: [type]
 - Current draft: [status]
 **Next:** [Next refinement step]
-\`\`\`
+```
 
 ---
 
