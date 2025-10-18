@@ -60,26 +60,27 @@ Current session management is BROKEN:
 - [x] Architecture documentation
 - [x] Workflow patterns documentation
 
-**Core Changes (TODO):**
-- [ ] Update `shared.ts` - key by name not sessionId
-  - [ ] Line 339: `store.sessions[entry.name]`
-  - [ ] Line 406: `store.sessions[entry.name]`
-  - [ ] Line 343-349: Output name not UUID
-- [ ] Update MCP run handler
-  - [ ] Return name in output
-  - [ ] Generate name if not provided
-- [ ] Update MCP resume handler
-  - [ ] Accept name parameter
-  - [ ] Remove UUID lookup
-- [ ] Update CLI handlers
-  - [ ] `view` - accept name
-  - [ ] `stop` - accept name
-  - [ ] `list` - show names
-- [ ] Update views
-  - [ ] Remove UUID from output
-  - [ ] Show names everywhere
+**Core Changes (DONE):**
+- [x] Update `shared.ts` - key by name not sessionId
+  - [x] Line 339: `store.sessions[entry.name]`
+  - [x] Line 406: `store.sessions[entry.name]`
+  - [x] Line 343-349: Output name not UUID
+- [x] Update MCP server
+  - [x] listSessions returns names
+  - [x] Tool descriptions updated (resume, view, stop)
+  - [x] Removed UUID from output
+- [x] Update views
+  - [x] `background.ts` uses sessionName parameter
+  - [x] Removed UUID truncation (formatSessionBadge)
+  - [x] Updated all messages to show names
+- [x] Run handler verified
+  - [x] Generates name if not provided
+  - [x] Uses name as primary identifier
+
+**Remaining (TODO):**
 - [ ] Test migration v2 → v3
-- [ ] Remove all UUID references
+- [ ] Test full workflow (run, resume, view, stop)
+- [ ] Create PR
 
 ---
 

@@ -332,21 +332,21 @@ export async function maybeHandleBackgroundLaunch(ctx: HandlerContext, params: B
   entry.status = 'running';
   entry.background = parsed.options.background;
 
-  // Use sessionId as key (no temp keys)
-  if (!entry.sessionId) {
-    throw new Error('Session ID must be generated before background launch');
+  // Use name as key (v3 architecture)
+  if (!entry.name) {
+    throw new Error('Session name must be set before background launch');
   }
-  store.sessions[entry.sessionId] = entry;
+  store.sessions[entry.name] = entry;
   await persistStore(ctx, store);
 
   process.stdout.write(`▸ Launching ${agentName} in background...\n`);
-  process.stdout.write(`▸ Session ID: ${entry.sessionId}\n\n`);
+  process.stdout.write(`▸ Session: ${entry.name}\n\n`);
   process.stdout.write('  View output:\n');
-  process.stdout.write(`    npx automagik-genie view ${entry.sessionId}\n\n`);
+  process.stdout.write(`    npx automagik-genie view ${entry.name}\n\n`);
   process.stdout.write('  Continue conversation:\n');
-  process.stdout.write(`    npx automagik-genie resume ${entry.sessionId} "<your message>"\n\n`);
+  process.stdout.write(`    npx automagik-genie resume ${entry.name} "<your message>"\n\n`);
   process.stdout.write('  Stop session:\n');
-  process.stdout.write(`    npx automagik-genie stop ${entry.sessionId}\n`);
+  process.stdout.write(`    npx automagik-genie stop ${entry.name}\n`);
   return true;
 }
 
@@ -399,11 +399,11 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
   entry.executorPid = proc.pid || null;
   if (runnerPid) entry.runnerPid = runnerPid;
 
-  // Use sessionId as key (no temp keys)
-  if (!entry.sessionId) {
-    throw new Error('Session ID must be generated before execution');
+  // Use name as key (v3 architecture)
+  if (!entry.name) {
+    throw new Error('Session name must be set before execution');
   }
-  store.sessions[entry.sessionId] = entry;
+  store.sessions[entry.name] = entry;
   await persistStore(ctx, store);
 
   let filteredStdout: NodeJS.ReadWriteStream | null = null;
@@ -482,7 +482,7 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
         buildRunCompletionView({
           agentName,
           outcome: 'failure',
-          sessionId: entry.sessionId,
+          sessionName: entry.name,
           executorKey,
           model: executorConfig.exec?.model || executorConfig.model || null,
           permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,
@@ -512,7 +512,7 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
       const envelope = buildRunCompletionView({
         agentName,
         outcome,
-        sessionId: entry.sessionId,
+        sessionName: entry.name,
         executorKey,
         model: executorConfig.exec?.model || executorConfig.model || null,
         permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,

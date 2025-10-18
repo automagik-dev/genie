@@ -110,7 +110,7 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
 }
 
 // Helper: List recent sessions
-function listSessions(): Array<{ id: string; name?: string | null; agent: string; status: string; created: string; lastUsed: string }> {
+function listSessions(): Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }> {
   const sessionsFile = '.genie/state/agents/sessions.json';
 
   if (!fs.existsSync(sessionsFile)) {
@@ -121,9 +121,9 @@ function listSessions(): Array<{ id: string; name?: string | null; agent: string
     const content = fs.readFileSync(sessionsFile, 'utf8');
     const store = JSON.parse(content);
 
+    // v3: Sessions keyed by name, entry.name should match key
     const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
-      id: entry.sessionId || key,
-      name: entry.name || null,
+      name: entry.name || key,  // In v3, key IS the name
       agent: entry.agent || key,
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
@@ -239,7 +239,7 @@ server.addTool({
 // Tool: list_sessions - View active and recent sessions
 server.addTool({
   name: 'list_sessions',
-  description: 'List active and recent Genie agent sessions. Shows session IDs, agents, status, and timing. Use this to find sessions to resume or view.',
+  description: 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.',
   parameters: z.object({}),
   execute: async () => {
     const sessions = listSessions();
@@ -252,10 +252,7 @@ server.addTool({
 
     sessions.forEach((session, index) => {
       const { displayId } = transformDisplayPath(session.agent);
-      response += `${index + 1}. **${session.id}**\n`;
-      if (session.name) {
-        response += `   Name: ${session.name}\n`;
-      }
+      response += `${index + 1}. **${session.name}**\n`;
       response += `   Agent: ${displayId}\n`;
       response += `   Status: ${session.status}\n`;
       response += `   Created: ${session.created}\n`;
@@ -302,7 +299,7 @@ server.addTool({
   name: 'resume',
   description: 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID (UUID) or friendly name to resume (get from list_sessions tool)'),
+    sessionId: z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
     prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
   }),
   execute: async (args) => {
@@ -326,7 +323,7 @@ server.addTool({
   name: 'view',
   description: 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID (UUID) or friendly name to view (get from list_sessions tool)'),
+    sessionId: z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
     full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
   }),
   execute: async (args) => {
@@ -350,7 +347,7 @@ server.addTool({
   name: 'stop',
   description: 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.',
   parameters: z.object({
-    sessionId: z.string().describe('Session ID (UUID) or friendly name to stop (get from list_sessions tool)')
+    sessionId: z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
   }),
   execute: async (args) => {
     try {
