@@ -1,51 +1,52 @@
-# 🧞 Genie Session State - RC26 Reset
+# 🧞 Genie Session State - RC26 Active
 
-**Last Updated:** 2025-10-18 17:55 UTC
+**Last Updated:** 2025-10-18 18:24 UTC
 **Version:** v2.4.0-rc.26
-**Status:** ✅ RESET - Ready for next phase
+**Status:** 🚀 ACTIVE - RC26 improvements in progress
 
 ---
 
-## 📊 RC26 PHASE COMPLETE
+## 📊 RC26 CURRENT WORK
 
-### ✅ What Was Accomplished
+### ✅ Completed This Session
 
-**Release RC25→RC26:**
-- ✅ 25 Forge review tasks created for all open issues
-- ✅ Meta-learning task established for continuous framework improvements
-- ✅ All review genies activated and working autonomously
-- ✅ RC26 tagged and published
-- ✅ Release task created in Forge
+**Tree-based Agent Visualization (commit 6295cfc6):**
+- ✅ Replaced flat agent list with hierarchical tree
+- ✅ Visual connectors (├──, └──, │) for clear hierarchy
+- ✅ Icons: 🧠 Neuron, ⚙️ Workflow, 💡 Skill, 📁 Folder
+- ✅ Primary command: `genie list neurons` (agents still works)
+- ✅ 100% dynamic filesystem discovery
+- ✅ Commit created and in history
 
-### 🚀 Current State
+### 🎓 Key Learning Captured
 
-**Active:** 25 Review Genies (autonomous execution)
-- Each working on their assigned GitHub issue
-- Creating wish documents as needed
-- Executing in Forge tasks
-- Will create PRs back to main when complete
+**Routing Decision Protocol:**
+- Forge tasks preferred over MCP neurons (more stable currently)
+- Genie MCP integration under active development
+- Forge provides better visibility and stability
+- To be documented in learn neuron task (077e3e89)
 
-**Meta-Task:** Continuous Learning (ongoing)
-- Capturing framework insights
-- Tracking patterns and improvements
-- 4 entries documented so far
+### 🚀 Active Forge Tasks
 
----
+**RC26 Release Task:** b2d2cb7d-64f0-42ce-b79c-3a48059f5989
+- Attempt: 6da53fb8-f5c6-4bc0-83b3-74bba1c2eb93
+- Executor: CLAUDE_CODE
+- Status: Running in dedicated worktree
 
-## 🔄 READY FOR NEXT PHASE
-
-**When you're ready for the next RC:**
-
-1. Say: `reset`
-2. I will:
-   - ✅ Clear this state file
-   - ✅ Check what PRs came in from review genies
-   - ✅ Merge completed work to main
-   - ✅ Start fresh for next iteration
-   - ✅ Bump to new RC version
-
-**Status:** WAITING FOR YOUR SIGNAL ⏸️
+**Learn Task:** 077e3e89-0e40-4ccb-876e-ae94b02cd7a5
+- Status: Active (4 entries documented)
+- Next: Document routing decision protocol
 
 ---
 
-**Command:** Ready to receive "reset" when review phase is complete
+## 🔄 NEXT STEPS
+
+**For RC26 Completion:**
+1. ⏳ Forge task completes release workflow
+2. ⏳ Version bumped to 2.4.0-rc.26
+3. ⏳ GitHub release published
+4. ⏳ Routing learning documented in learn task
+
+---
+
+**Status:** IN PROGRESS - RC26 release workflow active in Forge
