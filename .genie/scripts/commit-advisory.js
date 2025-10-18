@@ -46,46 +46,41 @@ class CommitAdvisory {
    * Get commits to be pushed
    */
   getCommitsToPush() {
+    const delimiter = '---COMMIT-BOUNDARY---';
+    const format = `%H%n%s%n%b${delimiter}`;
+
     try {
+      let log;
       // Try to get commits relative to upstream
       try {
-        const log = execSync('git log @{u}..HEAD --format="%H|%s"', {
+        log = execSync(`git log @{u}..HEAD --format="${format}"`, {
           encoding: 'utf8',
           cwd: REPO_ROOT,
           stdio: ['pipe', 'pipe', 'ignore']
         });
-        const commits = log.trim().split('\n').filter(l => l);
-        if (commits.length === 0) throw new Error('No upstream commits');
-
-        return commits.map(line => {
-          const parts = line.split('|', 2);
-          return {
-            hash: parts[0] || '',
-            subject: parts[1] || 'unknown',
-            body: ''
-          };
-        });
+        if (!log.trim()) throw new Error('No upstream commits');
       } catch {
         // Fallback: last 5 commits
-        const log = execSync('git log -5 --format="%H|%s"', {
+        log = execSync(`git log -5 --format="${format}"`, {
           encoding: 'utf8',
           cwd: REPO_ROOT
         });
-        const commits = log.trim().split('\n').filter(l => l);
-        if (commits.length === 0) {
-          this.warnings.push('No commits found in recent history');
-          return [];
-        }
-
-        return commits.map(line => {
-          const parts = line.split('|', 2);
-          return {
-            hash: parts[0] || '',
-            subject: parts[1] || 'unknown',
-            body: ''
-          };
-        });
       }
+
+      const entries = log.split(delimiter).filter(e => e.trim());
+      if (entries.length === 0) {
+        this.warnings.push('No commits found in recent history');
+        return [];
+      }
+
+      return entries.map(entry => {
+        const lines = entry.trim().split('\n');
+        return {
+          hash: lines[0] || '',
+          subject: lines[1] || 'unknown',
+          body: lines.slice(2).join('\n').trim()
+        };
+      });
     } catch (e) {
       this.errors.push(`Failed to get commits: ${e.message}`);
       return [];
@@ -203,21 +198,28 @@ class CommitAdvisory {
     };
 
     // Look for wish references: wish: slug, .genie/wishes/slug
-    const wishMatches = full.match(/wish:?\s*(\w[-\w]*)|\.genie\/wishes\/(\w[-\w]*)/gi) || [];
-    wishMatches.forEach(m => {
-      const slug = m.match(/\w[-\w]*/)[0];
-      refs.wishes.push(slug);
-      refs.hasWishRef = true;
-    });
+    // Require colon for "wish:" format to avoid false positives like "wish or"
+    const wishPattern = /\bwish:\s*(\w[-\w]+)|\.genie\/wishes\/(\w[-\w]+)/gim;
+    let wishMatch;
+    while ((wishMatch = wishPattern.exec(full)) !== null) {
+      const slug = wishMatch[1] || wishMatch[2];
+      if (slug) {
+        refs.wishes.push(slug);
+        refs.hasWishRef = true;
+      }
+    }
 
     // Look for GitHub issues: fixes #123, closes #456
-    const issueMatches = full.match(/(fixes|closes)\s+#(\d+)/gi) || [];
-    issueMatches.forEach(m => {
-      const num = m.match(/\d+/)[0];
-      refs.issues.push(num);
-      refs.hasIssueRef = true;
-      this.issues.add(num);
-    });
+    const issuePattern = /(fixes|closes)\s+#(\d+)/gi;
+    let issueMatch;
+    while ((issueMatch = issuePattern.exec(full)) !== null) {
+      const num = issueMatch[2];
+      if (num) {
+        refs.issues.push(num);
+        refs.hasIssueRef = true;
+        this.issues.add(num);
+      }
+    }
 
     return refs;
   }
@@ -250,10 +252,24 @@ class CommitAdvisory {
     for (const commit of this.commits) {
       const refs = references.get(commit.hash);
       if (!refs.hasWishRef && !refs.hasIssueRef) {
-        this.errors.push(
-          `Commit "${commit.subject.substring(0, 50)}" (${commit.hash.substring(0, 8)}) not linked to wish or issue\n` +
-          `     Fix: Add wish reference or GitHub issue link to commit message`
-        );
+        this.errors.push({
+          commit: commit.hash.substring(0, 8),
+          subject: commit.subject.substring(0, 60),
+          reason: 'Not linked to wish or GitHub issue',
+          why: 'Every commit must trace to a work item (wish or issue) so we can track WHY code was written',
+          fixes: [
+            {
+              label: 'Link to existing wish',
+              command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nwish: wish-slug"`,
+              description: 'Replace "wish-slug" with an actual wish slug from .genie/wishes/'
+            },
+            {
+              label: 'Link to GitHub issue',
+              command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nfixes #NNN"`,
+              description: 'Replace NNN with actual GitHub issue number'
+            }
+          ]
+        });
       }
     }
 
@@ -262,10 +278,24 @@ class CommitAdvisory {
       if (this.isBugFix(commit)) {
         const refs = references.get(commit.hash);
         if (!refs.hasIssueRef) {
-          this.errors.push(
-            `Bug fix commit "${commit.subject.substring(0, 50)}" must reference GitHub issue\n` +
-            `     Fix: Add "fixes #NNN" to commit message`
-          );
+          this.errors.push({
+            commit: commit.hash.substring(0, 8),
+            subject: commit.subject.substring(0, 60),
+            reason: 'Bug fix without GitHub issue reference',
+            why: 'Bug fixes must link to GitHub issues for traceability and audit trail',
+            fixes: [
+              {
+                label: 'Create GitHub issue first',
+                command: `gh issue create -t "Bug: ${commit.subject.substring(0, 40)}" -b "Description of the bug and fix"`,
+                description: 'Create the issue, note the number (e.g., #42), then amend commit'
+              },
+              {
+                label: 'Then link in commit',
+                command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nfixes #NNN"`,
+                description: 'Replace NNN with the issue number from previous step'
+              }
+            ]
+          });
         }
       }
     }
@@ -337,7 +367,7 @@ class CommitAdvisory {
   }
 
   /**
-   * Generate advisory report
+   * Generate advisory report with remediation guide
    */
   generateReport(branch, commitCount) {
     let report = [];
@@ -352,8 +382,30 @@ class CommitAdvisory {
     if (this.errors.length > 0) {
       report.push(`## ❌ Blocking Issues (${this.errors.length})\n`);
       this.errors.forEach((err, i) => {
-        report.push(`${i + 1}. ${err}\n`);
+        if (typeof err === 'object') {
+          report.push(`${i + 1}. **${err.reason}**`);
+          report.push(`   Commit: \`${err.commit}\` - ${err.subject}`);
+          report.push(`   WHY: ${err.why}`);
+          report.push(`   HOW TO FIX (choose one):\n`);
+          err.fixes.forEach((fix, j) => {
+            report.push(`   **${fix.label}:**`);
+            report.push(`   \`\`\``);
+            report.push(`   ${fix.command}`);
+            report.push(`   \`\`\``);
+            report.push(`   ${fix.description}`);
+          });
+          report.push('');
+        } else {
+          report.push(`${i + 1}. ${err}\n`);
+        }
       });
+
+      // Add quick fix section
+      report.push('## 📋 Quick Fix Steps\n');
+      report.push('1. Choose ONE of the fix options above for each error');
+      report.push('2. Run the command from that option');
+      report.push('3. After amending: `git push`\n');
+      report.push('**Need help?** See: `.genie/docs/commit-advisory-guide.md`\n');
     }
 
     if (this.warnings.length > 0) {
