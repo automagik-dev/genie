@@ -99,7 +99,7 @@ export function createViewHandler(ctx: HandlerContext): Handler {
         // For now, we'll try to get the execution processes and read their logs
         const { ForgeClient } = require('../../../forge.js');
         const forgeClient = new ForgeClient(
-          process.env.FORGE_BASE_URL || 'http://localhost:3000',
+          process.env.FORGE_BASE_URL || 'http://localhost:8887',
           process.env.FORGE_TOKEN
         );
 

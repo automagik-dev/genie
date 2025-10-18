@@ -17,6 +17,7 @@ import type { GenieConfig, ConfigPaths } from './types';
 import { saveSessions } from '../session-store';
 
 // Import ForgeClient from root
+// @ts-ignore - forge.js is a compiled JS file without type declarations
 import { ForgeClient } from '../../../../forge.js';
 
 export interface ForgeExecutorConfig {
@@ -273,7 +274,7 @@ export class ForgeExecutor {
  */
 export function createForgeExecutor(config: Partial<ForgeExecutorConfig> = {}): ForgeExecutor {
   const defaultConfig: ForgeExecutorConfig = {
-    forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:3000',
+    forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
     forgeToken: process.env.FORGE_TOKEN,
     genieProjectId: process.env.GENIE_PROJECT_ID,
   };

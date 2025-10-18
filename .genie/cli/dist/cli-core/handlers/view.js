@@ -90,7 +90,7 @@ function createViewHandler(ctx) {
                 // Try to get logs via WebSocket URL or execution processes
                 // For now, we'll try to get the execution processes and read their logs
                 const { ForgeClient } = require('../../../forge.js');
-                const forgeClient = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:3000', process.env.FORGE_TOKEN);
+                const forgeClient = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887', process.env.FORGE_TOKEN);
                 const processes = await forgeClient.listExecutionProcesses(entry.sessionId);
                 if (processes && processes.length > 0) {
                     // Get the latest process logs

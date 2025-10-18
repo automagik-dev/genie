@@ -18,14 +18,15 @@ exports.createForgeExecutor = createForgeExecutor;
 exports.handleForgeBackgroundLaunch = handleForgeBackgroundLaunch;
 const session_store_1 = require("../session-store");
 // Import ForgeClient from root
-const forge_1 = require("../../../../forge");
+// @ts-ignore - forge.js is a compiled JS file without type declarations
+const forge_js_1 = require("../../../../forge.js");
 /**
  * ForgeExecutor - Main class for Forge backend integration
  */
 class ForgeExecutor {
     constructor(config) {
         this.config = config;
-        this.forge = new forge_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
+        this.forge = new forge_js_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
     }
     /**
      * Create a new Genie session via Forge task attempt
@@ -204,7 +205,7 @@ exports.ForgeExecutor = ForgeExecutor;
  */
 function createForgeExecutor(config = {}) {
     const defaultConfig = {
-        forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:3000',
+        forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
         forgeToken: process.env.FORGE_TOKEN,
         genieProjectId: process.env.GENIE_PROJECT_ID,
     };

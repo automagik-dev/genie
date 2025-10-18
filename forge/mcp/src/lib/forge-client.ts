@@ -24,7 +24,7 @@ export class UserError extends Error {
 export class ForgeClient {
   private client: typeof BaseForgeClient.prototype;
 
-  constructor(baseUrl: string = 'http://localhost:3000', token?: string) {
+  constructor(baseUrl: string = 'http://localhost:8887', token?: string) {
     this.client = new BaseForgeClient(baseUrl, token);
   }
 
