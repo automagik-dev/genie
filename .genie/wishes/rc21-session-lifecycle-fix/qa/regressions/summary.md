@@ -18,7 +18,7 @@ Sessions:
 
 Findings:
 - Bug #66: PASS – resume did not drop session; sessions list retained entries
-- Bug #90: INCONCLUSIVE CONTENT – agents gated on permissions, but full=true path executes; no evidence of truncation
+- Bug #90: PASS – `view full=true` returns full transcript (4 messages), `full=false` returns summary/lastMessage as expected; no truncation observed
 - Bug #92: PASS – no lingering zombies; a running entry was stopped/cleaned and no longer listed
 - MCP Ops: PASS (launch + view + stop flows validated; gating prompts observed)
 
@@ -26,5 +26,4 @@ Notes:
 - Permission prompts within QA agents are expected in non-interactive runs; background launch + polling validated (≈0.5s)
 - Underlying session store shows V2 format and stable updates
 
-Verdict: Overall regression suite – PASS (Bug 66, 92). Bug 90 content check gated; operational behavior OK.
-
+Verdict: Overall regression suite – PASS (Bug 66, 90, 92).
