@@ -6,15 +6,35 @@
 
 ## 🎯 Active Sessions
 
-### NONE - Ready for restart
+### NONE - RC16 Bugs Fixed ✅
 
-**Status:** Awaiting session restart for MCP testing
-**Context:** CLI testing completed, found discrepancy between package and local source
-**Next:** Session restart to enable MCP tools for proper RC16 validation
+**Status:** Both critical bugs already fixed in commit ee07ea8
+**Context:**
+- Bug #1: Background polling V1/V2 mismatch - FIXED (commit ee07ea8)
+- Bug #2: Name field missing - FALSE ALARM (source always correct, stale build)
+**Next:** Ready for RC17 testing with MCP tools
 
 ---
 
 ## 🔄 Session History (Recent)
+
+### Bug Investigation - RC16 Critical Bugs ✅
+**Session ID:** N/A (direct execution, no implementor session)
+**Started:** 2025-10-18 ~00:20 UTC
+**Completed:** 2025-10-18 ~00:35 UTC
+**Outcome:** Both bugs already fixed, no new code needed
+**Details:**
+- Bug #1 (background polling): Already fixed in commit ee07ea8
+  - Changed from V1 format (liveStore.agents?.[agentName])
+  - To V2 format (Object.values(liveStore.sessions).find())
+  - Location: .genie/cli/src/cli-core/handlers/shared.ts:344-348
+- Bug #2 (name field missing): False alarm - source always correct
+  - Entry created with name: run.ts:62
+  - Persisted correctly: shared.ts:352
+  - Issue was stale build, rebuild confirmed fix present
+- TypeScript rebuilt successfully
+- Dist files confirmed updated with both fixes
+- Ready for RC17 testing
 
 ### Learn - Sequential Questioning Protocol ✅
 **Session ID:** `0991ac69-082a-4d9b-861a-24729e801aba`
