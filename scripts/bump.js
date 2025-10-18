@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BUMP_TYPE = process.argv[2];
+const NO_PUSH = process.argv[3] === '--no-push';
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
 
 // Colors
@@ -162,29 +163,36 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
   exec(`git tag v${newVersion}`);
   log('green', '✅', `Tagged v${newVersion}`);
 
-  // Push to trigger CI
-  log('blue', '📤', 'Pushing to remote...');
-  exec('git push');
-  exec('git push --tags');
+  // Push to trigger CI (unless --no-push flag is set)
+  if (!NO_PUSH) {
+    log('blue', '📤', 'Pushing to remote...');
+    exec('git push');
+    exec('git push --tags');
 
-  log('green', '🎉', 'Release candidate created!');
-  console.log('');
+    log('green', '🎉', 'Release candidate created!');
+    console.log('');
 
-  // Trigger publish workflow
-  log('blue', '🚀', 'Triggering publish workflow...');
-  const workflowResult = exec(`gh workflow run publish.yml --field tag=v${newVersion}`, true);
+    // Trigger publish workflow
+    log('blue', '🚀', 'Triggering publish workflow...');
+    const workflowResult = exec(`gh workflow run publish.yml --field tag=v${newVersion}`, true);
 
-  if (workflowResult === null || workflowResult === '') {
-    log('green', '✅', 'Publish workflow triggered');
-    log('blue', '📦', `CI will publish: npm install automagik-genie@next`);
-    log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
+    if (workflowResult === null || workflowResult === '') {
+      log('green', '✅', 'Publish workflow triggered');
+      log('blue', '📦', `CI will publish: npm install automagik-genie@next`);
+      log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
+    } else {
+      log('yellow', '⚠️', 'Could not trigger workflow automatically');
+      log('yellow', '💡', `Run manually: gh workflow run publish.yml --field tag=v${newVersion}`);
+    }
+
+    console.log('');
+    log('yellow', '💡', `When ready: pnpm release:stable`);
   } else {
-    log('yellow', '⚠️', 'Could not trigger workflow automatically');
-    log('yellow', '💡', `Run manually: gh workflow run publish.yml --field tag=v${newVersion}`);
+    log('green', '🎉', 'Release candidate created locally!');
+    log('yellow', '💡', `Tag: v${newVersion} (not pushed)`);
+    console.log('');
+    log('blue', '💡', 'Next: Push tag and create GitHub release');
   }
-
-  console.log('');
-  log('yellow', '💡', `When ready: pnpm release:stable`);
 }
 
 main();
