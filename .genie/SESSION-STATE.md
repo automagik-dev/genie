@@ -301,7 +301,12 @@ Felipe reviews incoming PRs as genies create them. All PRs will be linked to Git
 
 ## 🧠 ACTIVE FORGE TASK ATTEMPTS (2025-10-18 13:05 UTC)
 
-**CRITICAL LEARNING:** Genie is NOT working locally. ALL execution happens via Forge MCP. No direct genie calls unless for pure reasoning/analysis. Use Forge for everything.
+**CRITICAL LEARNING:**
+- ✅ Genie is NOT working locally. ALL execution happens via Forge MCP
+- ✅ No direct genie calls unless for pure reasoning/analysis
+- ✅ Use Forge for everything
+- ✅ Every wish MUST have GitHub issue + Forge task
+- ✅ Standard naming for visibility + LLM recognition + slug-friendliness
 
 **Fresh Sonnet 4.5 Attempts - ACTIVE NOW:**
 
@@ -325,6 +330,45 @@ mcp__automagik_forge__list_tasks project_id=f8924071-fa8e-43ee-8fbc-96ec5b49b3da
 - ❌ Call genie MCP directly for execution
 - ❌ Use git commands locally for Forge tasks
 - ✅ Use Forge MCP only for all coordination
+
+---
+
+## 📋 STANDARD FORGE TASK NAMING CONVENTION
+
+**Pattern:** `[TYPE]-###-slug-friendly-name`
+
+**TYPE values:**
+- `forge` - Regular feature/implementation work
+- `bug` - Bug fixes
+- `doc` - Documentation
+- `learn` - Learning/meta tasks
+- `neuron` - Permanent infrastructure/neuron work
+- `wish` - Wish fulfillment (feature/epic level)
+- `orchestration` - Coordination/meta-orchestration
+- `pr` - PR/merge tracking
+
+**Examples (Current):**
+```
+✅ forge/120-executor-replacement          [TYPE: forge, #: 120, slug: executor-replacement]
+✅ [BUG] #104 - MCP Background Launch...   [TYPE: BUG, #: 104, slug: mcp-background-launch-timeout]
+✅ [WISH] skills-prioritization            [TYPE: WISH, slug: skills-prioritization]
+✅ [neuron] Git                             [TYPE: neuron, slug: git]
+✅ forge/120-executor-replacement          [TYPE: forge, #: 120]
+
+❌ [FRESH] Skills Prioritization           [Inconsistent - should be [WISH-FRESH]]
+❌ [TRIAGE] Incomplete Wishes              [Should be [DOC] or [ORCHESTRATION]]
+❌ [ORCHESTRATION] Parallel PR Creation    [Should have #]
+```
+
+**GitHub Issue + Forge Task Mapping:**
+- GitHub Issue #107 → Forge task: `[WISH] #107-skills-prioritization`
+- GitHub Issue #104 → Forge task: `[BUG] #104-mcp-background-launch-timeout`
+- GitHub Issue #120 → Forge task: `forge/120-executor-replacement` OR `forge/#120-executor-replacement`
+
+**Standardization tasks:**
+- [ ] Rename tasks to follow pattern
+- [ ] Ensure ALL tasks link to GitHub issues
+- [ ] Update task descriptions with standard format
 
 ---
 
