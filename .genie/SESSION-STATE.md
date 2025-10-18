@@ -1,18 +1,25 @@
 # 🧞 Genie Session State
-**Last Updated:** 2025-10-18 00:14 UTC
+**Last Updated:** 2025-10-18 01:05 UTC
 **Purpose:** Track active neuron sessions and workflow states for collective coordination
 
 ---
 
 ## 🎯 Active Sessions
 
-### NONE - RC16 Bugs Fixed ✅
+### NONE - RC17 Published, Ready for Fresh QA ✅
 
-**Status:** Both critical bugs already fixed in commit ee07ea8
+**Status:** RC17 published, clean state established
 **Context:**
-- Bug #1: Background polling V1/V2 mismatch - FIXED (commit ee07ea8)
-- Bug #2: Name field missing - FALSE ALARM (source always correct, stale build)
-**Next:** Ready for RC17 testing with MCP tools
+- RC17 commit: `50f752e` (fix: background polling V2 format + RC17 prep)
+- Bug #1 (background polling): FIXED in commit ee07ea8
+- Bug #2 (name field): Deeper investigation revealed sessions.json corruption bug
+- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.17
+- npm publish: Completed (exit 0), registry may be cached
+- All session state cleaned for fresh start
+**Next:**
+1. Verify RC17 on npm@next (after registry cache refresh)
+2. Begin fresh QA validation with clean state
+3. Investigate sessions.json corruption bug (low priority)
 
 ---
 
