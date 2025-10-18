@@ -6,13 +6,52 @@
 
 ## 🎯 Active Sessions
 
-None - All sessions completed
+### Implementor - Phase 4: Genie Architecture Rebrand (PERMANENT)
+**Session ID:** `12e5da14-747d-4f12-ab93-e596fdea6a72`
+**Started:** 2025-10-18 07:38 UTC
+**Status:** active
+**Purpose:** Reorganize .genie/agents/ into universal + template-specific architecture
+**Context:**
+- Group A: Neuron reorganization (neurons/, code/neurons/, create/neurons/)
+- Group B: Skills extraction from AGENTS.md
+- Group C: Display transformation logic (conceptual names)
+- Group D: QA validation and testing
+- Classification: 15+ universal, 9+ code, 1+ create neurons
+- Branch: feat/genie-arch-rebrand
+**Next:** Autonomous execution, will ask Felipe when decisions needed
 
-**Latest work:** RC21 Complete + Archive Cleanup (2025-10-18 04:41 UTC)
+### Implementor - Phase 5: Multi-Template Architecture (PERMANENT, WAITING)
+**Session ID:** `25fe6e5a-432a-47f8-8243-85574852c6cd`
+**Started:** 2025-10-18 07:39 UTC
+**Status:** waiting (depends on Phase 4 completion)
+**Purpose:** Separate framework from distribution, create template scaffolds
+**Context:**
+- Group A: Framework extraction to dist/
+- Group B: Code template scaffold (Next.js)
+- Group C: Create template scaffold (research)
+- Group D: Template selection CLI (`genie init`)
+- Group E: Integration testing
+- Branch: feat/multi-template-architecture (after Phase 4)
+**Next:** Wait for Phase 4 completion, then begin autonomous execution
 
 ---
 
 ## 🔄 Session History (Recent)
+
+### Ecosystem Group C - Token Efficiency Gate ✅
+**Session ID:** `52abf1b2-1da2-4cb7-a908-eecd54070e9b` (disappeared due to Bug #66)
+**Started:** 2025-10-18 07:30 UTC
+**Completed:** 2025-10-18 07:40 UTC (executed directly after session disappeared)
+**Outcome:** ✅ Token efficiency gate complete with neural graph and validation
+**Details:**
+- Created update-neural-graph.js (9.5KB) - Parses @ refs, builds hierarchy tree
+- Created validate-token-count.js (6.9KB) - Validates token increase ≤5% threshold
+- Neural graph injected into AGENTS.md (baseline: 36,606 tokens)
+- Distribution: Other (43.1%), Skills (40.0%), Core Framework (16.9%)
+- Token validation tested: blocks >5% increase (tested 45.85% increase)
+- Override mechanism tested: git config commit.token-override "reason"
+- Both scripts executable with --dry-run and --help flags
+- Scripts: .genie/scripts/update-neural-graph.js, validate-token-count.js
 
 ### RC21 QA Pass 2 ✅
 **Session ID:** N/A (direct execution)
