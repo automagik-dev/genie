@@ -30,11 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Fix git hook permissions
-        run: |
-          chmod +x .git/hooks/pre-commit .git/hooks/pre-push 2>/dev/null || true
-          ls -la .git/hooks/
-
       - name: Verify CLI basic commands
         run: |
           echo "=== Testing CLI Help ==="
@@ -45,7 +40,7 @@ jobs:
 
       - name: Run tests
         run: |
-          GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
+          GENIE_SKIP_ADVISORY_SMOKE=1 pnpm run test:genie
 
       - name: Smoke test init/update/rollback
         run: |
