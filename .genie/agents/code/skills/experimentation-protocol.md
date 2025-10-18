@@ -1,5 +1,5 @@
 # Experimentation Protocol
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core philosophy:** Learning = Experimentation
 
 **Rule:** ALWAYS EXPERIMENT during learning. Experimentation is not optional—it's how we discover better patterns.

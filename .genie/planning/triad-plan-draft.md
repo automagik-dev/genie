@@ -1,5 +1,5 @@
 # Triad Refactoring Plan (Draft)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** Awaiting Felipe's input on key decisions
 **Date:** 2025-10-17
 

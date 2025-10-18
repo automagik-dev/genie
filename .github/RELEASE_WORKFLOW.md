@@ -34,7 +34,7 @@ pnpm release:stable
 - `scripts/bump.js` - Creates RC versions, auto-pushes to trigger CI
 - `scripts/release.js` - Promotes RC → stable, creates GitHub releases
 - `scripts/status.js` - Shows version status across local/git/npm
-- `scripts/changelog.js` - Moves [Unreleased] → RC section and promotes RC → stable in CHANGELOG.md
+- `.genie/scripts/update-changelog.js` - Moves [Unreleased] → RC section and promotes RC → stable in CHANGELOG.md
 
 ### Modified
 - `package.json` - Added 6 new scripts

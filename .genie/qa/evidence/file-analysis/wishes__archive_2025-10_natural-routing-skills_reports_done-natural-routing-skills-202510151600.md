@@ -1,5 +1,5 @@
 # File Analysis: .genie/wishes/_archive/2025-10/natural-routing-skills/reports/done-natural-routing-skills-202510151600.md
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 
 ## Summary

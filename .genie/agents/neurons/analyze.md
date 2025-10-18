@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: analyze
 description: System analysis and focused investigations with dependency mapping

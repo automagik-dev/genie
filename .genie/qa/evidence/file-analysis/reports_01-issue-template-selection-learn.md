@@ -1,5 +1,5 @@
 # File Analysis: .genie/reports/01-issue-template-selection-learn.md
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 
 ## Summary

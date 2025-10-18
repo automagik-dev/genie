@@ -1,5 +1,5 @@
 # Planning Brief: Template Agents Loading Strategy
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-09
 **Context:** Debug investigation of `genie init` missing files
 **Related Wish:** `.genie/wishes/core-template-separation/core-template-separation-wish.md`

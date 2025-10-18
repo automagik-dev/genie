@@ -1,5 +1,5 @@
 # Code Style Guide
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Context
 
 Global code style rules for Agent OS projects.

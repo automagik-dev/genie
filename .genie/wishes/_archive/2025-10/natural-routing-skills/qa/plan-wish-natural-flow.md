@@ -1,5 +1,5 @@
 # Plan → Wish Natural Flow Validation
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Validate that Genie can guide users through plan→wish invisibly
 **Validation Date:** 2025-10-15
 **Evidence Source:** This wish itself (natural-routing-skills)

@@ -1,5 +1,5 @@
 # Agent Routing Guidance
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Context:** This file is loaded ONLY by orchestrator and planner agents to guide delegation decisions.
 **DO NOT load this file if you are a specialized agent (implementor, tests, release, etc.).**
 

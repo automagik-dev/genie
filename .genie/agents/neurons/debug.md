@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: debug
 description: Debug issues, report bugs, or create plan/wish/forge workflow for fixes

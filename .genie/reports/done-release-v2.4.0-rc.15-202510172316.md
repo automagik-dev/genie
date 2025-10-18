@@ -1,5 +1,5 @@
 # 🚀 Release Report: v2.4.0-rc.15
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Release Details
 - **Version:** 2.4.0-rc.15
 - **Type:** RC (@next)

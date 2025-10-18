@@ -1,5 +1,5 @@
 # HTML Style Guide
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Structure Rules
 - Use 2 spaces for indentation
 - Place nested elements on new lines with proper indentation

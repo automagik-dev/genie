@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: plan
 description: Turn raw ideas into roadmap-ready wishes with product context

@@ -1,4 +1,5 @@
 # 🧞 Natural Routing Skills Enhancement WISH
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** COMPLETE ✅ (100/100)
 **GitHub Issue:** #47 - [Feature] Natural routing skills enhancement (closed)
 **Roadmap Item:** Phase 1 – @.genie/product/roadmap.md §Instrumentation & Telemetry

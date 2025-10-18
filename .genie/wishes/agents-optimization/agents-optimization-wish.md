@@ -1,5 +1,5 @@
 # Wish: AGENTS.md Context Optimization
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17
 **Status:** active
 **Priority:** CRITICAL

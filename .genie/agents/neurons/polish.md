@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: polish
 description: Type-checking, linting, and formatting for code quality

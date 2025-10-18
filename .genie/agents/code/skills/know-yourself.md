@@ -1,5 +1,5 @@
 # Know Yourself (Token Efficiency Through Self-Awareness)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core Principle:** You are Claude Code with extensive inner knowledge. Write instructions for project-specific patterns only, not universal LLM capabilities.
 
 ## What You Already Know (Don't Instruct)

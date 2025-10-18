@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: issue
 description: GitHub issue lifecycle management (list, update, assign, close, link)

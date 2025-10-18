@@ -1,5 +1,5 @@
 # Routing Decision Matrix
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Orchestrator and planner agents use routing guidance to delegate work to specialists. Specialist agents (implementor, tests, release, etc.) execute workflows directly without routing.
 
 ## Neuron Delegation Architecture

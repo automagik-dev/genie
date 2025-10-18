@@ -1,5 +1,5 @@
 # Blocker Protocol
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **When encountering blockers:**
 
 1. Log the blocker directly in the wish (timestamped entry with findings and status).

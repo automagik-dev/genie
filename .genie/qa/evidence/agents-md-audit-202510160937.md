@@ -1,4 +1,5 @@
 # AGENTS.md Comprehensive Audit
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-16 09:37 UTC
 **Auditor:** Autonomous analysis
 **Context:** Natural language routing failing 95% of time - delegation discipline not followed

@@ -1,4 +1,5 @@
 # Wish Review – {Wish Slug}
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2024-..Z | **Status in wish:** {status}
 **Completion Score:** XX/100 (XX%)
 

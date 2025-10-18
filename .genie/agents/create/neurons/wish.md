@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: wish
 description: Convert research ideas into roadmap-aligned wishes with quality contracts

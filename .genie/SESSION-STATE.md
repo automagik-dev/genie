@@ -8,7 +8,7 @@
 
 None - All sessions completed
 
-**Latest work:** RC21 QA Group B (2025-10-18 04:35 UTC)
+**Latest work:** RC21 Complete + Archive Cleanup (2025-10-18 04:41 UTC)
 
 ---
 
@@ -326,6 +326,18 @@ None - All sessions completed
 ---
 
 **Architecture Note:** This file enables persistent collective intelligence. Each neuron is a conversation partner with memory. This file coordinates them.
+
+### RC21 Archive Cleanup ✅
+**Session ID:** N/A (direct execution)
+**Started:** 2025-10-18 04:41 UTC
+**Completed:** 2025-10-18 04:42 UTC
+**Outcome:** ✅ RC21 finalization complete
+**Details:**
+- STATE.md updated to v2.4.0-rc.21
+- 3 wishes archived (triad-redesign, provider-runtime-override, mcp-permission-regression)
+- Archive location: .genie/wishes/_archive/2025-10/
+- Documentation updated
+
 ### RC21 QA Group B ✅
 **Session IDs:**
 - 89278dd3-c311-4519-b2e7-182a5fb9e5b6 (plan)

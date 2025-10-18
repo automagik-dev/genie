@@ -1,5 +1,5 @@
 # Chat-Mode Helpers (Scoped Use Only)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Genie can handle small, interactive requests without entering Plan → Wish when the scope is clearly limited. Preferred helpers:
 
 - `core/debug` – root-cause investigations or "why is this broken?" questions

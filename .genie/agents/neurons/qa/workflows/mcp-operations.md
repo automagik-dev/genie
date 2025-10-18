@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: qa/mcp-operations
 description: MCP tool operations testing (list, run, view, resume, stop)

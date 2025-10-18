@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: qa/bug-92
 description: Regression test for Bug #92 - Zombie sessions stuck in running status

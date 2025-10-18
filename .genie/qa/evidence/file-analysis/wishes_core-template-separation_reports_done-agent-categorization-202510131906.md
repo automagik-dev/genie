@@ -1,5 +1,5 @@
 # File Analysis: .genie/wishes/core-template-separation/reports/done-agent-categorization-202510131906.md
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 
 ## Summary

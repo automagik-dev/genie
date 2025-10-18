@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: roadmap
 description: Document strategic initiatives in automagik-roadmap with guided template selection

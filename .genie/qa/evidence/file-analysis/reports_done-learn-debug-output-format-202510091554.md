@@ -1,5 +1,5 @@
 # File Analysis: .genie/reports/done-learn-debug-output-format-202510091554.md
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 
 ## Summary

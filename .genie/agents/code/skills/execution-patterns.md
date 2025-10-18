@@ -1,5 +1,5 @@
 # Execution Patterns
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Evidence capture standards for repeatability and QA:**
 
 ## Evidence Checklist

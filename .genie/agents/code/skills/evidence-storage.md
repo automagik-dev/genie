@@ -1,5 +1,5 @@
 # Evidence & Storage Conventions
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Evidence Requirements
 
 - Wishes must declare where artefacts live; there is no default `qa/` directory. Capture metrics inline in the wish (e.g., tables under a **Metrics** section) or in clearly named companion files.

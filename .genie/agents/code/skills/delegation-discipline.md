@@ -1,5 +1,5 @@
 # Delegation Discipline *(CRITICAL)*
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** implement directly when orchestrating. **ALWAYS** delegate to specialist agents for multi-file work.
 
 ## Forbidden Actions

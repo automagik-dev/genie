@@ -1,5 +1,5 @@
 # Forge Plan – Token-Efficient Output
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-15 18:45Z
 **Wish:** token-efficient-output-wish.md
 **Branch:** feat/token-efficient-output

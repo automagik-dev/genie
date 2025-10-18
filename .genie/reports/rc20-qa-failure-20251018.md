@@ -1,4 +1,5 @@
 # RC20 QA Failure Report
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 03:12 UTC
 **Severity:** CRITICAL
 **Status:** RC20 FAILED - Bug #102 Regression

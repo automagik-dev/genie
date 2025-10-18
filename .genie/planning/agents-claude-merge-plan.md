@@ -1,5 +1,5 @@
 # AGENTS.md → CLAUDE.md Merge Plan
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-17
 **Goal:** Single source of truth for faster iteration
 **Strategy:** Merge all AGENTS.md content into CLAUDE.md, delete AGENTS.md

@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: review
 description: Wish audits, code review, and QA validation with evidence-based verdicts

@@ -1,5 +1,5 @@
 # Parallel Execution Framework
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Manage parallel work without losing clarity.
 
 **Success criteria:**

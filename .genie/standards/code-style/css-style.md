@@ -1,5 +1,5 @@
 # CSS Style Guide
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 We always use the latest version of TailwindCSS for all CSS.
 
 ### Multi-line CSS classes in markup

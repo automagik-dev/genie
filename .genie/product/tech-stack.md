@@ -1,5 +1,5 @@
 # Genie Dev Technical Stack
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Genie Dev extends the core Genie template with diagnostics and automation focused on self-evolution. The stack stays lightweight so downstream repos can still install it cleanly.
 
 ## Core CLI

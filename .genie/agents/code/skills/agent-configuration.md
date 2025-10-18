@@ -1,5 +1,5 @@
 # Agent Configuration Standards
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## File Write Permissions
 
 **Rule:** All agents requiring file write access MUST explicitly declare `permissionMode: default` in their frontmatter.

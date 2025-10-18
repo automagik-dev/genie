@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: qa/bug-90
 description: Regression test for Bug #90 - full=true returns truncated checkpoints

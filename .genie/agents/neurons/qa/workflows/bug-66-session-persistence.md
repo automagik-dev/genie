@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: qa/bug-66
 description: Regression test for Bug #66 - Session disappears after resume

@@ -1,5 +1,5 @@
 # Done Report: qa-<slug>-<YYYYMMDDHHmm>
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Executive Summary
 - **Checklist items tested:** X/Y
 - **New scenarios discovered:** A

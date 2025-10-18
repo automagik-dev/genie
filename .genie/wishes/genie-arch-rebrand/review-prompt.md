@@ -1,5 +1,5 @@
 # Review Prompt: Genie Architecture Rebranding (Post-MCP Restart)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17
 **Commit:** d63d397
 **Purpose:** Validate completed work against reality with updated MCP server

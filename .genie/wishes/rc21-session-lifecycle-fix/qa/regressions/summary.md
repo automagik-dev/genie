@@ -1,5 +1,5 @@
 # RC21 Regression QA – Bug 66/90/92
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Date: 2025-10-18
 
 Scope:

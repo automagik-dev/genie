@@ -1,5 +1,5 @@
 # Done Report: implementor-template-extraction-202510162038
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Working Tasks
 - [x] Group A: Extract templates to .genie/templates/
 - [x] Group B: Update core workflow agents with @ references

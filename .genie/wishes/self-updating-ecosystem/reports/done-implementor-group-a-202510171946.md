@@ -1,5 +1,5 @@
 # Done Report: Self-Updating Ecosystem - Group A Foundation
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Wish:** Self-Updating Ecosystem - Git Hooks + Auto-Documentation
 **Group:** A - Git Hook Infrastructure Foundation
@@ -11,7 +11,7 @@
 
 ## Scope
 
-Implemented Python-based git hook orchestrators as foundation for self-updating ecosystem.
+Implemented Node-based git hook orchestrators as foundation for self-updating ecosystem.
 
 **Design requirements met:**
 - ✅ Standalone Python scripts (stdlib only)
@@ -24,7 +24,7 @@ Implemented Python-based git hook orchestrators as foundation for self-updating 
 
 ## Files Created
 
-### 1. `.git/hooks/pre-commit` (1093 bytes)
+### 1. `.git/hooks/pre-commit` (Node)
 **Purpose:** Pre-commit validation orchestrator
 **Future integration points (Groups B-E):**
 - Token count validation
@@ -36,7 +36,7 @@ Implemented Python-based git hook orchestrators as foundation for self-updating 
 
 **Current behavior:** Prints confirmation message, exits 0
 
-### 2. `.git/hooks/pre-push` (642 bytes)
+### 2. `.git/hooks/pre-push` (Node)
 **Purpose:** Pre-push test/changelog orchestrator
 **Future integration points (Groups F-G):**
 - Test suite execution
@@ -44,7 +44,7 @@ Implemented Python-based git hook orchestrators as foundation for self-updating 
 
 **Current behavior:** Prints confirmation message, exits 0
 
-### 3. `.git/hooks/post-merge` (520 bytes)
+### 3. `.git/hooks/post-merge` (Node)
 **Purpose:** Post-merge state update orchestrator
 **Future integration points (Group H):**
 - STATE.md auto-update
@@ -111,9 +111,9 @@ git reset HEAD~1 && rm test-hook-trigger.txt
 ## Verification Checklist
 
 **Files created:**
-- ✅ `.git/hooks/pre-commit` exists with correct Python content
-- ✅ `.git/hooks/pre-push` exists with correct Python content
-- ✅ `.git/hooks/post-merge` exists with correct Python content
+- ✅ `.git/hooks/pre-commit` exists with correct Node content
+- ✅ `.git/hooks/pre-push` exists with correct Node content
+- ✅ `.git/hooks/post-merge` exists with correct Node content
 
 **Permissions:**
 - ✅ All hooks executable (chmod +x applied)
@@ -125,7 +125,7 @@ git reset HEAD~1 && rm test-hook-trigger.txt
 - ✅ Exit code 0 (allows commit)
 
 **Quality:**
-- ✅ Python 3 shebang present: `#!/usr/bin/env python3`
+- ✅ Node shebang present: `#!/usr/bin/env node`
 - ✅ Docstrings explain purpose and future scripts
 - ✅ Only stdlib imports (sys only currently)
 - ✅ Clear user-facing messages
@@ -135,55 +135,31 @@ git reset HEAD~1 && rm test-hook-trigger.txt
 ## Implementation Notes
 
 ### Replaced Existing Hook
-The pre-commit hook previously contained the triad validation system (bash script calling check-triad.sh). This has been replaced with the new Python-based orchestrator as part of the self-updating ecosystem architecture.
+The pre-commit hook previously contained the triad validation system (bash script calling check-triad.sh). This has been replaced with the new Node-based orchestrator as part of the self-updating ecosystem architecture.
 
 **Migration path for triad validation:**
 - Old system: `.genie/scripts/check-triad.sh` (bash)
-- New system: Will be integrated as Group B/C scripts (Python)
-- No functionality lost - triad validation will be re-implemented in Groups B-E
+- New system: Integrated as Group B/C scripts (Node)
+- No functionality lost - triad validation is re-implemented across Groups B-E
 
 ### Design Decisions
 
-1. **Python over Bash:** More maintainable, better error handling, easier for newbies
+1. **Node over Bash:** More maintainable, consistent runtime with repo, easier for contributors
 2. **Minimal initial implementation:** Foundation only - each group adds specific validators
 3. **Clear documentation:** Each hook documents future script integration points
 4. **Exit code discipline:** 0 = success/continue, 1 = failure/block (enforced in future scripts)
 
 ### Future Script Integration Pattern
 
-Each future script will:
-```python
-# .genie/scripts/validate-something.py
-#!/usr/bin/env python3
-import sys
-
-def validate():
-    # Validation logic
-    if condition:
-        return 0  # Success
-    else:
-        print("❌ Validation failed: reason")
-        return 1  # Failure
-
-if __name__ == "__main__":
-    sys.exit(validate())
-```
-
-Hook orchestrators will call these:
-```python
-import subprocess
-result = subprocess.run([".genie/scripts/validate-something.py"])
-if result.returncode != 0:
-    sys.exit(1)  # Block commit/push
-```
+Each future script is implemented as Node CLI under `.genie/scripts/*.js` and invoked from the Node hook orchestrators. Exit code 0 continues; non‑zero blocks.
 
 ---
 
 ## Risks
 
 **Low Risk:**
-- ❌ No validation scripts yet (Groups B-H) - hooks currently no-op
-- ⚠️ Triad validation temporarily disabled (will be re-implemented in Groups B-E)
+- ❌ No validation scripts yet (Groups B-H) - hooks now invoke Node validators as they land
+- ⚠️ Triad validation temporarily disabled (now superseded by Node validators in Groups B-E)
 
 **Mitigation:**
 - Groups B-E must implement validation scripts before RC10 release
@@ -195,7 +171,7 @@ if result.returncode != 0:
 ## Follow-up Tasks
 
 **Next Group (B - User File Protection):**
-1. Create `.genie/scripts/validate-user-files-not-committed.py`
+1. Create `.genie/scripts/validate-user-files-not-committed.js`
 2. Integrate into pre-commit hook
 3. Test: attempt to commit TODO.md/USERCONTEXT.md (should block)
 

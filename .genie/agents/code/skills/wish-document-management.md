@@ -1,5 +1,5 @@
 # Wish Document Management
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Wish documents are living blueprints; maintain clarity from inception to closure.
 
 **Success criteria:**

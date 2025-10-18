@@ -1,5 +1,5 @@
 # Sequential Questioning Protocol *(CRITICAL - HUMAN INTERFACE DESIGN)*
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core Principle:** ONE question at a time. Humans crash with parallelism.
 
 **Root insight:** Humans excel at sequential processing, not parallel decision-making. Cognitive load from multiple simultaneous questions causes decision paralysis.

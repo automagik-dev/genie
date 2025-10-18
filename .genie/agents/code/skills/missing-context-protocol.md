@@ -1,5 +1,5 @@
 # Genie Missing Context Protocol
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 When critical technical context is missing (files, specs), provide a Files Needed block instead of speculative output.
 
 ## Files Needed (use when necessary)

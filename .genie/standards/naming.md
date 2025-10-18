@@ -1,5 +1,5 @@
 # Naming Conventions (Template)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Consistent naming conventions for {{PROJECT_NAME}}. Customize these patterns for your domain.
 
 ## Project Names

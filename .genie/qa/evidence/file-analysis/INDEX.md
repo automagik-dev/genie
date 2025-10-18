@@ -1,5 +1,5 @@
 # Per-File Analysis Index
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:31 UTC
 **Total files:** 132
 **Coverage:** 100%

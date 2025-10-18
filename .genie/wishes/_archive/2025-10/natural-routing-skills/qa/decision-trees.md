@@ -1,5 +1,5 @@
 # Routing Decision Trees
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-15
 **Purpose:** Visual decision logic for natural routing system
 

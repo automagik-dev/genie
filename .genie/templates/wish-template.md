@@ -1,4 +1,5 @@
 # 🧞 {FEATURE NAME} WISH
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** DRAFT
 **Roadmap Item:** {ROADMAP-ID} – @.genie/product/roadmap.md §{section}
 **Mission Link:** @.genie/product/mission.md §Pitch

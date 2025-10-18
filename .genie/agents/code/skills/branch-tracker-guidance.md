@@ -1,5 +1,5 @@
 # Branch & Tracker Guidance
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Branch strategy:**
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
 - **Existing branch** only with documented rationale (wish status log).

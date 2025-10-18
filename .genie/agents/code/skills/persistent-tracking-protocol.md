@@ -1,5 +1,5 @@
 # Persistent Tracking Protocol
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** SESSION-STATE.md enables collective intelligence with memory across restarts.
 
 **Requirements for SESSION-STATE.md:**

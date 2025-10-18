@@ -1,5 +1,5 @@
 # 🧞 Genie Update Workflow
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Migrate context from previous Genie installation (any version, any structure) to current installation without data loss.
 
 **When to use:** After running `genie update` or manual framework upgrade when a backup folder exists at the path provided by the CLI.

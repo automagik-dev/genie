@@ -1,5 +1,5 @@
 # Planning Brief: Context Triad Refactoring
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-17
 **Submitted by:** Felipe Rosa (CEO, Namastex Labs)
 **Deadline:** TODAY (RC release pipeline)

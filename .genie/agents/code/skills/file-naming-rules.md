@@ -1,5 +1,5 @@
 # File and Naming Rules
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Maintain tidy workspace; centralize planning and evidence under `.genie/`.
 
 ## Success Criteria

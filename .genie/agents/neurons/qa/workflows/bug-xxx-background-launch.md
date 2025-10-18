@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: qa/bug-xxx-background-launch
 description: NEW BUG - Background agent launch failure (executor never spawns)

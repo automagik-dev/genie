@@ -1,5 +1,5 @@
 # Commit Advisory – Template Selection Learning
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-13T18:35Z
 
 ## Snapshot

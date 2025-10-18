@@ -1,5 +1,5 @@
 # QA Checklist
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Living document auto-updated by QA Agent via learn integration**
 
 **Last Update:** !`date -u +"%Y-%m-%d %H:%M UTC"`

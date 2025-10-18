@@ -1,5 +1,5 @@
 # Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md.
 
 **Root cause:** Files load automatically via @ in CLAUDE.md, but updates happened ad-hoc (forgotten). Now **ENFORCED** by git.

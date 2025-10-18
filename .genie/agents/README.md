@@ -1,5 +1,5 @@
 # GENIE Agents Documentation
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Overview
 This directory contains agent definitions that power GENIE's intelligent orchestration capabilities via MCP.
 

@@ -1,5 +1,5 @@
 # Development Best Practices
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Context
 
 Global development guidelines for Agent OS projects.

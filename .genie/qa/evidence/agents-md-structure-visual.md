@@ -1,4 +1,5 @@
 # AGENTS.md Structure Visualization
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-16 09:37 UTC
 
 ## Current Structure (Problematic)

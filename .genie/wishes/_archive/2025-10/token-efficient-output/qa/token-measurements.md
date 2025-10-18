@@ -1,5 +1,5 @@
 # Token Measurements - Before/After Comparison
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-15
 **Wish:** Token-Efficient Output (Issue #42)
 

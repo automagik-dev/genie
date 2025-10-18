@@ -1,5 +1,5 @@
 # Prompting Standards
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core principles:**
 - Use Discovery → Implementation → Verification sections in agents and prompts.
 - Always reference files with `@` to auto-load content.

@@ -1,5 +1,5 @@
 # Routing.md Reconciliation Report
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-15 14:45 UTC
 **Task:** Update routing.md to reflect orchestrator mode analysis findings
 **Based on:** `.genie/wishes/natural-routing-skills/reports/mode-overlap-analysis-202510151430.md`

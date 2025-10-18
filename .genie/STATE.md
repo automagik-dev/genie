@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.20
+last_version: 2.4.0-rc.21
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -18,16 +18,16 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-18
-**Focus:** RC21 Hotfix Cycle – Session lifecycle + background polling
+**Focus:** RC21 Complete – Session lifecycle + background polling + archive cleanup
 **Branch:** !`git branch --show-current`
 
 **Completed Work:**
-- ✅ RC20 published (v2.4.0-rc.20) - Bug #4 UUID keys + name field fix
-- ✅ RC20 comprehensive QA testing initiated
-- 🚨 CRITICAL BUG FOUND: Bug #102 regression (duplicate sessions)
-- ✅ Root cause identified: background-launcher.ts V1/V2 format mismatch
-- ✅ QA failure report documented: .genie/reports/rc20-qa-failure-20251018.md
-- ⏸️ RC20 deployment halted pending fix
+- ✅ RC21 published (v2.4.0-rc.21) - Session lifecycle + background polling fixes
+- ✅ One-session-per-run fix (no duplicate sessions)
+- ✅ Fast background polling (~0.5s session ID discovery)
+- ✅ Correct CLI hints (npx automagik-genie)
+- ✅ QA Group B passed (6 sessions tested)
+- ✅ 3 wishes archived (triad-redesign, provider-runtime-override, mcp-permission-regression)
 
 ---
 
@@ -78,16 +78,18 @@ validation_commands:
 **Wishes:** 5 active + 2 archived
 **Technical Debt:** Medium (systematic fixes queued)
 
-**Archived Wishes:**
+**Archived Wishes (2025-10):**
 - token-efficient-output (100/100)
 - natural-routing-skills (100/100)
 - core-template-separation (100/100)
+- triad-redesign (100/100)
+- provider-runtime-override (100/100)
+- mcp-permission-regression (100/100)
 
 **Active Wishes:**
-1. triad-redesign (0/100) - in progress
-2. provider-runtime-override (#40) - 95% complete
-3. multi-template-architecture (#37) - 50% complete
-4. backup-update-system (#38) - 0% (DEFERRED)
+1. rc21-session-lifecycle-fix (100/100) - complete, pending archive
+2. multi-template-architecture (#37) - 50% complete
+3. backup-update-system (#38) - 0% (DEFERRED)
 
 ---
 

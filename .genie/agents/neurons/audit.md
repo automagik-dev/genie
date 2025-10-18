@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: audit
 description: Risk assessment and security audit with impact/likelihood analysis

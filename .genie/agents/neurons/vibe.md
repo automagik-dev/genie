@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: sleepy
 description: Autonomous wish coordinator with Genie orchestrator validation

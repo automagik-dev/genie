@@ -1,5 +1,5 @@
 # Task F: Extract Supporting Documentation
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** F
 **Targets:** `.genie/docs/` (create 4 supporting docs)
 **Lines to extract:** AGENTS.md 479-569, 571-698, 1633-1767, 1884-1930

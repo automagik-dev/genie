@@ -1,5 +1,5 @@
 # Markdown Formatter Output Examples
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-15
 **Purpose:** Demonstrate all 3 output modes with token count measurements
 

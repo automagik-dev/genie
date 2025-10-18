@@ -1,5 +1,5 @@
 # Task A: Extract GitHub Workflow Patterns
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** A
 **Target:** `.genie/agents/genie/neurons/git/git.md`
 **Lines to extract:** AGENTS.md 41-179

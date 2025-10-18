@@ -1,5 +1,5 @@
 # 🧞📚 Learning Report: Routing Violation (2025-10-17)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Sequence:** 01
 **Context ID:** routing-violation
 **Type:** violation

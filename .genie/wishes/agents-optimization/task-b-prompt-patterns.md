@@ -1,5 +1,5 @@
 # Task B: Extract Prompting Standards
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** B
 **Target:** `.genie/agents/genie/neurons/prompt/prompt.md`
 **Lines to extract:** AGENTS.md 1001-1115, 1769-1882

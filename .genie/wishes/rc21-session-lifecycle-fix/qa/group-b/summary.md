@@ -1,5 +1,5 @@
 # Group B QA – RC21 Session Lifecycle
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Date: 2025-10-18
 
 Scope:

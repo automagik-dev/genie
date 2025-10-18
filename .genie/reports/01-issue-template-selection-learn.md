@@ -1,5 +1,5 @@
 # 🧞📚 Learning Report: Issue Template Selection
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Sequence:** 01
 **Context ID:** issue-template-selection
 **Type:** violation + pattern

@@ -1,5 +1,5 @@
 # Meta-Learn & Behavioral Corrections
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Use the unified `learn` meta-learning agent to capture violations, new patterns, workflows, and capabilities in one place. It records behavioural guardrails, propagates edits, and produces evidence reports.
 
 ## Recognition Patterns (How Base Genie Knows to Invoke Learn)

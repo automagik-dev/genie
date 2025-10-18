@@ -1,5 +1,5 @@
 # QA - Genie Project Context
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Validation Commands
 
 ### CLI Operations

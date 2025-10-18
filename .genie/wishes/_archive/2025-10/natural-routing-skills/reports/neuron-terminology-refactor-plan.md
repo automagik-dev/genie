@@ -1,5 +1,5 @@
 # Neuron Terminology Refactoring Plan
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-15 16:30 UTC
 **Context:** Post-commit 93a05a0 terminology cleanup
 **Session:** implementor-neuron-terminology-refactor

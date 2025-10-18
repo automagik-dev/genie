@@ -1,3 +1,5 @@
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
 ---
 name: challenge
 description: Critical evaluation via questions, debate, or direct challenge

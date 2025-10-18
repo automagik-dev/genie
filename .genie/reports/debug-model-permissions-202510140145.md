@@ -1,5 +1,5 @@
 # 🐛 Debug Report: Model Selection & Permission Blocking
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-14 01:45 UTC
 **Issue Source:** Felipe's Forge update session
 **Status:** Root causes identified, quick fixes proposed

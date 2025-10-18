@@ -110,12 +110,10 @@ function executeRelease(pkg, stableVersion) {
   fs.writeFileSync(PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
   log('green', '✅', 'Updated package.json');
 
-  // Update CHANGELOG for stable (promote RC section or add stable section) via Python hook script
+  // Update CHANGELOG for stable (promote RC section or add stable section) via Node script
   try {
     log('blue', '📝', 'Updating CHANGELOG.md...');
-    exec(
-      `python3 ${path.join(__dirname, '..', '.genie', 'scripts', 'update-changelog.py')} stable ${stableVersion}`
-    );
+    exec(`node ${path.join(__dirname, '..', '.genie', 'scripts', 'update-changelog.js')} stable ${stableVersion}`);
     log('green', '✅', 'CHANGELOG updated');
   } catch (e) {
     log('yellow', '⚠️', 'CHANGELOG update failed; continuing without changelog change');

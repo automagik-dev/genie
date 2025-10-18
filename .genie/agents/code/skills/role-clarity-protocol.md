@@ -1,5 +1,5 @@
 # Role Clarity Protocol *(CRITICAL)*
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** bypass session checks when resuming work. **ALWAYS** check session results before assuming work needs to be done.
 
 ## Core Role Distinction

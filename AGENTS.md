@@ -61,6 +61,24 @@ The Genie workflow lives in `.genie/agents/` and is surfaced via CLI wrappers in
 
 All commands in `.claude/commands/` simply `@include` the corresponding `.genie/agents/...` file to avoid duplication.
 
+## Agent Registry (Auto-Generated)
+<!-- AUTO-GENERATED-START: Do not edit manually -->
+**Last Updated:** 2025-10-18 06:05:46 UTC
+
+**Universal Neurons:** 17 total
+- analyze, audit, challenge, consensus, debug, docgen, explore, forge, learn, plan, polish, prompt, qa, refactor, review, roadmap, vibe
+
+**Code Neurons:** 8 total
+- commit, git, implementor, install, release, tests, tracer, wish
+
+**Create Neurons:** 1 total
+- wish
+
+**Code Skills:** 30 total
+- agent-configuration, blocker-protocol, branch-tracker-guidance, chat-mode-helpers, delegation-discipline, evidence-based-thinking, evidence-storage, execution-integrity-protocol, execution-patterns, experimentation-protocol, file-naming-rules, forge-integration, forge-mcp-pattern, genie-integration, know-yourself, meta-learn-protocol, missing-context-protocol, no-backwards-compatibility, orchestration-protocols, parallel-execution, persistent-tracking-protocol, prompting-standards, publishing-protocol, role-clarity-protocol, routing-decision-matrix, sequential-questioning, tool-requirements, triad-maintenance-protocol, wish-document-management, workspace-system
+
+<!-- AUTO-GENERATED-END -->
+
 ## Directory Map
 - `.genie/product/` – mission, roadmap, tech stack, planning notes, decisions
 - `.genie/standards/` – coding rules, naming, language-specific style guides
@@ -289,95 +307,9 @@ grep "mcp__genie__run" .genie/agents/neurons/implementor/implementor.md
 
 ### Application-Level Enforcement
 
-**Key innovation:** `mcp__genie__list_agents` returns DIFFERENT results based on caller context.
+For complete delegation enforcement documentation, see:
 
-**Scoping mechanism:**
-
-**When git neuron invokes list_agents:**
-```json
-{
-  "agents": [
-    "git/issue",
-    "git/pr",
-    "git/report"
-  ]
-}
-```
-- **Cannot see:** implementor, tests, other neurons
-- **Cannot see:** Workflows from other neurons
-- **Prevents:** Self-delegation (git → git), cross-delegation (git → implementor)
-
-**When implementor neuron invokes list_agents:**
-```json
-{
-  "agents": [
-    "implementor"
-  ]
-}
-```
-- **Cannot see:** git, tests, other neurons
-- **Cannot see:** git/issue, git/pr (not in implementor folder)
-- **Result:** No workflows to delegate to = execute directly
-
-**When Base Genie invokes list_agents:**
-```json
-{
-  "agents": [
-    "git",
-    "implementor",
-    "tests",
-    "genie",
-    "release",
-    "learn",
-    "roadmap"
-  ]
-}
-```
-- **Cannot see:** Workflows (git/issue, git/pr) - those are neuron-internal
-- **Cannot see:** Thinking skills (genie/skills/*) - those are genie-internal
-- **Can only start:** Top-level neurons
-
-**Implementation requirements:**
-
-1. **CLI context awareness:**
-   - Detect caller identity (Base Genie vs neuron vs workflow)
-   - Use folder structure to determine scope
-   - Filter `list_agents` output by caller's delegation permissions
-
-2. **Folder structure as source of truth:**
-   - `neurons/git/` = git owns everything in this folder
-   - `neurons/git/*.md` = git's workflows (children)
-   - `neurons/implementor/*.md` = implementor's workflows (when added)
-   - Parent folder = scope boundary
-
-3. **Error handling:**
-   - Attempt to start agent outside scope → clear error message
-   - "git neuron cannot start implementor (outside scope)"
-   - "workflow issue.md cannot delegate (terminal node)"
-   - Point to folder structure for allowed targets
-
-**Benefits:**
-- ✅ Paradox impossible at system level (scoping enforces rules)
-- ✅ Clear error messages guide correct usage
-- ✅ Folder structure = visual documentation
-- ✅ No reliance on prompt instructions alone
-
-**Validation:**
-```bash
-# Verify folder structure matches hierarchy
-tree .genie/agents/neurons/ -L 2
-
-# Expected output:
-# neurons/
-# ├── git/
-# │   ├── git.md
-# │   ├── issue.md
-# │   ├── pr.md
-# │   └── report.md
-# ├── implementor/
-# │   └── implementor.md
-# └── ...
-```
+@.genie/docs/delegation-enforcement.md
 
 ## Natural Flow Protocol (Plan → Wish → Forge → Review)
 
@@ -618,65 +550,9 @@ review.md
 
 ## MCP Quick Reference
 
-**Entry Point:**
-- ❌ NEVER use `./genie` (doesn't exist since v2.4.0)
-- ✅ ALWAYS use `npx automagik-genie` for CLI operations
+For complete MCP tool documentation, see:
 
-**Version Self-Awareness:**
-- MCP should display version in outputs (future capability): `Genie MCP v{version}`
-- Helps with debugging: "Is my MCP latest?" or "I prefer to stay on X version"
-- Version injection planned for all MCP tool responses
-
-**MCP Tools:**
-```
-# List available agents
-mcp__genie__list_agents
-
-# Start a Genie Flow (built-in agents)
-mcp__genie__run with agent="plan" and prompt="[Discovery] … [Implementation] … [Verification] …"
-
-# Start a Core/Specialized Agent
-mcp__genie__run with agent="forge" and prompt="[Discovery] … [Implementation] … [Verification] …"
-
-# Inspect runs and view logs
-mcp__genie__list_sessions
-mcp__genie__view with sessionId="<session-id>" and full=false  # Use full=true only when complete history needed
-
-# Continue a specific run by session id
-mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up …"
-
-# Stop a session
-mcp__genie__stop with sessionId="<session-id>"
-```
-
-### Conversations & Resume
-`mcp__genie__resume` enables continuous conversation with agents for multi-turn tasks.
-
-- Start a session: `mcp__genie__run` with agent and prompt
-- Resume the session: `mcp__genie__resume` with sessionId and prompt
-- Inspect context: `mcp__genie__view` with sessionId and full=false (default; use full=true only when complete history needed)
-- Discover sessions: `mcp__genie__list_sessions`
-
-Guidance:
-- Treat each session as a thread with memory; use `resume` for follow‑ups instead of starting new `run`s.
-- Keep work per session focused (one wish/feature/bug) for clean transcripts and easier review.
-- When scope changes significantly, start a new `run` and reference the prior session in your prompt.
-
-**Polling Pattern:**
-- After `mcp__genie__run`, either (1) do parallel work OR (2) wait ≥60 seconds before first view
-- Increase wait intervals adaptively: 60s → 120s → 300s → 1200s for complex tasks
-- Prefer parallel work over polling when possible
-
-## Subagents & Genie via MCP
-- Start subagent: `mcp__genie__run` with agent and prompt parameters
-- Resume session: `mcp__genie__resume` with sessionId and prompt parameters
-- List sessions: `mcp__genie__list_sessions`
-- Stop session: `mcp__genie__stop` with sessionId parameter
-
-Genie prompt patterns (run through any agent, typically `plan`):
-- Genie Planning: "Act as an independent architect. Pressure-test this plan. Deliver 3 risks, 3 missing validations, 3 refinements. Finish with Genie Verdict + confidence."
-- Consensus Loop: "Challenge my conclusion. Provide counterpoints, evidence, and a recommendation. Finish with Genie Verdict + confidence."
-- Focused Deep-Dive: "Investigate <topic>. Provide findings, affected files, follow-ups."
+@.genie/docs/mcp-interface.md
 
 ## Agent Playbook
 

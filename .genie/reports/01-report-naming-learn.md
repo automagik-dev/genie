@@ -1,5 +1,5 @@
 # 🧞📚 Learning Report: report-naming
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Sequence:** 01
 **Context ID:** report-naming
 **Type:** pattern

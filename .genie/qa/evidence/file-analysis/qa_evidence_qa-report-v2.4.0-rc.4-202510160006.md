@@ -1,5 +1,5 @@
 # File Analysis: .genie/qa/evidence/qa-report-v2.4.0-rc.4-202510160006.md
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 
 ## Summary
