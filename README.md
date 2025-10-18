@@ -239,6 +239,141 @@ Other MCP clients (Cursor, Roo, Gemini CLI, Cline) follow the same pattern—jus
 
 ---
 
+## 🔄 Self-Updating Ecosystem
+
+Genie includes a comprehensive **git hook automation system** that maintains documentation, validates changes, and enforces quality standards automatically.
+
+### What Gets Automated
+
+**Pre-Commit (Validation + Updates):**
+- ✅ **User file protection** - Blocks `.genie/TODO.md` and `.genie/USERCONTEXT.md` from commits
+- ✅ **Cross-reference validation** - Catches broken `@file.md` references before commit
+- ✅ **Token efficiency gate** - Blocks commits if token count increases >5% without justification
+- ✅ **Neural graph auto-generation** - Updates AGENTS.md with token counts and dependency tree
+- ✅ **Agent registry auto-generation** - Scans folders and updates agent/neuron/skill lists
+- ✅ **Universal headers injection** - Adds `Last Updated` timestamps to all .md files
+- ✅ **Forge task linking** - Auto-links Forge task metadata to wish documents
+
+**Pre-Push (Quality Enforcement):**
+- ✅ **Test runner** - Blocks push if `pnpm test` fails
+- ✅ **CHANGELOG auto-generation** - Groups commits by type (feat, fix, refactor) since last tag
+
+**Post-Merge (State Updates):**
+- ✅ **STATE.md auto-update** - Updates version and commit hash after merge
+
+**On-Demand (Evidence & Analytics):**
+- ✅ **QA sync from GitHub issues** - Converts bugs into test scenarios (53 scenarios generated)
+- ✅ **Dependency graph generation** - Visual Mermaid diagram of ecosystem structure (136 files, 332 dependencies)
+
+### Token Efficiency Workflow
+
+The token efficiency gate ensures AGENTS.md stays lean:
+
+```bash
+# Commit triggers validation
+git commit -m "feat: add comprehensive audit neuron"
+
+# ❌ Token count increased by 8.2% (threshold: 5%)
+#    Current: 95,234 | Baseline: 88,000 | Change: +7,234
+#
+# If this increase is justified:
+#    git config commit.token-override "Added audit neuron with 18 validation rules"
+
+# Justify and retry
+git config commit.token-override "Added audit neuron (18 validation rules)"
+git commit -m "feat: add comprehensive audit neuron"
+
+# ✅ Token efficiency validated (justified increase)
+# ✅ Neural graph updated in AGENTS.md (Total: 95,234 tokens)
+# ✅ Agent registry updated (Neurons: 18 total)
+# ✅ All pre-commit validations passed
+```
+
+### Auto-Generated Sections
+
+Two sections in **AGENTS.md** are automatically maintained:
+
+**Agent Registry:**
+```markdown
+## Agent Registry (Auto-Generated)
+**Last Updated:** 2025-10-18 16:45:59 UTC
+
+**Universal Neurons:** 16 total
+- analyze, audit, debate, design-review, forge, learn, plan, prompt, qa, review, ...
+
+**Code Neurons:** 15 total
+- commit, debug, git, implementor, polish, refactor, release, tests, ...
+
+**Code Skills:** 32 total
+- delegation-discipline, evidence-based-thinking, forge-integration, ...
+```
+
+**Neural Graph:**
+```markdown
+## Neural Graph Architecture (Auto-Generated)
+**Last Updated:** 2025-10-18 16:45:24 UTC
+**Total Tokens:** 23,622 (baseline for efficiency validation)
+
+**Distribution:**
+- Skills: 19,381 tokens (82.0%)
+- Other: 3,276 tokens (13.9%)
+- Core Framework: 965 tokens (4.1%)
+
+**Hierarchy:**
+- **AGENTS.md** (965 tokens, +22,657 from 36 refs)
+  - **.genie/agents/code/skills/know-yourself.md** (1,359 tokens)
+  - **.genie/agents/code/skills/evidence-based-thinking.md** (750 tokens)
+  ...
+```
+
+### Hook Installation
+
+Git hooks are installed automatically when you clone the repository. They're located in `.git/hooks/`:
+- `pre-commit` - Validation and auto-updates
+- `pre-push` - Tests and CHANGELOG
+- `post-merge` - STATE.md updates
+
+**No manual setup required** - hooks work out of the box.
+
+### Manual Script Usage
+
+You can run any automation script manually:
+
+```bash
+# Validate cross-references
+node .genie/scripts/validate-cross-references.js
+
+# Update neural graph
+node .genie/scripts/update-neural-graph.js
+
+# Update agent registry
+node .genie/scripts/update-agent-registry.js
+
+# Sync QA scenarios from GitHub issues
+node .genie/scripts/sync-qa-from-issues.js
+
+# Generate dependency graph
+node .genie/scripts/build-dependency-graph.js
+
+# All scripts support --dry-run and --help
+node .genie/scripts/validate-token-count.js --help
+```
+
+### Override Mechanisms
+
+**Token efficiency override** (one-time use):
+```bash
+git config commit.token-override "Reason for increase"
+# Override automatically cleared after successful commit
+```
+
+**Skip pre-commit hooks** (not recommended):
+```bash
+git commit --no-verify
+```
+
+---
+
 ## 🧪 Development
 
 ```bash

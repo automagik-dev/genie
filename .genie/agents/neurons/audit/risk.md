@@ -1,5 +1,5 @@
 # Risk Audit Workflow
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Extends universal audit framework with general risk assessment patterns.**
 
 @.genie/agents/neurons/audit.md

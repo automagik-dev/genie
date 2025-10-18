@@ -39,16 +39,18 @@ function getPackageRoot() {
     // ../../../../ = workspace root (dev) or package root (npm)
     return path_1.default.resolve(__dirname, '../../../..');
 }
-function getTemplateGeniePath(template = 'code') {
-    // templates/code/.genie/ - Software development template
-    // templates/create/.genie/ - Adaptive learning template
-    return path_1.default.join(getPackageRoot(), 'templates', template, '.genie');
+function getTemplateGeniePath(_template = 'code') {
+    // Copy directly from framework's .genie/ directory
+    // Template variants (code vs create) handled by install/update neurons
+    return path_1.default.join(getPackageRoot(), '.genie');
 }
-function getTemplateClaudePath(template = 'code') {
-    return path_1.default.join(getPackageRoot(), 'templates', template, '.claude');
+function getTemplateClaudePath(_template = 'code') {
+    // .claude/ not used - Claude Code wraps core agents directly
+    return path_1.default.join(getPackageRoot(), '.claude');
 }
-function getTemplateRootPath(template = 'code') {
-    return path_1.default.join(getPackageRoot(), 'templates', template);
+function getTemplateRootPath(_template = 'code') {
+    // Root files (AGENTS.md, CLAUDE.md) copied from framework root
+    return getPackageRoot();
 }
 function getTemplateRelativeBlacklist() {
     // Protect user work - these directories should NEVER be overwritten

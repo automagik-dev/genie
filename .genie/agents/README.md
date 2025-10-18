@@ -7,9 +7,10 @@ This directory contains agent definitions that power GENIE's intelligent orchest
 
 Genie uses a layered architecture for extensibility without forking:
 
-1. **Workflow Agents (root)** – `plan.md`, `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`
+1. **Workflow Agents (root)** – `wish.md`, `forge.md`, `review.md`, `orchestrator.md`, `vibe.md`
    - Primary workflow orchestrators
    - Immutable - no custom overrides loaded
+   - Note: `plan` absorbed into `wish` workflow (multi-step dance)
 
 2. **Neuron Agents (`neurons/`)** – Specialized agents shipped with framework
    - **Delivery agents** (6): `implementor.md`, `tests.md`, `polish.md`, `review.md`, `git.md`, `release.md`
@@ -34,10 +35,10 @@ Genie uses a layered architecture for extensibility without forking:
 **Three-tier model:**
 
 **Tier 1: Base Genie (main conversation)**
-- **Folder:** Root level (`.genie/agents/workflows/`)
-- **Can delegate to:** Neurons only (git, implementor, tests, orchestrator, etc.)
-- **Cannot delegate to:** Workflows directly (those are neuron-internal)
-- **Agents:** plan, wish, forge, review, vibe (orchestrator workflows)
+- **Folder:** Root level (`.genie/agents/neurons/`)
+- **Can delegate to:** Neurons and workflows only
+- **Cannot delegate to:** Self-delegation
+- **Agents:** wish, forge, review, vibe (orchestrator workflows)
 
 **Tier 2: Neurons (persistent subagent sessions)**
 - **Folder:** `.genie/agents/neurons/[neuron-name]/`
@@ -50,16 +51,21 @@ Genie uses a layered architecture for extensibility without forking:
 - **Can delegate to:** NOTHING (execute directly with Edit/Write/Bash)
 - **Examples:** git/issue.md, git/pr.md, git/report.md
 
-**Proposed folder structure (migration in progress):**
+**Current folder structure:**
 ```
 .genie/agents/
-├── workflows/              # Tier 1: Base orchestrators (Genie main uses)
-│   ├── plan.md
-│   ├── wish.md
-│   ├── forge.md
-│   └── review.md
-│
-├── neurons/                # Tier 2: Neurons (persistent sessions)
+├── neurons/                # Tier 1 & 2: Workflows + Neurons
+│   ├── wish.md                  # Tier 1: Wish orchestrator (multi-step dance)
+│   ├── forge.md                 # Tier 1: Forge orchestrator
+│   ├── review.md                # Tier 1: Review orchestrator
+│   │
+│   ├── code/neurons/            # Tier 2: Code template neurons
+│   │   ├── wish/                     # Wish dance steps
+│   │   │   ├── discovery.md              # Step 1: Discovery
+│   │   │   ├── alignment.md              # Step 2: Alignment
+│   │   │   ├── requirements.md           # Step 3: Requirements
+│   │   │   └── blueprint.md              # Step 4: Blueprint
+│   │   │
 │   ├── git/                     # Git neuron + workflows
 │   │   ├── git.md                    # Core neuron (can delegate to children)
 │   │   ├── issue.md                  # Workflow: GitHub issue ops (terminal)
@@ -373,10 +379,13 @@ Current agent routing (see AGENTS.md for updates):
 - `orchestrator` → `.genie/agents/neurons/orchestrator.md`
 
 **Workflows:**
-- `plan` → `.genie/agents/workflows/plan.md`
-- `wish` → `.genie/agents/workflows/wish.md`
-- `forge` → `.genie/agents/workflows/forge.md`
-- `review` → `.genie/agents/workflows/review.md` (workflow level)
+- `wish` → `.genie/agents/neurons/wish.md` (orchestrator for wish dance)
+  - `discovery` → `.genie/agents/code/neurons/wish/discovery.md`
+  - `alignment` → `.genie/agents/code/neurons/wish/alignment.md`
+  - `requirements` → `.genie/agents/code/neurons/wish/requirements.md`
+  - `blueprint` → `.genie/agents/code/neurons/wish/blueprint.md`
+- `forge` → `.genie/agents/neurons/forge.md`
+- `review` → `.genie/agents/neurons/review.md`
 - `vibe` → `.genie/agents/workflows/vibe.md`
 - `genie-qa` → `.genie/agents/workflows/genie-qa.md`
 

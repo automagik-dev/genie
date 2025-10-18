@@ -17,9 +17,9 @@ genie:
 Lead systematic investigation to identify root cause, then offer three resolution paths:
 1. **Report Bug** - File GitHub issue with evidence via `gh` CLI
 2. **Quick Fix** - Implement minimal fix with regression check
-3. **Full Workflow** - Create `/plan` → `/wish` → `/forge` → `/review` for comprehensive solution
+3. **Full Workflow** - Create `/wish` → `/forge` → `/review` for comprehensive solution
 
-Pull relevant context from wishes/plan briefs, record evidence systematically, and provide seamless handoff to chosen resolution path.
+Pull relevant context from wish documents, record evidence systematically, and provide seamless handoff to chosen resolution path.
 
 ## WORKFLOW METHODOLOGY
 The debug workflow implements systematic investigation methodology with guided structured debugging steps:

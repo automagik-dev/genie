@@ -1,5 +1,5 @@
 # Example: Implementor Neuron Using Session-State-Updater
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 This demonstrates how ANY neuron/workflow automatically maintains SESSION-STATE.md without explicit memory of role-clarity-protocol.
 
 ---

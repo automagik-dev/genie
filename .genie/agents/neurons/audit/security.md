@@ -1,5 +1,5 @@
 # Security Audit Workflow
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Extends universal audit framework with security-specific patterns (OWASP, CVE).**
 
 @.genie/agents/neurons/audit.md

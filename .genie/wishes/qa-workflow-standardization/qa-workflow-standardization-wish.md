@@ -1,5 +1,5 @@
 # Wish: QA Workflow Standardization (Per‑Issue, Node‑Only)
-
+**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** !`date -u +"%Y-%m-%d"`
 **Status:** In Planning → Ready to Forge
 **Complexity:** Medium
