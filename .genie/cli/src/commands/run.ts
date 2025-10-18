@@ -6,7 +6,7 @@ import type { CLIOptions, ParsedCommand, ConfigPaths, GenieConfig, ExecuteRunArg
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { deriveStartTime, deriveLogFile } from '../lib/utils';
 import { getSemanticDisplayMessage } from '../lib/display-transform';
-import { INTERNAL_SESSION_ID_ENV } from '../background-manager';
+import { INTERNAL_SESSION_ID_ENV } from '../lib/constants';
 import { getPackageRoot } from '../lib/paths';
 import {
   loadSessions,

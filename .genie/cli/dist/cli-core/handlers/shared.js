@@ -28,7 +28,7 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const background_1 = require("../../views/background");
 const display_transform_1 = require("../../lib/display-transform");
-const background_manager_1 = require("../../background-manager");
+const constants_1 = require("../../lib/constants");
 function applyStoreMerge(target, next) {
     target.version = next.version;
     target.sessions = next.sessions;
@@ -232,8 +232,7 @@ function extractFrontMatter(source, onWarning) {
     }
 }
 function deriveStartTime() {
-    const { INTERNAL_START_TIME_ENV } = require('../../background-manager');
-    const fromEnv = process.env[INTERNAL_START_TIME_ENV];
+    const fromEnv = process.env[constants_1.INTERNAL_START_TIME_ENV];
     if (!fromEnv)
         return Date.now();
     const parsed = Number(fromEnv);
@@ -256,8 +255,7 @@ function sanitizeLogFilename(agentName) {
     return normalized.length ? normalized : fallback;
 }
 function deriveLogFile(agentName, startTime, paths) {
-    const { INTERNAL_LOG_PATH_ENV } = require('../../background-manager');
-    const envPath = process.env[INTERNAL_LOG_PATH_ENV];
+    const envPath = process.env[constants_1.INTERNAL_LOG_PATH_ENV];
     if (envPath)
         return envPath;
     const filename = `${sanitizeLogFilename(agentName)}-${startTime}.log`;
@@ -306,7 +304,7 @@ async function maybeHandleBackgroundLaunch(ctx, params) {
         logFile,
         backgroundConfig: config.background,
         scriptPath: __filename,
-        env: entry.sessionId ? { [background_manager_1.INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
+        env: entry.sessionId ? { [constants_1.INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
     });
     entry.runnerPid = runnerPid;
     entry.status = 'running';

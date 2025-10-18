@@ -109,32 +109,28 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
   return agents;
 }
 
-// Helper: List recent sessions
-function listSessions(): Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }> {
-  const sessionsFile = path.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
-
-  if (!fs.existsSync(sessionsFile)) {
-    return [];
-  }
-
+// Helper: List recent sessions (uses Forge API)
+async function listSessions(): Promise<Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }>> {
   try {
-    const content = fs.readFileSync(sessionsFile, 'utf8');
-    const store = JSON.parse(content);
+    // ALWAYS use Forge API for session listing (complete executor replacement)
+    const { createForgeExecutor } = require('../../cli/src/lib/forge-executor');
+    const forgeExecutor = createForgeExecutor();
 
-    // v3: Sessions keyed by name, entry.name should match key
-    const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
-      name: entry.name || key,  // In v3, key IS the name
-      agent: entry.agent || key,
+    const forgeSessions = await forgeExecutor.listSessions();
+
+    const sessions = forgeSessions.map((entry: any) => ({
+      name: entry.name || entry.sessionId || 'unknown',
+      agent: entry.agent || 'unknown',
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
       lastUsed: entry.lastUsed || entry.created || 'unknown'
     }));
 
     // Filter: Show running sessions + recent completed (last 10)
-    const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+    const running = sessions.filter((s: any) => s.status === 'running' || s.status === 'starting');
     const completed = sessions
-      .filter(s => s.status === 'completed')
-      .sort((a, b) => {
+      .filter((s: any) => s.status === 'completed')
+      .sort((a: any, b: any) => {
         if (a.lastUsed === 'unknown') return 1;
         if (b.lastUsed === 'unknown') return -1;
         return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
@@ -148,7 +144,44 @@ function listSessions(): Array<{ name: string; agent: string; status: string; cr
       return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
     });
   } catch (error) {
-    return [];
+    // Fallback to local sessions.json if Forge API fails
+    console.warn('Failed to fetch Forge sessions, falling back to local store');
+    const sessionsFile = path.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
+
+    if (!fs.existsSync(sessionsFile)) {
+      return [];
+    }
+
+    try {
+      const content = fs.readFileSync(sessionsFile, 'utf8');
+      const store = JSON.parse(content);
+
+      const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
+        name: entry.name || key,
+        agent: entry.agent || key,
+        status: entry.status || 'unknown',
+        created: entry.created || 'unknown',
+        lastUsed: entry.lastUsed || entry.created || 'unknown'
+      }));
+
+      const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+      const completed = sessions
+        .filter(s => s.status === 'completed')
+        .sort((a, b) => {
+          if (a.lastUsed === 'unknown') return 1;
+          if (b.lastUsed === 'unknown') return -1;
+          return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+        })
+        .slice(0, 10);
+
+      return [...running, ...completed].sort((a, b) => {
+        if (a.lastUsed === 'unknown') return 1;
+        if (b.lastUsed === 'unknown') return -1;
+        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+      });
+    } catch (error) {
+      return [];
+    }
   }
 }
 
@@ -242,7 +275,7 @@ server.addTool({
   description: 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.',
   parameters: z.object({}),
   execute: async () => {
-    const sessions = listSessions();
+    const sessions = await listSessions();
 
     if (sessions.length === 0) {
       return getVersionHeader() + 'No sessions found. Start a new session with the "run" tool.';

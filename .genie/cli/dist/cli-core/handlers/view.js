@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createViewHandler = createViewHandler;
 const fs_1 = __importDefault(require("fs"));
 const session_helpers_1 = require("../../lib/session-helpers");
+const forge_executor_1 = require("../../lib/forge-executor");
 function createViewHandler(ctx) {
     return async (parsed) => {
         const [sessionName] = parsed.commandArgs;
@@ -77,18 +78,15 @@ function createViewHandler(ctx) {
         //     }
         //   }
         //
-        // Try to get Forge logs if this is a Forge-managed session
+        // ALWAYS use Forge for logs (complete executor replacement)
         let transcript = raw;
         let source = 'CLI log';
-        const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
-        if (forgeEnabled && entry.executor === 'forge' && entry.sessionId) {
+        if (entry.sessionId) {
             try {
-                const { createForgeExecutor } = require('../../lib/forge-executor');
-                const forgeExecutor = createForgeExecutor();
+                const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
                 // Get task attempt status and logs
                 const status = await forgeExecutor.getSessionStatus(entry.sessionId);
                 // Try to get logs via WebSocket URL or execution processes
-                // For now, we'll try to get the execution processes and read their logs
                 const { ForgeClient } = require('../../../forge.js');
                 const forgeClient = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887', process.env.FORGE_TOKEN);
                 const processes = await forgeClient.listExecutionProcesses(entry.sessionId);

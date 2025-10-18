@@ -12,7 +12,7 @@ import {
   buildRunCompletionView
 } from '../../views/background';
 import { transformDisplayPath } from '../../lib/display-transform';
-import { INTERNAL_SESSION_ID_ENV } from '../../background-manager';
+import { INTERNAL_SESSION_ID_ENV, INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from '../../lib/constants';
 
 export interface ExecuteRunArgs {
   agentName: string;
@@ -282,7 +282,6 @@ export function extractFrontMatter(source: string, onWarning: (message: string) 
 }
 
 export function deriveStartTime(): number {
-  const { INTERNAL_START_TIME_ENV } = require('../../background-manager');
   const fromEnv = process.env[INTERNAL_START_TIME_ENV];
   if (!fromEnv) return Date.now();
   const parsed = Number(fromEnv);
@@ -305,7 +304,6 @@ export function sanitizeLogFilename(agentName: string): string {
 }
 
 export function deriveLogFile(agentName: string, startTime: number, paths: Required<ConfigPaths>): string {
-  const { INTERNAL_LOG_PATH_ENV } = require('../../background-manager');
   const envPath = process.env[INTERNAL_LOG_PATH_ENV];
   if (envPath) return envPath;
   const filename = `${sanitizeLogFilename(agentName)}-${startTime}.log`;

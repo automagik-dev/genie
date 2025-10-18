@@ -3,6 +3,7 @@ import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { findSessionEntry } from '../../lib/session-helpers';
 import { persistStore } from './shared';
+import { createForgeExecutor } from '../../lib/forge-executor';
 
 export function createStopHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -26,14 +27,10 @@ export function createStopHandler(ctx: HandlerContext): Handler {
     const { agentName, entry } = found;
     const identifier = entry.name || agentName;
 
-    // Check if this is a Forge-managed session
-    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
-    if (forgeEnabled && entry.executor === 'forge' && entry.sessionId) {
-      // Use Forge stop API
+    // ALWAYS use Forge stop API (complete executor replacement)
+    if (entry.sessionId) {
       try {
-        const { createForgeExecutor } = require('../../lib/forge-executor');
         const forgeExecutor = createForgeExecutor();
-
         await forgeExecutor.stopSession(entry.sessionId);
 
         entry.status = 'stopped';

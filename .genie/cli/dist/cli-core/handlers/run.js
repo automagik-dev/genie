@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createRunHandler = createRunHandler;
 const path_1 = __importDefault(require("path"));
 const shared_1 = require("./shared");
+const forge_executor_1 = require("../../lib/forge-executor");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -47,7 +48,7 @@ function createRunHandler(ctx) {
             const { randomBytes } = require('crypto');
             return randomBytes(16).toString('hex');
         };
-        const { INTERNAL_SESSION_ID_ENV } = require('../../background-manager');
+        const { INTERNAL_SESSION_ID_ENV } = require('../../lib/constants');
         // If running as background runner, reuse propagated sessionId to avoid duplicates
         const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
         const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
@@ -73,22 +74,22 @@ function createRunHandler(ctx) {
             sessionId: sessionId // UUID assigned immediately
         };
         // Don't persist yet - wait for sessionId extraction
-        const handledBackground = await (0, shared_1.maybeHandleBackgroundLaunch)(ctx, {
-            parsed,
-            config: ctx.config,
-            paths: ctx.paths,
-            store,
-            entry,
-            agentName: resolvedAgentName,
-            executorKey,
-            executionMode: modeName,
-            startTime,
-            logFile,
-            allowResume: true,
-            prompt
-        });
-        if (handledBackground) {
-            return;
+        // Check if background launch requested (and not already background runner)
+        if (parsed.options.background && !parsed.options.backgroundRunner) {
+            const handledBackground = await (0, forge_executor_1.handleForgeBackgroundLaunch)({
+                agentName: resolvedAgentName,
+                prompt,
+                config: ctx.config,
+                paths: ctx.paths,
+                store,
+                entry,
+                executorKey,
+                executionMode: modeName,
+                startTime
+            });
+            if (handledBackground) {
+                return;
+            }
         }
         const agentPath = path_1.default.join('.genie', 'agents', `${resolvedAgentName}.md`);
         const command = executor.buildRunCommand({

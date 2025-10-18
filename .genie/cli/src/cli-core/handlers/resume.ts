@@ -15,9 +15,9 @@ import {
   deriveStartTime,
   deriveLogFile,
   persistStore,
-  maybeHandleBackgroundLaunch,
   executeRun
 } from './shared';
+import { createForgeExecutor } from '../../lib/forge-executor';
 
 export function createResumeHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -112,42 +112,20 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     session.signal = null;
     await persistStore(ctx, store);
 
-    // Check if this is a Forge-managed session
-    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
-    if (forgeEnabled && session.executor === 'forge') {
-      // Use Forge follow-up API instead of spawning new process
+    // ALWAYS use Forge for resume operations (complete executor replacement)
+    // Check if background launch requested (and not already background runner)
+    if (parsed.options.background && !parsed.options.backgroundRunner) {
       try {
-        const { createForgeExecutor } = require('../../lib/forge-executor');
         const forgeExecutor = createForgeExecutor();
-
         await forgeExecutor.resumeSession(session.sessionId, prompt);
-
         process.stdout.write(`✓ Resumed session ${session.name}\n`);
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        process.stdout.write(`⚠️  Forge resume failed: ${message}\n`);
-        process.stdout.write(`⚠️  Falling back to traditional resume\n`);
+        process.stdout.write(`\n▸ Failed to resume via Forge: ${message}\n`);
+        // Don't fallback - Forge is the only executor now
+        throw error;
       }
-    }
-
-    const handledBackground = await maybeHandleBackgroundLaunch(ctx, {
-      parsed,
-      config: ctx.config,
-      paths: ctx.paths,
-      store,
-      entry: session,
-      agentName,
-      executorKey,
-      executionMode: modeName,
-      startTime,
-      logFile,
-      allowResume: false,
-      prompt
-    });
-
-    if (handledBackground) {
-      return;
     }
 
     await executeRun(ctx, {

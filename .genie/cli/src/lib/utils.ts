@@ -1,6 +1,6 @@
 import path from 'path';
 import type { ConfigPaths } from './types';
-import { INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from '../background-manager';
+import { INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from './constants';
 
 /**
  * Formats ISO timestamp as human-readable relative time.

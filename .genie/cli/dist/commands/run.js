@@ -11,7 +11,7 @@ const child_process_1 = require("child_process");
 const agent_resolver_1 = require("../lib/agent-resolver");
 const utils_1 = require("../lib/utils");
 const display_transform_1 = require("../lib/display-transform");
-const background_manager_1 = require("../background-manager");
+const constants_1 = require("../lib/constants");
 const paths_1 = require("../lib/paths");
 const session_store_1 = require("../session-store");
 const config_defaults_1 = require("../lib/config-defaults");
@@ -58,7 +58,7 @@ async function runChat(parsed, config, paths) {
         return randomBytes(16).toString('hex');
     };
     const { generateSessionName } = require('../session-store');
-    const envSessionId = process.env[background_manager_1.INTERNAL_SESSION_ID_ENV];
+    const envSessionId = process.env[constants_1.INTERNAL_SESSION_ID_ENV];
     const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
         ? envSessionId.trim()
         : uuidv4();

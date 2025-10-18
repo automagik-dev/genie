@@ -3,6 +3,7 @@ import path from 'path';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { findSessionEntry } from '../../lib/session-helpers';
+import { createForgeExecutor } from '../../lib/forge-executor';
 
 export function createViewHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -82,21 +83,18 @@ export function createViewHandler(ctx: HandlerContext): Handler {
     //     }
     //   }
     //
-    // Try to get Forge logs if this is a Forge-managed session
+    // ALWAYS use Forge for logs (complete executor replacement)
     let transcript = raw;
     let source = 'CLI log';
 
-    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
-    if (forgeEnabled && entry.executor === 'forge' && entry.sessionId) {
+    if (entry.sessionId) {
       try {
-        const { createForgeExecutor } = require('../../lib/forge-executor');
         const forgeExecutor = createForgeExecutor();
 
         // Get task attempt status and logs
         const status = await forgeExecutor.getSessionStatus(entry.sessionId);
 
         // Try to get logs via WebSocket URL or execution processes
-        // For now, we'll try to get the execution processes and read their logs
         const { ForgeClient } = require('../../../forge.js');
         const forgeClient = new ForgeClient(
           process.env.FORGE_BASE_URL || 'http://localhost:8887',

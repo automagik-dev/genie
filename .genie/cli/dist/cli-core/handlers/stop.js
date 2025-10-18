@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createStopHandler = createStopHandler;
 const session_helpers_1 = require("../../lib/session-helpers");
 const shared_1 = require("./shared");
+const forge_executor_1 = require("../../lib/forge-executor");
 function createStopHandler(ctx) {
     return async (parsed) => {
         const [sessionName] = parsed.commandArgs;
@@ -21,13 +22,10 @@ function createStopHandler(ctx) {
         }
         const { agentName, entry } = found;
         const identifier = entry.name || agentName;
-        // Check if this is a Forge-managed session
-        const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
-        if (forgeEnabled && entry.executor === 'forge' && entry.sessionId) {
-            // Use Forge stop API
+        // ALWAYS use Forge stop API (complete executor replacement)
+        if (entry.sessionId) {
             try {
-                const { createForgeExecutor } = require('../../lib/forge-executor');
-                const forgeExecutor = createForgeExecutor();
+                const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
                 await forgeExecutor.stopSession(entry.sessionId);
                 entry.status = 'stopped';
                 entry.lastUsed = new Date().toISOString();

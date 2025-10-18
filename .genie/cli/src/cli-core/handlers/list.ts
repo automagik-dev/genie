@@ -1,6 +1,7 @@
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { listAgents } from './shared';
+import { createForgeExecutor } from '../../lib/forge-executor';
 
 export function createListHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -27,11 +28,29 @@ export function createListHandler(ctx: HandlerContext): Handler {
     }
 
     if (target === 'sessions') {
+      // ALWAYS query Forge for sessions (complete executor replacement)
+      try {
+        const forgeExecutor = createForgeExecutor();
+        const forgeSessions = await forgeExecutor.listSessions();
+
+        return {
+          type: 'sessions',
+          sessions: forgeSessions.map(entry => ({
+            name: entry.name || entry.sessionId,
+            agent: entry.agent,
+            status: entry.status || 'unknown',
+            created: entry.created || null,
+            lastUsed: entry.lastUsed || entry.created || null,
+            mode: 'default',
+            logFile: null
+          }))
+        };
+      } catch (error) {
+        console.warn('Failed to fetch Forge sessions, falling back to local store');
+      }
+
+      // Fallback to local store if Forge API fails
       const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-
-      // TODO (Wish #120-B): Optionally query Forge for live session status
-      // For now, rely on session store (updated by Forge integration in run/resume/stop handlers)
-
       const entries = Object.entries(store.sessions || {});
 
       // In v3, sessions are keyed by name (not sessionId)

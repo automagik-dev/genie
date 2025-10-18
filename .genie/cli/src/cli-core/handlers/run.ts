@@ -13,9 +13,9 @@ import {
   deriveStartTime,
   deriveLogFile,
   persistStore,
-  maybeHandleBackgroundLaunch,
   executeRun
 } from './shared';
+import { handleForgeBackgroundLaunch } from '../../lib/forge-executor';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -63,7 +63,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       const { randomBytes } = require('crypto');
       return randomBytes(16).toString('hex');
     };
-    const { INTERNAL_SESSION_ID_ENV } = require('../../background-manager');
+    const { INTERNAL_SESSION_ID_ENV } = require('../../lib/constants');
 
     // If running as background runner, reuse propagated sessionId to avoid duplicates
     const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
@@ -93,23 +93,23 @@ export function createRunHandler(ctx: HandlerContext): Handler {
 
     // Don't persist yet - wait for sessionId extraction
 
-    const handledBackground = await maybeHandleBackgroundLaunch(ctx, {
-      parsed,
-      config: ctx.config,
-      paths: ctx.paths,
-      store,
-      entry,
-      agentName: resolvedAgentName,
-      executorKey,
-      executionMode: modeName,
-      startTime,
-      logFile,
-      allowResume: true,
-      prompt
-    });
+    // Check if background launch requested (and not already background runner)
+    if (parsed.options.background && !parsed.options.backgroundRunner) {
+      const handledBackground = await handleForgeBackgroundLaunch({
+        agentName: resolvedAgentName,
+        prompt,
+        config: ctx.config,
+        paths: ctx.paths,
+        store,
+        entry,
+        executorKey,
+        executionMode: modeName,
+        startTime
+      });
 
-    if (handledBackground) {
-      return;
+      if (handledBackground) {
+        return;
+      }
     }
 
     const agentPath = path.join('.genie', 'agents', `${resolvedAgentName}.md`);
