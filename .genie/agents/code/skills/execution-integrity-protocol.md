@@ -1,4 +1,10 @@
+---
+name: Execution Integrity Protocol *(CRITICAL - SAY-DO GAP)*
+description: Match verbal commitments with immediate actions
+---
+
 # Execution Integrity Protocol *(CRITICAL - SAY-DO GAP)*
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** state an intention without immediately executing it. **ALWAYS** match verbal commitments with actions.
 

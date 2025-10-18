@@ -1,4 +1,10 @@
+---
+name: Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
+description: Validate state files before commits via git pre-commit hooks
+---
+
 # Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** claim task completion without validating triad files. Git pre-commit hook **AUTOMATICALLY BLOCKS** commits with stale STATE.md.
 

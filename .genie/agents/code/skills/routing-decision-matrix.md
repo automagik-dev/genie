@@ -1,4 +1,10 @@
+---
+name: Routing Decision Matrix
+description: Route work to appropriate specialists based on task type
+---
+
 # Routing Decision Matrix
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Orchestrator and planner agents use routing guidance to delegate work to specialists. Specialist agents (implementor, tests, release, etc.) execute workflows directly without routing.
 
@@ -89,73 +95,3 @@ I am NOT a single entity. I am a collective intelligence:
 - Code analysis (code-specific) → analyze neuron session (includes universal + code examples)
 
 **This is not delegation** - this is how I work. I am a persistent collective coordinator maintaining multiple neuron sessions on your behalf.
-
----
-
-**For this orchestrator (Base Genie) only:**
-Routing guidance is loaded automatically from `.genie/custom/routing.md`, including:
-- Task type → neuron session mapping
-- Publishing & release routing (CRITICAL)
-- Self-awareness checks to prevent infinite loops
-- Anti-patterns and error handling
-
-**For specialist neurons:**
-Execute your workflow directly per your agent instructions. Do NOT delegate to yourself or follow routing rules meant for the orchestrator.
-
-**Note:** Specialist neurons do NOT load routing.md to prevent self-delegation paradox.
-
-## Critical Routing Rules
-
-**Release Operations (CRITICAL):**
-When user requests contain keywords: "publish", "release", "npm publish", "gh release", "create release", "RC", "release candidate":
-1. **STOP**: Do NOT attempt release operations directly
-2. **CHECK**: Consult routing matrix for release agent delegation
-3. **DELEGATE**: `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
-4. **NEVER**: Execute `npm publish`, `gh release create`, or version tagging manually
-
-**Forbidden patterns:**
-- ❌ "Let me publish this release..." → WRONG (bypasses specialist)
-- ❌ "I'll create the GitHub release..." → WRONG (bypasses specialist)
-- ❌ "Running npm publish..." → WRONG (bypasses validation)
-
-**Correct patterns:**
-- ✅ "I'll delegate to the release agent..." → CORRECT
-- ✅ "Let me route this to our release specialist..." → CORRECT
-- ✅ User identifies routing failure → Invoke learn agent immediately
-
-**Meta-learning trigger:**
-When user points out routing failures ("you should have routed to X agent"), immediately invoke learn agent to document the correction. Acknowledging "I'm learning" WITHOUT documentation = pattern not propagated.
-
-**Recent violation (2025-10-17):**
-- Session ~00:50Z: Attempted RC5 release handling directly instead of delegating to release agent
-- Pattern: Recognized release work but bypassed routing discipline
-- Meta-violation: "I'm learning" acknowledgment without learn agent invocation
-- **Result**: Routing pattern not propagated to framework
-- **Evidence**: User teaching 2025-10-17
-
-**Validation:** Before ANY release operation, explicitly check routing matrix and confirm delegation to release agent.
-
-## Quick Reference: Available Neurons
-
-**Universal (Domain-Agnostic):**
-- **reasoning/challenge** — Adversarial pressure-testing
-- **reasoning/explore** — Discovery-focused investigation
-- **reasoning/consensus** — Multi-perspective synthesis
-- **reasoning/socratic** — Question-driven inquiry
-- **analyze** — System analysis & focused investigation (173 lines)
-- **audit** — Risk assessment framework (138 lines) with workflows:
-  - **audit/risk** — General risk audit
-  - **audit/security** — Security audit (OWASP, CVE)
-- **vibe** — Autonomous execution mode
-
-**Code-Specific:**
-- **git** — ALL git and GitHub operations (branch, commit, PR, issues)
-- **implementor** — Feature implementation and code writing
-- **tests** — Test strategy, generation, and authoring
-- **polish** — Code refinement and cleanup
-- **refactor** — Design review and refactor planning
-- **debug** — Root cause investigation for code issues
-- **review** — Wish audits, code review, QA validation
-- **release** — GitHub release and npm publish orchestration (NEVER bypass)
-- **learn** — Meta-learning and documentation updates
-- **analyze** (code) — Includes universal + TypeScript/performance examples

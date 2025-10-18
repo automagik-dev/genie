@@ -1,4 +1,10 @@
+---
+name: Blocker Protocol
+description: Log blockers timestamped in wishes, wait for guidance before resuming
+---
+
 # Blocker Protocol
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **When encountering blockers:**
 

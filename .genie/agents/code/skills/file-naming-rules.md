@@ -1,4 +1,10 @@
+---
+name: File and Naming Rules
+description: Centralize planning and evidence under .genie/, avoid doc sprawl
+---
+
 # File and Naming Rules
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Maintain tidy workspace; centralize planning and evidence under `.genie/`.
 

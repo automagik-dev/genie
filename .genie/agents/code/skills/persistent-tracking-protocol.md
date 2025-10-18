@@ -1,4 +1,10 @@
+---
+name: Persistent Tracking Protocol
+description: Track all active neuron sessions in SESSION-STATE.md for continuity
+---
+
 # Persistent Tracking Protocol
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** SESSION-STATE.md enables collective intelligence with memory across restarts.
 

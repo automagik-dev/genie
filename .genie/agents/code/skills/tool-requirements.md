@@ -1,4 +1,10 @@
+---
+name: Tool Requirements
+description: Validate with pnpm run check and cargo test --workspace
+---
+
 # Tool Requirements
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Primary stack:** Rust + Node/TS; metrics/test hooks captured in wishes/forge plans.
 

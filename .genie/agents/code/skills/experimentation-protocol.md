@@ -1,4 +1,10 @@
+---
+name: Experimentation Protocol
+description: Always experiment with clear hypotheses during learning
+---
+
 # Experimentation Protocol
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core philosophy:** Learning = Experimentation
 

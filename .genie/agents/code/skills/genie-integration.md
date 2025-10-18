@@ -1,4 +1,10 @@
+---
+name: Genie Integration Framework
+description: Use genie neuron for second opinions, pressure-tests, and decision audits
+---
+
 # Genie Integration Framework
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** `genie` skill is GENIE's partner for second opinions, plan pressure-tests, deep dives, and decision audits. Use it to reduce risk, surface blind spots, and document reasoning without blocking implementation work.
 

@@ -1,4 +1,11 @@
+---
+name: Agent Configuration Standards
+implementor
+description: Declare permissionMode: default for agents that write files
+---
+
 # Agent Configuration Standards
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## File Write Permissions
 
@@ -28,13 +35,6 @@
 
 **Implementation example:**
 ```yaml
----
-name: implementor
-genie:
-  executor: claude
-  model: sonnet
-  permissionMode: default  # ← Required for file writes
----
 ```
 
 **Validation:**

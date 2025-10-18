@@ -1,4 +1,10 @@
+---
+name: Publishing Protocol *(CRITICAL)*
+description: Never publish directly; always delegate to the release agent
+---
+
 # Publishing Protocol *(CRITICAL)*
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** execute `npm publish` or `gh release create` directly. **ALWAYS** delegate to release agent.
 

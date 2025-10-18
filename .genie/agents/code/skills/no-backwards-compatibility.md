@@ -1,4 +1,10 @@
+---
+name: No Backwards Compatibility
+description: Replace old behavior entirely, never preserve legacy features
+---
+
 # No Backwards Compatibility
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Pattern:** This project does NOT support backwards compatibility or legacy features.
 

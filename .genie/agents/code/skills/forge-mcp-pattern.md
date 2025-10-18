@@ -1,4 +1,10 @@
+---
+name: Forge MCP Task Pattern
+description: Create Forge tasks with @ references to load full context from files
+---
+
 # Forge MCP Task Pattern
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 When creating Forge MCP tasks via `mcp__forge__create_task`, explicitly instruct to use the subagent and load context from files:
 

@@ -1,4 +1,10 @@
+---
+name: Role Clarity Protocol *(CRITICAL)*
+description: Always check active sessions before assuming work needs to be done
+---
+
 # Role Clarity Protocol *(CRITICAL)*
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **NEVER** bypass session checks when resuming work. **ALWAYS** check session results before assuming work needs to be done.
 

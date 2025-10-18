@@ -1,4 +1,10 @@
+---
+name: Execution Patterns
+description: Capture evidence: command outputs, logs, diffs for repeatability
+---
+
 # Execution Patterns
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Evidence capture standards for repeatability and QA:**
 

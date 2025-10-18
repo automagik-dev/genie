@@ -1,4 +1,10 @@
+---
+name: Sequential Questioning Protocol *(CRITICAL - HUMAN INTERFACE DESIGN)*
+description: Ask one decision at a time, manage queue internally
+---
+
 # Sequential Questioning Protocol *(CRITICAL - HUMAN INTERFACE DESIGN)*
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Core Principle:** ONE question at a time. Humans crash with parallelism.
 

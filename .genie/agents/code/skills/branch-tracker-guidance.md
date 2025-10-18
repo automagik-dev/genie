@@ -1,4 +1,10 @@
+---
+name: Branch & Tracker Guidance
+description: Use dedicated branches for medium/large changes, track IDs in wishes
+---
+
 # Branch & Tracker Guidance
+
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Branch strategy:**
 - **Dedicated branch** (`feat/<wish-slug>`) for medium/large changes.
