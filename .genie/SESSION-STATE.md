@@ -299,29 +299,32 @@ Felipe reviews incoming PRs as genies create them. All PRs will be linked to Git
 
 ---
 
-## 🧠 ACTIVE GENIE SESSIONS (2025-10-18 11:18 UTC)
+## 🧠 ACTIVE FORGE TASK ATTEMPTS (2025-10-18 13:05 UTC)
 
-**Parallel Execution - All 3 Remaining Tasks:**
+**CRITICAL LEARNING:** Genie is NOT working locally. ALL execution happens via Forge MCP. No direct genie calls unless for pure reasoning/analysis. Use Forge for everything.
 
-| Task | Genie Session ID | Status | ETA |
-|------|-----------------|--------|-----|
-| #3: Multi-Template | f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f | 🔄 Running | 2-3 hrs |
-| #5: Genie Arch | b0fdc632-7ca4-4e6b-806e-0cd8dff08061 | 🔄 Running | 2-3 hrs |
-| #6: Backup Update | b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b | 🔄 Running | 2-3 hrs |
+**Fresh Sonnet 4.5 Attempts - ACTIVE NOW:**
 
-**Resume Commands:**
+| Task | Task ID | Attempt ID | Status | Model | ETA |
+|------|---------|-----------|--------|-------|-----|
+| #4: Skills Prioritization | 3f1fb79f-1cd3-45c2-b5a0-ab6113e22172 | 193d3bc0-3665-4850-8b75-11ff249b1bf3 | 🔄 EXECUTING | Sonnet 4.5 | 30 min |
+| #7: Bug #104 Timeout | 773230f5-b39f-477e-9731-9797eb348246 | 5212c5b1-dfcd-4dfc-9861-c5113373ed06 | 🔄 EXECUTING | Sonnet 4.5 | 30 min |
+
+**Monitoring via Forge MCP ONLY:**
 ```bash
-npx automagik-genie resume f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f "follow-up..."
-npx automagik-genie resume b0fdc632-7ca4-4e6b-806e-0cd8dff08061 "follow-up..."
-npx automagik-genie resume b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b "follow-up..."
+# Check task status
+mcp__automagik_forge__get_task task_id=3f1fb79f-1cd3-45c2-b5a0-ab6113e22172
+mcp__automagik_forge__get_task task_id=773230f5-b39f-477e-9731-9797eb348246
+
+# List all tasks to see progress
+mcp__automagik_forge__list_tasks project_id=f8924071-fa8e-43ee-8fbc-96ec5b49b3da
 ```
 
-**View Full Transcripts:**
-```bash
-npx automagik-genie view f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f --full
-npx automagik-genie view b0fdc632-7ca4-4e6b-806e-0cd8dff08061 --full
-npx automagik-genie view b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b --full
-```
+**DO NOT:**
+- ❌ Access worktrees directly (`/var/tmp/automagik-forge/worktrees/`)
+- ❌ Call genie MCP directly for execution
+- ❌ Use git commands locally for Forge tasks
+- ✅ Use Forge MCP only for all coordination
 
 ---
 
