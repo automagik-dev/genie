@@ -48,17 +48,25 @@ Implementation tasks (Implementation <<< neuron)
 
 ---
 
-## Next Learning: Stakeholder Neuron Naming
+## Standardization: Stakeholder Neuron Naming
 
-**Need to find:**
-1. What is the standardized naming format for Stakeholder neuron?
-2. How does Stakeholder <<< neuron relate to GitHub issue #120?
-3. What is the specific Forge task naming pattern for issue managers?
+✅ **DECIDED: Forge Task Naming Standard = `Issue-{number} <<<`**
 
-**Searching in:**
-- `.genie/agents/code/skills/forge-*.md`
-- `.genie/agents/neurons/` (particularly for issue/stakeholder patterns)
-- ForgeClient documentation (forge.ts)
+**Pattern:**
+- GitHub Issue: `#120`
+- Forge Task: `Issue-120 - {short description}`
+- Neuron: `Issue-120 <<<`
+
+**Why this pattern:**
+- Immediate GitHub linkage (issue number in name)
+- Standardized across all issue-based work
+- Clean, parseable naming convention
+- Applies to all Forge tasks managing GitHub issues
+
+**Examples:**
+- `Issue-120 <<< ` → Investigating Forge integration (this one!)
+- `Issue-115 <<<` → Fix auth bug
+- `Issue-99 <<<` → Performance optimization
 
 ---
 
