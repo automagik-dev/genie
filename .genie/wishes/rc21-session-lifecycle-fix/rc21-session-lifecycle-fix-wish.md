@@ -1,9 +1,9 @@
 # 🧞 RC21 Session Lifecycle Fix WISH
-**Status:** IN PROGRESS (Group A+B DONE)
+**Status:** IN PROGRESS (Group A+B+D DONE)
 **Roadmap Item:** release/rc21 – @.genie/product/roadmap.md §Releases
 **Mission Link:** @.genie/product/mission.md §Reliability
 **Standards:** @.genie/standards/best-practices.md §Core Principles
-**Completion Score:** 70/100 (updated by review)
+**Completion Score:** 90/100 (updated by review)
 
 ## Context Ledger
 | Source | Type | Summary | Routed To |
@@ -76,6 +76,7 @@ Fix session lifecycle bugs: ensure one session per run and restore fast backgrou
 
 ## Status Log
 - [2025-10-18T04:35Z] ✅ Group B (QA) PASS – evidence in qa/group-b, report created
+- [2025-10-18T04:39Z] 🚀 Group D (Release) – v2.4.0-rc.21 tagged + published to `next`
 - [2025-10-18T04:20Z] ✅ QA Pass 2 complete - Core fix verified (see .genie/reports/rc21-qa2-results-20251018.md)
 - [2025-10-18T04:12Z] 🔧 Implemented fixes to background-launcher.ts, background-manager.ts, run.ts
 - [2025-10-18T03:13Z] Wish created

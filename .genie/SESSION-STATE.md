@@ -345,3 +345,14 @@ None - All sessions completed
 - CLI hints: npx automagik-genie view/resume/stop
 - Artifacts: .genie/wishes/rc21-session-lifecycle-fix/qa/group-b/*
 **Verdict:** RC21 QA passed – proceed to docs + release
+
+### RC21 Tag + Release Orchestration 🚀
+**Session ID:** N/A (direct execution)
+**Started:** 2025-10-18 04:36 UTC
+**Completed:** 2025-10-18 04:39 UTC
+**Outcome:** Version bumped to 2.4.0-rc.21, tag pushed, publish workflow triggered
+**Details:**
+- scripts/bump.js rc-increment → v2.4.0-rc.21
+- git push + git push --tags (pre-push tests passed)
+- gh workflow run publish.yml --field tag=v2.4.0-rc.21
+- CHANGELOG unchanged (no new commits since tag)

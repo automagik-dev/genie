@@ -34,8 +34,8 @@ validation_commands:
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.20 on npm@next (2025-10-18)
-**Status:** ✅ RC21 QA passed – ready to release (one-session-per-run + polling fix validated)
+**Published:** v2.4.0-rc.21 on npm@next (2025-10-18)
+**Status:** 🎉 RC21 released – publish complete
 
 **Latest Commit:** !`git log --oneline -1`
 
@@ -51,6 +51,7 @@ validation_commands:
 - 🧪 Local + MCP validation: 1 session per run, fast session ID discovery (~0.5s), no timeout
   - Evidence: `.genie/wishes/rc21-session-lifecycle-fix/qa/group-b/`
   - Report: `.genie/wishes/rc21-session-lifecycle-fix/reports/done-group-b-20251018.md`
+  - Tag: v2.4.0-rc.21 (pushed)
 - 📊 Report: .genie/reports/rc20-qa-failure-20251018.md
 
 **Previous RC Fixes:**
