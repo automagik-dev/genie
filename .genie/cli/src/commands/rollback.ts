@@ -72,6 +72,13 @@ export async function runRollback(
 
     const preBackupId = await backupCurrentState(targetGenie);
     await restoreFromBackup(targetGenie, backupDir);
+
+    // Restore root documentation files if they exist in backup
+    const docsBackupDir = path.join(backupsRoot, targetId, 'docs');
+    if (await pathExists(docsBackupDir)) {
+      await restoreRootDocs(cwd, docsBackupDir);
+    }
+
     await mergeBackupHistories(targetGenie, backupsRoot, preBackupId);
     await touchVersionFile(cwd, 'rollback');
 
@@ -133,8 +140,26 @@ function selectBackupId(ids: string[], flags: RollbackFlags): string | undefined
 async function backupCurrentState(targetGenie: string): Promise<string> {
   const backupId = `${toIsoId()}-pre-rollback`;
   const backupDir = path.join(targetGenie, 'backups', backupId);
+  const cwd = process.cwd();
+
   await ensureDir(backupDir);
+
+  // Backup current .genie directory
   await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
+
+  // Backup current root framework documentation files
+  const rootDocsDir = path.join(backupDir, 'docs');
+  await ensureDir(rootDocsDir);
+
+  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
+  for (const file of rootDocsFiles) {
+    const srcPath = path.join(cwd, file);
+    const destPath = path.join(rootDocsDir, file);
+    if (await pathExists(srcPath)) {
+      await fsp.copyFile(srcPath, destPath);
+    }
+  }
+
   return backupId;
 }
 
@@ -174,6 +199,17 @@ async function mergeBackupHistories(targetGenie: string, backupsRoot: string, pr
   const recordDir = path.join(backupsRoot, preBackupId, 'metadata');
   await ensureDir(recordDir);
   await fsp.writeFile(path.join(recordDir, 'note.txt'), 'Created automatically before rollback.');
+}
+
+async function restoreRootDocs(cwd: string, docsBackupDir: string): Promise<void> {
+  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
+  for (const file of rootDocsFiles) {
+    const srcPath = path.join(docsBackupDir, file);
+    const destPath = path.join(cwd, file);
+    if (await pathExists(srcPath)) {
+      await fsp.copyFile(srcPath, destPath);
+    }
+  }
 }
 
 async function touchVersionFile(cwd: string, reason: 'rollback'): Promise<void> {

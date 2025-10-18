@@ -466,8 +466,26 @@ async function createBackup(targetGenie: string): Promise<string> {
   const backupId = toIsoId();
   const backupsRoot = path.join(targetGenie, 'backups');
   const backupDir = path.join(backupsRoot, backupId);
+  const cwd = process.cwd();
+
   await ensureDir(backupDir);
+
+  // Backup .genie directory
   await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
+
+  // Backup root framework documentation files
+  const rootDocsDir = path.join(backupDir, 'docs');
+  await ensureDir(rootDocsDir);
+
+  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
+  for (const file of rootDocsFiles) {
+    const srcPath = path.join(cwd, file);
+    const destPath = path.join(rootDocsDir, file);
+    if (await pathExists(srcPath)) {
+      await fsp.copyFile(srcPath, destPath);
+    }
+  }
+
   return backupId;
 }
 
