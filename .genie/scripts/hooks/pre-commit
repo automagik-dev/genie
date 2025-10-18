@@ -48,6 +48,14 @@ function main() {
     'validate-cross-references.js',
     'forge-task-link.js',  // Auto-link Forge tasks to wishes on first commit
   ];
+
+  // Run worktree access prevention check (bash script)
+  console.log('🔍 Checking for Forge worktree violations...');
+  const worktreeCheckPath = path.join(__dirname, '..', 'prevent-worktree-access.sh');
+  const worktreeCheck = spawnSync('bash', [worktreeCheckPath], { stdio: 'inherit' });
+  if (worktreeCheck.status !== 0) {
+    exitCode = 1;
+  }
   for (const v of validations) {
     const code = run(v);
     if (code !== 0) exitCode = 1;
