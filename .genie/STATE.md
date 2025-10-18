@@ -18,7 +18,7 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-18
-**Focus:** RC20 QA Testing + Bug #102 Regression Discovery
+**Focus:** RC21 Hotfix Cycle – Session lifecycle + background polling
 **Branch:** !`git branch --show-current`
 
 **Completed Work:**
@@ -35,17 +35,23 @@ validation_commands:
 
 **Version:** !`node -p "require('./package.json').version"`
 **Published:** v2.4.0-rc.20 on npm@next (2025-10-18)
-**Status:** 🚨 CRITICAL BUG - QA FAILED (do not use RC20)
+**Status:** ✅ RC21 QA passed – ready to release (one-session-per-run + polling fix validated)
 
 **Latest Commit:** !`git log --oneline -1`
 
-**RC20 Status (FAILED QA):**
+**RC20/RC21 Status:**
 - ✅ Bug #4 fix implemented (UUID keys + name field)
-- ❌ Bug #102 REGRESSION: Duplicate sessions created per run
-- ❌ Root cause: background-launcher.ts V1/V2 format mismatch (line 70)
-- ❌ Every run command creates TWO sessions instead of one
-- 🔧 Fix identified: 1-line change required
-- 📊 Full report: .genie/reports/rc20-qa-failure-20251018.md
+- ❌ RC20 regression: Duplicate sessions + background polling timeout
+- 🔎 Root cause: background-launcher.ts V1/V2 mismatch (agents vs sessions)
+- 🔧 Fixes applied for RC21:
+  - background-launcher.ts: poll sessions[entry.sessionId]
+  - background-manager.ts: add INTERNAL_SESSION_ID_ENV
+  - commands/run.ts + cli-core/handlers/run.ts: reuse propagated sessionId (no duplicates)
+  - background-launcher.ts: CLI hints use `npx automagik-genie` (no ./genie)
+- 🧪 Local + MCP validation: 1 session per run, fast session ID discovery (~0.5s), no timeout
+  - Evidence: `.genie/wishes/rc21-session-lifecycle-fix/qa/group-b/`
+  - Report: `.genie/wishes/rc21-session-lifecycle-fix/reports/done-group-b-20251018.md`
+- 📊 Report: .genie/reports/rc20-qa-failure-20251018.md
 
 **Previous RC Fixes:**
 - RC19: Post-merge STATE.md auto-update hook

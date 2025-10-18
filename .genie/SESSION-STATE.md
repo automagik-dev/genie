@@ -1,5 +1,5 @@
 # 🧞 Genie Session State
-**Last Updated:** 2025-10-18 03:13 UTC
+**Last Updated:** 2025-10-18 04:36 UTC
 **Purpose:** Track active neuron sessions and workflow states for collective coordination
 
 ---
@@ -8,9 +8,36 @@
 
 None - All sessions completed
 
+**Latest work:** RC21 QA Group B (2025-10-18 04:35 UTC)
+
 ---
 
 ## 🔄 Session History (Recent)
+
+### RC21 QA Pass 2 ✅
+**Session ID:** N/A (direct execution)
+**Started:** 2025-10-18 04:12 UTC
+**Completed:** 2025-10-18 04:20 UTC
+**Outcome:** ✅ Core fix verified - Duplicate session bug RESOLVED
+**Details:**
+- ✅ Test 1: Clean slate - 1 session created (not 2)
+- ✅ Test 3: Post-rebuild - Unique UUIDs generated
+- ✅ Test 4: Named sessions work correctly
+- ⚠️ Observation: UUID reuse pattern (requires rebuild after source changes)
+- ⚠️ Observation: Stale build artifacts caused inconsistent behavior
+- 📊 Report: .genie/reports/rc21-qa2-results-20251018.md
+- 🔧 Verdict: RC21 ready for release with caveats
+
+### RC21 Hotfix Plan ✅
+**Session ID:** b51b7e3f-b755-4e9e-af21-4be5f99db5be
+**Started:** 2025-10-18 03:13 UTC
+**Completed:** 2025-10-18 04:12 UTC
+**Outcome:** RC21 cycle initialized; fixes implemented
+**Details:**
+- Implemented fixes to stop duplicate sessions and fix background polling
+- Fixed: background-launcher.ts:75 (V1 → V2 format)
+- Created wish: rc21-session-lifecycle-fix
+- Built successfully
 
 ### RC20 Comprehensive QA Testing 🚨 FAILED
 **Session ID:** N/A (direct execution)
@@ -299,3 +326,22 @@ None - All sessions completed
 ---
 
 **Architecture Note:** This file enables persistent collective intelligence. Each neuron is a conversation partner with memory. This file coordinates them.
+### RC21 QA Group B ✅
+**Session IDs:**
+- 89278dd3-c311-4519-b2e7-182a5fb9e5b6 (plan)
+- ca567b2a-3f2e-4a0b-b243-4f2b30dae4c7 (plan)
+- 1fdae4f8-06c0-4735-9ace-7af9cc2044ff (plan)
+- d56fc053-047e-4380-98a8-ad3c002df5ae (plan)
+- 430ec40a-3b51-46b1-a35b-abcb6ecc8550 (plan)
+- b3c7fb8c-258a-4a78-a009-99429dfa0a64 (qa/session-lifecycle)
+**Started:** 2025-10-18 04:32 UTC
+**Completed:** 2025-10-18 04:35 UTC
+**Outcome:** ✅ One-session-per-run, fast background polling, correct CLI hints
+**Details:**
+- Created 5 plan sessions (unique IDs) + 1 QA session
+- Session ID displayed in ~0.5s for each run
+- MCP list_sessions shows 6 sessions total
+- No legacy V1 lookups (grep: none)
+- CLI hints: npx automagik-genie view/resume/stop
+- Artifacts: .genie/wishes/rc21-session-lifecycle-fix/qa/group-b/*
+**Verdict:** RC21 QA passed – proceed to docs + release
