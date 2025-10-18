@@ -83,13 +83,14 @@ export async function runList(
   const [targetRaw] = parsed.commandArgs;
 
   if (!targetRaw) {
-    console.log('Usage: genie list <agents|sessions>');
+    console.log('Usage: genie list <neurons|sessions>');
+    console.log('       genie list agents       # (alias for neurons)');
     return;
   }
 
   const target = targetRaw.toLowerCase();
 
-  if (target === 'agents') {
+  if (target === 'agents' || target === 'neurons') {
     await emitAgentCatalog(parsed);
     return;
   }
@@ -99,42 +100,114 @@ export async function runList(
     return;
   }
 
-  console.error(`Error: Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
+  console.error(`Error: Unknown list target '${targetRaw}'. Try 'neurons' or 'sessions'.`);
   process.exitCode = 1;
+}
+
+interface TreeNode {
+  name: string;
+  type: 'neuron' | 'workflow' | 'skill' | 'folder';
+  path: string;
+  description: string;
+  children: Map<string, TreeNode>;
+}
+
+function buildTree(agents: ReturnType<typeof listAgents>): TreeNode {
+  const root: TreeNode = {
+    name: 'root',
+    type: 'folder',
+    path: '',
+    description: '',
+    children: new Map()
+  };
+
+  agents.forEach((agent) => {
+    const parts = agent.id.split('/');
+    let current = root;
+
+    // Determine type based on path
+    let nodeType: 'neuron' | 'workflow' | 'skill' | 'folder' = 'neuron';
+    if (agent.id.includes('/workflows/')) nodeType = 'workflow';
+    else if (agent.id.includes('/skills/')) nodeType = 'skill';
+
+    // Build tree structure
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isLast = i === parts.length - 1;
+
+      if (!current.children.has(part)) {
+        current.children.set(part, {
+          name: part,
+          type: isLast ? nodeType : 'folder',
+          path: parts.slice(0, i + 1).join('/'),
+          description: isLast
+            ? (((agent.meta?.description || agent.meta?.summary || '') as string)
+                .replace(/\s+/g, ' ')
+                .trim() || '')
+            : '',
+          children: new Map()
+        });
+      }
+
+      current = current.children.get(part)!;
+    }
+  });
+
+  return root;
+}
+
+function renderTree(node: TreeNode, prefix: string = '', isLast: boolean = true, depth: number = 0): string[] {
+  const lines: string[] = [];
+
+  if (depth > 0) {
+    const connector = isLast ? '└── ' : '├── ';
+    const icon = node.type === 'neuron' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
+    const desc = node.description ? ` - ${truncateText(node.description, 80)}` : '';
+    lines.push(`${prefix}${connector}${icon} ${node.name}${desc}`);
+  }
+
+  const children = Array.from(node.children.values()).sort((a, b) => {
+    // Sort: folders first, then by type, then alphabetically
+    if (a.type === 'folder' && b.type !== 'folder') return -1;
+    if (a.type !== 'folder' && b.type === 'folder') return 1;
+    if (a.type !== b.type) return a.type.localeCompare(b.type);
+    return a.name.localeCompare(b.name);
+  });
+
+  children.forEach((child, index) => {
+    const isChildLast = index === children.length - 1;
+    const extension = isLast ? '    ' : '│   ';
+    const childPrefix = depth > 0 ? prefix + extension : '';
+    lines.push(...renderTree(child, childPrefix, isChildLast, depth + 1));
+  });
+
+  return lines;
 }
 
 export async function emitAgentCatalog(parsed: ParsedCommand): Promise<void> {
   const agents = listAgents();
 
-  console.log(`## Available Agents (${agents.length} total)\n`);
+  // Separate by category
+  const neurons = agents.filter(a => !a.id.includes('/workflows/') && !a.id.includes('/skills/'));
+  const workflows = agents.filter(a => a.id.includes('/workflows/'));
+  const skills = agents.filter(a => a.id.includes('/skills/'));
 
-  const grouped = new Map<string, typeof agents>();
-  agents.forEach((entry) => {
-    const folder = entry.folder ?? '.';
-    if (!grouped.has(folder)) grouped.set(folder, []);
-    grouped.get(folder)!.push(entry);
-  });
+  console.log(`## 🧞 Genie Agent Hierarchy\n`);
+  console.log(`**Total:** ${agents.length} agents (${neurons.length} neurons, ${workflows.length} workflows, ${skills.length} skills)\n`);
 
-  const orderedFolders = Array.from(grouped.keys()).sort((a, b) => {
-    if (a === '.') return -1;
-    if (b === '.') return 1;
-    return a.localeCompare(b);
-  });
+  // Build and render tree
+  const tree = buildTree(agents);
+  const treeLines = renderTree(tree);
+  console.log(treeLines.join('\n'));
 
-  orderedFolders.forEach((folder) => {
-    const label = folder === '.' ? 'root' : folder;
-    console.log(`### ${label}\n`);
-
-    const folderAgents = grouped.get(folder)!.sort((a, b) => a.label.localeCompare(b.label));
-
-    folderAgents.forEach((agent) => {
-      const description = ((agent.meta?.description || agent.meta?.summary || '') as string)
-        .replace(/\s+/g, ' ')
-        .trim();
-      const summary = truncateText(description || '—', 96);
-      console.log(`- **${agent.id}**: ${summary}`);
-    });
-
-    console.log('');
-  });
+  console.log('\n## 💡 Quick Guide\n');
+  console.log('**Icons:**');
+  console.log('  🧠 Neuron (main executable agent)');
+  console.log('  ⚙️  Workflow (neuron-scoped sub-task)');
+  console.log('  💡 Skill (capability/pattern)');
+  console.log('  📁 Folder (organizational grouping)\n');
+  console.log('**Commands:**');
+  console.log('  genie run <neuron-id> "<prompt>"    # Start a neuron');
+  console.log('  genie list sessions                 # View active sessions');
+  console.log('  genie view <session-id>             # View session transcript');
 }
