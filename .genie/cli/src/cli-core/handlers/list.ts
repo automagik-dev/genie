@@ -28,6 +28,10 @@ export function createListHandler(ctx: HandlerContext): Handler {
 
     if (target === 'sessions') {
       const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
+
+      // TODO (Wish #120-B): Optionally query Forge for live session status
+      // For now, rely on session store (updated by Forge integration in run/resume/stop handlers)
+
       const entries = Object.entries(store.sessions || {});
 
       // In v3, sessions are keyed by name (not sessionId)

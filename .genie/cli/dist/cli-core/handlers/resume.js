@@ -88,6 +88,23 @@ function createResumeHandler(ctx) {
         session.exitCode = null;
         session.signal = null;
         await (0, shared_1.persistStore)(ctx, store);
+        // Check if this is a Forge-managed session
+        const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
+        if (forgeEnabled && session.executor === 'forge') {
+            // Use Forge follow-up API instead of spawning new process
+            try {
+                const { createForgeExecutor } = require('../../lib/forge-executor');
+                const forgeExecutor = createForgeExecutor();
+                await forgeExecutor.resumeSession(session.sessionId, prompt);
+                process.stdout.write(`✓ Resumed session ${session.name}\n`);
+                return;
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                process.stdout.write(`⚠️  Forge resume failed: ${message}\n`);
+                process.stdout.write(`⚠️  Falling back to traditional resume\n`);
+            }
+        }
         const handledBackground = await (0, shared_1.maybeHandleBackgroundLaunch)(ctx, {
             parsed,
             config: ctx.config,
@@ -99,7 +116,8 @@ function createResumeHandler(ctx) {
             executionMode: modeName,
             startTime,
             logFile,
-            allowResume: false
+            allowResume: false,
+            prompt
         });
         if (handledBackground) {
             return;

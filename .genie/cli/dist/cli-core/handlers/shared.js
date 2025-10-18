@@ -269,6 +269,37 @@ async function maybeHandleBackgroundLaunch(ctx, params) {
     if (!parsed.options.background || parsed.options.backgroundRunner) {
         return false;
     }
+    // Check if Forge backend is available
+    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
+    if (forgeEnabled) {
+        // Use Forge executor for background sessions
+        try {
+            const { handleForgeBackgroundLaunch } = require('../../lib/forge-executor');
+            const prompt = params.prompt || '';
+            const handled = await handleForgeBackgroundLaunch({
+                agentName,
+                prompt,
+                config,
+                paths,
+                store,
+                entry,
+                executorKey: params.executorKey,
+                executionMode,
+                startTime
+            });
+            if (handled) {
+                return true;
+            }
+            // If Forge fails, fall through to traditional background launcher
+            process.stdout.write(`⚠️  Forge backend unavailable, using traditional background launcher\n`);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            process.stdout.write(`⚠️  Forge error: ${message}\n`);
+            process.stdout.write(`⚠️  Falling back to traditional background launcher\n`);
+        }
+    }
+    // Traditional background launcher (fallback)
     const runnerPid = backgroundManager.launch({
         rawArgs: parsed.options.rawArgs,
         startTime,

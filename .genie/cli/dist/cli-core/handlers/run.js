@@ -84,7 +84,8 @@ function createRunHandler(ctx) {
             executionMode: modeName,
             startTime,
             logFile,
-            allowResume: true
+            allowResume: true,
+            prompt
         });
         if (handledBackground) {
             return;

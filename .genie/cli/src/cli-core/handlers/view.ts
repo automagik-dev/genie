@@ -82,15 +82,49 @@ export function createViewHandler(ctx: HandlerContext): Handler {
     //     }
     //   }
     //
-    // For now: Use CLI log only (no filesystem violations)
-    const transcript = raw;
+    // Try to get Forge logs if this is a Forge-managed session
+    let transcript = raw;
+    let source = 'CLI log';
+
+    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
+    if (forgeEnabled && entry.executor === 'forge' && entry.sessionId) {
+      try {
+        const { createForgeExecutor } = require('../../lib/forge-executor');
+        const forgeExecutor = createForgeExecutor();
+
+        // Get task attempt status and logs
+        const status = await forgeExecutor.getSessionStatus(entry.sessionId);
+
+        // Try to get logs via WebSocket URL or execution processes
+        // For now, we'll try to get the execution processes and read their logs
+        const { ForgeClient } = require('../../../forge.js');
+        const forgeClient = new ForgeClient(
+          process.env.FORGE_BASE_URL || 'http://localhost:3000',
+          process.env.FORGE_TOKEN
+        );
+
+        const processes = await forgeClient.listExecutionProcesses(entry.sessionId);
+
+        if (processes && processes.length > 0) {
+          // Get the latest process logs
+          const latestProcess = processes[processes.length - 1];
+          if (latestProcess.output) {
+            transcript = latestProcess.output;
+            source = 'Forge logs';
+          }
+        }
+      } catch (error) {
+        // Fallback to CLI log if Forge API fails
+        console.warn(`Failed to fetch Forge logs for ${entry.sessionId}, using CLI log`);
+      }
+    }
 
     return {
       name: entry.name || sessionName,
       agent: agentName,
       status: entry.status || 'unknown',
       transcript,
-      source: 'CLI log', // TODO (Wish #120-A): Change to 'Forge logs' when using Forge API
+      source,
       mode: entry.mode || entry.preset,
       created: entry.created,
       lastUsed: entry.lastUsed,

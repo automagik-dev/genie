@@ -104,7 +104,8 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       executionMode: modeName,
       startTime,
       logFile,
-      allowResume: true
+      allowResume: true,
+      prompt
     });
 
     if (handledBackground) {

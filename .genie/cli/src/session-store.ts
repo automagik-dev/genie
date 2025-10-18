@@ -1,5 +1,14 @@
 import fs from 'fs';
 
+/**
+ * Session entry metadata
+ *
+ * Forge Integration (Wish #120-A):
+ * - When `executor === 'forge'`, `sessionId` is the Forge task attempt ID
+ * - Forge sessions use Forge backend for all operations (create, resume, stop, view)
+ * - Traditional sessions use background-launcher.ts with PID-based management
+ * - Both types coexist in the same session store (backwards compatibility)
+ */
 export interface SessionEntry {
   agent: string;
   name?: string;  // Friendly session name (user-provided or auto-generated)
@@ -12,12 +21,12 @@ export interface SessionEntry {
   status?: string;
   background?: boolean;
   runnerPid?: number | null;
-  executor?: string;
+  executor?: string;  // 'forge' for Forge-managed sessions, 'codex'/'claude' for traditional
   executorPid?: number | null;
   exitCode?: number | null;
   signal?: string | null;
   startTime?: string;
-  sessionId?: string | null;
+  sessionId?: string | null;  // Forge task attempt ID when executor === 'forge'
   [key: string]: unknown;
 }
 
