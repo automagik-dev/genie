@@ -38,7 +38,8 @@ class ForgeClient {
         if (!result.success) {
             throw new Error(result.message || 'API request failed');
         }
-        return result.data;
+        // For DELETE operations, data field might not exist
+        return result.data !== undefined ? result.data : null;
     }
     // ============================================================================
     // HEALTH & SYSTEM
