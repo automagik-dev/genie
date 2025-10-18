@@ -310,30 +310,34 @@ class CommitAdvisory {
       references.set(commit.hash, refs);
     }
 
-    // Rule 2: Commit Traceability (BLOCKING) - Skip for release branches
-    if (!isReleaseBranch) {
-      for (const commit of this.commits) {
-        const refs = references.get(commit.hash);
-        if (!refs.hasWishRef && !refs.hasIssueRef) {
-          this.errors.push({
-            commit: commit.hash.substring(0, 8),
-            subject: commit.subject.substring(0, 60),
-            reason: 'Not linked to wish or GitHub issue',
-            why: 'Every commit must trace to a work item (wish or issue) so we can track WHY code was written',
-            fixes: [
-              {
-                label: 'Link to existing wish',
-                command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nwish: wish-slug"`,
-                description: 'Replace "wish-slug" with an actual wish slug from .genie/wishes/'
-              },
-              {
-                label: 'Link to GitHub issue',
-                command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nfixes #NNN"`,
-                description: 'Replace NNN with actual GitHub issue number'
-              }
-            ]
-          });
-        }
+    // Release branch: Skip traceability check, add validation pass
+    if (isReleaseBranch) {
+      this.passes.push('Release branch - traceability validation skipped (expected for automated releases)');
+      return;
+    }
+
+    // Rule 2: Commit Traceability (BLOCKING)
+    for (const commit of this.commits) {
+      const refs = references.get(commit.hash);
+      if (!refs.hasWishRef && !refs.hasIssueRef) {
+        this.errors.push({
+          commit: commit.hash.substring(0, 8),
+          subject: commit.subject.substring(0, 60),
+          reason: 'Not linked to wish or GitHub issue',
+          why: 'Every commit must trace to a work item (wish or issue) so we can track WHY code was written',
+          fixes: [
+            {
+              label: 'Link to existing wish',
+              command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nwish: wish-slug"`,
+              description: 'Replace "wish-slug" with an actual wish slug from .genie/wishes/'
+            },
+            {
+              label: 'Link to GitHub issue',
+              command: `git commit --amend -m "${commit.subject.substring(0, 40)}\n\nfixes #NNN"`,
+              description: 'Replace NNN with actual GitHub issue number'
+            }
+          ]
+        });
       }
     }
 
