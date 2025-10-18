@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+- implement Groups F-G of self-updating ecosystem (79c295e)
+
+### Fixes
+- update identity-smoke test for V2 session format (ed9b371)
+- clean up cross-references and improve validator (ee07ea8)
+
+### Other
+- fix(tests): correct identity-smoke.sh for V2 session format (71964ae)
+- fix(mcp): background polling V2 format + RC17 prep (50f752e)
+- docs(learn): add sequential questioning protocol teaching (7f68986)
+- feat(skills): add sequential-questioning protocol (e25717b)
+
 **Current Version:** !`node -p "require('./package.json').version"`
 **Generated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
