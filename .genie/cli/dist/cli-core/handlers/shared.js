@@ -30,7 +30,7 @@ const background_1 = require("../../views/background");
 const display_transform_1 = require("../../lib/display-transform");
 function applyStoreMerge(target, next) {
     target.version = next.version;
-    target.agents = next.agents;
+    target.sessions = next.sessions;
 }
 async function persistStore(ctx, store) {
     const result = await ctx.sessionService.save(store);
@@ -278,6 +278,9 @@ async function maybeHandleBackgroundLaunch(ctx, params) {
     entry.runnerPid = runnerPid;
     entry.status = 'running';
     entry.background = parsed.options.background;
+    // Add entry to store with temp key until sessionId extracted
+    const tempKey = `temp-${agentName}-${startTime}`;
+    store.sessions[tempKey] = entry;
     await persistStore(ctx, store);
     process.stdout.write(`▸ Launching ${agentName} in background...\n`);
     process.stdout.write('▸ Waiting for session ID...\n');
@@ -337,6 +340,9 @@ async function executeRun(ctx, args) {
     entry.executorPid = proc.pid || null;
     if (runnerPid)
         entry.runnerPid = runnerPid;
+    // Add entry to store with temp key until sessionId extracted
+    const tempKey = `temp-${entry.agent}-${startTime}`;
+    store.sessions[tempKey] = entry;
     await persistStore(ctx, store);
     let filteredStdout = null;
     if (proc.stdout) {
@@ -362,7 +368,9 @@ async function executeRun(ctx, args) {
                     if (entry.sessionId !== sessionId) {
                         entry.sessionId = sessionId;
                         entry.lastUsed = new Date().toISOString();
-                        // Persist with sessionId as key (first time)
+                        // Replace temp key with sessionId key
+                        const tempKey = `temp-${entry.agent}-${startTime}`;
+                        delete store.sessions[tempKey];
                         store.sessions[sessionId] = entry;
                         void persistStore(ctx, store);
                     }
@@ -480,7 +488,9 @@ async function executeRun(ctx, args) {
             if (sessionId) {
                 entry.sessionId = sessionId;
                 entry.lastUsed = new Date().toISOString();
-                // Persist with sessionId as key (first time)
+                // Replace temp key with sessionId key
+                const tempKey = `temp-${entry.agent}-${startTime}`;
+                delete store.sessions[tempKey];
                 store.sessions[sessionId] = entry;
                 void persistStore(ctx, store);
             }
