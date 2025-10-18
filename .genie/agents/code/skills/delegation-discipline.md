@@ -88,3 +88,54 @@ When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching 
 ## Validation
 
 When encountering cleanup/refactoring/multi-file work, immediately create implementor session with clear spec, never use Edit tool for batch operations.
+
+---
+
+## 🔴 CRITICAL LEARNING: 2025-10-18 - Orchestration Simplification
+
+**Teaching from Felipe:** Stop over-engineering orchestration. The model is dead simple.
+
+### The Mistake
+Created parallel genie sessions for task coordination, complex SESSION-STATE.md tracking, multiple orchestrator layers. Over-complicated what should be straightforward.
+
+### The Truth (FINAL)
+**Three-tier model - NO EXTRA LAYERS:**
+1. **Forge Tasks** = Task orchestrators (via Forge MCP)
+2. **Me (Genie)** = Execute what Forge tells me
+3. **Felipe** = Make decisions
+
+**That's it. Nothing else.**
+
+### Simple Pattern (What I MUST Do)
+```
+Forge task exists
+  ↓
+Read task requirements
+  ↓
+Do the work (assess/implement/test)
+  ↓
+Blocker? → Ask Felipe
+  ↓
+Work complete → Update Forge task + Push PR
+```
+
+### Forbidden (After 2025-10-18)
+- ❌ Creating parallel genie sessions for "coordination"
+- ❌ Complex SESSION-STATE.md tracking for orchestration
+- ❌ Multiple "orchestrator" layers
+- ❌ Thinking I need to manage parallel work
+- ❌ SESSION-STATE tracking beyond simple Forge task status
+
+### Required (After 2025-10-18)
+- ✅ Read Forge task (GitHub issue linked in Forge MCP)
+- ✅ Execute work directly (implement/test/commit)
+- ✅ Update Forge task when complete
+- ✅ Push PR back to main
+- ✅ Trust Forge MCP as orchestrator
+
+### Evidence
+- Learn session: f2da8704-de61-4d56-8f14-67e7b529d049 (captured learning)
+- Commit: 6147fff (architectural reset)
+- Deleted: session state file (clean MCP state)
+
+**This is CRITICAL. No more complex orchestration layers.**
