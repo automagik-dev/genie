@@ -410,14 +410,337 @@ PHASE 4: Production (Week 4)
 
 ---
 
-**Wish Status:** ✅ READY FOR IMPLEMENTATION
-**Investigation:** ✅ COMPLETE (~5,000 lines of documentation + POC)
+**Wish Status:** ✅ READY FOR IMPLEMENTATION (EXPANDED SCOPE)
+**Investigation:** ✅ COMPLETE (~8,000 lines of documentation + POC + integration analysis)
 **Decision Matrix:** 9.2/10 (STRONG YES)
-**Recommendation:** PROCEED IMMEDIATELY
+**Recommendation:** PROCEED IMMEDIATELY (with expanded scope per decision matrix)
+
+---
+
+## 📈 ADDENDUM: Integration with Consolidated Decision Matrix (2025-10-18)
+
+### Executive Summary
+
+Based on the **consolidated Forge ⇄ Genie integration decision matrix**, this wish has been **expanded** to include additional high-value endpoints that were decided YES/INCLUDE but not covered in the original POC investigation.
+
+**Key Changes:**
+- **+21 tasks** added across Groups A-D (+105% expansion)
+- **Timeline:** 4 weeks → 6-8 weeks (+50-100%)
+- **Scope:** Core replacement + Git integration + Notifications + Updating neuron
+- **ROI:** Still extremely high (9.2/10 maintained)
+
+**Detailed Analysis:** See `.genie/reports/FORGE-GENIE-INTEGRATION-ANALYSIS-20251018.md`
+
+---
+
+### Expanded Group A: Core Replacement + Git Integration (Week 2-3) [+9 tasks]
+
+**Original Scope:**
+1. Integrate forge-executor.ts into genie.ts
+2. Update handlers (run, resume, stop, list, view)
+3. Delete background-launcher.ts (~120 lines)
+4. Delete background-manager.ts (~150 lines)
+
+**NEW - Git Integration (9 endpoints):**
+5. ✅ `healthCheck()` - Pre-flight validation before operations
+6. ✅ `updateTask()` - Task renaming, notes, status updates
+7. ✅ `deleteTask()` - Session deletion (cleanup)
+8. ✅ `mergeTaskAttempt()` - Finalize approved changes (one-click merge)
+9. ✅ `pushTaskAttemptBranch()` - Manual/integrated push to remote
+10. ✅ `abortTaskAttemptConflicts()` - Rollback/cleanup merge conflicts
+11. ✅ `createTaskAttemptPullRequest()` - Automated PR creation
+12. ✅ `attachExistingPullRequest()` - Auto-link existing PR via naming convention
+13. ✅ `getTaskAttemptChildren()` - State tree synchronization (neuron coordination)
+
+**Rationale:**
+- Decision matrix marked all 9 endpoints as **YES (HIGH PRIORITY)**
+- Git operations enable zero-click workflow (PR automation)
+- State tree sync critical for multi-neuron coordination
+- Health check prevents operations against unavailable backend
+
+**Verification (Expanded):**
+- All handlers use Forge API
+- Git operations functional (merge, push, PR, abort)
+- Health check passes before operations
+- State tree synchronized with Forge backend
+- All tests pass (`pnpm run check`)
+
+**Timeline:** 2-3 weeks (expanded from 1 week due to Git complexity)
+
+---
+
+### Expanded Group B: Streaming + Inspection (Week 3-4) [+4 tasks]
+
+**Original Scope:**
+1. WebSocket log streaming (log-streamer.ts)
+2. Live diffs (diff-streamer.ts)
+3. `view --live` flag
+4. `diff <session-id> [--live]` command
+
+**NEW - Inspection/Audit (4 endpoints):**
+5. ✅ `getCommitInfo()` - Inspect individual commit details
+6. ✅ `compareCommitToHead()` - Compare commits (audit trail)
+7. ✅ `getTaskAttemptBranchStatus()` - Git branch status via API
+8. ✅ Branch status display in `view` command (integrated)
+
+**Rationale:**
+- Decision matrix marked inspection endpoints as **YES (MEDIUM PRIORITY)**
+- Audit trail critical for debugging and compliance
+- Branch status useful for QA/review workflows
+
+**Verification (Expanded):**
+- WebSocket latency < 100ms
+- Live diffs show changes in real-time
+- Commit inspection works correctly
+- Branch status accurate and up-to-date
+- Documentation updated
+
+**Timeline:** 1-2 weeks
+
+---
+
+### Expanded Group C: Advanced Features + Notifications (Week 4-5) [+4 tasks]
+
+**Original Scope:**
+1. PR automation (optional)
+2. Approval requests (optional)
+3. Draft management (optional)
+
+**NEW - Advanced Management + Omni Notifications (4 items):**
+4. ✅ `changeTaskAttemptTargetBranch()` - Retarget PRs dynamically
+5. ✅ `openTaskAttemptInEditor()` - Local QA/review (VS Code, Cursor, Zed)
+6. ✅ `replaceTaskAttemptProcess()` - Executor/model switching mid-execution
+7. ✅ **Omni Notifications** - Real-time event notifications via WhatsApp/Slack/Discord
+
+**Omni Event Mapping:**
+- `task_started` → "🧞 Genie session started: {agent} ({sessionId})"
+- `task_completed` → "✅ Genie session completed: {agent} ({sessionId})"
+- `task_failed` → "❌ Genie session failed: {agent} ({sessionId})"
+- `pr_created` → "🔀 PR created: {url}"
+- `merge_complete` → "🎉 Merge complete: {branch} → {target}"
+- `approval_requested` → "🤔 Approval needed: {message}"
+
+**Rationale:**
+- Decision matrix marked advanced endpoints as **YES (MEDIUM PRIORITY)**
+- Omni notifications marked as **INCLUDE NOW** (leveraging existing integration)
+- Retargeting useful for dynamic workflow changes
+- Editor integration improves local development UX
+
+**Configuration:**
+```yaml
+# .genie/config.yml
+notifications:
+  enabled: true
+  omni:
+    instance_name: genie-notifications
+    phone: +1234567890
+  events:
+    - task_started
+    - task_completed
+    - task_failed
+    - pr_created
+```
+
+**Verification (Expanded):**
+- Retargeting works correctly
+- Editor integration functional
+- Executor switching works mid-execution
+- Notifications delivered via Omni
+- Event mapping accurate
+- No notification spam (debouncing)
+
+**Timeline:** 1-2 weeks
+
+---
+
+### Expanded Group D: Migration & Testing + Updating Neuron (Week 5-6) [+4 tasks]
+
+**Original Scope:**
+1. Migration script (sessions.json → Forge tasks)
+2. Run 7 POC test cases
+3. Stress test: 10 parallel sessions
+4. Performance profiling
+5. Migration guide for users
+6. Rollback plan
+
+**NEW - Updating Neuron + Version Management (4 items):**
+7. ✅ Create `/update` directory structure
+8. ✅ Implement version files (diff-based: "what changed between versions")
+9. ✅ Create updating neuron (handles version comparisons + migrations)
+10. ✅ Document update workflow and version file format
+
+**Updating Neuron Structure:**
+```
+.genie/
+├── update/
+│   ├── version-2.3.0-to-2.4.0.md    # What changed (diff description)
+│   ├── version-2.4.0-to-2.5.0.md    # What changed
+│   ├── migration-scripts/
+│   │   ├── 2.3.0-to-2.4.0.ts
+│   │   └── 2.4.0-to-2.5.0.ts
+│   └── update-neuron.md             # Neuron instructions
+```
+
+**Rationale:**
+- Decision matrix marked updating neuron as **NEW CAPABILITY**
+- Version files provide clarity on changes (diff-based approach)
+- Centralized update logic (all updates under `/update`)
+- Enables automated version migrations
+
+**Verification (Expanded):**
+- All 7 POC test cases pass
+- 10 parallel sessions safe (zero conflicts)
+- Performance targets met
+- Migration script works correctly
+- Updating neuron functional (version comparisons + migrations)
+- Version files accurate and complete
+- Documentation complete
+
+**Timeline:** 1-2 weeks
+
+---
+
+### Updated Success Metrics
+
+**Added metrics from decision matrix integration:**
+
+| Metric | Current | Target | How to Measure |
+|--------|---------|--------|----------------|
+| Git operations | Manual (gh pr create) | Automated (API call) | Time to create PR (< 10s) |
+| Health check latency | None | < 1s | Pre-flight validation time |
+| Task updates | Not supported | Full CRUD | updateTask() success rate |
+| State tree sync | Manual (SESSION-STATE.md) | Automatic (API) | getTaskAttemptChildren() accuracy |
+| Notifications | None | Real-time (< 5s) | Event → Omni delivery time |
+| Version migrations | Manual | Automated (updating neuron) | Migration success rate |
+
+---
+
+### Updated Timeline
+
+| Phase | Original | Expanded | Change | Justification |
+|-------|----------|----------|--------|---------------|
+| **Group A** | 1 week | 2-3 weeks | +100-200% | +9 Git integration tasks (complex) |
+| **Group B** | 1 week | 1-2 weeks | +0-100% | +4 inspection endpoints (medium) |
+| **Group C** | 1 week | 1-2 weeks | +0-100% | +4 advanced features + Omni (medium) |
+| **Group D** | 1 week | 1-2 weeks | +0-100% | +4 updating neuron tasks (medium) |
+| **TOTAL** | 4 weeks | 6-8 weeks | +50-100% | +21 tasks total |
+
+---
+
+### Updated Risk Assessment
+
+**New risks from expanded scope:**
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| Scope creep (21 new tasks) | Medium | Medium | Phased approach, prioritize core (Group A) |
+| Git operations complexity | Low | Medium | Use Forge API (already proven stable) |
+| Notification spam | Low | Low | Debouncing + user configuration |
+| Version migration failures | Low | Medium | Dry-run mode + rollback capability |
+
+**Overall Risk:** LOW-MEDIUM (all new risks mitigated, no high-risk items)
+
+---
+
+### Updated File Structure
+
+**NEW files (from decision matrix):**
+```
+.genie/
+├── update/                             # NEW - Version management
+│   ├── version-files/
+│   ├── migration-scripts/
+│   └── update-neuron.md
+├── cli/src/lib/
+│   ├── git-operations.ts               # NEW - Git integration
+│   ├── notification-service.ts         # NEW - Omni integration
+│   └── version-manager.ts              # NEW - Update logic
+└── reports/
+    └── FORGE-GENIE-INTEGRATION-ANALYSIS-20251018.md  # ✅ Complete
+```
+
+---
+
+### Coverage Summary
+
+**Decision Matrix → Implementation Mapping:**
+
+| Category | Total Endpoints | YES | POC Coverage | New Tasks | Status |
+|----------|----------------|-----|--------------|-----------|--------|
+| **1 - Health** | 1 | 1 | 0 | 1 | ✅ Group A |
+| **2 - Projects** | 8 | 2 | 2 | 0 | ✅ Complete |
+| **3 - Tasks** | 6 | 4 | 2 | 2 | ✅ Group A |
+| **4 - Task Attempts** | 19 | 17 | 8 | 9 | ✅ Groups A-C |
+| **6-15 - Discovery** | ~60+ | 0 | 0 | 0 | 📋 Future phase |
+| **TOTAL** | ~94+ | 24 | 12 | 12 | ✅ 50% expansion |
+
+**Key Insight:** 50% of YES decisions (12/24) already in POC, 50% (12/24) added via integration analysis.
+
+---
+
+### OpenAPI Specification
+
+**Complete specification available in:**
+`.genie/reports/FORGE-GENIE-INTEGRATION-ANALYSIS-20251018.md` (Part 5)
+
+**Highlights:**
+- 24 core endpoints documented (Categories 1-4, YES decisions)
+- Full request/response schemas
+- Examples and validation rules
+- Ready for Forge backend alignment
+
+---
+
+### Breaking Changes (Updated)
+
+**NEW - Breaking Change #3:**
+
+#### 3. Task Updates (NEW Capability)
+
+**Current:** No way to rename/update tasks after creation
+**Forge:** Full CRUD via updateTask() API
+
+**Mitigation:**
+- Update MCP tools to expose updateTask()
+- Add CLI flag: `npx automagik-genie update <session-id> --title "new title"`
+
+**Impact:** Low (new capability, no existing behavior broken)
+
+---
+
+### References (Updated)
+
+**Investigation Reports:**
+- FORGE-API-VALIDATION-20251018.md - Complete API validation
+- FORGE-VS-GENIE-COMPARISON-20251018.md - Side-by-side comparison
+- IMPLEMENTATION-STRATEGY-20251018.md - 4-week phased plan
+- TEST-PLAN-POC-20251018.md - 7 comprehensive test cases
+- GENIE-TO-FORGE-REPLACEMENT-MAP-20251018.md - 1:1 mapping
+- PRE-WISH-SUMMARY-20251018.md - Decision matrix (9.2/10)
+- INVESTIGATION-COMPLETE-20251018.md - Executive summary
+- **FORGE-GENIE-INTEGRATION-ANALYSIS-20251018.md** - ✅ **Integration analysis (NEW)**
+
+**Total Documentation:** ~8,000 lines (7 reports + integration analysis + POC)
+
+---
+
+### Final Recommendation (Updated)
+
+✅ **PROCEED WITH EXPANDED SCOPE**
+
+**Justification:**
+1. ✅ Decision matrix adds high-value features (Git ops, notifications, updating neuron)
+2. ✅ Timeline remains reasonable (6-8 weeks, phased approach)
+3. ✅ ROI still extremely high (9.2/10 maintained)
+4. ✅ All new tasks have clear mitigations
+5. ✅ 50% already validated via POC (12/24 endpoints)
+
+**Next Action:** Begin Group A implementation (Core Replacement + Git Integration)
 
 ---
 
 **Created by:** Genie (forge/120-executor-replacement)
 **Date:** 2025-10-18
-**Worktree:** c3d1-forge-120-execut
-**Total Investigation Time:** ~5 hours (2 sessions)
+**Worktree:** /var/tmp/automagik-forge/worktrees/b636-wish-120-executo
+**Total Investigation Time:** ~8 hours (3 sessions: POC + investigation + integration analysis)
+**Expanded:** 2025-10-18 (post-decision matrix integration)
