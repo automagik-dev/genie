@@ -121,11 +121,18 @@ function normalizeSessionStore(
 
     const sessions: Record<string, SessionEntry> = {};
     Object.entries(incoming.agents).forEach(([agentName, entry]) => {
+      // Skip metadata fields (version, sessions, executor) that got mixed into agents during corruption
+      if (typeof entry !== 'object' || entry === null) return;
+      if (agentName === 'version' || agentName === 'sessions' || agentName === 'executor') return;
+
+      // Skip entries that don't look like sessions (no agent or sessionId field)
+      if (!entry.agent && !entry.sessionId) return;
+
       // Generate sessionId if missing (fallback to agent name for old entries)
       const sessionId = entry.sessionId || `legacy-${agentName}-${Date.now()}`;
       sessions[sessionId] = {
         ...entry,
-        agent: agentName,
+        agent: entry.agent || agentName,
         sessionId
       };
     });
