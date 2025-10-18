@@ -294,6 +294,25 @@ class CommitAdvisory {
   }
 
   /**
+   * Check if commit is auto-generated (from git hooks, forge, etc)
+   */
+  isAutomatedCommit(commit) {
+    const full = `${commit.subject} ${commit.body}`;
+
+    // Patterns for automated commits
+    const patterns = [
+      /\(auto-generated\)/i,
+      /\[skip ci\]/i,
+      /\[auto\]/i,
+      /^chore:\s*(auto-|update.*timestamp|update.*token count)/i,
+      /^chore:\s*update\s+(AGENTS|STATE|CHANGELOG)\.md/i,
+      /neural graph/i
+    ];
+
+    return patterns.some(pattern => pattern.test(full));
+  }
+
+  /**
    * Validate commits
    */
   validateCommits(isReleaseBranch = false) {
@@ -318,6 +337,11 @@ class CommitAdvisory {
 
     // Rule 2: Commit Traceability (BLOCKING)
     for (const commit of this.commits) {
+      // Skip automated/forge commits from traceability check
+      if (this.isAutomatedCommit(commit)) {
+        continue;
+      }
+
       const refs = references.get(commit.hash);
       if (!refs.hasWishRef && !refs.hasIssueRef) {
         this.errors.push({
@@ -343,6 +367,11 @@ class CommitAdvisory {
 
     // Rule 3: Bug Commits Must Have Issues (BLOCKING)
     for (const commit of this.commits) {
+      // Skip automated/forge commits from bug fix check
+      if (this.isAutomatedCommit(commit)) {
+        continue;
+      }
+
       if (this.isBugFix(commit)) {
         const refs = references.get(commit.hash);
         if (!refs.hasIssueRef) {
