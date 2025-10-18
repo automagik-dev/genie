@@ -54,3 +54,110 @@ Merge to main + archive worktree
 - Every worktree MUST have corresponding open PR (or be in progress)
 - Every merged PR MUST have completed forge card
 - Main branch MUST only receive PRs (no direct commits for forge work)
+
+## Forge as Meta-Neuron: Continuous Learning *(CRITICAL)*
+
+**Core Principle:** Forge is not just for code implementation. Forge can host ANY persistent work unit, including continuous learning. When Forge hosts a "learn" task, results are VISIBLE to the user.
+
+**Why This Matters:**
+- **Visibility:** User sees learning results directly in Forge UI (not hidden in MCP session logs)
+- **Persistence:** Learning task lives alongside all other work (integrated development + learning)
+- **Coordination:** Learning integrated with code tasks, not separate workflow
+- **Continuity:** Each learning session builds on previous ones documented in Forge task
+- **Accountability:** Learning outcomes traceable + reviewable just like code
+
+**How It Works:**
+
+1. **Create Forge "learn" task** (permanent, ongoing):
+   - Task type: meta-learning
+   - Description: "Continuous framework learning from user corrections and patterns"
+   - Status: always active (never closed)
+   - Updates: Each learning session appends findings
+
+2. **Learning Loop:**
+   ```
+   Teaching Signal (user correction, new pattern, framework gap)
+     ↓
+   Create/Update Forge "learn" task description with observation
+     ↓
+   Genie delegates to learn neuron via MCP
+     ↓
+   Learn neuron analyzes + documents finding
+     ↓
+   Learn neuron updates framework files (skills, agents, docs)
+     ↓
+   Forge task updated with conclusion + changed files
+     ↓
+   User sees result immediately in Forge UI
+     ↓
+   Framework permanently updated with new knowledge
+   ```
+
+3. **Example Workflow:**
+   - **User:** "I notice the Forge-as-entry-point pattern..."
+   - **Genie:** Creates/updates Forge "learn" task with observation
+   - **Learn neuron:** Analyzes scope, identifies files to update (e.g., forge-integration.md)
+   - **Learn neuron:** Proposes changes, applies edits
+   - **Genie:** Updates Forge task: "Learning outcome: Documented Forge-as-entry-point pattern in forge-integration.md (lines 9-56)"
+   - **User sees:** Clear documentation of what was learned + where it was captured (visible in Forge)
+
+**Distinction from Implementation Tasks:**
+
+| Aspect | Implementation Task | Learning Task |
+|--------|-------------------|---------------|
+| **Purpose** | Deliver code feature | Capture framework knowledge |
+| **Output** | Code PR back to main | Framework documentation updates |
+| **Visibility** | Code changes in PR | Forge task entry + skill/agent updates |
+| **Lifecycle** | Created → In Progress → Complete → Archived | Permanent (always active) |
+| **Result** | Merged feature | Updated framework knowledge |
+
+**Benefits Over MCP-Only Learning:**
+
+**MCP-only approach (old):**
+- ❌ Learning happens in hidden session logs
+- ❌ User must use `mcp__genie__view` to see outcomes
+- ❌ No integration with development workflow
+- ❌ Learning sessions disconnected from code work
+
+**Forge-hosted learning (new):**
+- ✅ Learning visible in same UI as code tasks
+- ✅ User sees results immediately (no tool invocation needed)
+- ✅ Learning integrated with development (one workflow)
+- ✅ Each learning session builds on previous (documented in Forge task)
+- ✅ Traceable: What was learned + when + which files changed
+
+**Implementation Requirements:**
+
+1. **Forge task creation:**
+   ```
+   mcp__automagik_forge__create_task with:
+   - project_id: <project-id>
+   - title: "Continuous Learning"
+   - description: "Meta-neuron for capturing framework knowledge from user corrections and patterns. Always active."
+   ```
+
+2. **Task updates (after each learning session):**
+   ```
+   mcp__automagik_forge__update_task with:
+   - task_id: <learn-task-id>
+   - description: "[Previous description]\n\n**[Timestamp]:** [Learning outcome summary]\n- Files changed: [list]\n- Pattern documented: [summary]"
+   ```
+
+3. **Coordination with learn neuron:**
+   - Genie detects teaching signal → updates Forge "learn" task with observation
+   - Genie delegates to learn neuron: `mcp__genie__run with agent="learn" and prompt="[Teaching input]"`
+   - Learn neuron performs analysis + framework updates
+   - Genie updates Forge task with outcome summary
+   - User sees complete learning chain in Forge UI
+
+**Validation:**
+
+After implementing Forge-hosted learning:
+- [ ] Forge "learn" task exists and is always active
+- [ ] Each teaching signal creates/updates Forge task entry
+- [ ] Learn neuron outcomes visible in Forge task description
+- [ ] User can track all learning in one place (Forge UI)
+- [ ] Framework updates referenced in Forge task (files changed, patterns added)
+- [ ] No hidden learning sessions (everything visible in Forge)
+
+**Context:** Discovered 2025-10-18 when user taught: "forge can serve as neuron too, in this case, i can see results too"
