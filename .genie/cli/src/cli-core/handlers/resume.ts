@@ -32,37 +32,35 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     const found = findSessionEntry(store, sessionName, ctx.paths);
 
     if (!found) {
-      // Check if session file exists but is orphaned
-      const executorKey = ctx.config.defaults?.executor || ctx.defaultExecutorKey;
-      const executor = requireExecutor(ctx, executorKey);
-
-      if (executor.tryLocateSessionFileBySessionId && executor.resolvePaths) {
-        const executorConfig = ctx.config.executors?.[executorKey] || {};
-        const executorPaths = executor.resolvePaths({
-          config: executorConfig,
-          baseDir: ctx.paths.baseDir,
-          resolvePath: (target: string, base?: string) =>
-            path.isAbsolute(target) ? target : path.resolve(base || ctx.paths.baseDir || '.', target)
-        });
-
-        const sessionsDir = executorPaths.sessionsDir;
-        if (sessionsDir) {
-          const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionName, sessionsDir);
-          if (sessionFilePath && fs.existsSync(sessionFilePath)) {
-            throw new Error(
-              `❌ Session '${sessionName}' is not tracked in CLI state.\n\n` +
-              `Session file exists at:\n  ${sessionFilePath}\n\n` +
-              `This session cannot be resumed because CLI tracking information is missing.\n` +
-              `This may happen if sessions.json was corrupted or deleted.\n\n` +
-              `Options:\n` +
-              `  1. View the session: npx automagik-genie view ${sessionName}\n` +
-              `  2. Start a new session: npx automagik-genie run <agent> "<prompt>"\n` +
-              `  3. (Advanced) Manually restore sessions.json entry`
-            );
-          }
-        }
-      }
-
+      // CRITICAL: Do NOT access filesystem directly - this violates Forge worktree isolation
+      // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #3)
+      //
+      // OLD CODE (filesystem violation - REMOVED):
+      //   - executor.tryLocateSessionFileBySessionId()
+      //   - fs.existsSync(sessionFilePath)
+      //
+      // TODO (Wish #120-A): Use Forge MCP to check if session exists
+      // Proposed implementation:
+      //   try {
+      //     const task = await mcp__automagik_forge__get_task({ task_id: sessionName });
+      //     if (task) {
+      //       throw new Error(
+      //         `❌ Session '${sessionName}' is not tracked in CLI state.\n\n` +
+      //         `Forge task exists: ${task.id}\n` +
+      //         `Status: ${task.status}\n\n` +
+      //         `This session cannot be resumed because CLI tracking information is missing.\n` +
+      //         `This may happen if sessions.json was corrupted or deleted.\n\n` +
+      //         `Options:\n` +
+      //         `  1. View the session: npx automagik-genie view ${sessionName}\n` +
+      //         `  2. Start a new session: npx automagik-genie run <agent> "<prompt>"\n` +
+      //         `  3. (Advanced) Manually restore sessions.json entry`
+      //       );
+      //     }
+      //   } catch (error) {
+      //     // Session doesn't exist in Forge either
+      //   }
+      //
+      // For now: Simply throw error (no filesystem violations)
       throw new Error(`❌ No session found with name '${sessionName}'`);
     }
 

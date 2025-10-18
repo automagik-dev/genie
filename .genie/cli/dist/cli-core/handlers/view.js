@@ -5,7 +5,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createViewHandler = createViewHandler;
 const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
 const session_helpers_1 = require("../../lib/session-helpers");
 function createViewHandler(ctx) {
     return async (parsed) => {
@@ -17,34 +16,28 @@ function createViewHandler(ctx) {
         // Try sessions.json first (v3: sessions keyed by name)
         let found = (0, session_helpers_1.findSessionEntry)(store, sessionName, ctx.paths);
         let orphanedSession = false;
-        // If not found in sessions.json, try direct session file lookup
+        // If not found in sessions.json, try Forge API lookup
+        // CRITICAL: Do NOT access filesystem directly - this violates Forge worktree isolation
+        // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #1)
         if (!found) {
-            const executorKey = ctx.config.defaults?.executor || ctx.defaultExecutorKey;
-            const executor = ctx.executors[executorKey];
-            if (executor?.tryLocateSessionFileBySessionId && executor.resolvePaths) {
-                const executorConfig = ctx.config.executors?.[executorKey] || {};
-                const executorPaths = executor.resolvePaths({
-                    config: executorConfig,
-                    baseDir: ctx.paths.baseDir,
-                    resolvePath: (target, base) => path_1.default.isAbsolute(target) ? target : path_1.default.resolve(base || ctx.paths.baseDir || '.', target)
-                });
-                const sessionsDir = executorPaths.sessionsDir;
-                if (sessionsDir) {
-                    const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionName, sessionsDir);
-                    if (sessionFilePath && fs_1.default.existsSync(sessionFilePath)) {
-                        orphanedSession = true;
-                        const sessionFileContent = fs_1.default.readFileSync(sessionFilePath, 'utf8');
-                        return {
-                            name: sessionName,
-                            agent: 'unknown',
-                            status: 'orphaned',
-                            transcript: sessionFileContent,
-                            source: 'orphaned session file',
-                            filePath: sessionFilePath
-                        };
-                    }
-                }
-            }
+            // TODO (Wish #120-A): Use Forge MCP to check if session exists
+            // Proposed implementation:
+            //   try {
+            //     const task = await mcp__automagik_forge__get_task({ task_id: sessionName });
+            //     if (task) {
+            //       return {
+            //         name: sessionName,
+            //         agent: task.title.match(/^Genie: ([^\(]+)/)?.[1]?.trim() || 'unknown',
+            //         status: 'orphaned',
+            //         transcript: await getForgeTaskLogs(sessionName), // TODO: implement
+            //         source: 'Forge task',
+            //       };
+            //     }
+            //   } catch (error) {
+            //     // Session doesn't exist in Forge either
+            //   }
+            //
+            // For now: Simply throw error (no filesystem violations)
             throw new Error(`❌ No session found with name '${sessionName}'`);
         }
         const { agentName, entry } = found;
@@ -56,40 +49,42 @@ function createViewHandler(ctx) {
         }
         const raw = fs_1.default.readFileSync(logFile, 'utf8');
         const allLines = raw.split(/\r?\n/);
-        // Try to locate and read from session file for full conversation history
-        let sessionFileContent = null;
-        if (entry.sessionId && entry.startTime && executor?.locateSessionFile) {
-            const executorConfig = ctx.config.executors?.[executorKey] || {};
-            const executorPaths = executor.resolvePaths({
-                config: executorConfig,
-                baseDir: ctx.paths.baseDir,
-                resolvePath: (target, base) => path_1.default.isAbsolute(target) ? target : path_1.default.resolve(base || ctx.paths.baseDir || '.', target)
-            });
-            const sessionsDir = executorPaths.sessionsDir;
-            const startTime = new Date(entry.startTime).getTime();
-            if (sessionsDir && !Number.isNaN(startTime)) {
-                const sessionFilePath = executor.locateSessionFile({
-                    sessionId: entry.sessionId,
-                    startTime,
-                    sessionsDir
-                });
-                if (sessionFilePath && fs_1.default.existsSync(sessionFilePath)) {
-                    try {
-                        sessionFileContent = fs_1.default.readFileSync(sessionFilePath, 'utf8');
-                    }
-                    catch {
-                        // Fall back to CLI log if session file read fails
-                    }
-                }
-            }
-        }
-        const transcript = sessionFileContent || raw;
+        // CRITICAL: Do NOT read session files directly - this violates Forge worktree isolation
+        // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #2)
+        //
+        // OLD CODE (filesystem violation - REMOVED):
+        //   - executor.locateSessionFile()
+        //   - fs.existsSync(sessionFilePath)
+        //   - fs.readFileSync(sessionFilePath, 'utf8')
+        //
+        // TODO (Wish #120-A): Use Forge MCP to get logs (when Forge integration is complete)
+        // Proposed implementation:
+        //   let transcript = raw; // Default to CLI log
+        //
+        //   if (entry.sessionId && entry.executor === 'forge') {
+        //     try {
+        //       // Always prefer Forge logs over CLI logs (source of truth)
+        //       const forgeLogs = await mcp__automagik_forge__get_task_attempt_logs({
+        //         attempt_id: entry.sessionId
+        //       });
+        //       if (forgeLogs) {
+        //         transcript = forgeLogs;
+        //         source = 'Forge logs';
+        //       }
+        //     } catch (error) {
+        //       // Fallback to CLI log file if Forge API fails
+        //       console.warn(`Failed to fetch Forge logs for ${entry.sessionId}, using CLI log`);
+        //     }
+        //   }
+        //
+        // For now: Use CLI log only (no filesystem violations)
+        const transcript = raw;
         return {
             name: entry.name || sessionName,
             agent: agentName,
             status: entry.status || 'unknown',
             transcript,
-            source: sessionFileContent ? 'session file' : 'CLI log',
+            source: 'CLI log', // TODO (Wish #120-A): Change to 'Forge logs' when using Forge API
             mode: entry.mode || entry.preset,
             created: entry.created,
             lastUsed: entry.lastUsed,
