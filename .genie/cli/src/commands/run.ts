@@ -82,9 +82,10 @@ export async function runChat(
     ? envSessionId.trim()
     : uuidv4();
 
+  const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
   const entry: SessionEntry = {
     agent: resolvedAgentName,
-    name: parsed.options.name || generateSessionName(resolvedAgentName),
+    name: sessionName,
     preset: modeName,
     mode: modeName,
     logFile,
@@ -101,7 +102,8 @@ export async function runChat(
     startTime: new Date(startTime).toISOString(),
     sessionId: sessionId // UUID assigned immediately
   };
-  store.sessions[sessionId] = entry;
+  // v3 architecture: Use name as storage key (not UUID)
+  store.sessions[sessionName] = entry;
   saveSessions(paths as SessionPathsConfig, store);
 
   // Show executor info to user

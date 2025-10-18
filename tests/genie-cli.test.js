@@ -61,9 +61,9 @@ async function runCliCoreTests() {
     sessionsFile,
     JSON.stringify(
       {
-        version: 2,
+        version: 3,
         sessions: {
-          genieA: { agent: 'genieA', executor: 'codex', sessionId: 'genieA' }
+          genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' }
         }
       },
       null,
@@ -79,16 +79,16 @@ async function runCliCoreTests() {
     });
 
     const store = service.load();
-    store.sessions.genieB = { agent: 'genieB', executor: 'codex', sessionId: 'genieB' };
+    store.sessions.genieB = { agent: 'genieB', name: 'genieB', executor: 'codex', sessionId: 'genieB-uuid' };
 
     fs.writeFileSync(
       sessionsFile,
       JSON.stringify(
         {
-          version: 2,
+          version: 3,
           sessions: {
-            genieA: { agent: 'genieA', executor: 'codex', sessionId: 'genieA' },
-            genieC: { agent: 'genieC', executor: 'codex', sessionId: 'genieC' }
+            genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' },
+            genieC: { agent: 'genieC', name: 'genieC', executor: 'codex', sessionId: 'genieC-uuid' }
           }
         },
         null,
