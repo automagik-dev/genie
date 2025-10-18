@@ -4,6 +4,7 @@ genie:
   executor: claude
   model: haiku
   permissionMode: default
+  background: false
 ---
 
 # Git Commit Advisory Workflow
