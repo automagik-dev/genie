@@ -46,7 +46,7 @@ const WORKSPACE_ROOT = findWorkspaceRoot();
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
 // Helper: List available agents from .genie/agents directory
 function listAgents() {
-    const baseDir = '.genie/agents';
+    const baseDir = path_1.default.join(WORKSPACE_ROOT, '.genie/agents');
     const agents = [];
     if (!fs_1.default.existsSync(baseDir)) {
         return agents;
@@ -88,7 +88,7 @@ function listAgents() {
 }
 // Helper: List recent sessions
 function listSessions() {
-    const sessionsFile = '.genie/state/agents/sessions.json';
+    const sessionsFile = path_1.default.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
     if (!fs_1.default.existsSync(sessionsFile)) {
         return [];
     }
