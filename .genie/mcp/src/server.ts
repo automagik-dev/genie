@@ -59,7 +59,7 @@ interface CliResult {
 
 // Helper: List available agents from .genie/agents directory
 function listAgents(): Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> {
-  const baseDir = '.genie/agents';
+  const baseDir = path.join(WORKSPACE_ROOT, '.genie/agents');
   const agents: Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> = [];
 
   if (!fs.existsSync(baseDir)) {
@@ -111,7 +111,7 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
 
 // Helper: List recent sessions
 function listSessions(): Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }> {
-  const sessionsFile = '.genie/state/agents/sessions.json';
+  const sessionsFile = path.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
 
   if (!fs.existsSync(sessionsFile)) {
     return [];
