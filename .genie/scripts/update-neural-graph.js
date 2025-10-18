@@ -186,8 +186,6 @@ function calculateDistribution(node, stats = { total: 0, byCategory: {} }) {
  * Generate neural graph content
  */
 function generateNeuralGraphContent() {
-  const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-
   // Build graph starting from AGENTS.md
   console.log('📊 Building neural graph from AGENTS.md...');
   const graph = buildNeuralGraph(AGENTS_MD_PATH);
@@ -201,7 +199,7 @@ function generateNeuralGraphContent() {
   const stats = calculateDistribution(graph);
 
   let content = `${SECTION_HEADER}\n${MARKER_START}\n`;
-  content += `**Last Updated:** ${timestamp}\n`;
+  content += `**Last Updated:** !\`date -u +"%Y-%m-%d %H:%M:%S UTC"\`\n`;
   content += `**Total Tokens:** ${totalTokens.toLocaleString()} (baseline for efficiency validation)\n\n`;
 
   // Distribution breakdown

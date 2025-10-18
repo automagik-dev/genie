@@ -61,10 +61,8 @@ function scanDirectory(dirPath) {
  * Generate registry markdown content
  */
 function generateRegistryContent() {
-  const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-
   let content = `${SECTION_HEADER}\n${MARKER_START}\n`;
-  content += `**Last Updated:** ${timestamp}\n\n`;
+  content += `**Last Updated:** !\`date -u +"%Y-%m-%d %H:%M:%S UTC"\`\n\n`;
 
   // Scan each category
   for (const [category, dirPath] of Object.entries(SCAN_PATHS)) {
