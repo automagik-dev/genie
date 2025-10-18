@@ -20,34 +20,36 @@
 
 ## 📊 RC28 EXECUTION PLAN
 
-### **Phase 1: Foundation (Session Names) ✅ IN PROGRESS**
+### **Phase 1: Foundation (Session Names) ✅ COMPLETE**
 
 **Issue #146 - Session Name Architecture**
-- Status: ✅ Implementation complete, in final review
-- Branch: 115-session-name-architecture → rc28 (renamed)
-- Critical fix needed: run.ts:104 (storage key bug)
+- Status: ✅ Implementation complete, ready to merge
+- Branch: rc28 (consolidated)
 - **Why first:** Names align with Forge task names (foundation)
 
 **Forge Tasks:**
 - ✅ 93672720 - Complete session name implementation (DONE)
 - ✅ 31a28932 - Review session name architecture (DONE)
-- 🔴 b91ba10d - Fix critical bug in run.ts:104 (IN-REVIEW)
+- ✅ b91ba10d - Fix critical bug in run.ts:104 (DONE - verified at line 106)
+- ✅ eaed664f - Pre-push hook worktree fix (DONE - 2025-10-18 21:47 UTC)
 
 ---
 
-### **Phase 2: Core Replacement (Wish #120-A) 🚧 READY**
+### **Phase 2: Core Replacement (Wish #120-A) 🟢 READY**
 
-**Issue #143 - Forge Drop-In Replacement (Quick Win)**
-- Status: Discoveries complete, ready for implementation
+**Issue #143 - Forge Drop-In Replacement**
+- Status: 🟢 UNBLOCKED - POC exists, ready for handler integration
+- Discovery: forge-executor.ts POC EXISTS (308 lines, complete implementation)
 - Scope: 9 core endpoints, ZERO user-facing changes
-- Impact: Eliminates 5-7 critical bugs simultaneously
+- Impact: Eliminates 6+ critical bugs simultaneously
 
 **Discoveries Complete:**
-- ✅ e46f87c2 - Filesystem restrictions audit (3 CRITICAL violations fixed)
+- ✅ e46f87c2 - Filesystem restrictions audit (3 violations fixed in view.ts + resume.ts)
 - ✅ c8b8a793 - Migration script design (hybrid strategy)
+- ✅ **POC exists (2025-10-18 21:50 UTC):** `.genie/cli/src/lib/forge-executor.ts` (308 lines)
 
 **Forge Task:**
-- 🟡 5fcd097d - Implement Wish #120-A (IN-REVIEW, ready to start)
+- 🟡 5fcd097d - Wish #120-A (READY - POC verified, proceed with handler integration)
 
 **Implementation Groups:**
 - Group A: Core integration (8 tasks) - Replace background-launcher.ts
@@ -80,15 +82,17 @@
 1. **112fbf0b** - Create Advanced Forge MCP Server (FastMCP integration)
 2. **336a4dfe** - [WISH] #120-executor-replacement (parent investigation)
 
-### **In Review (3):**
-1. **b91ba10d** - Fix critical bug in run.ts:104 (PR #146 blocker) 🔴 CRITICAL
-2. **5fcd097d** - Implement Wish #120-A (ready to start)
-3. **f09d6d78** - Report pre-push hook worktree issue
+### **In Review (1):**
+1. **5fcd097d** - Wish #120-A implementation (POC verified, ready for integration)
 
-### **Done (7):**
-- ✅ Session name architecture complete
-- ✅ Filesystem audit complete (violations fixed)
-- ✅ Migration strategy complete
+### **Done (10):**
+- ✅ forge-executor.ts POC verification (exists at 308 lines)
+- ✅ b91ba10d - Critical run.ts:104 bug fix (verified)
+- ✅ eaed664f - Pre-push hook worktree fix (implemented)
+- ✅ 93672720 - Session name implementation
+- ✅ 31a28932 - Session name review
+- ✅ e46f87c2 - Filesystem audit (violations fixed)
+- ✅ c8b8a793 - Migration strategy design
 - ✅ Protocol violations learned
 - ✅ RC27 release tasks
 
@@ -116,11 +120,18 @@
 
 ## 🚀 NEXT ACTIONS
 
-**Immediate:**
-1. ✅ Rename branch: 115-session-name-architecture → rc28
-2. 🔴 Fix run.ts:104 critical bug (storage key)
-3. Merge PR #146 (session names) to rc28
-4. Start Forge task 5fcd097d (Wish #120-A implementation)
+**Ready to Execute (Wish #120-A Handler Integration):**
+1. ✅ Fix run.ts:104 critical bug (DONE - verified)
+2. ✅ Fix pre-push hook worktree issue (DONE - implemented)
+3. ✅ **forge-executor.ts POC verified** (EXISTS - 308 lines, complete)
+   - Location: `.genie/cli/src/lib/forge-executor.ts`
+   - API: createSession(), resumeSession(), stopSession(), listSessions()
+   - All methods implemented, ready for integration
+4. 🟢 **START: Handler integration** (Tasks 3-8 from Wish #120-A)
+   - Update run.ts → handleForgeBackgroundLaunch()
+   - Update stop.ts → forgeExecutor.stopSession()
+   - Update list.ts → forgeExecutor.listSessions()
+   - Delete background-launcher.ts (~270 lines)
 5. Monitor Forge MCP server task (112fbf0b)
 
 **After Wish #120-A Complete:**
