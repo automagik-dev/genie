@@ -137,8 +137,20 @@ function main() {
   fs.writeFileSync(PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
   log('green', '✅', 'Updated package.json');
 
+  // Update CHANGELOG for this RC (move Unreleased → new RC section) via Python hook script
+  try {
+    log('blue', '📝', 'Updating CHANGELOG.md...');
+    require('child_process').execSync(
+      `python3 ${path.join(__dirname, '..', '.genie', 'scripts', 'update-changelog.py')} rc ${newVersion}`,
+      { stdio: 'inherit' }
+    );
+    log('green', '✅', 'CHANGELOG updated');
+  } catch (e) {
+    log('yellow', '⚠️', 'CHANGELOG update failed; continuing without changelog move');
+  }
+
   // Git operations
-  exec('git add package.json');
+  exec('git add package.json CHANGELOG.md');
 
   const commitMessage = `chore: pre-release v${newVersion}
 

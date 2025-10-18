@@ -35,11 +35,12 @@ pnpm bump:minor
 
 **What happens:**
 1. ✅ Updates `package.json` from `2.0.1` → `2.1.0-rc.1`
-2. ✅ Creates git commit with co-author attribution
-3. ✅ Creates git tag `v2.1.0-rc.1`
-4. ✅ Pushes to GitHub
-5. ✅ Automatically triggers publish workflow
-6. ✅ CI publishes to npm with `@next` tag
+2. ✅ Updates `CHANGELOG.md` (moves [Unreleased] → `2.1.0-rc.1` section)
+3. ✅ Creates git commit with co-author attribution
+4. ✅ Creates git tag `v2.1.0-rc.1`
+5. ✅ Pushes to GitHub
+6. ✅ Automatically triggers publish workflow
+7. ✅ CI publishes to npm with `@next` tag
 
 **Testing RC:**
 ```bash
@@ -66,11 +67,12 @@ pnpm release:stable
 
 **What happens:**
 1. ✅ Updates `package.json` from `2.1.0-rc.X` → `2.1.0`
-2. ✅ Runs full test suite
-3. ✅ Creates git commit + tag `v2.1.0`
-4. ✅ Pushes to GitHub
-5. ✅ Creates GitHub release (auto-triggers publish workflow)
-6. ✅ CI publishes to npm with `@latest` tag
+2. ✅ Updates `CHANGELOG.md` (promotes last RC section → stable `2.1.0`)
+3. ✅ Runs full test suite
+4. ✅ Creates git commit + tag `v2.1.0`
+5. ✅ Pushes to GitHub
+6. ✅ Creates GitHub release (auto-triggers publish workflow)
+7. ✅ CI publishes to npm with `@latest` tag
 
 **Users get stable version:**
 ```bash

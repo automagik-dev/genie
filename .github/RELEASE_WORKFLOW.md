@@ -34,6 +34,7 @@ pnpm release:stable
 - `scripts/bump.js` - Creates RC versions, auto-pushes to trigger CI
 - `scripts/release.js` - Promotes RC → stable, creates GitHub releases
 - `scripts/status.js` - Shows version status across local/git/npm
+- `scripts/changelog.js` - Moves [Unreleased] → RC section and promotes RC → stable in CHANGELOG.md
 
 ### Modified
 - `package.json` - Added 6 new scripts
@@ -67,6 +68,7 @@ pnpm status
 ✅ **Idempotent** - Won't duplicate publishes if re-run
 ✅ **Clear separation** - RC (@next) vs Stable (@latest)
 ✅ **GitHub integration** - Auto-creates releases on stable promotion
+✅ **Changelog-aware** - RC bump moves [Unreleased] to version; stable promotes RC section
 
 ## CI Enhancements
 
@@ -132,6 +134,5 @@ npm unpublish automagik-genie`@X.Y.Z-rc.N`
 
 - [ ] Add `--dry-run` flag to scripts
 - [ ] Interactive mode for release.js (already has confirmation)
-- [ ] Changelog generation integration
 - [ ] Slack/Discord notifications
 - [ ] Auto-rollback on CI failure

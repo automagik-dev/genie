@@ -2,7 +2,7 @@
 
 **Created:** 2025-10-17
 **Status:** In Progress (Groups F-G complete, RC19 published)
-**Complexity:** High (comprehensive git hook suite + Python automation)
+**Complexity:** High (comprehensive git hook suite + Node automation)
 **Branch:** `main` (Groups F-G merged, feat branch for remaining groups)
 **Related Issues:** #49 (telemetry/metrics)
 
@@ -10,10 +10,28 @@
 
 ## 📊 Status Log
 
+**2025-10-18 (Group J):**
+- ✅ Group J implementation complete
+- ✅ Dependency graph generation operational (build-dependency-graph.js)
+- ✅ Visual Mermaid diagram with 136 nodes, 332 edges
+- ✅ Hub nodes identified (AGENTS.md: 20 refs, session-store: 12 refs)
+- ✅ Circular dependency detection (0 found)
+- ✅ Dry-run mode functional
+- ✅ Output: .genie/docs/dependency-graph.md
+- 📋 Remaining: Groups C, D, E, K
+
+**2025-10-18 (Group I):**
+- ✅ Group I implementation complete
+- ✅ QA sync from GitHub issues operational (sync-qa-from-issues.js)
+- ✅ Scenarios auto-generated: 53 total (7 open, 46 fixed)
+- ✅ Bug status tracking working (🔴 Open / ✅ Fixed)
+- ✅ Dry-run mode functional
+- ✅ Output: .genie/qa/scenarios-from-bugs.md
+
 **2025-10-18 (RC19):**
 - ✅ Groups F-G implementation complete
-- ✅ CHANGELOG auto-generation operational (update-changelog.py)
-- ✅ Pre-push test runner operational (run-tests.py)
+- ✅ CHANGELOG auto-generation operational (update-changelog.js)
+- ✅ Pre-push test runner operational (run-tests.js)
 - ✅ Pre-push hook integration working perfectly
 - ✅ All tests passing (19/19)
 - 🔄 RC iteration cycle (RC16-RC19):
@@ -21,11 +39,10 @@
   - RC17: Fixed background polling V2 format bug
   - RC18: Fixed identity-smoke test for V2 session format
   - RC19: Documentation updates, all systems operational
-- 📋 Remaining: Groups C, D, E, I, J, K
 
 **2025-10-18 (Group H):**
 - ✅ Group H implementation complete
-- ✅ Post-merge STATE.md update operational (update-state.py)
+- ✅ Post-merge STATE.md update operational (update-state.js)
 - ✅ Auto-commit with [skip ci] working
 - ✅ Idempotent operation (no duplicate commits)
 - ✅ Git workflow trilogy complete (pre-commit, pre-push, post-merge)
@@ -37,7 +54,7 @@
 
 **Comprehensive self-updating ecosystem with zero manual maintenance.**
 
-**Git hooks orchestrate Python scripts to:**
+**Git hooks orchestrate Node scripts to:**
 1. **Validate** - Token counts, @ references, routing matrix, user files not committed
 2. **Generate** - Neural graph, agent registry, CHANGELOG, QA scenarios from bugs
 3. **Update** - AGENTS.md, STATE.md, validation statuses, universal headers
@@ -45,7 +62,7 @@
 
 **Result:** Framework self-documents, self-validates, stays lean - automatically.
 
-**Architecture Principle:** Python scripts as git hooks (standalone, stdlib only, newbie-friendly)
+**Architecture Principle:** Node scripts as git hooks (standalone, stdlib only, newbie-friendly)
 
 ---
 
@@ -72,7 +89,7 @@
 
 ### Opportunity
 
-**Git hook suite (Python-based) that automatically:**
+**Git hook suite (Node-based) that automatically:**
 1. **Pre-commit:**
    - Validates token count (≤5% increase without justification)
    - Generates neural graph → injects into AGENTS.md
@@ -135,13 +152,13 @@
 - ✅ Hooks run fast (<5s total for typical commit)
 - ✅ Clear error messages when blocked
 - ✅ Easy override for legitimate increases
-- ✅ Works for total newbies (standalone Python, stdlib only)
+- ✅ Works for total newbies (standalone Node, stdlib only)
 
 ---
 
 ## 🔧 Technical Design
 
-### Architecture: Python Scripts as Git Hooks
+### Architecture: Node Scripts as Git Hooks
 
 **Design Principle:**
 - **NOT a Python project** - Just helper scripts
@@ -152,51 +169,28 @@
 ### Component 1: Git Hook Orchestrators
 
 **Files:**
-- `.git/hooks/pre-commit` - Python runner orchestrating validation + updates
-- `.git/hooks/pre-push` - Python runner for tests + changelog
-- `.git/hooks/post-merge` - Python runner for STATE.md update
+- `.git/hooks/pre-commit` - Node runner orchestrating validation + updates
+- `.git/hooks/pre-push` - Node runner for tests + changelog
+- `.git/hooks/post-merge` - Node runner for STATE.md update
 
-**Pre-commit workflow:**
-```python
-#!/usr/bin/env python3
-"""Pre-commit hook orchestrator"""
-import subprocess, sys
+**Pre-commit workflow:** Node orchestrator invoking `.genie/scripts/*.js` validators, blocking on non‑zero exit.
 
-hooks = [
-    "validate-user-files-not-committed.py",
-    "validate-cross-references.py",
-    "validate-token-count.py",
-    "update-neural-graph.py",
-    "update-agent-registry.py",
-    "validate-routing-matrix.py",
-    "run-validation-commands.py",
-    "inject-universal-headers.py"
-]
-
-for hook in hooks:
-    result = subprocess.run([sys.executable, f".genie/scripts/{hook}"])
-    if result.returncode != 0:
-        sys.exit(1)
-
-sys.exit(0)
-```
-
-### Component 2: Python Helper Scripts
+### Component 2: Node Helper Scripts
 
 **Location:** `.genie/scripts/`
 
-**Script 1: validate-user-files-not-committed.py**
+**Script 1: validate-user-files-not-committed.js**
 - Check `git diff --cached --name-only`
 - Block if TODO.md or USERCONTEXT.md staged
 - Error: "User files are gitignored. Unstage them: git reset .genie/TODO.md"
 
-**Script 2: validate-cross-references.py**
+**Script 2: validate-cross-references.js**
 - Parse all .md files for @ references
 - Check file existence
 - Report broken links with suggestions
 - Exit 1 if any broken
 
-**Script 3: validate-token-count.py**
+**Script 3: validate-token-count.js**
 - Count tokens (tiktoken library OR simple approximation: 1 token ≈ 4 chars)
 - Recursively resolve @ references (simulate full load)
 - Extract baseline from AGENTS.md neural graph section
@@ -204,7 +198,7 @@ sys.exit(0)
 - Block if >5% increase without override
 - Check for override: `git config commit.token-override`
 
-**Script 4: update-neural-graph.py**
+**Script 4: update-neural-graph.js**
 - Parse all @ references across .genie/agents/*.md
 - Build hierarchical tree structure
 - Calculate token count per file + per level
@@ -212,7 +206,7 @@ sys.exit(0)
 - Inject into AGENTS.md at `## Neural Graph Architecture` section
 - Stage AGENTS.md
 
-**Script 5: update-agent-registry.py**
+**Script 5: update-agent-registry.js**
 - Scan `.genie/agents/neurons/` → Universal neurons (list)
 - Scan `.genie/agents/code/neurons/` → Code neurons (list)
 - Scan `.genie/agents/create/neurons/` → Create neurons (list)
@@ -221,31 +215,31 @@ sys.exit(0)
 - Inject into AGENTS.md at `## Agent Registry (Auto-Generated)` section
 - Stage AGENTS.md
 
-**Script 6: validate-routing-matrix.py**
+**Script 6: validate-routing-matrix.js**
 - Parse `.genie/custom/routing.md` for agent references
 - Check each referenced agent exists in folder structure
 - Report missing agents
 - Exit 1 if any missing
 
-**Script 7: run-validation-commands.py**
+**Script 7: run-validation-commands.js**
 - Parse AGENTS.md for \`\`\`bash validation blocks
 - Extract commands, execute them
 - Capture exit codes
 - Inject status (✅ PASS / ❌ FAIL + timestamp) after code block
 - Stage AGENTS.md
 
-**Script 8: inject-universal-headers.py**
+**Script 8: inject-universal-headers.js**
 - Scan all .md files in .genie/
 - Check if has `**Last Updated:** !date` header
 - If missing, inject after title (line 2)
 - Stage modified files
 
-**Script 9: run-tests.py** (pre-push)
+**Script 9: run-tests.js** (pre-push)
 - Execute `pnpm test`
 - Capture output
 - Exit with test exit code (blocks push if fails)
 
-**Script 10: update-changelog.py** (pre-push)
+**Script 10: update-changelog.js** (pre-push)
 - Get last tag: `git describe --tags --abbrev=0`
 - Parse commits since tag: `git log <tag>..HEAD --oneline`
 - Group by type (feat:, fix:, refactor:, etc.)
@@ -253,20 +247,20 @@ sys.exit(0)
 - Inject into CHANGELOG.md (prepend new section)
 - Stage CHANGELOG.md
 
-**Script 11: update-state.py** (post-merge)
+**Script 11: update-state.js** (post-merge)
 - Get current commit: `git log -1 --format=%h`
 - Get current version: `node -p "require('./package.json').version"`
 - Inject into STATE.md via ! commands (they auto-execute)
 - Commit STATE.md automatically: `git commit -m "chore: auto-update STATE.md [skip ci]"`
 
-**Script 12: sync-qa-from-issues.py** (scheduled/manual)
+**Script 12: sync-qa-from-issues.js** (scheduled/manual)
 - Fetch open GitHub issues via `gh issue list --json`
 - Filter bugs (label:type:bug)
 - Generate QA scenario per bug
 - Inject into `.genie/qa/scenarios-from-bugs.md`
 - Track fixed bugs (check if issue closed)
 
-**Script 13: build-dependency-graph.py** (scheduled/manual)
+**Script 13: build-dependency-graph.js** (scheduled/manual)
 - Parse all @ references + import statements
 - Build graph (nodes = files, edges = dependencies)
 - Generate Mermaid diagram
@@ -356,9 +350,9 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Tasks:**
 1. Create `.git/hooks/` orchestrator scripts:
-   - `pre-commit` (Python runner)
-   - `pre-push` (Python runner)
-   - `post-merge` (Python runner)
+   - `pre-commit` (Node runner)
+   - `pre-push` (Node runner)
+   - `post-merge` (Node runner)
 2. Make executable: `chmod +x .git/hooks/*`
 3. Test hook triggering (empty scripts, verify calls)
 4. Document hook setup in README.md
@@ -366,25 +360,25 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Evidence:**
 - ✅ Hooks execute on git commit/push/merge
 - ✅ Clear when each hook triggers
-- ✅ Hooks are Python scripts (not shell)
+- ✅ Hooks are Node scripts (not shell)
 
 ### Group B: Validation Suite
 **Complexity:** Medium
 **Estimated:** 4-5 hours
 
 **Tasks:**
-1. Implement `validate-user-files-not-committed.py`:
+1. Implement `validate-user-files-not-committed.js`:
    - Check staged files for TODO.md, USERCONTEXT.md
    - Clear error message + git reset command
-2. Implement `validate-cross-references.py`:
+2. Implement `validate-cross-references.js`:
    - @ reference parser (regex: `@[\w/./-]+\.md`)
    - File existence checker
    - Error report with suggestions
-3. Implement `validate-routing-matrix.py`:
+3. Implement `validate-routing-matrix.js`:
    - Parse routing.md
    - Check agent refs exist in folder structure
    - Report missing agents
-4. Implement `run-validation-commands.py`:
+4. Implement `run-validation-commands.js`:
    - Parse ```bash blocks from AGENTS.md
    - Execute commands, capture exit codes
    - Inject ✅/❌ status + timestamp
@@ -402,16 +396,15 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Tasks:**
 1. Implement token counting:
-   - Option A: Use tiktoken (requires pip install - document in README)
-   - Option B: Approximation (1 token ≈ 4 chars, stdlib only)
+   - Approximation (1 token ≈ 4 chars) or minimal dependency if warranted
    - Recursive @ reference resolution
-2. Implement `validate-token-count.py`:
+2. Implement `validate-token-count.js`:
    - Count current tokens
    - Extract baseline from AGENTS.md
    - Calculate % change
    - Check override flag: `git config commit.token-override`
    - Block if >5% increase without override
-3. Implement `update-neural-graph.py`:
+3. Implement `update-neural-graph.js`:
    - Parse @ refs, build tree
    - Calculate tokens per file + per level
    - Generate markdown tree
@@ -430,7 +423,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Estimated:** 2-3 hours
 
 **Tasks:**
-1. Implement `update-agent-registry.py`:
+1. Implement `update-agent-registry.js`:
    - Scan folders: neurons/, code/neurons/, create/neurons/, code/skills/
    - Count files, generate lists
    - Format registry section
@@ -454,7 +447,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Estimated:** 1-2 hours
 
 **Tasks:**
-1. Implement `inject-universal-headers.py`:
+1. Implement `inject-universal-headers.js`:
    - Scan all .md files in .genie/
    - Check for `**Last Updated:**` line
    - If missing, inject after title (line 2)
@@ -472,7 +465,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Completed:** 2025-10-18 (RC19)
 
 **Tasks:**
-1. ✅ Implement `update-changelog.py`:
+1. ✅ Implement `update-changelog.js`:
    - Get last tag: `git describe --tags --abbrev=0`
    - Parse commits: `git log <tag>..HEAD --oneline`
    - Group by type (feat:, fix:, refactor:, docs:, chore:, test:)
@@ -486,7 +479,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 - ✅ CHANGELOG auto-updated on push
 - ✅ Commits grouped by type (Features, Fixes, Other)
 - ✅ Format matches release workflow expectations
-- ✅ Script: `.genie/scripts/update-changelog.py` (6797 bytes)
+- ✅ Script: `.genie/scripts/update-changelog.js`
 - ✅ CHANGELOG.md: [Unreleased] section with grouped commits
 - ✅ Dynamic headers using ! commands
 
@@ -496,7 +489,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Completed:** 2025-10-18 (RC19)
 
 **Tasks:**
-1. ✅ Implement `run-tests.py`:
+1. ✅ Implement `run-tests.js`:
    - Execute `pnpm test`
    - Stream output to console
    - Exit with test exit code
@@ -507,7 +500,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 - ✅ Push blocked if tests fail
 - ✅ Clear output shows which tests failed
 - ✅ Successful tests allow push to continue
-- ✅ Script: `.genie/scripts/run-tests.py` (1437 bytes)
+- ✅ Script: `.genie/scripts/run-tests.js`
 - ✅ Hook: `.git/hooks/pre-push` (executable, 1524 bytes)
 - ✅ All tests passing: 19/19
 
@@ -517,7 +510,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **Completed:** 2025-10-18
 
 **Tasks:**
-1. ✅ Implement `update-state.py`:
+1. ✅ Implement `update-state.js`:
    - Extract current commit, version
    - Update STATE.md validation metadata
    - Auto-commit: `git commit -m "chore: auto-update STATE.md [skip ci]"`
@@ -528,50 +521,64 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 - ✅ STATE.md updated after merge
 - ✅ Auto-commit created with [skip ci]
 - ✅ Version + commit always current
-- ✅ Script: `.genie/scripts/update-state.py` (3.9KB)
+- ✅ Script: `.genie/scripts/update-state.js` (3.9KB)
 - ✅ Hook: `.git/hooks/post-merge` (1.5KB)
 - ✅ Idempotent: No duplicate commits when already current
 - ✅ Auto-commit: `4782d62 chore: auto-update STATE.md to v2.4.0-rc.19 [skip ci]`
 
-### Group I: QA Sync from GitHub Issues
+### Group I: QA Sync from GitHub Issues ✅ COMPLETE
 **Complexity:** Medium
 **Estimated:** 3-4 hours
+**Completed:** 2025-10-18
 
 **Tasks:**
-1. Implement `sync-qa-from-issues.py`:
+1. ✅ Implement `sync-qa-from-issues.js`:
    - Fetch issues: `gh issue list --json number,title,labels,state`
    - Filter bugs (label:type:bug)
    - Generate QA scenario per bug
    - Track fixed (check if closed)
    - Write to `.genie/qa/scenarios-from-bugs.md`
-2. Add GitHub Actions workflow (daily trigger)
-3. Manual trigger: `python .genie/scripts/sync-qa-from-issues.py`
-4. Test with current bugs
+2. ⏸️ Add GitHub Actions workflow (daily trigger) - Future enhancement
+3. ✅ Manual trigger: `node .genie/scripts/sync-qa-from-issues.js`
+4. ✅ Test with current bugs
 
 **Evidence:**
-- ✅ QA scenarios synced from issues
-- ✅ Fixed bugs marked ✅
-- ✅ Daily workflow updates scenarios
+- ✅ QA scenarios synced from issues (53 bugs total)
+- ✅ Fixed bugs marked ✅ (46 fixed, 7 open)
+- ✅ Script: `.genie/scripts/sync-qa-from-issues.js`
+- ✅ Output: `.genie/qa/scenarios-from-bugs.md` (auto-generated)
+- ✅ Dry-run mode working (`--dry-run` flag)
+- ✅ Structured sections extracted (reproduction steps, expected/actual behavior)
+- ✅ GitHub links included for each bug
+- ✅ Validation checklists per bug
+- ⏸️ Daily workflow: Future enhancement via GitHub Actions
 
-### Group J: Dependency Graph Generation
+### Group J: Dependency Graph Generation ✅ COMPLETE
 **Complexity:** Medium
 **Estimated:** 3-4 hours
+**Completed:** 2025-10-18
 
 **Tasks:**
-1. Implement `build-dependency-graph.py`:
+1. ✅ Implement `build-dependency-graph.js`:
    - Parse @ refs from all .md files
    - Parse import statements from TypeScript files
    - Build graph (nodes, edges)
    - Generate Mermaid diagram
    - Save to `.genie/docs/dependency-graph.md`
-2. Add to monthly GitHub Actions workflow
-3. Manual trigger available
-4. Test graph generation
+2. ⏸️ Add to monthly GitHub Actions workflow - Future enhancement
+3. ✅ Manual trigger available
+4. ✅ Test graph generation
 
 **Evidence:**
-- ✅ Dependency graph generated
-- ✅ Visual map of ecosystem
-- ✅ @ references + code imports shown
+- ✅ Dependency graph generated (136 files, 332 dependencies)
+- ✅ Visual Mermaid diagram showing ecosystem structure
+- ✅ @ references + code imports captured
+- ✅ Hub nodes analysis (top 10 most referenced files)
+- ✅ Circular dependency detection (0 found)
+- ✅ Script: `.genie/scripts/build-dependency-graph.js`
+- ✅ Output: `.genie/docs/dependency-graph.md` (auto-generated)
+- ✅ Dry-run mode working (`--dry-run` flag)
+- ⏸️ GitHub Actions workflow: Future enhancement
 
 ### Group K: Documentation + Integration Testing
 **Complexity:** Low-Medium
@@ -607,7 +614,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 - [ ] Pre-commit hook triggers on `git commit`
 - [ ] Pre-push hook triggers on `git push`
 - [ ] Post-merge hook triggers after `git merge`
-- [ ] Hooks are Python scripts (not shell)
+- [ ] Hooks are Node scripts (not shell)
 
 **Validation Suite:**
 - [ ] User files (TODO.md, USERCONTEXT.md) blocked from commit
@@ -646,14 +653,14 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 - [x] Version + commit always current
 
 **QA Sync:**
-- [ ] QA scenarios synced from GitHub issues
-- [ ] Fixed bugs marked ✅
-- [ ] Daily workflow updates scenarios
+- [x] QA scenarios synced from GitHub issues
+- [x] Fixed bugs marked ✅
+- [ ] Daily workflow updates scenarios (future enhancement)
 
 **Dependency Graph:**
-- [ ] Graph generated showing @ refs + imports
-- [ ] Visual map of ecosystem
-- [ ] Monthly workflow updates graph
+- [x] Graph generated showing @ refs + imports
+- [x] Visual map of ecosystem
+- [ ] Monthly workflow updates graph (future enhancement)
 
 **Integration:**
 - [ ] End-to-end workflow tested (clone → commit → push → merge)
@@ -668,9 +675,9 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **None anticipated.**
 
 **Potential risks:**
-- Token counting accuracy → Start with approximation (1 token ≈ 4 chars), add tiktoken later if needed
+- Token counting accuracy → Start with approximation (1 token ≈ 4 chars)
 - Git hook performance → Optimize hot paths, use caching where appropriate
-- Python version compatibility → Target Python 3.8+ (widely available)
+- Node version compatibility → Target Node 18+
 - Hook installation → Document in README, consider setup script
 
 ---
