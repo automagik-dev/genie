@@ -131,10 +131,11 @@ program
 // List command
 program
   .command('list <type>')
-  .description('List agents or sessions')
+  .description('List neurons or sessions')
   .action((type: string) => {
-    if (type !== 'agents' && type !== 'sessions') {
-      console.error('Error: list command accepts "agents" or "sessions"');
+    const validTypes = ['agents', 'neurons', 'sessions'];
+    if (!validTypes.includes(type)) {
+      console.error('Error: list command accepts "neurons" or "sessions" (agents is alias for neurons)');
       process.exit(1);
     }
     execGenie(['list', type]);
