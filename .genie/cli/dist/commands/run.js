@@ -221,7 +221,7 @@ function executeRun(args) {
             const envelope = (0, background_1.buildRunCompletionView)({
                 agentName,
                 outcome: 'failure',
-                sessionId: entry.sessionId,
+                sessionName: entry.name,
                 executorKey,
                 model: executorConfig.exec?.model || executorConfig.model || null,
                 permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,
@@ -254,7 +254,7 @@ function executeRun(args) {
             const envelope = (0, background_1.buildRunCompletionView)({
                 agentName,
                 outcome,
-                sessionId: entry.sessionId,
+                sessionName: entry.name,
                 executorKey,
                 model: executorConfig.exec?.model || executorConfig.model || null,
                 permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,

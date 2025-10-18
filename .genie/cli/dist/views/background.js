@@ -12,14 +12,14 @@ function buildBackgroundStartingView(params) {
 
 🚀 **Preparing workspace**
 - Spawning detached runner for this agent.
-- Session id will appear once the executor boots.`;
+- Session name will appear once the executor boots.`;
 }
 function buildBackgroundPendingView(params) {
     const frame = params.frame ?? '⠙';
-    return `${frame} **Linking session id**
+    return `${frame} **Linking session name**
 
 ⏳ **Hold tight**
-- Waiting for the executor to publish the session id.
+- Waiting for the executor to publish the session name.
 - You will see management commands as soon as it is ready.`;
 }
 function buildBackgroundStartView(params) {
@@ -28,8 +28,8 @@ function buildBackgroundStartView(params) {
     lines.push('');
     // Badges
     const badges = [];
-    if (params.sessionId) {
-        badges.push(formatSessionBadge(params.sessionId));
+    if (params.sessionName) {
+        badges.push(`Session ${params.sessionName}`);
     }
     else {
         badges.push('Session pending');
@@ -42,8 +42,8 @@ function buildBackgroundStartView(params) {
     lines.push(badges.map(b => `**${b}**`).join(' · '));
     lines.push('');
     // Key-value pairs
-    if (params.sessionId) {
-        lines.push(`**Session:** ${params.sessionId}`);
+    if (params.sessionName) {
+        lines.push(`**Session:** ${params.sessionName}`);
     }
     else {
         lines.push(`**Session:** pending`);
@@ -82,8 +82,8 @@ function buildRunCompletionView(params) {
     lines.push('');
     // Only show stats for attached mode (not background)
     if (params.background === false) {
-        if (params.sessionId) {
-            lines.push(`**Resume:** npx automagik-genie resume ${params.sessionId} "continue"`);
+        if (params.sessionName) {
+            lines.push(`**Resume:** npx automagik-genie resume ${params.sessionName} "continue"`);
         }
         // Executor and model on same line
         const executorInfo = [];
@@ -120,11 +120,4 @@ function buildRunCompletionView(params) {
         }
     }
     return lines.join('\n');
-}
-function formatSessionBadge(sessionId) {
-    const trimmed = sessionId.trim();
-    if (trimmed.length <= 10)
-        return `Session ${trimmed}`;
-    const head = trimmed.slice(0, 8);
-    return `Session ${head}…`;
 }

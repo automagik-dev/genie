@@ -162,21 +162,21 @@ export function buildResumeHelpView(): string {
   return buildSubcommandHelpView({
     command: 'resume',
     description: 'Continue an existing agent session',
-    usage: 'genie resume <sessionId> "<prompt>" [--help]',
+    usage: 'genie resume <session-name> "<prompt>" [--help]',
     arguments: [
-      { name: '<sessionId>', description: 'Session identifier from active or recent runs' },
+      { name: '<session-name>', description: 'Session name from active or recent runs' },
       { name: '<prompt>', description: 'Follow-up prompt or new task instruction' }
     ],
     options: [
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
-      'genie resume RUN-1234 "Please add error handling to the implementation"',
-      'genie resume GENIE-567 "Review the test coverage and suggest improvements"',
-      'genie resume FORGE-890 "Update the documentation with the new API changes"'
+      'genie resume implementor-2510181230 "Please add error handling to the implementation"',
+      'genie resume plan-2510180915 "Review the test coverage and suggest improvements"',
+      'genie resume forge-2510181015 "Update the documentation with the new API changes"'
     ],
     notes: [
-      'Session IDs can be found with: genie list sessions',
+      'Session names can be found with: genie list sessions',
       'Only active or recently completed sessions can be resumed',
       'Use quotes around prompts containing spaces or special characters'
     ]
@@ -210,20 +210,20 @@ export function buildViewHelpView(): string {
   return buildSubcommandHelpView({
     command: 'view',
     description: 'Show transcript and details for a session',
-    usage: 'genie view <sessionId> [--full] [--help]',
+    usage: 'genie view <session-name> [--full] [--help]',
     arguments: [
-      { name: '<sessionId>', description: 'Session identifier to display' }
+      { name: '<session-name>', description: 'Session name to display' }
     ],
     options: [
       { flag: '--full', description: 'Show complete session transcript (default: recent messages)' },
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
-      'genie view 01999405-7d8e-7de3-a918-464ddd15',
-      'genie view 01999402-c007-7f82-87b9-0304c8e5 --full'
+      'genie view implementor-2510181230',
+      'genie view plan-2510180915 --full'
     ],
     notes: [
-      'Session IDs can be found with: genie list sessions',
+      'Session names can be found with: genie list sessions',
       'Default view shows recent conversation; use --full for complete history',
       'Includes session metadata like execution mode and background status'
     ]
@@ -234,20 +234,20 @@ export function buildStopHelpView(): string {
   return buildSubcommandHelpView({
     command: 'stop',
     description: 'End a running background session',
-    usage: 'genie stop <sessionId> [--help]',
+    usage: 'genie stop <session-name> [--help]',
     arguments: [
-      { name: '<sessionId>', description: 'Session identifier to stop' }
+      { name: '<session-name>', description: 'Session name to stop' }
     ],
     options: [
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
-      'genie stop RUN-1234',
-      'genie stop GENIE-567'
+      'genie stop implementor-2510181230',
+      'genie stop plan-2510180915'
     ],
     notes: [
       'Only affects running background sessions',
-      'Session IDs can be found with: genie list sessions',
+      'Session names can be found with: genie list sessions',
       'Stopped sessions can still be viewed but not resumed'
     ]
   });

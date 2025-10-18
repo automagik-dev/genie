@@ -12,12 +12,12 @@ function createResumeHandler(ctx) {
     return async (parsed) => {
         const cmdArgs = parsed.commandArgs;
         if (cmdArgs.length < 2) {
-            throw new Error('Usage: genie resume <sessionId> "<prompt>"');
+            throw new Error('Usage: genie resume <session-name> "<prompt>"');
         }
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-        const sessionIdArg = cmdArgs[0];
+        const sessionName = cmdArgs[0];
         const prompt = cmdArgs.slice(1).join(' ').trim();
-        const found = (0, session_helpers_1.findSessionEntry)(store, sessionIdArg, ctx.paths);
+        const found = (0, session_helpers_1.findSessionEntry)(store, sessionName, ctx.paths);
         if (!found) {
             // Check if session file exists but is orphaned
             const executorKey = ctx.config.defaults?.executor || ctx.defaultExecutorKey;
@@ -31,20 +31,20 @@ function createResumeHandler(ctx) {
                 });
                 const sessionsDir = executorPaths.sessionsDir;
                 if (sessionsDir) {
-                    const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionIdArg, sessionsDir);
+                    const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionName, sessionsDir);
                     if (sessionFilePath && fs_1.default.existsSync(sessionFilePath)) {
-                        throw new Error(`❌ Session '${sessionIdArg}' is not tracked in CLI state.\n\n` +
+                        throw new Error(`❌ Session '${sessionName}' is not tracked in CLI state.\n\n` +
                             `Session file exists at:\n  ${sessionFilePath}\n\n` +
                             `This session cannot be resumed because CLI tracking information is missing.\n` +
                             `This may happen if sessions.json was corrupted or deleted.\n\n` +
                             `Options:\n` +
-                            `  1. View the session: npx automagik-genie view ${sessionIdArg}\n` +
+                            `  1. View the session: npx automagik-genie view ${sessionName}\n` +
                             `  2. Start a new session: npx automagik-genie run <agent> "<prompt>"\n` +
                             `  3. (Advanced) Manually restore sessions.json entry`);
                     }
                 }
             }
-            throw new Error(`❌ No run found with session id '${sessionIdArg}'`);
+            throw new Error(`❌ No session found with name '${sessionName}'`);
         }
         const { agentName, entry: session } = found;
         if (!session || !session.sessionId) {

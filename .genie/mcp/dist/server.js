@@ -95,9 +95,9 @@ function listSessions() {
     try {
         const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
         const store = JSON.parse(content);
+        // v3: Sessions keyed by name, entry.name should match key
         const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
-            id: entry.sessionId || key,
-            name: entry.name || null,
+            name: entry.name || key, // In v3, key IS the name
             agent: entry.agent || key,
             status: entry.status || 'unknown',
             created: entry.created || 'unknown',
@@ -209,7 +209,7 @@ server.addTool({
 // Tool: list_sessions - View active and recent sessions
 server.addTool({
     name: 'list_sessions',
-    description: 'List active and recent Genie agent sessions. Shows session IDs, agents, status, and timing. Use this to find sessions to resume or view.',
+    description: 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.',
     parameters: zod_1.z.object({}),
     execute: async () => {
         const sessions = listSessions();
@@ -219,10 +219,7 @@ server.addTool({
         let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
         sessions.forEach((session, index) => {
             const { displayId } = (0, display_transform_1.transformDisplayPath)(session.agent);
-            response += `${index + 1}. **${session.id}**\n`;
-            if (session.name) {
-                response += `   Name: ${session.name}\n`;
-            }
+            response += `${index + 1}. **${session.name}**\n`;
             response += `   Agent: ${displayId}\n`;
             response += `   Status: ${session.status}\n`;
             response += `   Created: ${session.created}\n`;
@@ -265,7 +262,7 @@ server.addTool({
     name: 'resume',
     description: 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to resume (get from list_sessions tool)'),
+        sessionId: zod_1.z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
         prompt: zod_1.z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
     }),
     execute: async (args) => {
@@ -288,7 +285,7 @@ server.addTool({
     name: 'view',
     description: 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to view (get from list_sessions tool)'),
+        sessionId: zod_1.z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
         full: zod_1.z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
     }),
     execute: async (args) => {
@@ -311,7 +308,7 @@ server.addTool({
     name: 'stop',
     description: 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to stop (get from list_sessions tool)')
+        sessionId: zod_1.z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
     }),
     execute: async (args) => {
         try {

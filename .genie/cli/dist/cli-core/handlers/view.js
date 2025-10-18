@@ -9,13 +9,13 @@ const path_1 = __importDefault(require("path"));
 const session_helpers_1 = require("../../lib/session-helpers");
 function createViewHandler(ctx) {
     return async (parsed) => {
-        const [sessionId] = parsed.commandArgs;
-        if (!sessionId) {
-            throw new Error('Usage: genie view <sessionId> [--full]');
+        const [sessionName] = parsed.commandArgs;
+        if (!sessionName) {
+            throw new Error('Usage: genie view <session-name> [--full]');
         }
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-        // Try sessions.json first
-        let found = (0, session_helpers_1.findSessionEntry)(store, sessionId, ctx.paths);
+        // Try sessions.json first (v3: sessions keyed by name)
+        let found = (0, session_helpers_1.findSessionEntry)(store, sessionName, ctx.paths);
         let orphanedSession = false;
         // If not found in sessions.json, try direct session file lookup
         if (!found) {
@@ -30,12 +30,12 @@ function createViewHandler(ctx) {
                 });
                 const sessionsDir = executorPaths.sessionsDir;
                 if (sessionsDir) {
-                    const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionId, sessionsDir);
+                    const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionName, sessionsDir);
                     if (sessionFilePath && fs_1.default.existsSync(sessionFilePath)) {
                         orphanedSession = true;
                         const sessionFileContent = fs_1.default.readFileSync(sessionFilePath, 'utf8');
                         return {
-                            sessionId,
+                            name: sessionName,
                             agent: 'unknown',
                             status: 'orphaned',
                             transcript: sessionFileContent,
@@ -45,7 +45,7 @@ function createViewHandler(ctx) {
                     }
                 }
             }
-            throw new Error(`❌ No run found with session id '${sessionId}'`);
+            throw new Error(`❌ No session found with name '${sessionName}'`);
         }
         const { agentName, entry } = found;
         const executorKey = entry.executor || ctx.config.defaults?.executor || ctx.defaultExecutorKey;
@@ -85,7 +85,7 @@ function createViewHandler(ctx) {
         }
         const transcript = sessionFileContent || raw;
         return {
-            sessionId: entry.sessionId || sessionId,
+            name: entry.name || sessionName,
             agent: agentName,
             status: entry.status || 'unknown',
             transcript,

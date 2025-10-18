@@ -6,32 +6,32 @@ import { persistStore } from './shared';
 
 export function createStopHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
-    const [target] = parsed.commandArgs;
-    if (!target) {
-      throw new Error('Usage: genie stop <sessionId>');
+    const [sessionName] = parsed.commandArgs;
+    if (!sessionName) {
+      throw new Error('Usage: genie stop <session-name>');
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-    const found = findSessionEntry(store, target, ctx.paths);
+    const found = findSessionEntry(store, sessionName, ctx.paths);
 
     if (!found) {
       return {
         success: false,
-        sessionId: target,
-        message: `No run found with session id '${target}'.`,
-        events: [{ label: target, status: 'failed', message: 'Session id not found' }]
+        name: sessionName,
+        message: `No session found with name '${sessionName}'.`,
+        events: [{ label: sessionName, status: 'failed', message: 'Session not found' }]
       };
     }
 
     const { agentName, entry } = found;
-    const identifier = entry.sessionId || agentName;
+    const identifier = entry.name || agentName;
     const alivePids = [entry.runnerPid, entry.executorPid]
       .filter((pid) => ctx.backgroundManager.isAlive(pid)) as number[];
 
     if (!alivePids.length) {
       return {
         success: false,
-        sessionId: identifier,
+        name: identifier,
         message: `No active process found for ${identifier}.`,
         events: [{ label: identifier, detail: 'No active process', status: 'pending' }]
       };
@@ -61,7 +61,7 @@ export function createStopHandler(ctx: HandlerContext): Handler {
 
     return {
       success: true,
-      sessionId: identifier,
+      name: identifier,
       message: `Stop signal handled for ${identifier}`,
       events
     };

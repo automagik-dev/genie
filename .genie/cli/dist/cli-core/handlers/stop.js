@@ -5,28 +5,28 @@ const session_helpers_1 = require("../../lib/session-helpers");
 const shared_1 = require("./shared");
 function createStopHandler(ctx) {
     return async (parsed) => {
-        const [target] = parsed.commandArgs;
-        if (!target) {
-            throw new Error('Usage: genie stop <sessionId>');
+        const [sessionName] = parsed.commandArgs;
+        if (!sessionName) {
+            throw new Error('Usage: genie stop <session-name>');
         }
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-        const found = (0, session_helpers_1.findSessionEntry)(store, target, ctx.paths);
+        const found = (0, session_helpers_1.findSessionEntry)(store, sessionName, ctx.paths);
         if (!found) {
             return {
                 success: false,
-                sessionId: target,
-                message: `No run found with session id '${target}'.`,
-                events: [{ label: target, status: 'failed', message: 'Session id not found' }]
+                name: sessionName,
+                message: `No session found with name '${sessionName}'.`,
+                events: [{ label: sessionName, status: 'failed', message: 'Session not found' }]
             };
         }
         const { agentName, entry } = found;
-        const identifier = entry.sessionId || agentName;
+        const identifier = entry.name || agentName;
         const alivePids = [entry.runnerPid, entry.executorPid]
             .filter((pid) => ctx.backgroundManager.isAlive(pid));
         if (!alivePids.length) {
             return {
                 success: false,
-                sessionId: identifier,
+                name: identifier,
                 message: `No active process found for ${identifier}.`,
                 events: [{ label: identifier, detail: 'No active process', status: 'pending' }]
             };
@@ -55,7 +55,7 @@ function createStopHandler(ctx) {
         await (0, shared_1.persistStore)(ctx, store);
         return {
             success: true,
-            sessionId: identifier,
+            name: identifier,
             message: `Stop signal handled for ${identifier}`,
             events
         };

@@ -6,15 +6,15 @@ import { findSessionEntry } from '../../lib/session-helpers';
 
 export function createViewHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
-    const [sessionId] = parsed.commandArgs;
-    if (!sessionId) {
-      throw new Error('Usage: genie view <sessionId> [--full]');
+    const [sessionName] = parsed.commandArgs;
+    if (!sessionName) {
+      throw new Error('Usage: genie view <session-name> [--full]');
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
 
-    // Try sessions.json first
-    let found: { agentName: string; entry: any } | null = findSessionEntry(store, sessionId, ctx.paths);
+    // Try sessions.json first (v3: sessions keyed by name)
+    let found: { agentName: string; entry: any } | null = findSessionEntry(store, sessionName, ctx.paths);
     let orphanedSession = false;
 
     // If not found in sessions.json, try direct session file lookup
@@ -33,13 +33,13 @@ export function createViewHandler(ctx: HandlerContext): Handler {
 
         const sessionsDir = executorPaths.sessionsDir;
         if (sessionsDir) {
-          const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionId, sessionsDir);
+          const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionName, sessionsDir);
           if (sessionFilePath && fs.existsSync(sessionFilePath)) {
             orphanedSession = true;
             const sessionFileContent = fs.readFileSync(sessionFilePath, 'utf8');
 
             return {
-              sessionId,
+              name: sessionName,
               agent: 'unknown',
               status: 'orphaned',
               transcript: sessionFileContent,
@@ -50,7 +50,7 @@ export function createViewHandler(ctx: HandlerContext): Handler {
         }
       }
 
-      throw new Error(`❌ No run found with session id '${sessionId}'`);
+      throw new Error(`❌ No session found with name '${sessionName}'`);
     }
 
     const { agentName, entry } = found;
@@ -98,7 +98,7 @@ export function createViewHandler(ctx: HandlerContext): Handler {
     const transcript = sessionFileContent || raw;
 
     return {
-      sessionId: entry.sessionId || sessionId,
+      name: entry.name || sessionName,
       agent: agentName,
       status: entry.status || 'unknown',
       transcript,

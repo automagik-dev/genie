@@ -276,7 +276,7 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
       const envelope = buildRunCompletionView({
         agentName,
         outcome: 'failure',
-        sessionId: entry.sessionId,
+        sessionName: entry.name,
         executorKey,
         model: executorConfig.exec?.model || executorConfig.model || null,
         permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,
@@ -309,7 +309,7 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
       const envelope = buildRunCompletionView({
         agentName,
         outcome,
-        sessionId: entry.sessionId,
+        sessionName: entry.name,
         executorKey,
         model: executorConfig.exec?.model || executorConfig.model || null,
         permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,
