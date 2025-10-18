@@ -186,6 +186,12 @@ export async function runUpdate(
     // Update version file
     await touchVersionFile(cwd);
 
+    // Run update neuron for version transition guidance
+    console.log('🧞 Consulting update neuron for migration guidance...');
+    console.log('');
+    await runUpdateNeuron(backupId, cwd);
+    console.log('');
+
     console.log(`📝 Generating migration orchestration prompt...`);
     console.log('');
 
@@ -487,6 +493,77 @@ async function createBackup(targetGenie: string): Promise<string> {
   }
 
   return backupId;
+}
+
+async function runUpdateNeuron(backupId: string, cwd: string): Promise<void> {
+  try {
+    // Read version information
+    const versionPath = resolveWorkspaceVersionPath(cwd);
+    const newVersion = getPackageVersion();
+
+    // Try to get old version from backup
+    const backupVersionPath = path.join(cwd, '.genie/backups', backupId, 'genie/state/version.json');
+    let oldVersion = 'unknown';
+    if (await pathExists(backupVersionPath)) {
+      try {
+        const backupVersionData = JSON.parse(await fsp.readFile(backupVersionPath, 'utf8'));
+        oldVersion = backupVersionData.version || 'unknown';
+      } catch {
+        // If backup version file missing or corrupt, that's okay
+        oldVersion = 'unknown';
+      }
+    }
+
+    const backupPath = `.genie/backups/${backupId}/`;
+
+    console.log(`📊 Version transition: ${oldVersion} → ${newVersion}`);
+    console.log(`💾 Backup location: ${backupPath}`);
+    console.log('');
+    console.log('💡 Update neuron guidance:');
+    console.log('');
+
+    // Determine which transition guide to use
+    const majorMinor = (v: string) => {
+      const match = v.match(/^(\d+)\.(\d+)/);
+      return match ? `${match[1]}.${match[2]}` : null;
+    };
+
+    const oldMM = majorMinor(oldVersion);
+    const newMM = majorMinor(newVersion);
+
+    let guideFile = 'generic-update.md';
+    if (oldMM && newMM && oldMM !== newMM) {
+      const specificGuide = `v${oldMM}.x-to-v${newMM}.0.md`;
+      const specificPath = path.join(cwd, '.genie/agents/neurons/update/versions', specificGuide);
+      if (await pathExists(specificPath)) {
+        guideFile = specificGuide;
+      }
+    }
+
+    // Output guide summary
+    const guidePath = path.join(cwd, '.genie/agents/neurons/update/versions', guideFile);
+    if (await pathExists(guidePath)) {
+      console.log(`   Using transition guide: ${guideFile}`);
+      console.log(`   Full guide at: .genie/agents/neurons/update/versions/${guideFile}`);
+      console.log('');
+      console.log('   Key points:');
+      console.log('   • Your previous configuration is safely backed up');
+      console.log('   • Fresh framework templates have been installed');
+      console.log('   • Check the transition guide for version-specific changes');
+      console.log('   • Manually merge any customizations you want to preserve');
+      console.log('');
+    } else {
+      console.log(`   ⚠️  Transition guide not found: ${guideFile}`);
+      console.log('   Generic guidance: Review backup and manually merge customizations');
+      console.log('');
+    }
+
+    console.log('✅ Update neuron guidance provided');
+  } catch (error) {
+    // Non-fatal - log warning and continue
+    console.log(`⚠️  Update neuron unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    console.log('   Continuing with update...');
+  }
 }
 
 async function copyTemplateGenie(templateGenie: string, targetGenie: string): Promise<void> {
