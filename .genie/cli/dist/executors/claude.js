@@ -127,6 +127,33 @@ function resolvePaths({ config = {}, baseDir, resolvePath }) {
     return {};
 }
 function extractSessionId({ startTime, paths = {} }) {
+    // Extract session_id from Claude Code's log output
+    // Claude Code emits: {"type":"system","subtype":"init","session_id":"...","model":"..."}
+    const logFile = paths.logFile;
+    if (!logFile || !fs_1.default.existsSync(logFile)) {
+        return null;
+    }
+    try {
+        const logContent = fs_1.default.readFileSync(logFile, 'utf-8');
+        const lines = logContent.split('\n');
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('{')) {
+                try {
+                    const event = JSON.parse(trimmed);
+                    if (event.type === 'system' && event.subtype === 'init' && event.session_id) {
+                        return event.session_id;
+                    }
+                }
+                catch {
+                    // Not valid JSON, continue
+                }
+            }
+        }
+    }
+    catch (error) {
+        console.error(`[genie] Failed to extract session ID from log: ${error}`);
+    }
     return null;
 }
 function getSessionExtractionDelay({ config = {}, defaultDelay }) {
