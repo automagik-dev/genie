@@ -44,10 +44,13 @@ async function runChat(parsed, config, paths) {
     const isBackgroundRunner = parsed.options.backgroundRunner === true;
     const startTime = (0, utils_1.deriveStartTime)(isBackgroundRunner);
     const logFile = (0, utils_1.deriveLogFile)(resolvedAgentName, startTime, paths, isBackgroundRunner);
-    // Generate temporary session ID for tracking (will be updated with real sessionId later)
-    const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
+    // Generate UUID immediately (no temp keys)
+    const { v4: uuidv4 } = require('uuid');
+    const { generateSessionName } = require('../session-store');
+    const sessionId = uuidv4();
     const entry = {
         agent: resolvedAgentName,
+        name: parsed.options.name || generateSessionName(resolvedAgentName),
         preset: modeName,
         mode: modeName,
         logFile,
@@ -62,9 +65,9 @@ async function runChat(parsed, config, paths) {
         exitCode: null,
         signal: null,
         startTime: new Date(startTime).toISOString(),
-        sessionId: tempSessionId // Will be updated with real sessionId from executor
+        sessionId: sessionId // UUID assigned immediately
     };
-    store.sessions[tempSessionId] = entry;
+    store.sessions[sessionId] = entry;
     (0, session_store_1.saveSessions)(paths, store);
     // Show executor info to user
     if (!parsed.options.backgroundRunner) {
@@ -231,13 +234,6 @@ function executeRun(args) {
         entry.status = code === 0 ? 'completed' : 'failed';
         (0, session_store_1.saveSessions)(paths, store);
         logStream.end();
-        const sessionFromLog = logViewer?.readSessionIdFromLog?.(logFile) ?? null;
-        const resolvedSessionId = sessionFromLog || entry.sessionId || null;
-        if (entry.sessionId !== resolvedSessionId) {
-            entry.sessionId = resolvedSessionId;
-            entry.lastUsed = new Date().toISOString();
-            (0, session_store_1.saveSessions)(paths, store);
-        }
         if (!background) {
             const outcome = code === 0 ? 'success' : 'failure';
             const notes = signal ? [`Signal: ${signal}`] : [];
@@ -266,27 +262,12 @@ function executeRun(args) {
         ? executor.getSessionExtractionDelay({ config: executorConfig, defaultDelay })
         : defaultDelay;
     if (executor.extractSessionId) {
-        const retryIntervals = [sessionDelay, 2000, 3000, 3000];
-        let retryIndex = 0;
+        // sessionId already assigned at creation time - just update lastUsed if needed
         const attemptExtraction = () => {
-            if (entry.sessionId)
-                return;
-            const sessionId = executor.extractSessionId?.({
-                startTime,
-                config: executorConfig,
-                paths: executorPaths
-            }) || null;
-            if (sessionId) {
-                entry.sessionId = sessionId;
-                entry.lastUsed = new Date().toISOString();
-                (0, session_store_1.saveSessions)(paths, store);
-            }
-            else if (retryIndex < retryIntervals.length) {
-                setTimeout(attemptExtraction, retryIntervals[retryIndex]);
-                retryIndex++;
-            }
+            entry.lastUsed = new Date().toISOString();
+            (0, session_store_1.saveSessions)(paths, store);
         };
-        setTimeout(attemptExtraction, retryIntervals[retryIndex++]);
+        setTimeout(attemptExtraction, sessionDelay);
     }
     return promise;
 }

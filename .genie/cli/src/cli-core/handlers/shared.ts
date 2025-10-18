@@ -330,46 +330,21 @@ export async function maybeHandleBackgroundLaunch(ctx: HandlerContext, params: B
   entry.status = 'running';
   entry.background = parsed.options.background;
 
-  // Add entry to store with temp key until sessionId extracted
-  const tempKey = `temp-${agentName}-${startTime}`;
-  store.sessions[tempKey] = entry;
+  // Use sessionId as key (no temp keys)
+  if (!entry.sessionId) {
+    throw new Error('Session ID must be generated before background launch');
+  }
+  store.sessions[entry.sessionId] = entry;
   await persistStore(ctx, store);
 
   process.stdout.write(`▸ Launching ${agentName} in background...\n`);
-  process.stdout.write('▸ Waiting for session ID...\n');
-
-  const pollStart = Date.now();
-  const pollTimeout = 20000;
-  const pollInterval = 500;
-
-  while (Date.now() - pollStart < pollTimeout) {
-    await sleep(pollInterval);
-    const liveStore = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-
-    // V2 format: search sessions by agent name (sessions are keyed by sessionId)
-    const liveEntry = Object.values(liveStore.sessions || {}).find(
-      s => s.agent === agentName && s.status === 'running' && s.sessionId
-    );
-
-    if (liveEntry?.sessionId) {
-      const elapsed = ((Date.now() - pollStart) / 1000).toFixed(1);
-      entry.sessionId = liveEntry.sessionId;
-      process.stdout.write(`▸ Session ID: ${liveEntry.sessionId} (${elapsed}s)\n\n`);
-      process.stdout.write('  View output:\n');
-      process.stdout.write(`    ./genie view ${liveEntry.sessionId}\n\n`);
-      process.stdout.write('  Continue conversation:\n');
-      process.stdout.write(`    ./genie resume ${liveEntry.sessionId} "<your message>"\n\n`);
-      process.stdout.write('  Stop session:\n');
-      process.stdout.write(`    ./genie stop ${liveEntry.sessionId}\n`);
-      return true;
-    }
-  }
-
-  process.stdout.write('▸ Session started but ID not available yet (timeout after 20s)\n\n');
-  process.stdout.write('  List sessions to find ID:\n');
-  process.stdout.write('    ./genie list sessions\n\n');
-  process.stdout.write('  Then view output:\n');
-  process.stdout.write('    ./genie view <sessionId>\n');
+  process.stdout.write(`▸ Session ID: ${entry.sessionId}\n\n`);
+  process.stdout.write('  View output:\n');
+  process.stdout.write(`    npx automagik-genie view ${entry.sessionId}\n\n`);
+  process.stdout.write('  Continue conversation:\n');
+  process.stdout.write(`    npx automagik-genie resume ${entry.sessionId} "<your message>"\n\n`);
+  process.stdout.write('  Stop session:\n');
+  process.stdout.write(`    npx automagik-genie stop ${entry.sessionId}\n`);
   return true;
 }
 
@@ -422,9 +397,11 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
   entry.executorPid = proc.pid || null;
   if (runnerPid) entry.runnerPid = runnerPid;
 
-  // Add entry to store with temp key until sessionId extracted
-  const tempKey = `temp-${entry.agent}-${startTime}`;
-  store.sessions[tempKey] = entry;
+  // Use sessionId as key (no temp keys)
+  if (!entry.sessionId) {
+    throw new Error('Session ID must be generated before execution');
+  }
+  store.sessions[entry.sessionId] = entry;
   await persistStore(ctx, store);
 
   let filteredStdout: NodeJS.ReadWriteStream | null = null;
@@ -445,19 +422,9 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
     try {
       const data = JSON.parse(trimmed);
       if (data && typeof data === 'object' && data.type === 'session.created') {
-        const sessionId = data.session_id || data.sessionId;
-        if (sessionId) {
-          if (entry.sessionId !== sessionId) {
-            entry.sessionId = sessionId;
-            entry.lastUsed = new Date().toISOString();
-
-            // Replace temp key with sessionId key
-            const tempKey = `temp-${entry.agent}-${startTime}`;
-            delete store.sessions[tempKey];
-            store.sessions[sessionId] = entry;
-            void persistStore(ctx, store);
-          }
-        }
+        // MCP might emit session.created event - update lastUsed if needed
+        entry.lastUsed = new Date().toISOString();
+        void persistStore(ctx, store);
       }
     } catch {
       // ignore malformed JSON lines
@@ -570,27 +537,9 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
     let retryIndex = 0;
 
     const attemptExtraction = () => {
-      if (entry.sessionId) return;
-
-      const sessionId = executor.extractSessionId?.({
-        startTime,
-        config: executorConfig,
-        paths: executorPaths
-      }) || null;
-
-      if (sessionId) {
-        entry.sessionId = sessionId;
-        entry.lastUsed = new Date().toISOString();
-
-        // Replace temp key with sessionId key
-        const tempKey = `temp-${entry.agent}-${startTime}`;
-        delete store.sessions[tempKey];
-        store.sessions[sessionId] = entry;
-        void persistStore(ctx, store);
-      } else if (retryIndex < retryIntervals.length) {
-        setTimeout(attemptExtraction, retryIntervals[retryIndex]);
-        retryIndex++;
-      }
+      // sessionId already assigned at creation time - just update lastUsed
+      entry.lastUsed = new Date().toISOString();
+      void persistStore(ctx, store);
     };
 
     setTimeout(attemptExtraction, retryIntervals[retryIndex++]);

@@ -65,11 +65,14 @@ export async function runChat(
   const startTime = deriveStartTime(isBackgroundRunner);
   const logFile = deriveLogFile(resolvedAgentName, startTime, paths, isBackgroundRunner);
 
-  // Generate temporary session ID for tracking (will be updated with real sessionId later)
-  const tempSessionId = `temp-${resolvedAgentName}-${startTime}`;
+  // Generate UUID immediately (no temp keys)
+  const { v4: uuidv4 } = require('uuid');
+  const { generateSessionName } = require('../session-store');
+  const sessionId = uuidv4();
 
   const entry: SessionEntry = {
     agent: resolvedAgentName,
+    name: parsed.options.name || generateSessionName(resolvedAgentName),
     preset: modeName,
     mode: modeName,
     logFile,
@@ -84,9 +87,9 @@ export async function runChat(
     exitCode: null,
     signal: null,
     startTime: new Date(startTime).toISOString(),
-    sessionId: tempSessionId // Will be updated with real sessionId from executor
+    sessionId: sessionId // UUID assigned immediately
   };
-  store.sessions[tempSessionId] = entry;
+  store.sessions[sessionId] = entry;
   saveSessions(paths as SessionPathsConfig, store);
 
   // Show executor info to user
@@ -287,13 +290,6 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
     entry.status = code === 0 ? 'completed' : 'failed';
     saveSessions(paths as SessionPathsConfig, store);
     logStream.end();
-    const sessionFromLog = logViewer?.readSessionIdFromLog?.(logFile) ?? null;
-    const resolvedSessionId = sessionFromLog || entry.sessionId || null;
-    if (entry.sessionId !== resolvedSessionId) {
-      entry.sessionId = resolvedSessionId;
-      entry.lastUsed = new Date().toISOString();
-      saveSessions(paths as SessionPathsConfig, store);
-    }
 
     if (!background) {
       const outcome = code === 0 ? 'success' : 'failure';
@@ -324,29 +320,13 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
     : defaultDelay;
 
   if (executor.extractSessionId) {
-    const retryIntervals = [sessionDelay, 2000, 3000, 3000];
-    let retryIndex = 0;
-
+    // sessionId already assigned at creation time - just update lastUsed if needed
     const attemptExtraction = () => {
-      if (entry.sessionId) return;
-
-      const sessionId = executor.extractSessionId?.({
-        startTime,
-        config: executorConfig,
-        paths: executorPaths
-      }) || null;
-
-      if (sessionId) {
-        entry.sessionId = sessionId;
-        entry.lastUsed = new Date().toISOString();
-        saveSessions(paths as SessionPathsConfig, store);
-      } else if (retryIndex < retryIntervals.length) {
-        setTimeout(attemptExtraction, retryIntervals[retryIndex]);
-        retryIndex++;
-      }
+      entry.lastUsed = new Date().toISOString();
+      saveSessions(paths as SessionPathsConfig, store);
     };
 
-    setTimeout(attemptExtraction, retryIntervals[retryIndex++]);
+    setTimeout(attemptExtraction, sessionDelay);
   }
 
   return promise;

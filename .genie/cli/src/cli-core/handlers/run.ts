@@ -53,10 +53,13 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const startTime = deriveStartTime();
     const logFile = deriveLogFile(resolvedAgentName, startTime, ctx.paths);
 
-    // Import generateSessionName from session-store
+    // Import generateSessionName and generate UUID
     const { generateSessionName } = require('../../session-store');
+    const { v4: uuidv4 } = require('uuid');
 
-    // Don't persist with temp key - wait for real sessionId from extraction
+    // Generate UUID immediately (no temp keys)
+    const sessionId = uuidv4();
+
     const entry: SessionEntry = {
       agent: resolvedAgentName,
       name: parsed.options.name || generateSessionName(resolvedAgentName),
@@ -74,7 +77,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       exitCode: null,
       signal: null,
       startTime: new Date(startTime).toISOString(),
-      sessionId: null // Will be filled by extraction
+      sessionId: sessionId // UUID assigned immediately
     };
 
     // Don't persist yet - wait for sessionId extraction

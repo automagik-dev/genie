@@ -35,9 +35,11 @@ function createRunHandler(ctx) {
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const startTime = (0, shared_1.deriveStartTime)();
         const logFile = (0, shared_1.deriveLogFile)(resolvedAgentName, startTime, ctx.paths);
-        // Import generateSessionName from session-store
+        // Import generateSessionName and generate UUID
         const { generateSessionName } = require('../../session-store');
-        // Don't persist with temp key - wait for real sessionId from extraction
+        const { v4: uuidv4 } = require('uuid');
+        // Generate UUID immediately (no temp keys)
+        const sessionId = uuidv4();
         const entry = {
             agent: resolvedAgentName,
             name: parsed.options.name || generateSessionName(resolvedAgentName),
@@ -55,7 +57,7 @@ function createRunHandler(ctx) {
             exitCode: null,
             signal: null,
             startTime: new Date(startTime).toISOString(),
-            sessionId: null // Will be filled by extraction
+            sessionId: sessionId // UUID assigned immediately
         };
         // Don't persist yet - wait for sessionId extraction
         const handledBackground = await (0, shared_1.maybeHandleBackgroundLaunch)(ctx, {
