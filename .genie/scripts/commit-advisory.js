@@ -51,40 +51,102 @@ class CommitAdvisory {
 
     try {
       let log;
-      // Try to get commits relative to upstream
+
+      // Strategy 1: Try to get commits relative to upstream (@{u})
       try {
         log = execSync(`git log @{u}..HEAD --format="${format}"`, {
           encoding: 'utf8',
           cwd: REPO_ROOT,
           stdio: ['pipe', 'pipe', 'ignore']
         });
-        if (!log.trim()) throw new Error('No upstream commits');
+        if (log.trim()) {
+          return this.parseCommitLog(log, delimiter);
+        }
       } catch {
-        // Fallback: last 5 commits
-        log = execSync(`git log -5 --format="${format}"`, {
+        // Upstream doesn't exist yet (branch not pushed)
+      }
+
+      // Strategy 2: Try commits relative to origin/main
+      try {
+        log = execSync(`git log origin/main..HEAD --format="${format}"`, {
           encoding: 'utf8',
-          cwd: REPO_ROOT
+          cwd: REPO_ROOT,
+          stdio: ['pipe', 'pipe', 'ignore']
         });
+        if (log.trim()) {
+          return this.parseCommitLog(log, delimiter);
+        }
+      } catch {
+        // origin/main doesn't exist
       }
 
-      const entries = log.split(delimiter).filter(e => e.trim());
-      if (entries.length === 0) {
-        this.warnings.push('No commits found in recent history');
-        return [];
+      // Strategy 3: Try commits relative to local main
+      try {
+        log = execSync(`git log main..HEAD --format="${format}"`, {
+          encoding: 'utf8',
+          cwd: REPO_ROOT,
+          stdio: ['pipe', 'pipe', 'ignore']
+        });
+        if (log.trim()) {
+          return this.parseCommitLog(log, delimiter);
+        }
+      } catch {
+        // main doesn't exist
       }
 
-      return entries.map(entry => {
-        const lines = entry.trim().split('\n');
-        return {
-          hash: lines[0] || '',
-          subject: lines[1] || 'unknown',
-          body: lines.slice(2).join('\n').trim()
-        };
+      // Strategy 4: Find merge-base and get commits from there
+      try {
+        const mergeBase = execSync('git merge-base HEAD origin/main', {
+          encoding: 'utf8',
+          cwd: REPO_ROOT,
+          stdio: ['pipe', 'pipe', 'ignore']
+        }).trim();
+
+        if (mergeBase) {
+          log = execSync(`git log ${mergeBase}..HEAD --format="${format}"`, {
+            encoding: 'utf8',
+            cwd: REPO_ROOT
+          });
+          if (log.trim()) {
+            return this.parseCommitLog(log, delimiter);
+          }
+        }
+      } catch {
+        // merge-base failed
+      }
+
+      // Final fallback: last 5 commits (with warning)
+      this.warnings.push('Could not determine base branch - checking last 5 commits only');
+      log = execSync(`git log -5 --format="${format}"`, {
+        encoding: 'utf8',
+        cwd: REPO_ROOT
       });
+
+      return this.parseCommitLog(log, delimiter);
     } catch (e) {
       this.errors.push(`Failed to get commits: ${e.message}`);
       return [];
     }
+  }
+
+  /**
+   * Parse commit log output into commit objects
+   */
+  parseCommitLog(log, delimiter) {
+    const entries = log.split(delimiter).filter(e => e.trim());
+    if (entries.length === 0) {
+      this.warnings.push('No commits found in recent history');
+      return [];
+    }
+
+    return entries.map(entry => {
+      const lines = entry.trim().split('\n');
+      return {
+        hash: lines[0] || '',
+        subject: lines[1] || 'unknown',
+        body: lines.slice(2).join('\n').trim()
+      };
+    });
   }
 
   /**
