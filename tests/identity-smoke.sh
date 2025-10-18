@@ -53,8 +53,12 @@ if [ -z "$log_file" ]; then
           const agent = process.argv[2];
           if (!fs.existsSync(p)) { process.exit(0); }
           const data = JSON.parse(fs.readFileSync(p, "utf8"));
-          const entry = data && data.agents && data.agents[agent];
-          if (entry && entry.logFile) { console.log(entry.logFile); }
+          // V2 format: { sessions: { "key": { agent, logFile, ... } } }
+          const sessions = data && data.sessions;
+          if (sessions) {
+            const entry = Object.values(sessions).find(s => s.agent === agent);
+            if (entry && entry.logFile) { console.log(entry.logFile); }
+          }
         } catch {}
       ' "$sessions_path" "$AGENT" 2>/dev/null || true)
       if [ -n "$log_candidate" ]; then
