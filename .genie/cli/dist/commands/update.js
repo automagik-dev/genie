@@ -376,8 +376,21 @@ async function createBackup(targetGenie) {
     const backupId = (0, fs_utils_1.toIsoId)();
     const backupsRoot = path_1.default.join(targetGenie, 'backups');
     const backupDir = path_1.default.join(backupsRoot, backupId);
+    const cwd = process.cwd();
     await (0, fs_utils_1.ensureDir)(backupDir);
+    // Backup .genie directory
     await (0, fs_utils_1.snapshotDirectory)(targetGenie, path_1.default.join(backupDir, 'genie'));
+    // Backup root framework documentation files
+    const rootDocsDir = path_1.default.join(backupDir, 'docs');
+    await (0, fs_utils_1.ensureDir)(rootDocsDir);
+    const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
+    for (const file of rootDocsFiles) {
+        const srcPath = path_1.default.join(cwd, file);
+        const destPath = path_1.default.join(rootDocsDir, file);
+        if (await (0, fs_utils_1.pathExists)(srcPath)) {
+            await fs_1.promises.copyFile(srcPath, destPath);
+        }
+    }
     return backupId;
 }
 async function copyTemplateGenie(templateGenie, targetGenie) {
