@@ -38,7 +38,7 @@ const defaults: ExecutorDefaults = {
   sessionExtractionDelayMs: null
 };
 
-function buildRunCommand({ config = {}, instructions, prompt, agentPath }: { config?: Record<string, any>; instructions?: string; prompt?: string; agentPath?: string }): ExecutorCommand {
+function buildRunCommand({ config = {}, prompt, agentPath }: { config?: Record<string, any>; prompt?: string; agentPath?: string }): ExecutorCommand {
   const execConfig = mergeExecConfig(config.exec) as Record<string, any>;
   const command = config.binary || defaults.binary!;
   const packageSpec = config.packageSpec || defaults.packageSpec;
