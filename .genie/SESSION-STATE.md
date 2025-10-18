@@ -333,42 +333,44 @@ mcp__automagik_forge__list_tasks project_id=f8924071-fa8e-43ee-8fbc-96ec5b49b3da
 
 ---
 
-## 📋 STANDARD FORGE TASK NAMING CONVENTION
+## 📋 STANDARD FORGE TASK NAMING CONVENTION ✅ STANDARDIZED
 
-**Pattern:** `[TYPE]-###-slug-friendly-name`
+**Pattern:** `[TYPE] #issue-number-slug-friendly-name`
 
 **TYPE values:**
-- `forge` - Regular feature/implementation work
-- `bug` - Bug fixes
-- `doc` - Documentation
-- `learn` - Learning/meta tasks
-- `neuron` - Permanent infrastructure/neuron work
-- `wish` - Wish fulfillment (feature/epic level)
-- `orchestration` - Coordination/meta-orchestration
-- `pr` - PR/merge tracking
+- `[WISH]` - Wish fulfillment (feature/epic level)
+- `[BUG]` - Bug fixes
+- `[FORK]` - Investigations/explorations
+- `[DOC]` - Documentation tasks
+- `[NEURON]` - Permanent infrastructure/neuron work
+- `[LEARN]` - Learning/meta tasks
+- `forge/NNN` - Alternative for code tasks (issue #NNN)
 
-**Examples (Current):**
-```
-✅ forge/120-executor-replacement          [TYPE: forge, #: 120, slug: executor-replacement]
-✅ [BUG] #104 - MCP Background Launch...   [TYPE: BUG, #: 104, slug: mcp-background-launch-timeout]
-✅ [WISH] skills-prioritization            [TYPE: WISH, slug: skills-prioritization]
-✅ [neuron] Git                             [TYPE: neuron, slug: git]
-✅ forge/120-executor-replacement          [TYPE: forge, #: 120]
+**✅ STANDARDIZATION COMPLETE (2025-10-18 13:10 UTC):**
 
-❌ [FRESH] Skills Prioritization           [Inconsistent - should be [WISH-FRESH]]
-❌ [TRIAGE] Incomplete Wishes              [Should be [DOC] or [ORCHESTRATION]]
-❌ [ORCHESTRATION] Parallel PR Creation    [Should have #]
-```
+All 19 Forge tasks now follow pattern:
 
-**GitHub Issue + Forge Task Mapping:**
-- GitHub Issue #107 → Forge task: `[WISH] #107-skills-prioritization`
-- GitHub Issue #104 → Forge task: `[BUG] #104-mcp-background-launch-timeout`
-- GitHub Issue #120 → Forge task: `forge/120-executor-replacement` OR `forge/#120-executor-replacement`
+| Issue | Task Name | Type |
+|-------|-----------|------|
+| #107 | `[WISH] #107-skills-prioritization` | Skill prioritization |
+| #108 | `[WISH] #108-genie-arch-rebrand` | Architecture rebrand |
+| #109 | `[WISH] #109-rc21-session-lifecycle-fix` | RC21 fix |
+| #110 | `[WISH] #110-multi-template-architecture` | Template architecture |
+| #111 | `[WISH] agents-optimization` | AGENTS.md extraction (✅ DONE) |
+| #114 | `[WISH] #114-backup-update-system` | Backup system |
+| #120 | `forge/120-executor-replacement` | Executor replacement |
+| #104 | `[BUG] #104-mcp-background-launch-timeout` | Timeout fix |
+| #102 | `[BUG] #102-mcp-session-id-collision` | Session collision |
+| #66 | `[BUG] #66-mcp-session-disappears` | Session disappears |
+| #122 | `[FORK] #122-uuid-reuse-stale-artifacts` | UUID investigation |
+| #123 | `[DOC] #123-triage-incomplete-wishes` | Triage wishes |
+| ✅ | `[NEURON] #121-git-permanent-neuron` | Git neuron (no issue) |
+| ✅ | `[LEARN] Continuous Framework Learning` | Meta-learning (no issue) |
 
-**Standardization tasks:**
-- [ ] Rename tasks to follow pattern
-- [ ] Ensure ALL tasks link to GitHub issues
-- [ ] Update task descriptions with standard format
+**Pattern now recognizable by:**
+- ✅ Humans (clear TYPE + issue# + description)
+- ✅ LLMs (structured naming, slug-friendly)
+- ✅ Automation (grep-able, linkable to issues)
 
 ---
 
