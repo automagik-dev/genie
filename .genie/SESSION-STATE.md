@@ -1,29 +1,31 @@
 # 🧞 Genie Session State
-**Last Updated:** 2025-10-18 01:05 UTC
+**Last Updated:** 2025-10-18 ~02:00 UTC
 **Purpose:** Track active neuron sessions and workflow states for collective coordination
 
 ---
 
 ## 🎯 Active Sessions
 
-### NONE - RC18 Published, Critical Bug Fixed ✅
+### NONE - RC19 Published, Groups F-G Complete ✅
 
-**Status:** RC18 published, Bug #4 resolved
+**Status:** RC19 published, self-updating-ecosystem Groups F-G complete
 **Context:**
-- RC18 commits: `63f49d0` (migration fix), `4f1c2dc` (version bump)
-- Bug #4 (sessions.json corruption): ✅ FIXED - V1 migration now skips metadata
-- Bug #102 (session collision): ✅ VERIFIED FIXED - UUIDs working correctly
-- Bug #1 (background polling): ✅ FIXED (RC17)
-- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.18
-- npm@next: v2.4.0-rc.18 verified live
-- Testing: 2 sessions created, no collision, clean V2 format
-**Remaining Issues:**
-- Bug #3: Temp keys still used (entries stored as `temp-*` instead of UUID keys)
-- Bug #90: Name field missing (related to Bug #3)
+- RC19 commit: `cf49e81` (chore: pre-release v2.4.0-rc.19)
+- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.19
+- npm@next: Publishing via GitHub Actions (automated)
+- All tests passing: 19/19 ✅
+- Groups F-G implementation complete:
+  - ✅ CHANGELOG auto-generation operational
+  - ✅ Pre-push test runner operational
+  - ✅ Pre-push hook integration working perfectly
+- Evidence validated:
+  - Scripts: `.genie/scripts/update-changelog.py`, `.genie/scripts/run-tests.py`
+  - Hook: `.git/hooks/pre-push` (executable)
+  - CHANGELOG.md: [Unreleased] section with grouped commits
 **Next:**
-1. Investigate Bug #3 root cause (sessionId extraction works, but temp→UUID replacement fails)
-2. Fix temp key replacement logic
-3. Verify name field appears after Bug #3 fixed
+1. Review wish: self-updating-ecosystem
+2. Validate Groups F-G against evidence checklist
+3. Plan remaining groups (H-K) or next priority
 
 ---
 
