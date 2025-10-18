@@ -28,6 +28,7 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const background_1 = require("../../views/background");
 const display_transform_1 = require("../../lib/display-transform");
+const background_manager_1 = require("../../background-manager");
 function applyStoreMerge(target, next) {
     target.version = next.version;
     target.sessions = next.sessions;
@@ -273,7 +274,8 @@ async function maybeHandleBackgroundLaunch(ctx, params) {
         startTime,
         logFile,
         backgroundConfig: config.background,
-        scriptPath: __filename
+        scriptPath: __filename,
+        env: entry.sessionId ? { [background_manager_1.INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
     });
     entry.runnerPid = runnerPid;
     entry.status = 'running';

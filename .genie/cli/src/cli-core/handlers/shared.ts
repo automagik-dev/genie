@@ -12,6 +12,7 @@ import {
   buildRunCompletionView
 } from '../../views/background';
 import { transformDisplayPath } from '../../lib/display-transform';
+import { INTERNAL_SESSION_ID_ENV } from '../../background-manager';
 
 export interface ExecuteRunArgs {
   agentName: string;
@@ -323,7 +324,8 @@ export async function maybeHandleBackgroundLaunch(ctx: HandlerContext, params: B
     startTime,
     logFile,
     backgroundConfig: config.background,
-    scriptPath: __filename
+    scriptPath: __filename,
+    env: entry.sessionId ? { [INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
   });
 
   entry.runnerPid = runnerPid;
@@ -551,4 +553,3 @@ export async function executeRun(ctx: HandlerContext, args: ExecuteRunArgs): Pro
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-

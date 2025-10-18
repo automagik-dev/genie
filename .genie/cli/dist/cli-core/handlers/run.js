@@ -35,11 +35,24 @@ function createRunHandler(ctx) {
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const startTime = (0, shared_1.deriveStartTime)();
         const logFile = (0, shared_1.deriveLogFile)(resolvedAgentName, startTime, ctx.paths);
-        // Import generateSessionName and generate UUID
+        // Import generateSessionName and generate/reuse UUID
         const { generateSessionName } = require('../../session-store');
-        const { v4: uuidv4 } = require('uuid');
-        // Generate UUID immediately (no temp keys)
-        const sessionId = uuidv4();
+        const uuidv4 = () => {
+            try {
+                const { randomUUID } = require('crypto');
+                if (typeof randomUUID === 'function')
+                    return randomUUID();
+            }
+            catch { }
+            const { randomBytes } = require('crypto');
+            return randomBytes(16).toString('hex');
+        };
+        const { INTERNAL_SESSION_ID_ENV } = require('../../background-manager');
+        // If running as background runner, reuse propagated sessionId to avoid duplicates
+        const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
+        const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
+            ? envSessionId.trim()
+            : uuidv4();
         const entry = {
             agent: resolvedAgentName,
             name: parsed.options.name || generateSessionName(resolvedAgentName),

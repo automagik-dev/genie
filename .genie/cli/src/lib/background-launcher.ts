@@ -4,6 +4,7 @@ import type { ParsedCommand, ConfigPaths, GenieConfig } from './types';
 import type { SessionStore, SessionEntry, SessionPathsConfig, SessionLoadConfig } from '../session-store';
 import { loadSessions, saveSessions } from '../session-store';
 import { backgroundManager } from './background-manager-instance';
+import { INTERNAL_SESSION_ID_ENV } from '../background-manager';
 import { sleep } from './async';
 import { DEFAULT_CONFIG } from './config-defaults';
 
@@ -49,7 +50,8 @@ export async function maybeHandleBackgroundLaunch(params: BackgroundLaunchParams
     startTime,
     logFile,
     backgroundConfig: config.background,
-    scriptPath: path.resolve(__dirname, '..', 'genie.js')
+    scriptPath: path.resolve(__dirname, '..', 'genie.js'),
+    env: entry.sessionId ? { [INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
   });
 
   entry.runnerPid = runnerPid;
@@ -67,24 +69,27 @@ export async function maybeHandleBackgroundLaunch(params: BackgroundLaunchParams
   while (Date.now() - pollStart < pollTimeout) {
     await sleep(pollInterval);
     const liveStore = loadSessions(paths as SessionPathsConfig, config as SessionLoadConfig, DEFAULT_CONFIG as any);
-    const liveEntry = liveStore.agents?.[agentName];
+    // Use V2 session store format: sessions keyed by sessionId
+    // The foreground process already persisted `entry` under its UUID key.
+    // Poll for that specific session record instead of legacy agent-keyed lookup.
+    const liveEntry = entry.sessionId ? liveStore.sessions?.[entry.sessionId] : undefined;
 
     if (liveEntry?.sessionId) {
       const elapsed = ((Date.now() - pollStart) / 1000).toFixed(1);
       entry.sessionId = liveEntry.sessionId;
       process.stdout.write(`▸ Session ID: ${liveEntry.sessionId} (${elapsed}s)\n\n`);
       process.stdout.write(`  View output:\n`);
-      process.stdout.write(`    ./genie view ${liveEntry.sessionId}\n\n`);
+      process.stdout.write(`    npx automagik-genie view ${liveEntry.sessionId}\n\n`);
       process.stdout.write(`  Continue conversation:\n`);
 
       if (allowResume) {
-        process.stdout.write(`    ./genie resume ${liveEntry.sessionId} "..."\n\n`);
+        process.stdout.write(`    npx automagik-genie resume ${liveEntry.sessionId} "..."\n\n`);
       } else {
-        process.stdout.write(`    ./genie continue ${agentName} "..."\n\n`);
+        process.stdout.write(`    npx automagik-genie continue ${agentName} "..."\n\n`);
       }
 
       process.stdout.write(`  Stop the agent:\n`);
-      process.stdout.write(`    ./genie stop ${liveEntry.sessionId}\n\n`);
+      process.stdout.write(`    npx automagik-genie stop ${liveEntry.sessionId}\n\n`);
       return true;
     }
 

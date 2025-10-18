@@ -5,6 +5,7 @@ import type { Executor } from '../executors/types';
 import type { CLIOptions, ParsedCommand, ConfigPaths, GenieConfig, ExecuteRunArgs } from '../lib/types';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { deriveStartTime, deriveLogFile } from '../lib/utils';
+import { INTERNAL_SESSION_ID_ENV } from '../background-manager';
 import { getPackageRoot } from '../lib/paths';
 import {
   loadSessions,
@@ -65,10 +66,20 @@ export async function runChat(
   const startTime = deriveStartTime(isBackgroundRunner);
   const logFile = deriveLogFile(resolvedAgentName, startTime, paths, isBackgroundRunner);
 
-  // Generate UUID immediately (no temp keys)
-  const { v4: uuidv4 } = require('uuid');
+  // Generate or reuse sessionId
+  const uuidv4 = () => {
+    try {
+      const { randomUUID } = require('crypto');
+      if (typeof randomUUID === 'function') return randomUUID();
+    } catch {}
+    const { randomBytes } = require('crypto');
+    return randomBytes(16).toString('hex');
+  };
   const { generateSessionName } = require('../session-store');
-  const sessionId = uuidv4();
+  const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
+  const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
+    ? envSessionId.trim()
+    : uuidv4();
 
   const entry: SessionEntry = {
     agent: resolvedAgentName,
@@ -331,5 +342,3 @@ export function executeRun(args: ExecuteRunArgs): Promise<void> {
 
   return promise;
 }
-
-

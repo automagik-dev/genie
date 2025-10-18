@@ -10,6 +10,7 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const agent_resolver_1 = require("../lib/agent-resolver");
 const utils_1 = require("../lib/utils");
+const background_manager_1 = require("../background-manager");
 const paths_1 = require("../lib/paths");
 const session_store_1 = require("../session-store");
 const config_defaults_1 = require("../lib/config-defaults");
@@ -44,10 +45,22 @@ async function runChat(parsed, config, paths) {
     const isBackgroundRunner = parsed.options.backgroundRunner === true;
     const startTime = (0, utils_1.deriveStartTime)(isBackgroundRunner);
     const logFile = (0, utils_1.deriveLogFile)(resolvedAgentName, startTime, paths, isBackgroundRunner);
-    // Generate UUID immediately (no temp keys)
-    const { v4: uuidv4 } = require('uuid');
+    // Generate or reuse sessionId
+    const uuidv4 = () => {
+        try {
+            const { randomUUID } = require('crypto');
+            if (typeof randomUUID === 'function')
+                return randomUUID();
+        }
+        catch { }
+        const { randomBytes } = require('crypto');
+        return randomBytes(16).toString('hex');
+    };
     const { generateSessionName } = require('../session-store');
-    const sessionId = uuidv4();
+    const envSessionId = process.env[background_manager_1.INTERNAL_SESSION_ID_ENV];
+    const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
+        ? envSessionId.trim()
+        : uuidv4();
     const entry = {
         agent: resolvedAgentName,
         name: parsed.options.name || generateSessionName(resolvedAgentName),
