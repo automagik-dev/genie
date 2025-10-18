@@ -19,34 +19,30 @@
 
 ## Neuron Consultation
 
-Genie operates through two cognitive layers: **strategic Genie skills** (via genie neuron) and **execution specialists** (direct collaboration).
+Genie operates through **universal neurons** (reasoning, analysis, audit) and **execution specialists** (code, git, tests, etc.).
 
-**Strategic Thinking Modes (18 total - via genie neuron):**
+### Universal Neurons (Domain-Agnostic)
 
-Use `mcp__genie__run` with `agent="genie"` and include `Mode: <mode-name>` in the prompt to select the reasoning approach. Genie automatically loads `.genie/custom/<mode>.md` when present.
+**Reasoning Modes (4 total - via reasoning/*):**
 
-**Core reasoning styles:**
-- `challenge` – Critical evaluation and adversarial pressure-testing
-- `explore` – Discovery-focused exploratory reasoning
-- `consensus` – Multi-model perspective synthesis
+Use `mcp__genie__run with agent="reasoning/<mode>"`:
+- `reasoning/challenge` – Adversarial pressure-testing and critical evaluation
+- `reasoning/explore` – Discovery-focused investigation without adversarial pressure
+- `reasoning/consensus` – Multi-perspective synthesis and agreement-building
+- `reasoning/socratic` – Question-driven inquiry to uncover assumptions
 
-**Strategic analysis skills:**
-- `plan` – Plan pressure-testing, phase mapping, risk identification
-- `analyze` – System architecture audit and dependency mapping
-- `debug` – Root cause investigation with hypothesis testing
-- `audit` – Risk assessment and security audit with impact/likelihood analysis
-- `refactor` – Design review and refactor planning with verification
-- `docgen` – Documentation outline generation
-- `tracer` – Instrumentation/observability planning
-- `precommit` – Pre-commit validation gate and commit advisory
+**Analysis & Audit:**
+- `analyze` – System analysis and focused investigation (universal framework)
+- `audit` – Risk and impact assessment (universal framework with workflows)
+  - `audit/risk` – General risk audit workflow
+  - `audit/security` – Security audit workflow (OWASP, CVE)
 
-**Custom skills (project-specific):**
-- `compliance` – Controls, evidence, sign-offs mapping
-- `retrospective` – Wins, misses, lessons capture
+**Autonomous Execution:**
+- `vibe` – Fully autonomous task execution mode
 
-**Execution Specialists (6 total - direct neurons):**
+### Code-Specific Neurons
 
-Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
+**Execution Specialists:**
 - `implementor` – Feature implementation and code writing
 - `tests` – Test strategy, generation, authoring across all layers
 - `polish` – Code refinement and cleanup
@@ -54,7 +50,12 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 - `git` – ALL git and GitHub operations (branch, commit, PR, issues)
 - `release` – GitHub release and npm publish orchestration
 
-> Tip: Add project-specific guidance in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`; core files remain immutable.
+**Code Analysis & Tools:**
+- `analyze` (code) – Includes universal analyze + TypeScript/performance examples
+- `debug` – Root cause investigation for code issues
+- `refactor` – Design review and refactor planning
+
+> **Architecture Note:** Universal neurons work across ALL domains (code, legal, medical, finance). Code neurons extend or specialize for code development.
 
 ## How To Run (MCP)
 
@@ -65,18 +66,22 @@ Collaborate directly via `mcp__genie__run with agent="<specialist>"`:
 
 ## Quick Reference
 
-**Strategic Thinking Modes (18 total):**
-- Core reasoning (3): challenge, explore, consensus
-- Analysis skills (8): plan, analyze, debug, audit, refactor, docgen, tracer, precommit
-- Custom skills (2): compliance, retrospective
+**Universal Neurons:**
+- **Reasoning (4):** challenge, explore, consensus, socratic (in reasoning/)
+- **Analysis (1):** analyze (universal framework, 173 lines)
+- **Audit (1 + 2 workflows):** audit (universal framework, 138 lines) + risk, security
+- **Autonomous (1):** vibe
 
-**Execution Specialists (6 total):**
-- Delivery: implementor, tests, polish, review
-- Infrastructure: git, release
+**Code-Specific Neurons:**
+- **Execution (6):** implementor, tests, polish, review, git, release
+- **Code Tools (3):** analyze (code), debug, refactor
 
-- Thinking skill templates live in `.genie/agents/neurons/genie.md` and `.genie/agents/neurons/skills/`
-- Project-specific adjustments belong in `.genie/custom/<mode>.md` or `.genie/custom/<specialist>.md`
-- Core files remain immutable; extend via custom overrides only
+**Include Pattern:**
+- Universal frameworks: `.genie/agents/neurons/{analyze,audit}.md`
+- Reasoning modes: `.genie/agents/neurons/reasoning/{challenge,explore,consensus,socratic}.md`
+- Audit workflows: `.genie/agents/neurons/audit/{risk,security}.md`
+- Code extensions: `.genie/agents/code/neurons/analyze.md` (includes universal + code examples)
+- Custom overrides: `.genie/custom/<neuron>.md`
 
 ## Outputs & Evidence
 

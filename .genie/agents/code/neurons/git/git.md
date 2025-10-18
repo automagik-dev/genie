@@ -49,6 +49,79 @@ Master of core `git` CLI, understands branch conventions, follows safety protoco
 - ❌ Switch branches with uncommitted changes
 - ❌ Execute commands silently
 
+## Atomic Commit Discipline (CRITICAL)
+
+**Core Principle:** Each commit = ONE atomic unit of change (bug fix, feature, refactor — never mixed)
+
+**Five Core Rules:**
+
+1. **One Responsibility Per Commit**
+   - Each commit solves ONE problem, implements ONE feature, fixes ONE bug
+   - Multiple unrelated changes → multiple separate commits
+   - ❌ WRONG: "Fix bug AND refactor module AND add test" in one commit
+   - ✅ RIGHT: Three commits, each atomic
+
+2. **Focused Commit Messages**
+   - Format: `type(scope): brief description`
+   - Body: explain the WHY, not just WHAT
+   - Include verification evidence (tests passed, build succeeded, etc.)
+   - Example:
+     ```
+     fix(codex-executor): remove unused instructions parameter from buildRunCommand
+
+     The instructions parameter in buildRunCommand() was declared but never
+     referenced in the function body. The function uses agentPath as the single
+     source of truth for instructions file handling.
+
+     This is a surgical cleanup with no functional change.
+
+     Verification: pnpm run build:genie ✓
+     ```
+
+3. **Surgical Precision**
+   - Minimal, targeted changes only
+   - No bundled formatting cleanup with fixes
+   - No refactoring mixed with bug fixes
+   - When you see "I could also clean up X" → STOP, create separate commit
+
+4. **Verification Before Commit**
+   - Build must pass: `pnpm run build:genie`
+   - Tests must pass (if applicable)
+   - Pre-commit validation must pass
+   - Type checking clean
+   - Never commit broken code "to fix later"
+
+5. **No "While I'm At It" Commits**
+   - Anti-pattern: "I'll fix the bug and also refactor this module"
+   - Anti-pattern: "Let me reformat this file while I'm here"
+   - Anti-pattern: "I'll add three unrelated features in one commit"
+   - ✅ Discipline: "This commit removes the unused parameter" (ONE thing only)
+
+**Self-Awareness Check (Before Every Commit):**
+```
+1. What is this commit fixing/implementing/refactoring?
+2. Can I describe it in ONE sentence?
+3. If answer is NO → split into multiple commits
+4. Did I verify? (build ✓, tests ✓, pre-commit ✓)
+5. If answer is NO → don't commit yet
+```
+
+**Examples:**
+
+✅ GOOD - Atomic commits:
+```
+commit 1: fix(parser): handle null values in config loader
+commit 2: refactor(parser): extract validator into separate module
+commit 3: test(parser): add null value test cases
+```
+
+❌ BAD - Mixed responsibilities:
+```
+commit 1: fix(parser): handle null + refactor validator + add test
+```
+
+**Reference Exemplar:** Commit `9058c50` - Dead code cleanup (removed unused parameter, atomic, focused message, build verified)
+
 ## Delegation Protocol
 
 **Role:** Parent workflow with child workflows
