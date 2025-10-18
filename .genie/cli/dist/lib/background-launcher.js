@@ -34,8 +34,11 @@ async function maybeHandleBackgroundLaunch(params) {
     process.stdout.write(`▸ Launching ${agentName} in background...\n`);
     process.stdout.write(`▸ Waiting for session ID...\n`);
     const pollStart = Date.now();
-    const pollTimeout = 20000;
-    const pollInterval = 500;
+    // Configurable timeout (default 60s, was 20s) - fixes race condition on slow starts
+    const pollTimeout = parseInt(process.env.GENIE_POLL_TIMEOUT || '60000', 10);
+    let pollInterval = 500;
+    const maxPollInterval = 5000;
+    let lastProgressTime = pollStart;
     while (Date.now() - pollStart < pollTimeout) {
         await (0, async_1.sleep)(pollInterval);
         const liveStore = (0, session_store_1.loadSessions)(paths, config, config_defaults_1.DEFAULT_CONFIG);
@@ -68,8 +71,18 @@ async function maybeHandleBackgroundLaunch(params) {
             process.stdout.write(`▸ Check log: ${logFile}\n`);
             return true;
         }
+        // Progress feedback every 5 seconds
+        const now = Date.now();
+        if (now - lastProgressTime >= 5000) {
+            const elapsed = Math.floor((now - pollStart) / 1000);
+            process.stdout.write(`▸ Still waiting... (${elapsed}s elapsed)\n`);
+            lastProgressTime = now;
+        }
+        // Exponential backoff: 500ms → 750ms → 1125ms → 1688ms → 2532ms → 3798ms → 5000ms (max)
+        pollInterval = Math.min(Math.floor(pollInterval * 1.5), maxPollInterval);
     }
-    process.stdout.write(`\n▸ Timeout waiting for session ID\n`);
+    process.stdout.write(`\n▸ Timeout waiting for session ID (waited ${Math.floor(pollTimeout / 1000)}s)\n`);
+    process.stdout.write(`▸ Increase timeout with: GENIE_POLL_TIMEOUT=120000 (for 120s)\n`);
     process.stdout.write(`▸ Check log: ${logFile}\n`);
     return true;
 }
