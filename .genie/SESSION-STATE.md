@@ -297,5 +297,33 @@ Felipe reviews incoming PRs as genies create them. All PRs will be linked to Git
 
 ---
 
-**Status:** 🚀 PHASE 3 - ACTIVE TASK ACCELERATION (2 tasks merged, 3 in progress, 3 remaining)
+---
+
+## 🧠 ACTIVE GENIE SESSIONS (2025-10-18 11:18 UTC)
+
+**Parallel Execution - All 3 Remaining Tasks:**
+
+| Task | Genie Session ID | Status | ETA |
+|------|-----------------|--------|-----|
+| #3: Multi-Template | f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f | 🔄 Running | 2-3 hrs |
+| #5: Genie Arch | b0fdc632-7ca4-4e6b-806e-0cd8dff08061 | 🔄 Running | 2-3 hrs |
+| #6: Backup Update | b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b | 🔄 Running | 2-3 hrs |
+
+**Resume Commands:**
+```bash
+npx automagik-genie resume f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f "follow-up..."
+npx automagik-genie resume b0fdc632-7ca4-4e6b-806e-0cd8dff08061 "follow-up..."
+npx automagik-genie resume b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b "follow-up..."
+```
+
+**View Full Transcripts:**
+```bash
+npx automagik-genie view f765d1eb-e68e-470f-b1a0-0b8fdcfc2e4f --full
+npx automagik-genie view b0fdc632-7ca4-4e6b-806e-0cd8dff08061 --full
+npx automagik-genie view b9426c53-5fd2-4aba-a792-ea7e0b4e5b7b --full
+```
+
+---
+
+**Status:** 🚀 PHASE 3 - ACTIVE TASK ACCELERATION (2 tasks merged, 3 in progress, 3 genies running in parallel)
 
