@@ -60,8 +60,8 @@ export async function runContinue(
             `This session cannot be resumed because CLI tracking information is missing.\n` +
             `This may happen if sessions.json was corrupted or deleted.\n\n` +
             `Options:\n` +
-            `  1. View the session: ./genie view ${sessionIdArg}\n` +
-            `  2. Start a new session: ./genie run <agent> "<prompt>"\n` +
+            `  1. View the session: npx automagik-genie view ${sessionIdArg}\n` +
+            `  2. Start a new session: npx automagik-genie run <agent> "<prompt>"\n` +
             `  3. (Advanced) Manually restore sessions.json entry`
           );
         }

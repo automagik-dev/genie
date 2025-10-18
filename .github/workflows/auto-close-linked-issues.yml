@@ -1,0 +1,107 @@
+name: Auto-Close Linked Issues on PR Merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  auto-close-issues:
+    runs-on: ubuntu-latest
+    # Only run if PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Extract issue numbers from PR body
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prBody = context.payload.pull_request.body || '';
+            const prNumber = context.payload.pull_request.number;
+
+            console.log('PR #' + prNumber + ' was merged');
+            console.log('Scanning PR body for closing keywords...');
+
+            // Match patterns: "Closes #123", "Fixes #456", "Resolves #789"
+            // Case-insensitive, supports various formats
+            const closePattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+
+            const matches = [...prBody.matchAll(closePattern)];
+            const issueNumbers = matches.map(match => match[1]);
+
+            // Remove duplicates
+            const uniqueIssues = [...new Set(issueNumbers)];
+
+            if (uniqueIssues.length === 0) {
+              console.log('No issues to close (no closing keywords found in PR body)');
+              core.setOutput('has_issues', 'false');
+              return;
+            }
+
+            console.log('Found ' + uniqueIssues.length + ' issue(s) to close:', uniqueIssues.join(', '));
+            core.setOutput('has_issues', 'true');
+            core.setOutput('issue_numbers', JSON.stringify(uniqueIssues));
+
+      - name: Close linked issues
+        if: steps.extract.outputs.has_issues == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumbers = JSON.parse('${{ steps.extract.outputs.issue_numbers }}');
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const prUrl = context.payload.pull_request.html_url;
+            const prAuthor = context.payload.pull_request.user.login;
+
+            console.log('Closing ' + issueNumbers.length + ' linked issue(s)...');
+
+            for (const issueNumber of issueNumbers) {
+              try {
+                // Check if issue exists and is open
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: parseInt(issueNumber)
+                });
+
+                if (issue.state === 'closed') {
+                  console.log('Issue #' + issueNumber + ' is already closed, skipping');
+                  continue;
+                }
+
+                // Add comment explaining the closure
+                const comment = `✅ **Automatically closed via PR #${prNumber}**\n\n` +
+                  `**PR Title:** ${prTitle}\n` +
+                  `**Merged by:** @${prAuthor}\n` +
+                  `**PR Link:** ${prUrl}\n\n` +
+                  `This issue was automatically closed because the merged PR contained closing keywords in its description.`;
+
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: parseInt(issueNumber),
+                  body: comment
+                });
+
+                // Close the issue
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: parseInt(issueNumber),
+                  state: 'closed'
+                });
+
+                console.log('✓ Closed issue #' + issueNumber + ': ' + issue.title);
+
+              } catch (error) {
+                console.error('Failed to close issue #' + issueNumber + ':', error.message);
+                // Continue with other issues even if one fails
+              }
+            }
+
+            console.log('✅ Issue closure process complete - closed', issueNumbers.length, 'issue(s)');
+            // Note: Cannot comment on merged PRs due to GitHub permissions
+            // Issues are closed with explanatory comments, which is the primary goal

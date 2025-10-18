@@ -112,7 +112,7 @@ export function buildRunCompletionView(params: RunCompletionParams): string {
   // Only show stats for attached mode (not background)
   if (params.background === false) {
     if (params.sessionId) {
-      lines.push(`**Resume:** ./genie resume ${params.sessionId} "continue"`);
+      lines.push(`**Resume:** npx automagik-genie resume ${params.sessionId} "continue"`);
     }
 
     // Executor and model on same line
