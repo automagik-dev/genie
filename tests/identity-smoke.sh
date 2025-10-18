@@ -46,18 +46,43 @@ fi
 # Test 2: Validate hook scripts exist and are executable
 echo ""
 echo "Checking hook scripts..."
-if [ -x "$REPO_DIR/.git/hooks/pre-commit" ]; then
-  echo "✅ pre-commit hook is executable"
-else
-  echo "❌ pre-commit hook not executable"
-  exit 1
+
+# Find the actual git hooks directory (handles worktrees)
+GIT_HOOKS_DIR=""
+if [ -d "$REPO_DIR/.git/hooks" ]; then
+  # Regular repository
+  GIT_HOOKS_DIR="$REPO_DIR/.git/hooks"
+elif [ -f "$REPO_DIR/.git" ]; then
+  # Worktree: .git is a file containing gitdir path
+  WORKTREE_GITDIR=$(grep 'gitdir:' "$REPO_DIR/.git" | cut -d' ' -f2)
+  if [ -n "$WORKTREE_GITDIR" ]; then
+    # Resolve to absolute path if relative
+    if [[ "$WORKTREE_GITDIR" != /* ]]; then
+      WORKTREE_GITDIR="$REPO_DIR/$WORKTREE_GITDIR"
+    fi
+    # Get main git directory from worktree path
+    MAIN_GIT_DIR=$(dirname "$(dirname "$WORKTREE_GITDIR")")
+    GIT_HOOKS_DIR="$MAIN_GIT_DIR/hooks"
+  fi
 fi
 
-if [ -x "$REPO_DIR/.git/hooks/pre-push" ]; then
-  echo "✅ pre-push hook is executable"
+if [ -z "$GIT_HOOKS_DIR" ] || [ ! -d "$GIT_HOOKS_DIR" ]; then
+  echo "⚠️  Cannot find git hooks directory (not in a git repository)"
+  echo "Skipping hook validation"
 else
-  echo "❌ pre-push hook not executable"
-  exit 1
+  if [ -x "$GIT_HOOKS_DIR/pre-commit" ]; then
+    echo "✅ pre-commit hook is executable"
+  else
+    echo "❌ pre-commit hook not executable"
+    exit 1
+  fi
+
+  if [ -x "$GIT_HOOKS_DIR/pre-push" ]; then
+    echo "✅ pre-push hook is executable"
+  else
+    echo "❌ pre-push hook not executable"
+    exit 1
+  fi
 fi
 
 # Test 3: Validate validation scripts exist

@@ -22,6 +22,7 @@
     ".genie/standards/**/*.md",
     ".genie/guides/**/*.md",
     ".genie/templates/**/*.md",
+    ".genie/scripts/**/*",
     "templates/code/**/*",
     "templates/create/**/*",
     "bin/automagik-genie.js",

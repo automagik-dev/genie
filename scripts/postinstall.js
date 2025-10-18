@@ -6,6 +6,67 @@
 const fs = require('fs');
 const path = require('path');
 
+/**
+ * Install git hooks if we're in a git repository
+ */
+function installGitHooks() {
+  const gitDir = path.join(__dirname, '..', '.git');
+  const hooksSourceDir = path.join(__dirname, '..', '.genie', 'scripts', 'hooks');
+
+  // Check if we're in a git repository
+  if (!fs.existsSync(gitDir)) {
+    return; // Not a git repo, skip hook installation
+  }
+
+  // Check if .git is a file (worktree) or directory (main repo)
+  const gitDirStats = fs.statSync(gitDir);
+  let gitHooksDir;
+
+  if (gitDirStats.isFile()) {
+    // Worktree: read the gitdir path from .git file
+    const gitDirContent = fs.readFileSync(gitDir, 'utf8');
+    const match = gitDirContent.match(/gitdir:\s*(.+)/);
+    if (match) {
+      const worktreeGitDir = path.resolve(path.dirname(gitDir), match[1].trim());
+      // For worktrees, hooks are in the main .git/hooks directory
+      const mainGitDir = worktreeGitDir.replace(/\/worktrees\/[^/]+$/, '');
+      gitHooksDir = path.join(mainGitDir, 'hooks');
+    }
+  } else {
+    // Main repository
+    gitHooksDir = path.join(gitDir, 'hooks');
+  }
+
+  if (!gitHooksDir || !fs.existsSync(gitHooksDir)) {
+    return; // Can't find hooks directory
+  }
+
+  // Check if hook templates exist
+  if (!fs.existsSync(hooksSourceDir)) {
+    return; // No hook templates to install
+  }
+
+  // Install each hook
+  const hooks = ['pre-commit', 'pre-push'];
+  for (const hook of hooks) {
+    const source = path.join(hooksSourceDir, hook);
+    const dest = path.join(gitHooksDir, hook);
+
+    if (!fs.existsSync(source)) {
+      continue; // Hook template doesn't exist
+    }
+
+    try {
+      // Copy hook file
+      fs.copyFileSync(source, dest);
+      // Make it executable (chmod +x)
+      fs.chmodSync(dest, 0o755);
+    } catch (err) {
+      // Silently fail - don't break installation if hooks can't be installed
+    }
+  }
+}
+
 const GREEN = '\x1b[32m';
 const BLUE = '\x1b[34m';
 const YELLOW = '\x1b[33m';
@@ -26,6 +87,9 @@ function printCommand(description, command) {
   console.log(`  ${YELLOW}${command}${RESET}`);
   console.log('');
 }
+
+// Install git hooks first (silent)
+installGitHooks();
 
 console.log('');
 console.log(`${GREEN}╔═══════════════════════════════════════════════════════════╗${RESET}`);

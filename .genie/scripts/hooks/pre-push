@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+
+const { spawnSync, execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+function runNodeScript(script, args = []) {
+  const p = path.join(__dirname, '..', '..', '.genie', 'scripts', script);
+  const res = spawnSync('node', [p, ...args], { stdio: 'inherit' });
+  return res.status || 0;
+}
+
+function getCurrentBranch() {
+  try {
+    // Try to get branch from current working directory context
+    // This works correctly in worktrees when git push is executed
+    const result = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+
+    return result;
+  } catch (e) {
+    // Fallback: try reading HEAD file directly
+    try {
+      const gitDir = process.env.GIT_DIR || path.join(__dirname, '..');
+      const headFile = path.join(gitDir, 'HEAD');
+
+      if (fs.existsSync(headFile)) {
+        const head = fs.readFileSync(headFile, 'utf8').trim();
+        if (head.startsWith('ref: refs/heads/')) {
+          return head.replace('ref: refs/heads/', '');
+        }
+      }
+    } catch {}
+
+    return '';
+  }
+}
+
+function main() {
+  console.log('🧞 Genie pre-push hook');
+  const currentBranch = getCurrentBranch();
+  const isForgeBranch = currentBranch.startsWith('forge/');
+  const isFeatBranch = currentBranch.startsWith('feat/');
+  const isWorkInProgress = isForgeBranch || isFeatBranch;
+
+  console.log(`📍 Detected branch: ${currentBranch}`);
+
+  // Step 1: tests
+  const testsCode = runNodeScript('run-tests.js');
+  if (testsCode !== 0) {
+    console.error('❌ Pre-push blocked - tests failed');
+    process.exit(1);
+  }
+  // Step 2: commit advisory (validates traceability)
+  const advisoryCode = runNodeScript('commit-advisory.js');
+  if (advisoryCode === 2) {
+    console.error('❌ Pre-push blocked - commit validation failed');
+    process.exit(1);
+  }
+  if (advisoryCode === 1 && !process.env.GENIE_SKIP_WISH_CHECK) {
+    if (isWorkInProgress) {
+      const branchType = isForgeBranch ? 'forge' : 'feat';
+      console.warn(`⚠️  Pre-push warnings detected (allowed for ${branchType}/* branches)`);
+      // forge/* and feat/* branches are work-in-progress, allow warnings
+    } else {
+      console.warn('⚠️  Pre-push has warnings (override: GENIE_SKIP_WISH_CHECK=1 git push)');
+      // Note: exit 1 blocks, exit 0 allows warnings
+      process.exit(1);
+    }
+  }
+  // Step 3: update changelog (non-blocking)
+  const clCode = runNodeScript('update-changelog.js');
+  if (clCode !== 0) {
+    console.warn('⚠️  CHANGELOG update failed (non-blocking)');
+  }
+  console.log('✅ Pre-push hooks passed');
+}
+
+main();

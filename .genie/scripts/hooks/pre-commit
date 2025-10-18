@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+
+const { spawnSync } = require('child_process');
+const path = require('path');
+
+function run(script) {
+  const p = path.join(__dirname, '..', '..', '.genie', 'scripts', script);
+  const res = spawnSync('node', [p], { stdio: 'inherit' });
+  return res.status || 0;
+}
+
+function runGenie(agent, prompt) {
+  // Run Genie workflow and capture session ID + wait for completion
+  const { execSync } = require('child_process');
+  const fs = require('fs');
+
+  try {
+    const genieCliPath = path.join(__dirname, '..', '..', '.genie', 'cli', 'dist', 'genie-cli.js');
+    if (!fs.existsSync(genieCliPath)) {
+      return { sessionId: null, success: true, message: 'Genie CLI not built (skipping workflow)' };
+    }
+
+    console.log(`Running Genie workflow: ${agent}...`);
+
+    // Start workflow (fire and forget, non-blocking)
+    const spawn = require('child_process').spawn;
+    const proc = spawn('node', [genieCliPath, 'run', agent, prompt], {
+      cwd: path.join(__dirname, '..', '..'),
+      stdio: 'ignore',
+      detached: true
+    });
+    proc.unref();
+
+    // Return success - workflow runs in background
+    return { sessionId: null, success: true, message: `Workflow ${agent} started (runs in background)` };
+  } catch (e) {
+    console.log(`⚠️  Could not run workflow: ${e.message}`);
+    return { sessionId: null, success: true, message: 'Workflow skipped' };
+  }
+}
+
+function main() {
+  console.log('🧞 Genie pre-commit validation');
+  console.log('');
+  let exitCode = 0;
+  const validations = [
+    'validate-user-files-not-committed.js',
+    'validate-cross-references.js',
+    'forge-task-link.js',  // Auto-link Forge tasks to wishes on first commit
+  ];
+  for (const v of validations) {
+    const code = run(v);
+    if (code !== 0) exitCode = 1;
+  }
+
+  // Optionally run Genie workflow (non-blocking)
+  console.log('');
+  const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
+  if (workflow.message) {
+    console.log(`ℹ️  ${workflow.message}`);
+  }
+
+  console.log('');
+  if (exitCode === 0) console.log('✅ All pre-commit validations passed');
+  else console.error('❌ Some validations failed - fix issues above and retry commit');
+  process.exit(exitCode);
+}
+
+main();
