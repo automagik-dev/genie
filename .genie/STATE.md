@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.19
+last_version: 2.4.0-rc.20
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -17,39 +17,41 @@ validation_commands:
 
 ## 📊 Current Session
 
-**Date:** 2025-10-17
-**Focus:** Self-updating ecosystem + squeaky clean repository
+**Date:** 2025-10-18
+**Focus:** RC20 QA Testing + Bug #102 Regression Discovery
 **Branch:** !`git branch --show-current`
 
 **Completed Work:**
-- ✅ Fixed 305 broken @ references → 0 (squeaky clean)
-- ✅ Deleted .claude/ directory (natural routing complete)
-- ✅ Enhanced validator (code block + inline code detection)
-- ✅ Created agent neural tree generator script
-- ✅ Committed: b0b94bd (108 files, +2,582/-999 lines)
-- ✅ All cross-references validated
+- ✅ RC20 published (v2.4.0-rc.20) - Bug #4 UUID keys + name field fix
+- ✅ RC20 comprehensive QA testing initiated
+- 🚨 CRITICAL BUG FOUND: Bug #102 regression (duplicate sessions)
+- ✅ Root cause identified: background-launcher.ts V1/V2 format mismatch
+- ✅ QA failure report documented: .genie/reports/rc20-qa-failure-20251018.md
+- ⏸️ RC20 deployment halted pending fix
 
 ---
 
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.15 on npm@next (2025-10-17)
-**Latest:** Squeaky clean repository + agent neural tree
+**Published:** v2.4.0-rc.20 on npm@next (2025-10-18)
+**Status:** 🚨 CRITICAL BUG - QA FAILED (do not use RC20)
 
 **Latest Commit:** !`git log --oneline -1`
 
-**Key Improvements in RC15:**
-- ✅ 305 broken @ references fixed → 0 (100% valid)
-- ✅ Validator enhanced (code block + inline code detection)
-- ✅ Agent neural tree generator script created
-- ✅ .claude/ directory removed (natural routing complete)
-- ✅ 108 files cleaned, all cross-references validated
+**RC20 Status (FAILED QA):**
+- ✅ Bug #4 fix implemented (UUID keys + name field)
+- ❌ Bug #102 REGRESSION: Duplicate sessions created per run
+- ❌ Root cause: background-launcher.ts V1/V2 format mismatch (line 70)
+- ❌ Every run command creates TWO sessions instead of one
+- 🔧 Fix identified: 1-line change required
+- 📊 Full report: .genie/reports/rc20-qa-failure-20251018.md
 
 **Previous RC Fixes:**
-- RC13: Bug #90 full transcript fix
-- RC12: Session visibility + delegation paradox fixes
-- RC9: 4 confirmed MCP bugs patched
+- RC19: Post-merge STATE.md auto-update hook
+- RC16-18: Session collision + fragmentation fixes
+- RC15: 305 broken @ references fixed
+- RC9-13: MCP bugs + full transcript fix
 
 ---
 

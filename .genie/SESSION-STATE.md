@@ -1,35 +1,58 @@
 # 🧞 Genie Session State
-**Last Updated:** 2025-10-18 ~02:00 UTC
+**Last Updated:** 2025-10-18 03:13 UTC
 **Purpose:** Track active neuron sessions and workflow states for collective coordination
 
 ---
 
 ## 🎯 Active Sessions
 
-### NONE - RC19 Published, Groups F-G Complete ✅
-
-**Status:** RC19 published, self-updating-ecosystem Groups F-G complete
-**Context:**
-- RC19 commit: `cf49e81` (chore: pre-release v2.4.0-rc.19)
-- GitHub Release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.19
-- npm@next: Publishing via GitHub Actions (automated)
-- All tests passing: 19/19 ✅
-- Groups F-G implementation complete:
-  - ✅ CHANGELOG auto-generation operational
-  - ✅ Pre-push test runner operational
-  - ✅ Pre-push hook integration working perfectly
-- Evidence validated:
-  - Scripts: `.genie/scripts/update-changelog.py`, `.genie/scripts/run-tests.py`
-  - Hook: `.git/hooks/pre-push` (executable)
-  - CHANGELOG.md: [Unreleased] section with grouped commits
-**Next:**
-1. Review wish: self-updating-ecosystem
-2. Validate Groups F-G against evidence checklist
-3. Plan remaining groups (H-K) or next priority
+None - All sessions completed
 
 ---
 
 ## 🔄 Session History (Recent)
+
+### RC20 Comprehensive QA Testing 🚨 FAILED
+**Session ID:** N/A (direct execution)
+**Started:** 2025-10-18 03:09 UTC
+**Completed:** 2025-10-18 03:12 UTC
+**Outcome:** CRITICAL BUG FOUND - Bug #102 regression
+**Details:**
+- ✅ Clean slate setup complete
+- ✅ Session creation tests executed
+- 🚨 CRITICAL: Every `run` creates TWO sessions (different UUIDs)
+- 🚨 Root cause: background-launcher.ts:70 uses V1 format (liveStore.agents)
+- 🚨 Should use V2 format (liveStore.sessions)
+- ⏸️ QA aborted - bug blocks all downstream testing
+- 📊 Report: .genie/reports/rc20-qa-failure-20251018.md
+- 🔧 Fix identified: 1-line change required for RC21
+
+### Implementor - Bug #4 Complete Fix ✅
+**Session ID:** Multiple (direct execution)
+**Started:** 2025-10-18 ~01:54 UTC
+**Completed:** 2025-10-18 ~02:26 UTC
+**Outcome:** Bug #4 fixes implemented and released in RC20
+**Details:**
+- Fixed UUID key generation (no more temp-* keys)
+- Fixed name field storage (--name parameter works)
+- Changed run.ts to generate UUID immediately
+- Removed temp key replacement logic
+- All 4 CLI validation tests passed
+- Done report: .genie/wishes/bug4-final-fix/reports/done-implementor-bug4-final-fix-202510180226.md
+- Released as RC20 (LATER FOUND TO HAVE REGRESSION)
+
+### Release - RC20 GitHub Release ✅
+**Session ID:** N/A (not tracked)
+**Started:** 2025-10-18 ~02:30 UTC
+**Completed:** 2025-10-18 ~02:35 UTC
+**Outcome:** v2.4.0-rc.20 published to npm@next
+**Details:**
+- GitHub release: https://github.com/namastexlabs/automagik-genie/releases/tag/v2.4.0-rc.20
+- npm: https://www.npmjs.com/package/automagik-genie/v/2.4.0-rc.20
+- Features: UUID keys, name field support
+- **NOTE:** QA later revealed Bug #102 regression
+
+## 🔄 Session History (Older)
 
 ### Bug Investigation - RC16 Critical Bugs ✅
 **Session ID:** N/A (direct execution, no implementor session)
@@ -203,29 +226,6 @@
 - Same file, different neurons → Coordinate through genie
 - Parallel work → Clearly separate concerns in session entries
 - Session restart → Resume from last known state in this file
-
----
-
-## 📋 RC16 Validation Status
-
-**Test incomplete** - needs MCP tools for proper validation
-
-**What we know:**
-- RC16 published: commit 0a843e8 (includes fix e78c8d1)
-- Fix commit shows 44 files changed (proper implementation)
-- Source code (run.ts) has name field and sessionId handling
-- Global package has --name option in genie-cli.js
-- CLI test showed unexpected behavior but may be setup issue
-
-**What needs verification (after MCP session restart):**
-1. Create two sessions with MCP run tool
-2. Verify sessionId keys (not temp-* keys)
-3. Verify name field present in session entries
-4. Check no collision when same agent runs twice
-5. Verify single log file per session (no fragmentation)
-6. Test resume/view/stop with both UUID and name
-
-**Next:** Felipe restarting session to enable MCP testing
 
 ---
 
