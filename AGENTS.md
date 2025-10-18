@@ -643,3 +643,61 @@ Genie: *creates wish naturally, no commands exposed*
 </master_principles>
 
 </prompt>
+
+
+## Neural Graph Architecture (Auto-Generated)
+<!-- AUTO-GENERATED-START: Do not edit manually -->
+**Last Updated:** 2025-10-18 06:34:54 UTC
+**Total Tokens:** 37,822 (baseline for efficiency validation)
+
+**Distribution:**
+- Other: 16,834 tokens (44.5%)
+- Skills: 13,906 tokens (36.8%)
+- Core Framework: 7,082 tokens (18.7%)
+
+**Hierarchy:**
+
+- **AGENTS.md** (7,082 tokens, +30,740 from 41 refs)
+  - **.genie/product/mission.md** (684 tokens)
+  - **.genie/product/tech-stack.md** (546 tokens)
+  - **.genie/product/roadmap.md** (594 tokens)
+  - **.genie/product/environment.md** (694 tokens)
+  - **.genie/agents/code/skills/know-yourself.md** (550 tokens)
+  - **.genie/agents/code/skills/evidence-based-thinking.md** (72 tokens)
+  - **.genie/agents/code/skills/publishing-protocol.md** (541 tokens)
+  - **.genie/agents/code/skills/delegation-discipline.md** (806 tokens)
+  - **.genie/agents/code/skills/role-clarity-protocol.md** (705 tokens)
+  - **.genie/agents/code/skills/execution-integrity-protocol.md** (617 tokens)
+  - **.genie/agents/code/skills/triad-maintenance-protocol.md** (1,283 tokens)
+  - **.genie/agents/code/skills/persistent-tracking-protocol.md** (1,055 tokens)
+  - **.genie/agents/code/skills/no-backwards-compatibility.md** (274 tokens)
+  - **.genie/agents/code/skills/experimentation-protocol.md** (481 tokens)
+  - **.genie/agents/code/skills/agent-configuration.md** (548 tokens)
+  - **.genie/agents/code/skills/file-naming-rules.md** (267 tokens)
+  - **.genie/agents/code/skills/routing-decision-matrix.md** (1,659 tokens)
+  - **.genie/agents/code/skills/evidence-storage.md** (265 tokens)
+  - **.genie/agents/code/skills/prompting-standards.md** (152 tokens)
+  - **.genie/agents/code/skills/branch-tracker-guidance.md** (139 tokens)
+  - **.genie/agents/code/skills/blocker-protocol.md** (73 tokens)
+  - **.genie/agents/code/skills/chat-mode-helpers.md** (219 tokens)
+  - **.genie/agents/code/skills/forge-mcp-pattern.md** (393 tokens)
+  - **.genie/agents/code/skills/meta-learn-protocol.md** (624 tokens)
+  - **.genie/agents/code/skills/tool-requirements.md** (95 tokens)
+  - **.genie/agents/code/skills/orchestration-protocols.md** (190 tokens)
+  - **.genie/agents/code/skills/execution-patterns.md** (87 tokens)
+  - **.genie/agents/code/skills/wish-document-management.md** (86 tokens)
+  - **.genie/agents/code/skills/genie-integration.md** (1,151 tokens)
+  - **.genie/agents/code/skills/missing-context-protocol.md** (106 tokens)
+  - **.genie/agents/code/skills/parallel-execution.md** (71 tokens)
+  - **.genie/agents/code/skills/workspace-system.md** (77 tokens)
+  - **.genie/agents/code/skills/forge-integration.md** (76 tokens)
+  - **.genie/agents/code/skills/sequential-questioning.md** (1,244 tokens)
+  - **.genie/agents/code/qa.md** (1,016 tokens)
+  - **.genie/qa/checklist.md** (2,334 tokens)
+  - **.genie/MASTER-PLAN.md** (2,949 tokens)
+  - **.genie/SESSION-STATE.md** (4,638 tokens)
+  - **.genie/USERCONTEXT.md** (1,981 tokens)
+  - **.genie/docs/delegation-enforcement.md** (640 tokens)
+  - **.genie/docs/mcp-interface.md** (758 tokens)
+
+<!-- AUTO-GENERATED-END -->

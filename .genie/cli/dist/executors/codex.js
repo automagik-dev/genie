@@ -72,7 +72,7 @@ const defaults = {
     },
     sessionExtractionDelayMs: null
 };
-function buildRunCommand({ config = {}, instructions, prompt, agentPath }) {
+function buildRunCommand({ config = {}, prompt, agentPath }) {
     const execConfig = mergeExecConfig(config.exec);
     const command = config.binary || defaults.binary;
     const packageSpec = config.packageSpec || defaults.packageSpec;
