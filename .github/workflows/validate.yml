@@ -30,6 +30,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Fix git hook permissions
+        run: |
+          chmod +x .git/hooks/pre-commit .git/hooks/pre-push 2>/dev/null || true
+          ls -la .git/hooks/
+
       - name: Verify CLI basic commands
         run: |
           echo "=== Testing CLI Help ==="
