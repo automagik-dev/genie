@@ -92,17 +92,39 @@ class ForgeTaskLinker {
 
   /**
    * Extract Forge metadata from branch name
-   * Branch pattern: forge/<attempt-id-prefix>-<abbreviated-title>
+   * Branch patterns:
+   * - forge/<attempt-id-prefix>-<abbreviated-title> (Forge worktrees)
+   * - feat/<abbreviated-title> (Manual feature branches)
    */
   extractForgeMetadata(branch) {
-    const match = branch.match(/^forge\/([a-f0-9]{4})-(.*?)$/);
-    if (!match) return null;
+    // Try forge/ pattern first (Forge worktrees: forge/35a4-test-forge-metad)
+    let match = branch.match(/^forge\/([a-f0-9]{4})-(.*?)$/);
+    if (match) {
+      return {
+        attemptIdPrefix: match[1],
+        taskAbbrev: match[2],
+        fullBranchName: branch,
+        isForgeBranch: true
+      };
+    }
 
-    return {
-      attemptIdPrefix: match[1],
-      taskAbbrev: match[2],
-      fullBranchName: branch
-    };
+    // Try feat/ pattern (Manual branches: feat/skills-prioritization)
+    match = branch.match(/^feat\/(.+?)$/);
+    if (match) {
+      // Generate pseudo attempt ID from branch name (first 4 chars of first word)
+      const taskName = match[1];
+      const firstWord = taskName.split('-')[0];
+      const pseudoId = firstWord.substring(0, 4).padEnd(4, '0').toLowerCase();
+
+      return {
+        attemptIdPrefix: `feat_${pseudoId}`,
+        taskAbbrev: taskName,
+        fullBranchName: branch,
+        isForgeBranch: false
+      };
+    }
+
+    return null;
   }
 
   /**
