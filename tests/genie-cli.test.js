@@ -57,6 +57,8 @@ async function runCliCoreTests() {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
   const sessionsFile = path.join(tmpDir, 'sessions.json');
+
+  // V3 format: sessions keyed by name (not agent name or sessionId)
   fs.writeFileSync(
     sessionsFile,
     JSON.stringify(
@@ -81,6 +83,7 @@ async function runCliCoreTests() {
     const store = service.load();
     store.sessions.genieB = { agent: 'genieB', name: 'genieB', executor: 'codex', sessionId: 'genieB-uuid' };
 
+    // Simulate concurrent write (another process adds session-c)
     fs.writeFileSync(
       sessionsFile,
       JSON.stringify(
@@ -100,8 +103,8 @@ async function runCliCoreTests() {
 
     const merged = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
     assert.ok(merged.sessions.genieA, 'should retain original entries');
-    assert.ok(merged.sessions.genieB, 'should include newly saved agent');
-    assert.ok(merged.sessions.genieC, 'should merge concurrent agent additions');
+    assert.ok(merged.sessions.genieB, 'should include newly saved session');
+    assert.ok(merged.sessions.genieC, 'should merge concurrent session additions');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
