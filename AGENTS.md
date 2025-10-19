@@ -60,6 +60,7 @@ See `.genie/` directory for comprehensive documentation:
 - `@.genie/code/skills/wish-document-management.md`
 - `@.genie/code/skills/forge-integration.md`
 - `@.genie/code/skills/forge-mcp-pattern.md`
+- `@.genie/code/skills/forge-orchestration-workflow.md`
 - `@.genie/code/skills/missing-context-protocol.md`
 
 ## Workflow Architecture
