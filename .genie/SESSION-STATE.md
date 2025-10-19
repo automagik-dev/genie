@@ -88,7 +88,35 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 
 **These change Genie behavior through documentation, no code required:**
 
-**1. c0e6699d - Learn: Forge Orchestration Patterns** ⭐⭐⭐⭐⭐
+**🔥 TOP PRIORITY FOUNDATION TASKS:**
+
+**1. 535a26c1 - Voice Agent Transformation** 🔥⭐⭐⭐⭐⭐
+- **Status:** Just created, discovery phase
+- **Phase 1:** Investigation (Tier I - prompt audit, language conversion)
+- **Phase 2:** Implementation (Tier I - prompt rewrites, minimal code)
+- **Impact:** Transform base Genie to voice-first, human-centric co-pilot
+- **Priority:** 🔥 TOP - Core identity evolution
+- **Dependencies:** Synergy with Task 2 (naming affects prompts)
+- **Why Critical:** Felipe's main objective - "make base Genie as tiny and simple and human-centric as possible"
+- **Scope:** Review ALL agent prompts, convert to conversational tone, simplify base Genie
+- **Next:** Inventory all prompts, design voice-friendly patterns, create conversion templates
+
+**2. c1d21957 - Unified Naming Taxonomy** 🔥⭐⭐⭐⭐⭐
+- **Status:** Just created, discovery phase
+- **Phase 1:** Investigation (Tier I - naming inventory, pattern analysis)
+- **Phase 2:** Implementation (Tier I - template updates, migration)
+- **Impact:** Single coherent taxonomy across Forge, GitHub, templates, branches, codebase
+- **Priority:** 🔥 TOP - Foundation for all coordination
+- **Dependencies:** Synergy with Task 1 (naming language affects voice prompts)
+- **Why Critical:** Eliminates confusion, enables automation, creates single source of truth
+- **Scope:** Review ALL naming (Forge tasks, GitHub, branches, templates, files, commits)
+- **Next:** Complete naming inventory, design unified taxonomy, create migration plan
+
+---
+
+**REVIEW & MERGE CANDIDATES:**
+
+**3. c0e6699d - Learn: Forge Orchestration Patterns** ⭐⭐⭐⭐⭐
 - **Status:** in-review (may be complete)
 - **Output:** `.genie/code/skills/forge-orchestration-workflow.md`
 - **Impact:** Delegation pattern, active monitoring loop, crash recovery
@@ -96,7 +124,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Dependencies:** None
 - **Next:** Check if complete, review, merge immediately
 
-**2. 6644fd56 - Wish: Forge Executor Integration** ⭐⭐⭐⭐
+**4. 6644fd56 - Wish: Forge Executor Integration** ⭐⭐⭐⭐
 - **Status:** in-review (may be complete)
 - **Output:** `.genie/wishes/2025-10-19-forge-executor-integration.md`
 - **Impact:** Wish document template, Tech Council pattern, acceptance criteria
@@ -104,7 +132,11 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Dependencies:** None
 - **Next:** Check if complete, review, merge after #1
 
-**3. ab6c2576 - Forge Resource Sync Investigation** ⭐⭐⭐⭐⭐
+---
+
+**EDUCATIONAL & DISCOVERY TASKS:**
+
+**5. ab6c2576 - Forge Resource Sync Investigation** ⭐⭐⭐⭐⭐
 - **Status:** Just created, awaiting Felipe guidance
 - **Phase 1:** Investigation (Tier I - markdown reports)
 - **Phase 2:** Implementation (Tier II - if approved)
@@ -113,7 +145,8 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Dependencies:** None for investigation phase
 - **Next:** Felipe leads investigation, Genie learns and documents
 
-**4. 22593561 - MCP Server Authentication for Remote Access** 🔴⭐⭐⭐⭐⭐
+**6. c5e207a8 - MCP Server Authentication for Remote Access (#152)** 🔴⭐⭐⭐⭐⭐
+- **GitHub Issue:** #152
 - **Status:** Just created, discovery phase
 - **Phase 1:** Investigation (Tier I - FastMCP exploration, auth pattern research)
 - **Phase 2:** Implementation (Tier II - if approved)
@@ -128,7 +161,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 
 **Genie Behavioral Changes Requiring TypeScript/Rust:**
 
-**5. dafbff84 - Forge Executor Integration** ⭐⭐⭐⭐⭐
+**7. dafbff84 - Forge Executor Integration** ⭐⭐⭐⭐⭐
 - **Status:** in-review
 - **Code:** Replace background-launcher.ts, update handlers, WebSocket streaming
 - **Impact:** <5s session creation, real-time logs, 6 bugs eliminated, 10+ concurrent sessions
@@ -137,7 +170,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Blocker:** forge-executor.ts project detection bug (needs fix)
 - **Next:** Fix bug, then review/merge
 
-**6. 0d568ea8 - MCP Auto-Sync on Startup** ⭐⭐⭐⭐
+**8. 0d568ea8 - MCP Auto-Sync on Startup** ⭐⭐⭐⭐
 - **Status:** todo
 - **Code:** mcp-server.ts init hook, health check, project matching
 - **Impact:** Auto-detect Forge projects at startup
@@ -146,7 +179,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Blocker:** None
 - **Next:** Can execute immediately
 
-**7. 5df76ebd - Wish Task Creation via MCP** ⭐⭐⭐⭐⭐
+**9. 5df76ebd - Wish Task Creation via MCP** ⭐⭐⭐⭐⭐
 - **Status:** todo
 - **Code:** mcp__genie__wish tool, Forge API state="agent", branch creation
 - **Impact:** Wishes become real Forge tasks with branches
@@ -154,7 +187,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Dependencies:** **BLOCKED** - needs Forge Tasks 2, 7 (state="agent", branch)
 - **Next:** Wait for Forge backend release
 
-**8. 89b104c1 - Sub-Task Creation from Execution Groups** ⭐⭐⭐⭐
+**10. 89b104c1 - Sub-Task Creation from Execution Groups** ⭐⭐⭐⭐
 - **Status:** todo
 - **Code:** Extend forge.md to create Forge sub-tasks with parent_task_id
 - **Impact:** forge.md creates REAL tasks (not just files), hierarchical relationships
@@ -162,7 +195,7 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 - **Dependencies:** **BLOCKED** - needs Task 6, Forge Task 6 (parent_task_id)
 - **Next:** Wait for dependencies complete
 
-**9. 28921ec5 - Hierarchical Learn Integration** ⭐⭐⭐
+**11. 28921ec5 - Hierarchical Learn Integration** ⭐⭐⭐
 - **Status:** todo
 - **Code:** Project Learn task, wish Learn sub-tasks, parent_task_id linking
 - **Impact:** Two-tier learning (project + wish levels)
@@ -174,83 +207,103 @@ When Felipe returns and says "Let's continue", engage in conversation mode to:
 
 **These enable Genie Tier II behavioral changes:**
 
-**10. 07d294a2 - State "agent" Implementation** 🔴 CRITICAL
+**12. 07d294a2 - State "agent" Implementation** 🔴 CRITICAL
 - **Code:** Rust enum, database migration, API validation
 - **Enables:** Task 6 (Wish Creation)
 
-**11. 86ed77e2 - Parent-Child Task Support** 🔴 CRITICAL
+**13. 86ed77e2 - Parent-Child Task Support** 🔴 CRITICAL
 - **Code:** Rust model, parent_task_id field, API endpoint
 - **Enables:** Tasks 7, 8 (Sub-Tasks, Learn hierarchy)
 
-**12. dfbd3854 - Branch Assignment to Tasks** 🟡 FOUNDATION
+**14. dfbd3854 - Branch Assignment to Tasks** 🟡 FOUNDATION
 - **Code:** Rust field, branch creation/push logic
 - **Enables:** Task 6 (Wish branches)
 
 ### 📋 Execution Order Plan
 
 **Tier I (Markdown Only - Discovery Phases):**
-1. Review & merge c0e6699d (Learn doc) - FIRST
-2. Review & merge 6644fd56 (Wish doc) - SECOND
-3. Investigate ab6c2576 (Resource sync) - Felipe guides
-4. Investigate 22593561 (MCP Auth) - 🔴 HIGH priority for release
+
+**🔥 TOP PRIORITY (Execute First):**
+1. Investigate 535a26c1 (Voice Agent) - 🔥 Transform base Genie to human-centric co-pilot
+2. Investigate c1d21957 (Naming Taxonomy) - 🔥 Unify all naming across systems
+
+**Review & Merge (If Complete):**
+3. Review & merge c0e6699d (Learn doc) - Foundation orchestration patterns
+4. Review & merge 6644fd56 (Wish doc) - Wish template establishment
+
+**Educational & Release Critical:**
+5. Investigate ab6c2576 (Resource sync) - Felipe guides (educational)
+6. Investigate c5e207a8 (MCP Auth #152) - 🔴 HIGH priority for release
 
 **Tier II (Code Required):**
-- **Wave 1 (Now):** Tasks 5, 6 (Executor, Auto-Sync) - no blockers
-- **Wave 2 (After Forge):** Task 7 (Wish Creation) - needs state="agent", branch
-- **Wave 3 (After Wave 2):** Tasks 8, 9 (Sub-Tasks, Learn) - needs parent_task_id
-- **Release Blocker:** Task 4 (MCP Auth) - after discovery phase completes
+- **Wave 1 (Now):** Tasks 7, 8 (Executor, Auto-Sync) - no blockers
+- **Wave 2 (After Forge):** Task 9 (Wish Creation) - needs state="agent", branch
+- **Wave 3 (After Wave 2):** Tasks 10, 11 (Sub-Tasks, Learn) - needs parent_task_id
+- **Release Blocker:** Task 6 (MCP Auth) - after discovery phase completes
 
 **Forge Backend (Felipe):**
-- Execute Tasks 10, 11, 12 in parallel
+- Execute Tasks 12, 13, 14 in parallel
 - Publish new Forge version
 - Signal ready to Genie
 
 ### 🚧 Critical Path Dependencies
 
 ```
+🔥 TOP PRIORITY (Foundation - Execute First):
+├─ Task 1 (Voice Agent) ─────────────────┐ ← 🔥 Human-centric transformation
+└─ Task 2 (Naming Taxonomy) ─────────────┘ ← 🔥 Unified naming (synergy with #1)
+
 Forge Backend (Felipe):
-├─ Task 10: state="agent" ─────────────┐
-├─ Task 11: parent_task_id ────────┐   │
-└─ Task 12: branch field ──────┐   │   │
-                               │   │   │
-Genie Tier II:                 │   │   │
-├─ Task 6 (Auto-Sync) ─────────┘   │   │ ← No blocker
-├─ Task 5 (Executor) ──────────────┘   │ ← No blocker
-├─ Task 4 (MCP Auth) ──────────────────┘ ← 🔴 Release blocker
-├─ Task 7 (Wish) ──────────────────────┘ ← Needs 10, 12
-├─ Task 8 (Sub-Tasks) ──────────────┘ ← Needs 7, 11
-└─ Task 9 (Learn) ──────────────────┘ ← Needs 11
+├─ Task 12: state="agent" ────────────┐
+├─ Task 13: parent_task_id ───────┐   │
+└─ Task 14: branch field ─────┐   │   │
+                              │   │   │
+Genie Tier II:                │   │   │
+├─ Task 8 (Auto-Sync) ────────┘   │   │ ← No blocker
+├─ Task 7 (Executor) ─────────────┘   │ ← No blocker
+├─ Task 6 (MCP Auth) ─────────────────┘ ← 🔴 Release blocker
+├─ Task 9 (Wish) ─────────────────────┘ ← Needs 12, 14
+├─ Task 10 (Sub-Tasks) ───────────┘ ← Needs 9, 13
+└─ Task 11 (Learn) ───────────────┘ ← Needs 13
 ```
 
 ### 💬 Discussion Priorities (Next Session)
 
 **When Felipe says "Let's continue", discuss:**
 
-1. **Tier I Status:**
+1. **🔥 TOP PRIORITY - Foundation Tasks (NEW):**
+   - Task 1 (Voice Agent): Start prompt audit immediately?
+   - Task 2 (Naming Taxonomy): Start naming inventory immediately?
+   - Execute these BEFORE everything else?
+   - Synergy between voice prompts and naming language?
+   - Timeline for discovery completion?
+
+2. **Tier I Review Status:**
    - Are tasks c0e6699d & 6644fd56 complete?
    - Should we merge them immediately?
    - Any refinements needed?
 
-2. **Educational Task (ab6c2576):**
-   - Start investigation phase now?
+3. **Educational Task (ab6c2576):**
+   - Start investigation phase now or after foundation tasks?
    - How deep should we investigate?
    - What format for findings?
 
-3. **MCP Authentication (NEW - Release Blocker):**
-   - Start discovery phase now or after other tasks?
+4. **MCP Authentication (Task 6 - Release Blocker):**
+   - Start discovery phase now or after foundation tasks?
    - FastMCP exploration approach?
    - Auth method preferences (JWT, API keys, OAuth)?
    - Timeline for next release?
 
-4. **Tier II Sequencing:**
+5. **Tier II Sequencing:**
    - Fix executor bug first or start auto-sync?
-   - When will Felipe execute Forge Tasks 10, 11, 12?
+   - When will Felipe execute Forge Tasks 12, 13, 14?
    - Should we prepare validation tests?
 
-5. **Other Improvements:**
-   - Any markdown-only behavioral changes missing?
-   - Agent prompt refinements needed?
-   - Workflow documentation updates?
+6. **Overall Priority Order:**
+   - Voice + Naming first (foundation)?
+   - Then review/merge tasks 3, 4?
+   - Then resource sync + MCP auth?
+   - Then Tier II code work?
 
 **Current State:** Organized and waiting. All tasks categorized, dependencies mapped, priorities recommended. NO EXECUTION until discussion complete.
 
