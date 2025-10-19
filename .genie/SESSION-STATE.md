@@ -118,9 +118,31 @@
 2. **Wave 2 (Genie Integration):** Tasks 1, 3, 5 after Wave 1 merged
 3. **Wave 3 (Final Integration):** Task 4 after Task 3 merged
 
-**Execution Status:** Planning complete, awaiting Forge bug fix to start Wave 1
-**Context Docs:** `/tmp/CRITICAL-CONTEXT-wish-forge-learn-integration.md` (complete)
-**Key Insight:** State "agent" doesn't exist yet - must implement Task 2 before Task 3
+**🔴 CRITICAL BLOCKER - Forge Version Release Required:**
+
+**Must be done by Felipe before Genie work can continue:**
+1. Execute Task 2 (state="agent") in Forge backend
+2. Execute Task 6 (parent_task_id) in Forge backend
+3. Execute Task 7 (branch field) in Forge backend
+4. **Publish new Forge version** with these 3 features
+5. Only then can Genie Tasks 1, 3, 4, 5 proceed
+
+**Why this blocks everything:**
+- Task 3 (Wish Creation) needs state="agent" → depends on Forge Task 2
+- Task 4 (Sub-Tasks) needs parent_task_id → depends on Forge Task 6
+- Task 5 (Learn) needs parent_task_id → depends on Forge Task 6
+- All Genie tasks depend on new Forge API features existing
+
+**Current Status:**
+- ⏸️  **PAUSED** - Waiting for Felipe to execute Forge Tasks 2, 6, 7
+- ⏸️  **PAUSED** - Waiting for new Forge version publish
+- ✅ Planning complete, all 7 tasks created and documented
+- ✅ Context preserved in `/tmp/CRITICAL-CONTEXT-wish-forge-learn-integration.md`
+
+**Resume Point (After Forge Release):**
+1. Verify new Forge version has state="agent", parent_task_id, branch field
+2. Start Wave 2: Execute Genie Tasks 1, 3, 5 in parallel
+3. After Task 3 merged: Execute Wave 3 (Task 4)
 
 ### **Workflow Pattern:**
 1. Create task in Forge → automatic worktree creation
