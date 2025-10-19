@@ -283,7 +283,7 @@ Genie (main conversation)
 - `@.genie/skills/know-yourself.md` - Update with teams awareness
 
 **Files to update:**
-- `AGENTS.md` - Add teams to neural graph
+- `AGENTS.md` - Add teams to agent graph
 - `SESSION-STATE.md` - Track team consultation sessions
 - `.genie/docs/mcp-interface.md` - Document team MCP tools (if needed)
 

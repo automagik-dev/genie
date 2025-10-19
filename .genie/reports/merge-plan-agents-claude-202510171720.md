@@ -36,7 +36,7 @@
 | Universal Workflow Architecture | 392-527 | Cross-variant workflow (code/create/NL) | Architecture |
 | Evidence & Storage Conventions | 530-539 | Artifact management | Standards |
 | Testing & Evaluation | 536-539 | Validation approach | Standards |
-| Prompting Standards | 541-655 | @ / ! / patterns, neural file networks | Core Framework |
+| Prompting Standards | 541-655 | @ / ! / patterns, agent file networks | Core Framework |
 | Branch & Tracker Guidance | 657-668 | Git workflow conventions | Standards |
 | Blocker Protocol | 670-673 | Escalation handling | Workflow |
 | MCP Quick Reference | 675-724 | Tool usage patterns | Technical |
@@ -492,7 +492,7 @@ echo -n "Permission Mode: "
 grep -qi "permissionmode.*default" MERGED.md && echo "✅" || echo "❌"
 
 echo -n "@ / ! / patterns: "
-grep -qi "neural file network" MERGED.md && echo "✅" || echo "❌"
+grep -qi "agent file network" MERGED.md && echo "✅" || echo "❌"
 
 echo ""
 echo "=== CLAUDE.md Content Verification ==="

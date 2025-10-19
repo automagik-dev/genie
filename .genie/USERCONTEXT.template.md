@@ -62,7 +62,7 @@
 @mcp:resource     → Fetches MCP data
 ```
 
-**USE CASE:** Create "neural file networks" - attach related files
+**USE CASE:** Create "agent file networks" - attach related files
 
 **! (Bash Command Execution):**
 ```markdown

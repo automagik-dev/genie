@@ -4,7 +4,7 @@
  *
  * Purpose: Auto-detect teaching moments in conversation transcripts
  * Triggers: "Let me teach you", "You should have", "From now on", "That was wrong because"
- * Action: Log teaching moment and suggest invoking learn neuron
+ * Action: Log teaching moment and suggest invoking learn agent
  *
  * Usage: node detect-teaching-signal.js <transcript-file>
  *
@@ -71,7 +71,7 @@ function getContext(lines, index) {
 }
 
 /**
- * Generate learn neuron invocation suggestion
+ * Generate learn agent invocation suggestion
  * @param {Array} moments - Detected teaching moments
  * @returns {string} - Suggested command
  */
@@ -90,7 +90,7 @@ function generateLearnSuggestion(moments) {
    Context:
    ${moment.context.split('\n').map(l => '   ' + l).join('\n')}
 
-   ✅ Action: Invoke learn neuron
+   ✅ Action: Invoke learn agent
    Command: mcp__genie__run agent="learn" prompt="Teaching: [describe learning]"
 `;
   }).join('\n---\n');
@@ -99,7 +99,7 @@ function generateLearnSuggestion(moments) {
 🔍 Detected ${moments.length} teaching signal(s):
 ${suggestions}
 
-⚠️ CRITICAL: According to routing.md (lines 106-127), teaching moments should trigger learn neuron invocation.
+⚠️ CRITICAL: According to routing.md (lines 106-127), teaching moments should trigger learn agent invocation.
    Do NOT skip this step - document the learning immediately.
 `;
 }
@@ -112,7 +112,7 @@ if (require.main === module) {
     console.log(`
 Usage: node detect-teaching-signal.js <transcript-file>
 
-Detects teaching moments in conversation transcripts and suggests learn neuron invocation.
+Detects teaching moments in conversation transcripts and suggests learn agent invocation.
 
 Teaching patterns:
 ${TEACHING_PATTERNS.map(p => `  - ${p.source}`).join('\n')}

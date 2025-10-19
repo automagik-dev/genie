@@ -13,7 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 // Core agents that ship with npm package (should NOT be in user .genie/agents/)
-// Reflects current structure: workflows/, neurons/, neurons/modes/
+// Reflects current structure: workflows/, agents/, agents/modes/
 const CORE_AGENT_IDS = [
     // Workflow orchestrators (.genie/agents/workflows/)
     'workflows/plan',
@@ -23,27 +23,27 @@ const CORE_AGENT_IDS = [
     'workflows/vibe',
     'workflows/qa',
     'workflows/prompt',
-    // Core neurons (.genie/agents/neurons/)
-    'neurons/orchestrator',
-    'neurons/commit',
-    'neurons/git',
-    'neurons/implementor',
-    'neurons/install',
-    'neurons/learn',
-    'neurons/polish',
-    'neurons/release',
-    'neurons/roadmap',
-    'neurons/tests',
-    // Strategic thinking modes (.genie/agents/neurons/modes/)
-    'neurons/modes/analyze',
-    'neurons/modes/audit',
-    'neurons/modes/challenge',
-    'neurons/modes/consensus',
-    'neurons/modes/debug',
-    'neurons/modes/docgen',
-    'neurons/modes/explore',
-    'neurons/modes/refactor',
-    'neurons/modes/tracer',
+    // Core agents (.genie/agents/agents/)
+    'agents/orchestrator',
+    'agents/commit',
+    'agents/git',
+    'agents/implementor',
+    'agents/install',
+    'agents/learn',
+    'agents/polish',
+    'agents/release',
+    'agents/roadmap',
+    'agents/tests',
+    // Strategic thinking modes (.genie/agents/agents/modes/)
+    'agents/modes/analyze',
+    'agents/modes/audit',
+    'agents/modes/challenge',
+    'agents/modes/consensus',
+    'agents/modes/debug',
+    'agents/modes/docgen',
+    'agents/modes/explore',
+    'agents/modes/refactor',
+    'agents/modes/tracer',
 ];
 /**
  * Detects if this is a clean install or needs migration
@@ -57,9 +57,9 @@ function detectInstallType() {
     if (!fs_1.default.existsSync(agentsDir)) {
         return 'clean';
     }
-    // Check for new structure (workflows/ and neurons/ subdirectories)
+    // Check for new structure (workflows/ and agents/ subdirectories)
     const workflowsDir = path_1.default.join(agentsDir, 'workflows');
-    const neuronsDir = path_1.default.join(agentsDir, 'neurons');
+    const neuronsDir = path_1.default.join(agentsDir, 'agents');
     if (fs_1.default.existsSync(workflowsDir) && fs_1.default.existsSync(neuronsDir)) {
         // Has new structure - check if agents come from npm or are in repo
         const workflowAgents = fs_1.default.existsSync(workflowsDir)
@@ -290,7 +290,7 @@ async function runMigration(options = {}) {
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'qa'));
             // Clean up current structure directories (should be empty after core removal)
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'workflows'));
-            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'neurons'));
+            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'agents'));
         }
         // Step 6: Copy new templates
         console.log('📦 Installing new template structure...');

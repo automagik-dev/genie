@@ -41,7 +41,7 @@ function getPackageRoot() {
 }
 function getTemplateGeniePath(_template = 'code') {
     // Copy directly from framework's .genie/ directory
-    // Template variants (code vs create) handled by install/update neurons
+    // Template variants (code vs create) handled by install/update agents
     return path_1.default.join(getPackageRoot(), '.genie');
 }
 function getTemplateClaudePath(_template = 'code') {

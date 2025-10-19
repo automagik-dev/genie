@@ -8,12 +8,12 @@ export function createListHandler(ctx: HandlerContext): Handler {
     const [targetRaw] = parsed.commandArgs;
 
     if (!targetRaw) {
-      throw new Error('Usage: genie list <neurons|sessions>');
+      throw new Error('Usage: genie list <agents|sessions>');
     }
 
     const target = targetRaw.toLowerCase();
 
-    if (target === 'agents' || target === 'neurons') {
+    if (target === 'agents' || target === 'agents') {
       const agents = listAgents();
       return {
         type: 'agents',
@@ -79,7 +79,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
       };
     }
 
-    throw new Error(`Unknown list target '${targetRaw}'. Try 'neurons' or 'sessions'.`);
+    throw new Error(`Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
   };
 }
 

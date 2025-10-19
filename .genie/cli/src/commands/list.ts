@@ -83,14 +83,14 @@ export async function runList(
   const [targetRaw] = parsed.commandArgs;
 
   if (!targetRaw) {
-    console.log('Usage: genie list <neurons|sessions>');
-    console.log('       genie list agents       # (alias for neurons)');
+    console.log('Usage: genie list <agents|sessions>');
+    console.log('       genie list agents       # (alias for agents)');
     return;
   }
 
   const target = targetRaw.toLowerCase();
 
-  if (target === 'agents' || target === 'neurons') {
+  if (target === 'agents' || target === 'agents') {
     await emitAgentCatalog(parsed);
     return;
   }
@@ -100,13 +100,13 @@ export async function runList(
     return;
   }
 
-  console.error(`Error: Unknown list target '${targetRaw}'. Try 'neurons' or 'sessions'.`);
+  console.error(`Error: Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
   process.exitCode = 1;
 }
 
 interface TreeNode {
   name: string;
-  type: 'neuron' | 'workflow' | 'skill' | 'folder';
+  type: 'agent' | 'workflow' | 'skill' | 'folder';
   path: string;
   description: string;
   children: Map<string, TreeNode>;
@@ -126,7 +126,7 @@ function buildTree(agents: ReturnType<typeof listAgents>): TreeNode {
     let current = root;
 
     // Determine type based on path
-    let nodeType: 'neuron' | 'workflow' | 'skill' | 'folder' = 'neuron';
+    let nodeType: 'agent' | 'workflow' | 'skill' | 'folder' = 'agent';
     if (agent.id.includes('/workflows/')) nodeType = 'workflow';
     else if (agent.id.includes('/skills/')) nodeType = 'skill';
 
@@ -161,7 +161,7 @@ function renderTree(node: TreeNode, prefix: string = '', isLast: boolean = true,
 
   if (depth > 0) {
     const connector = isLast ? '└── ' : '├── ';
-    const icon = node.type === 'neuron' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
+    const icon = node.type === 'agent' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
     const desc = node.description ? ` - ${truncateText(node.description, 80)}` : '';
     lines.push(`${prefix}${connector}${icon} ${node.name}${desc}`);
   }
@@ -185,15 +185,15 @@ function renderTree(node: TreeNode, prefix: string = '', isLast: boolean = true,
 }
 
 export async function emitAgentCatalog(parsed: ParsedCommand): Promise<void> {
-  const agents = listAgents();
+  const allAgents = listAgents();
 
   // Separate by category
-  const neurons = agents.filter(a => !a.id.includes('/workflows/') && !a.id.includes('/skills/'));
-  const workflows = agents.filter(a => a.id.includes('/workflows/'));
-  const skills = agents.filter(a => a.id.includes('/skills/'));
+  const agents = allAgents.filter(a => !a.id.includes('/workflows/') && !a.id.includes('/skills/'));
+  const workflows = allAgents.filter(a => a.id.includes('/workflows/'));
+  const skills = allAgents.filter(a => a.id.includes('/skills/'));
 
   console.log(`## 🧞 Genie Agent Hierarchy\n`);
-  console.log(`**Total:** ${agents.length} agents (${neurons.length} neurons, ${workflows.length} workflows, ${skills.length} skills)\n`);
+  console.log(`**Total:** ${agents.length} agents (${agents.length} agents, ${workflows.length} workflows, ${skills.length} skills)\n`);
 
   // Build and render tree
   const tree = buildTree(agents);
@@ -202,12 +202,12 @@ export async function emitAgentCatalog(parsed: ParsedCommand): Promise<void> {
 
   console.log('\n## 💡 Quick Guide\n');
   console.log('**Icons:**');
-  console.log('  🧠 Neuron (main executable agent)');
-  console.log('  ⚙️  Workflow (neuron-scoped sub-task)');
+  console.log('  🧠 Agent (main executable agent)');
+  console.log('  ⚙️  Workflow (agent-scoped sub-task)');
   console.log('  💡 Skill (capability/pattern)');
   console.log('  📁 Folder (organizational grouping)\n');
   console.log('**Commands:**');
-  console.log('  genie run <neuron-id> "<prompt>"    # Start a neuron');
+  console.log('  genie run <agent-id> "<prompt>"    # Start a agent');
   console.log('  genie list sessions                 # View active sessions');
   console.log('  genie view <session-id>             # View session transcript');
 }

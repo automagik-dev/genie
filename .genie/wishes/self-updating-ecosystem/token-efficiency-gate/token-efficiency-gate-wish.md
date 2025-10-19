@@ -14,7 +14,7 @@
 
 **Git hooks orchestrate Python scripts to:**
 1. **Validate** - Token counts, @ references, routing matrix, user files not committed
-2. **Generate** - Neural graph, agent registry, CHANGELOG, QA scenarios from bugs
+2. **Generate** - Agent graph, agent registry, CHANGELOG, QA scenarios from bugs
 3. **Update** - AGENTS.md, STATE.md, validation statuses, universal headers
 4. **Enforce** - Tests pass before push, token efficiency maintained
 
@@ -32,7 +32,7 @@
 - Token bloat can creep in unnoticed (@ reference duplication, content drift)
 - Architecture hierarchy exists but requires manual documentation
 - No enforcement mechanism for token efficiency
-- Neural graph ("which file loads what") is described but not evidenced
+- Agent graph ("which file loads what") is described but not evidenced
 
 **Pain points:**
 - Discovered @ optimization backwards (would have exploded tokens) - need prevention
@@ -43,7 +43,7 @@
 
 **Git hook that enforces AND documents:**
 1. **Token Gate**: Block commits that increase total prompt tokens without justification
-2. **Neural Graph**: Parse all @ references, build hierarchy tree
+2. **Agent Graph**: Parse all @ references, build hierarchy tree
 3. **Auto-Documentation**: Update AGENTS.md with current architecture map on every commit
 
 **Strategic value:**
@@ -59,7 +59,7 @@
 - ✅ Commits blocked if tokens increase >5% without justification
 - ✅ Override mechanism available (`--token-increase-justified "reason"`)
 
-**Neural graph accuracy:**
+**Agent graph accuracy:**
 - ✅ All @ references discovered and mapped
 - ✅ Hierarchy depth calculated (CLAUDE.md → AGENTS.md → agents → custom)
 - ✅ Circular references detected and warned
@@ -69,7 +69,7 @@
 - ✅ Hook runs fast (<2s for typical commit)
 - ✅ Clear error messages when blocked
 - ✅ Easy override for legitimate increases
-- ✅ Neural graph readable and useful
+- ✅ Agent graph readable and useful
 
 ---
 
@@ -100,14 +100,14 @@ function countTokensWithReferences(file: string, visited: Set<string>): number {
 }
 ```
 
-### Component 2: Neural Graph Builder
+### Component 2: Agent Graph Builder
 
 **Files:**
-- `.genie/scripts/build-neural-graph.ts` - @ reference parser + hierarchy builder
+- `.genie/scripts/build-agent-graph.ts` - @ reference parser + hierarchy builder
 
 **Output format:**
 ```markdown
-## Neural Graph Architecture
+## Agent Graph Architecture
 
 **Total Prompt Tokens:** 47,234 (baseline: 45,123, change: +2,111)
 **Last Updated:** 2025-10-17 18:45 UTC
@@ -158,11 +158,11 @@ CLAUDE.md (1,234 tokens)
 #!/bin/bash
 # .git/hooks/pre-commit
 
-# 1. Generate neural graph (always - updates AGENTS.md)
-node .genie/scripts/build-neural-graph.ts > /tmp/neural-graph.md
+# 1. Generate agent graph (always - updates AGENTS.md)
+node .genie/scripts/build-agent-graph.ts > /tmp/agent-graph.md
 
 # 2. Extract current token count
-CURRENT_TOKENS=$(grep "Total Prompt Tokens:" /tmp/neural-graph.md | awk '{print $4}')
+CURRENT_TOKENS=$(grep "Total Prompt Tokens:" /tmp/agent-graph.md | awk '{print $4}')
 
 # 3. Get baseline from AGENTS.md
 BASELINE_TOKENS=$(grep "baseline:" AGENTS.md | awk '{print $2}' | tr -d ',')
@@ -181,14 +181,14 @@ if (( $(echo "$PERCENT > 5" | bc -l) )); then
   exit 1
 fi
 
-# 6. Update AGENTS.md with new neural graph
-sed -i '/## Neural Graph Architecture/,/^## /!b;/^## Neural Graph Architecture/r /tmp/neural-graph.md' AGENTS.md
+# 6. Update AGENTS.md with new agent graph
+sed -i '/## Agent Graph Architecture/,/^## /!b;/^## Agent Graph Architecture/r /tmp/agent-graph.md' AGENTS.md
 
 # 7. Stage updated AGENTS.md
 git add AGENTS.md
 
 echo "✅ Token validation passed (+${CHANGE} tokens, ${PERCENT}%)"
-echo "✅ AGENTS.md updated with neural graph"
+echo "✅ AGENTS.md updated with agent graph"
 ```
 
 **Override mechanism:**
@@ -233,12 +233,12 @@ git commit -m "feat: add refactor workflow"
 - ✅ Current baseline documented (commit output)
 - ✅ @ references resolved correctly (manual spot check)
 
-### Group B: Neural Graph Builder
+### Group B: Agent Graph Builder
 **Complexity:** Medium
 **Estimated:** 2-3 hours
 
 **Tasks:**
-1. Implement `build-neural-graph.ts`:
+1. Implement `build-agent-graph.ts`:
    - Parse @ references from all files
    - Build tree structure (parent-child relationships)
    - Calculate depth + token distribution
@@ -254,7 +254,7 @@ git commit -m "feat: add refactor workflow"
    - Check formatting readability
 
 **Evidence:**
-- ✅ Neural graph generated for current state
+- ✅ Agent graph generated for current state
 - ✅ Tree structure validated (manual review)
 - ✅ Token distribution accurate
 
@@ -264,11 +264,11 @@ git commit -m "feat: add refactor workflow"
 
 **Tasks:**
 1. Create `.genie/scripts/validate-tokens.sh`:
-   - Run neural graph builder
+   - Run agent graph builder
    - Extract current vs baseline tokens
    - Calculate percentage change
    - Check threshold (5%)
-   - Update AGENTS.md with neural graph
+   - Update AGENTS.md with agent graph
    - Stage AGENTS.md automatically
 2. Create `.git/hooks/pre-commit`:
    - Call validation script
@@ -294,14 +294,14 @@ git commit -m "feat: add refactor workflow"
 
 **Tasks:**
 1. Document in AGENTS.md:
-   - New section: "Neural Graph Architecture" (hook auto-maintains)
+   - New section: "Agent Graph Architecture" (hook auto-maintains)
    - New section: "Token Efficiency Protocol" (how hook works, override usage)
 2. Update README.md:
    - Hook setup instructions
    - Override usage examples
-   - Neural graph location
+   - Agent graph location
 3. Add to `.genie/scripts/check-triad.sh`:
-   - Verify neural graph section exists in AGENTS.md
+   - Verify agent graph section exists in AGENTS.md
    - Validate baseline token count present
 4. Test full workflow:
    - Fresh clone → hook setup → commit → validation
@@ -323,7 +323,7 @@ git commit -m "feat: add refactor workflow"
 - [ ] Cycle detection works (test with circular refs)
 - [ ] Performance acceptable (<1s for full count)
 
-**Neural Graph:**
+**Agent Graph:**
 - [ ] Tree structure generated correctly
 - [ ] Token distribution accurate (spot check 5 files)
 - [ ] Hierarchy depth shown (CLAUDE.md = depth 0, agents = depth 2+)
@@ -338,7 +338,7 @@ git commit -m "feat: add refactor workflow"
 **Integration:**
 - [ ] Fresh clone → hook works immediately
 - [ ] Existing workflow unaffected (commits still fast)
-- [ ] Neural graph readable and useful
+- [ ] Agent graph readable and useful
 - [ ] Token efficiency enforced automatically
 
 ---
@@ -366,7 +366,7 @@ git commit -m "feat: add refactor workflow"
 
 **Checkpoints:**
 - After Group A: Baseline token count committed
-- After Group B: Neural graph visible in AGENTS.md
+- After Group B: Agent graph visible in AGENTS.md
 - After Group C: Hook enforcing on every commit
 - After Group D: Documentation complete, full workflow tested
 
@@ -376,11 +376,11 @@ git commit -m "feat: add refactor workflow"
 
 ## 📝 Notes
 
-**Key insight:** This wish combines **enforcement** (token gate) with **visibility** (neural graph) in one automated flow. Every commit becomes a validation + documentation event.
+**Key insight:** This wish combines **enforcement** (token gate) with **visibility** (agent graph) in one automated flow. Every commit becomes a validation + documentation event.
 
 **Architectural benefit:** Makes @ reference optimization **provable** - not just described, but evidenced with token counts and hierarchy maps.
 
-**Maintenance:** Zero manual work - hook maintains neural graph automatically.
+**Maintenance:** Zero manual work - hook maintains agent graph automatically.
 
 ---
 
@@ -388,7 +388,7 @@ git commit -m "feat: add refactor workflow"
 
 **When complete:**
 - ✅ Every commit validates token efficiency (<5% increase threshold)
-- ✅ AGENTS.md always shows current neural graph (auto-updated)
+- ✅ AGENTS.md always shows current agent graph (auto-updated)
 - ✅ Architecture hierarchy visible and accurate
 - ✅ Override mechanism available for legitimate increases
 - ✅ Token efficiency claims provable with evidence
@@ -397,7 +397,7 @@ git commit -m "feat: add refactor workflow"
 ```bash
 git commit -m "feat: add new feature"
 # ✅ Token validation passed (+234 tokens, 0.5%)
-# ✅ AGENTS.md updated with neural graph
+# ✅ AGENTS.md updated with agent graph
 
 # Later, adding large agent...
 git commit -m "feat: add comprehensive audit agent"
@@ -411,7 +411,7 @@ git commit -m "feat: add comprehensive audit agent"
 git config commit.token-override "Added audit agent (18 validation rules)"
 git commit -m "feat: add comprehensive audit agent"
 # ⚠️  Token increase justified: Added audit agent (18 validation rules)
-# ✅ AGENTS.md updated with neural graph
+# ✅ AGENTS.md updated with agent graph
 # ✅ Baseline updated: 51,234 tokens
 ```
 

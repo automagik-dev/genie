@@ -11,7 +11,7 @@
 
 **Key Findings:**
 - ✅ **3 files** already using @ / ! patterns excellently (STATE.md, SESSION-STATE.md, MASTER-PLAN.md)
-- 🟡 **15+ high-impact opportunities** for @ neural file networks
+- 🟡 **15+ high-impact opportunities** for @ agent file networks
 - 🟡 **20+ opportunities** for ! dynamic data injection
 - ❌ **0 opportunities** for / (MCP command triggers) - not applicable to documentation files
 
@@ -93,7 +93,7 @@
 <!-- rest of structure -->
 ```
 
-**Impact:** Agent README becomes neural hub linking to all framework docs
+**Impact:** Agent README becomes agent hub linking to all framework docs
 **Effort:** 15 minutes
 
 ---
@@ -354,7 +354,7 @@ This mode uses the universal prompting framework (see above):
 7. 🟡 5+ custom files → @.genie/code/agents/<agent>.md
 8. 🟡 .genie/custom/routing.md → `@.genie/agents/README.md`, 
 
-**Neural File Network Map:**
+**Agent File Network Map:**
 ```
 CLAUDE.md
   ↓  (line 2)
@@ -431,7 +431,7 @@ CLAUDE.md
 ## 🎯 Implementation Plan
 
 ### Phase 1: Core Framework (HIGH Priority - 1 hour)
-**Objective:** Establish neural file network foundation
+**Objective:** Establish agent file network foundation
 
 1. **Batch edit: All agents → @AGENTS.md** (30 min)
    - 5 workflow agents (plan, wish, forge, review, qa)
@@ -444,7 +444,7 @@ CLAUDE.md
    - Add @.genie/MASTER-PLAN.md for architectural context
    - Add version + timestamp via !
 
-3. **.genie/agents/README.md → Neural hub** (10 min)
+3. **.genie/agents/README.md → Agent hub** (10 min)
    - Add `@AGENTS.md`, @.genie/code/agents/prompt.md at top
    - Add version + timestamp via !
 
@@ -574,7 +574,7 @@ grep -r "!\`" .genie/ .claude/ | wc -l
 1. Delegate Phase 1 to implementor agent (batch edit 23 files)
 2. Validate @ loading works correctly (spot check 3 agents)
 3. Proceed to Phase 2 if Phase 1 successful
-4. Document learnings in AGENTS.md (new pattern: neural file networks)
+4. Document learnings in AGENTS.md (new pattern: agent file networks)
 
 ---
 

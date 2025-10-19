@@ -41,7 +41,7 @@ Current folder structure and output displays don't reflect the true architecture
 
 ### Vision
 
-Perfect markdown agent neural graph with:
+Perfect markdown agent agent graph with:
 - Universal agents (`.genie/agents/`) - shared across all templates
 - Template-specific overrides (code/agents/, create/agents/) - only when needed
 - Clear hierarchy visible in folder structure

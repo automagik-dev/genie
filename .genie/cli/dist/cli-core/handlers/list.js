@@ -7,10 +7,10 @@ function createListHandler(ctx) {
     return async (parsed) => {
         const [targetRaw] = parsed.commandArgs;
         if (!targetRaw) {
-            throw new Error('Usage: genie list <neurons|sessions>');
+            throw new Error('Usage: genie list <agents|sessions>');
         }
         const target = targetRaw.toLowerCase();
-        if (target === 'agents' || target === 'neurons') {
+        if (target === 'agents' || target === 'agents') {
             const agents = (0, shared_1.listAgents)();
             return {
                 type: 'agents',
@@ -70,7 +70,7 @@ function createListHandler(ctx) {
                 sessions
             };
         }
-        throw new Error(`Unknown list target '${targetRaw}'. Try 'neurons' or 'sessions'.`);
+        throw new Error(`Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
     };
 }
 function resolveDisplayStatus(entry, ctx) {

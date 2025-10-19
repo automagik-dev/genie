@@ -306,7 +306,7 @@ class CommitAdvisory {
       /\[auto\]/i,
       /^chore:\s*(auto-|update.*timestamp|update.*token count)/i,
       /^chore:\s*update\s+(AGENTS|STATE|CHANGELOG)\.md/i,
-      /neural graph/i,
+      /agent graph/i,
       /\(automagik-forge\s+[a-f0-9-]+\)/i  // Forge task references (e.g., "automagik-forge e7f23ead")
     ];
 

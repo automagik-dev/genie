@@ -24,7 +24,7 @@ This file loads all Genie agent knowledge and project state via @ references abo
 - **AGENTS.md**: Complete Genie agent knowledge base (universal patterns, behavioral rules, workflows)
 - **CLAUDE.md**: Meta-loader (this file) - auto-loads knowledge on every session
 - **MASTER-PLAN.md**: Architectural evolution tracking, today's goals, validation checklist
-- **SESSION-STATE.md**: Active neuron coordination, session tracking
+- **SESSION-STATE.md**: Active agent coordination, session tracking
 - **USERCONTEXT.md**: Per-user preferences and session continuity
 
 All agent instructions, patterns, and behavioral rules are now in AGENTS.md for single source of truth.

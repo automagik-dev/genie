@@ -213,7 +213,7 @@ function main() {
   const ok2 = updateBetweenMarkers(genieReadme, '<!-- NEURAL_TREE_START -->', '<!-- NEURAL_TREE_END -->', mdTree);
   console.log(ok2 ? '   ✅ Markdown tree updated' : '   ⚠️  Could not update markdown tree (markers missing)');
 
-  console.log('\n✨ Agent neural tree generation complete!');
+  console.log('\n✨ Agent agent tree generation complete!');
   console.log('   - README.md: Mermaid flowchart');
   console.log('   - .genie/README.md: Detailed markdown tree');
 }

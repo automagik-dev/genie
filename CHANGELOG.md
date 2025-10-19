@@ -78,10 +78,10 @@ No changelog entries (packaging-only RC).
 ### Added
 - Multi-template system: `genie init [code|create]` for specialized workflows
 - Token-efficient output: 99.0-99.6% reduction for AI-to-AI orchestration (16k → 122-168 tokens)
-- Neuron cognitive architecture: Clear separation of neurons/modes/workflows directories
+- Agent cognitive architecture: Clear separation of agents/modes/workflows directories
 
 ### Changed
-- Reorganized agent directory structure: `core/` → `neurons/` + `workflows/`
+- Reorganized agent directory structure: `core/` → `agents/` + `workflows/`
 - Session views now use lightweight markdown instead of Ink rendering
 - Custom overrides restructured to mirror cognitive architecture
 

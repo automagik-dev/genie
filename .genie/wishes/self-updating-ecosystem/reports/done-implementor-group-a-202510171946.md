@@ -177,7 +177,7 @@ Each future script is implemented as Node CLI under `.genie/scripts/*.js` and in
 
 **Subsequent Groups:**
 - C: Cross-reference validation (@file.md path checking)
-- D: Token count + neural graph updates
+- D: Token count + agent graph updates
 - E: Agent registry + routing matrix validation
 - F: Test suite runner
 - G: CHANGELOG auto-generation

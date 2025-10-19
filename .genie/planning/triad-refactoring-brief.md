@@ -48,7 +48,7 @@ Refactor the context management system from monolithic CONTEXT.md into a proper 
 **Meta-awareness:** I am Genie building Genie for general audience. Users install blank templates (code/create). My behavior models their behavior.
 
 **@ Philosophy:**
-- Strategic use only (neural networks, small frequent files)
+- Strategic use only (agent networks, small frequent files)
 - Avoid excessive chains that load too much context
 - Teach by example: agents see how I optimize @
 - Self-awareness: I access files (Read) AND call myself (MCP)

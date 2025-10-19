@@ -3,12 +3,12 @@
 /**
  * session-state-updater.js
  *
- * Updates SESSION-STATE.md with neuron/workflow session information.
- * Called by neurons via: !`npx node .genie/scripts/session-state-updater.js "action=started neuron=implementor session_id=abc123 purpose=..."`
+ * Updates SESSION-STATE.md with agent/workflow session information.
+ * Called by agents via: !`npx node .genie/scripts/session-state-updater.js "action=started agent=implementor session_id=abc123 purpose=..."`
  *
  * Parameters (space or key=value separated):
  * - action: started|in_progress|completed|waiting|paused
- * - neuron: neuron name (implementor, tests, git, genie, learn, release, roadmap)
+ * - agent: agent name (implementor, tests, git, genie, learn, release, roadmap)
  * - session_id: UUID or session identifier
  * - purpose: string description of work
  * - context: optional structured data
@@ -50,7 +50,7 @@ function validateParameters(params) {
     errors.push(`Invalid action: ${params.action}. Must be: started|in_progress|completed|waiting|paused`);
   }
 
-  if (!params.neuron) errors.push('Missing required parameter: neuron');
+  if (!params.agent) errors.push('Missing required parameter: agent');
   if (!params.session_id) errors.push('Missing required parameter: session_id');
 
   if (errors.length > 0) {
@@ -76,7 +76,7 @@ function getCurrentTimestamp() {
 
 function formatSessionEntry(params) {
   const timestamp = getCurrentTimestamp();
-  let entry = `### ${params.neuron.charAt(0).toUpperCase() + params.neuron.slice(1)} - ${params.purpose || 'Unknown task'}\n`;
+  let entry = `### ${params.agent.charAt(0).toUpperCase() + params.agent.slice(1)} - ${params.purpose || 'Unknown task'}\n`;
   entry += `**Session ID:** \`${params.session_id}\`\n`;
   entry += `**Started:** ${timestamp}\n`;
   entry += `**Status:** ${params.action}\n`;
@@ -207,10 +207,10 @@ function main() {
       status: 'success',
       action: params.action,
       session_id: params.session_id,
-      neuron: params.neuron,
+      agent: params.agent,
       updated_files: ['.genie/SESSION-STATE.md'],
       timestamp: getCurrentTimestamp(),
-      message: `Session state updated: ${params.action} (${params.neuron})`
+      message: `Session state updated: ${params.action} (${params.agent})`
     };
 
     console.log(JSON.stringify(response, null, 2));

@@ -85,7 +85,7 @@ function countTokensWithRefs(filePath, visited = new Set(), depth = 0) {
 }
 
 /**
- * Extract baseline token count from AGENTS.md neural graph section
+ * Extract baseline token count from AGENTS.md agent graph section
  */
 function extractBaseline() {
   if (!fs.existsSync(AGENTS_MD_PATH)) {
@@ -100,7 +100,7 @@ function extractBaseline() {
 
   if (!match) {
     console.warn('⚠️  No baseline found in AGENTS.md');
-    console.warn('   Run: node .genie/scripts/update-neural-graph.js');
+    console.warn('   Run: node .genie/scripts/update-agent-graph.js');
     return null;
   }
 
@@ -149,7 +149,7 @@ function validate(dryRun = false) {
   const baseline = extractBaseline();
   if (!baseline) {
     console.error('❌ Cannot validate without baseline');
-    console.error('   Run: node .genie/scripts/update-neural-graph.js');
+    console.error('   Run: node .genie/scripts/update-agent-graph.js');
     process.exit(1);
   }
 
@@ -186,7 +186,7 @@ function validate(dryRun = false) {
 
       console.log('');
       console.log('⚠️  Remember to update baseline:');
-      console.log('   node .genie/scripts/update-neural-graph.js');
+      console.log('   node .genie/scripts/update-agent-graph.js');
       process.exit(0);
     }
 
@@ -229,7 +229,7 @@ function showHelp() {
   console.log('Description:');
   console.log('  Validates token count hasn\'t increased >5% without justification');
   console.log('  Counts tokens using tiktoken (GPT-4 accurate) with recursive @ resolution');
-  console.log('  Compares against baseline from AGENTS.md neural graph');
+  console.log('  Compares against baseline from AGENTS.md agent graph');
   console.log('  Blocks commit if increase exceeds threshold without override');
   console.log('');
   console.log('Override mechanism:');

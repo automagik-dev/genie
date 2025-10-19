@@ -263,7 +263,7 @@ Requirements:
 - Update all @ references
 - Add teams section (already exists)
 - Clear distinction: agents (execute), teams (advise), workflows (deterministic)
-- Auto-generated neural graph update
+- Auto-generated agent graph update
 
 Output:
 - Revamped AGENTS.md with natural architecture language

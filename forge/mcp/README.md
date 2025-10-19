@@ -400,7 +400,7 @@ mcpServers:
 ### Use in Genie Workflows
 
 ```typescript
-// In Genie neuron (via MCP)
+// In Genie agent (via MCP)
 const { tool } = context;
 
 // Create and start task

@@ -6,7 +6,7 @@
  * Part of self-updating ecosystem (Group C)
  *
  * Usage:
- *   node .genie/scripts/update-neural-graph.js [--dry-run]
+ *   node .genie/scripts/update-agent-graph.js [--dry-run]
  */
 
 const fs = require('fs');
@@ -115,7 +115,7 @@ function calculateTotalTokens(node) {
 }
 
 /**
- * Render neural graph as markdown tree
+ * Render agent graph as markdown tree
  */
 function renderGraph(node, indent = 0) {
   if (!node) return '';
@@ -339,7 +339,7 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log('Knowledge Graph Generator');
   console.log('');
   console.log('Usage:');
-  console.log('  node .genie/scripts/update-neural-graph.js [--dry-run]');
+  console.log('  node .genie/scripts/update-agent-graph.js [--dry-run]');
   console.log('');
   console.log('Options:');
   console.log('  --dry-run    Preview changes without modifying files');

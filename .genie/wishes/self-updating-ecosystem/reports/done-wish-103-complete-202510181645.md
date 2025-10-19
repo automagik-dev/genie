@@ -12,7 +12,7 @@
 
 Created a **comprehensive self-updating ecosystem** with zero manual maintenance via Node.js-based git hooks that:
 1. **Validate** - Token counts, @ references, routing matrix, user files
-2. **Generate** - Neural graph, agent registry, CHANGELOG, QA scenarios
+2. **Generate** - Agent graph, agent registry, CHANGELOG, QA scenarios
 3. **Update** - AGENTS.md, STATE.md, validation statuses, universal headers
 4. **Enforce** - Tests pass before push, token efficiency maintained
 
@@ -26,7 +26,7 @@ Created a **comprehensive self-updating ecosystem** with zero manual maintenance
 - Created 3-phase pre-commit hook orchestrator (Node.js)
 - Phase 1: Core validations (user files, cross-references)
 - Phase 2: Token efficiency gate
-- Phase 3: Auto-updates (neural graph, agent registry, headers)
+- Phase 3: Auto-updates (agent graph, agent registry, headers)
 - Pre-push and post-merge hooks operational
 
 **Group B: Validation Suite** ✅
@@ -36,7 +36,7 @@ Created a **comprehensive self-updating ecosystem** with zero manual maintenance
 
 **Group C: Token Efficiency Gate** ✅
 - `validate-token-count.js` - Enforces 5% threshold with tiktoken (GPT-4 accurate)
-- `update-neural-graph.js` - Generates hierarchy + token distribution
+- `update-agent-graph.js` - Generates hierarchy + token distribution
 - Baseline established: 23,622 tokens
 - Override mechanism: `git config commit.token-override "reason"`
 - Auto-clears override after use
@@ -104,7 +104,7 @@ validate-cross-references.js
 validate-token-count.js
 
 // Phase 3: Auto-Updates (non-blocking, auto-stage)
-update-neural-graph.js
+update-agent-graph.js
 update-agent-registry.js
 inject-universal-headers.js
 forge-task-link.js
@@ -127,7 +127,7 @@ forge-task-link.js
 **Code Skills:** 32 total
 ```
 
-**Neural Graph** (auto-maintained):
+**Agent Graph** (auto-maintained):
 ```markdown
 **Total Tokens:** 23,622 (baseline for efficiency validation)
 **Distribution:**
@@ -150,12 +150,12 @@ $ node .genie/scripts/validate-token-count.js --dry-run
 ```
 ✅ Working correctly (slight increase due to agent registry section addition)
 
-### Neural Graph Generation Test
+### Agent Graph Generation Test
 ```bash
-$ node .genie/scripts/update-neural-graph.js
-🧠 Neural Graph Generator
-📊 Building neural graph from AGENTS.md...
-✅ Neural graph section added to AGENTS.md
+$ node .genie/scripts/update-agent-graph.js
+🧠 Agent Graph Generator
+📊 Building agent graph from AGENTS.md...
+✅ Agent graph section added to AGENTS.md
 ```
 ✅ Generated 23,622 token baseline with full hierarchy
 
@@ -188,7 +188,7 @@ $ node .genie/scripts/validate-cross-references.js
 **Automation Achieved:**
 - ✅ Zero manual documentation maintenance
 - ✅ Token efficiency enforced automatically (5% threshold)
-- ✅ AGENTS.md always accurate (neural graph + registry auto-updated)
+- ✅ AGENTS.md always accurate (agent graph + registry auto-updated)
 - ✅ CHANGELOG always current (auto-generated on push)
 - ✅ Tests always pass on remote (pre-push enforcement)
 - ✅ STATE.md always reflects latest merge
@@ -199,7 +199,7 @@ $ node .genie/scripts/validate-cross-references.js
 - Baseline: 23,622 tokens (AGENTS.md + all @ references)
 - Threshold: 5% increase maximum
 - Override mechanism: One-time use, auto-clears
-- Neural graph shows distribution and hierarchy
+- Agent graph shows distribution and hierarchy
 
 **Quality Gates:**
 - User files blocked from commits
@@ -250,7 +250,7 @@ $ node .genie/scripts/validate-cross-references.js
 
 **Documentation:**
 - `README.md` (added comprehensive "Self-Updating Ecosystem" section)
-- `AGENTS.md` (added Agent Registry + Neural Graph sections)
+- `AGENTS.md` (added Agent Registry + Agent Graph sections)
 - `.genie/wishes/self-updating-ecosystem/self-updating-ecosystem-wish.md` (status updated to COMPLETE)
 
 **Dependencies:**
@@ -266,7 +266,7 @@ $ node .genie/scripts/validate-cross-references.js
 All success criteria from wish document achieved:
 
 - [x] Every commit validates token efficiency (<5% increase threshold)
-- [x] AGENTS.md always shows current neural graph (auto-updated)
+- [x] AGENTS.md always shows current agent graph (auto-updated)
 - [x] Agent registry always accurate (auto-generated from folders)
 - [x] @ references always valid (broken links caught at commit)
 - [x] CHANGELOG always current (auto-updated on push)
@@ -282,7 +282,7 @@ git commit -m "feat: add audit agent"
 # ✅ User files validation passed
 # ✅ All @ cross-references valid
 # ✅ Token efficiency validated (increase: 2.3%, within 5% threshold)
-# 🧠 Neural graph updated (Total: 24,166 tokens)
+# 🧠 Agent graph updated (Total: 24,166 tokens)
 # 🤖 Agent registry updated (Universal Agents: 17 total)
 # ✅ All pre-commit validations passed
 ```

@@ -131,8 +131,8 @@ async function runUpdate(parsed, _config, _paths) {
         console.log('');
         // Update version file
         await touchVersionFile(cwd);
-        // Run update neuron for version transition guidance
-        console.log('🧞 Consulting update neuron for migration guidance...');
+        // Run update agent for version transition guidance
+        console.log('🧞 Consulting update agent for migration guidance...');
         console.log('');
         await runUpdateNeuron(backupId, cwd);
         console.log('');
@@ -420,7 +420,7 @@ async function runUpdateNeuron(backupId, cwd) {
         console.log(`📊 Version transition: ${oldVersion} → ${newVersion}`);
         console.log(`💾 Backup location: ${backupPath}`);
         console.log('');
-        console.log('💡 Update neuron guidance:');
+        console.log('💡 Update agent guidance:');
         console.log('');
         // Determine which transition guide to use
         const majorMinor = (v) => {
@@ -455,11 +455,11 @@ async function runUpdateNeuron(backupId, cwd) {
             console.log('   Generic guidance: Review backup and manually merge customizations');
             console.log('');
         }
-        console.log('✅ Update neuron guidance provided');
+        console.log('✅ Update agent guidance provided');
     }
     catch (error) {
         // Non-fatal - log warning and continue
-        console.log(`⚠️  Update neuron unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(`⚠️  Update agent unavailable: ${error instanceof Error ? error.message : String(error)}`);
         console.log('   Continuing with update...');
     }
 }

@@ -267,7 +267,7 @@
 ## 🧪 Experimentation Notes
 
 **Natural context acquisition patterns:**
-- @ for neural file networks (knowledge graphs)
+- @ for agent file networks (knowledge graphs)
 - ! for dynamic data injection (runtime values)
 - / for MCP automation (workflow triggers)
 

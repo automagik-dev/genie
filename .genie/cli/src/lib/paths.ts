@@ -28,7 +28,7 @@ export type TemplateType = 'code' | 'create';
 
 export function getTemplateGeniePath(_template: TemplateType = 'code'): string {
   // Copy directly from framework's .genie/ directory
-  // Template variants (code vs create) handled by install/update neurons
+  // Template variants (code vs create) handled by install/update agents
   return path.join(getPackageRoot(), '.genie');
 }
 

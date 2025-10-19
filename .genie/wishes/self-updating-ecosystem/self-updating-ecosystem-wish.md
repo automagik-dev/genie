@@ -18,7 +18,7 @@
   - Cross-reference validation operational
 - ✅ Group C: Token efficiency gate operational
   - validate-token-count.js with tiktoken integration (23,622 token baseline)
-  - update-neural-graph.js generating hierarchy + token distribution
+  - update-agent-graph.js generating hierarchy + token distribution
 - ✅ Group D: Agent registry auto-generation operational
   - Scans 4 categories: 16 Universal, 15 Code, 1 Create agents, 32 Skills
 - ✅ Group K: Documentation complete (README.md comprehensive section)
@@ -82,7 +82,7 @@
 
 **Git hooks orchestrate Node scripts to:**
 1. **Validate** - Token counts, @ references, routing matrix, user files not committed
-2. **Generate** - Neural graph, agent registry, CHANGELOG, QA scenarios from bugs
+2. **Generate** - Agent graph, agent registry, CHANGELOG, QA scenarios from bugs
 3. **Update** - AGENTS.md, STATE.md, validation statuses, universal headers
 4. **Enforce** - Tests pass before push, token efficiency maintained
 
@@ -97,7 +97,7 @@
 ### Problem Statement
 
 **Current state:**
-- Manual documentation updates (agent lists, neural graphs, validation status)
+- Manual documentation updates (agent lists, agent graphs, validation status)
 - Token bloat can creep in unnoticed
 - Broken @ references discovered at runtime
 - CHANGELOG manually maintained
@@ -118,7 +118,7 @@
 **Git hook suite (Node-based) that automatically:**
 1. **Pre-commit:**
    - Validates token count (≤5% increase without justification)
-   - Generates neural graph → injects into AGENTS.md
+   - Generates agent graph → injects into AGENTS.md
    - Generates agent/skill registry → injects into AGENTS.md
    - Validates @ cross-references (catch broken links)
    - Validates routing matrix (check refs exist)
@@ -151,7 +151,7 @@
 **Token efficiency:**
 - ✅ Baseline established (current token count documented)
 - ✅ Commits blocked if tokens increase >5% without justification
-- ✅ Neural graph shows token cost per hierarchy level
+- ✅ Agent graph shows token cost per hierarchy level
 - ✅ Override mechanism available (--token-increase-justified "reason")
 
 **Agent/Skill registry:**
@@ -219,17 +219,17 @@
 **Script 3: validate-token-count.js**
 - Count tokens (tiktoken library OR simple approximation: 1 token ≈ 4 chars)
 - Recursively resolve @ references (simulate full load)
-- Extract baseline from AGENTS.md neural graph section
+- Extract baseline from AGENTS.md agent graph section
 - Calculate change percentage
 - Block if >5% increase without override
 - Check for override: `git config commit.token-override`
 
-**Script 4: update-neural-graph.js**
+**Script 4: update-agent-graph.js**
 - Parse all @ references across .genie/agents/*.md
 - Build hierarchical tree structure
 - Calculate token count per file + per level
 - Generate markdown tree with indentation
-- Inject into AGENTS.md at `## Neural Graph Architecture` section
+- Inject into AGENTS.md at `## Agent Graph Architecture` section
 - Stage AGENTS.md
 
 **Script 5: update-agent-registry.js**
@@ -334,7 +334,7 @@ Code Genie loads: ~72KB (code + universal + AGENTS.md)
 Git agent loads: ~45KB (git + AGENTS.md + code.md)
 ```
 
-**Neural graph shows this visually:**
+**Agent graph shows this visually:**
 - Each node shows token count
 - Hierarchy depth indicated by indentation
 - Distribution summary (% per category)
@@ -430,7 +430,7 @@ Git agent loads: ~45KB (git + AGENTS.md + code.md)
    - Calculate % change
    - Check override flag: `git config commit.token-override`
    - Block if >5% increase without override
-3. Implement `update-neural-graph.js`:
+3. Implement `update-agent-graph.js`:
    - Parse @ refs, build tree
    - Calculate tokens per file + per level
    - Generate markdown tree
@@ -441,7 +441,7 @@ Git agent loads: ~45KB (git + AGENTS.md + code.md)
 **Evidence:**
 - ✅ Baseline token count documented
 - ✅ Token increase >5% blocked
-- ✅ Neural graph auto-generated and injected
+- ✅ Agent graph auto-generated and injected
 - ✅ Override works: `git config commit.token-override "reason"`
 
 ### Group D: Agent Registry Auto-Generation
@@ -621,7 +621,7 @@ Git agent loads: ~45KB (git + AGENTS.md + code.md)
    - Script locations + purposes
    - Troubleshooting
 2. Document in AGENTS.md:
-   - Auto-generated sections (Neural Graph, Agent Registry)
+   - Auto-generated sections (Agent Graph, Agent Registry)
    - Validation commands with auto-status
 3. End-to-end testing:
    - Fresh clone → hook setup → commit → validation
@@ -656,7 +656,7 @@ Git agent loads: ~45KB (git + AGENTS.md + code.md)
 - [ ] Baseline token count documented in AGENTS.md
 - [ ] Token increase >5% blocked with clear message
 - [ ] Override mechanism works (`git config commit.token-override "reason"`)
-- [ ] Neural graph auto-generated and injected into AGENTS.md
+- [ ] Agent graph auto-generated and injected into AGENTS.md
 - [ ] Token cost shown per hierarchy level
 
 **Agent Registry:**
@@ -766,7 +766,7 @@ Git agent loads: ~45KB (git + AGENTS.md + code.md)
 
 **When complete:**
 - ✅ Every commit validates token efficiency (<5% increase threshold)
-- ✅ AGENTS.md always shows current neural graph (auto-updated)
+- ✅ AGENTS.md always shows current agent graph (auto-updated)
 - ✅ Agent registry always accurate (auto-generated from folders)
 - ✅ @ references always valid (broken links caught at commit)
 - ✅ CHANGELOG always current (auto-updated on push)
@@ -789,7 +789,7 @@ git commit -m "feat: add comprehensive audit agent"
 git config commit.token-override "Added audit agent (18 validation rules)"
 git commit -m "feat: add comprehensive audit agent"
 # ✅ Token efficiency validated (justified increase)
-# ✅ Neural graph updated in AGENTS.md
+# ✅ Agent graph updated in AGENTS.md
 # ✅ Agent registry updated (Agents: 18 total)
 # ✅ Validation commands executed (12 passed)
 # ✅ Universal headers injected (3 new files)
