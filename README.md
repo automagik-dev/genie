@@ -97,34 +97,23 @@ Genie's architecture uses **universal neurons** (shared across all templates) an
 <!-- AGENT_TREE_START -->
 ```mermaid
 graph TB
-    %% Genie Agent Neural Tree
+    %% Genie Agent Tree
 
-    %% Universal Neurons (17)
-    UNIVERSAL[Universal Neurons]:::universal
-    analyze[analyze]:::neuron
-    UNIVERSAL --> analyze
-    audit[audit]:::neuron
-    UNIVERSAL --> audit
-    challenge[challenge]:::neuron
-    UNIVERSAL --> challenge
-    consensus[consensus]:::neuron
-    UNIVERSAL --> consensus
-    debug[debug]:::neuron
-    UNIVERSAL --> debug
-    more_universal[...12 more]:::more
-    UNIVERSAL --> more_universal
-
-    %% Code Template
-    CODE[Code Orchestrator]:::orchestrator
-    code_commit[commit]:::code_neuron
+    %% Code Collective
+    CODE[Code Collective]:::orchestrator
+    code_analyze[analyze]:::code_agent
+    CODE --> code_analyze
+    code_audit[audit]:::code_agent
+    CODE --> code_audit
+    code_challenge[challenge]:::code_agent
+    CODE --> code_challenge
+    code_commit[commit]:::code_agent
     CODE --> code_commit
-    code_git[git]:::code_neuron
-    CODE --> code_git
-    code_implementor[implementor]:::code_neuron
-    CODE --> code_implementor
-    code_install[install]:::code_neuron
-    CODE --> code_install
-    more_code[...4 more]:::more
+    code_consensus[consensus]:::code_agent
+    CODE --> code_consensus
+    code_debate[debate]:::code_agent
+    CODE --> code_debate
+    more_code[...24 more]:::more
     CODE --> more_code
 
     %% Git Workflows
@@ -132,17 +121,25 @@ graph TB
     code_git --> git_pr[pr]:::workflow
     code_git --> git_report[report]:::workflow
 
-    %% Create Template
-    CREATE[Create Orchestrator]:::orchestrator
-    create_wish[wish]:::create_neuron
+    %% Code Workflows
+    workflow_forge[forge]:::workflow
+    CODE --> workflow_forge
+    workflow_session-state-updater[session-state-updater]:::workflow
+    CODE --> workflow_session-state-updater
+    workflow_session-state-updater-example[session-state-updater-example]:::workflow
+    CODE --> workflow_session-state-updater-example
+    workflow_wish[wish]:::workflow
+    CODE --> workflow_wish
+
+    %% Create Collective
+    CREATE[Create Collective]:::orchestrator
+    create_wish[wish]:::create_agent
     CREATE --> create_wish
 
     %% Styling
-    classDef universal fill:#e1f5ff,stroke:#0288d1,stroke-width:2px
     classDef orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:3px
-    classDef neuron fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef code_neuron fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef create_neuron fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef code_agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef create_agent fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef workflow fill:#fff9c4,stroke:#fbc02d,stroke-width:1px
     classDef more fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray: 5 5
 ```

@@ -110,54 +110,64 @@ See `@.genie/docs/mcp-interface.md` for complete documentation.
 <!-- AUTO-GENERATED-START: Do not edit manually -->
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Note:** Paths updated for new architecture (Genie → Collectives → Entities)
+**Total Tokens:** 43,560 (baseline for efficiency validation)
+
+**Distribution:**
+- Code Skills: 11,622 tokens (26.7%)
+- Universal Skills: 10,203 tokens (23.4%)
+- Advisory Teams: 8,643 tokens (19.8%)
+- Code Workflows: 7,328 tokens (16.8%)
+- Product Docs: 2,518 tokens (5.8%)
+- Core Framework: 1,843 tokens (4.2%)
+- Documentation: 758 tokens (1.7%)
+- Code Agents: 645 tokens (1.5%)
 
 **Hierarchy:**
 
-- **AGENTS.md** (framework entry point)
-  - **.genie/product/mission.md** - Product vision & goals
-  - **.genie/product/tech-stack.md** - Technology decisions
-  - **.genie/product/roadmap.md** - Feature roadmap
-  - **.genie/product/environment.md** - Development environment
-
-**Universal Skills:**
-  - **.genie/skills/know-yourself.md** - Identity & capabilities
-  - **.genie/skills/evidence-based-thinking.md** - Decision framework
-  - **.genie/skills/routing-decision-matrix.md** - Agent routing logic
-  - **.genie/skills/execution-integrity-protocol.md** - Execution standards
-  - **.genie/skills/persistent-tracking-protocol.md** - State tracking
-  - **.genie/skills/meta-learn-protocol.md** - Learning system
-  - **.genie/skills/delegation-discipline.md** - Invocation patterns
-  - **.genie/skills/blocker-protocol.md** - Blocker handling
-  - **.genie/skills/chat-mode-helpers.md** - Interaction patterns
-  - **.genie/skills/experimentation-protocol.md** - Experimentation rules
-  - **.genie/skills/orchestration-protocols.md** - Orchestration patterns
-  - **.genie/skills/parallel-execution.md** - Parallel execution
-  - **.genie/skills/sequential-questioning.md** - User interaction
-  - **.genie/skills/no-backwards-compatibility.md** - Evolution policy
-
-**Code Collective:**
-  - **Skills:**
-    - **.genie/code/skills/publishing-protocol.md**
-    - **.genie/code/skills/role-clarity-protocol.md**
-    - **.genie/code/skills/triad-maintenance-protocol.md**
-    - **.genie/code/skills/team-consultation-protocol.md**
-    - **.genie/code/skills/genie-integration.md**
-    - **.genie/code/skills/agent-configuration.md**
-    - **.genie/code/skills/tool-requirements.md**
-    - **.genie/code/skills/wish-initiation-rule.md**
-    - **.genie/code/skills/forge-integration.md**
-    - **.genie/code/skills/forge-mcp-pattern.md**
-  - **Workflows:**
-    - **.genie/code/workflows/wish.md** - Discovery & planning
-    - **.genie/code/workflows/forge.md** - Execution breakdown
-    - **.genie/code/workflows/review.md** - Quality validation
-  - **Teams:**
-    - **.genie/code/teams/tech-council/council.md** - Orchestrator
-    - **.genie/code/teams/tech-council/nayr.md** - Foundational thinking
-    - **.genie/code/teams/tech-council/oettam.md** - Performance focus
-    - **.genie/code/teams/tech-council/jt.md** - Simplicity advocate
-
-**Documentation:**
-  - **.genie/docs/mcp-interface.md** - MCP integration guide
+- **AGENTS.md** (1,843 tokens, +41,717 from 44 refs)
+  - **.genie/product/mission.md** (684 tokens)
+  - **.genie/product/tech-stack.md** (546 tokens)
+  - **.genie/product/roadmap.md** (594 tokens)
+  - **.genie/product/environment.md** (694 tokens)
+  - **.genie/skills/know-yourself.md** (1,392 tokens)
+  - **.genie/skills/evidence-based-thinking.md** (748 tokens)
+  - **.genie/skills/routing-decision-matrix.md** (1,251 tokens)
+  - **.genie/skills/execution-integrity-protocol.md** (643 tokens)
+  - **.genie/skills/persistent-tracking-protocol.md** (1,066 tokens)
+  - **.genie/skills/meta-learn-protocol.md** (648 tokens)
+  - **.genie/skills/delegation-discipline.md** (1,729 tokens)
+  - **.genie/skills/blocker-protocol.md** (97 tokens)
+  - **.genie/skills/chat-mode-helpers.md** (248 tokens)
+  - **.genie/skills/experimentation-protocol.md** (499 tokens)
+  - **.genie/skills/orchestration-protocols.md** (219 tokens)
+  - **.genie/skills/parallel-execution.md** (93 tokens)
+  - **.genie/skills/sequential-questioning.md** (1,275 tokens)
+  - **.genie/skills/no-backwards-compatibility.md** (295 tokens)
+  - **.genie/code/skills/publishing-protocol.md** (565 tokens)
+  - **.genie/code/skills/role-clarity-protocol.md** (732 tokens)
+  - **.genie/code/skills/triad-maintenance-protocol.md** (1,315 tokens)
+  - **.genie/code/skills/team-consultation-protocol.md** (1,858 tokens)
+  - **.genie/code/skills/genie-integration.md** (1,202 tokens)
+  - **.genie/code/skills/agent-configuration.md** (535 tokens)
+  - **.genie/code/skills/tool-requirements.md** (116 tokens)
+  - **.genie/code/skills/wish-initiation-rule.md** (1,210 tokens)
+  - **.genie/code/skills/branch-tracker-guidance.md** (164 tokens)
+  - **.genie/code/skills/evidence-storage.md** (286 tokens)
+  - **.genie/code/skills/prompting-standards.md** (169 tokens)
+  - **.genie/code/skills/workspace-system.md** (104 tokens)
+  - **.genie/code/skills/file-naming-rules.md** (293 tokens)
+  - **.genie/code/skills/execution-patterns.md** (110 tokens)
+  - **.genie/code/skills/wish-document-management.md** (791 tokens)
+  - **.genie/code/skills/forge-integration.md** (1,627 tokens)
+  - **.genie/code/skills/forge-mcp-pattern.md** (417 tokens)
+  - **.genie/code/skills/missing-context-protocol.md** (128 tokens)
+  - **.genie/code/workflows/wish.md** (1,373 tokens)
+  - **.genie/code/workflows/forge.md** (5,955 tokens)
+  - **.genie/code/agents/wish/blueprint.md** (645 tokens)
+  - **.genie/code/teams/tech-council/council.md** (2,235 tokens)
+  - **.genie/code/teams/tech-council/nayr.md** (2,013 tokens)
+  - **.genie/code/teams/tech-council/oettam.md** (2,489 tokens)
+  - **.genie/code/teams/tech-council/jt.md** (1,906 tokens)
+  - **.genie/docs/mcp-interface.md** (758 tokens)
 
 <!-- AUTO-GENERATED-END -->

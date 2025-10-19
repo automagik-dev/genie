@@ -54,61 +54,68 @@ mcp__genie__list_sessions
 ---
 
 <!-- NEURAL_TREE_START -->
-## Agent Neural Tree
+## Agent Tree
 
-**Auto-generated** from `.genie/agents/` folder structure
+**Auto-generated** from `.genie/` folder structure
 
 **Summary:**
-- Universal agents: 17
-- Code agents: 8
-- Git workflows: 3
+- Code agents: 30
+- Code workflows: 4
+- Git workflows: 4
 - Create agents: 1
 - Orchestrators: 2
-- **Total: 31 agents**
+- **Total: 41 agents**
 
-### Universal Agents (Shared)
-
-- **analyze**
-- **audit**
-- **challenge**
-- **consensus**
-- **debug**
-- **docgen**
-- **explore**
-- **forge** → `forge`
-- **learn** → `learn`
-- **plan** → `...`, `genie`, `plan`
-- **polish** → `polish`
-- **prompt**
-- **qa** → `learn`
-- **refactor**
-- **review** → `review`
-- **roadmap** → `roadmap`
-- **vibe** → `sleepy`, `$agent`
-
-### Code Template
+### Code Collective
 
 **Orchestrator:** `code`
 
 **Agents:**
+- **analyze**
+- **audit**
+- **challenge**
 - **commit**
-- **git** → `git`, `report`, `pr`, `issue`
+- **consensus**
+- **debate**
+- **debug**
+- **deep-dive**
+- **design-review**
+- **docgen**
+- **explore**
+- **git** → `report`, `issue`, `pr`, `git`
 - **implementor** → `implementor`
-- **install** → `review`, `forge`, `wish`, `plan`
-- **release** → `release`, `commit`
+- **install** → `wish`, `forge`, `review`
+- **learn** → `learn`
+- **polish** → `polish`
+- **precommit**
+- **prompt**
+- **qa** → `learn`
+- **refactor**
+- **release** → `commit`, `release`
+- **review** → `review`
+- **risk-audit**
+- **roadmap** → `roadmap`
+- **socratic**
+- **test-strategy**
 - **tests** → `tests`
 - **tracer**
-- **wish** → `wish`
+- **update**
+- **vibe** → `sleepy`, `$agent`
+
+**Workflows:**
+- **forge**
+- **session-state-updater**
+- **session-state-updater-example**
+- **wish**
 
 **Git workflows:** `issue`, `pr`, `report`
 
-### Create Template
+### Create Collective
 
 **Orchestrator:** `create`
 
 **Agents:**
 - **wish**
-
 <!-- NEURAL_TREE_END -->
 
 ---

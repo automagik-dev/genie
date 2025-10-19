@@ -264,15 +264,14 @@ class ForgeClient {
         return this.request('POST', `/projects/${projectId}/tasks`, { body: task });
     }
     /**
-     * POST /api/projects/{project_id}/tasks/create-and-start
+     * POST /api/tasks/create-and-start
      * Create a task AND immediately start task attempt (all-in-one)
      * Faster than create + start separately
-     * @param projectId - Project UUID
-     * @param request - Task details and executor to use
-     * @returns New task attempt started
+     * @param request - Full request with task object, executor_profile_id, and base_branch
+     * @returns New task with attempt started
      */
-    async createAndStartTask(projectId, request) {
-        return this.request('POST', `/projects/${projectId}/tasks/create-and-start`, {
+    async createAndStartTask(request) {
+        return this.request('POST', `/tasks/create-and-start`, {
             body: request,
         });
     }

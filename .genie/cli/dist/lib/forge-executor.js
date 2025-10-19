@@ -47,13 +47,16 @@ class ForgeExecutor {
         // Create task + start attempt (all-in-one atomic operation)
         // No polling timeout race - this either succeeds or throws error
         const requestBody = {
-            title: `Genie: ${agentName} (${executionMode})`,
-            description: prompt,
+            task: {
+                project_id: projectId,
+                title: `Genie: ${agentName} (${executionMode})`,
+                description: prompt,
+            },
             executor_profile_id: this.mapExecutorToProfile(executorKey),
             base_branch: 'main', // TODO: Make configurable
         };
         process.stdout.write(`[DEBUG] Request body: ${JSON.stringify(requestBody, null, 2)}\n`);
-        const attempt = await this.forge.createAndStartTask(projectId, requestBody);
+        const attempt = await this.forge.createAndStartTask(requestBody);
         process.stdout.write(`▸ Task attempt created: ${attempt.id}\n`);
         process.stdout.write(`▸ Worktree: ${this.getWorktreePath(attempt.id)}\n`);
         process.stdout.write(`▸ Branch: ${this.getBranchName(attempt.id)}\n\n`);

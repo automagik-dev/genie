@@ -432,16 +432,16 @@ async function runUpdateNeuron(backupId, cwd) {
         let guideFile = 'generic-update.md';
         if (oldMM && newMM && oldMM !== newMM) {
             const specificGuide = `v${oldMM}.x-to-v${newMM}.0.md`;
-            const specificPath = path_1.default.join(cwd, '.genie/agents/neurons/update/versions', specificGuide);
+            const specificPath = path_1.default.join(cwd, '.genie/code/agents/update/versions', specificGuide);
             if (await (0, fs_utils_1.pathExists)(specificPath)) {
                 guideFile = specificGuide;
             }
         }
         // Output guide summary
-        const guidePath = path_1.default.join(cwd, '.genie/agents/neurons/update/versions', guideFile);
+        const guidePath = path_1.default.join(cwd, '.genie/code/agents/update/versions', guideFile);
         if (await (0, fs_utils_1.pathExists)(guidePath)) {
             console.log(`   Using transition guide: ${guideFile}`);
-            console.log(`   Full guide at: .genie/agents/neurons/update/versions/${guideFile}`);
+            console.log(`   Full guide at: .genie/code/agents/update/versions/${guideFile}`);
             console.log('');
             console.log('   Key points:');
             console.log('   • Your previous configuration is safely backed up');
