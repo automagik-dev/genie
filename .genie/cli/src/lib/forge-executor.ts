@@ -199,9 +199,9 @@ export class ForgeExecutor {
   }
 
   /**
-   * Map Genie executor key to Forge executor profile ID
+   * Map Genie executor key to Forge executor profile ID object
    */
-  private mapExecutorToProfile(executorKey: string): string {
+  private mapExecutorToProfile(executorKey: string): { executor: string; variant: null } {
     // Map Genie executor names to Forge profile IDs
     const mapping: Record<string, string> = {
       'claude-code': 'CLAUDE_CODE',
@@ -210,7 +210,13 @@ export class ForgeExecutor {
       'cursor': 'CURSOR',
     };
 
-    return mapping[executorKey] || 'CLAUDE_CODE';
+    const executor = mapping[executorKey] || 'CLAUDE_CODE';
+
+    // Return ExecutorProfileId object structure expected by Forge API
+    return {
+      executor,
+      variant: null,
+    };
   }
 
   /**

@@ -138,7 +138,7 @@ class ForgeExecutor {
         return newProject.id;
     }
     /**
-     * Map Genie executor key to Forge executor profile ID
+     * Map Genie executor key to Forge executor profile ID object
      */
     mapExecutorToProfile(executorKey) {
         // Map Genie executor names to Forge profile IDs
@@ -148,7 +148,12 @@ class ForgeExecutor {
             'gemini': 'GEMINI',
             'cursor': 'CURSOR',
         };
-        return mapping[executorKey] || 'CLAUDE_CODE';
+        const executor = mapping[executorKey] || 'CLAUDE_CODE';
+        // Return ExecutorProfileId object structure expected by Forge API
+        return {
+            executor,
+            variant: null,
+        };
     }
     /**
      * Map Forge task to Genie session entry
