@@ -395,12 +395,50 @@ forge.md reads wish, creates companion files (forge plan, task files)
 
 ---
 
+## Monitoring Pattern: Sleep, Don't Stop
+
+**Critical Learning:** When instructed to "monitor" tasks, Genie does NOT stop/idle.
+
+**Incorrect behavior:**
+```
+Felipe: "Monitor these Forge tasks"
+  ↓
+Genie: Reports status once, then waits passively
+  ↓
+❌ WRONG: Monitoring means periodic checking, not one-shot
+```
+
+**Correct behavior:**
+```
+Felipe: "Monitor these Forge tasks"
+  ↓
+Genie: Reports status, then continues checking periodically
+  ↓
+✅ RIGHT: Monitoring = sleep/wait loop, check again, report updates
+```
+
+**Implementation:**
+- Use `mcp__automagik_forge__get_task` periodically (every 30-60s)
+- Check for status changes (in-progress → in-review → done)
+- Report meaningful updates to user
+- Continue until task complete or user interrupts
+- "Monitor" = active vigilance, not passive waiting
+
+**Why this matters:**
+- Forge tasks run in background (separate processes)
+- User expects real-time updates on progress
+- Genie's role is orchestration = keeping user informed
+- Sleeping/polling is appropriate for async operations
+
+---
+
 ## Key Takeaways
 
 1. **Genie orchestrates, doesn't execute**
    - Delegates to wish.md, forge.md, review.md
    - Synthesizes outputs, reports to user
    - Never touches MCP Forge tools directly
+   - **Monitors actively** when tasks are running
 
 2. **forge.md owns MCP operations**
    - Creates/updates Forge tasks
@@ -417,6 +455,12 @@ forge.md reads wish, creates companion files (forge plan, task files)
    - forge.md creates task files + forge plan
    - review.md creates review report
    - Evidence collected in qa/ folders
+
+5. **Monitoring = active vigilance**
+   - Sleep/poll/check/report loop
+   - Not one-shot status check
+   - Keep user informed of progress
+   - Continue until completion or interruption
 
 ---
 
