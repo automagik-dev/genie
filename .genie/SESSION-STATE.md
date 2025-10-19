@@ -48,6 +48,28 @@
 
 ## 🔥 CURRENT TASKS (2025-10-19 Session)
 
+### **🔥 PRIORITY #1: Educational Foundation Task**
+
+**Task ID:** ab6c2576-f376-4f6e-9aba-c191b210d675
+**Title:** Wish: Investigate Forge Resource Sync & Auto-Agent Triggering
+**Status:** Just created - awaiting execution
+**Purpose:** DUAL OBJECTIVE
+1. **Technical:** Understand Forge API resource sync for auto-agent triggering
+2. **Educational:** Felipe demonstrates complete wish-forge-learn workflow
+
+**Why Priority #1:**
+- Establishes template for all future wishes
+- Teaches Genie the complete workflow pattern
+- Validates wish-forge-learn integration design
+- Improves efficiency for Stream A & Stream B execution
+- Related to multiple Genie behavior enhancement tasks
+
+**Felipe's Intent:** "I will use it as an educational purpose to teach you how I want all the process done while we do it. We will do that first before any other so that you will learn and evolve."
+
+**Next:** Felipe will demonstrate investigation workflow start-to-finish
+
+---
+
 ### **Architectural Evolution Complete ✅**
 - Tech Council team established (nayr, oettam, jt)
 - Advisory pattern validated
