@@ -17,6 +17,7 @@
     ".genie/cli/dist/**/*",
     ".genie/mcp/dist/**/*",
     ".genie/mcp/src/**/*",
+    "forge.js",
     ".genie/agents/**/*.md",
     ".genie/product/**/*.md",
     ".genie/standards/**/*.md",
