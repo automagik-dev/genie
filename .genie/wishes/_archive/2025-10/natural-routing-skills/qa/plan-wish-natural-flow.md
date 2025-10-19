@@ -26,18 +26,18 @@ Genie: "I've captured this. Ready to break it down?"
 
 **What happened:**
 - Session start: Felipe expressed need for natural routing enhancement
-- Genie consulted orchestrator neuron (session `ce821e38-e5f8-481c-a7ab-81fc620653a5`)
+- Genie consulted orchestrator agent (session `ce821e38-e5f8-481c-a7ab-81fc620653a5`)
 - Orchestrator gathered context, analyzed scope, identified risks
 - Genie presented plan naturally in conversation
 
 **Evidence:**
-- Status log entry (wish:266): "Orchestrator neuron completed mode overlap analysis"
-- MCP session evidence (qa/mcp-session-evidence.md) documents neuron consultation
+- Status log entry (wish:266): "Orchestrator agent completed mode overlap analysis"
+- MCP session evidence (qa/mcp-session-evidence.md) documents agent consultation
 - No `/plan` command visible in user conversation
 - Planning brief emerged from natural dialogue
 
 **Validation:**
-✅ Planning happened via neuron (not exposed command)
+✅ Planning happened via agent (not exposed command)
 ✅ Strategic thinking invisible to user
 ✅ Results presented naturally ("Here's what I'm thinking...")
 ✅ User approved without knowing mechanics
@@ -85,7 +85,7 @@ Genie: "I've captured this. Ready to break it down?"
 ### 4. Review Phase (Ongoing)
 
 **What happened:**
-- Real MCP validation via orchestrator neuron
+- Real MCP validation via orchestrator agent
 - Evidence captured in qa/ and reports/
 - Validation results integrated naturally into conversation
 - User experiencing collaborative verification
@@ -97,7 +97,7 @@ Genie: "I've captured this. Ready to break it down?"
 - Natural conversation throughout
 
 **Validation:**
-✅ Review happening via neuron sessions (not exposed commands)
+✅ Review happening via agent sessions (not exposed commands)
 ✅ Evidence capture invisible but thorough
 ✅ User experiencing collaborative validation
 ✅ Results presented naturally
@@ -112,8 +112,8 @@ Genie: "I've captured this. Ready to break it down?"
 - ❌ No MCP tool names visible
 - ✅ Only natural conversation
 
-**Neuron Architecture Working:**
-- ✅ Orchestrator neuron (session ce821e38...) provided strategic thinking
+**Agent Architecture Working:**
+- ✅ Orchestrator agent (session ce821e38...) provided strategic thinking
 - ✅ Session persisted throughout wish (not one-shot)
 - ✅ Context built organically across multiple interactions
 - ✅ Evidence trail complete in MCP session transcript
@@ -130,7 +130,7 @@ Genie: "I've captured this. Ready to break it down?"
 
 1. **User talks naturally** → Genie orchestrates invisibly → Work gets done
 2. **Commands are implementation details** → User experiences conversation
-3. **Neurons provide persistence** → Context builds without resets
+3. **Agents provide persistence** → Context builds without resets
 4. **Mentor personality works** → Proactive, collaborative, natural
 
 **This wish is self-demonstrating evidence of natural flow working in production.**
@@ -151,12 +151,12 @@ Genie: "I've captured this. Ready to break it down?"
 ## Validation Criteria (100% Complete)
 
 ✅ No slash commands exposed to user
-✅ Planning happened naturally via neuron consultation
+✅ Planning happened naturally via agent consultation
 ✅ Wish document created invisibly
 ✅ Forge breakdown presented naturally
 ✅ User experiences continuous conversation, not command execution
 ✅ Evidence captured throughout (qa/ + reports/)
-✅ Neuron sessions demonstrate persistence
+✅ Agent sessions demonstrate persistence
 ✅ Natural mentor personality maintained
 
 **Status:** VALIDATED ✅

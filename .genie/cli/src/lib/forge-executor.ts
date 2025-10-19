@@ -70,19 +70,28 @@ export class ForgeExecutor {
       startTime
     } = params;
 
+    process.stdout.write(`[DEBUG forge-executor] createSession() called with executorKey="${executorKey}"\n`);
+    process.stdout.write(`[DEBUG forge-executor] Current working directory: ${process.cwd()}\n`);
+
     // Get or create Genie project
+    process.stdout.write(`[DEBUG forge-executor] Getting or creating Genie project for repo: ${process.cwd()}\n`);
     const projectId = await this.getOrCreateGenieProject();
+    process.stdout.write(`[DEBUG forge-executor] Got project ID: ${projectId}\n`);
 
     process.stdout.write(`▸ Creating Forge task for ${agentName}...\n`);
 
     // Create task + start attempt (all-in-one atomic operation)
     // No polling timeout race - this either succeeds or throws error
-    const attempt = await this.forge.createAndStartTask(projectId, {
+    const requestBody = {
       title: `Genie: ${agentName} (${executionMode})`,
       description: prompt,
       executor_profile_id: this.mapExecutorToProfile(executorKey),
       base_branch: 'main', // TODO: Make configurable
-    });
+    };
+
+    process.stdout.write(`[DEBUG] Request body: ${JSON.stringify(requestBody, null, 2)}\n`);
+
+    const attempt = await this.forge.createAndStartTask(projectId, requestBody);
 
     process.stdout.write(`▸ Task attempt created: ${attempt.id}\n`);
     process.stdout.write(`▸ Worktree: ${this.getWorktreePath(attempt.id)}\n`);
@@ -179,21 +188,29 @@ export class ForgeExecutor {
       return this.config.genieProjectId;
     }
 
-    // Otherwise, find or create "Genie Sessions" project
-    const projects = await this.forge.listProjects();
-    const genieProject = projects.find((p: any) => p.name === 'Genie Sessions');
+    const currentRepoPath = process.cwd();
 
-    if (genieProject) {
-      this.config.genieProjectId = genieProject.id;
-      return genieProject.id;
+    // Find project by git_repo_path (not by name)
+    const projects = await this.forge.listProjects();
+    const existingProject = projects.find((p: any) => p.git_repo_path === currentRepoPath);
+
+    if (existingProject) {
+      process.stdout.write(`[DEBUG forge-executor] Found existing project: ${existingProject.name} (${existingProject.id})\n`);
+      this.config.genieProjectId = existingProject.id;
+      return existingProject.id;
     }
 
-    // Create new project
-    const newProject = await this.forge.createProject({
+    // No existing project - create new one
+    const createProjectPayload = {
       name: 'Genie Sessions',
-      repo_path: process.cwd(), // Current working directory
-    });
+      git_repo_path: currentRepoPath,
+      use_existing_repo: true,
+    };
+    process.stdout.write(`[DEBUG forge-executor] Creating new project with: ${JSON.stringify(createProjectPayload, null, 2)}\n`);
 
+    const newProject = await this.forge.createProject(createProjectPayload);
+
+    process.stdout.write(`[DEBUG forge-executor] Project created: ${newProject.id}\n`);
     this.config.genieProjectId = newProject.id;
     return newProject.id;
   }

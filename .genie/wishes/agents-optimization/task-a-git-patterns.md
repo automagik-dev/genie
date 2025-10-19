@@ -1,7 +1,7 @@
 # Task A: Extract GitHub Workflow Patterns
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** A
-**Target:** `.genie/agents/genie/neurons/git/git.md`
+**Target:** `.genie/agents/genie/agents/git/git.md`
 **Lines to extract:** AGENTS.md 41-179
 
 ---
@@ -16,7 +16,7 @@
 **Current state:**
 - AGENTS.md: 2272 lines total
 - Target sections contain GitHub workflow patterns
-- git.md exists at `.genie/agents/genie/neurons/git/git.md`
+- git.md exists at `.genie/agents/genie/agents/git/git.md`
 
 **Dependencies:**
 - Must preserve all GitHub patterns
@@ -37,7 +37,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 41-179
-   - Insert @ reference: `@.genie/agents/code/neurons/git/git.md (GitHub workflow patterns)`
+   - Insert @ reference: `@.genie/code/agents/git/git.md (GitHub workflow patterns)`
    - Keep "Experimentation Protocol" section intact (comes after)
 
 4. **Validation:**
@@ -52,22 +52,22 @@
 **Pattern preservation:**
 ```bash
 # Developer Welcome Flow
-grep -q "Developer Welcome Flow" .genie/agents/genie/neurons/git/git.md && echo "✅ Welcome flow preserved"
+grep -q "Developer Welcome Flow" .genie/agents/genie/agents/git/git.md && echo "✅ Welcome flow preserved"
 
 # Quick Capture
-grep -q "Quick Capture Workflow" .genie/agents/genie/neurons/git/git.md && echo "✅ Quick capture preserved"
+grep -q "Quick Capture Workflow" .genie/agents/genie/agents/git/git.md && echo "✅ Quick capture preserved"
 
 # GitHub integration
-grep -q "Git & GitHub Workflow Integration" .genie/agents/genie/neurons/git/git.md && echo "✅ GitHub integration preserved"
+grep -q "Git & GitHub Workflow Integration" .genie/agents/genie/agents/git/git.md && echo "✅ GitHub integration preserved"
 
 # Template distinctions
-grep -q "Template selection rules" .genie/agents/genie/neurons/git/git.md && echo "✅ Template rules preserved"
+grep -q "Template selection rules" .genie/agents/genie/agents/git/git.md && echo "✅ Template rules preserved"
 ```
 
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/code/neurons/git/git.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/code/agents/git/git.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Developer Welcome Flow" AGENTS.md && echo "✅ Content removed"
@@ -85,4 +85,4 @@ wc -l AGENTS.md
 ## Evidence Location
 
 **Done Report:** `.genie/wishes/agents-optimization/reports/done-implementor-task-a-<timestamp>.md`
-**Diff:** `git diff AGENTS.md .genie/agents/genie/neurons/git/git.md`
+**Diff:** `git diff AGENTS.md .genie/agents/genie/agents/git/git.md`

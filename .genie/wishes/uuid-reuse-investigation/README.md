@@ -118,7 +118,7 @@ npx automagik-genie  →  node .genie/cli/dist/genie-cli.js
 
 **User Experience:**
 ```bash
-$ npx automagik-genie run neurons/plan "Test"
+$ npx automagik-genie run agents/plan "Test"
 
 ⚠️  WARNING: Stale build artifacts detected!
 
@@ -131,7 +131,7 @@ $ npx automagik-genie run neurons/plan "Test"
 
    To fix: pnpm run build:genie
 
-🧞 Starting agent: neurons/plan
+🧞 Starting agent: agents/plan
    ...
 ```
 

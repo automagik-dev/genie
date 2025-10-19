@@ -13,7 +13,7 @@
 
 **Remaining (14 agents):**
 
-Neurons (8):
+Agents (8):
 - git.md
 - install.md
 - learn.md

@@ -346,12 +346,12 @@ genie review <id> --compare HEAD  # Compare to HEAD
 ```bash
 genie task update <id> --title "New title"
 genie task delete <id>
-genie task children <id>   # Show child attempts (neuron tree)
+genie task children <id>   # Show child attempts (agent tree)
 ```
 
 **Why Complex:** Requires state tree synchronization
 
-**4. Migration & Updating Neuron:**
+**4. Migration & Updating Agent:**
 ```bash
 genie update check         # Check for updates
 genie update apply         # Apply version migration
@@ -426,7 +426,7 @@ genie rollback <version>   # Rollback to previous version
 
 **Phase 3 - Adoption Kits for Downstream Repos:** ✅ Perfect fit
 - **Migration tools:** Upgrade notes, migration diffs, rollback guidance
-- **Advanced features:** Template system, updating neuron, automation
+- **Advanced features:** Template system, updating agent, automation
 
 **Deliverable for Roadmap:** Production-ready adoption kits
 
@@ -461,7 +461,7 @@ genie rollback <version>   # Rollback to previous version
 **Migration & Updating:**
 11. Design /update directory structure
 12. Implement version files (diff-based)
-13. Implement updating neuron
+13. Implement updating agent
 14. Implement migration scripts
 15. Document rollback plan
 

@@ -104,7 +104,7 @@ genie list                                # List sessions
 - ❌ Executor visibility (Wish #120-B)
 - ❌ Templates unification (Wish #120-C)
 - ❌ Advanced inspection (Wish #120-C)
-- ❌ Migration & updating neuron (Wish #120-C)
+- ❌ Migration & updating agent (Wish #120-C)
 - ❌ SSE automations (Wish #120-C)
 
 **Principle:** If users can't see it today, it's not in Wish #120-A.
@@ -518,7 +518,7 @@ genie run analyze "test"  # Always succeeds, < 5s, identical output
 
 **Immediate Follow-Ups:**
 1. **Wish #120-B:** Low-hanging fruits (PR automation, Omni, images, executor visibility)
-2. **Wish #120-C:** Advanced features (templates, migration neuron, SSE automations)
+2. **Wish #120-C:** Advanced features (templates, migration agent, SSE automations)
 
 **Dependencies Unlocked:**
 - This wish unlocks all Forge backend features for future wishes

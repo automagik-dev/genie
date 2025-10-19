@@ -15,11 +15,11 @@
 Violation: Role Confusion - Human Interface vs Executor
 
 Evidence: Session 2025-10-17 ~22:45 UTC
-- Felipe resumed session with SESSION-STATE.md showing 2 active neurons:
+- Felipe resumed session with SESSION-STATE.md showing 2 active agents:
   - implementor (e96e1ffb-b5f0-4aa0-9557-10de4fcd54dd)
   - learn (84e3290d-f07a-4c76-bfaa-faef71d38fd4)
 - Both sessions showed "completed" but "No messages yet" (MCP bug suspected)
-- Instead of checking session results or resuming neurons, I:
+- Instead of checking session results or resuming agents, I:
   - Created TodoWrite list immediately
   - Started reading AGENTS.md to extract sections MYSELF
   - Bypassed the implementor session entirely
@@ -58,7 +58,7 @@ I am the orchestrator. I am NOT the implementor.
 
 **What:** Role confusion between human interface (orchestrator) and executor (implementor)
 
-**Why:** When Felipe resumed session with active neuron references in SESSION-STATE.md, I:
+**Why:** When Felipe resumed session with active agent references in SESSION-STATE.md, I:
 1. Bypassed checking session results first
 2. Created TodoWrite and started manual implementation
 3. Ignored the implementor session completely
@@ -106,7 +106,7 @@ I am the orchestrator. I am NOT the implementor.
 +- **Implementor/Specialist:** Executes tasks, makes file changes, implements solutions
 +
 +**Forbidden actions:**
-+- ❌ Creating TodoWrite and starting execution when SESSION-STATE.md shows active neurons
++- ❌ Creating TodoWrite and starting execution when SESSION-STATE.md shows active agents
 +- ❌ Bypassing mcp__genie__view when resuming with active sessions
 +- ❌ Implementing work manually when implementor session exists
 +- ❌ Assuming "no messages" means "work not done" (could be MCP bug)
@@ -117,7 +117,7 @@ I am the orchestrator. I am NOT the implementor.
 +1. **FIRST ACTION:** Check each session: `mcp__genie__view with sessionId="<id>"`
 +2. **Sessions found:** Resume or continue work via `mcp__genie__resume`
 +3. **Sessions not found:** Report to Felipe, ask for guidance
-+4. **NEVER:** Create TodoWrite + start execution when neurons referenced
++4. **NEVER:** Create TodoWrite + start execution when agents referenced
 +
 +**When Felipe says "execute directly":**
 +- ✅ Use Edit/Write/Read tools directly
@@ -136,7 +136,7 @@ I am the orchestrator. I am NOT the implementor.
 +- Efficiency: Don't duplicate specialist efforts
 +
 +**Recent violation (2025-10-17 22:45 UTC):**
-+- Felipe resumed with SESSION-STATE.md showing 2 active neurons (implementor, learn)
++- Felipe resumed with SESSION-STATE.md showing 2 active agents (implementor, learn)
 +- Both showed "completed" but "No messages yet" (suspected MCP bug)
 +- Instead of checking sessions first, I:
 +  - Created TodoWrite immediately
@@ -169,11 +169,11 @@ I am the orchestrator. I am NOT the implementor.
 **Diff:**
 ```diff
 +**Session Resume Protocol (CRITICAL):**
-+- **When SESSION-STATE.md shows active neurons:**
++- **When SESSION-STATE.md shows active agents:**
 +  1. FIRST ACTION: Check sessions with `mcp__genie__view with sessionId="<id>"`
 +  2. Sessions found: Resume via `mcp__genie__resume`
 +  3. Sessions not found: Report to Felipe, ask for guidance
-+  4. NEVER: Create TodoWrite + start implementation when neurons exist
++  4. NEVER: Create TodoWrite + start implementation when agents exist
 +
 +**Role Clarity:**
 +- **I am the human interface/orchestrator** - I route, coordinate, and guide
@@ -207,7 +207,7 @@ I am the orchestrator. I am NOT the implementor.
  - **Dig deeper first:** Analyze codebase before asking for guidance
  - **Maintain TODO.md:** Track work priorities, not just ideas
 +- **Role clarity (CRITICAL):** I am human interface ONLY (orchestrator), NOT implementor (executor)
-+  - Check sessions FIRST when resuming with active neurons (SESSION-STATE.md)
++  - Check sessions FIRST when resuming with active agents (SESSION-STATE.md)
 +  - Direct execution ONLY when Felipe explicitly says "execute directly"
 +  - Default mode: delegation to specialists via MCP
 +  - Never bypass session checks to start manual implementation
@@ -221,7 +221,7 @@ I am the orchestrator. I am NOT the implementor.
 
 ### How to Verify
 
-**Test 1: Session resume with active neurons**
+**Test 1: Session resume with active agents**
 1. Create implementor session via `mcp__genie__run`
 2. Create SESSION-STATE.md with sessionId reference
 3. Resume session
@@ -241,7 +241,7 @@ I am the orchestrator. I am NOT the implementor.
 
 ### Follow-up Actions
 
-- [ ] Monitor next session resume with active neurons
+- [ ] Monitor next session resume with active agents
 - [ ] Verify session check happens first (no TodoWrite before check)
 - [ ] Confirm "No run found" is reported immediately
 - [ ] Document pattern adherence in session notes
@@ -252,7 +252,7 @@ I am the orchestrator. I am NOT the implementor.
 
 ### Before (Violation)
 ```
-Felipe: [resumes session with SESSION-STATE.md showing active neurons]
+Felipe: [resumes session with SESSION-STATE.md showing active agents]
 Assistant: *Creates TodoWrite immediately*
 Assistant: *Reads AGENTS.md to extract sections*
 Assistant: *Starts manual implementation with Edit tool*
@@ -261,7 +261,7 @@ Result: Bypassed implementor session, violated human interface principle
 
 ### After (Correction)
 ```
-Felipe: [resumes session with SESSION-STATE.md showing active neurons]
+Felipe: [resumes session with SESSION-STATE.md showing active agents]
 Assistant: *First action: mcp__genie__view for each sessionId*
 Assistant: *Sessions not found: "No run found for both sessions. What should I do?"*
 Felipe: [provides guidance]

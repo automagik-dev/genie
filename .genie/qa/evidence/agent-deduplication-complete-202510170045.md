@@ -24,7 +24,7 @@ Customize phases below for [AGENT_ROLE].
 
 ## Completed Agents (18/18)
 
-### Neurons (11)
+### Agents (11)
 1. ✅ commit.md - pre-commit validation
 2. ✅ git.md - Git/GitHub workflow management
 3. ✅ implementor.md - feature implementation with TDD
@@ -89,15 +89,15 @@ $ grep "Framework Reference" -A 5 .genie/agents/**/*.md | grep "@AGENTS.md" | wc
 ## Files Modified
 
 ```
-.genie/agents/neurons/commit.md
-.genie/agents/neurons/git.md
-.genie/agents/neurons/implementor.md
-.genie/agents/neurons/learn.md
-.genie/agents/neurons/polish.md
-.genie/agents/neurons/prompt.md
-.genie/agents/neurons/release-old-backup.md
-.genie/agents/neurons/release.md
-.genie/agents/neurons/tests.md
+.genie/agents/commit.md
+.genie/agents/git.md
+.genie/agents/implementor.md
+.genie/agents/learn.md
+.genie/agents/polish.md
+.genie/agents/prompt.md
+.genie/agents/release-old-backup.md
+.genie/agents/release.md
+.genie/agents/tests.md
 .genie/agents/workflows/forge.md
 .genie/agents/workflows/plan.md
 .genie/agents/workflows/qa.md

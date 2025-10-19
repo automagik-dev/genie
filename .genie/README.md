@@ -59,14 +59,14 @@ mcp__genie__list_sessions
 **Auto-generated** from `.genie/agents/` folder structure
 
 **Summary:**
-- Universal neurons: 17
-- Code neurons: 8
+- Universal agents: 17
+- Code agents: 8
 - Git workflows: 3
-- Create neurons: 1
+- Create agents: 1
 - Orchestrators: 2
 - **Total: 31 agents**
 
-### Universal Neurons (Shared)
+### Universal Agents (Shared)
 
 - **analyze**
 - **audit**
@@ -90,7 +90,7 @@ mcp__genie__list_sessions
 
 **Orchestrator:** `code`
 
-**Neurons:**
+**Agents:**
 - **commit**
 - **git** → `git`, `report`, `pr`, `issue`
 - **implementor** → `implementor`
@@ -106,7 +106,7 @@ mcp__genie__list_sessions
 
 **Orchestrator:** `create`
 
-**Neurons:**
+**Agents:**
 - **wish**
 
 <!-- NEURAL_TREE_END -->

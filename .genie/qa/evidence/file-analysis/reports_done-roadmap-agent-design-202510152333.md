@@ -32,11 +32,11 @@
 **Recommendation:** Add @ refs
 
 **Notes:**
-- Missing @: .genie/agents/neurons/roadmap.md
+- Missing @: .genie/agents/roadmap.md
 - Missing @: .genie/custom/routing.md
-- Missing @: .genie/agents/neurons/roadmap.md
+- Missing @: .genie/agents/roadmap.md
 - Missing @: .genie/custom/routing.md
-- Missing @: .genie/agents/neurons/roadmap.md
+- Missing @: .genie/agents/roadmap.md
 
 ### 4. Knowledge Graph Position: INFO
 

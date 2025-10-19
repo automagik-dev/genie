@@ -352,7 +352,7 @@ grep -r "executor-prompt.tsx" .genie/cli/src/
    - Confirm no parsing errors, no encoding issues
 
 5. **Real orchestration validation:**
-   - Run orchestration with 3-4 specialist neurons
+   - Run orchestration with 3-4 specialist agents
    - Example: plan → wish → forge → implementor workflow
    - Measure total token consumption
    - Verify workflow still functional with markdown output

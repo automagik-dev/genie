@@ -39,8 +39,8 @@ graph TD
 4. **.genie/genie/standards/best-practices.md** - Referenced 10 times
 5. **.genie/genie/USERCONTEXT.md** - Referenced 9 times
 6. **cli/src/lib/view-helpers** - Referenced 9 times
-7. **.genie/genie/agents/neurons/prompt.md** - Referenced 7 times
-8. **.genie/genie/agents/code/neurons/git/git.md** - Referenced 7 times
+7. **.genie/genie/agents/prompt.md** - Referenced 7 times
+8. **.genie/genie/agents/code/agents/git/git.md** - Referenced 7 times
 9. **.genie/genie/product/roadmap.md** - Referenced 7 times
 10. **cli/src/views/common** - Referenced 7 times
 

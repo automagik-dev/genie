@@ -26,7 +26,7 @@
 │     ├─ spawn('node', [                                            │
 │     │   '.genie/cli/dist/genie-cli.js',                           │
 │     │   'run',                                                    │
-│     │   'neurons/git/commit-advisory',                            │
+│     │   'agents/git/commit-advisory',                            │
 │     │   'Pre-commit validation'                                   │
 │     │ ], { detached: true })  ← KEY: non-blocking                │
 │     │                                                              │
@@ -46,9 +46,9 @@
 ┌────────────────────────────────────────────────────────────────────┐
 │ Genie Workflow (background process)                                │
 │                                                                    │
-│  genie-cli.js run neurons/git/commit-advisory                      │
+│  genie-cli.js run agents/git/commit-advisory                      │
 │  │                                                                 │
-│  ├─ Load workflow: .genie/agents/neurons/git/commit-advisory.md   │
+│  ├─ Load workflow: .genie/agents/git/commit-advisory.md   │
 │  │                                                                 │
 │  ├─ Execute Haiku agent (Claude model)                            │
 │  │  └─ Analyze: commits, wishes, GitHub issues, branch           │
@@ -68,7 +68,7 @@
 │  │  ```                                                           │
 │  │                                                                 │
 │  └─ Store in JSONL log file                                       │
-│     └─ .genie/state/agents/logs/neurons-git-abc123.log            │
+│     └─ .genie/state/agents/logs/agents-git-abc123.log            │
 │        {type: "session.created", session_id: "abc-123"}           │
 │        {type: "item.completed", item: {text: "# Commit..."}}      │
 │        {type: "turn.completed", status: "success"}                │
@@ -77,7 +77,7 @@
 │     └─ .genie/state/agents/sessions.json                          │
 │        {                                                          │
 │          "abc-123": {                                             │
-│            agent: "neurons/git/commit-advisory",                  │
+│            agent: "agents/git/commit-advisory",                  │
 │            logFile: ".genie/state/agents/logs/...",               │
 │            status: "completed"                                    │
 │          }                                                         │
@@ -149,7 +149,7 @@
 ├── pre-commit                              ← Hook orchestrator
 │   ├─ Runs: validate-user-files-not-committed.js
 │   ├─ Runs: validate-cross-references.js
-│   └─ SPAWNS: genie run neurons/git/commit-advisory
+│   └─ SPAWNS: genie run agents/git/commit-advisory
 │
 └── pre-push
     ├─ Runs: tests (pnpm run test:all)
@@ -157,7 +157,7 @@
     └─ Updates: CHANGELOG.md
 
 .genie/
-├── agents/neurons/git/
+├── agents/git/
 │   └── commit-advisory.md                  ← Genie workflow definition
 │
 ├── scripts/
@@ -169,7 +169,7 @@
 ├── state/agents/
 │   ├── sessions.json                       ← Session metadata (V2 format)
 │   └── logs/
-│       └── neurons-git-*.log               ← JSONL output files
+│       └── agents-git-*.log               ← JSONL output files
 │
 └── docs/
     ├── commit-advisory-guide.md
@@ -280,20 +280,20 @@ else exitCode = 0;
   "version": 2,
   "sessions": {
     "abc-123-xyz": {
-      "agent": "neurons/git/commit-advisory",
+      "agent": "agents/git/commit-advisory",
       "sessionId": "abc-123-xyz",
       "executor": "claude",
       "model": "haiku",
-      "logFile": ".genie/state/agents/logs/neurons-git-commit-advisory-abc123.log",
+      "logFile": ".genie/state/agents/logs/agents-git-commit-advisory-abc123.log",
       "startTime": "2025-10-18T07:15:30.000Z",
       "status": "completed"
     },
     "def-456-uvw": {
-      "agent": "neurons/git/commit-advisory",
+      "agent": "agents/git/commit-advisory",
       "sessionId": "def-456-uvw",
       "executor": "claude",
       "model": "haiku",
-      "logFile": ".genie/state/agents/logs/neurons-git-commit-advisory-def456.log",
+      "logFile": ".genie/state/agents/logs/agents-git-commit-advisory-def456.log",
       "startTime": "2025-10-18T07:20:15.000Z",
       "status": "completed"
     }
@@ -305,7 +305,7 @@ else exitCode = 0;
 ```javascript
 // Find log file for session
 const entry = Object.values(sessions).find(s => s.sessionId === 'abc-123-xyz');
-const logPath = entry.logFile;  // ".genie/state/agents/logs/neurons-git-..."
+const logPath = entry.logFile;  // ".genie/state/agents/logs/agents-git-..."
 
 // Read log file
 const content = fs.readFileSync(logPath, 'utf8');
@@ -315,7 +315,7 @@ const content = fs.readFileSync(logPath, 'utf8');
 
 ## Event Flow in JSONL Log
 
-**.genie/state/agents/logs/neurons-git-commit-advisory-abc123.log**
+**.genie/state/agents/logs/agents-git-commit-advisory-abc123.log**
 
 ```jsonl
 {"type":"session.created","session_id":"abc-123-xyz","timestamp":"2025-10-18T07:15:30.000Z"}

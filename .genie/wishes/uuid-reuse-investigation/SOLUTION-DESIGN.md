@@ -282,8 +282,8 @@ export function checkBuildFreshness(options = {}): BuildFreshnessResult {
 
 **Scenario 1: Fresh Build**
 ```bash
-$ npx automagik-genie run neurons/plan "Test"
-🧞 Starting agent: neurons/plan
+$ npx automagik-genie run agents/plan "Test"
+🧞 Starting agent: agents/plan
    Executor: claude-code (from config)
    ...
 ```
@@ -293,7 +293,7 @@ No warnings, immediate execution.
 
 **Scenario 2: Stale Build**
 ```bash
-$ npx automagik-genie run neurons/plan "Test"
+$ npx automagik-genie run agents/plan "Test"
 
 ⚠️  WARNING: Stale build artifacts detected!
 
@@ -307,7 +307,7 @@ $ npx automagik-genie run neurons/plan "Test"
 
    To fix: pnpm run build:genie
 
-🧞 Starting agent: neurons/plan
+🧞 Starting agent: agents/plan
    Executor: claude-code (from config)
    ...
 ```
@@ -475,14 +475,14 @@ If automated detection proves too complex, fallback to enhanced documentation:
 
 \`\`\bash
 # Bad (runs stale code)
-npx automagik-genie run neurons/plan "Test"
+npx automagik-genie run agents/plan "Test"
 
 # Good (rebuilds first)
-pnpm build:genie && npx automagik-genie run neurons/plan "Test"
+pnpm build:genie && npx automagik-genie run agents/plan "Test"
 
 # Best (watch mode - auto-rebuild)
 pnpm dev  # In terminal 1
-npx automagik-genie run neurons/plan "Test"  # In terminal 2
+npx automagik-genie run agents/plan "Test"  # In terminal 2
 \`\`\`
 
 ### Common Pitfall: Stale Build Artifacts

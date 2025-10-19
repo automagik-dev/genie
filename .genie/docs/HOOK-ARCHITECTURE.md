@@ -19,7 +19,7 @@ Two-layer git validation system:
    - Blocks commit/push immediately on errors
 
 2. **Intelligent Workflow Layer** (pre-commit with Genie)
-   - Genie agent `neurons/git/commit-advisory`
+   - Genie agent `agents/git/commit-advisory`
    - Runs in background (non-blocking)
    - Produces structured JSONL logs
    - Results queryable via parser
@@ -35,7 +35,7 @@ Two-layer git validation system:
 ├── pre-commit
 │   ├─ Run: validate-user-files-not-committed.js (SYNC)
 │   ├─ Run: validate-cross-references.js (SYNC)
-│   └─ SPAWN: genie run neurons/git/commit-advisory (ASYNC)
+│   └─ SPAWN: genie run agents/git/commit-advisory (ASYNC)
 │      └─ Non-blocking, runs in background
 │
 ├── pre-push
@@ -75,7 +75,7 @@ Two-layer git validation system:
 ### Workflow Definition
 
 ```
-.genie/agents/neurons/git/
+.genie/agents/git/
 └── commit-advisory.md ← NEW
     ├─ Executor: claude (Haiku model for speed)
     ├─ Input: Commits to validate
@@ -103,7 +103,7 @@ Two-layer git validation system:
 │  └─ Exit 1 if fails ❌
 │
 ├─ [ASYNC] SPAWN Genie workflow
-│  ├─ Start: neurons/git/commit-advisory
+│  ├─ Start: agents/git/commit-advisory
 │  ├─ Return immediately (don't wait)
 │  └─ Workflow runs in background
 │
@@ -157,7 +157,7 @@ wish: my-feature-slug"
 
 ✅ User files validation passed
 ✅ Cross-references valid
-Running Genie workflow: neurons/git/commit-advisory...
+Running Genie workflow: agents/git/commit-advisory...
 ℹ️  Workflow started (runs in background)
 
 ✅ All pre-commit validations passed
@@ -292,7 +292,7 @@ const advisory = require('./.genie/scripts/commit-advisory.js');
 ### Genie Workflow (pre-commit)
 
 ```bash
-node .genie/cli/dist/genie-cli.js run "neurons/git/commit-advisory" "Pre-commit validation"
+node .genie/cli/dist/genie-cli.js run "agents/git/commit-advisory" "Pre-commit validation"
 ```
 
 **Output:** JSONL log in `.genie/state/agents/logs/`
@@ -377,11 +377,11 @@ git push --no-verify
   "version": 2,
   "sessions": {
     "sessionId-1": {
-      "agent": "neurons/git/commit-advisory",
+      "agent": "agents/git/commit-advisory",
       "sessionId": "sessionId-1",
       "executor": "claude",
       "model": "haiku",
-      "logFile": ".genie/state/agents/logs/neurons-git-abc123.log",
+      "logFile": ".genie/state/agents/logs/agents-git-abc123.log",
       "startTime": "2025-10-18T07:00:00Z",
       "status": "completed"
     }
@@ -428,7 +428,7 @@ node .genie/scripts/commit-advisory.js
 
 ```bash
 # Find a recent session
-genie list-sessions | grep neurons/git/commit-advisory
+genie list-sessions | grep agents/git/commit-advisory
 
 # Parse its output
 node .genie/scripts/genie-workflow-parser.js <sessionId> validation
@@ -476,7 +476,7 @@ ls -la .genie/cli/dist/genie-cli.js
 cd .genie/cli && npm run build
 
 # Verify workflow file
-cat .genie/agents/neurons/git/commit-advisory.md
+cat .genie/agents/git/commit-advisory.md
 ```
 
 ---

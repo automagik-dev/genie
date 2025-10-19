@@ -183,7 +183,7 @@ Violation - Manual implementation instead of orchestrator delegation
 
 ### Before (Violation)
 **Session:** 2025-10-16 22:30 UTC
-**Task:** Fix path references from `core/` to `neurons/`
+**Task:** Fix path references from `core/` to `agents/`
 **Approach:** Manual implementation with Edit tool
 **Result:**
 - 11 Edit tool calls
@@ -193,9 +193,9 @@ Violation - Manual implementation instead of orchestrator delegation
 
 **Example violations:**
 ```
-Edit: .genie/agents/README.md (core/analyze → neurons/analyze)
-Edit: .genie/agents/README.md (core/commit → neurons/commit)
-Edit: .genie/agents/README.md (core/debug → neurons/debug)
+Edit: .genie/agents/README.md (core/analyze → agents/analyze)
+Edit: .genie/agents/README.md (core/commit → agents/commit)
+Edit: .genie/agents/README.md (core/debug → agents/debug)
 ... (8 more manual edits)
 ```
 
@@ -279,7 +279,7 @@ Result: Token-efficient, clean evidence trail, proper separation
 **Change:**
 Added concrete anti-pattern about bypassing delegation for "quick" multi-file work. Includes real violation example (11 Edit calls) and pattern to watch for.
 
-**File 4: .genie/agents/neurons/learn.md**
+**File 4: .genie/agents/learn.md**
 
 **Section:** Anti-Patterns
 **Edit type:** Append meta-awareness note

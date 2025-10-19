@@ -211,7 +211,7 @@ Both updated simultaneously (recent rebuild).
 echo "// test comment" >> .genie/cli/src/commands/run.ts
 
 # 2. Run without rebuilding
-npx automagik-genie run neurons/plan "Test 1" --background
+npx automagik-genie run agents/plan "Test 1" --background
 
 # 3. Observe behavior (may use old code)
 
@@ -219,7 +219,7 @@ npx automagik-genie run neurons/plan "Test 1" --background
 pnpm build:genie
 
 # 5. Run again
-npx automagik-genie run neurons/plan "Test 2" --background
+npx automagik-genie run agents/plan "Test 2" --background
 
 # 6. Observe behavior (uses new code)
 ```

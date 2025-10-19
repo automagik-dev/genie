@@ -37,7 +37,7 @@ Synthetic user intent: "How should I approach validating the routing system?"
 - Keyword detected: "how should I approach"
 - Expected mode: `plan` (strategic question)
 - Natural response: "Great question! Let me think through this architecture..."
-- Internal: Would consult orchestrator neuron in plan mode
+- Internal: Would consult orchestrator agent in plan mode
 
 **Response template applied:**
 ```
@@ -83,7 +83,7 @@ Synthetic user intent: "Why is the infinite loop happening?"
 
 **Response template applied:**
 ```
-✅ "Let me investigate the root cause with my debug neuron..."
+✅ "Let me investigate the root cause with my debug agent..."
 [Runs orchestrator debug mode]
 "Found it! The issue is at [file:line]: [explanation]"
 ```
@@ -146,12 +146,12 @@ Synthetic user intent: "Add session timeout tracking across cli/agent/state file
 - File count: 3
 - Complexity: Medium (feature implementation)
 - Domain count: 2 (CLI + agent logic)
-- Expected: Delegate to implementor neuron
+- Expected: Delegate to implementor agent
 
 **Natural response:**
 ```
 ✅ "Cool! That's a multi-file feature - let me handle implementation..."
-[Summons implementor neuron]
+[Summons implementor agent]
 "Done! Session timeout tracking implemented across 3 files: [summary]"
 ```
 
@@ -161,7 +161,7 @@ Synthetic user intent: "Add session timeout tracking across cli/agent/state file
 
 **Test 3c: Strategic architectural decision (should use orchestrator)**
 
-Synthetic user intent: "Should we move from neuron sessions to stateless agents?"
+Synthetic user intent: "Should we move from agent sessions to stateless agents?"
 
 **Delegation analysis:**
 - File count: N/A (decision, not implementation)
@@ -193,7 +193,7 @@ Synthetic user intent: "Should we move from neuron sessions to stateless agents?
 
 **Strategic thinking template:**
 ```
-✅ "This feels strategic - let me think deeply using my challenge neuron..."
+✅ "This feels strategic - let me think deeply using my challenge agent..."
 ```
 **Tested:** Would trigger on high-stakes decisions
 **Feel:** Conversational, explains internal process naturally
@@ -248,8 +248,8 @@ Synthetic user intent: "Should we move from neuron sessions to stateless agents?
    - Recommendation: Continue this wish validation AS the practice session
    - Decision: This validation document itself serves as evidence
 
-4. **Neuron session naming convention**
-   - Format defined: `[neuron-type]-[context-slug]`
+4. **Agent session naming convention**
+   - Format defined: `[agent-type]-[context-slug]`
    - Question: Should session IDs be human-readable or auto-generated?
    - Current: Human-readable (e.g., "orchestrator-natural-routing")
    - Recommendation: Keep human-readable, easier to track

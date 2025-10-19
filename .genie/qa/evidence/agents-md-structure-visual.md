@@ -105,7 +105,7 @@ Time →
 │  🏗️ ARCHITECTURE (Lines 350-500)                            │
 │  ├─ Directory Map                                           │
 │  ├─ Agent Types & Roles                                     │
-│  ├─ Neuron Architecture                                     │
+│  ├─ Agent Architecture                                     │
 │  └─ Configuration Standards                                 │
 │                                                              │
 │  📚 REFERENCE (Lines 500-650)                               │

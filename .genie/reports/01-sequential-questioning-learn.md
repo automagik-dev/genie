@@ -88,7 +88,7 @@ I thought: "I have 6 questions. Let me batch them to save time."
 
 **Already loaded in AGENTS.md:** Line 46
 ```markdown
-@.genie/agents/code/skills/sequential-questioning.md
+@.genie/skills/sequential-questioning.md
 ```
 
 ### No additional changes required
@@ -151,12 +151,12 @@ I have 6 questions for you. Let's go through them one at a time.
 This teaching was flagged with "LEARN MODE" - explicit signal from Felipe that this should be documented in framework.
 
 **Recognition pattern for future:**
-- "LEARN MODE" = invoke learn neuron
-- "Let me teach you..." = invoke learn neuron
-- Behavioral corrections = invoke learn neuron
-- Pattern establishment = invoke learn neuron
+- "LEARN MODE" = invoke learn agent
+- "Let me teach you..." = invoke learn agent
+- Behavioral corrections = invoke learn agent
+- Pattern establishment = invoke learn agent
 
-In this case, learn neuron invocation failed (prompt too long). Executed documentation directly per role clarity protocol (Felipe's explicit teaching context = "execute directly" signal).
+In this case, learn agent invocation failed (prompt too long). Executed documentation directly per role clarity protocol (Felipe's explicit teaching context = "execute directly" signal).
 
 ---
 
@@ -189,8 +189,8 @@ In this case, learn neuron invocation failed (prompt too long). Executed documen
 
 **About this learning process:**
 
-1. **Recognition:** Felipe used "LEARN MODE" signal → attempted learn neuron invocation
-2. **Failure:** Learn neuron failed (prompt too long)
+1. **Recognition:** Felipe used "LEARN MODE" signal → attempted learn agent invocation
+2. **Failure:** Learn agent failed (prompt too long)
 3. **Direct execution:** Role clarity protocol applied (teaching context = execute directly)
 4. **Discovery:** Skill file already existed and was comprehensive
 5. **Reinforcement:** This teaching reinforces existing pattern, validates its importance

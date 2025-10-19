@@ -541,7 +541,7 @@ genie list sessions | grep -c "test-"
 ### Wish #120-C (Advanced Features)
 - Templates unification
 - Advanced inspection
-- Migration & updating neuron
+- Migration & updating agent
 - SSE automations
 
 **See also:** `.genie/wishes/wish-120-a-forge-drop-in-replacement/`

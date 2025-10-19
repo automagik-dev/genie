@@ -24,7 +24,7 @@ RC20 comprehensive QA testing has **FAILED**. Critical regression of Bug #102 di
 
 **Test Command:**
 ```bash
-npx automagik-genie run neurons/plan "QA Test 1: Basic session creation"
+npx automagik-genie run agents/plan "QA Test 1: Basic session creation"
 ```
 
 **Expected Result:**
@@ -36,16 +36,16 @@ npx automagik-genie run neurons/plan "QA Test 1: Basic session creation"
 ```json
 {
   "a3eb3467-a3b0-45c7-9670-f7e9cf684028": {
-    "agent": "neurons/plan",
-    "name": "neurons/plan-2510180309",
+    "agent": "agents/plan",
+    "name": "agents/plan-2510180309",
     "sessionId": "a3eb3467-a3b0-45c7-9670-f7e9cf684028",
     "runnerPid": 3392981,
     "executorPid": null,
     "status": "running"
   },
   "fdcefb8d-20be-4a09-bba1-5f9d8ce70358": {
-    "agent": "neurons/plan",
-    "name": "neurons/plan-2510180309",
+    "agent": "agents/plan",
+    "name": "agents/plan-2510180309",
     "sessionId": "fdcefb8d-20be-4a09-bba1-5f9d8ce70358",
     "runnerPid": 3392981,
     "executorPid": 3392988,
@@ -86,7 +86,7 @@ const liveEntry = liveStore.sessions?.[entry.sessionId];
 
 ### Execution Flow
 
-1. **User runs:** `genie run neurons/plan "test"`
+1. **User runs:** `genie run agents/plan "test"`
 2. **Foreground process (run.ts:68-93):**
    - Generates UUID1: `a3eb3467-a3b0-45c7-9670-f7e9cf684028`
    - Creates session entry
@@ -126,7 +126,7 @@ rm -rf .genie/state/agents/sessions.json .genie/state/agents/logs/*
 
 **Test 1 execution:**
 ```bash
-npx automagik-genie run neurons/plan "QA Test 1: Basic session creation"
+npx automagik-genie run agents/plan "QA Test 1: Basic session creation"
 ```
 
 **Sessions created:** 2 (should be 1)
@@ -149,7 +149,7 @@ npx automagik-genie run neurons/plan "QA Test 1: Basic session creation"
 
 **Command:**
 ```bash
-npx automagik-genie run code/neurons/implementor --name "qa-test-named" "QA Test 2"
+npx automagik-genie run code/agents/implementor --name "qa-test-named" "QA Test 2"
 ```
 
 **Result:** SAME PATTERN
@@ -238,7 +238,7 @@ Should return ZERO results after fix.
 **1. Clean slate test:**
 ```bash
 rm -rf .genie/state/agents/sessions.json .genie/state/agents/logs/*
-npx automagik-genie run neurons/plan "Test 1"
+npx automagik-genie run agents/plan "Test 1"
 cat .genie/state/agents/sessions.json | jq '.sessions | length'
 # Expected: 1 (not 2)
 ```
@@ -251,21 +251,21 @@ cat .genie/state/agents/sessions.json | jq '.sessions | keys'
 
 **3. Name field:**
 ```bash
-npx automagik-genie run neurons/plan --name "test-session" "Test 2"
+npx automagik-genie run agents/plan --name "test-session" "Test 2"
 cat .genie/state/agents/sessions.json | jq '.sessions | to_entries | .[].value.name'
-# Expected: ["neurons/plan-TIMESTAMP", "test-session"]
+# Expected: ["agents/plan-TIMESTAMP", "test-session"]
 ```
 
 **4. Polling success:**
 ```bash
-npx automagik-genie run neurons/plan "Test 3" 2>&1 | grep "Timeout"
+npx automagik-genie run agents/plan "Test 3" 2>&1 | grep "Timeout"
 # Expected: NO OUTPUT (polling succeeds)
 ```
 
 **5. Session count after 5 runs:**
 ```bash
 for i in {1..5}; do
-  npx automagik-genie run neurons/plan "Test $i"
+  npx automagik-genie run agents/plan "Test $i"
   sleep 1
 done
 cat .genie/state/agents/sessions.json | jq '.sessions | length'

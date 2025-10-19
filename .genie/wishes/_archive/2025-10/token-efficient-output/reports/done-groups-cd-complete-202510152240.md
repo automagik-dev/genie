@@ -1,6 +1,6 @@
 # Done Report: Groups C+D Complete - Token-Efficient Output
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**Agent:** Genie (orchestrator) + 5 parallel implementor neurons
+**Agent:** Genie (orchestrator) + 5 parallel implementor agents
 **Date:** 2025-10-15 22:40 UTC
 **Wish:** Token-Efficient Output (Issue #42)
 **Branch:** feat/token-efficient-output
@@ -155,7 +155,7 @@ None encountered.
 ## Risks Mitigated
 
 1. ✅ Dependency paradox (executor-prompt used Ink) - Replaced with readline
-2. ✅ Build errors from Ink deletion - Fixed by parallel neurons
+2. ✅ Build errors from Ink deletion - Fixed by parallel agents
 3. ✅ Information loss concern - Measured <2%, well below 5% target
 4. ✅ MCP integration breakage - Validated, works correctly
 

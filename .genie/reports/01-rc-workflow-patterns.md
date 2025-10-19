@@ -62,7 +62,7 @@ git commit -m "fix: session names (#115), legacy commands (#89), auto-close (#15
 ```bash
 # Today: Manual process
 1. Developer runs: genie run release "RC28"
-2. Release neuron bumps version
+2. Release agent bumps version
 3. Manual npm publish
 4. Manual GitHub release
 5. Manual STATE.md update
@@ -198,7 +198,7 @@ jobs:
 
 ✅ Establish branch naming convention
 ✅ Document auto-publish specification
-✅ Continue manual releases via release neuron
+✅ Continue manual releases via release agent
 
 ### Phase 2: Semi-Automatic (Next Sprint)
 
@@ -211,7 +211,7 @@ jobs:
 
 1. Remove manual approval gate
 2. Every merge to main = automatic release
-3. Release neuron becomes validation tool only
+3. Release agent becomes validation tool only
 4. STATE.md updates automatically
 
 ---
@@ -362,7 +362,7 @@ gh pr create --title "Release v2.4.0" \
 - [ ] Enable auto-publish for RC releases
 - [ ] Monitor first few automatic releases
 - [ ] Refine detection logic if needed
-- [ ] Update release neuron to validate only
+- [ ] Update release agent to validate only
 
 ### Long-term (Future)
 

@@ -62,7 +62,7 @@
 | @.genie/reports/debug-model-permissions-202510140145.md | report | Oct 14 debug analysis | investigation |
 | Test logs | evidence | 8+ permission test runs | investigation |
 | @.genie/cli/src/cli-core/handlers/shared.ts:391 | code | stdin='ignore' causing prompt auto-skip | investigation |
-| @.genie/agents/neurons/*.md | config | All agents use bypassPermissions now | verification |
+| @.genie/code/agents/*.md | config | All agents use bypassPermissions now | verification |
 
 ## Discovery Summary
 
@@ -377,7 +377,7 @@ mcp__genie__run with agent="implementor" and prompt="Create /tmp/test.txt"
 - [2025-10-16 09:30Z] Context gathered (Oct 13-15 timeline, previous fix analysis)
 - [2025-10-16 09:30Z] Investigation strategy defined (3 groups)
 - [2025-10-16 09:30Z] DRAFT status - awaiting Group A investigation
-- [2025-10-16 09:37Z] Debug neuron launched (session a99cf4a8-dafa-4423-876f-845f866b8103)
+- [2025-10-16 09:37Z] Debug agent launched (session a99cf4a8-dafa-4423-876f-845f866b8103)
 - [2025-10-16 12:36Z] **INVESTIGATION COMPLETE** - Root cause identified
 - [2025-10-16 12:38Z] Issue #44 updated with findings and resolution steps
 - [2025-10-16 12:40Z] Status: RESOLVED ✅ (Not a bug - upgrade required)

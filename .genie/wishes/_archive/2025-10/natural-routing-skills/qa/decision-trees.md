@@ -30,10 +30,10 @@ START: New task received
 │  │
 │  └─ 3+ files
 │     └─ DELEGATE to specialist
-│        ├─ Implementation work → implementor neuron
-│        ├─ Test writing → tests neuron
-│        ├─ Code cleanup → polish neuron
-│        └─ Git operations → git-workflow neuron
+│        ├─ Implementation work → implementor agent
+│        ├─ Test writing → tests agent
+│        ├─ Code cleanup → polish agent
+│        └─ Git operations → git-workflow agent
 │
 └─ Is it architectural/high-stakes?
    └─ YES → Decision Tree 2 (Orchestrator Mode Selection)
@@ -121,7 +121,7 @@ START: Work session in progress
 
 ---
 
-## Decision Tree 4: Neuron Session vs One-Shot
+## Decision Tree 4: Agent Session vs One-Shot
 
 ```
 START: Decision to delegate to specialist
@@ -140,8 +140,8 @@ START: Decision to delegate to specialist
 │     ├─ Iterative refinement needed
 │     ├─ Building domain understanding required
 │     ├─ Back-and-forth expected
-│     └─ ACTION: Neuron session (persistent)
-│        ├─ Create session: `[neuron-type]-[context-slug]`
+│     └─ ACTION: Agent session (persistent)
+│        ├─ Create session: `[agent-type]-[context-slug]`
 │        ├─ Resume throughout: mcp__genie__resume
 │        └─ Benefits: context preserved, memory maintained
 │
@@ -210,14 +210,14 @@ START: User message received
 |-----------|-----------|------------|----------|---------|
 | Typo fix | 1 | Trivial | Direct execution | No coordination needed |
 | Logic change | 1-2 | Medium | Direct execution | Manageable scope |
-| Feature implementation | 3+ | Medium-High | implementor neuron | Multi-file coordination |
-| Test writing | Any | Medium | tests neuron | Specialized skill |
+| Feature implementation | 3+ | Medium-High | implementor agent | Multi-file coordination |
+| Test writing | Any | Medium | tests agent | Specialized skill |
 | Code cleanup | 1-2 | Low | Direct execution | Simple refactor |
-| Code cleanup | 3+ | Medium | polish neuron | Multi-file consistency |
+| Code cleanup | 3+ | Medium | polish agent | Multi-file consistency |
 | Architectural question | N/A | High | orchestrator (plan/analyze) | Strategic thinking |
 | Bug investigation | Any | High | orchestrator (debug) | Root cause analysis |
 | Security review | Any | High | orchestrator (secaudit) | Risk assessment |
-| Git operations | Any | Any | git-workflow neuron | Specialized workflow |
+| Git operations | Any | Any | git-workflow agent | Specialized workflow |
 
 ### Table 3: Checkpoint Signal Strength
 
@@ -247,7 +247,7 @@ ANTI-PATTERN: Over-routing
 ├─ Symptoms:
 │  ├─ Delegating single-file edits
 │  ├─ Using orchestrator for simple questions
-│  └─ Creating neuron sessions for one-shot tasks
+│  └─ Creating agent sessions for one-shot tasks
 │
 └─ Fix: Apply file count + complexity thresholds strictly
 ```

@@ -13,7 +13,7 @@
 - **Context Completeness (10 pts)**
   - [ ] Current architecture documented (JSONL → ChatMessage[] → ViewEnvelope → Ink) (3 pts)
   - [ ] Token cost measured (16k per session view) (3 pts)
-  - [ ] Orchestrator neuron findings captured (4 pts)
+  - [ ] Orchestrator agent findings captured (4 pts)
 - **Scope Clarity (10 pts)**
   - [ ] Markdown-only output justified (no users, no backwards compat) (4 pts)
   - [ ] Ink deletion scope defined (3 pts)
@@ -59,7 +59,7 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | Issue #42 | github | Token explosion problem (36-48k for 3-4 subagents) | wish |
-| Orchestrator session b4088faa | neuron | Pressure-test findings, risks identified | wish |
+| Orchestrator session b4088faa | agent | Pressure-test findings, risks identified | wish |
 | Felipe guidance | session | "No users, Ink was mistake, keep it simple" | implementation |
 |  | repo | Current Ink rendering (560 lines, delete target) | Group A |
 |  | repo | ViewEnvelope builders (delete target) | Group A |
@@ -68,7 +68,7 @@
 
 ## Discovery Summary
 
-**Primary analyst:** Genie (orchestrator neuron via challenge mode)
+**Primary analyst:** Genie (orchestrator agent via challenge mode)
 
 **Problem:**
 - AI-to-AI orchestration consuming 36-48k tokens (18-24% of budget) just for monitoring
@@ -111,7 +111,7 @@ Replace verbose 4-layer Ink rendering pipeline with simple 2-layer markdown form
 **Pain points:**
 - Complex 4-layer pipeline for simple formatting task
 - Ink overhead (React rendering, ANSI codes) unnecessary for AI consumers
-- Can't efficiently orchestrate multiple specialist neurons
+- Can't efficiently orchestrate multiple specialist agents
 - Premature context trimming required
 
 ## Target State & Guardrails

@@ -71,7 +71,7 @@
 4. Consider splitting peripheral file changes into separate PR
 
 ## Verification Commands
-Summarize the validation commands executed (per wish instructions and project defaults in `@.genie/agents/code/neurons/tests.md` / `@.genie/agents/code/neurons/commit.md`) and record pass/fail status for each.
+Summarize the validation commands executed (per wish instructions and project defaults in `@.genie/code/agents/tests.md` / `@.genie/code/agents/commit.md`) and record pass/fail status for each.
 
 ## Verdict
 **Score: XX/100 (XX%)**

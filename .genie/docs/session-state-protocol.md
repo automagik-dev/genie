@@ -4,21 +4,21 @@
 
 ## Architecture
 
-SESSION-STATE.md is the coordination hub for Genie's persistent neuron system:
+SESSION-STATE.md is the coordination hub for Genie's persistent agent system:
 
 - **Location:** `.genie/SESSION-STATE.md`
 - **Committed:** Yes (shared team state)
-- **Purpose:** Track all active neuron sessions, enable resume after restart
+- **Purpose:** Track all active agent sessions, enable resume after restart
 - **Authority:** Source of truth for collective coordination
 
 ## Requirements for SESSION-STATE.md
 
-### 1. Track All Active Neurons
+### 1. Track All Active Agents
 
-Each active neuron session must have an entry:
+Each active agent session must have an entry:
 
 ```markdown
-### Git Neuron - Feature Implementation
+### Git Agent - Feature Implementation
 **Session ID:** `abc123...`
 **Started:** 2025-10-17 16:00 UTC
 **Status:** active
@@ -32,8 +32,8 @@ Each active neuron session must have an entry:
 
 Track workflow delegation hierarchy:
 
-- Neuron entry lists child workflow sessions
-- Clear which workflows belong to which neuron
+- Agent entry lists child workflow sessions
+- Clear which workflows belong to which agent
 - Prevents "orphaned children" after context reset
 
 ### 3. Resume Protocol
@@ -41,30 +41,30 @@ Track workflow delegation hierarchy:
 Enable seamless restart:
 
 - Base Genie reads SESSION-STATE.md on restart
-- Identifies active neurons, presents status to user
-- User can resume any neuron with `mcp__genie__resume`
+- Identifies active agents, presents status to user
+- User can resume any agent with `mcp__genie__resume`
 - Children resume automatically when parent resumes
 
 ### 4. Completion Tracking
 
 Document outcomes and maintain history:
 
-- Neurons mark "completed" when work done
+- Agents mark "completed" when work done
 - Children marked completed when parent completes
 - Completed sessions move to history section
 - Evidence preserved (Done Reports linked)
 
 ## Session Entry Templates
 
-### Neuron with Workflows
+### Agent with Workflows
 
 ```markdown
-### [Neuron Name] - [Context Description]
+### [Agent Name] - [Context Description]
 **Session ID:** `abc123...`
 **Started:** YYYY-MM-DD HH:MM UTC
 **Status:** active | paused | completed
 **Children:** [workflow-name] (session-id), [workflow-name] (session-id)
-**Purpose:** [What this neuron is working on]
+**Purpose:** [What this agent is working on]
 **Context:** [Key files, decisions, state]
 **Next:** [Next action when resumed]
 ```
@@ -72,9 +72,9 @@ Document outcomes and maintain history:
 ### Workflow (Child)
 
 ```markdown
-### [Workflow Name] (child of [Parent Neuron])
+### [Workflow Name] (child of [Parent Agent])
 **Session ID:** `def456...`
-**Parent:** [Parent Neuron] (abc123)
+**Parent:** [Parent Agent] (abc123)
 **Started:** YYYY-MM-DD HH:MM UTC
 **Status:** active | completed
 **Purpose:** [Specific workflow task]
@@ -83,18 +83,18 @@ Document outcomes and maintain history:
 
 ## Coordination Rules
 
-### Before Starting Neuron
+### Before Starting Agent
 
-1. Check SESSION-STATE.md for conflicts (same files, different neurons)
+1. Check SESSION-STATE.md for conflicts (same files, different agents)
 2. Create session entry with "starting" status
-3. Launch neuron, capture session ID
+3. Launch agent, capture session ID
 4. Update entry with actual session ID and "active" status
 
-### When Neuron Delegates to Workflow
+### When Agent Delegates to Workflow
 
 1. Launch workflow, capture session ID
 2. Add workflow entry with parent reference
-3. Update parent neuron entry with child list
+3. Update parent agent entry with child list
 
 ### When Work Completes
 
@@ -109,12 +109,12 @@ Document outcomes and maintain history:
 - SESSION-STATE.md cleaned regularly (move completed to history)
 - Never delete entries without documenting outcomes
 
-## Example: Git Neuron with Workflows
+## Example: Git Agent with Workflows
 
 ```markdown
 ## Active Sessions
 
-### Git Neuron - Feature XYZ Implementation
+### Git Agent - Feature XYZ Implementation
 **Session ID:** `git-xyz-abc123`
 **Started:** 2025-10-17 16:00 UTC
 **Status:** active
@@ -128,17 +128,17 @@ Document outcomes and maintain history:
 - Issues created: #90, #91
 **Next:** Create PR after final issue created
 
-### Issue Workflow (child of Git Neuron)
+### Issue Workflow (child of Git Agent)
 **Session ID:** `issue-xyz-def456`
-**Parent:** Git Neuron (git-xyz-abc123)
+**Parent:** Git Agent (git-xyz-abc123)
 **Started:** 2025-10-17 16:05 UTC
 **Status:** completed
 **Purpose:** Create GitHub issue #90
 **Context:** Used bug-report template, populated all fields
 
-### PR Workflow (child of Git Neuron)
+### PR Workflow (child of Git Agent)
 **Session ID:** `pr-xyz-ghi789`
-**Parent:** Git Neuron (git-xyz-abc123)
+**Parent:** Git Agent (git-xyz-abc123)
 **Started:** 2025-10-17 16:10 UTC
 **Status:** active
 **Purpose:** Create PR for feat/xyz
@@ -155,13 +155,13 @@ grep -E "^### |^\*\*Session ID:|^\*\*Parent:" .genie/SESSION-STATE.md
 # (manual check: every workflow entry has Parent: line)
 
 # Verify no orphans (workflows without active parents)
-# (manual check: compare child Parent: with active neuron sessions)
+# (manual check: compare child Parent: with active agent sessions)
 ```
 
 ## Benefits
 
 - **Persistent memory:** Restart without context loss
-- **Collective intelligence:** Multiple neurons work in parallel
+- **Collective intelligence:** Multiple agents work in parallel
 - **Resume capability:** Pick up where you left off
 - **Conflict prevention:** Know what's running before starting new work
-- **Evidence trail:** Complete history of all neuron work
+- **Evidence trail:** Complete history of all agent work

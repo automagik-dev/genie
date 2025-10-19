@@ -184,14 +184,14 @@ forge.subscribeToEvents((event) => {
 
 ---
 
-### 2.2 Updating Neuron + /update Directory (NEW - Not in Original Investigation)
+### 2.2 Updating Agent + /update Directory (NEW - Not in Original Investigation)
 
 **Decision:** Concentrate updates under `/update` with version files
 
 **What it is:**
 - `/update` directory contains update logic
 - Version files describe **diff between current version and user version**
-- Updating neuron handles version comparisons + migrations
+- Updating agent handles version comparisons + migrations
 
 **Example Structure:**
 ```
@@ -202,7 +202,7 @@ forge.subscribeToEvents((event) => {
 │   ├── migration-scripts/
 │   │   ├── 2.3.0-to-2.4.0.ts
 │   │   └── 2.4.0-to-2.5.0.ts
-│   └── update-neuron.md             # Neuron instructions
+│   └── update-agent.md             # Agent instructions
 ```
 
 **Proposed Group:** **Group D (Migration & Testing)** or **separate initiative**
@@ -245,7 +245,7 @@ forge.subscribeToEvents((event) => {
    - `deleteTask()` (session deletion)
 
 3. **State Tree Sync (1 endpoint)** - Group B
-   - `getTaskAttemptChildren()` (neuron coordination)
+   - `getTaskAttemptChildren()` (agent coordination)
 
 4. **Health Check (1 endpoint)** - Group A
    - `healthCheck()` (pre-flight validation)
@@ -408,7 +408,7 @@ forge.subscribeToEvents((event) => {
 
 ---
 
-#### **Group D: Migration & Testing + Updating Neuron (Week 5-6) [EXPANDED]**
+#### **Group D: Migration & Testing + Updating Agent (Week 5-6) [EXPANDED]**
 
 **Original Scope:**
 - ✅ Migration script (sessions.json → Forge tasks)
@@ -418,10 +418,10 @@ forge.subscribeToEvents((event) => {
 - ✅ Migration guide
 - ✅ Rollback plan
 
-**NEW - Updating Neuron + Version Management:**
+**NEW - Updating Agent + Version Management:**
 1. ✅ Create `/update` directory structure
 2. ✅ Implement version files (diff-based)
-3. ✅ Create updating neuron
+3. ✅ Create updating agent
 4. ✅ Document update workflow
 
 **Verification:**
@@ -435,7 +435,7 @@ forge.subscribeToEvents((event) => {
 - [x] Migration script working
 - [x] All tests pass
 - [x] Stress test complete
-- [x] Updating neuron implemented (NEW)
+- [x] Updating agent implemented (NEW)
 - [x] Version files created (NEW)
 - [x] Documentation complete
 
@@ -965,7 +965,7 @@ paths:
   /tasks/{taskId}/attempts/{attemptId}/children:
     get:
       operationId: getTaskAttemptChildren
-      summary: Get child attempts (neuron state tree sync)
+      summary: Get child attempts (agent state tree sync)
       tags: [TaskAttempts]
       parameters:
         - in: path
@@ -1137,7 +1137,7 @@ components:
 - **Group A: Core Replacement + Git Integration** (16 tasks, +9)
 - **Group B: Streaming + Inspection** (8 tasks, +4)
 - **Group C: Advanced Features + Notifications** (7 tasks, +4)
-- **Group D: Migration & Testing + Updating Neuron** (10 tasks, +4)
+- **Group D: Migration & Testing + Updating Agent** (10 tasks, +4)
 
 **Total Tasks:** 20 → 41 tasks (+21 tasks, +105% expansion)
 
@@ -1310,7 +1310,7 @@ notifications:
 **Option 1: Update Wish Document (Recommended)**
 1. Expand Groups A-D with new endpoints (21 tasks added)
 2. Add notifications section (Omni integration)
-3. Add updating neuron section (/update directory)
+3. Add updating agent section (/update directory)
 4. Update timeline (4 weeks → 6-8 weeks)
 5. Commit updated wish document
 
@@ -1323,7 +1323,7 @@ notifications:
 **Option 3: Phased Approach**
 1. Phase 1: Core replacement (original Groups A-B) - 3 weeks
 2. Phase 2: Git integration (new endpoints) - 2 weeks
-3. Phase 3: Notifications + updating neuron - 2 weeks
+3. Phase 3: Notifications + updating agent - 2 weeks
 4. Phase 4: Discovery (Categories 6-15) - TBD
 
 **Recommended:** **Option 1** (update wish, then implement Groups A-D expanded)
@@ -1378,7 +1378,7 @@ notifications:
 | **Group D** | 1 week | 1-2 weeks | +0-100% |
 | **TOTAL** | 4 weeks | 6-8 weeks | +50-100% |
 
-**Justification:** +21 tasks added, complex Git operations, new capabilities (notifications, updating neuron)
+**Justification:** +21 tasks added, complex Git operations, new capabilities (notifications, updating agent)
 
 ---
 
@@ -1404,7 +1404,7 @@ notifications:
 **Key Takeaways:**
 1. ✅ Decision matrix expands scope by 105% (21 tasks → 41 tasks)
 2. ✅ POC validates 50% of YES decisions (12/24)
-3. ✅ High-value additions: Git ops, notifications, updating neuron
+3. ✅ High-value additions: Git ops, notifications, updating agent
 4. ✅ Timeline remains reasonable (6-8 weeks, phased)
 5. ✅ ROI still extremely high (9.2/10 decision score maintained)
 

@@ -96,7 +96,7 @@ Our documentation correctly identifies:
 
 ### 4. QA Regression Test ✅ MATCHES
 
-**Test Location:** `.genie/agents/neurons/qa/workflows/bug-102-session-collision.md`
+**Test Location:** `.genie/agents/qa/workflows/bug-102-session-collision.md`
 
 **Test Scenario Match:**
 Our documentation describes:
@@ -204,7 +204,7 @@ export function generateSessionName(agentName: string): string {
 ## Cross-Reference Links ✅ VALID
 
 **Internal References:**
-- ✅ `.genie/agents/neurons/qa/workflows/bug-102-session-collision.md` (exists)
+- ✅ `.genie/agents/qa/workflows/bug-102-session-collision.md` (exists)
 - ✅ `.genie/reports/done-implementor-rc16-bug-fixes-202510172342.md` (exists)
 - ✅ `.genie/wishes/rc21-session-lifecycle-fix/rc21-session-lifecycle-fix-wish.md` (exists)
 

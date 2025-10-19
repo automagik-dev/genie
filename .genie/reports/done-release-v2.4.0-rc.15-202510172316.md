@@ -38,7 +38,7 @@
 
 ## Key Improvements
 - **Display transformation completion:** All MCP outputs now use single source of truth
-- **list_sessions consistency:** Shows clean agent names (implementor not code/neurons/implementor)
+- **list_sessions consistency:** Shows clean agent names (implementor not code/agents/implementor)
 - **run tool output:** Applies proper display transformation throughout
 - **User experience:** Consistent, clean agent naming across all MCP interactions
 

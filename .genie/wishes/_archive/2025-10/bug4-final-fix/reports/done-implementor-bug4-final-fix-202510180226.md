@@ -26,7 +26,7 @@ Successfully fixed both remaining Bug #4 issues to achieve 100% V2 session forma
 - **Location:** `.genie/cli/src/commands/run.ts:69`
 - **Pattern:** `const tempSessionId = \`temp-${resolvedAgentName}-${startTime}\`;`
 - **Why:** sessionId extraction relied on MCP output, fallback created temp keys that never got replaced
-- **Evidence:** sessions.json showing `"temp-neurons/plan-1760752238939"` as keys
+- **Evidence:** sessions.json showing `"temp-agents/plan-1760752238939"` as keys
 
 **Problem 2: Name field present but not guaranteed**
 - **Location:** `.genie/cli/src/commands/run.ts` (missing name field assignment)
@@ -146,7 +146,7 @@ proc.on('exit', (code, signal) => {
 
 **Test 1: UUID Key Format** ✅ PASSED
 ```bash
-npx automagik-genie run neurons/plan "Test 1"
+npx automagik-genie run agents/plan "Test 1"
 cat .genie/state/agents/sessions.json
 ```
 
@@ -157,7 +157,7 @@ cat .genie/state/agents/sessions.json
   "sessions": {
     "138d43eb-929d-458e-a7be-2ca2d3e46644": {  // ✅ UUID as key!
       "sessionId": "138d43eb-929d-458e-a7be-2ca2d3e46644",  // ✅ Matches key!
-      "name": "neurons/plan-2510180224",  // ✅ Name field present!
+      "name": "agents/plan-2510180224",  // ✅ Name field present!
       ...
     }
   }
@@ -166,7 +166,7 @@ cat .genie/state/agents/sessions.json
 
 **Test 2: Name Field Storage** ✅ PASSED
 ```bash
-npx automagik-genie run neurons/plan --name "my-custom-name" "Test 2"
+npx automagik-genie run agents/plan --name "my-custom-name" "Test 2"
 cat .genie/state/agents/sessions.json | grep "my-custom-name"
 ```
 
@@ -177,8 +177,8 @@ cat .genie/state/agents/sessions.json | grep "my-custom-name"
 
 **Test 3: Collision Prevention** ✅ PASSED
 ```bash
-npx automagik-genie run neurons/plan "Test 3a" &
-npx automagik-genie run neurons/plan "Test 3b"
+npx automagik-genie run agents/plan "Test 3a" &
+npx automagik-genie run agents/plan "Test 3b"
 ```
 
 **Result:**
@@ -188,7 +188,7 @@ npx automagik-genie run neurons/plan "Test 3b"
 
 **Test 4: Stability** ✅ PASSED
 ```bash
-npx automagik-genie run neurons/plan "Test 4"
+npx automagik-genie run agents/plan "Test 4"
 ```
 
 **Result:**
@@ -214,11 +214,11 @@ rm -rf .genie/state/agents/sessions.json .genie/state/agents/logs/*
 
 **Test executions:**
 ```bash
-npx automagik-genie run neurons/plan "Test 1"
-npx automagik-genie run neurons/plan --name "my-custom-name" "Test 2"
-npx automagik-genie run neurons/plan "Test 3a" &
-npx automagik-genie run neurons/plan "Test 3b"
-npx automagik-genie run neurons/plan "Test 4"
+npx automagik-genie run agents/plan "Test 1"
+npx automagik-genie run agents/plan --name "my-custom-name" "Test 2"
+npx automagik-genie run agents/plan "Test 3a" &
+npx automagik-genie run agents/plan "Test 3b"
+npx automagik-genie run agents/plan "Test 4"
 ```
 
 **All commands:** ✅ Success (exit code 0)
@@ -232,8 +232,8 @@ npx automagik-genie run neurons/plan "Test 4"
 {
   "version": 2,
   "sessions": {
-    "temp-neurons/plan-1760752238939": {  // ❌ temp- key format
-      "agent": "neurons/plan",
+    "temp-agents/plan-1760752238939": {  // ❌ temp- key format
+      "agent": "agents/plan",
       "sessionId": "601b90b1-c6d5-4605-8f60-31d09099efe7",  // ❌ UUID not used as key
       // ❌ No name field
       ...
@@ -248,8 +248,8 @@ npx automagik-genie run neurons/plan "Test 4"
   "version": 2,
   "sessions": {
     "138d43eb-929d-458e-a7be-2ca2d3e46644": {  // ✅ UUID as key!
-      "agent": "neurons/plan",
-      "name": "neurons/plan-2510180224",  // ✅ Name field present!
+      "agent": "agents/plan",
+      "name": "agents/plan-2510180224",  // ✅ Name field present!
       "sessionId": "138d43eb-929d-458e-a7be-2ca2d3e46644",  // ✅ Consistent!
       ...
     }

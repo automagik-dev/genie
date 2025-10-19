@@ -31,9 +31,9 @@
 **Recommendation:** Add @ refs
 
 **Notes:**
-- Missing @: .genie/agents/neurons/learn.md
+- Missing @: .genie/agents/learn.md
 - Missing @: .genie/custom/routing.md
-- Missing @: .genie/agents/neurons/learn.md
+- Missing @: .genie/agents/learn.md
 - Missing @: .genie/custom/routing.md
 - Missing @: .genie/custom/routing.md
 

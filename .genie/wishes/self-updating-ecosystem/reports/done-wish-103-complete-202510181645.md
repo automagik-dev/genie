@@ -43,7 +43,7 @@ Created a **comprehensive self-updating ecosystem** with zero manual maintenance
 
 **Group D: Agent Registry Auto-Generation** ✅
 - `update-agent-registry.js` - Scans folders and updates AGENTS.md
-- Current counts: 16 Universal Neurons, 15 Code Neurons, 1 Create Neuron, 32 Code Skills
+- Current counts: 16 Universal Agents, 15 Code Agents, 1 Create Agent, 32 Code Skills
 - Auto-updates between `<!-- AUTO-GENERATED-START/END -->` markers
 
 **Group E: Universal Headers Injection** ✅ (previously complete)
@@ -121,9 +121,9 @@ forge-task-link.js
 
 **Agent Registry** (auto-maintained):
 ```markdown
-**Universal Neurons:** 16 total
-**Code Neurons:** 15 total
-**Create Neurons:** 1 total
+**Universal Agents:** 16 total
+**Code Agents:** 15 total
+**Create Agents:** 1 total
 **Code Skills:** 32 total
 ```
 
@@ -165,9 +165,9 @@ $ node .genie/scripts/update-agent-registry.js
 🤖 Agent Registry Auto-Generator
 ✅ Agent registry updated in AGENTS.md
 📊 Registry Summary:
-   Universal Neurons: 16 total
-   Code Neurons: 15 total
-   Create Neurons: 1 total
+   Universal Agents: 16 total
+   Code Agents: 15 total
+   Create Agents: 1 total
    Code Skills: 32 total
 ```
 ✅ All categories scanned and counted accurately
@@ -278,12 +278,12 @@ All success criteria from wish document achieved:
 
 **User Experience Example:**
 ```bash
-git commit -m "feat: add audit neuron"
+git commit -m "feat: add audit agent"
 # ✅ User files validation passed
 # ✅ All @ cross-references valid
 # ✅ Token efficiency validated (increase: 2.3%, within 5% threshold)
 # 🧠 Neural graph updated (Total: 24,166 tokens)
-# 🤖 Agent registry updated (Universal Neurons: 17 total)
+# 🤖 Agent registry updated (Universal Agents: 17 total)
 # ✅ All pre-commit validations passed
 ```
 

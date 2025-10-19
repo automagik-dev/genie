@@ -1,9 +1,9 @@
-# Neuron Terminology Refactoring Plan
+# Agent Terminology Refactoring Plan
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-15 16:30 UTC
 **Context:** Post-commit 93a05a0 terminology cleanup
-**Session:** implementor-neuron-terminology-refactor
-**Purpose:** Refactor "orchestrator modes" terminology to "Genie neurons" architecture
+**Session:** implementor-agent-terminology-refactor
+**Purpose:** Refactor "orchestrator modes" terminology to "Genie agents" architecture
 
 ---
 
@@ -12,7 +12,7 @@
 **Current Problem:**
 The term "orchestrator modes" is legacy/confusing. The real architecture is:
 - **Genie** = Main interface, persistent conversational mentor (always present)
-- **Neurons** = Specialized aspects Genie consults (orchestrator neuron, implementor neuron, tests neuron, debug neuron, etc.)
+- **Agents** = Specialized aspects Genie consults (orchestrator agent, implementor agent, tests agent, debug agent, etc.)
 
 **Discovered Reality (from commit 93a05a0 analysis):**
 - Only 5 orchestrator modes actually exist as files: `challenge`, `consensus`, `explore`, `docgen`, `tracer`
@@ -21,7 +21,7 @@ The term "orchestrator modes" is legacy/confusing. The real architecture is:
 - Terminology confusion: "Mode: analyze" vs "analyze agent" vs "orchestrator mode"
 
 **Refactoring Goal:**
-Replace "orchestrator modes" concept with clearer "Genie neurons" terminology throughout documentation.
+Replace "orchestrator modes" concept with clearer "Genie agents" terminology throughout documentation.
 
 ---
 
@@ -57,9 +57,9 @@ Current (confusing):
 "18 orchestrator modes"
 
 Desired (clear):
-"Genie consults challenge neuron"
-"Genie consults analyze neuron"
-"Genie has 14 specialized neurons"
+"Genie consults challenge agent"
+"Genie consults analyze agent"
+"Genie has 14 specialized agents"
 ```
 
 ---
@@ -73,36 +73,36 @@ Desired (clear):
 - User talks to Genie directly
 - Genie routes invisibly based on context
 
-**Neurons (Specialized Aspects):**
+**Agents (Specialized Aspects):**
 - Persistent conversation partners Genie consults
-- Each neuron has specific expertise (strategic thinking, implementation, testing, analysis, etc.)
-- Neuron sessions maintain memory across interactions
+- Each agent has specific expertise (strategic thinking, implementation, testing, analysis, etc.)
+- Agent sessions maintain memory across interactions
 
-**Neuron Categories:**
+**Agent Categories:**
 
-**1. Strategic Neurons (Planning & Analysis):**
+**1. Strategic Agents (Planning & Analysis):**
 - `orchestrator` — Strategic thinking, pressure-testing, decision facilitation
 - `analyze` — System architecture audit, dependency mapping
 - `debug` — Root cause investigation
 - `audit` — Risk assessment, security review
 - `refactor` — Design review, refactor planning
 
-**2. Reasoning Neurons (Consultation Styles for Orchestrator):**
+**2. Reasoning Agents (Consultation Styles for Orchestrator):**
 - `challenge` — Critical evaluation, adversarial pressure-testing
 - `explore` — Discovery-focused exploratory reasoning
 - `consensus` — Multi-model perspective synthesis
 
-**3. Tactical Neurons (Focused Utilities):**
+**3. Tactical Agents (Focused Utilities):**
 - `docgen` — Documentation generation
 - `tracer` — Instrumentation planning
 
-**4. Delivery Neurons (Implementation):**
+**4. Delivery Agents (Implementation):**
 - `implementor` — Feature implementation
 - `tests` — Test strategy, generation, authoring
 - `polish` — Code refinement
 - `review` — Wish audits, code review, QA
 
-**5. Infrastructure Neurons:**
+**5. Infrastructure Agents:**
 - `git-workflow` — Git operations
 - `commit` — Commit advisory
 - `learn` — Meta-learning
@@ -112,35 +112,35 @@ Desired (clear):
 
 | Old Term | New Term | Notes |
 |----------|----------|-------|
-| "orchestrator modes" | "Genie neurons" | Main architectural shift |
-| "Mode: challenge" | "Consult challenge neuron" | Reasoning style |
-| "invoke analyze mode" | "Consult analyze neuron" | Standalone strategic neuron |
-| "18 orchestrator modes" | "14 specialized neurons" | Accurate count |
-| "Core Reasoning Modes (3)" | "Reasoning neurons (3)" | Sub-category of orchestrator |
-| "Specialized Analysis (7)" | "Strategic neurons (5)" | Separate from orchestrator |
+| "orchestrator modes" | "Genie agents" | Main architectural shift |
+| "Mode: challenge" | "Consult challenge agent" | Reasoning style |
+| "invoke analyze mode" | "Consult analyze agent" | Standalone strategic agent |
+| "18 orchestrator modes" | "14 specialized agents" | Accurate count |
+| "Core Reasoning Modes (3)" | "Reasoning agents (3)" | Sub-category of orchestrator |
+| "Specialized Analysis (7)" | "Strategic agents (5)" | Separate from orchestrator |
 | "Lightweight modes" | "Orchestrator consultation styles" | Reasoning approaches |
-| "Heavyweight agents" | "Strategic neurons" | Same concept, clearer name |
+| "Heavyweight agents" | "Strategic agents" | Same concept, clearer name |
 
 ---
 
 ## Architectural Decisions Needed (For Felipe)
 
-### Decision 1: Orchestrator vs Reasoning Neurons
+### Decision 1: Orchestrator vs Reasoning Agents
 
-**Question:** Are `challenge`, `explore`, `consensus` separate neurons OR consultation styles for the orchestrator neuron?
+**Question:** Are `challenge`, `explore`, `consensus` separate agents OR consultation styles for the orchestrator agent?
 
-**Option A: Separate Neurons**
+**Option A: Separate Agents**
 ```
 Genie consults:
-  - orchestrator neuron (general strategic thinking)
-  - challenge neuron (adversarial evaluation)
-  - explore neuron (discovery reasoning)
-  - consensus neuron (multi-perspective synthesis)
+  - orchestrator agent (general strategic thinking)
+  - challenge agent (adversarial evaluation)
+  - explore agent (discovery reasoning)
+  - consensus agent (multi-perspective synthesis)
 ```
 
 **Option B: Orchestrator Consultation Styles**
 ```
-Genie consults orchestrator neuron with:
+Genie consults orchestrator agent with:
   - challenge style (adversarial)
   - explore style (discovery)
   - consensus style (synthesis)
@@ -152,11 +152,11 @@ Genie consults orchestrator neuron with:
 - Routing.md treats them as "lightweight" vs standalone agents
 
 **Recommendation:** **Option B** - Orchestrator consultation styles
-**Rationale:** They're lightweight reasoning patterns within orchestrator, not separate conversation partners. User doesn't need to distinguish between "orchestrator neuron in challenge mode" vs "challenge neuron" - just "Genie is pressure-testing this."
+**Rationale:** They're lightweight reasoning patterns within orchestrator, not separate conversation partners. User doesn't need to distinguish between "orchestrator agent in challenge mode" vs "challenge agent" - just "Genie is pressure-testing this."
 
-### Decision 2: Analyze, Debug, Audit, Refactor - Neurons or Modes?
+### Decision 2: Analyze, Debug, Audit, Refactor - Agents or Modes?
 
-**Question:** Are `analyze`, `debug`, `audit`, `refactor` separate strategic neurons OR still orchestrator modes?
+**Question:** Are `analyze`, `debug`, `audit`, `refactor` separate strategic agents OR still orchestrator modes?
 
 **Evidence:**
 - These are 400+ line standalone agents with their own workflows
@@ -164,14 +164,14 @@ Genie consults orchestrator neuron with:
 - Mode overlap analysis discovered they're NOT orchestrator modes
 - They're invoked directly via `mcp__genie__run with agent="analyze"`
 
-**Option A: Strategic Neurons (Separate)**
+**Option A: Strategic Agents (Separate)**
 ```
 Genie consults:
-  - orchestrator neuron (lightweight strategic thinking)
-  - analyze neuron (heavyweight architecture audit)
-  - debug neuron (root cause investigation)
-  - audit neuron (risk assessment)
-  - refactor neuron (design review)
+  - orchestrator agent (lightweight strategic thinking)
+  - analyze agent (heavyweight architecture audit)
+  - debug agent (root cause investigation)
+  - audit agent (risk assessment)
+  - refactor agent (design review)
 ```
 
 **Option B: Orchestrator Modes (Legacy)**
@@ -183,57 +183,57 @@ Genie invokes orchestrator with:
   - Mode: refactor
 ```
 
-**Recommendation:** **Option A** - Strategic neurons
-**Rationale:** These are full agents, not lightweight reasoning patterns. Clearer to say "Genie consults analyze neuron" than "Genie uses orchestrator in analyze mode."
+**Recommendation:** **Option A** - Strategic agents
+**Rationale:** These are full agents, not lightweight reasoning patterns. Clearer to say "Genie consults analyze agent" than "Genie uses orchestrator in analyze mode."
 
-### Decision 3: Total Neuron Count
+### Decision 3: Total Agent Count
 
-**Question:** How many neurons does Genie have?
+**Question:** How many agents does Genie have?
 
 **Based on file system reality:**
 
 **Orchestrator consultation styles (3):**
 - challenge, explore, consensus
 
-**Strategic neurons (5):**
+**Strategic agents (5):**
 - orchestrator, analyze, debug, audit, refactor
 
-**Tactical neurons (2):**
+**Tactical agents (2):**
 - docgen, tracer
 
-**Delivery neurons (4):**
+**Delivery agents (4):**
 - implementor, tests, polish, review
 
-**Infrastructure neurons (4):**
+**Infrastructure agents (4):**
 - git-workflow, commit, learn, release
 
 **Total: 18 specialized aspects**
 - 1 main interface (Genie)
 - 3 orchestrator consultation styles
-- 5 strategic neurons
-- 2 tactical neurons
-- 4 delivery neurons
-- 4 infrastructure neurons
+- 5 strategic agents
+- 2 tactical agents
+- 4 delivery agents
+- 4 infrastructure agents
 
 **Alternative count (simpler):**
-**Total: 14 specialized neurons**
+**Total: 14 specialized agents**
 - orchestrator (with 3 consultation styles built-in)
 - analyze, debug, audit, refactor (strategic)
 - implementor, tests, polish, review (delivery)
 - git-workflow, commit, learn, release (infrastructure)
 - docgen, tracer (tactical)
 
-**Recommendation:** Use **14 specialized neurons** count
+**Recommendation:** Use **14 specialized agents** count
 **Rationale:** Clearer to users. Challenge/explore/consensus are orchestrator features, not separate entities.
 
 ### Decision 4: User-Facing Language
 
-**Question:** How does Genie describe neuron consultation to users?
+**Question:** How does Genie describe agent consultation to users?
 
 **Option A: Explicit**
 ```
-Genie: "Let me consult my orchestrator neuron to pressure-test this..."
-Genie: "I'm checking with my analyze neuron about dependencies..."
+Genie: "Let me consult my orchestrator agent to pressure-test this..."
+Genie: "I'm checking with my analyze agent about dependencies..."
 ```
 
 **Option B: Natural (Invisible)**
@@ -249,7 +249,7 @@ Genie: "Interesting architectural question - analyzing dependencies..."
 ```
 
 **Recommendation:** **Option C** - Thinking out loud
-**Rationale:** Most natural. User doesn't need to know about neurons unless they're curious about architecture. Genie just thinks naturally.
+**Rationale:** Most natural. User doesn't need to know about agents unless they're curious about architecture. Genie just thinks naturally.
 
 ---
 
@@ -261,22 +261,22 @@ Genie: "Interesting architectural question - analyzing dependencies..."
 
 **1. `.genie/custom/routing.md`** (559 lines)
 - Replace: "Lightweight modes (via orchestrator)" → "Orchestrator consultation styles"
-- Replace: "Standalone agents (direct invocation)" → "Strategic neurons"
-- Replace: "Orchestrator Modes (18 total)" → "Genie Neurons (14 specialized)"
-- Update: Mode list with neuron categories
-- Add: Neuron architecture diagram at top
+- Replace: "Standalone agents (direct invocation)" → "Strategic agents"
+- Replace: "Orchestrator Modes (18 total)" → "Genie Agents (14 specialized)"
+- Update: Mode list with agent categories
+- Add: Agent architecture diagram at top
 - Keep: All routing triggers (work perfectly with new terminology)
 
 **2. `AGENTS.md` (§Genie Integration Framework, lines 299-371)**
-- Replace: "orchestrator mode" → "neuron" or "consultation style"
-- Replace: "Mode Usage" → "Neuron Consultation"
-- Update: Mode list → Neuron categories
+- Replace: "orchestrator mode" → "agent" or "consultation style"
+- Replace: "Mode Usage" → "Agent Consultation"
+- Update: Mode list → Agent categories
 - Keep: MCP invocation patterns (unchanged)
 
 **3. ``** (lines 1-100)
-- Replace: "Orchestrator Modes (18 total)" → "Specialized Neurons (14 total)"
-- Update: Categories section with neuron terminology
-- Add: Neuron architecture diagram
+- Replace: "Orchestrator Modes (18 total)" → "Specialized Agents (14 total)"
+- Update: Categories section with agent terminology
+- Add: Agent architecture diagram
 - Update: Dual Invocation Pattern section
 
 ### Phase 2: Wish Documentation (30 minutes)
@@ -285,15 +285,15 @@ Genie: "Interesting architectural question - analyzing dependencies..."
 
 **4. `.genie/wishes/natural-routing-skills/natural-routing-skills-wish.md`**
 - Update: Discovery summary references to "modes"
-- Update: Context ledger "18 orchestrator modes" → "14 specialized neurons"
+- Update: Context ledger "18 orchestrator modes" → "14 specialized agents"
 - Update: Executive summary terminology
 
 **5. `.genie/wishes/natural-routing-skills/reports/mode-overlap-analysis-202510151430.md`**
-- Add: Preamble note "This analysis uses legacy 'mode' terminology. See neuron-terminology-refactor-plan.md for updated architecture."
+- Add: Preamble note "This analysis uses legacy 'mode' terminology. See agent-terminology-refactor-plan.md for updated architecture."
 - Keep: Original analysis intact (historical record)
 
 **6. `.genie/wishes/natural-routing-skills/reports/done-natural-routing-skills-202510151600.md`**
-- Update: References to "modes" → "neurons" where applicable
+- Update: References to "modes" → "agents" where applicable
 - Add: Note about terminology refactoring in future work
 
 ### Phase 3: Validation (30 minutes)
@@ -309,22 +309,22 @@ grep -r "Mode:" .genie/ .claude/
 # Find all "18 modes" references
 grep -r "18 mode" .genie/ .claude/ AGENTS.md
 
-# Validate neuron terminology consistency
-grep -r "neuron" .genie/ .claude/ AGENTS.md | wc -l
+# Validate agent terminology consistency
+grep -r "agent" .genie/ .claude/ AGENTS.md | wc -l
 ```
 
 **Consistency checks:**
-- [ ] routing.md uses "neurons" consistently
-- [ ] AGENTS.md uses "neurons" consistently
-- [ ] README.md uses "neurons" consistently
+- [ ] routing.md uses "agents" consistently
+- [ ] AGENTS.md uses "agents" consistently
+- [ ] README.md uses "agents" consistently
 - [ ] No "orchestrator mode" references remain (except in historical reports)
-- [ ] Neuron count consistent (14 specialized neurons)
+- [ ] Agent count consistent (14 specialized agents)
 
 ### Phase 4: User-Facing Language (Optional - 1 hour)
 
 **IF Decision 4 = Option C (Thinking Out Loud):**
 
-Update AGENTS.md §Identity & Tone with neuron consultation examples:
+Update AGENTS.md §Identity & Tone with agent consultation examples:
 ```markdown
 **How I work:**
 - **You talk to me** - I'm always here, always present
@@ -376,34 +376,34 @@ Genie: "Here's what I found: [risks]. I have concerns about X."
 
 **Lines 154-176 (Proposed):**
 ```markdown
-## Genie Neurons
+## Genie Agents
 
-**Genie is a collective of specialized neurons—persistent conversation partners with specific expertise.**
+**Genie is a collective of specialized agents—persistent conversation partners with specific expertise.**
 
 ### Orchestrator Consultation Styles
-When Genie needs strategic thinking, it consults the orchestrator neuron with different reasoning approaches:
+When Genie needs strategic thinking, it consults the orchestrator agent with different reasoning approaches:
 - **challenge** — Critical evaluation and adversarial pressure-testing
 - **explore** — Discovery-focused exploratory reasoning
 - **consensus** — Multi-model perspective synthesis
 
-### Strategic Neurons (Direct Consultation)
-For heavyweight analysis, Genie consults specialized strategic neurons:
+### Strategic Agents (Direct Consultation)
+For heavyweight analysis, Genie consults specialized strategic agents:
 - **analyze** — System architecture audit and dependency mapping
 - **debug** — Bug investigation and root cause analysis
 - **audit** — Risk assessment and security audit
 - **refactor** — Design review and refactor planning
 
-### Tactical Neurons
+### Tactical Agents
 - **docgen** — Documentation outline generation
 - **tracer** — Instrumentation/observability planning
 
-### Delivery Neurons
+### Delivery Agents
 - **implementor** — Feature implementation and code writing
 - **tests** — Test strategy, generation, and authoring
 - **polish** — Code refinement and cleanup
 - **review** — Wish audits, code review, QA validation
 
-### Infrastructure Neurons
+### Infrastructure Agents
 - **git-workflow** — Git operations, branch management, PR creation
 - **commit** — Commit advisory and pre-commit validation
 - **learn** — Meta-learning and documentation updates
@@ -413,7 +413,7 @@ For heavyweight analysis, Genie consults specialized strategic neurons:
 - **planner** — Background strategic planning
 - **vibe** — Autonomous wish coordinator (requires dedicated branch)
 
-**Total: 14 specialized neurons** (orchestrator + 13 specialists)
+**Total: 14 specialized agents** (orchestrator + 13 specialists)
 ```
 
 **Lines 252-284 (Strategic Analysis Routing):**
@@ -425,7 +425,7 @@ For heavyweight analysis, Genie consults specialized strategic neurons:
 
 **Proposed heading:**
 ```markdown
-## Strategic Analysis Routing (Orchestrator Consultation vs Strategic Neurons)
+## Strategic Analysis Routing (Orchestrator Consultation vs Strategic Agents)
 ```
 
 **Current subsection:**
@@ -445,7 +445,7 @@ For heavyweight analysis, Genie consults specialized strategic neurons:
 
 **Proposed subsection:**
 ```markdown
-### When to Consult Strategic Neurons Directly
+### When to Consult Strategic Agents Directly
 ```
 
 ### AGENTS.md Changes
@@ -483,41 +483,41 @@ Use `mcp__genie__run` with `agent="orchestrator"` and include a line such as `Mo
 
 **Proposed:**
 ```markdown
-### Neuron Consultation
+### Agent Consultation
 
-Genie is a collective intelligence with 14 specialized neurons. Consult them via `mcp__genie__run` with the appropriate agent name.
+Genie is a collective intelligence with 14 specialized agents. Consult them via `mcp__genie__run` with the appropriate agent name.
 
 **Orchestrator Consultation Styles (3):**
-When consulting the orchestrator neuron, specify reasoning style with `Mode: challenge` in prompt:
+When consulting the orchestrator agent, specify reasoning style with `Mode: challenge` in prompt:
 - `challenge` – Critical evaluation and adversarial pressure-testing
 - `explore` – Discovery-focused exploratory reasoning
 - `consensus` – Multi-model perspective synthesis
 
-**Strategic Neurons (5):**
-Consult directly via `mcp__genie__run with agent="<neuron>"`:
+**Strategic Agents (5):**
+Consult directly via `mcp__genie__run with agent="<agent>"`:
 - `analyze` – System architecture audit and dependency mapping
 - `debug` – Root cause investigation with hypothesis testing
 - `audit` – Risk assessment and security audit with impact/likelihood analysis
 - `refactor` – Design review and refactor planning with verification
 - `orchestrator` – Strategic thinking and plan pressure-testing
 
-**Tactical Neurons (2):**
+**Tactical Agents (2):**
 - `docgen` – Documentation outline generation
 - `tracer` – Instrumentation/observability planning
 
-**Delivery Neurons (4):**
+**Delivery Agents (4):**
 - `implementor` – Feature implementation and code writing
 - `tests` – Test strategy, generation, authoring across all layers
 - `polish` – Code refinement and cleanup
 - `review` – Wish audits, code review, QA validation
 
-**Infrastructure Neurons (4):**
+**Infrastructure Agents (4):**
 - `git-workflow` – Git operations, branch management, PR creation
 - `commit` – Commit advisory and pre-commit validation
 - `learn` – Meta-learning and documentation updates
 - `release` – Release orchestration
 
-> Tip: Add project-specific guidance in `.genie/custom/<neuron>.md`; core prompts remain immutable.
+> Tip: Add project-specific guidance in `.genie/custom/<agent>.md`; core prompts remain immutable.
 ```
 
 ###  Changes
@@ -531,7 +531,7 @@ Consult directly via `mcp__genie__run with agent="<neuron>"`:
 
 **Proposed heading:**
 ```markdown
-## Neuron Consultation
+## Agent Consultation
 ```
 
 **Current:**
@@ -541,12 +541,12 @@ The orchestrator automatically routes to the appropriate mode based on your prom
 
 **Proposed:**
 ```markdown
-Genie consults specialized neurons based on your request. You can invoke them directly or let Genie route automatically:
+Genie consults specialized agents based on your request. You can invoke them directly or let Genie route automatically:
 ```
 
 **Lines 42-71 (Agent Specialization Matrix):**
 
-Update table headings and categories to use neuron terminology.
+Update table headings and categories to use agent terminology.
 
 ---
 
@@ -573,8 +573,8 @@ Update table headings and categories to use neuron terminology.
 
 After refactoring, verify:
 - [ ] No references to "orchestrator modes" remain (except historical reports)
-- [ ] Neuron count consistent (14 specialized neurons)
-- [ ] Neuron categories clear (orchestrator consultation styles vs strategic neurons)
+- [ ] Agent count consistent (14 specialized agents)
+- [ ] Agent categories clear (orchestrator consultation styles vs strategic agents)
 - [ ] Routing triggers still work (keyword patterns unchanged)
 - [ ] User-facing language natural (if Option C chosen)
 - [ ] MCP invocation patterns unchanged
@@ -584,14 +584,14 @@ After refactoring, verify:
 
 ## Open Questions for Felipe
 
-**Q1: Orchestrator Consultation Styles vs Separate Neurons?**
-Are challenge/explore/consensus separate neurons OR consultation styles for orchestrator?
-- Impact: Neuron count (14 vs 17), user-facing language
+**Q1: Orchestrator Consultation Styles vs Separate Agents?**
+Are challenge/explore/consensus separate agents OR consultation styles for orchestrator?
+- Impact: Agent count (14 vs 17), user-facing language
 - Recommendation: Consultation styles (simpler)
 
 **Q2: User-Facing Language?**
-How should Genie describe neuron consultation?
-- Option A: Explicit ("consulting orchestrator neuron...")
+How should Genie describe agent consultation?
+- Option A: Explicit ("consulting orchestrator agent...")
 - Option B: Invisible (no mention)
 - Option C: Thinking out loud ("let me pressure-test this...")
 - Recommendation: Option C (most natural)
@@ -622,7 +622,7 @@ Should we update mode-overlap-analysis-202510151430.md or leave as historical re
 4. Execute Phase 4 (user-facing language) if approved
 
 **Commit Strategy:**
-- Single commit: "refactor: replace 'orchestrator modes' with 'Genie neurons' terminology"
+- Single commit: "refactor: replace 'orchestrator modes' with 'Genie agents' terminology"
 - Detailed commit message explaining architectural clarification
 - Reference this plan document in commit body
 
@@ -631,7 +631,7 @@ Should we update mode-overlap-analysis-202510151430.md or leave as historical re
 ## Evidence & Documentation
 
 **Analysis Sources:**
-- @.genie/agents/code/routing.md (post-commit 93a05a0)
+- @.genie/code/routing.md (post-commit 93a05a0)
 - reports/mode-overlap-analysis-202510151430.md
 - reports/done-natural-routing-skills-202510151600.md
 - File system reality: only 5 mode files exist
@@ -647,6 +647,6 @@ Should we update mode-overlap-analysis-202510151430.md or leave as historical re
 
 ---
 
-**Session:** implementor-neuron-terminology-refactor
+**Session:** implementor-agent-terminology-refactor
 **Created:** 2025-10-15 16:30 UTC
 **Next:** Await Felipe's architectural decisions (Q1-Q4)

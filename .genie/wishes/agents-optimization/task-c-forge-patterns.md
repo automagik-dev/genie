@@ -1,7 +1,7 @@
 # Task C: Extract Forge Patterns
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** C
-**Target:** `.genie/agents/genie/neurons/forge/forge.md`
+**Target:** `.genie/agents/genie/agents/forge/forge.md`
 **Lines to extract:** AGENTS.md 1209-1258
 
 ---
@@ -14,7 +14,7 @@
 **Current state:**
 - AGENTS.md: ~1906 lines (after Task B)
 - Target section contains Forge MCP task patterns
-- forge.md exists at `.genie/agents/genie/neurons/forge/forge.md`
+- forge.md exists at `.genie/agents/genie/agents/forge/forge.md`
 
 **Dependencies:**
 - Requires Task B complete
@@ -34,7 +34,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1209-1258
-   - Insert @ reference: `@.genie/agents/neurons/forge.md (forge patterns)`
+   - Insert @ reference: `@.genie/code/agents/forge.md (forge patterns)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -49,19 +49,19 @@
 **Pattern preservation:**
 ```bash
 # Forge MCP pattern
-grep -q "Forge MCP Task Pattern" .genie/agents/genie/neurons/forge/forge.md && echo "✅ Forge pattern preserved"
+grep -q "Forge MCP Task Pattern" .genie/agents/genie/agents/forge/forge.md && echo "✅ Forge pattern preserved"
 
 # @ syntax examples
-grep -q "@agent-" .genie/agents/genie/neurons/forge/forge.md && echo "✅ @ syntax preserved"
+grep -q "@agent-" .genie/agents/genie/agents/forge/forge.md && echo "✅ @ syntax preserved"
 
 # Validation section
-grep -q "Critical Distinction" .genie/agents/genie/neurons/forge/forge.md && echo "✅ Validation preserved"
+grep -q "Critical Distinction" .genie/agents/genie/agents/forge/forge.md && echo "✅ Validation preserved"
 ```
 
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/neurons/forge.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/code/agents/forge.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Forge MCP Task Pattern" AGENTS.md && echo "✅ Content removed"
@@ -79,4 +79,4 @@ wc -l AGENTS.md
 ## Evidence Location
 
 **Done Report:** `.genie/wishes/agents-optimization/reports/done-implementor-task-c-<timestamp>.md`
-**Diff:** `git diff AGENTS.md .genie/agents/genie/neurons/forge/forge.md`
+**Diff:** `git diff AGENTS.md .genie/agents/genie/agents/forge/forge.md`

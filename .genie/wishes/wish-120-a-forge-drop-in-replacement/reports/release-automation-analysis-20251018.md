@@ -243,8 +243,8 @@ Create issue #126 type per release with:
 
 ## 🏗️ Implementation Strategy
 
-### Phase 1: Create Release Workflow (Neuron Pattern)
-**File:** `.genie/agents/code/neurons/git/workflows/release.md`
+### Phase 1: Create Release Workflow (Agent Pattern)
+**File:** `.genie/agents/code/agents/git/workflows/release.md`
 
 **Responsibilities:**
 - Detect branch type (feature branch vs. main)
@@ -255,8 +255,8 @@ Create issue #126 type per release with:
 
 **Pattern:**
 ```yaml
-Type: Neuron Workflow
-Parent: git neuron
+Type: Agent Workflow
+Parent: git agent
 Scope: Release operations only
 Delegation: ❌ Execute directly (leaf node)
 Tools: git, gh, Bash
@@ -461,7 +461,7 @@ fixes #126  # Release issue requirement
 ## 📋 Files to Create/Modify
 
 ### New Files
-1. `.genie/agents/code/neurons/git/workflows/release.md`
+1. `.genie/agents/code/agents/git/workflows/release.md`
    - Complete release workflow automation
    - ~200 lines of documentation
 
@@ -555,10 +555,10 @@ fixes #126  # Release issue requirement
 - `scripts/bump.js` - Version bumping
 - `scripts/release.js` - Stable promotion
 - `.github/workflows/publish.yml` - NPM publishing
-- `.genie/agents/code/neurons/git/` - Git operations
+- `.genie/agents/code/agents/git/` - Git operations
 
 **Genie Patterns:**
-- Neuron workflows: Specialized execution
+- Agent workflows: Specialized execution
 - Leaf nodes: Direct tool usage (no delegation)
 - Traceability: Every action linked to issue/wish
 - Automation: Minimize manual steps

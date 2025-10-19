@@ -244,8 +244,8 @@ genie list                                # List sessions
 **Advanced Capabilities:**
 1. **Template Unification:** Merge Genie "code/create" with Forge templates
 2. **Advanced Inspection:** Detailed diffs, commit history, compare to HEAD
-3. **Advanced Task Management:** CRUD operations, neuron state tree
-4. **Migration & Updating Neuron:** Seamless version upgrades with rollback
+3. **Advanced Task Management:** CRUD operations, agent state tree
+4. **Migration & Updating Agent:** Seamless version upgrades with rollback
 5. **SSE Automations:** Safe auto-actions on events (idempotent)
 
 **User Impact:** ✅✅✅ VERY HIGH (production-ready adoption kits for downstream repos)

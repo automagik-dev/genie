@@ -434,7 +434,7 @@ const result = await mcp__automagik_forge__start_task_attempt({
 **Recommendation:** Use MCP Forge tools instead of HTTP ForgeClient
 
 **Why:**
-- ✅ MCP already works (proven with learn neuron)
+- ✅ MCP already works (proven with learn agent)
 - ✅ No auth complexity
 - ✅ Same underlying API
 - ✅ Simpler integration
@@ -496,4 +496,4 @@ class ForgeMcpExecutor {
 **Date:** 2025-10-18
 **Source:** research/forge/forge-app/src/router.rs
 **Worktree:** c3d1-forge-120-execut
-**Learn Neuron:** Running (attempt 7e1b56d1-50a3-4ac2-bfb2-ab9c9ef49327)
+**Learn Agent:** Running (attempt 7e1b56d1-50a3-4ac2-bfb2-ab9c9ef49327)

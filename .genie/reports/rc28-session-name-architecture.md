@@ -17,7 +17,7 @@ mcp__genie__run(agent="learn", name="bug-test-session-1")
 # Returns: "Session ID: 5438dfa7-835d-475e-85cc-e3a950b5e7a7"
 
 # Step 2: Check executor log
-head -5 .genie/state/agents/logs/neurons-learn-*.log
+head -5 .genie/state/agents/logs/agents-learn-*.log
 # Shows: {"session_id":"b654d5f6-6887-4580-ac93-efe8c8ef90b2"}
 
 # Step 3: Try to resume
@@ -59,10 +59,10 @@ mcp__genie__resume(sessionId="5438dfa7-835d-475e-85cc-e3a950b5e7a7")
   "sessions": {
     "bug-test-session-1": {
       "name": "bug-test-session-1",
-      "agent": "neurons/learn",
+      "agent": "agents/learn",
       "created": "2025-10-18T19:35:28.251Z",
       "status": "completed",
-      "logFile": ".genie/state/agents/logs/neurons-learn-1760816128160.log"
+      "logFile": ".genie/state/agents/logs/agents-learn-1760816128160.log"
     }
   }
 }

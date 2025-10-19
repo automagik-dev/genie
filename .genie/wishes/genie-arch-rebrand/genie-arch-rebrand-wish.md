@@ -13,37 +13,37 @@
 Current folder structure and output displays don't reflect the true architecture:
 - "genie" is redundant naming (all agents are genie - it's the template type that matters)
 - Current "workflows" and "skills" folders don't match invocability semantics
-- Output shows file paths (`genie/neurons/git/git`) instead of conceptual names (`Starting neuron: git`)
-- No clear separation between universal neurons and template-specific neurons
+- Output shows file paths (`genie/agents/git/git`) instead of conceptual names (`Starting agent: git`)
+- No clear separation between universal agents and template-specific agents
 - Create template agents exist in `templates/` but not in working `.genie/agents/`
-- Many neurons unnecessarily duplicated across templates when they could be universal
+- Many agents unnecessarily duplicated across templates when they could be universal
 
 ### Architectural Clarity
 
 **Base Layer** (`.genie/agents/`):
-- Contains universal neurons shared across ALL templates
+- Contains universal agents shared across ALL templates
 - Template-specific folders for code and create
 
-**Universal Neurons** (`neurons/`):
+**Universal Agents** (`agents/`):
 - Work identically across all templates
 - No template-specific behavior or context
 - Reasoning patterns, orchestration, meta-learning
 
-**Template-Specific Neurons** (`code/neurons/` or `create/neurons/`):
+**Template-Specific Agents** (`code/agents/` or `create/agents/`):
 - Only makes sense for one template (implementor = code-only)
 - Behavior differs significantly by template (wish = different for code vs create)
 - Template-specific tooling (git = code-only)
 
 **Agent Resolution Logic:**
-1. Check template-specific (`code/neurons/` or `create/neurons/`)
-2. If not found → fallback to `../neurons/` (universal)
-3. Template neurons override universal (e.g., wish.md)
+1. Check template-specific (`code/agents/` or `create/agents/`)
+2. If not found → fallback to `../agents/` (universal)
+3. Template agents override universal (e.g., wish.md)
 
 ### Vision
 
 Perfect markdown agent neural graph with:
-- Universal neurons (`.genie/agents/neurons/`) - shared across all templates
-- Template-specific overrides (code/neurons/, create/neurons/) - only when needed
+- Universal agents (`.genie/agents/`) - shared across all templates
+- Template-specific overrides (code/agents/, create/agents/) - only when needed
 - Clear hierarchy visible in folder structure
 - @ references create intelligent knowledge connections
 - Output displays reflect conceptual architecture
@@ -51,11 +51,11 @@ Perfect markdown agent neural graph with:
 
 ---
 
-## Neuron Classification (Predefined for Implementation)
+## Agent Classification (Predefined for Implementation)
 
 **This classification guides all file movements in Group A.**
 
-### Universal Neurons (`.genie/agents/neurons/` - 15+ total)
+### Universal Agents (`.genie/agents/` - 15+ total)
 
 **Orchestration (3):**
 - `plan.md` - Planning phase works same way for all templates
@@ -88,7 +88,7 @@ Perfect markdown agent neural graph with:
 **Prompt Crafting (1):**
 - `prompt.md` - Prompt crafting useful for both templates
 
-### Code-Specific Neurons (`code/neurons/` - 9+ total)
+### Code-Specific Agents (`code/agents/` - 9+ total)
 
 **Overrides (1):**
 - `wish.md` - Code-specific wish behavior (features, bugs, refactors)
@@ -109,7 +109,7 @@ Perfect markdown agent neural graph with:
 - `tracer.md` - Instrumentation/observability (code concept)
 - `precommit.md` - Git hooks validation (code concept)
 
-### Create-Specific Neurons (`create/neurons/` - 1 total)
+### Create-Specific Agents (`create/agents/` - 1 total)
 
 **Overrides (1):**
 - `wish.md` - Create-specific wish behavior (research papers, content campaigns)
@@ -118,30 +118,30 @@ Perfect markdown agent neural graph with:
 
 ## Execution Groups
 
-### Group A: Neuron Reorganization with Base Layer
+### Group A: Agent Reorganization with Base Layer
 
 **Objective:** Reorganize to universal + template-specific architecture
 
 **Current structure:**
 ```
 .genie/agents/
-├── workflows/              # Mislabeled (these are neurons)
-├── neurons/
+├── workflows/              # Mislabeled (these are agents)
+├── agents/
 │   ├── genie/             # Redundant naming
 │   │   ├── genie.md
-│   │   └── skills/        # Actually neurons, not skills
+│   │   └── skills/        # Actually agents, not skills
 │   ├── git/
 │   │   ├── git.md
 │   │   ├── issue.md       # Should be in workflows/
 │   │   ├── pr.md
 │   │   └── report.md
-│   └── ... (other neurons)
+│   └── ... (other agents)
 ```
 
 **Target structure:**
 ```
 .genie/agents/
-├── neurons/               # Universal neurons (shared)
+├── agents/               # Universal agents (shared)
 │   ├── plan.md, forge.md, review.md
 │   ├── analyze.md, challenge.md, consensus.md, explore.md
 │   ├── debate.md, deep-dive.md, socratic.md
@@ -154,7 +154,7 @@ Perfect markdown agent neural graph with:
 ├── code/
 │   ├── code.md
 │   ├── skills/
-│   └── neurons/           # Code-specific ONLY
+│   └── agents/           # Code-specific ONLY
 │       ├── wish.md (override)
 │       ├── implementor.md, tests.md, release.md
 │       ├── test-strategy.md, tracer.md, precommit.md
@@ -166,7 +166,7 @@ Perfect markdown agent neural graph with:
 └── create/
     ├── create.md
     ├── skills/
-    └── neurons/           # Create-specific ONLY
+    └── agents/           # Create-specific ONLY
         └── wish.md (override)
 ```
 
@@ -174,27 +174,27 @@ Perfect markdown agent neural graph with:
 
 **A1: Create structure**
 ```bash
-# Create base universal neurons folder
-mkdir -p .genie/agents/neurons
+# Create base universal agents folder
+mkdir -p .genie/code/agents
 
 # Create code template
 mkdir -p .genie/agents/code/skills
-mkdir -p .genie/agents/code/neurons
+mkdir -p .genie/agents/code/agents
 
 # Move genie.md → code.md
-mv .genie/agents/neurons/genie/genie.md .genie/agents/code/code.md
+mv .genie/agents/genie/genie.md .genie/agents/code/code.md
 
 # Create create template
 mkdir -p .genie/agents/create/skills
-mkdir -p .genie/agents/create/neurons
+mkdir -p .genie/agents/create/agents
 ```
 
-**A2: Move universal neurons from workflows/**
+**A2: Move universal agents from workflows/**
 ```bash
-# Move orchestration neurons (universal)
-mv .genie/agents/workflows/plan.md .genie/agents/neurons/plan.md
-mv .genie/agents/workflows/forge.md .genie/agents/neurons/forge.md
-mv .genie/agents/workflows/review.md .genie/agents/neurons/review.md
+# Move orchestration agents (universal)
+mv .genie/agents/workflows/plan.md .genie/agents/plan.md
+mv .genie/agents/workflows/forge.md .genie/agents/forge.md
+mv .genie/agents/workflows/review.md .genie/agents/review.md
 
 # Keep wish.md for template-specific placement later
 ```
@@ -202,86 +202,86 @@ mv .genie/agents/workflows/review.md .genie/agents/neurons/review.md
 **A3: Move wish.md to templates (override)**
 ```bash
 # Code-specific wish
-mv .genie/agents/workflows/wish.md .genie/agents/code/neurons/wish.md
+mv .genie/agents/workflows/wish.md .genie/agents/code/agents/wish.md
 
 # Create-specific wish (copy from template)
-cp templates/create/.genie/agents/workflows/wish.md .genie/agents/create/neurons/wish.md
+cp templates/create/.genie/agents/workflows/wish.md .genie/agents/create/agents/wish.md
 
 # Clean up workflows
 rmdir .genie/agents/workflows/
 ```
 
-**A4: Classify and move strategic neurons from genie/skills/**
+**A4: Classify and move strategic agents from genie/skills/**
 ```bash
-# Move universal strategic neurons
-for neuron in analyze challenge consensus explore debate deep-dive socratic design-review risk-audit audit refactor docgen; do
-  mv .genie/agents/neurons/genie/skills/$neuron.md .genie/agents/neurons/$neuron.md 2>/dev/null || true
+# Move universal strategic agents
+for agent in analyze challenge consensus explore debate deep-dive socratic design-review risk-audit audit refactor docgen; do
+  mv .genie/agents/genie/skills/$agent.md .genie/agents/$agent.md 2>/dev/null || true
 done
 
-# Move code-specific strategic neurons
-for neuron in test-strategy tracer precommit; do
-  mv .genie/agents/neurons/genie/skills/$neuron.md .genie/agents/code/neurons/$neuron.md 2>/dev/null || true
+# Move code-specific strategic agents
+for agent in test-strategy tracer precommit; do
+  mv .genie/agents/genie/skills/$agent.md .genie/agents/code/agents/$agent.md 2>/dev/null || true
 done
 
 # Clean up
-rmdir .genie/agents/neurons/genie/skills/
-rmdir .genie/agents/neurons/genie/
+rmdir .genie/agents/genie/skills/
+rmdir .genie/agents/genie/
 ```
 
 **A5: Classify and move execution specialists**
 ```bash
 # Universal execution
-mv .genie/agents/neurons/polish.md .genie/agents/neurons/polish.md 2>/dev/null || true
-mv .genie/agents/neurons/learn.md .genie/agents/neurons/learn.md 2>/dev/null || true
-mv .genie/agents/neurons/roadmap.md .genie/agents/neurons/roadmap.md 2>/dev/null || true
+mv .genie/agents/polish.md .genie/agents/polish.md 2>/dev/null || true
+mv .genie/agents/learn.md .genie/agents/learn.md 2>/dev/null || true
+mv .genie/agents/roadmap.md .genie/agents/roadmap.md 2>/dev/null || true
 
 # Code-specific execution
-mv .genie/agents/neurons/implementor.md .genie/agents/code/neurons/implementor.md
-mv .genie/agents/neurons/tests.md .genie/agents/code/neurons/tests.md
-mv .genie/agents/neurons/release.md .genie/agents/code/neurons/release.md
+mv .genie/agents/implementor.md .genie/agents/code/agents/implementor.md
+mv .genie/agents/tests.md .genie/agents/code/agents/tests.md
+mv .genie/agents/release.md .genie/agents/code/agents/release.md
 ```
 
 **A6: Move git (code-specific) with workflows/**
 ```bash
 # Create git workflows subfolder
-mkdir -p .genie/agents/code/neurons/git/workflows
+mkdir -p .genie/agents/code/agents/git/workflows
 
-# Move git neuron
-mv .genie/agents/neurons/git/git.md .genie/agents/code/neurons/git/git.md
+# Move git agent
+mv .genie/agents/git/git.md .genie/agents/code/agents/git/git.md
 
 # Move workflows
-mv .genie/agents/neurons/git/issue.md .genie/agents/code/neurons/git/workflows/issue.md
-mv .genie/agents/neurons/git/pr.md .genie/agents/code/neurons/git/workflows/pr.md
-mv .genie/agents/neurons/git/report.md .genie/agents/code/neurons/git/workflows/report.md
+mv .genie/agents/git/issue.md .genie/agents/code/agents/git/workflows/issue.md
+mv .genie/agents/git/pr.md .genie/agents/code/agents/git/workflows/pr.md
+mv .genie/agents/git/report.md .genie/agents/code/agents/git/workflows/report.md
 
 # Clean up
-rmdir .genie/agents/neurons/git/
-rmdir .genie/agents/neurons/
+rmdir .genie/agents/git/
+rmdir .genie/agents/
 ```
 
 **A7: Copy create template agents**
 ```bash
 # Copy orchestrator → create.md
-cp templates/create/.genie/agents/neurons/orchestrator.md .genie/agents/create/create.md
+cp templates/create/.genie/agents/orchestrator.md .genie/agents/create/create.md
 
 # Copy prompt (universal, but checking if different)
-cp templates/create/.genie/agents/neurons/prompt.md .genie/agents/neurons/prompt.md
+cp templates/create/.genie/agents/prompt.md .genie/agents/prompt.md
 
-# Create neurons already copied in A3 (wish.md)
+# Create agents already copied in A3 (wish.md)
 ```
 
 **Expected outcome:**
 ```
 .genie/agents/
-├── neurons/ (15+ universal)
+├── agents/ (15+ universal)
 ├── code/
 │   ├── code.md
 │   ├── skills/ (empty initially)
-│   └── neurons/ (9+ code-specific)
+│   └── agents/ (9+ code-specific)
 └── create/
     ├── create.md
     ├── skills/ (empty initially)
-    └── neurons/ (1 create-specific)
+    └── agents/ (1 create-specific)
 ```
 
 ---
@@ -306,34 +306,34 @@ const displayName = (agentPath: string) => {
     return `🧞 Starting create orchestrator`
   }
 
-  // Universal neurons
-  if (agentPath.match(/^neurons\/(\w+)\.md$/)) {
-    const neuron = agentPath.match(/neurons\/(\w+)\.md$/)?.[1]
-    return `🧞 Starting neuron: ${neuron}`
+  // Universal agents
+  if (agentPath.match(/^agents\/(\w+)\.md$/)) {
+    const agent = agentPath.match(/agents\/(\w+)\.md$/)?.[1]
+    return `🧞 Starting agent: ${agent}`
   }
 
-  // Code template neurons
-  if (agentPath.match(/^code\/neurons\/(\w+)\.md$/)) {
-    const neuron = agentPath.match(/code\/neurons\/(\w+)\.md$/)?.[1]
-    return `🧞 Starting code neuron: ${neuron}`
+  // Code template agents
+  if (agentPath.match(/^code\/agents\/(\w+)\.md$/)) {
+    const agent = agentPath.match(/code\/agents\/(\w+)\.md$/)?.[1]
+    return `🧞 Starting code agent: ${agent}`
   }
 
   // Code git workflows
-  if (agentPath.match(/^code\/neurons\/git\/workflows\/(\w+)\.md$/)) {
+  if (agentPath.match(/^code\/agents\/git\/workflows\/(\w+)\.md$/)) {
     const workflow = agentPath.match(/git\/workflows\/(\w+)\.md$/)?.[1]
     return `🧞 Starting git workflow: ${workflow}`
   }
 
-  // Create template neurons
-  if (agentPath.match(/^create\/neurons\/(\w+)\.md$/)) {
-    const neuron = agentPath.match(/create\/neurons\/(\w+)\.md$/)?.[1]
-    return `🧞 Starting create neuron: ${neuron}`
+  // Create template agents
+  if (agentPath.match(/^create\/agents\/(\w+)\.md$/)) {
+    const agent = agentPath.match(/create\/agents\/(\w+)\.md$/)?.[1]
+    return `🧞 Starting create agent: ${agent}`
   }
 
   // Legacy paths
-  if (agentPath.match(/^neurons\/genie\/skills\/(\w+)\.md$/)) {
+  if (agentPath.match(/^agents\/genie\/skills\/(\w+)\.md$/)) {
     const skill = agentPath.match(/skills\/(\w+)\.md$/)?.[1]
-    return `🧞 Starting neuron: ${skill} (legacy path)`
+    return `🧞 Starting agent: ${skill} (legacy path)`
   }
 
   // Fallback
@@ -346,27 +346,27 @@ const displayName = (agentPath: string) => {
 ### Group D: QA Workflow Creation & Validation
 
 **Test categories:**
-1. **Universal neurons** (~15 total)
-2. **Code-specific neurons** (~9 total)
+1. **Universal agents** (~15 total)
+2. **Code-specific agents** (~9 total)
 3. **Code git workflows** (3 total)
-4. **Create-specific neurons** (1 total)
+4. **Create-specific agents** (1 total)
 5. **Template orchestrators** (2 total)
 6. **Edge cases**
 
 **Validation commands:**
 ```bash
-# Count universal neurons (expect ~15)
-ls .genie/agents/neurons/*.md 2>/dev/null | wc -l
+# Count universal agents (expect ~15)
+ls .genie/agents/*.md 2>/dev/null | wc -l
 
-# Count code neurons (expect ~5 flat + git/)
-ls .genie/agents/code/neurons/*.md 2>/dev/null | wc -l
-ls -d .genie/agents/code/neurons/git 2>/dev/null | wc -l
+# Count code agents (expect ~5 flat + git/)
+ls .genie/agents/code/agents/*.md 2>/dev/null | wc -l
+ls -d .genie/agents/code/agents/git 2>/dev/null | wc -l
 
 # Count git workflows (expect 3)
-ls .genie/agents/code/neurons/git/workflows/*.md 2>/dev/null | wc -l
+ls .genie/agents/code/agents/git/workflows/*.md 2>/dev/null | wc -l
 
-# Count create neurons (expect 1)
-ls .genie/agents/create/neurons/*.md 2>/dev/null | wc -l
+# Count create agents (expect 1)
+ls .genie/agents/create/agents/*.md 2>/dev/null | wc -l
 
 # Test agent discovery
 mcp__genie__list_agents
@@ -377,15 +377,15 @@ mcp__genie__list_agents
 ## Evidence Checklist
 
 **Folder Reorganization:** ✅ COMPLETE (Group A)
-- [x] neurons/ created with ~15 universal neurons (21 created)
-- [x] code/ created with code.md + skills/ + neurons/
-- [x] create/ created with create.md + skills/ + neurons/
-- [x] workflows/ deleted (files moved to neurons/ or code/neurons/)
-- [x] neurons/genie/ deleted (files classified and moved)
-- [x] ~9 code-specific neurons in code/neurons/ (10 created)
+- [x] agents/ created with ~15 universal agents (21 created)
+- [x] code/ created with code.md + skills/ + agents/
+- [x] create/ created with create.md + skills/ + agents/
+- [x] workflows/ deleted (files moved to agents/ or code/agents/)
+- [x] agents/genie/ deleted (files classified and moved)
+- [x] ~9 code-specific agents in code/agents/ (10 created)
 - [x] git/workflows/ created with 3 files
-- [x] 1 create-specific neuron in create/neurons/
-- [x] Old neurons/ directory reorganized correctly
+- [x] 1 create-specific agent in create/agents/
+- [x] Old agents/ directory reorganized correctly
 
 **Skills Extraction:** ✅ COMPLETE (Group B - Pre-existing)
 - [x] Skills extracted into code/skills/ (32 skills exist)
@@ -394,16 +394,16 @@ mcp__genie__list_agents
 - [x] AGENTS.md updated with @ references (all tiers documented)
 
 **Display Transformation:** ✅ COMPLETE (Group C)
-- [x] Universal neuron display logic implemented (getSemanticDisplayMessage)
-- [x] Template-specific display logic implemented (all neuron types)
+- [x] Universal agent display logic implemented (getSemanticDisplayMessage)
+- [x] Template-specific display logic implemented (all agent types)
 - [x] Agent registration handles universal + template paths (transformDisplayPath)
-- [x] `mcp__genie__list_agents` shows all neurons correctly (25 agents)
+- [x] `mcp__genie__list_agents` shows all agents correctly (25 agents)
 
 **QA Validation:** ✅ COMPLETE (Group D)
-- [x] All ~15 universal neurons display correctly (21 tested)
-- [x] All ~9 code neurons display correctly (10 tested)
+- [x] All ~15 universal agents display correctly (21 tested)
+- [x] All ~9 code agents display correctly (10 tested)
 - [x] All 3 git workflows display correctly
-- [x] 1 create neuron displays correctly
+- [x] 1 create agent displays correctly
 - [x] Both template orchestrators display correctly
 - [x] No regression in existing features (build passes, all tests pass)
 
@@ -417,18 +417,18 @@ mcp__genie__list_agents
 ## Success Criteria
 
 **Architecture:**
-✅ Universal neurons shared across templates (no duplication)
-✅ Template-specific neurons only when behavior differs
+✅ Universal agents shared across templates (no duplication)
+✅ Template-specific agents only when behavior differs
 ✅ Clear resolution logic (template → universal fallback)
 ✅ Scalable for future templates (just add template folder)
 
 **Output:**
-✅ Universal neurons: `🧞 Starting neuron: plan`
-✅ Template neurons: `🧞 Starting code neuron: implementor`
+✅ Universal agents: `🧞 Starting agent: plan`
+✅ Template agents: `🧞 Starting code agent: implementor`
 ✅ Clear distinction visible in output
 
 **Functionality:**
-✅ Agent resolution finds universal neurons automatically
+✅ Agent resolution finds universal agents automatically
 ✅ Template overrides work correctly (wish.md)
 ✅ No regression in existing features
 

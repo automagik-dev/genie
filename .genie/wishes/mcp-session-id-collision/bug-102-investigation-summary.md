@@ -23,9 +23,9 @@
 ### What We Observed
 When running `mcp__genie__list_sessions`, the same session ID appeared multiple times:
 
-1. **genie/neurons/git** (created 2025-10-17T18:15:51.377Z)
-2. **neurons/learn** (created 2025-10-15T22:00:04.917Z)
-3. **neurons/git** (created 2025-10-15T22:02:32.691Z)
+1. **genie/agents/git** (created 2025-10-17T18:15:51.377Z)
+2. **agents/learn** (created 2025-10-15T22:00:04.917Z)
+3. **agents/git** (created 2025-10-15T22:02:32.691Z)
 
 ### Why This Was Bad
 - **Session tracking unreliable:** Can't determine which session belongs to which agent
@@ -196,7 +196,7 @@ Found 3 sessions:
 ## Testing & Validation
 
 ### Regression Test Created
-**Location:** `.genie/agents/neurons/qa/workflows/bug-102-session-collision.md`
+**Location:** `.genie/agents/qa/workflows/bug-102-session-collision.md`
 
 **Test Scenario:**
 1. Create 3 sessions with same agent type (genie)
@@ -280,7 +280,7 @@ Found 3 sessions:
 
 - **Full Wish Document:** `.genie/wishes/mcp-session-id-collision/mcp-session-id-collision-wish.md`
 - **Implementation Report:** `.genie/reports/done-implementor-rc16-bug-fixes-202510172342.md`
-- **Regression Test:** `.genie/agents/neurons/qa/workflows/bug-102-session-collision.md`
+- **Regression Test:** `.genie/agents/qa/workflows/bug-102-session-collision.md`
 - **GitHub Issue:** https://github.com/namastexlabs/automagik-genie/issues/102
 
 ---

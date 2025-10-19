@@ -15,7 +15,7 @@ This document consolidates ALL decisions from the comprehensive endpoint intervi
 - ✅ **Authentication:** Document in Discovery only (no direct implementation now)
 - ✅ **User Data Query:** Discovery-only (catalog/description, no exposure yet)
 - ✅ **Notifications:** INCLUDE NOW via existing Omni ↔ Forge integration
-- ✅ **Updating Neuron:** Centralize under /update with version files showing diffs
+- ✅ **Updating Agent:** Centralize under /update with version files showing diffs
 
 ---
 
@@ -162,7 +162,7 @@ This document consolidates ALL decisions from the comprehensive endpoint intervi
 
 ---
 
-### 4. Updating Neuron + /update Directory
+### 4. Updating Agent + /update Directory
 
 **Decision:** Centralize updates under /update with version files
 
@@ -635,7 +635,7 @@ components:
 
 **New Features Confirmed:**
 - ✅ Notifications via Omni integration
-- ✅ Updating Neuron with version files
+- ✅ Updating Agent with version files
 - ✅ Authentication documented in Discovery
 - ✅ User data query cataloged
 

@@ -18,12 +18,12 @@ validation_commands:
 ## 📊 Current Session
 
 **Date:** 2025-10-18
-**Focus:** Autonomous Architecture Evolution – Permanent neurons executing Phases 4-5
+**Focus:** Autonomous Architecture Evolution – Permanent agents executing Phases 4-5
 **Branch:** !`git branch --show-current`
 
 **⚠️ AUTONOMOUS WORK IN PROGRESS - DO NOT INTERFERE**
-- 🧠 Phase 4 Neuron (12e5da14) - genie-arch-rebrand - ACTIVE
-- 🧠 Phase 5 Neuron (25fe6e5a) - multi-template-architecture - WAITING
+- 🧠 Phase 4 Agent (12e5da14) - genie-arch-rebrand - ACTIVE
+- 🧠 Phase 5 Agent (25fe6e5a) - multi-template-architecture - WAITING
 - See SESSION-STATE.md for real-time progress
 - Base Genie orchestrating, bringing questions to Felipe when needed
 
@@ -122,7 +122,7 @@ validation_commands:
 ## 🧰 Tooling Status
 
 **MCP Integration:**
-- ✅ mcp__genie__run - Launch neuron sessions
+- ✅ mcp__genie__run - Launch agent sessions
 - ✅ mcp__genie__resume - Continue sessions
 - ✅ mcp__genie__view - Inspect output
 - ✅ mcp__genie__list_sessions - Discover sessions

@@ -41,7 +41,7 @@ Current session management is BROKEN:
   "sessions": {
     "146-session-name-architecture": {
       "name": "146-session-name-architecture",
-      "agent": "neurons/implementor",
+      "agent": "agents/implementor",
       "status": "running",
       "created": "2025-10-18T20:00:00Z"
     }

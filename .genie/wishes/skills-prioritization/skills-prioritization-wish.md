@@ -42,7 +42,7 @@
 
 ### Group B: Workflow Automation Candidates ✅ COMPLETED
 - Identify 4 candidates from skills that could automate
-- Design specifications (prompt neuron session 221956dc)
+- Design specifications (prompt agent session 221956dc)
 - Implement scripts (implementor session 7acc797f - pending permissions)
 - **Evidence:** Comprehensive JSON specs + implementations ready
 
@@ -54,7 +54,7 @@
 
 ### Group D: Routing Flowchart ✅ COMPLETED
 - Create orchestrator decision matrix
-- Define when to delegate to each neuron
+- Define when to delegate to each agent
 - Document critical routing rules (release, teaching, etc.)
 - **Evidence:** `.genie/custom/routing.md` (15KB)
 
@@ -125,7 +125,7 @@
 - ✅ Wish documents: problem, goal, groups, evidence, learnings
 - ✅ Wish enables streamlined framework process: `Plan → Wish → Forge → Review`
 
-**Next:** Learn neuron should document this as new skill: "wish-initiation-rule" or similar
+**Next:** Learn agent should document this as new skill: "wish-initiation-rule" or similar
 
 ---
 

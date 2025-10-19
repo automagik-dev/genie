@@ -18,11 +18,11 @@
 **Key Insights:**
 - Token-efficient output (Wish + PR #46) is COMPLETE and ready for review/merge
 - Natural routing skills (Wish) is COMPLETE (100/100) but not linked to issue
-- Multi-template architecture has partial overlap with token-efficient PR (neuron arch + templates/code + templates/create)
+- Multi-template architecture has partial overlap with token-efficient PR (agent arch + templates/code + templates/create)
 - Initiative-29 has 8 issues but only 3 linked wishes
 
 **Cleanup Priority:**
-1. **Merge PR #46** (token-efficient output + multi-template + neuron arch)
+1. **Merge PR #46** (token-efficient output + multi-template + agent arch)
 2. **Close completed wishes** (token-efficient, natural-routing)
 3. **Delete stale branches** (15 forge/* branches)
 4. **Link orphaned issues to wishes** (5 issues without wishes)
@@ -47,7 +47,7 @@
 - **Wish status:** Claims DRAFT but work is COMPLETE per Done Reports
 - **Evidence:** 3 Done Reports, 4 QA artifacts, 99.0-99.6% reduction achieved
 - **PR #46:** Description says "READY FOR REVIEW", addresses #42
-- **Overlap with multi-template:** PR includes neuron arch + templates/code + templates/create
+- **Overlap with multi-template:** PR includes agent arch + templates/code + templates/create
 - **Next:** Review PR, merge if validated, close #42, archive wish
 
 **natural-routing-skills:**
@@ -57,7 +57,7 @@
 - **Next:** Close wish, optionally create issue for tracking
 
 **multi-template-architecture:**
-- **Overlap with PR #46:** Neuron architecture + code/create templates already implemented
+- **Overlap with PR #46:** Agent architecture + code/create templates already implemented
 - **Wish status:** Claims 0% but significant work done in PR #46
 - **Issue #37:** Linked to initiative-29, still open
 - **Next:** Verify overlap scope, determine if wish is superseded or needs continuation
@@ -125,7 +125,7 @@
 |------|----------|-------|--------|
 | Token-efficient output | PR #46 ready, Done Reports, 99%+ reduction | #42 | CLOSE after merge |
 | Natural routing skills | 100/100 score, MCP validation, 5 completion log entries | None | CREATE issue + CLOSE wish |
-| Neuron cognitive architecture | Part of PR #46, 25 agents discovered | None | Covered by #42 |
+| Agent cognitive architecture | Part of PR #46, 25 agents discovered | None | Covered by #42 |
 | Multi-template system (code/create) | Part of PR #46, both templates deployed | #37 | Partial - verify remaining scope |
 
 ### ⚠️ Claimed Done but Issues Still Open
@@ -153,7 +153,7 @@
 ### Priority Matrix (Impact × Urgency)
 
 **High Priority (Do Now):**
-1. **Merge PR #46** — Token-efficient + multi-template + neuron arch (READY)
+1. **Merge PR #46** — Token-efficient + multi-template + agent arch (READY)
    - **Impact:** Major (99%+ token reduction + 2 templates + cognitive clarity)
    - **Urgency:** High (blocking other work)
    - **Action:** Review → Merge → Close #42 → Archive wish
@@ -330,7 +330,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
 
 ### Immediate (Today - 1 hour)
 
-1. **Review & merge PR #46** (token-efficient output + multi-template + neuron arch)
+1. **Review & merge PR #46** (token-efficient output + multi-template + agent arch)
    - Validate token reduction claims (99%+)
    - Merge to main
    - Close #42 with evidence link

@@ -10,7 +10,7 @@
 ## Completed Work
 
 ### Files Modified (1/15):
-1. ✅ .genie/agents/neurons/commit.md
+1. ✅ .genie/agents/commit.md
    - Added Framework Reference section after frontmatter
    - Removed duplicate `<task_breakdown>` block (9 lines)
    - Replaced with role-specific phase customizations
@@ -47,7 +47,7 @@ grep -l "AGENTS.md §Prompting Standards Framework" .genie/agents/**/*.md | wc -
 
 # Git diff
 git diff --stat
-# Result: .genie/agents/neurons/commit.md | 41 ++++++++++++++++++++++++++++++-----------
+# Result: .genie/agents/commit.md | 41 ++++++++++++++++++++++++++++++-----------
 #         1 file changed, 30 insertions(+), 11 deletions(-)
 ```
 
@@ -55,7 +55,7 @@ git diff --stat
 
 **Remaining agents (14):**
 
-Neurons (8):
+Agents (8):
 - git.md
 - install.md
 - learn.md

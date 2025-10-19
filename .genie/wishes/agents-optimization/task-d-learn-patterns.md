@@ -1,7 +1,7 @@
 # Task D: Extract Learn Patterns
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** D
-**Target:** `.genie/agents/genie/neurons/learn/learn.md`
+**Target:** `.genie/agents/genie/agents/learn/learn.md`
 **Lines to extract:** AGENTS.md 1260-1279
 
 ---
@@ -14,7 +14,7 @@
 **Current state:**
 - AGENTS.md: ~1857 lines (after Task C)
 - Target section contains meta-learning patterns
-- learn.md exists at `.genie/agents/genie/neurons/learn/learn.md`
+- learn.md exists at `.genie/agents/genie/agents/learn/learn.md`
 
 **Dependencies:**
 - Requires Task C complete
@@ -34,7 +34,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1260-1279
-   - Insert @ reference: `@.genie/agents/neurons/learn.md (meta-learning)`
+   - Insert @ reference: `@.genie/code/agents/learn.md (meta-learning)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -49,19 +49,19 @@
 **Pattern preservation:**
 ```bash
 # Meta-learning section
-grep -q "Meta-Learn" .genie/agents/genie/neurons/learn/learn.md && echo "✅ Meta-learning preserved"
+grep -q "Meta-Learn" .genie/agents/genie/agents/learn/learn.md && echo "✅ Meta-learning preserved"
 
 # When to use
-grep -q "When to Use" .genie/agents/genie/neurons/learn/learn.md && echo "✅ Usage patterns preserved"
+grep -q "When to Use" .genie/agents/genie/agents/learn/learn.md && echo "✅ Usage patterns preserved"
 
 # Done Report path
-grep -q "done-learn-" .genie/agents/genie/neurons/learn/learn.md && echo "✅ Evidence protocol preserved"
+grep -q "done-learn-" .genie/agents/genie/agents/learn/learn.md && echo "✅ Evidence protocol preserved"
 ```
 
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/neurons/learn.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/code/agents/learn.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "Meta-Learn & Behavioral Corrections" AGENTS.md && echo "✅ Content removed"
@@ -79,4 +79,4 @@ wc -l AGENTS.md
 ## Evidence Location
 
 **Done Report:** `.genie/wishes/agents-optimization/reports/done-implementor-task-d-<timestamp>.md`
-**Diff:** `git diff AGENTS.md .genie/agents/genie/neurons/learn/learn.md`
+**Diff:** `git diff AGENTS.md .genie/agents/genie/agents/learn/learn.md`

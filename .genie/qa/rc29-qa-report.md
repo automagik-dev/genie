@@ -42,8 +42,8 @@ Found 8 session(s):
 2. rc28-comprehensive-qa (qa, completed)
 3. rc28-github-release (git, completed)
 4. rc28-release (git/workflows/release, completed)
-5. code/neurons/git/git-2510182246 (git, completed)
-6. code/neurons/git/git-2510182243 (git, completed)
+5. code/agents/git/git-2510182246 (git, completed)
+6. code/agents/git/git-2510182243 (git, completed)
 7. forge-smoke-test (learn, completed)
 8. forge-test-120a (learn, running)
 ```
@@ -96,7 +96,7 @@ mcp__genie__run(
 
 **Result:**
 ```
-▸ Launching neurons/explore in background...
+▸ Launching agents/explore in background...
 ▸ Waiting for session ID...
 ▸ Timeout waiting for session ID
 ```
@@ -125,7 +125,7 @@ mcp__genie__resume(
 
 **Result:**
 ```
-▸ Launching neurons/explore in background...
+▸ Launching agents/explore in background...
 ▸ Waiting for session ID...
 ▸ Timeout waiting for session ID
 ```
@@ -182,16 +182,16 @@ node .genie/cli/dist/genie-cli.js list sessions
 
 | Session ID | Agent | Status | Executor |
 |------------|-------|--------|----------|
-| 7ee1b13b... | neurons/forge | failed | claude |
-| ca0d7316... | neurons/learn | stopped | claude |
-| 067d0527... | neurons/learn | stopped | claude |
-| fb218fcd... | neurons/learn | completed | claude |
-| fdb97373... | code/neurons/git/git | completed | claude |
-| a7fe4627... | code/neurons/git/git | completed | claude |
-| ece5b467... | code/neurons/git/workflows/release | completed | claude |
-| 72eb0c31... | code/neurons/git/git | completed | claude |
+| 7ee1b13b... | agents/forge | failed | claude |
+| ca0d7316... | agents/learn | stopped | claude |
+| 067d0527... | agents/learn | stopped | claude |
+| fb218fcd... | agents/learn | completed | claude |
+| fdb97373... | code/agents/git/git | completed | claude |
+| a7fe4627... | code/agents/git/git | completed | claude |
+| ece5b467... | code/agents/git/workflows/release | completed | claude |
+| 72eb0c31... | code/agents/git/git | completed | claude |
 | d4736d9f... | code/qa | completed | claude |
-| c0ac8cc9... | neurons/explore | failed | claude |
+| c0ac8cc9... | agents/explore | failed | claude |
 ```
 
 **Status:** ✅ PASS

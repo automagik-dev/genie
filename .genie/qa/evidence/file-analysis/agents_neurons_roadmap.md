@@ -1,4 +1,4 @@
-# File Analysis: .genie/agents/neurons/roadmap.md
+# File Analysis: .genie/agents/roadmap.md
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 

@@ -86,8 +86,8 @@ npx automagik-genie init create
 #### ✅ List Agents
 **Command:** `mcp__genie__list_agents`
 **Result:** Returns 26 agents correctly categorized:
-- **neurons:** 11 agents (commit, git, implementor, install, learn, orchestrator, polish, prompt, release, roadmap, tests)
-- **neurons/modes:** 10 modes (analyze, audit, challenge, consensus, debug, docgen, explore, refactor, tracer)
+- **agents:** 11 agents (commit, git, implementor, install, learn, orchestrator, polish, prompt, release, roadmap, tests)
+- **agents/modes:** 10 modes (analyze, audit, challenge, consensus, debug, docgen, explore, refactor, tracer)
 - **workflows:** 5 workflows (forge, plan, qa, review, vibe, wish)
 
 **Version Display:** ✅ "Genie MCP v2.4.0-rc.4" (self-awareness working)

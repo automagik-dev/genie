@@ -31,11 +31,11 @@
 **Recommendation:** Add @ refs
 
 **Notes:**
-- Missing @: .genie/custom/neurons/modes/analyze.md
-- Missing @: .genie/agents/neurons/orchestrator.md
-- Missing @: .genie/agents/neurons/implementor.md
-- Missing @: .genie/agents/neurons/tests.md
-- Missing @: .genie/agents/neurons/polish.md
+- Missing @: .genie/custom/agents/modes/analyze.md
+- Missing @: .genie/agents/orchestrator.md
+- Missing @: .genie/agents/implementor.md
+- Missing @: .genie/agents/tests.md
+- Missing @: .genie/agents/polish.md
 
 ### 4. Knowledge Graph Position: INFO
 

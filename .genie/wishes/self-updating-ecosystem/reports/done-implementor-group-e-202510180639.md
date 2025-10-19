@@ -79,7 +79,7 @@ git diff --cached --stat
 - `.genie/scripts/inject-universal-headers.js` (new file, 4.2KB)
 
 **Headers injected in 350 files across:**
-- `.genie/agents/` (all neurons, workflows, skills)
+- `.genie/agents/` (all agents, workflows, skills)
 - `.genie/docs/` (architecture documentation)
 - `.genie/product/` (mission, roadmap, tech-stack)
 - `.genie/qa/` (checklist, evidence, scenarios)

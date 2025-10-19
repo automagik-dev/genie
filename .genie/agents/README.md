@@ -12,84 +12,84 @@ Genie uses a layered architecture for extensibility without forking:
    - Immutable - no custom overrides loaded
    - Note: `plan` absorbed into `wish` workflow (multi-step dance)
 
-2. **Neuron Agents (`neurons/`)** – Specialized agents shipped with framework
+2. **Agents (`agents/`)** – Specialized agents shipped with framework
    - **Delivery agents** (6): `implementor.md`, `tests.md`, `polish.md`, `review.md`, `git.md`, `release.md`
    - **Infrastructure agents** (4): `commit.md`, `install.md`, `learn.md`, `prompt.md`
-   - **Strategic modes** (`neurons/modes/`, 9): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `audit.md`, `docgen.md`, `tracer.md`, `explore.md`
-   - **Orchestrator** (`neurons/orchestrator.md`): Multi-mode strategic thinking interface
+   - **Strategic modes** (`agents/modes/`, 9): `analyze.md`, `debug.md`, `challenge.md`, `consensus.md`, `refactor.md`, `audit.md`, `docgen.md`, `tracer.md`, `explore.md`
+   - **Orchestrator** (`agents/orchestrator.md`): Multi-mode strategic thinking interface
    - Immutable in distribution, but can be extended via custom layer
 
 3. **Custom Extensions (`../custom/`)** – Project-specific additions
-   - Auto-load alongside neuron agents when invoked
-   - Example: `.genie/custom/neurons/modes/analyze.md` extends `agents/neurons/modes/analyze.md`
+   - Auto-load alongside agents when invoked
+   - Example: `.genie/custom/agents/modes/analyze.md` extends `agents/modes/analyze.md`
    - Keeps core prompts pristine while allowing per-project customization
 
 4. **QA (`qa/`)** – Framework validation agents
 
 > **Note:** `learn` is the unified meta-learning agent; the legacy `self-learn` prompt has been retired.
 
-### Neuron Delegation Hierarchy
+### Agent Invocation Hierarchy
 
 **Architecture principle:** Folder structure = Delegation hierarchy = Enforcement boundary
 
 **Three-tier model:**
 
 **Tier 1: Base Genie (main conversation)**
-- **Folder:** Root level (`.genie/agents/neurons/`)
-- **Can delegate to:** Neurons and workflows only
+- **Folder:** Root level (`.genie/agents/`)
+- **Can delegate to:** Agents and workflows only
 - **Cannot delegate to:** Self-delegation
 - **Agents:** wish, forge, review, vibe (orchestrator workflows)
 
-**Tier 2: Neurons (persistent subagent sessions)**
-- **Folder:** `.genie/agents/neurons/[neuron-name]/`
+**Tier 2: Agents (persistent subagent sessions)**
+- **Folder:** `.genie/agents/[agent-name]/`
 - **Can delegate to:** Their OWN workflows only (scoped by folder)
-- **Cannot delegate to:** Other neurons, cross-delegation forbidden
+- **Cannot delegate to:** Other agents, cross-delegation forbidden
 - **Examples:** git (with git/issue, git/pr, git/report workflows), implementor, tests, orchestrator, release, learn
 
-**Tier 3: Workflows (neuron-scoped execution)**
-- **Folder:** `.genie/agents/neurons/[neuron-name]/*.md`
+**Tier 3: Workflows (agent-scoped execution)**
+- **Folder:** `.genie/agents/[agent-name]/*.md`
 - **Can delegate to:** NOTHING (execute directly with Edit/Write/Bash)
 - **Examples:** git/issue.md, git/pr.md, git/report.md
 
 **Current folder structure:**
 ```
 .genie/agents/
-├── neurons/                # Tier 1 & 2: Workflows + Neurons
+├── agents/                # Tier 1 & 2: Workflows + Agents
 │   ├── wish.md                  # Tier 1: Wish orchestrator (multi-step dance)
 │   ├── forge.md                 # Tier 1: Forge orchestrator
 │   ├── review.md                # Tier 1: Review orchestrator
 │   │
-│   ├── code/neurons/            # Tier 2: Code template neurons
+│   ├── code/agents/            # Tier 2: Code template agents
 │   │   ├── wish/                     # Wish dance steps
 │   │   │   ├── discovery.md              # Step 1: Discovery
 │   │   │   ├── alignment.md              # Step 2: Alignment
 │   │   │   ├── requirements.md           # Step 3: Requirements
 │   │   │   └── blueprint.md              # Step 4: Blueprint
 │   │   │
-│   ├── git/                     # Git neuron + workflows
-│   │   ├── git.md                    # Core neuron (can delegate to children)
+│   ├── git/                     # Git agent + workflows
+│   │   ├── git.md                    # Core agent (can delegate to children)
 │   │   ├── issue.md                  # Workflow: GitHub issue ops (terminal)
 │   │   ├── pr.md                     # Workflow: PR creation (terminal)
 │   │   └── report.md                 # Workflow: Issue reporting (terminal)
 │   │
-│   ├── implementor/             # Implementor neuron
+│   ├── implementor/             # Implementor agent
 │   │   └── implementor.md            # No workflows yet (terminal)
 │   │
-│   ├── orchestrator/            # Orchestrator neuron + modes
+│   ├── orchestrator/            # Orchestrator agent + modes
 │   │   ├── orchestrator.md           # Core wrapper (routes to modes)
 │   │   └── modes/                    # 18 thinking modes (terminal)
 │   │       ├── analyze.md
 │   │       ├── challenge.md
 │   │       └── ...
 │   │
-│   └── ... (other neurons)
+│   └── ... (other agents)
 ```
 
 **Application enforcement:**
 - `mcp__genie__list_agents` scoped per caller context
-- Git neuron sees only: git/issue, git/pr, git/report
-- Implementor neuron sees only: implementor (no workflows)
-- Base Genie sees only: top-level neurons
+- Git agent sees only: git/issue, git/pr, git/report
+- Implementor agent sees only: implementor (no workflows)
+- Base Genie sees only: top-level agents
 - Prevents self-delegation and cross-delegation at system level
 
 **See @AGENTS.md §Architectural Foundations for complete details.**
@@ -99,14 +99,14 @@ Genie uses a layered architecture for extensibility without forking:
 When an agent is invoked, the system loads:
 ```
 1. CLAUDE.md → AGENTS.md (base instructions, loaded ONCE)
-2. Neuron agent prompt
-   - Delivery/infrastructure: .genie/agents/neurons/<agent>.md
-   - Strategic modes: .genie/agents/neurons/modes/<mode>.md
-   - Orchestrator: .genie/agents/neurons/orchestrator.md
-3. Custom extensions (.genie/custom/neurons/<agent>.md) - if exists
+2. Agent agent prompt
+   - Delivery/infrastructure: .genie/agents/<agent>.md
+   - Strategic modes: .genie/agents/modes/<mode>.md
+   - Orchestrator: .genie/agents/orchestrator.md
+3. Custom extensions (.genie/custom/agents/<agent>.md) - if exists
 ```
 
-**Critical:** Neuron agents do NOT reload @AGENTS.md (already loaded at outer level via CLAUDE.md).
+**Critical:** Agent agents do NOT reload @AGENTS.md (already loaded at outer level via CLAUDE.md).
 
 This allows projects to add domain-specific context, preferred commands, or evidence paths without modifying shipped prompts.
 
@@ -352,40 +352,40 @@ mcp__genie__view with sessionId="<session-id>" and full=true
 Current agent routing (see AGENTS.md for updates):
 
 **Delivery Specialists:**
-- `implementor` → `.genie/agents/neurons/implementor.md`
-- `tests` → `.genie/agents/neurons/tests.md`
-- `polish` → `.genie/agents/neurons/polish.md`
-- `review` → `.genie/agents/neurons/review.md`
+- `implementor` → `.genie/agents/implementor.md`
+- `tests` → `.genie/agents/tests.md`
+- `polish` → `.genie/agents/polish.md`
+- `review` → `.genie/agents/review.md`
 
 **Infrastructure Specialists:**
-- `git` → `.genie/agents/neurons/git.md`
-- `release` → `.genie/agents/neurons/release.md`
-- `commit` → `.genie/agents/neurons/commit.md`
-- `install` → `.genie/agents/neurons/install.md`
-- `learn` → `.genie/agents/neurons/learn.md`
+- `git` → `.genie/agents/git.md`
+- `release` → `.genie/agents/release.md`
+- `commit` → `.genie/agents/commit.md`
+- `install` → `.genie/agents/install.md`
+- `learn` → `.genie/agents/learn.md`
 
 **Strategic Modes (via orchestrator):**
-- `analyze` → `.genie/agents/neurons/modes/analyze.md`
-- `debug` → `.genie/agents/neurons/modes/debug.md`
-- `audit` → `.genie/agents/neurons/modes/audit.md`
-- `refactor` → `.genie/agents/neurons/modes/refactor.md`
-- `challenge` → `.genie/agents/neurons/modes/challenge.md`
-- `consensus` → `.genie/agents/neurons/modes/consensus.md`
-- `explore` → `.genie/agents/neurons/modes/explore.md`
-- `docgen` → `.genie/agents/neurons/modes/docgen.md`
-- `tracer` → `.genie/agents/neurons/modes/tracer.md`
+- `analyze` → `.genie/agents/modes/analyze.md`
+- `debug` → `.genie/agents/modes/debug.md`
+- `audit` → `.genie/agents/modes/audit.md`
+- `refactor` → `.genie/agents/modes/refactor.md`
+- `challenge` → `.genie/agents/modes/challenge.md`
+- `consensus` → `.genie/agents/modes/consensus.md`
+- `explore` → `.genie/agents/modes/explore.md`
+- `docgen` → `.genie/agents/modes/docgen.md`
+- `tracer` → `.genie/agents/modes/tracer.md`
 
 **Orchestrator:**
-- `orchestrator` → `.genie/agents/neurons/orchestrator.md`
+- `orchestrator` → `.genie/agents/orchestrator.md`
 
 **Workflows:**
-- `wish` → `.genie/agents/neurons/wish.md` (orchestrator for wish dance)
-  - `discovery` → `.genie/agents/code/neurons/wish/discovery.md`
-  - `alignment` → `.genie/agents/code/neurons/wish/alignment.md`
-  - `requirements` → `.genie/agents/code/neurons/wish/requirements.md`
-  - `blueprint` → `.genie/agents/code/neurons/wish/blueprint.md`
-- `forge` → `.genie/agents/neurons/forge.md`
-- `review` → `.genie/agents/neurons/review.md`
+- `wish` → `.genie/agents/wish.md` (orchestrator for wish dance)
+  - `discovery` → `.genie/agents/code/agents/wish/discovery.md`
+  - `alignment` → `.genie/agents/code/agents/wish/alignment.md`
+  - `requirements` → `.genie/agents/code/agents/wish/requirements.md`
+  - `blueprint` → `.genie/agents/code/agents/wish/blueprint.md`
+- `forge` → `.genie/agents/forge.md`
+- `review` → `.genie/agents/review.md`
 - `vibe` → `.genie/agents/workflows/vibe.md`
 - `genie-qa` → `.genie/agents/workflows/genie-qa.md`
 

@@ -227,7 +227,7 @@ node .genie/scripts/commit-advisory.js
 
 ## Architecture
 
-**Workflow:** `.genie/agents/neurons/git/commit-advisory.md`
+**Workflow:** `.genie/agents/git/commit-advisory.md`
 **Implementation:** `.genie/scripts/commit-advisory.js`
 **Hook Integration:** `.git/hooks/pre-push`
 

@@ -16,7 +16,7 @@ Built complete infrastructure for **traceability-enforced git workflows**:
 - Comprehensive documentation (4 guides)
 
 **What was delivered:**
-1. ✅ Commit advisory workflow (`neurons/git/commit-advisory.md`)
+1. ✅ Commit advisory workflow (`agents/git/commit-advisory.md`)
 2. ✅ Direct Node validation script (`commit-advisory.js`)
 3. ✅ Genie output parser (`genie-workflow-parser.js`)
 4. ✅ Pre-commit hook integration
@@ -110,14 +110,14 @@ timeout 10 node .genie/scripts/validate-cross-references.js
 **Status:** ✅ PASS (verified in commit)
 **Details:**
 - Pre-commit hook successfully spawned Genie workflow
-- Output: `"ℹ️  Workflow neurons/git/commit-advisory started (runs in background)"`
+- Output: `"ℹ️  Workflow agents/git/commit-advisory started (runs in background)"`
 - Non-blocking behavior confirmed
 - Workflow ran in parallel with commit
 
 **Evidence from actual commit:**
 ```
-Running Genie workflow: neurons/git/commit-advisory...
-ℹ️  Workflow neurons/git/commit-advisory started (runs in background)
+Running Genie workflow: agents/git/commit-advisory...
+ℹ️  Workflow agents/git/commit-advisory started (runs in background)
 
 ✅ All pre-commit validations passed
 [main 1e63bc2] feat: genie git hook integration with output extraction

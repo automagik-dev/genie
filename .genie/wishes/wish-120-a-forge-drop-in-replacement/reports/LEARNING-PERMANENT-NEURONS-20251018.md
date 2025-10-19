@@ -1,4 +1,4 @@
-# Learning: Permanent Neuron Architecture (<<< Pattern)
+# Learning: Permanent Agent Architecture (<<< Pattern)
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 12:10 UTC
 **Status:** In Progress - Discovering Stakeholder naming convention
@@ -8,13 +8,13 @@
 
 ## Core Discoveries
 
-### 1. Parallel Neurons via Forge Task Attempts
+### 1. Parallel Agents via Forge Task Attempts
 ✅ **Each Forge task can spawn multiple independent attempts**
-- Each attempt = one neuron session (independent, warm, reusable)
+- Each attempt = one agent session (independent, warm, reusable)
 - No collision = filesystem safety (git worktrees)
 - Example: Git task → Attempt #1 (warm), Attempt #2 (executing), Attempt #3 (ready)
 
-### 2. Permanent Neuron Naming Pattern: `<<<`
+### 2. Permanent Agent Naming Pattern: `<<<`
 ✅ **Naming Convention:** `{NeuronType} <<<`
 - `Git <<<` → Git operations (we just used this!)
 - `Learn <<<` → Framework learning (needs renaming from old `learn`)
@@ -32,12 +32,12 @@
 GitHub Issue #120
   ↓ (created by Git <<<)
 Forge Task "Issue #120 - Replace Genie executor with Forge"
-  ↓ (managed by Stakeholder <<< neuron)
+  ↓ (managed by Stakeholder <<< agent)
 Investigation via ForgeClient (forge.ts)
   ↓
 Deep analysis: Forge capabilities vs Genie patterns
   ↓
-Implementation tasks (Implementation <<< neuron)
+Implementation tasks (Implementation <<< agent)
 ```
 
 ### 4. Evidence from Working System
@@ -49,14 +49,14 @@ Implementation tasks (Implementation <<< neuron)
 
 ---
 
-## Standardization: Stakeholder Neuron Naming
+## Standardization: Stakeholder Agent Naming
 
 ✅ **DECIDED: Forge Task Naming Standard = `Issue-{number} <<<`**
 
 **Pattern:**
 - GitHub Issue: `#120`
 - Forge Task: `Issue-120 - {short description}`
-- Neuron: `Issue-120 <<<`
+- Agent: `Issue-120 <<<`
 
 **Why this pattern:**
 - Immediate GitHub linkage (issue number in name)
@@ -88,7 +88,7 @@ Layer 2: Management (Stakeholder <<<)
   └─ Creates investigation report
 
 Layer 3: Implementation (Issue-Specific <<<)
-  ├─ Executor neuron (from Stakeholder assignment)
+  ├─ Executor agent (from Stakeholder assignment)
   ├─ Performs technical work
   ├─ Uses Forge task worktree
   └─ Returns PR to main
@@ -116,7 +116,7 @@ Current execution:
 - **Process:** `2b89a13f-a431-427d-9958-51d153e1b77d`
 - **Status:** Running
 - **Expected:** Issue #120 complete, return GitHub URL
-- **Next:** Create Stakeholder <<< neuron for investigation phase
+- **Next:** Create Stakeholder <<< agent for investigation phase
 
 ---
 

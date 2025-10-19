@@ -12,7 +12,7 @@
 
 ## 🎯 Mission Statement
 
-**Deep integration features requiring careful design: Template unification, advanced inspection/audit, migration & updating neuron, and safe SSE automations.**
+**Deep integration features requiring careful design: Template unification, advanced inspection/audit, migration & updating agent, and safe SSE automations.**
 
 **Philosophy:** Production-ready adoption kits for downstream repos. These are complex features that require architectural changes but provide very high value for power users and downstream adopters.
 
@@ -37,7 +37,7 @@
 **Manual Task Management:**
 - Cannot rename tasks after creation
 - Cannot delete failed/unwanted tasks
-- No visibility into neuron state tree (parent/child relationships)
+- No visibility into agent state tree (parent/child relationships)
 - **User pain:** "How do I clean up my tasks?"
 
 **No Version Migration System:**
@@ -67,7 +67,7 @@
 **Task Management:**
 - ✅ `updateTask(id, title, description, status)` - Update task metadata
 - ✅ `deleteTask(id)` - Delete task (with safety checks)
-- ✅ `getTaskAttemptChildren(id)` - State tree navigation (neuron coordination)
+- ✅ `getTaskAttemptChildren(id)` - State tree navigation (agent coordination)
 
 **Migration Support:**
 - Forge backend handles migrations internally
@@ -140,7 +140,7 @@ genie review <id> --compare HEAD  # Compare to HEAD, main, or tag
 genie task update <id> --title "New title"
 genie task update <id> --description "New desc"
 genie task delete <id>
-genie task children <id>   # Show child attempts (neuron tree)
+genie task children <id>   # Show child attempts (agent tree)
 ```
 
 **Endpoints Used:**
@@ -152,7 +152,7 @@ genie task children <id>   # Show child attempts (neuron tree)
 
 ---
 
-**4. Migration & Updating Neuron**
+**4. Migration & Updating Agent**
 
 **User Commands (NEW):**
 ```bash
@@ -163,7 +163,7 @@ genie rollback <version>   # Rollback to previous version
 
 **Architecture:**
 - `/update` directory with version files (diff-based)
-- Updating neuron (specialized agent for migration)
+- Updating agent (specialized agent for migration)
 - Migration scripts (data transformation, config updates)
 - Rollback capability (restore previous state)
 
@@ -424,7 +424,7 @@ automations:
 10. **Implement task children (state tree)**
     - Add `genie task children <id>` command
     - Call `getTaskAttemptChildren(id)`
-    - Display neuron state tree (parent → children)
+    - Display agent state tree (parent → children)
     - Visualize tree structure (ASCII art or table)
 
 ---
@@ -444,8 +444,8 @@ automations:
     - Include: config changes, file moves, schema updates
     - Validation logic (check version compatibility)
 
-13. **Implement updating neuron**
-    - Create `.genie/agents/neurons/updating/updating.md`
+13. **Implement updating agent**
+    - Create `.genie/agents/updating/updating.md`
     - Specialized agent for migration execution
     - Handles: version check, apply migration, rollback
     - Safety: dry-run mode, backup before migration
@@ -454,7 +454,7 @@ automations:
     - `genie update check` - Check for updates
     - `genie update apply` - Apply migration (with dry-run option)
     - `genie rollback <version>` - Rollback to previous version
-    - Integrate with updating neuron
+    - Integrate with updating agent
 
 15. **Document rollback plan**
     - `.genie/docs/version-migration.md`
@@ -616,7 +616,7 @@ automations:
 
 **How This Wish Aligns:**
 - ✅ **Migration tools:** Upgrade notes, migration diffs, rollback guidance
-- ✅ **Advanced features:** Template system, updating neuron, automation
+- ✅ **Advanced features:** Template system, updating agent, automation
 - ✅ **Production-ready:** Adoption kits for downstream repos
 
 **Roadmap Item (proposed):**
@@ -630,7 +630,7 @@ automations:
 
 **Deliverables for Roadmap:**
 - Template unification (or decision document)
-- Migration system (version files, updating neuron, rollback)
+- Migration system (version files, updating agent, rollback)
 - Advanced inspection tools (diff, commits, compare)
 - SSE automation engine (safe auto-actions)
 - Adoption kits (upgrade guides, migration docs, examples)

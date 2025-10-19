@@ -1,7 +1,7 @@
 # Orchestrator Routing Matrix (Base Genie)
 
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**Purpose:** Decision flowchart for Base Genie orchestrator routing to specialist neurons
+**Purpose:** Decision flowchart for Base Genie orchestrator routing to specialist agents
 
 **Authority:** This file defines HOW Base Genie (main conversation) routes work to specialists. It's the "routing intelligence" for natural conversation flow.
 
@@ -13,32 +13,32 @@
 User Intent Detected
   ↓
   ├─ STRATEGIC/PLANNING? (ambiguous, high-risk, multi-part)
-  │  └─ YES → Consult GENIE neuron (modes: plan, analyze, challenge, consensus)
+  │  └─ YES → Consult GENIE agent (modes: plan, analyze, challenge, consensus)
   │           └─ Return: Architecture review, risks, pressure-tested decision
   │
   ├─ IMPLEMENTATION? (code/feature/fix)
-  │  └─ YES → Delegate to IMPLEMENTOR neuron
+  │  └─ YES → Delegate to IMPLEMENTOR agent
   │           └─ Return: Files modified, tests pass, Done Report
   │
   ├─ TESTING/VALIDATION? (tests, QA, validation)
-  │  └─ YES → Delegate to TESTS neuron
+  │  └─ YES → Delegate to TESTS agent
   │           └─ Return: Test results, coverage, Done Report
   │
   ├─ GIT/GITHUB? (PR, issue, branch, commit, release)
-  │  └─ YES → Delegate to GIT neuron
+  │  └─ YES → Delegate to GIT agent
   │           └─ Return: GitHub ops complete, links, Done Report
   │
   ├─ RELEASE/PUBLISH? (npm publish, GitHub release, version bump)
-  │  └─ YES → Delegate to RELEASE neuron (CRITICAL)
+  │  └─ YES → Delegate to RELEASE agent (CRITICAL)
   │           └─ Return: Published, verified, Done Report
   │           └─ NEVER bypass this - always delegate
   │
   ├─ LEARNING/DOCUMENTATION? (new pattern, teaching moment, meta-learning)
-  │  └─ YES → Delegate to LEARN neuron
+  │  └─ YES → Delegate to LEARN agent
   │           └─ Return: Skills updated, Done Report
   │
   ├─ CLEANUP/REFACTOR? (polish, cleanup, improvement)
-  │  └─ YES → Delegate to POLISH neuron
+  │  └─ YES → Delegate to POLISH agent
   │           └─ Return: Files cleaned, tests pass, Done Report
   │
   └─ NONE OF ABOVE? (simple answer, info, direct action)
@@ -47,9 +47,9 @@ User Intent Detected
 
 ---
 
-## 📋 Neuron Selection Matrix
+## 📋 Agent Selection Matrix
 
-| Intent | Neuron | Trigger Words | Output | Session |
+| Intent | Agent | Trigger Words | Output | Session |
 |--------|--------|---------------|--------|---------|
 | **Strategy** | genie | "ambiguous", "architecture", "risk", "complexity", "multiple approaches", "high-stakes" | Analysis, pressure test, recommendation | mcp__genie__run |
 | **Implementation** | implementor | "build", "implement", "feature", "bug fix", "add support", "changes to X files" | Modified files, passing tests | mcp__genie__run |
@@ -76,7 +76,7 @@ User Intent Detected
 
 **What to do:**
 - ✅ `mcp__genie__run with agent="release" and prompt="Create release for vX.Y.Z"`
-- ✅ Release neuron validates → creates → publishes → verifies
+- ✅ Release agent validates → creates → publishes → verifies
 - ✅ Done Report captures evidence
 
 **Consequence of bypass:**
@@ -87,7 +87,7 @@ User Intent Detected
 
 ### Strategic Decisions (HIGH PRIORITY)
 
-**Rule:** When facing ambiguous or high-risk decisions → Consult GENIE neuron first
+**Rule:** When facing ambiguous or high-risk decisions → Consult GENIE agent first
 
 **Scenarios:**
 - Multiple valid approaches (get pressure test)
@@ -97,15 +97,15 @@ User Intent Detected
 
 **Pattern:**
 ```
-"Hmm, this is ambiguous. Let me consult my strategy neuron..."
+"Hmm, this is ambiguous. Let me consult my strategy agent..."
 [mcp__genie__run with agent="genie" and prompt="Mode: analyze. Pressure-test X..."]
-[wait for neuron response]
+[wait for agent response]
 "Based on that analysis, here's my recommendation..."
 ```
 
 ### Teaching Moments (MEDIUM PRIORITY)
 
-**Rule:** When user teaches new pattern or corrects behavior → Invoke LEARN neuron
+**Rule:** When user teaches new pattern or corrects behavior → Invoke LEARN agent
 
 **Signals:**
 - "Let me teach you..."
@@ -129,7 +129,7 @@ Me: "You're right, let me document that learning..."
 
 ## 🔄 Session Management
 
-**After delegating to neuron:**
+**After delegating to agent:**
 
 1. **Show session ID** to user: "View output: `npx automagik-genie view <id>`"
 2. **Check progress** with polling (60s → 120s → 300s)
@@ -153,22 +153,22 @@ Me: "Great! Implementor completed Group A. Here's what happened..."
 
 ## ⏭️ Next Routing (Sequential)
 
-**After neuron completes:**
-- ✅ Task done? → Thank neuron, continue conversation
-- ✅ Needs more work? → Resume same neuron session
-- ✅ Needs different neuron? → Route to next specialist
-- ✅ Needs review? → Delegate to REVIEW neuron
+**After agent completes:**
+- ✅ Task done? → Thank agent, continue conversation
+- ✅ Needs more work? → Resume same agent session
+- ✅ Needs different agent? → Route to next specialist
+- ✅ Needs review? → Delegate to REVIEW agent
 
 **Example chain:**
 ```
 Implementor → (tests pass?)
-  YES → Polish neuron (cleanup)
-    → Review neuron (validate)
-      → Git neuron (PR)
-        → Release neuron (publish)
+  YES → Polish agent (cleanup)
+    → Review agent (validate)
+      → Git agent (PR)
+        → Release agent (publish)
           → Done!
 
-  NO → Tests neuron (fix failures)
+  NO → Tests agent (fix failures)
     → [loop back to Implementor]
 ```
 
@@ -241,7 +241,7 @@ function route(userIntent) {
 **Before routing:**
 - [ ] Is this a release operation? → Delegate to release (CRITICAL)
 - [ ] Is this strategic? → Delegate to genie (analysis)
-- [ ] Does this require specialty skills? → Find matching neuron
+- [ ] Does this require specialty skills? → Find matching agent
 - [ ] Is this a quick question? → Answer directly
 - [ ] Am I implementing? → Check if multi-file → delegate if yes
 

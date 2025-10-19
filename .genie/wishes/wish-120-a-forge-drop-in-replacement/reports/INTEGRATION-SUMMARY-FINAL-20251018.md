@@ -94,7 +94,7 @@
   - 5 HIGH priority (Git integration - Group A)
   - 4 MEDIUM priority (inspection/audit - Group B)
   - 3 MEDIUM priority (advanced management - Group C)
-  - 2 NEW capabilities (notifications, updating neuron - Groups C-D)
+  - 2 NEW capabilities (notifications, updating agent - Groups C-D)
 
 ---
 
@@ -104,7 +104,7 @@
 - **Group A:** Core + Git integration (16 tasks, 2-3 weeks) [+9 tasks]
 - **Group B:** Streaming + inspection (8 tasks, 1-2 weeks) [+4 tasks]
 - **Group C:** Advanced + notifications (7 tasks, 1-2 weeks) [+4 tasks]
-- **Group D:** Migration + updating neuron (10 tasks, 1-2 weeks) [+4 tasks]
+- **Group D:** Migration + updating agent (10 tasks, 1-2 weeks) [+4 tasks]
 - **Total:** 41 tasks, 6-8 weeks (+21 tasks, +2-4 weeks)
 
 **Expansion Summary:**
@@ -139,7 +139,7 @@
 **Rationale:**
 - All 9 marked as **YES (HIGH PRIORITY)** in decision matrix
 - Git operations enable zero-click workflow
-- State tree sync critical for neuron coordination
+- State tree sync critical for agent coordination
 - Health check prevents invalid operations
 
 **Impact:** 2-3 weeks (from 1 week), complex Git integration
@@ -200,7 +200,7 @@
 
 ---
 
-### Group D: Migration & Testing + Updating Neuron [+4 tasks]
+### Group D: Migration & Testing + Updating Agent [+4 tasks]
 
 **Original (6 tasks):**
 1. Migration script (sessions.json → Forge)
@@ -213,17 +213,17 @@
 **NEW (4 tasks):**
 7. Create `/update` directory structure
 8. Implement version files (diff-based)
-9. Create updating neuron (version comparisons + migrations)
+9. Create updating agent (version comparisons + migrations)
 10. Document update workflow
 
-**Updating Neuron Structure:**
+**Updating Agent Structure:**
 ```
 .genie/
 ├── update/
 │   ├── version-2.3.0-to-2.4.0.md    # What changed
 │   ├── migration-scripts/
 │   │   └── 2.3.0-to-2.4.0.ts
-│   └── update-neuron.md
+│   └── update-agent.md
 ```
 
 **Rationale:**
@@ -453,7 +453,7 @@
 - Decision matrix → implementation mapping
 - Multi-stage investigation (POC → Integration → Wish)
 
-**Delegate to Learn Neuron:**
+**Delegate to Learn Agent:**
 - Update learn task (#077e3e89) with multi-stage investigation pattern
 - Document decision matrix integration workflow
 - Capture Forge ⇄ Genie integration patterns

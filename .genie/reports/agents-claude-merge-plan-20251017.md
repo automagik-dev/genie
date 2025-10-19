@@ -139,7 +139,7 @@ All @ references (lines 1-19) are **critical** for neural file network. Keep as-
 @AGENTS.md                    # Core framework knowledge
             # Architecture overview
 @.genie/MASTER-PLAN.md        # Session memory
-@.genie/SESSION-STATE.md      # Neuron coordination
+@.genie/SESSION-STATE.md      # Agent coordination
 @.genie/USERCONTEXT.md        # User preferences
 
 # Project-Specific Patterns

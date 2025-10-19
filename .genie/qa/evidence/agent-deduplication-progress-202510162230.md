@@ -45,7 +45,7 @@ Customize phases below for [AGENT_ROLE].
 
 ## Remaining Agents (11)
 
-**Neurons (6):**
+**Agents (6):**
 - git.md (has 2 `<task_breakdown>` sections)
 - learn.md
 - prompt.md

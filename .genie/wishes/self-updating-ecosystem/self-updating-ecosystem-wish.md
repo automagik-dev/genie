@@ -20,7 +20,7 @@
   - validate-token-count.js with tiktoken integration (23,622 token baseline)
   - update-neural-graph.js generating hierarchy + token distribution
 - ✅ Group D: Agent registry auto-generation operational
-  - Scans 4 categories: 16 Universal, 15 Code, 1 Create neurons, 32 Skills
+  - Scans 4 categories: 16 Universal, 15 Code, 1 Create agents, 32 Skills
 - ✅ Group K: Documentation complete (README.md comprehensive section)
 - ✅ Dependencies: js-tiktoken installed for accurate GPT-4 token counting
 - ✅ End-to-end testing: All validators working, auto-updates functional
@@ -156,7 +156,7 @@
 
 **Agent/Skill registry:**
 - ✅ Auto-generated from folder structure (single source of truth)
-- ✅ Always accurate (Universal neurons, Code neurons, Create neurons)
+- ✅ Always accurate (Universal agents, Code agents, Create agents)
 - ✅ Hierarchy-aware MCP list (Master → all, Code → code-specific + universal)
 
 **Cross-reference validation:**
@@ -233,9 +233,9 @@
 - Stage AGENTS.md
 
 **Script 5: update-agent-registry.js**
-- Scan `.genie/agents/neurons/` → Universal neurons (list)
-- Scan `.genie/agents/code/neurons/` → Code neurons (list)
-- Scan `.genie/agents/create/neurons/` → Create neurons (list)
+- Scan `.genie/agents/` → Universal agents (list)
+- Scan `.genie/agents/code/agents/` → Code agents (list)
+- Scan `.genie/agents/create/agents/` → Create agents (list)
 - Scan `.genie/agents/code/skills/` → Code skills (list)
 - Generate registry section with counts
 - Inject into AGENTS.md at `## Agent Registry (Auto-Generated)` section
@@ -295,7 +295,7 @@
 **Script 14: validate-routing-matrix.py**
 - Parse routing.md
 - Check all agent names exist
-- Validate hierarchy (Master → neurons, neuron → workflows)
+- Validate hierarchy (Master → agents, agent → workflows)
 
 ### Component 3: Hierarchy-Aware MCP List
 
@@ -306,8 +306,8 @@
 
 **Context detection:**
 - Caller = Master Genie → return ALL agents
-- Caller = code/code.md → return code neurons + universal neurons
-- Caller = code/neurons/git/git.md → return git workflows only
+- Caller = code/code.md → return code agents + universal agents
+- Caller = code/agents/git/git.md → return git workflows only
 - Caller = workflow → return NOTHING (execute directly)
 
 **Implementation:** Detect caller via execution context (cwd, agent name), filter list accordingly
@@ -322,16 +322,16 @@
 **Hierarchy expansion:**
 ```
 AGENTS.md (baseline, 25KB)
-├─ neurons/ (universal, 15 files × 2KB = 30KB)
-├─ code/neurons/ (8 files × 2KB = 16KB)
+├─ agents/ (universal, 15 files × 2KB = 30KB)
+├─ code/agents/ (8 files × 2KB = 16KB)
 │  └─ git/ (3 workflows × 1.5KB = 4.5KB)
-├─ create/neurons/ (1 file × 2KB = 2KB)
+├─ create/agents/ (1 file × 2KB = 2KB)
 └─ code/skills/ (7 files × 1.5KB = 10.5KB)
 
 Total hierarchy: ~88KB
 Master Genie loads: ~88KB (full context)
 Code Genie loads: ~72KB (code + universal + AGENTS.md)
-Git neuron loads: ~45KB (git + AGENTS.md + code.md)
+Git agent loads: ~45KB (git + AGENTS.md + code.md)
 ```
 
 **Neural graph shows this visually:**
@@ -450,7 +450,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Tasks:**
 1. Implement `update-agent-registry.js`:
-   - Scan folders: neurons/, code/neurons/, create/neurons/, code/skills/
+   - Scan folders: agents/, code/agents/, create/agents/, code/skills/
    - Count files, generate lists
    - Format registry section
    - Inject into AGENTS.md at marker section
@@ -465,7 +465,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Evidence:**
 - ✅ Registry auto-generated from folder structure
-- ✅ Counts accurate (Universal neurons: 17, Code neurons: 8, etc.)
+- ✅ Counts accurate (Universal agents: 17, Code agents: 8, etc.)
 - ✅ Marker sections prevent manual edits
 
 ### Group E: Universal Headers Injection ✅ COMPLETE
@@ -661,7 +661,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Agent Registry:**
 - [ ] Registry auto-generated from folder structure
-- [ ] Counts accurate (Universal neurons, Code neurons, Create neurons, Skills)
+- [ ] Counts accurate (Universal agents, Code agents, Create agents, Skills)
 - [ ] Single source of truth (folder structure drives docs)
 
 **Universal Headers:**
@@ -756,7 +756,7 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 
 **Maintenance:** Zero manual work after initial setup - hooks maintain everything.
 
-**Hierarchy-Aware MCP:** Master Genie sees all, Code Genie sees code-specific + universal, neurons see only their workflows. Delegation hierarchy enforced by visibility.
+**Hierarchy-Aware MCP:** Master Genie sees all, Code Genie sees code-specific + universal, agents see only their workflows. Delegation hierarchy enforced by visibility.
 
 **Integration with #49 (Telemetry):** Session metrics aggregation feeds into telemetry system. This wish provides automation infrastructure, #49 provides metrics collection/analysis.
 
@@ -779,18 +779,18 @@ Git neuron loads: ~45KB (git + AGENTS.md + code.md)
 **User experience:**
 ```bash
 # Commit with token increase
-git commit -m "feat: add comprehensive audit neuron"
+git commit -m "feat: add comprehensive audit agent"
 # ❌ Token count increased by 8.2% (threshold: 5%)
 #    Current: 95,234 | Baseline: 88,000 | Change: +7,234
 #
 # If this increase is justified:
-#    git config commit.token-override "Added audit neuron with 18 validation rules"
+#    git config commit.token-override "Added audit agent with 18 validation rules"
 
-git config commit.token-override "Added audit neuron (18 validation rules)"
-git commit -m "feat: add comprehensive audit neuron"
+git config commit.token-override "Added audit agent (18 validation rules)"
+git commit -m "feat: add comprehensive audit agent"
 # ✅ Token efficiency validated (justified increase)
 # ✅ Neural graph updated in AGENTS.md
-# ✅ Agent registry updated (Neurons: 18 total)
+# ✅ Agent registry updated (Agents: 18 total)
 # ✅ Validation commands executed (12 passed)
 # ✅ Universal headers injected (3 new files)
 # ✅ Pre-commit hooks passed (5/5)

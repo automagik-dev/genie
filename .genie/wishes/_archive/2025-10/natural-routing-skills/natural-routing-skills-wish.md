@@ -5,7 +5,7 @@
 **Roadmap Item:** Phase 1 – @.genie/product/roadmap.md §Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md §Meta-Agent Feedback Harness
 **Standards:** @.genie/standards/best-practices.md §Core Principles
-**Completion Score:** 100/100 (validated 2025-10-15 via real MCP neuron sessions)
+**Completion Score:** 100/100 (validated 2025-10-15 via real MCP agent sessions)
 
 ## Evaluation Matrix (100 Points Total)
 
@@ -59,9 +59,9 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | Planning brief | doc | Orchestrator session 36e0999a insights on routing, delegation, mode selection | entire wish |
-| @.genie/agents/code/routing.md | repo | Orchestrator-specific routing guidance (new from infinite loop fix) | wish, Group A |
-|  | repo | 18 strategic thinking modes via orchestrator neuron | wish, Group C |
-| @.genie/agents/code/neurons/commit.md | repo | Underutilized commit agent, needs routing triggers | wish, Group A |
+| @.genie/code/routing.md | repo | Orchestrator-specific routing guidance (new from infinite loop fix) | wish, Group A |
+|  | repo | 18 strategic thinking modes via orchestrator agent | wish, Group C |
+| @.genie/code/agents/commit.md | repo | Underutilized commit agent, needs routing triggers | wish, Group A |
 | @AGENTS.md | repo | Global context loaded by ALL agents (routing paradox risk) | wish, risk analysis |
 | @CLAUDE.md | repo | Project-specific patterns | wish, documentation |
 | Commit 0f45945 | git | Infinite loop fix via routing.md and self-reference guards | wish, risk mitigation |
@@ -70,7 +70,7 @@
 - **Primary analyst:** Felipe + Orchestrator session 36e0999a-4ebe-4ce1-a8f0-0169ded2bee8
 - **Key observations:**
   - Commit agent underutilized during v2.3.6 release
-  - Orchestrator neuron provides 18 strategic thinking modes for Genie
+  - Orchestrator agent provides 18 strategic thinking modes for Genie
   - Thinking modes lack clear "when to use" heuristics
   - Delegation threshold criteria undefined (file count, complexity, domain)
   - Recent infinite loop fix created routing.md as orchestrator-scoped guidance
@@ -91,12 +91,12 @@
   - R-4: Thinking mode clarification might remove useful specialized patterns
 
 ## Executive Summary
-Enhance natural routing instincts for delegation vs direct execution by creating scoped routing triggers (avoiding routing paradox), clarifying 18 strategic thinking modes with natural heuristics, and defining concrete delegation thresholds. Builds on Genie's two-layer cognitive architecture: strategic thinking (via orchestrator neuron) and execution specialists (direct collaboration). Extends recent infinite loop fix (commit 0f45945) that created routing.md for orchestrator-scoped guidance.
+Enhance natural routing instincts for delegation vs direct execution by creating scoped routing triggers (avoiding routing paradox), clarifying 18 strategic thinking modes with natural heuristics, and defining concrete delegation thresholds. Builds on Genie's two-layer cognitive architecture: strategic thinking (via orchestrator agent) and execution specialists (direct collaboration). Extends recent infinite loop fix (commit 0f45945) that created routing.md for orchestrator-scoped guidance.
 
 ## Current State
 - **What exists today:**
-  - @.genie/agents/code/routing.md (NEW from infinite loop fix) - orchestrator-specific routing guidance
-  - @.genie/agents/code/neurons/commit.md - commit agent with pre-commit gate workflow
+  - @.genie/code/routing.md (NEW from infinite loop fix) - orchestrator-specific routing guidance
+  - @.genie/code/agents/commit.md - commit agent with pre-commit gate workflow
   - @AGENTS.md - global context loaded by ALL agents
   - Recent self-reference guards prevent infinite delegation loops
 - **Gaps/Pain points:**
@@ -123,7 +123,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 ## Execution Groups
 ### Group A – Routing Trigger System (scoped to routing.md)
 - **Goal:** Create routing triggers that suggest commit agent, orchestrator modes, and specialist delegation WITHOUT causing routing paradox
-- **Surfaces:** `@.genie/agents/code/routing.md`, `@.genie/agents/code/neurons/commit.md`
+- **Surfaces:** `@.genie/code/routing.md`, `@.genie/code/agents/commit.md`
 - **Deliverables:**
   - Routing trigger definitions in routing.md ONLY (NOT AGENTS.md)
   - Commit agent trigger: multi-file commits, complex diffs, cross-domain changes
@@ -161,7 +161,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 
 ### Group D – Delegation Threshold Framework
 - **Goal:** Define concrete delegation thresholds with decision tree and examples
-- **Surfaces:** `@.genie/agents/code/routing.md`, `@AGENTS.md` (if safe - verify no paradox)
+- **Surfaces:** `@.genie/code/routing.md`, `@AGENTS.md` (if safe - verify no paradox)
 - **Deliverables:**
   - Complexity threshold criteria (≥3 files, ≥2 domains, strategic vs tactical)
   - Task type classification (simple edit, refactor, feature, investigation)
@@ -247,7 +247,7 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 - **External tasks:** None (all work self-contained in wish)
 - **Dependencies:**
   - Commit 0f45945 architecture (routing.md, self-reference guards) must remain intact
-  - @.genie/agents/code/routing.md must remain orchestrator-scoped (never global)
+  - @.genie/code/routing.md must remain orchestrator-scoped (never global)
   - AGENTS.md routing guidance must be carefully scoped to prevent paradox
 </spec_contract>
 
@@ -263,9 +263,9 @@ Enhance natural routing instincts for delegation vs direct execution by creating
 - [2025-10-15 08:45Z] Spec contract locked with scope, out-of-scope, success metrics, dependencies
 - [2025-10-15 08:45Z] Evidence checklist completed with validation commands, artefact paths, approval checkpoints
 - [2025-10-15 08:45Z] DRAFT status - awaiting human approval before `/forge`
-- [2025-10-15 12:20Z] Groups A+B implemented, commit 9970916 (neuron sessions + routing triggers + identity + natural flow)
-- [2025-10-15 14:20Z] Real MCP validation started - spawned orchestrator neuron (session ce821e38-e5f8-481c-a7ab-81fc620653a5)
-- [2025-10-15 14:30Z] Orchestrator neuron completed mode overlap analysis - discovered only 5 modes exist (not 18!)
+- [2025-10-15 12:20Z] Groups A+B implemented, commit 9970916 (agent sessions + routing triggers + identity + natural flow)
+- [2025-10-15 14:20Z] Real MCP validation started - spawned orchestrator agent (session ce821e38-e5f8-481c-a7ab-81fc620653a5)
+- [2025-10-15 14:30Z] Orchestrator agent completed mode overlap analysis - discovered only 5 modes exist (not 18!)
 - [2025-10-15 14:45Z] Decision trees created with threshold tables (qa/decision-trees.md)
 - [2025-10-15 14:50Z] MCP session evidence documented (qa/mcp-session-evidence.md)
 - [2025-10-15 15:00Z] Comprehensive validation report complete (reports/validation-complete-2025-10-15.md)

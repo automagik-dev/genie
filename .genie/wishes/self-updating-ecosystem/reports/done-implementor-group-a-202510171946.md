@@ -229,7 +229,7 @@ $ git commit -m "test: hook triggering validation"
 
 **No MCP bugs encountered during this implementation.**
 
-All work performed using standard Edit/Write/Bash tools as expected for implementor neuron.
+All work performed using standard Edit/Write/Bash tools as expected for implementor agent.
 
 ---
 

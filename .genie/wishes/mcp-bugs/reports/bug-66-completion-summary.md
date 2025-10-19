@@ -10,7 +10,7 @@
 
 ## Task Overview
 
-Investigated and documented Bug #66 (MCP session disappears after resume) which was a critical session persistence issue affecting multi-neuron workflows.
+Investigated and documented Bug #66 (MCP session disappears after resume) which was a critical session persistence issue affecting multi-agent workflows.
 
 ---
 
@@ -42,7 +42,7 @@ Investigated and documented Bug #66 (MCP session disappears after resume) which 
 ### 3. Resolution Summary
 **Root Cause:** Session storage used agent names as keys (V1 format), causing new sessions to overwrite previous ones of the same agent type
 **Fix:** Migrated to V2 storage format with sessionId-based keying
-**Impact:** CRITICAL bug blocking multi-neuron workflows - fully resolved
+**Impact:** CRITICAL bug blocking multi-agent workflows - fully resolved
 
 ---
 
@@ -63,7 +63,7 @@ Investigated and documented Bug #66 (MCP session disappears after resume) which 
 - Sessions appeared active in `list_sessions` but returned "No run found" on `view`/`resume`
 - Sessions became inaccessible after ~45 minutes of runtime
 - Complete context loss prevented work recovery
-- Blocked multi-neuron workflows and session coordination
+- Blocked multi-agent workflows and session coordination
 
 ### The Fix (Commit e78c8d1d)
 ```typescript

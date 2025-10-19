@@ -57,14 +57,15 @@ interface CliResult {
 
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
 
-// Helper: List available agents from .genie/agents directory
+// Helper: List available agents from .genie/code/agents and .genie/create/agents
 function listAgents(): Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> {
-  const baseDir = path.join(WORKSPACE_ROOT, '.genie/agents');
   const agents: Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> = [];
 
-  if (!fs.existsSync(baseDir)) {
-    return agents;
-  }
+  // Search in both code and create collectives
+  const searchDirs = [
+    path.join(WORKSPACE_ROOT, '.genie/code/agents'),
+    path.join(WORKSPACE_ROOT, '.genie/create/agents')
+  ];
 
   const visit = (dirPath: string, relativePath: string | null) => {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -105,7 +106,13 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
     });
   };
 
-  visit(baseDir, null);
+  // Visit all search directories
+  searchDirs.forEach(baseDir => {
+    if (fs.existsSync(baseDir)) {
+      visit(baseDir, null);
+    }
+  });
+
   return agents;
 }
 
@@ -239,7 +246,7 @@ server.addTool({
     const agents = listAgents();
 
     if (agents.length === 0) {
-      return getVersionHeader() + 'No agents found in .genie/agents directory.';
+      return getVersionHeader() + 'No agents found in .genie/code/agents or .genie/create/agents directories.';
     }
 
     let response = getVersionHeader() + `Found ${agents.length} available agents:\n\n`;

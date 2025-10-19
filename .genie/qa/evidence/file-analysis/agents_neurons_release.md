@@ -1,4 +1,4 @@
-# File Analysis: .genie/agents/neurons/release.md
+# File Analysis: .genie/agents/release.md
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-16 12:35 UTC
 

@@ -196,7 +196,7 @@ No exact duplicates found.
 ...
 @.genie/MASTER-PLAN.md
 
-# ⚠️ Session State (Permanent Neuron Coordination)
+# ⚠️ Session State (Permanent Agent Coordination)
 ...
 @.genie/SESSION-STATE.md
 
@@ -278,7 +278,7 @@ No exact duplicates found.
 # Key concepts from AGENTS.md
 grep -i "plan.*wish.*forge.*review" MERGED.md
 grep -i "evidence-based thinking" MERGED.md
-grep -i "neuron.*session" MERGED.md
+grep -i "agent.*session" MERGED.md
 grep -i "permissionmode.*default" MERGED.md
 
 # Key concepts from CLAUDE.md
@@ -485,8 +485,8 @@ echo -n "Triad Maintenance: "
 grep -qi "triad maintenance" MERGED.md && echo "✅" || echo "❌"
 
 # Technical patterns
-echo -n "Neuron Sessions: "
-grep -qi "neuron.*session" MERGED.md && echo "✅" || echo "❌"
+echo -n "Agent Sessions: "
+grep -qi "agent.*session" MERGED.md && echo "✅" || echo "❌"
 
 echo -n "Permission Mode: "
 grep -qi "permissionmode.*default" MERGED.md && echo "✅" || echo "❌"

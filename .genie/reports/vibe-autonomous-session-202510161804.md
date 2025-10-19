@@ -72,7 +72,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
 
 ### 3. Version Awareness Learning
 
-**Spawned:** Learn neuron session `4f5dd67a`
+**Spawned:** Learn agent session `4f5dd67a`
 **Topic:** Version self-awareness pattern (RC development flow)
 
 **Teaching Captured:**
@@ -81,7 +81,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
 - Local build: `node .genie/cli/dist/genie-cli.js`
 - Pattern: Find bug → Fix → Publish RC → Test with @next
 
-**Status:** Learn neuron encountered same MCP bug (now fixed in RC7)
+**Status:** Learn agent encountered same MCP bug (now fixed in RC7)
 
 ---
 
@@ -121,7 +121,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
 - Fell back to CLI: `node .genie/cli/dist/genie-cli.js`
 - Worked around successfully
 
-### Neuron Spawn Timeouts
+### Agent Spawn Timeouts
 - Implementor spawn timeout (but executed successfully per log)
 - Learn spawn completed but hit MCP bug (now fixed)
 - Switched to direct execution when delegation unstable
@@ -132,7 +132,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
 
 **Cycle 1:** 5 minutes
 - Waited for template extraction commit
-- Checked learn neuron status
+- Checked learn agent status
 
 **Cycle 2:** 10 minutes
 - Investigated MCP bug root cause
@@ -162,7 +162,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
    - Mark #5 COMPLETE
    - Move to next item (likely #7 or #8)
 
-4. **Check learn neuron output:**
+4. **Check learn agent output:**
    - Session `4f5dd67a` may have completed
    - Check for version awareness documentation
 
@@ -178,7 +178,7 @@ Added case for assistant/user/reasoning events with message.content structure (l
 
 **⚠️ Challenges:**
 - MCP tools unavailable (fell back to CLI successfully)
-- Neuron spawn instability (worked around)
+- Agent spawn instability (worked around)
 - Session tracking issues (documented as TODO #5, now fixed)
 
 **🎯 Mission Success:**

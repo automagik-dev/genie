@@ -120,8 +120,8 @@ CLAUDE.md (1,234 tokens)
 ├─ @AGENTS.md (23,456 tokens)
 │  ├─  (2,345 tokens)
 │  ├─  (1,987 tokens)
-│  ├─ @.genie/agents/code/neurons/implementor.md (3,210 tokens)
-│  └─ ... (15 more neurons)
+│  ├─ @.genie/code/agents/implementor.md (3,210 tokens)
+│  └─ ... (15 more agents)
 ├─ @.genie/MASTER-PLAN.md (4,567 tokens)
 ├─ @.genie/SESSION-STATE.md (890 tokens)
 └─ @.genie/USERCONTEXT.md (2,345 tokens)
@@ -129,15 +129,15 @@ CLAUDE.md (1,234 tokens)
    └─ @.genie/STATE.md (456 tokens)
 
 ### Custom Overrides (loaded conditionally)
-.genie/custom/routing.md (1,234 tokens) → loaded by genie neuron only
-.genie/custom/implementor.md (890 tokens) → loaded by implementor neuron
+.genie/custom/routing.md (1,234 tokens) → loaded by genie agent only
+.genie/custom/implementor.md (890 tokens) → loaded by implementor agent
 ... (8 more overrides)
 ```
 
 **Token Distribution:**
 - Core framework: 35,678 tokens (75%)
 - Workflow agents: 6,789 tokens (14%)
-- Execution neurons: 4,567 tokens (10%)
+- Execution agents: 4,567 tokens (10%)
 - Custom overrides: 200 tokens (0.4%)
 ```
 
@@ -202,7 +202,7 @@ if git config --get commit.token-override; then
 fi
 
 # User invocation:
-git config commit.token-override "Added 3 new neurons for refactor workflow"
+git config commit.token-override "Added 3 new agents for refactor workflow"
 git commit -m "feat: add refactor workflow"
 ```
 

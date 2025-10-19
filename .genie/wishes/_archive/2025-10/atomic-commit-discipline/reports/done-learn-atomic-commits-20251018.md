@@ -1,15 +1,15 @@
 # Done Report: Atomic Commit Discipline Teaching
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 06:50 UTC
-**Agent:** Learn Neuron (executed directly)
-**Scope:** Document atomic commit discipline principles for git neuron
+**Agent:** Learn Agent (executed directly)
+**Scope:** Document atomic commit discipline principles for git agent
 **Trigger:** Exemplar commit `9058c50` demonstrated atomic discipline
 
 ---
 
 ## Summary
 
-Documented comprehensive atomic commit discipline in git neuron. Teaching embedded as new section in `.genie/agents/code/neurons/git/git.md` with five core rules, anti-patterns, self-awareness checks, and concrete examples.
+Documented comprehensive atomic commit discipline in git agent. Teaching embedded as new section in `.genie/agents/code/agents/git/git.md` with five core rules, anti-patterns, self-awareness checks, and concrete examples.
 
 ---
 
@@ -22,13 +22,13 @@ Documented comprehensive atomic commit discipline in git neuron. Teaching embedd
 - Build verified before commit
 - Pre-commit validation passed
 
-**Pattern Extracted:** Git neuron should be ATOMIC-COMMIT-OBSESSED for EVERY commit
+**Pattern Extracted:** Git agent should be ATOMIC-COMMIT-OBSESSED for EVERY commit
 
 ---
 
 ## Implementation
 
-**File Updated:** `.genie/agents/code/neurons/git/git.md`
+**File Updated:** `.genie/agents/code/agents/git/git.md`
 
 **Section Added:** "Atomic Commit Discipline (CRITICAL)" (lines 52-123)
 
@@ -62,20 +62,20 @@ Documented comprehensive atomic commit discipline in git neuron. Teaching embedd
 
 ## Verification Checklist
 
-- [x] Section added to git neuron
+- [x] Section added to git agent
 - [x] Five core rules documented with explanations
 - [x] Anti-patterns clearly marked (❌ WRONG, ✅ RIGHT)
 - [x] Self-awareness check provided (before every commit)
 - [x] Concrete examples included (good vs bad commits)
 - [x] Reference exemplar linked (commit `9058c50`)
-- [x] Integrated with existing git neuron structure
+- [x] Integrated with existing git agent structure
 
 ---
 
 ## Integration Points
 
 **Where atomic discipline applies:**
-- Every commit created by git neuron
+- Every commit created by git agent
 - Every merge commit message
 - Every rebase (if approved)
 - Every cherry-pick operation (if used)
@@ -91,8 +91,8 @@ Documented comprehensive atomic commit discipline in git neuron. Teaching embedd
 
 **Future validation commands:**
 ```bash
-# Check git neuron has atomic discipline section
-grep -n "Atomic Commit Discipline" .genie/agents/code/neurons/git/git.md
+# Check git agent has atomic discipline section
+grep -n "Atomic Commit Discipline" .genie/agents/code/agents/git/git.md
 
 # Verify all commits are atomic (example)
 git log --oneline HEAD~5..HEAD | while read commit msg; do
@@ -101,7 +101,7 @@ done
 ```
 
 **Expected behavior after learning:**
-- Every commit created by git neuron is atomic
+- Every commit created by git agent is atomic
 - Commit messages include verification evidence
 - No mixed responsibilities in commits
 - Pre-commit validation passes before every commit
@@ -118,7 +118,7 @@ done
 
 ## Teaching Artifacts
 
-**Main File:** `.genie/agents/code/neurons/git/git.md` (added lines 52-123)
+**Main File:** `.genie/agents/code/agents/git/git.md` (added lines 52-123)
 
 **Exemplar Commit:**
 - Hash: `9058c50`
@@ -135,7 +135,7 @@ done
 ## Follow-Up
 
 **Next learning opportunities:**
-1. Document git neuron delegation patterns (when to delegate to report/issue/pr children)
+1. Document git agent invocation patterns (when to delegate to report/issue/pr children)
 2. Document collaborative merge strategies (handling multi-author commits)
 3. Document commit message review checklist (for code review)
 
@@ -143,4 +143,4 @@ done
 
 **Status:** ✅ COMPLETE
 
-Atomic commit discipline now embedded in git neuron. Git neuron will internalize and apply these principles to every commit.
+Atomic commit discipline now embedded in git agent. Git agent will internalize and apply these principles to every commit.

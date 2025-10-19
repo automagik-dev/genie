@@ -39,7 +39,7 @@ This guide walks through the complete mechanics.
        │                    ┌─────────────────▼─────────────────┐
        │                    │ Genie CLI (background process)   │
        │                    │                                  │
-       │                    │  1. Run agent: neurons/git/...   │
+       │                    │  1. Run agent: agents/git/...   │
        │                    │  2. Execute workflow logic       │
        │                    │  3. Generate JSONL session log   │
        │                    │  4. Store in .genie/state/...   │
@@ -89,7 +89,7 @@ function runGenie(agent, prompt) {
 }
 
 // In hook:
-const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
+const workflow = runGenie('agents/git/commit-advisory', 'Pre-commit validation');
 ```
 
 **What happens:**
@@ -102,7 +102,7 @@ const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation'
 
 ### Step 2: Genie Agent Runs & Logs
 
-**File:** `.genie/agents/neurons/git/commit-advisory.md`
+**File:** `.genie/agents/git/commit-advisory.md`
 
 The Genie workflow executes and produces:
 
@@ -251,8 +251,8 @@ $ git commit -m "feat: new feature"
 
 ✅ User files validation passed
 ✅ Cross-references valid
-Running Genie workflow: neurons/git/commit-advisory...
-ℹ️  Workflow neurons/git/commit-advisory started (runs in background)
+Running Genie workflow: agents/git/commit-advisory...
+ℹ️  Workflow agents/git/commit-advisory started (runs in background)
 
 ✅ All pre-commit validations passed
 [main abc1234] feat: new feature
@@ -374,10 +374,10 @@ console.log(results.validations.warnings);
   "version": 2,
   "sessions": {
     "sessionId-1": {
-      "agent": "neurons/git/commit-advisory",
+      "agent": "agents/git/commit-advisory",
       "sessionId": "abc-123-xyz",
       "executor": "claude",
-      "logFile": ".genie/state/agents/logs/neurons-git-commit-advisory-abc-123.log",
+      "logFile": ".genie/state/agents/logs/agents-git-commit-advisory-abc-123.log",
       "startTime": "2025-10-18T07:00:00Z",
       "status": "completed"
     }

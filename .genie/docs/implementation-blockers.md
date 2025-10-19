@@ -377,7 +377,7 @@
 
 **Tasks:**
 - Migration & testing (6 tasks)
-- Updating neuron (4 tasks)
+- Updating agent (4 tasks)
 - Total: 10 tasks
 
 **Blockers Resolved:**

@@ -29,7 +29,7 @@
 
 **Where:** AGENTS.md loads @ references at outer level
 **When:** Session start (via CLAUDE.md context loading)
-**Who receives:** All agents (base + neurons)
+**Who receives:** All agents (base + agents)
 **Why:** Essential behaviors needed immediately
 
 **Load sequence:**
@@ -42,7 +42,7 @@ CLAUDE.md loads (entry point)
   ↓
 AGENTS.md includes Priority 1-5 skills via @
   ↓
-Base Genie + Neurons all have these skills in context
+Base Genie + Agents all have these skills in context
 ```
 
 **Skills loaded:**
@@ -146,12 +146,12 @@ CLAUDE.md
 grep "pattern" .genie/agents/code/skills/
 ```
 
-### For Neurons (Specialty Prompt)
+### For Agents (Specialty Prompt)
 
-When neuron created:
+When agent created:
 
 ```markdown
-# Neuron context = AGENTS.md (priority 1-5) + specialty.md
+# Agent context = AGENTS.md (priority 1-5) + specialty.md
 
 ## Loaded automatically:
 - know-yourself (identity baseline)
@@ -176,12 +176,12 @@ AGENTS.md baseline (Priority 1-5): 13.9KB
 = ~14.5-16KB per session
 ```
 
-**Neuron session:**
+**Agent session:**
 ```
 AGENTS.md (shared): 13.9KB
-+ neuron specialty.md: 0.5-1KB
++ agent specialty.md: 0.5-1KB
 + custom overrides: 0-0.5KB
-= ~14.5-15.5KB per neuron
+= ~14.5-15.5KB per agent
 ```
 
 **Savings vs flat load:**
@@ -224,7 +224,7 @@ Actual Priority 1-5 only: ~13.9KB
 - [ ] Priority 1-5 skills loaded (14 files)
 - [ ] AGENTS.md loaded ONCE at outer level
 - [ ] Reference-only skills NOT loaded
-- [ ] Neuron receives base + specialty
+- [ ] Agent receives base + specialty
 - [ ] Token count ~13.9KB baseline
 
 ### Reference Access
@@ -234,10 +234,10 @@ Actual Priority 1-5 only: ~13.9KB
 - [ ] No session overhead on search
 - [ ] Clear error message if file missing
 
-### Neuron Behavior
+### Agent Behavior
 
-- [ ] Neuron has Priority 1-5 skills
-- [ ] Neuron can call `grep` for reference-only
+- [ ] Agent has Priority 1-5 skills
+- [ ] Agent can call `grep` for reference-only
 - [ ] No duplication (AGENTS.md not reloaded)
 - [ ] Session context clean
 

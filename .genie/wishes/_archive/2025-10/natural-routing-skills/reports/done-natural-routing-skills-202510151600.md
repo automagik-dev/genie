@@ -3,21 +3,21 @@
 **Wish:** natural-routing-skills
 **Completed:** 2025-10-15 16:00 UTC
 **Score:** 100/100
-**Validator:** Genie + 3 MCP neuron sessions
+**Validator:** Genie + 3 MCP agent sessions
 
 ---
 
 ## What Was Built
 
 ### Groups A+B: Routing System (Commit 9970916)
-- ✅ Neuron session architecture (559 lines routing.md)
+- ✅ Agent session architecture (559 lines routing.md)
 - ✅ Routing triggers (commit, orchestrator, specialist)
 - ✅ Identity transformation (persistent conversational mentor)
 - ✅ Natural flow protocol (plan→wish→forge→review)
 - ✅ Deleted 36 obsolete files (slash commands + Task wrappers)
 
 ### Groups C+D: Validation & Analysis (This Session)
-- ✅ Mode overlap analysis via orchestrator neuron (session ce821e38...)
+- ✅ Mode overlap analysis via orchestrator agent (session ce821e38...)
 - ✅ Decision trees + threshold tables (qa/decision-trees.md)
 - ✅ Plan→wish natural flow validation (qa/plan-wish-natural-flow.md)
 - ✅ routing.md updated with agent vs mode distinction
@@ -75,7 +75,7 @@
 **Natural Flow Proven:**
 - This wish itself demonstrates plan→wish working
 - User never saw slash commands
-- Neuron sessions provided persistence
+- Agent sessions provided persistence
 - Evidence captured invisibly
 
 ---
@@ -96,7 +96,7 @@
 **Verification (30/30):**
 - ✅ All validation commands executed
 - ✅ Artifacts captured (7 total)
-- ✅ Review thorough (3 neuron sessions)
+- ✅ Review thorough (3 agent sessions)
 
 ---
 

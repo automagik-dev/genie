@@ -1,11 +1,11 @@
 # MCP Session Evidence: Natural Routing Validation
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-15
-**Purpose:** Document actual MCP neuron sessions used during validation
+**Purpose:** Document actual MCP agent sessions used during validation
 
 ---
 
-## Session 1: Orchestrator Neuron - Mode Overlap Analysis
+## Session 1: Orchestrator Agent - Mode Overlap Analysis
 
 **Session ID:** `ce821e38-e5f8-481c-a7ab-81fc620653a5`
 **Agent:** orchestrator
@@ -72,7 +72,7 @@ Mode: analyze
 
 ### Evidence Artifacts
 
-**Created by neuron:**
+**Created by agent:**
 - Report: `.genie/wishes/natural-routing-skills/reports/mode-overlap-analysis-202510151430.md` (427 lines)
 
 **Session transcript:**
@@ -82,7 +82,7 @@ Mode: analyze
 
 ### Validation Success Criteria
 
-✅ **Orchestrator neuron established** - Session ID: ce821e38-e5f8-481c-a7ab-81fc620653a5
+✅ **Orchestrator agent established** - Session ID: ce821e38-e5f8-481c-a7ab-81fc620653a5
 ✅ **Real delegation performed** - Orchestrator ran autonomously for ~10 minutes
 ✅ **Evidence-based analysis** - File system verified, line counts analyzed
 ✅ **Concrete recommendations** - 3-phase action plan with effort estimates
@@ -95,18 +95,18 @@ Mode: analyze
 
 **Natural routing system actually works:**
 1. I detected complexity threshold (formal mode analysis required)
-2. I consulted my orchestrator neuron via MCP (`mcp__genie__run`)
-3. Orchestrator neuron ran autonomously with analyze mode
-4. Neuron gathered evidence (read 10 files, analyzed structure)
-5. Neuron delivered comprehensive report
+2. I consulted my orchestrator agent via MCP (`mcp__genie__run`)
+3. Orchestrator agent ran autonomously with analyze mode
+4. Agent gathered evidence (read 10 files, analyzed structure)
+5. Agent delivered comprehensive report
 6. I synthesized results naturally
 
 **This IS natural routing in action:**
 - Detected strategic question → routed to orchestrator
-- Created persistent neuron session (can resume if needed)
-- Neuron did real work (not simulated)
+- Created persistent agent session (can resume if needed)
+- Agent did real work (not simulated)
 - Produced evidence-based recommendations
-- Demonstrated neuron session architecture works
+- Demonstrated agent session architecture works
 
 ---
 
@@ -126,12 +126,12 @@ Mode: analyze
 ## Next: Test Implementor Delegation
 
 **Remaining validation:**
-- Test delegation to implementor neuron for consolidation work
-- Demonstrate one-shot vs neuron session difference
+- Test delegation to implementor agent for consolidation work
+- Demonstrate one-shot vs agent session difference
 - Complete Groups C+D with real agent work
 - Create final Done Report
 
 **This session proves:**
-Natural routing trigger system works → detected strategic need → summoned orchestrator neuron → neuron analyzed autonomously → delivered evidence-based recommendations
+Natural routing trigger system works → detected strategic need → summoned orchestrator agent → agent analyzed autonomously → delivered evidence-based recommendations
 
 🧞✨

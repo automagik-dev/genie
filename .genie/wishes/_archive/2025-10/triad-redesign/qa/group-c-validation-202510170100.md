@@ -12,7 +12,7 @@
 
 **Command:**
 ```bash
-rm .genie/agents/neurons/release-old-backup.md
+rm .genie/agents/release-old-backup.md
 ```
 
 **Result:**
@@ -22,7 +22,7 @@ rm .genie/agents/neurons/release-old-backup.md
 
 **Verification:**
 ```bash
-ls .genie/agents/neurons/release-old-backup.md
+ls .genie/agents/release-old-backup.md
 # Result: File does not exist
 ```
 
@@ -46,7 +46,7 @@ Count: 75 (expected ~76)
 - `.genie/agents/workflows/qa.md` - `@.genie/qa/evidence/<filename>`
 - `.genie/agents/workflows/review.md` - ``
 - `.genie/agents/workflows/forge.md` - `@agent-<persona>` pattern examples
-- `.genie/agents/neurons/modes/tracer.md` - `@.genie/agents/code/neurons/tracer.md`
+- `.genie/agents/modes/tracer.md` - `@.genie/code/agents/tracer.md`
 
 All @ references are strategic (loading context, custom overrides, examples).
 

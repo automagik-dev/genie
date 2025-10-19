@@ -1,7 +1,7 @@
 # Done Report: implementor-git-split-202510171642
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-17 16:42 UTC
-**Task:** Split git neuron into lean core + 3 specialized workflows
+**Task:** Split git agent into lean core + 3 specialized workflows
 **Executor:** Direct implementation (explicit "execute directly" instruction)
 
 ---
@@ -43,7 +43,7 @@
 
 ### Files Modified
 
-**1. `.genie/agents/neurons/git.md` (514 → 165 lines, 68% reduction)**
+**1. `.genie/agents/git.md` (514 → 165 lines, 68% reduction)**
 - Removed all GitHub operations (350 lines)
 - Kept core git operations only
 - Added "GitHub Operations" section with cross-references to 3 new workflows
@@ -57,8 +57,8 @@
 ### Line Counts
 
 ```bash
-$ wc -l .genie/agents/neurons/git.md .genie/agents/workflows/*.md
-  165 .genie/agents/neurons/git.md
+$ wc -l .genie/agents/git.md .genie/agents/workflows/*.md
+  165 .genie/agents/git.md
   295 .genie/agents/workflows/report.md
   212 .genie/agents/workflows/issue.md
   148 .genie/agents/workflows/pr.md
@@ -79,21 +79,21 @@ $ wc -l .genie/agents/neurons/git.md .genie/agents/workflows/*.md
 
 ```bash
 === Cross-references in git.md ===
-@.genie/agents/code/neurons/git/workflows/report.md
-@.genie/agents/code/neurons/git/workflows/issue.md
-@.genie/agents/code/neurons/git/workflows/pr.md
+@.genie/code/agents/git/workflows/report.md
+@.genie/code/agents/git/workflows/issue.md
+@.genie/code/agents/git/workflows/pr.md
 
 === Cross-references in report.md ===
-@.genie/agents/code/neurons/git/git.md
-@.genie/agents/code/neurons/git/workflows/issue.md
+@.genie/code/agents/git/git.md
+@.genie/code/agents/git/workflows/issue.md
 
 === Cross-references in issue.md ===
-@.genie/agents/code/neurons/git/workflows/report.md
-@.genie/agents/code/neurons/git/git.md
+@.genie/code/agents/git/workflows/report.md
+@.genie/code/agents/git/git.md
 
 === Cross-references in pr.md ===
-@.genie/agents/code/neurons/git/git.md
-@.genie/agents/code/neurons/git/workflows/issue.md
+@.genie/code/agents/git/git.md
+@.genie/code/agents/git/workflows/issue.md
 ```
 
 **Status:** ✅ All cross-references present and navigable via @ pattern
@@ -102,7 +102,7 @@ $ wc -l .genie/agents/neurons/git.md .genie/agents/workflows/*.md
 
 ```bash
 $ npx automagik-genie list agents | grep -E "(report|issue|pr|git)"
-- **neurons/git**: Core Git operations (branch, commit, push) - lean neuron
+- **agents/git**: Core Git operations (branch, commit, push) - lean agent
 - **workflows/issue**: GitHub issue lifecycle management (list, update, assign, close, link)
 - **workflows/pr**: Pull request creation workflow with proper descriptions
 - **workflows/report**: GitHub issue creation workflow with template selection
@@ -117,7 +117,7 @@ $ npx automagik-genie list agents | grep -E "(report|issue|pr|git)"
 ### Before Split (Monolithic)
 
 ```
-.genie/agents/neurons/git.md (514 lines)
+.genie/agents/git.md (514 lines)
 ├─ Git operations (150 lines)
 ├─ GitHub issues (260 lines)
 │  ├─ CREATE (20 lines)
@@ -135,7 +135,7 @@ $ npx automagik-genie list agents | grep -E "(report|issue|pr|git)"
 
 ```
 .genie/agents/
-├─ neurons/
+├─ agents/
 │  └─ git.md (165 lines)
 │     └─ Pure git operations
 └─ workflows/
@@ -207,7 +207,7 @@ This work was executed directly per explicit "execute directly" instruction, des
 
 ## Summary
 
-✅ **Success:** Git neuron split into 4 focused files
+✅ **Success:** Git agent split into 4 focused files
 ✅ **Context efficiency:** 43-71% reduction per operation type
 ✅ **Cross-references:** All @ patterns validated
 ✅ **Agent registration:** All 4 agents registered and discoverable

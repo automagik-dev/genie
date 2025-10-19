@@ -17,7 +17,7 @@ Bug #66 was a **critical** MCP session persistence issue where sessions would be
 **Root Cause:** Session storage used agent names as keys, causing new sessions to overwrite previous ones
 **Fix:** Migrated to V2 storage format using unique sessionId as storage key
 **Related:** Bug #102 (session collision) - same root cause
-**Impact:** CRITICAL - Blocked multi-neuron workflows and session coordination
+**Impact:** CRITICAL - Blocked multi-agent workflows and session coordination
 
 ---
 
@@ -190,7 +190,7 @@ if (incoming.agents) {
 
 A comprehensive 10-step regression test was created:
 
-**File:** `.genie/agents/neurons/qa/workflows/bug-66-session-persistence.md`
+**File:** `.genie/agents/qa/workflows/bug-66-session-persistence.md`
 
 **Test Coverage:**
 1. ✅ Sessions persist through single resume
@@ -231,14 +231,14 @@ A comprehensive 10-step regression test was created:
 ### Before Fix
 - ❌ Sessions lost after resume operations
 - ❌ Only one session per agent type could exist
-- ❌ Multi-neuron workflows blocked
+- ❌ Multi-agent workflows blocked
 - ❌ Work recovery impossible
 - ❌ Session coordination unreliable
 
 ### After Fix
 - ✅ Sessions persist indefinitely
 - ✅ Unlimited sessions per agent type
-- ✅ Multi-neuron workflows enabled
+- ✅ Multi-agent workflows enabled
 - ✅ Full work recovery capability
 - ✅ Reliable session coordination
 - ✅ Friendly session naming (bonus)
@@ -302,7 +302,7 @@ A comprehensive 10-step regression test was created:
 
 ### Documentation
 - **GitHub Issue:** https://github.com/namastexlabs/automagik-genie/issues/66
-- **Regression Test:** `.genie/agents/neurons/qa/workflows/bug-66-session-persistence.md`
+- **Regression Test:** `.genie/agents/qa/workflows/bug-66-session-persistence.md`
 - **Fix Commit:** `e78c8d1de75e26ae42393756429fd67fc9b990aa`
 
 ### Related Files

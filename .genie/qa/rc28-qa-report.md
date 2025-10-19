@@ -134,7 +134,7 @@ Starting SessionService Unit Tests...
 
 ### Issue: Agent Permission Loops
 **Severity:** LOW (does not affect end users)
-**Description:** Git neuron and QA neuron hit permission loops when trying to delegate
+**Description:** Git agent and QA agent hit permission loops when trying to delegate
 **Impact:** Internal testing only - user-facing functionality unaffected
 **Workaround:** Direct CLI/tool usage for QA operations
 **Fix Plan:** Not required for RC28 (addressed in future Forge integration)

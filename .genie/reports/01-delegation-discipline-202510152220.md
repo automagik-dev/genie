@@ -32,7 +32,7 @@ Validation:
 Target:
 - AGENTS.md (critical_behavioral_overrides section)
 - CLAUDE.md (delegation discipline pattern)
-- .genie/agents/neurons/learn.md (self-document this learning)
+- .genie/agents/learn.md (self-document this learning)
 - .genie/custom/routing.md (add delegation anti-patterns)
 
 ---
@@ -51,7 +51,7 @@ Violation - Critical behavioral override needed
 ### Affected Files
 - AGENTS.md: Critical behavioral overrides section (lines 677-711)
 - CLAUDE.md: Delegation discipline pattern (lines 90-128)
-- .genie/agents/neurons/learn.md: Meta-awareness anti-pattern (lines 751-753)
+- .genie/agents/learn.md: Meta-awareness anti-pattern (lines 751-753)
 - .genie/custom/routing.md: Already has delegation guidance for orchestrators
 
 ---
@@ -149,7 +149,7 @@ Future sessions should exhibit:
 ```bash
 # Verify documentation exists
 grep -n "Delegation Discipline" AGENTS.md CLAUDE.md
-grep -n "Meta-awareness" .genie/agents/neurons/learn.md
+grep -n "Meta-awareness" .genie/agents/learn.md
 
 # Count violations documented
 grep -c "Made 11 Edit calls" AGENTS.md CLAUDE.md
@@ -172,7 +172,7 @@ grep -c "Made 11 Edit calls" AGENTS.md CLAUDE.md
 
 ### Before (Violation State)
 Session 2025-10-16 22:30 UTC:
-- Task: Fix 11 path references (core/ → neurons/)
+- Task: Fix 11 path references (core/ → agents/)
 - Action taken: 11 sequential Edit tool calls
 - Token cost: ~13K tokens
 - Result: Context bloat, poor separation of concerns

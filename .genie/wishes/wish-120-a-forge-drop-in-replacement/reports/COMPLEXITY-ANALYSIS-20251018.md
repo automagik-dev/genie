@@ -53,7 +53,7 @@ Discovery: 0 items
 - Group A: Core + Git Integration (16 tasks, 2-3 weeks) [+9 tasks]
 - Group B: Streaming + Inspection (8 tasks, 1-2 weeks) [+4 tasks]
 - Group C: Advanced + Notifications (7 tasks, 1-2 weeks) [+4 tasks]
-- Group D: Migration + Updating Neuron (10 tasks, 1-2 weeks) [+4 tasks]
+- Group D: Migration + Updating Agent (10 tasks, 1-2 weeks) [+4 tasks]
 
 **Complexity:** 🔴 HIGH
 
@@ -159,7 +159,7 @@ Group C partially BLOCKS Group D
 Parallel Dependencies:
   ├─ Blocker #4 (Templates) ↔ Wish #110 (Multi-template arch)
   ├─ Blocker #5 (Executors) ↔ Wish #108 (Genie arch rebrand)
-  └─ Updating Neuron ↔ Version management system
+  └─ Updating Agent ↔ Version management system
 ```
 
 **Dependency Complexity:** 🔴 **HIGH** (went from 0 to 10+ dependencies)
@@ -225,7 +225,7 @@ Parallel Dependencies:
 - Genie CLI (5 handlers + 7 new commands)
 - Workflow phases (Plan/Wish/Forge/Review/Cross)
 - Session management (sessions.json → Forge)
-- Neuron coordination (state tree sync)
+- Agent coordination (state tree sync)
 - Templates (Forge vs. Genie unification)
 - Executors (dynamic discovery)
 - Filesystem (audit + restrictions)
@@ -277,7 +277,7 @@ Group C: 7 tasks
 
 Group D: 10 tasks
   ├─ Original: 6 tasks
-  └─ Updating neuron: 4 tasks
+  └─ Updating agent: 4 tasks
 
 Unmapped (Categories 6-15): ~14 tasks (if implemented)
   ├─ Drafts (if validated): 3 tasks
@@ -359,7 +359,7 @@ Total: 40-80 hours
 **Group D: Migration + Updating** (1-2 weeks, 40-80 hours)
 ```
 Original tasks: 40 hours
-Updating neuron: 20-40 hours
+Updating agent: 20-40 hours
 Testing/validation: 20-40 hours
 Total: 40-80 hours
 ```
@@ -491,21 +491,21 @@ Total: 40-80 hours
 **Complexity:** 🟢 LOW-MEDIUM
 
 **Scope:**
-- Group D: Migration + Updating neuron (10 tasks)
+- Group D: Migration + Updating agent (10 tasks)
 - Blocker #6 (Drafts) - Discovery + implementation (if justified)
 - Blocker #7 (SSE Automations) - Discovery + implementation
 - Unmapped Categories 6-15 (remaining items)
 
 **Deliverable:**
 - Migration tools (sessions.json → Forge)
-- Updating neuron (version management)
+- Updating agent (version management)
 - SSE automations (safe auto-actions)
 - Drafts (if validated)
 - Post-MVP features
 
 **Success Criteria:**
 - Migration script working
-- Updating neuron functional
+- Updating agent functional
 - SSE automations safe + valuable
 - All documentation complete
 
@@ -651,7 +651,7 @@ Total: 40-80 hours
 
 ### Medium Value, Low Risk (Do Third - Wish #120-C)
 - Migration tools (smooth transition)
-- Updating neuron (version management)
+- Updating agent (version management)
 - SSE automations (efficiency)
 - Image advanced features (nice-to-have)
 

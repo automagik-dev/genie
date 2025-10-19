@@ -9,7 +9,7 @@
 
 ## Summary
 
-Implemented `update-agent-registry.js` to auto-generate agent registry from folder structure. Script scans neurons/skills directories, counts files, and injects formatted registry into AGENTS.md between AUTO-GENERATED markers.
+Implemented `update-agent-registry.js` to auto-generate agent registry from folder structure. Script scans agents/skills directories, counts files, and injects formatted registry into AGENTS.md between AUTO-GENERATED markers.
 
 ---
 
@@ -22,9 +22,9 @@ Implemented `update-agent-registry.js` to auto-generate agent registry from fold
 - `AGENTS.md` - Added "Agent Registry (Auto-Generated)" section with markers
 
 ### Registry Categories
-1. **Universal Neurons** (17 total): `.genie/agents/neurons/`
-2. **Code Neurons** (8 total): `.genie/agents/code/neurons/`
-3. **Create Neurons** (1 total): `.genie/agents/create/neurons/`
+1. **Universal Agents** (17 total): `.genie/agents/`
+2. **Code Agents** (8 total): `.genie/agents/code/agents/`
+3. **Create Agents** (1 total): `.genie/agents/create/agents/`
 4. **Code Skills** (30 total): `.genie/agents/code/skills/`
 
 ---
@@ -43,7 +43,7 @@ node .genie/scripts/update-agent-registry.js
 
 # Validation
 ls -1 .genie/agents/code/skills/*.md | wc -l  # 30 ✓
-find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
+find .genie/code/agents -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
 ```
 
 ### Output (Success)
@@ -53,9 +53,9 @@ find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
 ✅ Agent registry updated in AGENTS.md
 
 📊 Registry Summary:
-   Universal Neurons: 17 total
-   Code Neurons: 8 total
-   Create Neurons: 1 total
+   Universal Agents: 17 total
+   Code Agents: 8 total
+   Create Agents: 1 total
    Code Skills: 30 total
 ```
 
@@ -64,8 +64,8 @@ find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
 ## Features Implemented
 
 ### Core Functionality
-- ✅ Scans 4 directories (neurons, code/neurons, create/neurons, code/skills)
-- ✅ Handles neuron folders with workflows (e.g., `git/git.md` → counts as "git")
+- ✅ Scans 4 directories (agents, code/agents, create/agents, code/skills)
+- ✅ Handles agent folders with workflows (e.g., `git/git.md` → counts as "git")
 - ✅ Sorts agents alphabetically
 - ✅ Generates markdown with timestamp
 - ✅ Replaces content between AUTO-GENERATED markers
@@ -82,13 +82,13 @@ find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
 <!-- AUTO-GENERATED-START: Do not edit manually -->
 **Last Updated:** 2025-10-18 06:05:20 UTC
 
-**Universal Neurons:** 17 total
+**Universal Agents:** 17 total
 - analyze, audit, challenge, consensus, debug, ...
 
-**Code Neurons:** 8 total
+**Code Agents:** 8 total
 - commit, git, implementor, install, ...
 
-**Create Neurons:** 1 total
+**Create Agents:** 1 total
 - wish
 
 **Code Skills:** 30 total
@@ -123,7 +123,7 @@ find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l  # 17 ✓
 ## Risks & Follow-ups
 
 ### Risks
-- **Low:** Script assumes folder structure remains consistent (neurons/, code/neurons/, etc.)
+- **Low:** Script assumes folder structure remains consistent (agents/, code/agents/, etc.)
 - **Low:** Timestamp always updates (expected behavior for git hooks)
 
 ### Follow-ups
@@ -148,7 +148,7 @@ node .genie/scripts/update-agent-registry.js
 grep -A10 "Agent Registry" AGENTS.md
 
 # Check counts manually
-find .genie/agents/neurons -maxdepth 1 -type f -name "*.md" | wc -l
+find .genie/code/agents -maxdepth 1 -type f -name "*.md" | wc -l
 ls -1 .genie/agents/code/skills/*.md | wc -l
 ```
 

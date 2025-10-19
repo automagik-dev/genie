@@ -459,16 +459,16 @@ notifications:
 - **Recommendation:** Discovery phase to inventory Forge templates first
 
 **2. Wish #108 (Genie arch rebrand) ↔ Executors (Category 11)**
-- **Dependency:** Universal vs. template-specific neurons
+- **Dependency:** Universal vs. template-specific agents
 - **Decision:** Use dynamic discovery of Forge executor profiles
 - **Mapping:** Genie-friendly names → Forge profile IDs
 - **Status:** Can proceed with dynamic discovery approach
 
-**3. Updating Neuron ↔ Version Management**
+**3. Updating Agent ↔ Version Management**
 - **Dependency:** Does Forge have version tracking/history?
 - **Discovery:** Investigate Forge's version management capabilities
 - **If yes:** Integrate with Review (show baseline → current)
-- **If no:** Updating neuron remains Genie-only
+- **If no:** Updating agent remains Genie-only
 
 **Recommendation:** PROCEED with decided items (approvals, images, SSE, auth, containers/filesystem restrictions) and RUN DISCOVERY focused on:
 - Approvals endpoint validation

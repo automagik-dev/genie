@@ -14,70 +14,76 @@ See `.genie/` directory for comprehensive documentation:
 
 ## Core Skills Architecture
 
-### Priority Tiers (Auto-loaded)
+### Universal Skills (Auto-loaded)
 **Tier 1 (Identity):**
-- `@.genie/agents/code/skills/know-yourself.md`
+- `@.genie/skills/know-yourself.md`
 
 **Tier 2 (Decision Framework):**
-- `@.genie/agents/code/skills/evidence-based-thinking.md`
-- `@.genie/agents/code/skills/routing-decision-matrix.md`
+- `@.genie/skills/evidence-based-thinking.md`
+- `@.genie/skills/routing-decision-matrix.md`
 
 **Tier 3 (System Coordination):**
-- `@.genie/agents/code/skills/execution-integrity-protocol.md`
-- `@.genie/agents/code/skills/persistent-tracking-protocol.md`
-- `@.genie/agents/code/skills/meta-learn-protocol.md`
-- `@.genie/agents/code/skills/wish-initiation-rule.md`
+- `@.genie/skills/execution-integrity-protocol.md`
+- `@.genie/skills/persistent-tracking-protocol.md`
+- `@.genie/skills/meta-learn-protocol.md`
 
 **Tier 4 (Discovery & Tools):**
-- `@.genie/agents/code/skills/delegation-discipline.md`
-- `@.genie/agents/code/skills/blocker-protocol.md`
-- `@.genie/agents/code/skills/chat-mode-helpers.md`
-- `@.genie/agents/code/skills/experimentation-protocol.md`
-- `@.genie/agents/code/skills/orchestration-protocols.md`
-- `@.genie/agents/code/skills/parallel-execution.md`
+- `@.genie/skills/delegation-discipline.md`
+- `@.genie/skills/blocker-protocol.md`
+- `@.genie/skills/chat-mode-helpers.md`
+- `@.genie/skills/experimentation-protocol.md`
+- `@.genie/skills/orchestration-protocols.md`
+- `@.genie/skills/parallel-execution.md`
 
 **Tier 5 (Guardrails):**
-- `@.genie/agents/code/skills/sequential-questioning.md`
-- `@.genie/agents/code/skills/no-backwards-compatibility.md`
+- `@.genie/skills/sequential-questioning.md`
+- `@.genie/skills/no-backwards-compatibility.md`
 
-### Reference-Only Skills
+### Code-Specific Skills
 **Protocols & Tools:**
-- `@.genie/agents/code/skills/publishing-protocol.md`
-- `@.genie/agents/code/skills/role-clarity-protocol.md`
-- `@.genie/agents/code/skills/triad-maintenance-protocol.md`
-- `@.genie/agents/code/skills/genie-integration.md`
-- `@.genie/agents/code/skills/agent-configuration.md`
-- `@.genie/agents/code/skills/tool-requirements.md`
+- `@.genie/code/skills/publishing-protocol.md`
+- `@.genie/code/skills/role-clarity-protocol.md`
+- `@.genie/code/skills/triad-maintenance-protocol.md`
+- `@.genie/code/skills/team-consultation-protocol.md`
+- `@.genie/code/skills/genie-integration.md`
+- `@.genie/code/skills/agent-configuration.md`
+- `@.genie/code/skills/tool-requirements.md`
+- `@.genie/code/skills/wish-initiation-rule.md`
 
 **Conventions:**
-- `@.genie/agents/code/skills/branch-tracker-guidance.md`
-- `@.genie/agents/code/skills/evidence-storage.md`
-- `@.genie/agents/code/skills/prompting-standards.md`
-- `@.genie/agents/code/skills/workspace-system.md`
-- `@.genie/agents/code/skills/file-naming-rules.md`
-- `@.genie/agents/code/skills/execution-patterns.md`
-- `@.genie/agents/code/skills/wish-document-management.md`
-- `@.genie/agents/code/skills/forge-integration.md`
-- `@.genie/agents/code/skills/forge-mcp-pattern.md`
-- `@.genie/agents/code/skills/missing-context-protocol.md`
+- `@.genie/code/skills/branch-tracker-guidance.md`
+- `@.genie/code/skills/evidence-storage.md`
+- `@.genie/code/skills/prompting-standards.md`
+- `@.genie/code/skills/workspace-system.md`
+- `@.genie/code/skills/file-naming-rules.md`
+- `@.genie/code/skills/execution-patterns.md`
+- `@.genie/code/skills/wish-document-management.md`
+- `@.genie/code/skills/forge-integration.md`
+- `@.genie/code/skills/forge-mcp-pattern.md`
+- `@.genie/code/skills/missing-context-protocol.md`
 
-## Universal Workflow Architecture
-**Workflow Pattern:** `Wish → Forge → Review`
+## Workflow Architecture
+**Pattern:** `Wish → Forge → Review`
 
-**Wish workflow structure:**
-- Main: `.genie/agents/neurons/wish.md` (discovery & planning orchestrator)
-- Delegates to: `.genie/agents/code/neurons/wish/blueprint.md` (wish document creation)
+### Core Workflows
+- `@.genie/code/workflows/wish.md` - Discovery & planning orchestrator
+- `@.genie/code/workflows/forge.md` - Execution breakdown & implementation
+- `@.genie/code/workflows/review.md` - Validation & quality assurance
 
-### Core Workflow Variants
-- **Code:** Implementation, tests, documentation
-- **Create:** Research, content, strategic planning
-- **NL:** Process improvements, decision frameworks
+### Supporting Components
+- `@.genie/code/agents/wish/blueprint.md` - Wish document creation
 
-### Workflow Components
-- `@.genie/agents/neurons/wish.md` (main orchestrator, delegates to blueprint)
-- `@.genie/agents/code/neurons/wish/blueprint.md` (wish document creation)
-- `@.genie/agents/neurons/forge.md`
-- `@.genie/agents/neurons/review.md`
+## Advisory Teams Architecture
+**Teams** are multi-persona advisory collectives that analyze and recommend but never execute.
+
+### Tech Council (Board of Technology)
+- **Council orchestrator:** `@.genie/code/teams/tech-council/council.md`
+- **Personas:**
+  - `@.genie/code/teams/tech-council/nayr.md` (Questioning, foundational thinking)
+  - `@.genie/code/teams/tech-council/oettam.md` (Performance-driven, benchmark-focused)
+  - `@.genie/code/teams/tech-council/jt.md` (Simplicity-focused, terse)
+
+**Consultation protocol:** `@.genie/agents/code/skills/team-consultation-protocol.md`
 
 ## @ Tool Semantics
 **Critical:** @ is a lightweight path reference, NOT a content loader.
@@ -87,71 +93,71 @@ See `.genie/` directory for comprehensive documentation:
 - Create knowledge graph connections
 - Save tokens by referencing, not duplicating
 
-## Neuron Delegation Hierarchy
-**Tiers:**
+## Agent Invocation Hierarchy
+**Natural Structure:**
 1. **Base Genie:** Human interface, persistent coordinator
-2. **Neurons:** Specialized execution with persistent memory
-3. **Workflows:** Neuron-scoped, atomic execution
+2. **Collectives:** Domain-specific organization (code, create)
+3. **Agents:** Individual execution units with persistent memory
+4. **Teams:** Advisory groups (analyze, recommend, no execution)
+5. **Workflows:** Deterministic sequences (wish, forge, review)
 
-**Enforcement:** Folder structure = Delegation hierarchy
+**Enforcement:** Folder structure reflects invocation hierarchy
 
 ## MCP Quick Reference
 See `@.genie/docs/mcp-interface.md` for complete documentation.
 
-## Neural Graph Architecture (Auto-Generated)
+## Knowledge Graph (Auto-Generated)
 <!-- AUTO-GENERATED-START: Do not edit manually -->
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**Total Tokens:** 35,982 (baseline for efficiency validation)
-
-**Distribution:**
-- Skills: 19,381 tokens (53.9%)
-- Universal Neurons: 10,633 tokens (29.6%)
-- Other: 3,276 tokens (9.1%)
-- Core Framework: 2,047 tokens (5.7%)
-- Code Neurons: 645 tokens (1.8%)
+**Note:** Paths updated for new architecture (Genie → Collectives → Entities)
 
 **Hierarchy:**
 
-- **AGENTS.md** (2,047 tokens, +33,935 from 40 refs)
-  - **.genie/product/mission.md** (684 tokens)
-  - **.genie/product/tech-stack.md** (546 tokens)
-  - **.genie/product/roadmap.md** (594 tokens)
-  - **.genie/product/environment.md** (694 tokens)
-  - **.genie/agents/code/skills/know-yourself.md** (1,359 tokens)
-  - **.genie/agents/code/skills/evidence-based-thinking.md** (750 tokens)
-  - **.genie/agents/code/skills/routing-decision-matrix.md** (1,146 tokens)
-  - **.genie/agents/code/skills/execution-integrity-protocol.md** (643 tokens)
-  - **.genie/agents/code/skills/persistent-tracking-protocol.md** (1,078 tokens)
-  - **.genie/agents/code/skills/meta-learn-protocol.md** (648 tokens)
-  - **.genie/agents/code/skills/wish-initiation-rule.md** (1,210 tokens)
-  - **.genie/agents/code/skills/delegation-discipline.md** (1,246 tokens)
-  - **.genie/agents/code/skills/blocker-protocol.md** (97 tokens)
-  - **.genie/agents/code/skills/chat-mode-helpers.md** (248 tokens)
-  - **.genie/agents/code/skills/experimentation-protocol.md** (499 tokens)
-  - **.genie/agents/code/skills/orchestration-protocols.md** (219 tokens)
-  - **.genie/agents/code/skills/parallel-execution.md** (93 tokens)
-  - **.genie/agents/code/skills/sequential-questioning.md** (1,275 tokens)
-  - **.genie/agents/code/skills/no-backwards-compatibility.md** (295 tokens)
-  - **.genie/agents/code/skills/publishing-protocol.md** (565 tokens)
-  - **.genie/agents/code/skills/role-clarity-protocol.md** (732 tokens)
-  - **.genie/agents/code/skills/triad-maintenance-protocol.md** (1,315 tokens)
-  - **.genie/agents/code/skills/genie-integration.md** (1,215 tokens)
-  - **.genie/agents/code/skills/agent-configuration.md** (537 tokens)
-  - **.genie/agents/code/skills/tool-requirements.md** (116 tokens)
-  - **.genie/agents/code/skills/branch-tracker-guidance.md** (164 tokens)
-  - **.genie/agents/code/skills/evidence-storage.md** (286 tokens)
-  - **.genie/agents/code/skills/prompting-standards.md** (172 tokens)
-  - **.genie/agents/code/skills/workspace-system.md** (104 tokens)
-  - **.genie/agents/code/skills/file-naming-rules.md** (293 tokens)
-  - **.genie/agents/code/skills/execution-patterns.md** (110 tokens)
-  - **.genie/agents/code/skills/wish-document-management.md** (791 tokens)
-  - **.genie/agents/code/skills/forge-integration.md** (1,630 tokens)
-  - **.genie/agents/code/skills/forge-mcp-pattern.md** (417 tokens)
-  - **.genie/agents/code/skills/missing-context-protocol.md** (128 tokens)
-  - **.genie/agents/neurons/wish.md** (1,373 tokens)
-  - **.genie/agents/code/neurons/wish/blueprint.md** (645 tokens)
-  - **.genie/agents/neurons/forge.md** (5,973 tokens)
-  - **.genie/agents/neurons/review.md** (3,287 tokens)
-  - **.genie/docs/mcp-interface.md** (758 tokens)
+- **AGENTS.md** (framework entry point)
+  - **.genie/product/mission.md** - Product vision & goals
+  - **.genie/product/tech-stack.md** - Technology decisions
+  - **.genie/product/roadmap.md** - Feature roadmap
+  - **.genie/product/environment.md** - Development environment
+
+**Universal Skills:**
+  - **.genie/skills/know-yourself.md** - Identity & capabilities
+  - **.genie/skills/evidence-based-thinking.md** - Decision framework
+  - **.genie/skills/routing-decision-matrix.md** - Agent routing logic
+  - **.genie/skills/execution-integrity-protocol.md** - Execution standards
+  - **.genie/skills/persistent-tracking-protocol.md** - State tracking
+  - **.genie/skills/meta-learn-protocol.md** - Learning system
+  - **.genie/skills/delegation-discipline.md** - Invocation patterns
+  - **.genie/skills/blocker-protocol.md** - Blocker handling
+  - **.genie/skills/chat-mode-helpers.md** - Interaction patterns
+  - **.genie/skills/experimentation-protocol.md** - Experimentation rules
+  - **.genie/skills/orchestration-protocols.md** - Orchestration patterns
+  - **.genie/skills/parallel-execution.md** - Parallel execution
+  - **.genie/skills/sequential-questioning.md** - User interaction
+  - **.genie/skills/no-backwards-compatibility.md** - Evolution policy
+
+**Code Collective:**
+  - **Skills:**
+    - **.genie/code/skills/publishing-protocol.md**
+    - **.genie/code/skills/role-clarity-protocol.md**
+    - **.genie/code/skills/triad-maintenance-protocol.md**
+    - **.genie/code/skills/team-consultation-protocol.md**
+    - **.genie/code/skills/genie-integration.md**
+    - **.genie/code/skills/agent-configuration.md**
+    - **.genie/code/skills/tool-requirements.md**
+    - **.genie/code/skills/wish-initiation-rule.md**
+    - **.genie/code/skills/forge-integration.md**
+    - **.genie/code/skills/forge-mcp-pattern.md**
+  - **Workflows:**
+    - **.genie/code/workflows/wish.md** - Discovery & planning
+    - **.genie/code/workflows/forge.md** - Execution breakdown
+    - **.genie/code/workflows/review.md** - Quality validation
+  - **Teams:**
+    - **.genie/code/teams/tech-council/council.md** - Orchestrator
+    - **.genie/code/teams/tech-council/nayr.md** - Foundational thinking
+    - **.genie/code/teams/tech-council/oettam.md** - Performance focus
+    - **.genie/code/teams/tech-council/jt.md** - Simplicity advocate
+
+**Documentation:**
+  - **.genie/docs/mcp-interface.md** - MCP integration guide
 
 <!-- AUTO-GENERATED-END -->

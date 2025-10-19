@@ -1,7 +1,7 @@
-# Done Report: Forge Neuron Split
+# Done Report: Forge Agent Split
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Timestamp:** 2025-10-17 19:36 UTC
-**Task:** Split forge neuron into focused execution workflows
+**Task:** Split forge agent into focused execution workflows
 **Status:** ✅ COMPLETE
 
 ---
@@ -19,11 +19,11 @@
 ## Completed Work
 
 **Files created:**
-1. `.genie/agents/genie/neurons/forge/forge-direct.md` - 306 lines (MCP execution workflow)
-2. `.genie/agents/genie/neurons/forge/forge-task.md` - 333 lines (external Forge tool workflow)
+1. `.genie/agents/genie/agents/forge/forge-direct.md` - 306 lines (MCP execution workflow)
+2. `.genie/agents/genie/agents/forge/forge-task.md` - 333 lines (external Forge tool workflow)
 
 **Files modified:**
-1. `.genie/agents/genie/neurons/forge/forge.md` - 661→435 lines (34% reduction for core operations)
+1. `.genie/agents/genie/agents/forge/forge.md` - 661→435 lines (34% reduction for core operations)
 
 **Architectural change:**
 - **OLD:** Single forge.md with 3 execution patterns crammed together (661 lines)
@@ -45,7 +45,7 @@
 - Does NOT execute tasks itself
 
 **forge-direct.md (MCP execution):**
-- Spawn implementor/neuron sessions via `mcp__genie__run`
+- Spawn implementor/agent sessions via `mcp__genie__run`
 - Each task gets dedicated MCP session (resumable until complete)
 - Track sessions in SESSION-STATE.md
 - Pure MCP-based execution
@@ -65,41 +65,41 @@
 **Pattern Preservation:**
 ```bash
 # Core orchestration preserved
-grep -q "spec_contract" .genie/agents/genie/neurons/forge/forge.md
+grep -q "spec_contract" .genie/agents/genie/agents/forge/forge.md
 # ✅ PASS
 
 # MCP session spawning preserved
-grep -q "mcp__genie__run" .genie/agents/genie/neurons/forge/forge-direct.md
+grep -q "mcp__genie__run" .genie/agents/genie/agents/forge/forge-direct.md
 # ✅ PASS
 
 # External Forge tools preserved
-grep -q "mcp__forge" .genie/agents/genie/neurons/forge/forge-task.md
+grep -q "mcp__forge" .genie/agents/genie/agents/forge/forge-task.md
 # ✅ PASS
 ```
 
 **Delegation Protocol:**
 ```bash
 # forge.md delegates to workflows correctly
-grep -A5 "Allowed delegations:" .genie/agents/genie/neurons/forge/forge.md | grep -E "forge-direct|forge-task"
+grep -A5 "Allowed delegations:" .genie/agents/genie/agents/forge/forge.md | grep -E "forge-direct|forge-task"
 # ✅ PASS - Delegates to forge-direct and forge-task
 
 # Workflow @ references present
-grep -E "@\.genie/agents/genie/neurons/forge/forge-(direct|task)\.md" .genie/agents/genie/neurons/forge/forge.md
+grep -E "@\.genie/agents/genie/agents/forge/forge-(direct|task)\.md" .genie/agents/genie/agents/forge/forge.md
 # ✅ PASS - Both workflows referenced
 ```
 
 **File Existence:**
 ```bash
 # All files exist
-test -f .genie/agents/genie/neurons/forge/forge.md && echo "✅"
-test -f .genie/agents/genie/neurons/forge/forge-direct.md && echo "✅"
-test -f .genie/agents/genie/neurons/forge/forge-task.md && echo "✅"
+test -f .genie/agents/genie/agents/forge/forge.md && echo "✅"
+test -f .genie/agents/genie/agents/forge/forge-direct.md && echo "✅"
+test -f .genie/agents/genie/agents/forge/forge-task.md && echo "✅"
 # ✅ PASS - All files present
 ```
 
 **Line Counts:**
 ```bash
-wc -l .genie/agents/genie/neurons/forge/*.md
+wc -l .genie/agents/genie/agents/forge/*.md
 # Result:
 #   306 forge-direct.md
 #   333 forge-task.md
@@ -137,14 +137,14 @@ wc -l .genie/agents/genie/neurons/forge/*.md
 - ✅ Each file has ONE job (not three jobs crammed together)
 - ✅ Easier to optimize each workflow independently
 - ✅ forge-task.md can evolve without affecting direct MCP workflow
-- ✅ Follows same architectural pattern as git neuron split
+- ✅ Follows same architectural pattern as git agent split
 - ✅ Core orchestration 34% leaner (661→435 lines)
 
 ---
 
 ## Summary
 
-✅ Forge neuron split complete with zero knowledge loss
+✅ Forge agent split complete with zero knowledge loss
 ✅ 3 focused files created (forge.md, forge-direct.md, forge-task.md)
 ✅ Core orchestration 34% reduction (661→435 lines)
 ✅ Per-operation context optimized (only load relevant workflow)

@@ -17,9 +17,9 @@
 ### Description
 Session ID collision where the same UUID appeared multiple times with different agents and timestamps:
 
-1. **genie/neurons/git** (created 2025-10-17T18:15:51.377Z, last used 2025-10-17T18:16:14.468Z)
-2. **neurons/learn** (created 2025-10-15T22:00:04.917Z, last used 2025-10-17T18:15:44.532Z)
-3. **neurons/git** (created 2025-10-15T22:02:32.691Z, last used 2025-10-17T18:14:37.960Z)
+1. **genie/agents/git** (created 2025-10-17T18:15:51.377Z, last used 2025-10-17T18:16:14.468Z)
+2. **agents/learn** (created 2025-10-15T22:00:04.917Z, last used 2025-10-17T18:15:44.532Z)
+3. **agents/git** (created 2025-10-15T22:02:32.691Z, last used 2025-10-17T18:14:37.960Z)
 
 ### Impact
 **Severity:** HIGH
@@ -280,7 +280,7 @@ npx automagik-genie run analyze
 
 ## Regression Test
 
-**Location:** `.genie/agents/neurons/qa/workflows/bug-102-session-collision.md`
+**Location:** `.genie/agents/qa/workflows/bug-102-session-collision.md`
 
 **Test Frequency:** Every RC release
 

@@ -259,7 +259,7 @@ Since HTTP API testing has auth complexity, let me show you the MCP approach (wh
 
 ### What We Just Did (5 Minutes Ago)
 
-**Started learn neuron via Forge MCP:**
+**Started learn agent via Forge MCP:**
 ```typescript
 // ONE LINE - That's it!
 await mcp__automagik_forge__start_task_attempt({
@@ -274,7 +274,7 @@ await mcp__automagik_forge__start_task_attempt({
 // Worktree created automatically
 ```
 
-**Result:** `7e1b56d1-50a3-4ac2-bfb2-ab9c9ef49327` (learn neuron session running now!)
+**Result:** `7e1b56d1-50a3-4ac2-bfb2-ab9c9ef49327` (learn agent session running now!)
 
 ---
 
@@ -329,7 +329,7 @@ await mcp__automagik_forge__start_task_attempt({
 
 ---
 
-## Real-World Example: Learn Neuron Started Successfully
+## Real-World Example: Learn Agent Started Successfully
 
 **Command Used:**
 ```typescript
@@ -379,7 +379,7 @@ await mcp__automagik_forge__start_task_attempt({
 
 **Testing:**
 - ✅ POC already working (forge-executor.ts)
-- ✅ Forge MCP proven (just started learn neuron successfully)
+- ✅ Forge MCP proven (just started learn agent successfully)
 - ✅ No new infrastructure needed (Forge already running)
 
 **Risk:**
@@ -396,7 +396,7 @@ await mcp__automagik_forge__start_task_attempt({
 **Status:** ✅ COMPLETE
 
 ### 2. Live Demonstration WORKS
-**Action:** Started learn neuron via Forge MCP
+**Action:** Started learn agent via Forge MCP
 **Result:** ✅ SUCCESS (attempt_id: 7e1b56d1-50a3-4ac2-bfb2-ab9c9ef49327)
 **Time:** < 1 second (vs 20s timeout)
 
@@ -419,7 +419,7 @@ await mcp__automagik_forge__start_task_attempt({
 
 **Evidence:**
 1. ✅ POC already implemented (forge-executor.ts)
-2. ✅ Live demo just succeeded (learn neuron started in < 1s)
+2. ✅ Live demo just succeeded (learn agent started in < 1s)
 3. ✅ Code changes minimal (12 lines across 4 files)
 4. ✅ 78% code reduction (delete 500 lines)
 5. ✅ Estimated effort: 1 hour (core), 1 week (full)
@@ -431,4 +431,4 @@ await mcp__automagik_forge__start_task_attempt({
 **Report Author:** Genie (forge/120-executor-replacement)
 **Date:** 2025-10-18
 **Worktree:** c3d1-forge-120-execut
-**Live Proof:** Learn neuron running now (attempt 7e1b56d1)
+**Live Proof:** Learn agent running now (attempt 7e1b56d1)

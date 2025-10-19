@@ -44,13 +44,14 @@ function findWorkspaceRoot() {
 }
 const WORKSPACE_ROOT = findWorkspaceRoot();
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
-// Helper: List available agents from .genie/agents directory
+// Helper: List available agents from .genie/code/agents and .genie/create/agents
 function listAgents() {
-    const baseDir = path_1.default.join(WORKSPACE_ROOT, '.genie/agents');
     const agents = [];
-    if (!fs_1.default.existsSync(baseDir)) {
-        return agents;
-    }
+    // Search in both code and create collectives
+    const searchDirs = [
+        path_1.default.join(WORKSPACE_ROOT, '.genie/code/agents'),
+        path_1.default.join(WORKSPACE_ROOT, '.genie/create/agents')
+    ];
     const visit = (dirPath, relativePath) => {
         const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
         entries.forEach((entry) => {
@@ -83,7 +84,12 @@ function listAgents() {
             agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
         });
     };
-    visit(baseDir, null);
+    // Visit all search directories
+    searchDirs.forEach(baseDir => {
+        if (fs_1.default.existsSync(baseDir)) {
+            visit(baseDir, null);
+        }
+    });
     return agents;
 }
 // Helper: List recent sessions (uses Forge API)
@@ -213,7 +219,7 @@ server.addTool({
     execute: async () => {
         const agents = listAgents();
         if (agents.length === 0) {
-            return getVersionHeader() + 'No agents found in .genie/agents directory.';
+            return getVersionHeader() + 'No agents found in .genie/code/agents or .genie/create/agents directories.';
         }
         let response = getVersionHeader() + `Found ${agents.length} available agents:\n\n`;
         // Group by folder

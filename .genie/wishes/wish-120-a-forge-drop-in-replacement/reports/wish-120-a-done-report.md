@@ -531,7 +531,7 @@ All 4 tasks completed successfully:
    - Use Forge inspection APIs for debugging
    - View execution logs, process status, branch diffs
 
-3. **Migration & Updating Neuron**
+3. **Migration & Updating Agent**
    - Auto-update Genie when Forge version changes
    - Seamless upgrade path
 

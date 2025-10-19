@@ -27,12 +27,12 @@ The primary issue is **STRUCTURAL OVERLOAD + BURIED CRITICAL PATTERNS**. Delegat
 
 ### ✅ VERIFIED: File References
 All referenced files exist:
-- `.genie/agents/neurons/git.md` ✅
-- `.genie/agents/neurons/prompt.md` ✅
-- `.genie/agents/neurons/orchestrator.md` ✅
-- `.genie/agents/neurons/modes/` (8 files) ✅
+- `.genie/agents/git.md` ✅
+- `.genie/agents/prompt.md` ✅
+- `.genie/agents/orchestrator.md` ✅
+- `.genie/agents/modes/` (8 files) ✅
 - `.genie/custom/routing.md` ✅
-- `.genie/custom/neurons/` ✅
+- `.genie/custom/agents/` ✅
 
 ### ❌ BROKEN: Section References in CLAUDE.md
 
@@ -234,7 +234,7 @@ CLAUDE.md version includes concrete examples (WRONG vs CORRECT pattern).
 ```
 **Step 4: Execution (Natural)**
 - For simple tasks: I do it directly
-- For complex tasks: I summon specialist neurons
+- For complex tasks: I summon specialist agents
 ```
 
 **Lines 886-920 (Delegation Discipline):**
@@ -580,9 +580,9 @@ If YES to any → Delegate instead
 ### File Verification Commands
 ```bash
 # All referenced files exist
-find .genie/agents/neurons -name "*.md" | wc -l  # 11 files
+find .genie/code/agents -name "*.md" | wc -l  # 11 files
 test -f .genie/custom/routing.md && echo "✅"    # Exists
-ls .genie/custom/neurons/ | wc -l                # 7 files + modes dir
+ls .genie/custom/agents/ | wc -l                # 7 files + modes dir
 ```
 
 ### Redundancy Detection

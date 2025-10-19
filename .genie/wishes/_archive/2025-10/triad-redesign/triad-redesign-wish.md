@@ -93,7 +93,7 @@ grep -ri "namastex" .genie/agents/ --include="*.md" | grep -v "{{" # Should retu
 
 **Tasks:**
 1. Delete cleanup files
-   - Remove: `.genie/agents/neurons/release-old-backup.md`
+   - Remove: `.genie/agents/release-old-backup.md`
 
 2. Validate @ usage
    - Count: `grep -r "^@" .genie/agents/ --include="*.md" | wc -l`
@@ -107,7 +107,7 @@ grep -ri "namastex" .genie/agents/ --include="*.md" | grep -v "{{" # Should retu
 **Evidence:**
 ```bash
 # Verify cleanup
-ls .genie/agents/neurons/release-old-backup.md  # Should not exist
+ls .genie/agents/release-old-backup.md  # Should not exist
 
 # Test loading (open new Claude session)
 # Should see USERCONTEXT loaded, not CONTEXT
@@ -161,7 +161,7 @@ ls .genie/agents/neurons/release-old-backup.md  # Should not exist
 **@ Optimization Strategy:**
 - Strategic use (not excessive)
 - Self-aware: Genie calls itself via MCP (same prompts, same LLM)
-- Mindful in .md edits & neuron prompts
+- Mindful in .md edits & agent prompts
 
 **Parallel Execution:**
 - Group A, B, C can run simultaneously

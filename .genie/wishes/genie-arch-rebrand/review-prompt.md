@@ -18,7 +18,7 @@ Before approving this wish as complete, perform deep reality-check analysis:
    - Identify any gaps between plan and implementation
 
 2. **Identify overlooked requirements or edge cases**
-   - Test agent resolution with all neuron types
+   - Test agent resolution with all agent types
    - Check for broken @ references
    - Verify display transformation handles all paths
    - Test template-specific vs universal resolution
@@ -47,9 +47,9 @@ Before approving this wish as complete, perform deep reality-check analysis:
 **Objective:** Reorganize agents from `.genie/agents/genie/*` to flat structure
 
 **Implementation:**
-- Created `.genie/agents/{code,create,neurons,workflows}/` structure
+- Created `.genie/agents/{code,create,agents,workflows}/` structure
 - Moved template-specific agents to `code/` and `create/` directories
-- Moved universal agents to `neurons/` directory (17 agents)
+- Moved universal agents to `agents/` directory (17 agents)
 - Deleted 150+ obsolete template files
 
 **Files modified:** ~155 files (moves + deletions)
@@ -81,9 +81,9 @@ Before approving this wish as complete, perform deep reality-check analysis:
 **Implementation:**
 - Implemented `transformDisplayPath()` function with logic:
   - Template folders (`code/`, `create/`): Strip entirely
-  - Category folders (`neurons/`, `workflows/`): Strip for top-level, preserve for children
-  - Parent neurons (e.g., `neurons/git/git.md`): Display as `git`
-  - Child workflows (e.g., `neurons/git/issue.md`): Display as `git/issue`
+  - Category folders (`agents/`, `workflows/`): Strip for top-level, preserve for children
+  - Parent agents (e.g., `agents/git/git.md`): Display as `git`
+  - Child workflows (e.g., `agents/git/issue.md`): Display as `git/issue`
 
 - Applied transformation in 3 locations:
   1. `.genie/cli/src/lib/agent-resolver.ts` - Added function and integration
@@ -96,9 +96,9 @@ Before approving this wish as complete, perform deep reality-check analysis:
 
 **Examples:**
 - `code/implementor` → `implementor`
-- `neurons/git/git` → `git`
-- `neurons/git/issue` → `git/issue`
-- `neurons/plan` → `plan`
+- `agents/git/git` → `git`
+- `agents/git/issue` → `git/issue`
+- `agents/plan` → `plan`
 
 ---
 
@@ -110,7 +110,7 @@ Before approving this wish as complete, perform deep reality-check analysis:
 - [ ] **Token savings verification:** Confirm ~528 lines removed (7 protocol sections)
 - [ ] **@ references intact:** All 7 skill @ references present and correct
   ```bash
-  grep "@.genie/agents/code/skills/" AGENTS.md | wc -l
+  grep "@.genie/code/skills/" AGENTS.md | wc -l
   # Expected: 7 references
   ```
 - [ ] **No content duplication:** Verify inline content removed, only @ references remain
@@ -126,12 +126,12 @@ Before approving this wish as complete, perform deep reality-check analysis:
   # ├── code/
   # │   ├── code.md
   # │   ├── skills/ (7 files)
-  # │   └── neurons/
+  # │   └── agents/
   # ├── create/
   # │   ├── create.md
   # │   ├── skills/
-  # │   └── neurons/
-  # ├── neurons/ (17 universal agents)
+  # │   └── agents/
+  # ├── agents/ (17 universal agents)
   # └── workflows/
   ```
 
@@ -163,13 +163,13 @@ Before approving this wish as complete, perform deep reality-check analysis:
 
   **Expected output (verify each):**
   - ✅ `implementor` (NOT `code/implementor`)
-  - ✅ `git` (NOT `neurons/git/git` or `code/neurons/git/git`)
-  - ✅ `git/issue` (NOT `neurons/git/issue`)
-  - ✅ `git/pr` (NOT `neurons/git/pr`)
-  - ✅ `git/report` (NOT `neurons/git/report`)
-  - ✅ `plan` (NOT `neurons/plan` or `workflows/plan`)
+  - ✅ `git` (NOT `agents/git/git` or `code/agents/git/git`)
+  - ✅ `git/issue` (NOT `agents/git/issue`)
+  - ✅ `git/pr` (NOT `agents/git/pr`)
+  - ✅ `git/report` (NOT `agents/git/report`)
+  - ✅ `plan` (NOT `agents/plan` or `workflows/plan`)
   - ✅ `tests` (NOT `code/tests`)
-  - ✅ `polish` (NOT `neurons/polish`)
+  - ✅ `polish` (NOT `agents/polish`)
 
 - [ ] **Folder grouping intact:** Verify agents still grouped by folder in output
 
@@ -217,7 +217,7 @@ Before approving this wish as complete, perform deep reality-check analysis:
 3. Does the fallback logic work for legacy paths?
 
 **Functionality:**
-1. Can all 17+ universal neurons be invoked?
+1. Can all 17+ universal agents be invoked?
 2. Do template-specific overrides work correctly?
 3. Are there any broken @ references?
 
@@ -230,24 +230,24 @@ Before approving this wish as complete, perform deep reality-check analysis:
 
 ## 🧪 Test Scenarios (Post-Restart)
 
-### Scenario 1: Universal Neuron Resolution
+### Scenario 1: Universal Agent Resolution
 ```
-mcp__genie__run with agent="plan" and prompt="Test universal neuron"
+mcp__genie__run with agent="plan" and prompt="Test universal agent"
 # Expected: Starts successfully, display shows "plan"
 ```
 
-### Scenario 2: Template-Specific Neuron Resolution
+### Scenario 2: Template-Specific Agent Resolution
 ```
-mcp__genie__run with agent="implementor" and prompt="Test code neuron"
+mcp__genie__run with agent="implementor" and prompt="Test code agent"
 # Expected: Starts successfully, display shows "implementor"
 ```
 
 ### Scenario 3: Parent-Child Workflow
 ```
-mcp__genie__run with agent="git" and prompt="Test parent neuron"
+mcp__genie__run with agent="git" and prompt="Test parent agent"
 # Expected: Starts successfully, display shows "git"
 
-# Then from git neuron context, delegate to child:
+# Then from git agent context, delegate to child:
 mcp__genie__run with agent="git/issue" and prompt="Test child workflow"
 # Expected: Starts successfully, display shows "git/issue"
 ```
@@ -261,7 +261,7 @@ Read with file_path="<skill-file-path-from-`@`-reference>"
 
 ### Scenario 5: Legacy Path Handling
 ```
-# If any legacy paths still exist (neurons/genie/skills/*)
+# If any legacy paths still exist (agents/genie/skills/*)
 mcp__genie__run with agent="<legacy-path>" and prompt="Test backward compatibility"
 # Expected: Either works with fallback, or clear error message
 ```
