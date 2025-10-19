@@ -85,6 +85,23 @@
 
 ### **Wish-Forge-Learn Integration Tasks (7 Created, Awaiting Execution):**
 
+**Origin:** New architectural requirement - integrate Genie wish workflow with Forge backend task system
+**Related Issues:** Foundation for future wish-based workflow (#145, #120-C)
+**Related Wishes:** Enables `wish-120-a-forge-drop-in-replacement` execution via Forge
+**Status:** Planning complete, 7 tasks created across 2 projects
+
+**Problem Being Solved:**
+- Genie wishes currently create documents but not Forge tasks
+- No hierarchical task relationships (wish → sub-tasks)
+- No learn integration at wish level
+- forge.md creates execution groups in docs only (not real Forge tasks)
+
+**Solution Architecture:**
+- Wishes create Forge tasks with state="agent" and branch="feat/<slug>"
+- forge.md creates Forge sub-tasks for execution groups (hierarchical)
+- Two-tier learn: project-level + wish-level sub-tasks
+- Forge backend gets parent_task_id and branch fields
+
 **Genie Project Tasks** (ee8f0a72-44da-411d-a23e-f2c6529b62ce, base: `dev`):
 - **0d568ea8** - Task 1: MCP Auto-Sync on Startup (todo, independent)
 - **5df76ebd** - Task 3: Wish Task Creation via Genie MCP (todo, depends on Task 2)
@@ -95,6 +112,11 @@
 - **07d294a2** - Task 2: State "agent" Implementation (todo, BLOCKS Task 3)
 - **86ed77e2** - Task 6: Parent-Child Support (todo, CRITICAL - BLOCKS Tasks 4 & 5)
 - **dfbd3854** - Task 7: Branch Assignment to Tasks (todo, foundation)
+
+**Execution Waves:**
+1. **Wave 1 (Forge Backend):** Tasks 2, 6, 7 in parallel → merge to main
+2. **Wave 2 (Genie Integration):** Tasks 1, 3, 5 after Wave 1 merged
+3. **Wave 3 (Final Integration):** Task 4 after Task 3 merged
 
 **Execution Status:** Planning complete, awaiting Forge bug fix to start Wave 1
 **Context Docs:** `/tmp/CRITICAL-CONTEXT-wish-forge-learn-integration.md` (complete)
