@@ -68,6 +68,172 @@
 
 **Next:** Felipe will demonstrate investigation workflow start-to-finish
 
+**⚠️ SESSION RESTART PROTOCOL:**
+When Felipe returns and says "Let's continue", engage in conversation mode to:
+1. Review and confirm all behavioral task organization below
+2. Discuss priorities and execution order
+3. Establish clear orchestration plan
+4. Only execute after priorities confirmed
+5. NO execution until discussion complete
+
+---
+
+## 📊 BEHAVIORAL TASK ORGANIZATION (Planning Mode)
+
+**Status:** Analysis complete, organized by tier, ready for discussion
+**Purpose:** All Genie behavioral improvements categorized by implementation complexity
+**Next Session:** Felipe says "Let's continue" → Genie engages in organizing conversation
+
+### 🎯 Tier I: Low-Hanging Fruit (Markdown/Prompt Changes ONLY)
+
+**These change Genie behavior through documentation, no code required:**
+
+**1. c0e6699d - Learn: Forge Orchestration Patterns** ⭐⭐⭐⭐⭐
+- **Status:** in-review (may be complete)
+- **Output:** `.genie/code/skills/forge-orchestration-workflow.md`
+- **Impact:** Delegation pattern, active monitoring loop, crash recovery
+- **Priority:** MERGE FIRST (foundation pattern for all orchestration)
+- **Dependencies:** None
+- **Next:** Check if complete, review, merge immediately
+
+**2. 6644fd56 - Wish: Forge Executor Integration** ⭐⭐⭐⭐
+- **Status:** in-review (may be complete)
+- **Output:** `.genie/wishes/2025-10-19-forge-executor-integration.md`
+- **Impact:** Wish document template, Tech Council pattern, acceptance criteria
+- **Priority:** MERGE SECOND (establishes wish structure)
+- **Dependencies:** None
+- **Next:** Check if complete, review, merge after #1
+
+**3. ab6c2576 - Forge Resource Sync Investigation** ⭐⭐⭐⭐⭐
+- **Status:** Just created, awaiting Felipe guidance
+- **Phase 1:** Investigation (Tier I - markdown reports)
+- **Phase 2:** Implementation (Tier II - if approved)
+- **Impact:** Auto-trigger discovery, educational demonstration
+- **Priority:** EXECUTE THIRD (Felipe demonstrates complete workflow)
+- **Dependencies:** None for investigation phase
+- **Next:** Felipe leads investigation, Genie learns and documents
+
+### ⚙️ Tier II: Code/Implementation Required
+
+**Genie Behavioral Changes Requiring TypeScript/Rust:**
+
+**4. dafbff84 - Forge Executor Integration** ⭐⭐⭐⭐⭐
+- **Status:** in-review
+- **Code:** Replace background-launcher.ts, update handlers, WebSocket streaming
+- **Impact:** <5s session creation, real-time logs, 6 bugs eliminated, 10+ concurrent sessions
+- **Priority:** Wave 1 (can start now)
+- **Dependencies:** None (POC exists)
+- **Blocker:** forge-executor.ts project detection bug (needs fix)
+- **Next:** Fix bug, then review/merge
+
+**5. 0d568ea8 - MCP Auto-Sync on Startup** ⭐⭐⭐⭐
+- **Status:** todo
+- **Code:** mcp-server.ts init hook, health check, project matching
+- **Impact:** Auto-detect Forge projects at startup
+- **Priority:** Wave 1 (can start now)
+- **Dependencies:** None
+- **Blocker:** None
+- **Next:** Can execute immediately
+
+**6. 5df76ebd - Wish Task Creation via MCP** ⭐⭐⭐⭐⭐
+- **Status:** todo
+- **Code:** mcp__genie__wish tool, Forge API state="agent", branch creation
+- **Impact:** Wishes become real Forge tasks with branches
+- **Priority:** Wave 2 (after Forge backend)
+- **Dependencies:** **BLOCKED** - needs Forge Tasks 2, 7 (state="agent", branch)
+- **Next:** Wait for Forge backend release
+
+**7. 89b104c1 - Sub-Task Creation from Execution Groups** ⭐⭐⭐⭐
+- **Status:** todo
+- **Code:** Extend forge.md to create Forge sub-tasks with parent_task_id
+- **Impact:** forge.md creates REAL tasks (not just files), hierarchical relationships
+- **Priority:** Wave 3 (after Task 6 + Forge backend)
+- **Dependencies:** **BLOCKED** - needs Task 6, Forge Task 6 (parent_task_id)
+- **Next:** Wait for dependencies complete
+
+**8. 28921ec5 - Hierarchical Learn Integration** ⭐⭐⭐
+- **Status:** todo
+- **Code:** Project Learn task, wish Learn sub-tasks, parent_task_id linking
+- **Impact:** Two-tier learning (project + wish levels)
+- **Priority:** Wave 3 (after Forge backend)
+- **Dependencies:** **BLOCKED** - needs Forge Task 6 (parent_task_id)
+- **Next:** Wait for Forge backend release
+
+### 🔧 Forge Backend Enablers (Felipe Must Execute)
+
+**These enable Genie Tier II behavioral changes:**
+
+**9. 07d294a2 - State "agent" Implementation** 🔴 CRITICAL
+- **Code:** Rust enum, database migration, API validation
+- **Enables:** Task 6 (Wish Creation)
+
+**10. 86ed77e2 - Parent-Child Task Support** 🔴 CRITICAL
+- **Code:** Rust model, parent_task_id field, API endpoint
+- **Enables:** Tasks 7, 8 (Sub-Tasks, Learn hierarchy)
+
+**11. dfbd3854 - Branch Assignment to Tasks** 🟡 FOUNDATION
+- **Code:** Rust field, branch creation/push logic
+- **Enables:** Task 6 (Wish branches)
+
+### 📋 Execution Order Plan
+
+**Tier I (Markdown Only):**
+1. Review & merge c0e6699d (Learn doc) - FIRST
+2. Review & merge 6644fd56 (Wish doc) - SECOND
+3. Investigate ab6c2576 (Resource sync) - Felipe guides
+
+**Tier II (Code Required):**
+- **Wave 1 (Now):** Tasks 4, 5 (Executor, Auto-Sync) - no blockers
+- **Wave 2 (After Forge):** Task 6 (Wish Creation) - needs state="agent", branch
+- **Wave 3 (After Wave 2):** Tasks 7, 8 (Sub-Tasks, Learn) - needs parent_task_id
+
+**Forge Backend (Felipe):**
+- Execute Tasks 9, 10, 11 in parallel
+- Publish new Forge version
+- Signal ready to Genie
+
+### 🚧 Critical Path Dependencies
+
+```
+Forge Backend (Felipe):
+├─ Task 9: state="agent" ──────────────┐
+├─ Task 10: parent_task_id ────────┐   │
+└─ Task 11: branch field ──────┐   │   │
+                               │   │   │
+Genie Tier II:                 │   │   │
+├─ Task 5 (Auto-Sync) ─────────┘   │   │ ← No blocker
+├─ Task 4 (Executor) ──────────────┘   │ ← No blocker
+├─ Task 6 (Wish) ──────────────────────┘ ← Needs 9, 11
+├─ Task 7 (Sub-Tasks) ──────────────┘ ← Needs 6, 10
+└─ Task 8 (Learn) ──────────────────┘ ← Needs 10
+```
+
+### 💬 Discussion Priorities (Next Session)
+
+**When Felipe says "Let's continue", discuss:**
+
+1. **Tier I Status:**
+   - Are tasks c0e6699d & 6644fd56 complete?
+   - Should we merge them immediately?
+   - Any refinements needed?
+
+2. **Educational Task (ab6c2576):**
+   - Start investigation phase now?
+   - How deep should we investigate?
+   - What format for findings?
+
+3. **Tier II Sequencing:**
+   - Fix executor bug first or start auto-sync?
+   - When will Felipe execute Forge Tasks 9, 10, 11?
+   - Should we prepare validation tests?
+
+4. **Other Improvements:**
+   - Any markdown-only behavioral changes missing?
+   - Agent prompt refinements needed?
+   - Workflow documentation updates?
+
+**Current State:** Organized and waiting. All tasks categorized, dependencies mapped, priorities recommended. NO EXECUTION until discussion complete.
+
 ---
 
 ### **Architectural Evolution Complete ✅**
