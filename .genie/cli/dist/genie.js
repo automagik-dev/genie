@@ -3,6 +3,9 @@
 /**
  * GENIE Agent CLI - Codex exec orchestration with configurable execution modes
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const cli_parser_1 = require("./lib/cli-parser");
 const config_1 = require("./lib/config");
@@ -10,11 +13,10 @@ const session_helpers_1 = require("./lib/session-helpers");
 const help_1 = require("./views/help");
 const common_1 = require("./views/common");
 const view_helpers_1 = require("./lib/view-helpers");
-const run_1 = require("./commands/run");
-const resume_1 = require("./commands/resume");
-const list_1 = require("./commands/list");
-const view_1 = require("./commands/view");
-const stop_1 = require("./commands/stop");
+const cli_core_1 = require("./cli-core");
+const executor_registry_1 = require("./lib/executor-registry");
+const executors_1 = require("./executors");
+const background_manager_1 = __importDefault(require("./background-manager"));
 const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
 const migrate_1 = require("./commands/migrate");
@@ -24,27 +26,28 @@ const status_1 = require("./commands/status");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
 const model_1 = require("./commands/model");
-const background_manager_1 = require("./background-manager");
+const background_manager_2 = require("./background-manager");
 void main();
 async function main() {
     try {
         let parsed = (0, cli_parser_1.parseArguments)(process.argv.slice(2));
-        const envIsBackground = process.env[background_manager_1.INTERNAL_BACKGROUND_MARKER_ENV] === '1';
+        const envIsBackground = process.env[background_manager_2.INTERNAL_BACKGROUND_MARKER_ENV] === '1';
         if (envIsBackground) {
             parsed.options.background = true;
             parsed.options.backgroundRunner = true;
             parsed.options.backgroundExplicit = true;
         }
         else {
-            delete process.env[background_manager_1.INTERNAL_BACKGROUND_ENV];
-            delete process.env[background_manager_1.INTERNAL_START_TIME_ENV];
-            delete process.env[background_manager_1.INTERNAL_LOG_PATH_ENV];
+            delete process.env[background_manager_2.INTERNAL_BACKGROUND_ENV];
+            delete process.env[background_manager_2.INTERNAL_START_TIME_ENV];
+            delete process.env[background_manager_2.INTERNAL_LOG_PATH_ENV];
         }
         // Fast path for help commands - skip config loading
         const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
             parsed.options.requestHelp;
         let config;
         let paths;
+        let handlers = null;
         if (isHelpOnly) {
             // Minimal config for help display
             config = { defaults: { background: true } };
@@ -61,6 +64,32 @@ async function main() {
                 await (0, view_helpers_1.emitView)(envelope, parsed.options);
                 (0, config_1.clearStartupWarnings)();
             }
+            // Create handler context for run/resume/list/view/stop commands
+            const sessionService = new cli_core_1.SessionService({
+                paths,
+                loadConfig: config,
+                defaults: { defaults: config.defaults }
+            });
+            const backgroundManager = new background_manager_1.default();
+            const handlerContext = {
+                config,
+                defaultConfig: config,
+                paths,
+                sessionService,
+                backgroundManager,
+                emitView: view_helpers_1.emitView,
+                recordRuntimeWarning: (msg) => {
+                    const { recordRuntimeWarning } = require('./lib/session-helpers');
+                    recordRuntimeWarning(msg);
+                },
+                recordStartupWarning: (msg) => {
+                    const { recordStartupWarning } = require('./lib/config');
+                    recordStartupWarning(msg);
+                },
+                executors: executor_registry_1.EXECUTORS,
+                defaultExecutorKey: executors_1.DEFAULT_EXECUTOR_KEY
+            };
+            handlers = (0, cli_core_1.createHandlers)(handlerContext);
         }
         switch (parsed.command) {
             case 'run':
@@ -68,7 +97,9 @@ async function main() {
                     await (0, view_helpers_1.emitView)((0, help_1.buildRunHelpView)(), parsed.options);
                     return;
                 }
-                await (0, run_1.runChat)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.run(parsed);
                 break;
             case 'init':
                 if (parsed.options.requestHelp) {
@@ -142,28 +173,36 @@ async function main() {
                     await (0, view_helpers_1.emitView)((0, help_1.buildResumeHelpView)(), parsed.options);
                     return;
                 }
-                await (0, resume_1.runContinue)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.resume(parsed);
                 break;
             case 'list':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildListHelpView)(), parsed.options);
                     return;
                 }
-                await (0, list_1.runList)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.list(parsed);
                 break;
             case 'view':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildViewHelpView)(), parsed.options);
                     return;
                 }
-                await (0, view_1.runView)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.view(parsed);
                 break;
             case 'stop':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildStopHelpView)(), parsed.options);
                     return;
                 }
-                await (0, stop_1.runStop)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.stop(parsed);
                 break;
             case 'help':
             case undefined:

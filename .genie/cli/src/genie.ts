@@ -22,11 +22,11 @@ import {
 } from './views/help';
 import { buildErrorView, buildInfoView, buildWarningView } from './views/common';
 import { emitView } from './lib/view-helpers';
-import { runChat } from './commands/run';
-import { runContinue } from './commands/resume';
-import { runList } from './commands/list';
-import { runView } from './commands/view';
-import { runStop } from './commands/stop';
+import { SessionService, createHandlers } from './cli-core';
+import type { HandlerContext } from './cli-core';
+import { EXECUTORS } from './lib/executor-registry';
+import { DEFAULT_EXECUTOR_KEY } from './executors';
+import BackgroundManager from './background-manager';
 import { runHelp } from './commands/help';
 import { runInit } from './commands/init';
 import { runMigrateCommand } from './commands/migrate';
@@ -65,6 +65,7 @@ async function main(): Promise<void> {
 
     let config: ReturnType<typeof loadConfig>;
     let paths: ReturnType<typeof resolvePaths>;
+    let handlers: ReturnType<typeof createHandlers> | null = null;
 
     if (isHelpOnly) {
       // Minimal config for help display
@@ -82,6 +83,36 @@ async function main(): Promise<void> {
         await emitView(envelope, parsed.options);
         clearStartupWarnings();
       }
+
+      // Create handler context for run/resume/list/view/stop commands
+      const sessionService = new SessionService({
+        paths,
+        loadConfig: config,
+        defaults: { defaults: config.defaults }
+      });
+
+      const backgroundManager = new BackgroundManager();
+
+      const handlerContext: HandlerContext = {
+        config,
+        defaultConfig: config,
+        paths,
+        sessionService,
+        backgroundManager,
+        emitView,
+        recordRuntimeWarning: (msg: string) => {
+          const { recordRuntimeWarning } = require('./lib/session-helpers');
+          recordRuntimeWarning(msg);
+        },
+        recordStartupWarning: (msg: string) => {
+          const { recordStartupWarning } = require('./lib/config');
+          recordStartupWarning(msg);
+        },
+        executors: EXECUTORS,
+        defaultExecutorKey: DEFAULT_EXECUTOR_KEY
+      };
+
+      handlers = createHandlers(handlerContext);
     }
 
     switch (parsed.command) {
@@ -90,7 +121,8 @@ async function main(): Promise<void> {
           await emitView(buildRunHelpView(), parsed.options);
           return;
         }
-        await runChat(parsed, config, paths);
+        if (!handlers) throw new Error('Handlers not initialized');
+        await handlers.run(parsed);
         break;
       case 'init':
         if (parsed.options.requestHelp) {
@@ -164,28 +196,32 @@ async function main(): Promise<void> {
           await emitView(buildResumeHelpView(), parsed.options);
           return;
         }
-        await runContinue(parsed, config, paths);
+        if (!handlers) throw new Error('Handlers not initialized');
+        await handlers.resume(parsed);
         break;
       case 'list':
         if (parsed.options.requestHelp) {
           await emitView(buildListHelpView(), parsed.options);
           return;
         }
-        await runList(parsed, config, paths);
+        if (!handlers) throw new Error('Handlers not initialized');
+        await handlers.list(parsed);
         break;
       case 'view':
         if (parsed.options.requestHelp) {
           await emitView(buildViewHelpView(), parsed.options);
           return;
         }
-        await runView(parsed, config, paths);
+        if (!handlers) throw new Error('Handlers not initialized');
+        await handlers.view(parsed);
         break;
       case 'stop':
         if (parsed.options.requestHelp) {
           await emitView(buildStopHelpView(), parsed.options);
           return;
         }
-        await runStop(parsed, config, paths);
+        if (!handlers) throw new Error('Handlers not initialized');
+        await handlers.stop(parsed);
         break;
       case 'help':
       case undefined:
