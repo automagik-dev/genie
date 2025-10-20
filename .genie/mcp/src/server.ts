@@ -116,12 +116,32 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
   return agents;
 }
 
+// Helper: Safely load Forge executor from dist (package) or src (repo)
+function loadForgeExecutor(): { createForgeExecutor: () => any } | null {
+  // Prefer compiled dist (works in published package)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('../../cli/dist/lib/forge-executor');
+  } catch (_distErr) {
+    // Fallback to TypeScript sources for local dev (within repo)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      return require('../../cli/src/lib/forge-executor');
+    } catch (_srcErr) {
+      return null;
+    }
+  }
+}
+
 // Helper: List recent sessions (uses Forge API)
 async function listSessions(): Promise<Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }>> {
   try {
     // ALWAYS use Forge API for session listing (complete executor replacement)
-    const { createForgeExecutor } = require('../../cli/src/lib/forge-executor');
-    const forgeExecutor = createForgeExecutor();
+    const mod = loadForgeExecutor();
+    if (!mod || typeof mod.createForgeExecutor !== 'function') {
+      throw new Error('Forge executor unavailable (did you build the CLI?)');
+    }
+    const forgeExecutor = mod.createForgeExecutor();
 
     const forgeSessions = await forgeExecutor.listSessions();
 
