@@ -85,7 +85,7 @@
 
 ## Universal Standards
 @AGENTS.md                           # Prompting Standards Framework
-@.genie/code/agents/prompt.md  # Prompt crafting workflow
+@.genie/skills/prompt.md             # Prompt crafting workflow
 
 ## Agent Types
 ### Workflow Orchestrators
@@ -338,16 +338,15 @@ This mode uses the universal prompting framework (see above):
 
 ### @ (File Reference) Patterns Discovered
 
-**Already Optimal (4 patterns):**
+**Already Optimal (3 patterns):**
 1. ✅ orchestrator.md:40 → @.genie/code/routing.md
 2. ✅ plan.md:58 → @.genie/code/routing.md
 3. ✅ implementor.md:112 → @.genie/code/agents/implementor.md
-4. ✅ wish.md:97 → @.genie/templates/wish-template.md
 
 **High-Impact Additions (15 patterns):**
 1. 🟡  → `@AGENTS.md`, @.genie/MASTER-PLAN.md
-2. 🟡 .genie/README.md → `@.genie/agents/README.md`, 
-3. 🟡 .genie/agents/README.md → `@AGENTS.md`, @.genie/code/agents/prompt.md
+2. 🟡 .genie/README.md → `@.genie/agents/README.md`,
+3. 🟡 .genie/agents/README.md → `@AGENTS.md` (note: prompt.md removed in refactoring)
 4. 🟡 5 workflow agents → @AGENTS.md (plan, wish, forge, review, qa)
 5. 🟡 9 agents → @AGENTS.md (implementor, tests, polish, etc.)
 6. 🟡 9 mode files → @AGENTS.md (analyze, challenge, debug, etc.)
@@ -445,7 +444,7 @@ CLAUDE.md
    - Add version + timestamp via !
 
 3. **.genie/agents/README.md → Agent hub** (10 min)
-   - Add `@AGENTS.md`, @.genie/code/agents/prompt.md at top
+   - Add `@AGENTS.md`, .genie/skills/prompt.md (updated path) at top
    - Add version + timestamp via !
 
 4. **.genie/README.md → Auto-sync** (10 min)

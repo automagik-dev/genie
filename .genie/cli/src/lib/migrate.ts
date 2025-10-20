@@ -9,7 +9,7 @@ import { execSync } from 'child_process';
  * 1. Detect existing Genie installation
  * 2. Backup entire .genie/ directory
  * 3. Analyze user customizations vs framework defaults
- * 4. Migrate to new structure (core agents in npm, customs in .genie/custom/)
+ * 4. Migrate to new structure (core agents in npm; project notes inline in agents/skills)
  * 5. Preserve user work (product/, standards/, wishes/, state/)
  */
 
@@ -177,13 +177,13 @@ export function analyzeAgents(): {
 }
 
 /**
- * Extracts customizations from modified core agents to .genie/custom/
+ * Extracts customizations from modified core agents (custom folder retired)
  */
 export function extractCustomizations(coreAgents: string[]): string[] {
   const extracted: string[] = [];
 
-  // TODO: Implement diff-based extraction
-  // For now, we'll preserve by moving to .genie/custom/
+  // TODO: Implement diff-based extraction/merge into local agent/skill docs
+  // For now: no-op (document that custom folder is retired)
 
   return extracted;
 }
@@ -214,23 +214,7 @@ export function copyTemplates(options: { force?: boolean } = {}): void {
     execSync(`cp -r "${claudeSource}" "${claudeDest}"`);
   }
 
-  // Copy .genie/custom/ stubs (merge with existing)
-  const customSource = path.join(templatesSource, '.genie', 'custom');
-  const customDest = path.join('.genie', 'custom');
-
-  if (!fs.existsSync(customDest)) {
-    fs.mkdirSync(customDest, { recursive: true });
-  }
-
-  const customStubs = fs.readdirSync(customSource);
-  for (const stub of customStubs) {
-    const stubSource = path.join(customSource, stub);
-    const stubDest = path.join(customDest, stub);
-
-    if (!fs.existsSync(stubDest)) {
-      fs.copyFileSync(stubSource, stubDest);
-    }
-  }
+  // Note: `.genie/custom/` retired — no custom stubs copied
 
   // Copy product/ and standards/ templates if they don't exist
   const copyIfMissing = (subdir: string) => {

@@ -185,7 +185,7 @@ npx automagik-genie rollback --help
 After running `init` you'll have:
 
 - `.genie/agents/` – prompt and core agents shipped with Genie
-- `.genie/custom/` – project-specific overrides consumed by the core agents (entrypoints stay immutable)
+- Project-specific guidance lives inline as "Project Notes" inside relevant `.genie/agents/*` or `.genie/skills/*` docs (no separate `custom/` directory)
 - `.genie/product/` – mission, roadmap, environment docs
 - `.genie/state/` – provider, version, provider-status state
 - `.genie/backups/<timestamp>/` – snapshots of previous states

@@ -2,9 +2,6 @@ import fs from 'fs';
 import type { SessionStore, SessionEntry } from '../session-store';
 import type { ConfigPaths } from './types';
 import { saveSessions } from '../session-store';
-import BackgroundManager from '../background-manager';
-
-const backgroundManager = new BackgroundManager();
 
 const runtimeWarnings: string[] = [];
 
@@ -88,26 +85,5 @@ export function findSessionEntry(
  * // Returns: 'failed (1)' if exit code non-zero
  */
 export function resolveDisplayStatus(entry: SessionEntry): string {
-  const baseStatus = entry.status || 'unknown';
-  const executorRunning = backgroundManager.isAlive(entry.executorPid);
-  const runnerRunning = backgroundManager.isAlive(entry.runnerPid);
-
-  if (baseStatus === 'running') {
-    if (executorRunning) return 'running';
-    if (!executorRunning && runnerRunning) return 'pending-completion';
-    if (entry.exitCode === 0) return 'completed';
-    if (typeof entry.exitCode === 'number' && entry.exitCode !== 0) {
-      return `failed (${entry.exitCode})`;
-    }
-    return 'stopped';
-  }
-
-  if (baseStatus === 'completed' || baseStatus === 'failed') {
-    return baseStatus;
-  }
-
-  if (runnerRunning || executorRunning) {
-    return 'running';
-  }
-  return baseStatus;
+  return entry.status || 'unknown';
 }

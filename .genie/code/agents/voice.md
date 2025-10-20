@@ -133,7 +133,7 @@ mcp__genie__run agent="learn" prompt="Capture session learnings: <highlights>"
 - @.genie/code/workflows/wish.md
 - @.genie/code/workflows/forge.md
 - @.genie/code/workflows/review.md
-- @.genie/docs/mcp-interface.md
+- @.genie/product/docs/mcp-interface.md
 
 ## Acceptance Checklist
 

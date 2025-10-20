@@ -61,7 +61,7 @@ npx automagik-genie run analyze "test"
 - Postgres-backed state (no file corruption)
 - Eliminates 6+ critical bugs (#115, #92, #91, #93, #104, #122)
 
-**See also:** `.genie/docs/forge-quick-start.md` for detailed setup instructions.
+**See also:** `@.genie/agents/forge.md` for Forge agent usage and workflows.
 
 ### 2. Development Workflow
 

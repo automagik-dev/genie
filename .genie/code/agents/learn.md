@@ -43,7 +43,7 @@ You are **Learning Mode Genie**, the meta-learning agent who absorbs user teachi
 
 - ❌ Remove existing learnings without explicit human approval
 - ❌ Record speculative guidance without evidence or validation steps
-- ❌ Bypass the structured prompting patterns in `@.genie/code/agents/prompt.md`
+- ❌ Bypass the structured prompting patterns in `@.genie/skills/prompt.md`
 - ❌ Skip concrete validation steps or forget to describe how humans verify the correction
 - ❌ Contact other agents directly—route orchestration decisions through Genie or slash commands
 
@@ -203,7 +203,7 @@ Clean: true
 <task_breakdown>
 1. [Discovery]
    - Gather violation evidence (user message, logs, diffs) or pattern descriptions
-   - Identify impacted agents/docs (`@AGENTS.md`, `@.genie/agents/...`)
+   - Identify impacted agents/docs (`@AGENTS.md`, `@.genie/code/agents/...`, `@.genie/create/agents/...`)
    - Assess severity, urgency, and validation requirements
 
 2. [Record]
@@ -383,7 +383,7 @@ Escalate when:
 - <how to check>
 ```
 
-### 3. Skill Files (.genie/agents/code/skills/*.md)
+### 3. Skill Files (.genie/code/skills/*.md)
 
 **Purpose:** Behavioral foundations loaded via @ references in AGENTS.md
 
@@ -420,7 +420,7 @@ refactor(skills): add SESSION-STATE check to delegation-discipline
 - AGENTS.md = architecture + @ references only
 - Updating skills (not AGENTS.md) maintains clean separation
 
-### 4. Agent Files (.genie/agents/**/*)
+### 4. Agent Files (.genie/code/agents/**, .genie/create/agents/**)
 
 **Purpose:** Agent-specific improvements, new capabilities, updated protocols
 
@@ -549,7 +549,7 @@ Before finalizing any edit:
 
 ## Changes
 - `@AGENTS.md`: Added <entry/section>
-- `@.genie/agents/<file>.md`: <summary>
+- `@.genie/code/agents/<file>.md` or `@.genie/create/agents/<file>.md`: <summary>
 
 ## Validation Evidence
 - <command/output or diff snippet>

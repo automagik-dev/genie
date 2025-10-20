@@ -39,32 +39,36 @@ See `.genie/` directory for comprehensive documentation:
 - `@.genie/skills/sequential-questioning.md`
 - `@.genie/skills/no-backwards-compatibility.md`
 
+**Tier 6 (Workflow & State Management):**
+- `@.genie/skills/role-clarity-protocol.md`
+- `@.genie/skills/triad-maintenance-protocol.md`
+- `@.genie/skills/wish-initiation-rule.md`
+- `@.genie/skills/wish-document-management.md`
+- `@.genie/skills/workspace-system.md`
+- `@.genie/skills/execution-patterns.md`
+- `@.genie/skills/missing-context-protocol.md`
+
 ### Code-Specific Skills
 **Protocols & Tools:**
 - `@.genie/code/skills/publishing-protocol.md`
-- `@.genie/code/skills/role-clarity-protocol.md`
-- `@.genie/code/skills/triad-maintenance-protocol.md`
 - `@.genie/code/skills/team-consultation-protocol.md`
 - `@.genie/code/skills/genie-integration.md`
 - `@.genie/code/skills/agent-configuration.md`
 - `@.genie/code/skills/tool-requirements.md`
-- `@.genie/code/skills/wish-initiation-rule.md`
 
 **Conventions:**
 - `@.genie/code/skills/branch-tracker-guidance.md`
 - `@.genie/code/skills/evidence-storage.md`
-- `@.genie/code/skills/prompting-standards.md`
-- `@.genie/code/skills/workspace-system.md`
 - `@.genie/code/skills/file-naming-rules.md`
-- `@.genie/code/skills/execution-patterns.md`
-- `@.genie/code/skills/wish-document-management.md`
 - `@.genie/code/skills/forge-integration.md`
 - `@.genie/code/skills/forge-mcp-pattern.md`
 - `@.genie/code/skills/forge-orchestration-workflow.md`
-- `@.genie/code/skills/missing-context-protocol.md`
 
 ## Workflow Architecture
 **Pattern:** `Wish → Forge → Review`
+
+## Core Agents (Global)
+@CORE_AGENTS.md
 
 ### Core Workflows
 - `@.genie/code/workflows/wish.md` - Discovery & planning orchestrator
@@ -105,7 +109,7 @@ See `.genie/` directory for comprehensive documentation:
 **Enforcement:** Folder structure reflects invocation hierarchy
 
 ## MCP Quick Reference
-See `@.genie/docs/mcp-interface.md` for complete documentation.
+See `@.genie/product/docs/mcp-interface.md` for complete documentation.
 
 ## Knowledge Graph (Auto-Generated)
 <!-- AUTO-GENERATED-START: Do not edit manually -->
@@ -144,24 +148,23 @@ See `@.genie/docs/mcp-interface.md` for complete documentation.
   - **.genie/skills/parallel-execution.md** (93 tokens)
   - **.genie/skills/sequential-questioning.md** (1,275 tokens)
   - **.genie/skills/no-backwards-compatibility.md** (295 tokens)
+  - **.genie/skills/role-clarity-protocol.md** (732 tokens)
+  - **.genie/skills/triad-maintenance-protocol.md** (1,315 tokens)
+  - **.genie/skills/wish-initiation-rule.md** (1,210 tokens)
+  - **.genie/skills/wish-document-management.md** (791 tokens)
+  - **.genie/skills/workspace-system.md** (104 tokens)
+  - **.genie/skills/execution-patterns.md** (110 tokens)
+  - **.genie/skills/missing-context-protocol.md** (128 tokens)
   - **.genie/code/skills/publishing-protocol.md** (565 tokens)
-  - **.genie/code/skills/role-clarity-protocol.md** (732 tokens)
-  - **.genie/code/skills/triad-maintenance-protocol.md** (1,315 tokens)
   - **.genie/code/skills/team-consultation-protocol.md** (1,858 tokens)
   - **.genie/code/skills/genie-integration.md** (1,202 tokens)
   - **.genie/code/skills/agent-configuration.md** (535 tokens)
   - **.genie/code/skills/tool-requirements.md** (116 tokens)
-  - **.genie/code/skills/wish-initiation-rule.md** (1,210 tokens)
   - **.genie/code/skills/branch-tracker-guidance.md** (164 tokens)
   - **.genie/code/skills/evidence-storage.md** (286 tokens)
-  - **.genie/code/skills/prompting-standards.md** (169 tokens)
-  - **.genie/code/skills/workspace-system.md** (104 tokens)
   - **.genie/code/skills/file-naming-rules.md** (293 tokens)
-  - **.genie/code/skills/execution-patterns.md** (110 tokens)
-  - **.genie/code/skills/wish-document-management.md** (791 tokens)
   - **.genie/code/skills/forge-integration.md** (1,627 tokens)
   - **.genie/code/skills/forge-mcp-pattern.md** (417 tokens)
-  - **.genie/code/skills/missing-context-protocol.md** (128 tokens)
   - **.genie/code/workflows/wish.md** (1,373 tokens)
   - **.genie/code/workflows/forge.md** (5,955 tokens)
   - **.genie/code/agents/wish/blueprint.md** (645 tokens)

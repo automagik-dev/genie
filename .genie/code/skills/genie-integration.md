@@ -87,7 +87,7 @@ Use `mcp__genie__run with agent="reasoning/<mode>"`:
 - Reasoning modes: `.genie/code/agents/reasoning/{challenge,explore,consensus,socratic}.md`
 - Audit workflows: `.genie/code/agents/audit/{risk,security}.md`
 - Code extensions: `.genie/code/agents/analyze.md` (includes universal + code examples)
-- Custom overrides: `.genie/custom/<agent>.md`
+- Project notes: Add a "Project Notes" section inside the relevant `.genie/code/agents/*` or `.genie/skills/*` doc (no separate `custom/` directory)
 
 ## Outputs & Evidence
 

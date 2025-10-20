@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { findSessionEntry } from '../../lib/session-helpers';
@@ -13,120 +11,26 @@ export function createViewHandler(ctx: HandlerContext): Handler {
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
+    const found = findSessionEntry(store, sessionName, ctx.paths);
 
-    // Try sessions.json first (v3: sessions keyed by name)
-    let found: { agentName: string; entry: any } | null = findSessionEntry(store, sessionName, ctx.paths);
-    let orphanedSession = false;
-
-    // If not found in sessions.json, try Forge API lookup
-    // CRITICAL: Do NOT access filesystem directly - this violates Forge worktree isolation
-    // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #1)
-    if (!found) {
-      // TODO (Wish #120-A): Use Forge MCP to check if session exists
-      // Proposed implementation:
-      //   try {
-      //     const task = await mcp__automagik_forge__get_task({ task_id: sessionName });
-      //     if (task) {
-      //       return {
-      //         name: sessionName,
-      //         agent: task.title.match(/^Genie: ([^\(]+)/)?.[1]?.trim() || 'unknown',
-      //         status: 'orphaned',
-      //         transcript: await getForgeTaskLogs(sessionName), // TODO: implement
-      //         source: 'Forge task',
-      //       };
-      //     }
-      //   } catch (error) {
-      //     // Session doesn't exist in Forge either
-      //   }
-      //
-      // For now: Simply throw error (no filesystem violations)
+    if (!found || !found.entry.sessionId) {
       throw new Error(`❌ No session found with name '${sessionName}'`);
     }
 
-    const { agentName, entry } = found;
-    const executorKey = entry.executor || ctx.config.defaults?.executor || ctx.defaultExecutorKey;
-    const executor = ctx.executors[executorKey];
-    const logFile = entry.logFile;
+    const forgeExecutor = createForgeExecutor();
+    await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
 
-    if (!logFile || !fs.existsSync(logFile)) {
-      throw new Error('❌ Log not found for this run');
-    }
+    const status = await forgeExecutor.getSessionStatus(found.entry.sessionId);
+    const transcript = await forgeExecutor.fetchLatestLogs(found.entry.sessionId);
 
-    const raw = fs.readFileSync(logFile, 'utf8');
-    const allLines = raw.split(/\r?\n/);
+    const lines = [
+      `Session: ${found.entry.name || sessionName}`,
+      `Agent: ${found.agentName}`,
+      `Status: ${status.status}`,
+      transcript ? '' : '(No logs available)',
+      transcript || ''
+    ].filter(Boolean);
 
-    // CRITICAL: Do NOT read session files directly - this violates Forge worktree isolation
-    // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #2)
-    //
-    // OLD CODE (filesystem violation - REMOVED):
-    //   - executor.locateSessionFile()
-    //   - fs.existsSync(sessionFilePath)
-    //   - fs.readFileSync(sessionFilePath, 'utf8')
-    //
-    // TODO (Wish #120-A): Use Forge MCP to get logs (when Forge integration is complete)
-    // Proposed implementation:
-    //   let transcript = raw; // Default to CLI log
-    //
-    //   if (entry.sessionId && entry.executor === 'forge') {
-    //     try {
-    //       // Always prefer Forge logs over CLI logs (source of truth)
-    //       const forgeLogs = await mcp__automagik_forge__get_task_attempt_logs({
-    //         attempt_id: entry.sessionId
-    //       });
-    //       if (forgeLogs) {
-    //         transcript = forgeLogs;
-    //         source = 'Forge logs';
-    //       }
-    //     } catch (error) {
-    //       // Fallback to CLI log file if Forge API fails
-    //       console.warn(`Failed to fetch Forge logs for ${entry.sessionId}, using CLI log`);
-    //     }
-    //   }
-    //
-    // ALWAYS use Forge for logs (complete executor replacement)
-    let transcript = raw;
-    let source = 'CLI log';
-
-    if (entry.sessionId) {
-      try {
-        const forgeExecutor = createForgeExecutor();
-
-        // Get task attempt status and logs
-        const status = await forgeExecutor.getSessionStatus(entry.sessionId);
-
-        // Try to get logs via WebSocket URL or execution processes
-        const { ForgeClient } = require('../../../forge.js');
-        const forgeClient = new ForgeClient(
-          process.env.FORGE_BASE_URL || 'http://localhost:8887',
-          process.env.FORGE_TOKEN
-        );
-
-        const processes = await forgeClient.listExecutionProcesses(entry.sessionId);
-
-        if (processes && processes.length > 0) {
-          // Get the latest process logs
-          const latestProcess = processes[processes.length - 1];
-          if (latestProcess.output) {
-            transcript = latestProcess.output;
-            source = 'Forge logs';
-          }
-        }
-      } catch (error) {
-        // Fallback to CLI log if Forge API fails
-        console.warn(`Failed to fetch Forge logs for ${entry.sessionId}, using CLI log`);
-      }
-    }
-
-    return {
-      name: entry.name || sessionName,
-      agent: agentName,
-      status: entry.status || 'unknown',
-      transcript,
-      source,
-      mode: entry.mode || entry.preset,
-      created: entry.created,
-      lastUsed: entry.lastUsed,
-      logFile
-    };
+    await ctx.emitView(lines.join('\n'), parsed.options);
   };
 }

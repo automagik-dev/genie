@@ -13,7 +13,6 @@ exports.prepareDirectories = prepareDirectories;
 exports.applyDefaults = applyDefaults;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-const executors_1 = require("../executors");
 const utils_1 = require("./utils");
 const paths_1 = require("./paths");
 let YAML = null;
@@ -24,83 +23,34 @@ try {
 catch (_) {
     // yaml module optional
 }
-const EXECUTORS = (0, executors_1.loadExecutors)();
 const BASE_CONFIG = {
     defaults: {
-        background: true,
-        executor: executors_1.DEFAULT_EXECUTOR_KEY
+        executor: 'opencode',
+        executorVariant: 'DEFAULT',
+        background: true
     },
     paths: {
-        baseDir: undefined, // Triggers findWorkspaceRoot() in resolvePaths()
+        baseDir: undefined,
         sessionsFile: '.genie/state/agents/sessions.json',
         logsDir: '.genie/state/agents/logs',
         backgroundDir: '.genie/state/agents/background'
     },
-    executors: {},
-    executionModes: {
-        default: {
-            description: 'Workspace-write automation with GPT-5 Codex.',
-            executor: executors_1.DEFAULT_EXECUTOR_KEY,
-            overrides: {
-                exec: {
-                    model: 'gpt-5-codex',
-                    sandbox: 'workspace-write',
-                    fullAuto: true
-                }
-            }
-        },
-        careful: {
-            description: 'Read-only approval-aware agent run.',
-            overrides: {
-                exec: {
-                    sandbox: 'read-only'
-                }
-            }
-        },
-        danger: {
-            description: 'Full access execution for externally sandboxed environments only.',
-            overrides: {
-                exec: {
-                    sandbox: 'danger-full-access',
-                    fullAuto: false,
-                    additionalArgs: ['--dangerously-bypass-approvals-and-sandbox']
-                }
-            }
-        },
-        debug: {
-            description: 'Enable plan tool and web search for architecture/deep analysis sessions.',
-            overrides: {
-                exec: {
-                    includePlanTool: true,
-                    search: true
-                }
-            }
-        }
+    forge: {
+        executors: {}
     },
-    background: {
-        enabled: true,
-        detach: false,
-        pollIntervalMs: 1500,
-        sessionExtractionDelayMs: 5000
+    executionModes: {}
+};
+function resolveConfigPath() {
+    try {
+        const root = (0, paths_1.findWorkspaceRoot)();
+        const projectConfig = path_1.default.join(root, '.genie', 'config.yaml');
+        if (fs_1.default.existsSync(projectConfig))
+            return projectConfig;
     }
-};
-const CONFIG_PATH = path_1.default.join(path_1.default.dirname(__dirname), 'config.yaml');
-const PROVIDER_EXECUTOR = {
-    codex: 'codex',
-    claude: 'claude'
-};
-const PROVIDER_MODEL = {
-    codex: 'gpt-5-codex',
-    claude: 'sonnet-4.5'
-};
-const DEFAULT_MODE_DESCRIPTION = {
-    codex: 'Workspace-write automation with GPT-5 Codex.',
-    claude: 'Workspace automation with Claude Sonnet 4.5.'
-};
-const CLAUDE_EXEC_MODEL = {
-    codex: 'sonnet',
-    claude: 'sonnet-4.5'
-};
+    catch (_) { }
+    return path_1.default.join(path_1.default.dirname(__dirname), 'config.yaml');
+}
+const CONFIG_PATH = resolveConfigPath();
 const startupWarnings = [];
 function recordStartupWarning(message) {
     startupWarnings.push(message);
@@ -112,12 +62,7 @@ function clearStartupWarnings() {
     startupWarnings.length = 0;
 }
 function buildDefaultConfig() {
-    const config = (0, utils_1.deepClone)(BASE_CONFIG);
-    config.executors = config.executors || {};
-    Object.entries(EXECUTORS).forEach(([key, executor]) => {
-        config.executors[key] = executor.defaults || {};
-    });
-    return config;
+    return (0, utils_1.deepClone)(BASE_CONFIG);
 }
 function loadConfig() {
     let config = (0, utils_1.deepClone)(buildDefaultConfig());
@@ -154,21 +99,25 @@ function loadConfig() {
     else {
         config.__configPath = CONFIG_PATH;
     }
-    const provider = loadWorkspaceProvider();
-    if (provider) {
-        applyProviderOverrides(config, provider);
-    }
+    // Ensure defaults exist
+    config.defaults = config.defaults || {};
+    if (!config.defaults.executor)
+        config.defaults.executor = 'opencode';
+    if (!config.defaults.executorVariant)
+        config.defaults.executorVariant = 'DEFAULT';
+    config.defaults.background = config.defaults.background ?? true;
+    config.forge = config.forge || { executors: {} };
+    config.forge.executors = config.forge.executors || {};
+    config.executionModes = config.executionModes || {};
     return config;
 }
 function resolvePaths(paths) {
-    // Use findWorkspaceRoot() to detect actual workspace, not process.cwd()
     const baseDir = paths.baseDir ? path_1.default.resolve(paths.baseDir) : (0, paths_1.findWorkspaceRoot)();
     return {
         baseDir,
         sessionsFile: paths.sessionsFile || path_1.default.join(baseDir, '.genie/state/agents/sessions.json'),
         logsDir: paths.logsDir || path_1.default.join(baseDir, '.genie/state/agents/logs'),
-        backgroundDir: paths.backgroundDir || path_1.default.join(baseDir, '.genie/state/agents/background'),
-        executors: paths.executors || {}
+        backgroundDir: paths.backgroundDir || path_1.default.join(baseDir, '.genie/state/agents/background')
     };
 }
 function prepareDirectories(paths) {
@@ -181,49 +130,5 @@ function prepareDirectories(paths) {
 function applyDefaults(options, defaults) {
     if (!options.backgroundExplicit) {
         options.background = Boolean(defaults?.background);
-    }
-}
-function loadWorkspaceProvider() {
-    try {
-        const providerPath = path_1.default.join(process.cwd(), '.genie', 'state', 'provider.json');
-        if (!fs_1.default.existsSync(providerPath)) {
-            return null;
-        }
-        const raw = fs_1.default.readFileSync(providerPath, 'utf8');
-        if (!raw.trim().length)
-            return null;
-        const parsed = JSON.parse(raw);
-        const value = parsed?.provider;
-        if (typeof value !== 'string')
-            return null;
-        const normalized = value.toLowerCase();
-        if (normalized.startsWith('claude'))
-            return 'claude';
-        return 'codex';
-    }
-    catch {
-        return null;
-    }
-}
-function applyProviderOverrides(config, provider) {
-    const normalized = provider === 'claude' ? 'claude' : 'codex';
-    const executor = PROVIDER_EXECUTOR[normalized];
-    const model = PROVIDER_MODEL[normalized];
-    if (!config.defaults)
-        config.defaults = {};
-    config.defaults.executor = executor;
-    const executionModes = (config.executionModes = config.executionModes || {});
-    const defaultMode = (executionModes.default = executionModes.default || {});
-    defaultMode.description = DEFAULT_MODE_DESCRIPTION[normalized];
-    defaultMode.executor = executor;
-    defaultMode.overrides = defaultMode.overrides || {};
-    defaultMode.overrides.exec = defaultMode.overrides.exec || {};
-    defaultMode.overrides.exec.model = model;
-    if (config.executors && config.executors.codex) {
-        config.executors.codex.exec = config.executors.codex.exec || {};
-    }
-    if (config.executors && config.executors.claude) {
-        config.executors.claude.exec = config.executors.claude.exec || {};
-        config.executors.claude.exec.model = CLAUDE_EXEC_MODEL[normalized];
     }
 }

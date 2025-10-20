@@ -1,11 +1,8 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createRunHandler = createRunHandler;
-const path_1 = __importDefault(require("path"));
-const shared_1 = require("./shared");
+const agent_resolver_1 = require("../../lib/agent-resolver");
+const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
 function createRunHandler(ctx) {
     return async (parsed) => {
@@ -14,121 +11,70 @@ function createRunHandler(ctx) {
             throw new Error('Usage: genie run <agent> "<prompt>"');
         }
         const prompt = promptParts.join(' ').trim();
-        const resolvedAgentName = (0, shared_1.resolveAgentIdentifier)(agentName);
-        const agentSpec = (0, shared_1.loadAgentSpec)(ctx, resolvedAgentName);
-        const agentMeta = agentSpec.meta || {};
-        const agentGenie = agentMeta.genie || {};
-        if (!parsed.options.backgroundExplicit && typeof agentGenie.background === 'boolean') {
-            parsed.options.background = agentGenie.background;
-        }
-        const defaultMode = ctx.config.defaults?.executionMode || ctx.config.defaults?.preset || 'default';
-        const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
-        const modeName = typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode;
-        const explicitExecutor = typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length
-            ? parsed.options.executor.trim()
-            : null;
-        const executorKey = (explicitExecutor || agentGenie.executor || (0, shared_1.resolveExecutorKey)(ctx, modeName)).trim();
-        const rawVariant = agentGenie.executorProfile ??
-            agentGenie.executor_variant ??
-            agentGenie.executorVariant ??
-            agentGenie.variant ??
-            agentGenie.profile;
-        const executorVariant = typeof rawVariant === 'string' && rawVariant.trim().length ? rawVariant.trim() : 'DEFAULT';
-        const executor = (0, shared_1.requireExecutor)(ctx, executorKey);
-        const executorOverrides = (0, shared_1.extractExecutorOverrides)(ctx, agentGenie, executorKey);
-        const executorConfig = (0, shared_1.buildExecutorConfig)(ctx, modeName, executorKey, executorOverrides);
-        // Debug: log executor config
-        console.error(`[DEBUG run.ts] agentGenie:`, JSON.stringify(agentGenie));
-        console.error(`[DEBUG run.ts] executorOverrides:`, JSON.stringify(executorOverrides));
-        console.error(`[DEBUG run.ts] executorConfig:`, JSON.stringify(executorConfig));
-        const executorPaths = (0, shared_1.resolveExecutorPaths)(ctx.paths, executorKey);
-        const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-        const startTime = (0, shared_1.deriveStartTime)();
-        const logFile = (0, shared_1.deriveLogFile)(resolvedAgentName, startTime, ctx.paths);
-        // Import generateSessionName and generate/reuse UUID
-        const { generateSessionName } = require('../../session-store');
-        const uuidv4 = () => {
-            try {
-                const { randomUUID } = require('crypto');
-                if (typeof randomUUID === 'function')
-                    return randomUUID();
-            }
-            catch { }
-            const { randomBytes } = require('crypto');
-            return randomBytes(16).toString('hex');
-        };
-        const { INTERNAL_SESSION_ID_ENV } = require('../../lib/constants');
-        // If running as background runner, reuse propagated sessionId to avoid duplicates
-        const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
-        const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
-            ? envSessionId.trim()
-            : uuidv4();
-        const entry = {
-            agent: resolvedAgentName,
-            name: parsed.options.name || generateSessionName(resolvedAgentName),
-            preset: modeName,
-            mode: modeName,
-            logFile,
-            lastPrompt: prompt.slice(0, 200),
-            created: new Date().toISOString(),
-            lastUsed: new Date().toISOString(),
-            status: 'starting',
-            background: parsed.options.background,
-            runnerPid: parsed.options.backgroundRunner ? process.pid : null,
-            executor: executorKey,
-            executorVariant,
-            executorPid: null,
-            exitCode: null,
-            signal: null,
-            startTime: new Date(startTime).toISOString(),
-            sessionId: sessionId // UUID assigned immediately
-        };
-        // Don't persist yet - wait for sessionId extraction
-        // Check if background launch requested (and not already background runner)
-        if (parsed.options.background && !parsed.options.backgroundRunner && !parsed.options.legacy) {
-            const handledBackground = await (0, forge_executor_1.handleForgeBackgroundLaunch)({
-                agentName: resolvedAgentName,
-                prompt,
-                config: ctx.config,
-                paths: ctx.paths,
-                store,
-                entry,
-                executorKey,
-                executorVariant,
-                executionMode: modeName,
-                startTime
-            });
-            if (handledBackground) {
-                return;
-            }
-        }
-        if (!agentSpec.filePath) {
-            throw new Error(`❌ Agent '${resolvedAgentName}' is missing a source file path`);
-        }
-        const agentPath = path_1.default.relative(process.cwd(), agentSpec.filePath);
-        const command = executor.buildRunCommand({
-            config: executorConfig,
-            agentPath,
-            prompt
-        });
-        await (0, shared_1.executeRun)(ctx, {
-            agentName,
-            command,
-            executorKey,
-            executor,
-            executorConfig,
-            executorPaths,
+        const resolvedAgentName = (0, agent_resolver_1.resolveAgentIdentifier)(agentName);
+        const agentSpec = (0, agent_resolver_1.loadAgentSpec)(resolvedAgentName);
+        const agentGenie = agentSpec.meta?.genie || {};
+        const { executorKey, executorVariant, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
+        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
+        await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+        const attemptId = await forgeExecutor.createSession({
+            agentName: resolvedAgentName,
             prompt,
-            store,
-            entry,
-            paths: ctx.paths,
-            config: ctx.config,
-            startTime,
-            logFile,
-            background: parsed.options.background,
-            runnerPid: parsed.options.backgroundRunner ? process.pid : null,
-            cliOptions: parsed.options,
+            executorKey,
+            executorVariant,
             executionMode: modeName
         });
+        const sessionName = parsed.options.name || (0, session_store_1.generateSessionName)(resolvedAgentName);
+        const now = new Date().toISOString();
+        const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
+        store.sessions[sessionName] = {
+            agent: resolvedAgentName,
+            name: sessionName,
+            executor: executorKey,
+            executorVariant,
+            status: 'running',
+            created: now,
+            lastUsed: now,
+            lastPrompt: prompt.slice(0, 200),
+            mode: modeName,
+            sessionId: attemptId,
+            background: parsed.options.background
+        };
+        await ctx.sessionService.save(store);
+        process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorKey}/${executorVariant})\n`);
+        process.stdout.write(`  Session name: ${sessionName}\n`);
+        process.stdout.write(`  View: genie view ${sessionName}\n`);
     };
+}
+function resolveExecutionSelection(config, parsed, agentGenie) {
+    let executor = (config.defaults?.executor || 'opencode').toLowerCase();
+    let variant = (config.defaults?.executorVariant || 'DEFAULT').toUpperCase();
+    let modeName = parsed.options.mode?.trim() || config.defaults?.executionMode || 'default';
+    if (parsed.options.mode) {
+        const modeConfig = config.executionModes?.[parsed.options.mode];
+        if (!modeConfig) {
+            throw new Error(`Execution mode '${parsed.options.mode}' not found.`);
+        }
+        if (modeConfig.executor)
+            executor = modeConfig.executor.toLowerCase();
+        if (modeConfig.executorVariant)
+            variant = modeConfig.executorVariant.toUpperCase();
+        modeName = parsed.options.mode;
+    }
+    if (typeof agentGenie.executionMode === 'string' && agentGenie.executionMode.trim().length) {
+        modeName = agentGenie.executionMode.trim();
+    }
+    if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
+        executor = agentGenie.executor.trim().toLowerCase();
+    }
+    const agentVariant = agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
+    if (typeof agentVariant === 'string' && agentVariant.trim().length) {
+        variant = agentVariant.trim().toUpperCase();
+    }
+    if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
+        executor = parsed.options.executor.trim().toLowerCase();
+    }
+    if (!variant.length)
+        variant = 'DEFAULT';
+    return { executorKey: executor, executorVariant: variant, modeName };
 }

@@ -22,7 +22,7 @@ Generate a wish at `.genie/wishes/<slug>/<slug>-wish.md` using the Create templa
 
 ## Steps
 1. Create folder `.genie/wishes/<slug>/`
-2. Load template: @.genie/create/templates/wish-template.md
+2. Load template: @.genie/product/templates/wish-template.md
 3. Populate sections from the planning brief and ledger
 4. Save wish file and create `validation/` and `reports/`
 5. Return path and next actions
@@ -30,4 +30,3 @@ Generate a wish at `.genie/wishes/<slug>/<slug>-wish.md` using the Create templa
 ## Output
 - `Wish saved at: @.genie/wishes/<slug>/<slug>-wish.md`
 - Short summary of groups, risks, and validation plan
-

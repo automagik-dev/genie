@@ -150,7 +150,7 @@ function migrateSessionEntries(store, defaultExecutor) {
 function resolveDefaultExecutor(config = {}, defaults = {}) {
     return (config.defaults?.executor ||
         defaults.defaults?.executor ||
-        'codex');
+        'opencode');
 }
 exports._internals = {
     readJson,

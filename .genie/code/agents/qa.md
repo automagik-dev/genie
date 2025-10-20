@@ -50,7 +50,7 @@ Execute end-to-end validation from user perspective using living checklist that 
 Load Context:
 - @.genie/qa/checklist.md (existing test scenarios)
 - @.genie/wishes/<slug>/<slug>-wish.md (what needs validation)
-- @.genie/agents/code/qa.md (project-specific commands/baselines)
+- @.genie/code/agents/qa.md (project-specific commands/baselines)
 
 Analysis:
 - Which checklist items apply to this wish?
@@ -242,10 +242,17 @@ Append to @.genie/qa/checklist.md under "Performance" section.
 ## Done Report Template
 
 Load the canonical QA done report template:
-@.genie/templates/qa-done-report-template.md
+@.genie/product/templates/qa-done-report-template.md
 
 This template defines the standard QA reporting format.
 Document test matrix, bugs found, and learning summary.
+
+## Checklist Reference
+
+Load the canonical QA checklist (items evolve over time):
+@.genie/product/docs/qa-checklist.md
+
+Use checklist items to drive repeatable, evidence-backed test runs.
 
 ---
 

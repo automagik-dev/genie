@@ -137,12 +137,12 @@ function analyzeAgents() {
     return result;
 }
 /**
- * Extracts customizations from modified core agents to .genie/custom/
+ * Extracts customizations from modified core agents (custom folder retired)
  */
 function extractCustomizations(coreAgents) {
     const extracted = [];
-    // TODO: Implement diff-based extraction
-    // For now, we'll preserve by moving to .genie/custom/
+    // TODO: Implement diff-based extraction/merge into local agent/skill docs
+    // For now: no-op (document that custom folder is retired)
     return extracted;
 }
 /**
@@ -168,20 +168,7 @@ function copyTemplates(options = {}) {
         }
         (0, child_process_1.execSync)(`cp -r "${claudeSource}" "${claudeDest}"`);
     }
-    // Copy .genie/custom/ stubs (merge with existing)
-    const customSource = path_1.default.join(templatesSource, '.genie', 'custom');
-    const customDest = path_1.default.join('.genie', 'custom');
-    if (!fs_1.default.existsSync(customDest)) {
-        fs_1.default.mkdirSync(customDest, { recursive: true });
-    }
-    const customStubs = fs_1.default.readdirSync(customSource);
-    for (const stub of customStubs) {
-        const stubSource = path_1.default.join(customSource, stub);
-        const stubDest = path_1.default.join(customDest, stub);
-        if (!fs_1.default.existsSync(stubDest)) {
-            fs_1.default.copyFileSync(stubSource, stubDest);
-        }
-    }
+    // Note: `.genie/custom/` retired — no custom stubs copied
     // Copy product/ and standards/ templates if they don't exist
     const copyIfMissing = (subdir) => {
         const source = path_1.default.join(templatesSource, '.genie', subdir);

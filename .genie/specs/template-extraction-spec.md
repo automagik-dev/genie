@@ -1,7 +1,7 @@
 # Template Extraction Specification
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Issue:** Template duplication across Genie framework (wish is our bible - consistency is critical)
-**Scope:** Extract embedded templates from workflow agents, establish @ template loading pattern
+**Scope:** Extract embedded templates from workflow agents, establish @ template loading pattern (centralized under product/templates)
 **Priority:** HIGH - architectural foundation
 
 ## Problem Statement
@@ -25,14 +25,10 @@ Workflow agents (wish.md, review.md, qa.md) contain embedded templates that are:
 
 ## Discovery (Files to Analyze)
 
-**Core workflow agents:**
-- `.genie/agents/workflows/wish.md` (223 lines) - Embedded template lines 95-213 (118 lines)
-- `.genie/agents/workflows/review.md` (415 lines) - Embedded template lines 98-187 (89 lines)
-- `.genie/agents/workflows/qa.md` (351 lines) - Embedded template lines 242-311 (69 lines)
-
-**Template variants:**
-- `templates/code/.genie/agents/workflows/{wish,review,qa}.md`
-- `templates/create/.genie/agents/workflows/{wish,review,qa}.md`
+**Current workflow/agents using templates:**
+- `.genie/code/agents/wish/blueprint.md` – loads wish template
+- `.genie/code/agents/review.md` – loads review report template
+- `.genie/code/agents/qa.md` – loads QA done report template
 
 **Existing wish instances** (for migration):
 - `.genie/wishes/*/`*-wish.md` (scan for all wish files)
@@ -41,34 +37,26 @@ Workflow agents (wish.md, review.md, qa.md) contain embedded templates that are:
 
 ### Group A: Template Extraction
 
-**Goal:** Extract embedded templates to `.genie/templates/`
+**Goal:** Extract embedded templates to `.genie/product/templates/`
 
 **Deliverables:**
 
-1. **Create `.genie/templates/wish-template.md`**
-   - Extract lines 95-213 from `.genie/agents/workflows/wish.md`
-   - Content: Full wish document structure (118 lines)
+1. **Create `.genie/product/templates/wish-template.md`**
+   - Content: Full wish document structure (canonical)
    - Format: Markdown with placeholders (`{FEATURE_NAME}`, `{ROADMAP-ID}`, etc.)
 
-2. **Create `.genie/templates/review-report-template.md`**
-   - Extract lines 98-187 from `.genie/agents/workflows/review.md`
-   - Content: Full review report structure (89 lines)
+2. **Create `.genie/product/templates/review-report-template.md`**
+   - Content: Full review report structure (canonical)
    - Format: Markdown with score breakdown placeholders
 
-3. **Create `.genie/templates/qa-done-report-template.md`**
-   - Extract lines 242-311 from `.genie/agents/workflows/qa.md`
-   - Content: QA done report structure (69 lines)
+3. **Create `.genie/product/templates/qa-done-report-template.md`**
+   - Content: QA done report structure (canonical)
    - Format: Markdown with test matrix placeholders
 
 **Validation:**
 ```bash
 # Verify templates exist
-ls -lh .genie/templates/*.md
-
-# Check line counts match
-wc -l .genie/templates/wish-template.md  # Should be 118
-wc -l .genie/templates/review-report-template.md  # Should be 89
-wc -l .genie/templates/qa-done-report-template.md  # Should be 69
+ls -lh .genie/product/templates/*.md
 ```
 
 ### Group B: Update Core Workflow Agents
@@ -77,54 +65,31 @@ wc -l .genie/templates/qa-done-report-template.md  # Should be 69
 
 **Deliverables:**
 
-1. **Update `.genie/agents/workflows/wish.md`**
-   - Replace lines 94-213 (template section) with:
+1. **Update wish blueprint agent**
+   - In `.genie/code/agents/wish/blueprint.md`, load:
      ```markdown
-     ## Wish Template (Saved at `.genie/wishes/<slug>/<slug>-wish.md`)
-
-     Load the canonical wish template:
-     @.genie/templates/wish-template.md
-
-     This template defines the standard structure for all wish documents.
-     Customize content within this structure, but maintain the format for consistency.
+     @.genie/product/templates/wish-template.md
      ```
    - Reduce from 223 → ~115 lines
 
-2. **Update `.genie/agents/workflows/review.md`**
-   - Replace lines 97-187 (report template) with:
+2. **Update review agent**
+   - In `.genie/code/agents/review.md`, load:
      ```markdown
-     ## Report Template
-
-     Load the canonical review report template:
-     @.genie/templates/review-report-template.md
-
-     This template defines the standard review reporting format.
-     Score each matrix checkpoint and provide evidence-based deductions.
+     @.genie/product/templates/review-report-template.md
      ```
    - Reduce from 415 → ~336 lines
 
-3. **Update `.genie/agents/workflows/qa.md`**
-   - Replace lines 240-311 (done report template) with:
+3. **Update QA agent**
+   - In `.genie/code/agents/qa.md`, load:
      ```markdown
-     ## Done Report Template
-
-     Load the canonical QA done report template:
-     @.genie/templates/qa-done-report-template.md
-
-     This template defines the standard QA reporting format.
-     Document test matrix, bugs found, and learning summary.
+     @.genie/product/templates/qa-done-report-template.md
      ```
    - Reduce from 351 → ~290 lines
 
 **Validation:**
 ```bash
 # Verify @ references are present
-grep -n "@.genie/templates/" .genie/agents/workflows/{wish,review,qa}.md
-
-# Check line counts reduced
-wc -l .genie/agents/workflows/wish.md  # ~115 lines
-wc -l .genie/agents/workflows/review.md  # ~336 lines
-wc -l .genie/agents/workflows/qa.md  # ~290 lines
+grep -n "@.genie/product/templates/" .genie/code/agents/{review.md,qa.md} .genie/code/agents/wish/blueprint.md
 ```
 
 ### Group C: Update Template Variants (Code + Create)
@@ -132,38 +97,12 @@ wc -l .genie/agents/workflows/qa.md  # ~290 lines
 **Goal:** Apply same @ reference pattern to template variants
 
 **Deliverables:**
-
-1. **Update `templates/code/.genie/agents/workflows/wish.md`**
-   - Same @ reference pattern as core
-   - Template path: `@.genie/templates/wish-template.md` (relative from project root)
-
-2. **Update `templates/code/.genie/agents/workflows/review.md`**
-   - Same @ reference pattern as core
-
-3. **Update `templates/code/.genie/agents/workflows/qa.md`**
-   - Same @ reference pattern as core
-
-4. **Update `templates/create/.genie/agents/workflows/wish.md`**
-   - Same @ reference pattern (template path identical - `.genie/templates/` is at project root)
-
-5. **Update `templates/create/.genie/agents/workflows/review.md`**
-   - Same @ reference pattern
-
-6. **Update `templates/create/.genie/agents/workflows/qa.md`**
-   - Same @ reference pattern
+- Ensure all agent references to templates point to `.genie/product/templates/`
 
 **Validation:**
 ```bash
-# Verify @ references in code variant
-grep -n "@.genie/templates/" templates/code/.genie/agents/workflows/{wish,review,qa}.md
-
-# Verify @ references in create variant
-grep -n "@.genie/templates/" templates/create/.genie/agents/workflows/{wish,review,qa}.md
-
-# Check all variants have consistent references
-diff -u \
-  <(grep "@.genie/templates/" .genie/agents/workflows/wish.md) \
-  <(grep "@.genie/templates/" templates/code/.genie/agents/workflows/wish.md)
+# Verify @ references in current agents
+grep -n "@.genie/product/templates/" .genie/code/agents/{review.md,qa.md} .genie/code/agents/wish/blueprint.md
 ```
 
 ### Group D: Migrate Existing Wishes (Optional)
@@ -175,7 +114,7 @@ diff -u \
 1. **Add template reference to existing wishes**
    - Prepend to each `*-wish.md`:
      ```markdown
-     @.genie/templates/wish-template.md
+     @.genie/product/templates/wish-template.md
 
      # 🧞 {FEATURE NAME} WISH
      [rest of wish content]
@@ -192,7 +131,7 @@ diff -u \
 **Validation:**
 ```bash
 # Verify @ references added
-head -1 .genie/wishes/*/*.md | grep "@.genie/templates/wish-template.md"
+head -1 .genie/wishes/*/*.md | grep "@.genie/product/templates/wish-template.md"
 
 # Check wishes still render correctly
 for wish in .genie/wishes/*/*.md; do
@@ -205,13 +144,12 @@ done
 
 **Commands to run:**
 ```bash
-# 1. Verify template extraction
-ls -1 .genie/templates/*.md
+# 1. Verify templates exist
+ls -1 .genie/product/templates/*.md
 # Expected: wish-template.md, review-report-template.md, qa-done-report-template.md
 
-# 2. Verify @ references in all workflow agents
-grep -r "@.genie/templates/" .genie/agents/workflows/ templates/*/. genie/agents/workflows/
-# Should show 9 matches (3 agents × 3 locations)
+# 2. Verify @ references in agents
+grep -r "@.genie/product/templates/" .genie/code/agents/
 
 # 3. Check line count reduction
 wc -l .genie/agents/workflows/{wish,review,qa}.md
@@ -224,8 +162,8 @@ wc -l .genie/agents/workflows/{wish,review,qa}.md
 ```
 
 **Success Criteria:**
-- ✅ 3 template files created in `.genie/templates/`
-- ✅ 9 workflow agents updated (3 core + 3 code + 3 create)
+- ✅ 3 template files created in `.genie/product/templates/`
+- ✅ Agent files updated to load templates via `@.genie/product/templates/`
 - ✅ All agents reduced in size (~40-50% smaller)
 - ✅ `@` references load templates correctly
 - ✅ Existing wishes optionally updated with @ references

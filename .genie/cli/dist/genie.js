@@ -3,9 +3,6 @@
 /**
  * GENIE Agent CLI - Codex exec orchestration with configurable execution modes
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 const cli_parser_1 = require("./lib/cli-parser");
 const config_1 = require("./lib/config");
@@ -14,34 +11,17 @@ const help_1 = require("./views/help");
 const common_1 = require("./views/common");
 const view_helpers_1 = require("./lib/view-helpers");
 const cli_core_1 = require("./cli-core");
-const executor_registry_1 = require("./lib/executor-registry");
-const executors_1 = require("./executors");
-const background_manager_1 = __importDefault(require("./background-manager"));
 const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
 const migrate_1 = require("./commands/migrate");
-const update_1 = require("./commands/update");
 const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
-const model_1 = require("./commands/model");
-const background_manager_2 = require("./background-manager");
 void main();
 async function main() {
     try {
         let parsed = (0, cli_parser_1.parseArguments)(process.argv.slice(2));
-        const envIsBackground = process.env[background_manager_2.INTERNAL_BACKGROUND_MARKER_ENV] === '1';
-        if (envIsBackground) {
-            parsed.options.background = true;
-            parsed.options.backgroundRunner = true;
-            parsed.options.backgroundExplicit = true;
-        }
-        else {
-            delete process.env[background_manager_2.INTERNAL_BACKGROUND_ENV];
-            delete process.env[background_manager_2.INTERNAL_START_TIME_ENV];
-            delete process.env[background_manager_2.INTERNAL_LOG_PATH_ENV];
-        }
         // Fast path for help commands - skip config loading
         const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
             parsed.options.requestHelp;
@@ -70,13 +50,11 @@ async function main() {
                 loadConfig: config,
                 defaults: { defaults: config.defaults }
             });
-            const backgroundManager = new background_manager_1.default();
             const handlerContext = {
                 config,
                 defaultConfig: config,
                 paths,
                 sessionService,
-                backgroundManager,
                 emitView: view_helpers_1.emitView,
                 recordRuntimeWarning: (msg) => {
                     const { recordRuntimeWarning } = require('./lib/session-helpers');
@@ -85,9 +63,7 @@ async function main() {
                 recordStartupWarning: (msg) => {
                     const { recordStartupWarning } = require('./lib/config');
                     recordStartupWarning(msg);
-                },
-                executors: executor_registry_1.EXECUTORS,
-                defaultExecutorKey: executors_1.DEFAULT_EXECUTOR_KEY
+                }
             };
             handlers = (0, cli_core_1.createHandlers)(handlerContext);
         }
@@ -104,8 +80,13 @@ async function main() {
             case 'init':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie init', [
-                        'Usage: genie init [--provider <codex|claude>] [--yes]',
-                        'Copies the packaged .genie templates into the current workspace, backs up any existing configuration, and records provider defaults.'
+                        'Usage: genie init [code|create] [--yes]',
+                        '• Copies packaged .genie into your repo (preserving agents, wishes, reports, state).',
+                        '• Copies AGENTS.md and .gitignore to project root (no CLAUDE.md changes).',
+                        '• Backs up existing .genie and AGENTS.md under .genie/backups/<id>/.',
+                        '• Prompts for default executor and model (arrow keys), updates .genie/config.yaml.',
+                        '• Configures MCP: genie@next and Forge in .mcp.json.',
+                        '• Starts a private Forge on 48887 and creates an Install task.'
                     ]), parsed.options);
                     return;
                 }
@@ -121,16 +102,6 @@ async function main() {
                     return;
                 }
                 await (0, migrate_1.runMigrateCommand)(parsed, config, paths);
-                break;
-            case 'update':
-                if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie update', [
-                        'Usage: genie update [--dry-run] [--force]',
-                        'Bakes template changes into the workspace after creating a backup snapshot.'
-                    ]), parsed.options);
-                    return;
-                }
-                await (0, update_1.runUpdate)(parsed, config, paths);
                 break;
             case 'rollback':
                 if (parsed.options.requestHelp) {
@@ -150,23 +121,6 @@ async function main() {
                 break;
             case 'statusline':
                 await (0, statusline_1.runStatusline)(parsed, config, paths);
-                break;
-            case 'model':
-                if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie model', [
-                        'Usage: genie model [subcommand]',
-                        '',
-                        'Configure default executor (codex or claude)',
-                        '',
-                        'Subcommands:',
-                        '  show    - Show current default executor (default)',
-                        '  detect  - Detect available executors',
-                        '  codex   - Set codex as default executor',
-                        '  claude  - Set claude as default executor'
-                    ]), parsed.options);
-                    return;
-                }
-                await (0, model_1.modelCommand)(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {

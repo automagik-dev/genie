@@ -103,8 +103,8 @@ pnpm run lint
 ## Domain-Specific Scenarios
 
 ### Agent System Validation
-- Core agents loaded from .genie/agents/
-- Custom overrides loaded from .genie/custom/
+- Core agents loaded from `.genie/agents/`
+- Project-specific notes embedded in agents/skills (no `custom/` directory)
 - Mode selection via orchestrator (18 modes)
 - Agent sessions persistence
 

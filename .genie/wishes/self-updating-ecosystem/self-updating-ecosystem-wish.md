@@ -242,7 +242,7 @@
 - Stage AGENTS.md
 
 **Script 6: validate-routing-matrix.js**
-- Parse `.genie/custom/routing.md` for agent references
+- Parse `.genie/skills/routing-decision-matrix.md` for agent references
 - Check each referenced agent exists in folder structure
 - Report missing agents
 - Exit 1 if any missing

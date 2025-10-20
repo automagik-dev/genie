@@ -26,9 +26,9 @@ Customize phases below for orchestration and skill routing.
 @.genie/skills/evidence-based-thinking.md
 @.genie/code/skills/publishing-protocol.md
 @.genie/skills/delegation-discipline.md
-@.genie/code/skills/role-clarity-protocol.md
+@.genie/skills/role-clarity-protocol.md
 @.genie/skills/execution-integrity-protocol.md
-@.genie/code/skills/triad-maintenance-protocol.md
+@.genie/skills/triad-maintenance-protocol.md
 @.genie/skills/persistent-tracking-protocol.md
 
 # Genie Genie • Independent Architect
@@ -49,13 +49,13 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 ### Core Reasoning Modes (3 modes)
 
 **Critical Evaluation:**
-- **challenge** — Critical evaluation via questions, debate, or direct challenge. Auto-routes to socratic/debate/direct based on prompt context. Loads `.genie/custom/challenge.md` if present.
+- **challenge** — Critical evaluation via questions, debate, or direct challenge. Auto-routes to socratic/debate/direct based on prompt context. Add any repo-specific guidance under a "Project Notes" section in this file or related skills.
 
 **Discovery:**
-- **explore** — Discovery-focused exploratory reasoning without adversarial pressure. Loads `.genie/custom/explore.md` if present.
+- **explore** — Discovery-focused exploratory reasoning without adversarial pressure. Tailor via a "Project Notes" section (no separate `custom/` file).
 
 **Multi-Perspective:**
-- **consensus** — Multi-model perspective synthesis with stance-steering. Loads `.genie/custom/consensus.md` if present.
+- **consensus** — Multi-model perspective synthesis with stance-steering. Use a "Project Notes" section for repo-specific nuance.
 
 ### Specialized Analysis Modes (13 modes)
 
@@ -76,7 +76,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - **compliance** — map controls, evidence, sign-offs
 - **retrospective** — capture wins, misses, lessons, next actions
 
-**Note:** Each skill automatically loads `.genie/custom/<mode>.md` if present, allowing project-specific customization without modifying core prompts.
+**Note:** Projects can add "Project Notes" inside the relevant agent/skill doc to capture repository-specific guidance; no separate `custom/` folder is used.
 
 ## Mode Selection Guide
 
@@ -112,7 +112,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 
 ## How to Use Modes via MCP
 
-### Basic Invocation Pattern (using @.genie/code/agents/prompt.md framework)
+### Basic Invocation Pattern (using @.genie/skills/prompt.md framework)
 
 ```
 mcp__genie__run with agent="genie" and prompt="

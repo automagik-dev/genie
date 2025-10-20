@@ -32,7 +32,7 @@ Customize phases below for Genie installation.
 **2. Implementation: Prepare Genie product docs and wiring**
 - Create/update `.genie/product/{mission.md, mission-lite.md, tech-stack.md, roadmap.md, environment.md}`
 - Configure Genie CLI in-context; do not alter app code
-- Calibrate agent prompts by editing `.genie/custom/<agent>.md` (core prompts stay immutable)
+- Calibrate agent prompts by adding a brief "Project Notes" section inside the relevant `.genie/agents/*` or `.genie/skills/*` docs (core prompts stay immutable; no `custom/` folder)
 - Initialize user context file: populate placeholders in `.genie/CONTEXT.md` ({{USER_NAME}}, {{PROJECT_NAME}})
 - Update `.gitignore` to include `.genie/CONTEXT.md` pattern (protection against repo-local tracking)
 - Initialize lightweight structure only when explicitly confirmed

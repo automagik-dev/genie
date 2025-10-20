@@ -58,7 +58,6 @@ function getTemplateRelativeBlacklist() {
         'cli', // Framework CLI code
         'mcp', // Framework MCP code
         'backups', // User backups
-        'agents', // User custom agents (preserve entirely)
         'wishes', // User wishes (preserve entirely)
         'reports', // User reports (preserve entirely)
         'state' // User session state (preserve entirely)

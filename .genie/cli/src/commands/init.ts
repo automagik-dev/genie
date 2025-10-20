@@ -6,10 +6,10 @@ import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import { promptExecutorChoice } from '../lib/executor-prompt.js';
+import { EXECUTORS } from '../lib/executor-registry';
 import {
   getPackageRoot,
   getTemplateGeniePath,
-  getTemplateClaudePath,
   getTemplateRootPath,
   getTemplateRelativeBlacklist,
   resolveTargetGeniePath,
@@ -32,41 +32,26 @@ import {
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
 import { configureBothExecutors } from '../lib/mcp-config';
+// Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
 interface InitFlags {
   provider?: string;
   yes?: boolean;
   force?: boolean;
   template?: TemplateType;
+  forgeBaseUrl?: string;
+  forgePort?: string;
 }
 
 interface InitSummary {
-  provider: string;
+  executor: string;
+  model?: string;
   backupId?: string;
-  claudeBackedUp: boolean;
   templateSource: string;
   target: string;
 }
 
-const PROVIDER_EXECUTOR: Record<string, string> = {
-  codex: 'codex',
-  claude: 'claude'
-};
-
-const PROVIDER_MODEL: Record<string, string> = {
-  codex: 'gpt-5-codex',
-  claude: 'sonnet-4.5'
-};
-
-const DEFAULT_MODE_DESCRIPTION: Record<string, string> = {
-  codex: 'Workspace-write automation with GPT-5 Codex.',
-  claude: 'Workspace automation with Claude Sonnet 4.5.'
-};
-
-const CLAUDE_EXEC_MODEL: Record<string, string> = {
-  codex: 'sonnet',
-  claude: 'sonnet-4.5'
-};
+const DEFAULT_MODE_DESCRIPTION = 'Workspace automation via Forge-backed executors.';
 
 export async function runInit(
   parsed: ParsedCommand,
@@ -84,7 +69,6 @@ export async function runInit(
     const template = flags.template || await promptTemplateChoice();
 
     const templateGenie = getTemplateGeniePath(template);
-    const templateClaude = getTemplateClaudePath(template);
     const targetGenie = resolveTargetGeniePath(cwd);
 
     const templateExists = await pathExists(templateGenie);
@@ -96,8 +80,7 @@ export async function runInit(
 
     // Check for partial installation (templates copied but executor not started)
     const versionPath = resolveWorkspaceVersionPath(cwd);
-    const providerPath = resolveWorkspaceProviderPath(cwd);
-    const partialInit = await pathExists(versionPath) && await pathExists(providerPath);
+    const partialInit = await pathExists(versionPath);
 
     if (partialInit) {
       console.log('');
@@ -105,64 +88,12 @@ export async function runInit(
       console.log('📦 Templates already copied, resuming setup...');
       console.log('');
 
-      // Read provider from saved state
-      const providerData = JSON.parse(await fsp.readFile(providerPath, 'utf8'));
-      const savedProvider = providerData.provider || 'claude';
-
-      // Detect available executors
-      const available = await detectAvailableExecutors();
-
-      let provider: string;
-      if (flags.provider) {
-        provider = normalizeProvider(flags.provider);
-      } else if (available.length === 0) {
-        console.log(`⚠️  No executors detected, using saved choice: ${savedProvider}`);
-        console.log('');
-        provider = savedProvider;
-      } else if (available.length === 1) {
-        provider = available[0];
-        console.log(`✓ Using ${provider} (only available executor)`);
-        console.log('');
-      } else {
-        // Both available - prompt user to confirm or change
-        console.log(`Previously selected: ${savedProvider}`);
-        console.log('');
-        provider = await promptExecutorChoice(available, savedProvider);
-        console.log('');
-        console.log(`✓ Using ${provider}`);
-        console.log('');
-
-        // Update saved provider if changed
-        if (provider !== savedProvider) {
-          await writeProviderState(cwd, provider);
-        }
-      }
-
-      // Verify executor is installed before resuming
-      if (!available.includes(provider)) {
-        console.log('');
-        console.log(`⚠️  ${provider} is not installed`);
-        console.log('');
-        if (provider === 'claude') {
-          console.log('Install Claude Code:');
-          console.log('  npm install -g @anthropic-ai/claude-code');
-          console.log('');
-          console.log('Or visit: https://docs.claude.com/docs/claude-code/install');
-        } else {
-          console.log('Install Codex:');
-          console.log('  npm install -g @namastexlabs/codex');
-        }
-        console.log('');
-        console.log(`After installation, run: cd ${cwd} && genie init`);
-        console.log('');
-        process.exitCode = 1;
-        return;
-      }
-
-      // Skip file operations, go straight to executor handoff
-      console.log(`🚀 Resuming install with ${provider}...`);
-      console.log('');
-      await handoffToExecutor(provider, cwd);
+      // Skip file operations; go straight to Forge-backed setup
+      const { executor, model } = await selectExecutorAndModel(flags);
+      await applyExecutorDefaults(targetGenie, executor, model);
+      await configureBothExecutors(cwd);
+      await runInstallViaCli(cwd, template);
+      await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
       return;
     }
 
@@ -214,10 +145,11 @@ export async function runInit(
     backupDir = stagedBackupDir;
   }
 
-    const claudeDir = path.resolve(cwd, '.claude');
-    const claudeExists = await pathExists(claudeDir);
-    if (claudeExists) {
-      await copyDirectory(claudeDir, path.join(backupDir, 'claude'));
+    // Backup AGENTS.md at repo root if present
+    const agentsMdPath = path.join(cwd, 'AGENTS.md');
+    const agentsMdExists = await pathExists(agentsMdPath);
+    if (agentsMdExists) {
+      await fsp.copyFile(agentsMdPath, path.join(backupDir, 'AGENTS.md'));
     }
 
     if (!targetExists) {
@@ -226,11 +158,8 @@ export async function runInit(
 
     await copyTemplateGenie(templateGenie, targetGenie);
 
-    if (await pathExists(templateClaude)) {
-      await copyTemplateClaude(templateClaude, claudeDir);
-    }
-
     await copyTemplateRootFiles(packageRoot, cwd, template);
+    await migrateAgentsDocs(cwd);
 
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
     const templateInstallMd = path.join(templateGenie, 'INSTALL.md');
@@ -260,55 +189,17 @@ export async function runInit(
 
     await ensureDir(backupsRoot);
 
-    // Detect available executors ONCE and reuse throughout
-    const availableExecutors = await detectAvailableExecutors();
-
-    const provider = await resolveProviderChoice(flags, availableExecutors);
-    await writeProviderState(cwd, provider);
-    await writeVersionState(cwd, backupId, claudeExists);
+    const { executor, model } = await selectExecutorAndModel(flags);
+    await writeVersionState(cwd, backupId, false);
     await initializeProviderStatus(cwd);
-    await applyProviderDefaults(targetGenie, provider);
+    await applyExecutorDefaults(targetGenie, executor, model);
 
     // Configure MCP servers for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
-    const summary: InitSummary = {
-      provider,
-      backupId,
-      claudeBackedUp: claudeExists,
-      templateSource: templateGenie,
-      target: targetGenie
-    };
-
+      await runInstallViaCli(cwd, template);
+    const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
     await emitView(buildInitSummaryView(summary), parsed.options);
-
-    // Verify executor is installed before handoff (use cached detection)
-    if (!availableExecutors.includes(provider)) {
-      console.log('');
-      console.log(`⚠️  ${provider} is not installed`);
-      console.log('');
-      if (provider === 'claude') {
-        console.log('Install Claude Code:');
-        console.log('  npm install -g @anthropic-ai/claude-code');
-        console.log('');
-        console.log('Or visit: https://docs.claude.com/docs/claude-code/install');
-      } else {
-        console.log('Install Codex:');
-        console.log('  npm install -g @namastexlabs/codex');
-      }
-      console.log('');
-      console.log(`After installation, run: cd ${cwd} && genie init`);
-      console.log('The templates are already installed - init will resume the setup.');
-      console.log('');
-      process.exitCode = 1;
-      return;
-    }
-
-    // Hand off to install agent
-    console.log('');
-    console.log(`🚀 Handing off to ${provider} for installation...`);
-    console.log('');
-    await handoffToExecutor(provider, cwd);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
@@ -337,6 +228,24 @@ function parseFlags(args: string[]): InitFlags {
     }
     if (token === '--force' || token === '-f') {
       flags.force = true;
+      continue;
+    }
+    if (token === '--forge-base-url' && args[i + 1]) {
+      flags.forgeBaseUrl = args[i + 1];
+      i++;
+      continue;
+    }
+    if (token.startsWith('--forge-base-url=')) {
+      flags.forgeBaseUrl = token.split('=')[1];
+      continue;
+    }
+    if (token === '--forge-port' && args[i + 1]) {
+      flags.forgePort = args[i + 1];
+      i++;
+      continue;
+    }
+    if (token.startsWith('--forge-port=')) {
+      flags.forgePort = token.split('=')[1];
       continue;
     }
 
@@ -368,82 +277,70 @@ async function copyTemplateGenie(templateGenie: string, targetGenie: string): Pr
   });
 }
 
-async function copyTemplateClaude(templateClaude: string, targetClaude: string): Promise<void> {
-  await ensureDir(path.dirname(targetClaude));
-  await copyDirectory(templateClaude, targetClaude);
-}
-
 async function copyTemplateRootFiles(packageRoot: string, targetDir: string, template: TemplateType): Promise<void> {
-  // Code template: Copy AGENTS.md and CLAUDE.md to project root
-  // Create template: No root files needed (everything in .genie/)
-  if (template === 'create') {
-    return; // Create template has no root files
-  }
-
-  const templatesDir = path.join(packageRoot, 'templates', template);
-  const rootFiles = ['AGENTS.md', 'CLAUDE.md'];
-
+  // Copy AGENTS.md and .gitignore from package root; never copy CLAUDE.md
+  const rootFiles = ['AGENTS.md', '.gitignore'];
   for (const file of rootFiles) {
-    const sourcePath = path.join(templatesDir, file);
+    const sourcePath = path.join(packageRoot, file);
     const targetPath = path.join(targetDir, file);
-
     if (await pathExists(sourcePath)) {
       await fsp.copyFile(sourcePath, targetPath);
     }
   }
-}
-
-async function resolveProviderChoice(flags: InitFlags, availableExecutors: string[]): Promise<string> {
-  if (flags.provider) {
-    return normalizeProvider(flags.provider);
-  }
-  if (process.env.GENIE_PROVIDER) {
-    return normalizeProvider(process.env.GENIE_PROVIDER);
-  }
-  if (!process.stdout.isTTY || flags.yes) {
-    return 'claude';  // Changed default from codex to claude
-  }
-  return await promptProvider(availableExecutors);
-}
-
-function normalizeProvider(value: string): string {
-  const normalized = value.toLowerCase();
-  if (normalized.startsWith('claude')) {
-    return 'claude';
-  }
-  return 'codex';
-}
-
-async function detectAvailableExecutors(): Promise<string[]> {
-  const { execFile } = await import('child_process');
-  const { promisify } = await import('util');
-  const execFileAsync = promisify(execFile);
-
-  const available: string[] = [];
-
-  // Check Codex
-  try {
-    await execFileAsync('codex', ['--version'], { timeout: 5000 });
-    available.push('codex');
-  } catch {
-    // Try npx fallback
-    try {
-      await execFileAsync('npx', ['-y', '@namastexlabs/codex@latest', '--version'], { timeout: 5000 });
-      available.push('codex');
-    } catch {
-      // Not available
+  // If user has CLAUDE.md, ensure it references @AGENTS.md for compatibility
+  const userClaude = path.join(targetDir, 'CLAUDE.md');
+  if (await pathExists(userClaude)) {
+    const content = await fsp.readFile(userClaude, 'utf8');
+    if (!/@AGENTS\.md/i.test(content)) {
+      const next = content.trimEnd() + `\n\n@AGENTS.md\n`;
+      await fsp.writeFile(userClaude, next, 'utf8');
     }
   }
+}
 
-  // Check Claude
+async function migrateAgentsDocs(cwd: string): Promise<void> {
   try {
-    await execFileAsync('claude', ['--version'], { timeout: 5000 });
-    available.push('claude');
-  } catch {
-    // Not available
-  }
+    // Create .genie/agents.genie as a pointer to root AGENTS.md (market standard)
+    const agentsGeniePath = path.join(cwd, '.genie', 'agents.genie');
+    const content = '@AGENTS.md\n';
+    await fsp.writeFile(agentsGeniePath, content, 'utf8');
 
-  return available;
+    // Ensure domain AGENTS.md include the master via @.genie/agents.genie
+    const domains = [path.join(cwd, '.genie', 'code', 'AGENTS.md'), path.join(cwd, '.genie', 'create', 'AGENTS.md')];
+    for (const domainFile of domains) {
+      try {
+        const raw = await fsp.readFile(domainFile, 'utf8');
+        if (!/@\.genie\/agents\.genie/i.test(raw)) {
+          const next = raw.trimEnd() + `\n\n@.genie/agents.genie\n`;
+          await fsp.writeFile(domainFile, next, 'utf8');
+        }
+      } catch (_) {}
+    }
+  } catch (err) {
+    // Soft-fail; not critical for init
+    console.log(`⚠️  Agents docs migration skipped: ${(err as Error)?.message || String(err)}`);
+  }
+}
+
+async function selectExecutorAndModel(flags: InitFlags): Promise<{ executor: string; model?: string }> {
+  // Build list from packaged executors (Forge handles binaries internally)
+  const keys = Object.keys(EXECUTORS);
+  let defaultKey = keys.includes('codex') ? 'codex' : (keys[0] || 'codex');
+  // Non-interactive default
+  if (!process.stdout.isTTY || flags.yes) {
+    return { executor: defaultKey, model: undefined };
+  }
+  const executor = await promptExecutorArrow(keys, defaultKey);
+  // Prompt model with default based on current config file (if present)
+  const configPath = path.join(process.cwd(), '.genie', 'config.yaml');
+  let defaultModel = executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
+  try {
+    const raw = await fsp.readFile(configPath, 'utf8');
+    const data = YAML.parse(raw) || {};
+    defaultModel = data?.executionModes?.default?.overrides?.exec?.model || defaultModel;
+  } catch {}
+  const model = await promptText(`Default model for ${executor}`, defaultModel);
+  return { executor, model };
 }
 
 async function promptTemplateChoice(): Promise<TemplateType> {
@@ -463,47 +360,11 @@ async function promptTemplateChoice(): Promise<TemplateType> {
   process.exit(0);
 }
 
-async function promptProvider(availableExecutors: string[]): Promise<string> {
-  if (availableExecutors.length === 0) {
-    console.log('');
-    console.log('⚠️  No executors detected (codex or claude)');
-    console.log('');
-    console.log('Install one of:');
-    console.log('  • Codex: npm install -g @namastexlabs/codex');
-    console.log('  • Claude Code: https://docs.claude.com/docs/claude-code/install');
-    console.log('');
-    console.log('Defaulting to claude (you can install it later)');
-    console.log('');
-    return 'claude';
-  }
+// Removed provider-specific prompt; we select executors directly
 
-  // If only one available, use it
-  if (availableExecutors.length === 1) {
-    const provider = availableExecutors[0];
-    console.log('');
-    console.log(`✓ Using ${provider} (only available executor)`);
-    console.log('');
-    return provider;
-  }
+// No provider state written anymore
 
-  // Both available - use ink selector
-  const selected = await promptExecutorChoice(availableExecutors, 'claude');
-  console.log('');
-  console.log(`✓ Using ${selected}`);
-  console.log('');
-  return selected;
-}
-
-async function writeProviderState(cwd: string, provider: string): Promise<void> {
-  const providerPath = resolveWorkspaceProviderPath(cwd);
-  await writeJsonFile(providerPath, {
-    provider,
-    decidedAt: new Date().toISOString(),
-    source: 'init'
-  });
-}
-
-async function writeVersionState(cwd: string, backupId: string, claudeBackedUp: boolean): Promise<void> {
+async function writeVersionState(cwd: string, backupId: string, _legacyBackedUp: boolean): Promise<void> {
   const versionPath = resolveWorkspaceVersionPath(cwd);
   const version = getPackageVersion();
   const now = new Date().toISOString();
@@ -524,7 +385,7 @@ async function writeVersionState(cwd: string, backupId: string, claudeBackedUp: 
     lastUpdated: now,
     migrationInfo: {
       backupId,
-      claudeBackedUp
+      claudeBackedUp: false
     }
   });
 }
@@ -540,30 +401,32 @@ async function initializeProviderStatus(cwd: string): Promise<void> {
 function buildInitSummaryView(summary: InitSummary) {
   const messages = [
     `✅ Installed Genie template at ${summary.target}`,
-    `🔌 Default provider: ${summary.provider}`,
+    `🔌 Default executor: ${summary.executor}${summary.model ? ` (model: ${summary.model})` : ''}`,
     `💾 Backup ID: ${summary.backupId ?? 'n/a'}`,
-    summary.claudeBackedUp ? '📦 Legacy .claude directory archived for migration.' : '📦 No legacy .claude directory detected.',
-    `📚 Template source: ${summary.templateSource}`
+    `📚 Template source: ${summary.templateSource}`,
+    `🛠️ Started Install agent via Genie run`
   ];
-  return buildInfoView('Genie initialization complete', messages);
+  return buildInfoView('Genie initialization complete', messages.filter(Boolean) as string[]);
 }
-
-async function applyProviderDefaults(genieRoot: string, provider: string): Promise<void> {
-  const executor = PROVIDER_EXECUTOR[provider] ?? 'codex';
-  const model = PROVIDER_MODEL[provider] ?? 'gpt-5-codex';
+async function applyExecutorDefaults(genieRoot: string, executorKey: string, model?: string): Promise<void> {
   await Promise.all([
-    updateConfigForProvider(genieRoot, provider, executor, model),
-    updateAgentsForProvider(genieRoot, executor, model)
+    updateProjectConfig(genieRoot, executorKey, model),
+    updateAgentsForExecutor(genieRoot, executorKey, model)
   ]);
 }
 
-async function updateConfigForProvider(
+async function updateProjectConfig(
   genieRoot: string,
-  provider: string,
-  executor: string,
-  model: string
+  executorKey: string,
+  model?: string
 ): Promise<void> {
-  const configPath = path.join(genieRoot, 'cli', 'config.yaml');
+  // Prefer project-level .genie/config.yaml; fallback to legacy .genie/cli/config.yaml
+  const primaryConfigPath = path.join(genieRoot, 'config.yaml');
+  const legacyConfigPath = path.join(genieRoot, 'cli', 'config.yaml');
+  const configPath = (await fsp
+    .access(primaryConfigPath)
+    .then(() => true)
+    .catch(() => false)) ? primaryConfigPath : legacyConfigPath;
   const exists = await fsp
     .access(configPath)
     .then(() => true)
@@ -575,27 +438,17 @@ async function updateConfigForProvider(
 
   const original = await fsp.readFile(configPath, 'utf8');
   let updated = original;
-
-  updated = replaceFirst(updated, /(defaults:\s*\n\s*executor:\s*)([^\s#]+)/, `$1${executor}`);
-
+  // defaults.executor
+  updated = replaceFirst(updated, /(defaults:\s*\n\s*executor:\s*)([^\s#]+)/, `$1${executorKey}`);
+  // executionModes.default block
   updated = replaceFirst(
     updated,
     /(executionModes:\s*\n  default:\s*\n(?:(?: {4}.+\n)+?))/, // capture default block
     (match) => {
       let block = match;
-      block = replaceFirst(block, /(    description:\s*)(.*)/, `$1${DEFAULT_MODE_DESCRIPTION[provider] ?? DEFAULT_MODE_DESCRIPTION.codex}`);
-      block = replaceFirst(block, /(    executor:\s*)([^\s#]+)/, `$1${executor}`);
-      block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${model}`);
-      return block;
-    }
-  );
-
-  updated = replaceFirst(
-    updated,
-    /(  claude:\s*\n(?:(?: {4}.+\n)+?))/,
-    (match) => {
-      let block = match;
-      block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${CLAUDE_EXEC_MODEL[provider] ?? CLAUDE_EXEC_MODEL.codex}`);
+      block = replaceFirst(block, /(    description:\s*)(.*)/, `$1${DEFAULT_MODE_DESCRIPTION}`);
+      block = replaceFirst(block, /(    executor:\s*)([^\s#]+)/, `$1${executorKey}`);
+      if (model) block = replaceFirst(block, /(      model:\s*)([^\s#]+)/, `$1${model}`);
       return block;
     }
   );
@@ -605,7 +458,7 @@ async function updateConfigForProvider(
   }
 }
 
-async function updateAgentsForProvider(genieRoot: string, executor: string, model: string): Promise<void> {
+async function updateAgentsForExecutor(genieRoot: string, executor: string, model?: string): Promise<void> {
   const agentsDir = path.join(genieRoot, 'agents');
 
   // Skip if agents directory doesn't exist (blacklisted during init)
@@ -640,7 +493,7 @@ async function updateAgentsForProvider(genieRoot: string, executor: string, mode
 
       const genieMeta = data.genie as Record<string, unknown>;
       genieMeta.executor = executor;
-      genieMeta.model = model;
+      if (model) genieMeta.model = model;
 
       const nextFrontMatter = YAML.stringify(data, { indent: 2 }).trimEnd();
       const nextContent = `---\n${nextFrontMatter}\n---${original.slice(end + 4)}`;
@@ -683,8 +536,105 @@ function replaceFirst(source: string, pattern: RegExp, replacement: string | ((m
 }
 
 
-async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
-  console.log('[HANDOFF] Starting handoffToExecutor');
+// Legacy handoff removed in favor of Forge task creation
+
+async function promptExecutorArrow(options: string[], defaultValue: string): Promise<string> {
+  return new Promise((resolve) => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      resolve(defaultValue);
+      return;
+    }
+    let index = Math.max(0, options.indexOf(defaultValue));
+    const render = () => {
+      process.stdout.write('\x1Bc'); // clear screen
+      console.log('Select default executor (↑/↓, Enter):');
+      options.forEach((opt, i) => {
+        const prefix = i === index ? '›' : ' ';
+        console.log(`${prefix} ${opt}`);
+      });
+      console.log('');
+    };
+    render();
+    const onData = (buf: Buffer) => {
+      const s = buf.toString();
+      if (s === '\u0003') { // Ctrl+C
+        process.stdin.off('data', onData);
+        if ((process.stdin as any).setRawMode) (process.stdin as any).setRawMode(false);
+        process.stdin.pause();
+        resolve(defaultValue);
+        return;
+      }
+      if (s === '\r' || s === '\n') {
+        process.stdin.off('data', onData);
+        if ((process.stdin as any).setRawMode) (process.stdin as any).setRawMode(false);
+        process.stdin.pause();
+        console.log('');
+        resolve(options[index]);
+        return;
+      }
+      if (s.startsWith('\u001b')) {
+        // Arrow keys
+        if (s === '\u001b[A') index = (index - 1 + options.length) % options.length; // up
+        if (s === '\u001b[B') index = (index + 1) % options.length; // down
+        render();
+      }
+    };
+    process.stdin.resume();
+    if ((process.stdin as any).setRawMode) (process.stdin as any).setRawMode(true);
+    process.stdin.on('data', onData);
+  });
+}
+
+async function promptText(question: string, defaultValue?: string): Promise<string | undefined> {
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  const suffix = defaultValue ? ` (${defaultValue})` : '';
+  const answer: string = await new Promise((resolve) => rl.question(`${question}${suffix}: `, (ans: string) => { rl.close(); resolve(ans); }));
+  const trimmed = answer.trim();
+  return trimmed.length ? trimmed : defaultValue;
+}
+
+function mapExecutorToForgeProfile(executorKey: string): { executor: string; variant: string } {
+  const mapping: Record<string, string> = {
+    'claude': 'CLAUDE_CODE',
+    'claude-code': 'CLAUDE_CODE',
+    'codex': 'CODEX',
+    'opencode': 'OPENCODE',
+    'gemini': 'GEMINI',
+    'cursor': 'CURSOR',
+    'qwen_code': 'QWEN_CODE',
+    'amp': 'AMP',
+    'copilot': 'COPILOT'
+  };
+  const normalized = (executorKey || '').toLowerCase();
+  return { executor: mapping[normalized] || normalized.toUpperCase(), variant: 'DEFAULT' };
+}
+
+async function runInstallViaCli(cwd: string, template: TemplateType, flags?: InitFlags): Promise<void> {
+  try {
+    const { spawn } = await import('child_process');
+    const cliPath = path.join(getPackageRoot(), '.genie', 'cli', 'dist', 'genie.js');
+    const workflowPath = template === 'create'
+      ? '@.genie/create/workflows/install.md'
+      : '@.genie/code/workflows/install.md';
+    const agentId = template === 'create' ? 'create/agents/install' : 'code/agents/install';
+    const prompt = [
+      'Use the install subagent to set up Genie in this repo.',
+      '@agent-install',
+      workflowPath
+    ].join('\n');
+    const baseUrl = flags?.forgeBaseUrl ? flags.forgeBaseUrl : (flags?.forgePort ? `http://localhost:${flags.forgePort}` : 'http://localhost:8888');
+    const child = spawn(process.execPath, [cliPath, 'run', agentId, prompt], {
+      cwd,
+      stdio: 'inherit',
+      env: { ...process.env, GENIE_USE_FORGE: '1', FORGE_BASE_URL: baseUrl }
+    });
+    await new Promise<void>((resolve) => child.on('close', () => resolve()));
+  } catch (err) {
+    console.log(`⚠️  Failed to launch Install agent via CLI: ${(err as Error)?.message || String(err)}`);
+  }
+}
+  // Legacy handoff code removed
+  /*
   console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
 
   const { spawn, execSync } = await import('child_process');
@@ -723,29 +673,16 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
     (process.argv[1] && process.argv[1].includes('\\_npx\\'))
   );
 
-  console.log(`[HANDOFF] TTY status: stdin=${process.stdin.isTTY}, stdout=${process.stdout.isTTY}, stderr=${process.stderr.isTTY}`);
-  console.log(`[HANDOFF] Running under npx: ${isNpxSubprocess}`);
-  console.log(`[HANDOFF] npm_execpath: ${process.env.npm_execpath || 'not set'}`);
-  console.log(`[HANDOFF] npm_command: ${process.env.npm_command || 'not set'}`);
-  console.log(`[HANDOFF] _: ${process.env._ || 'not set'}`);
-  console.log(`[HANDOFF] __dirname: ${__dirname}`);
-  console.log(`[HANDOFF] process.argv[0]: ${process.argv[0]}`);
-  console.log(`[HANDOFF] process.argv[1]: ${process.argv[1]}`);
+  // Legacy handoff code removed
 
   // Additional fallback: if TTY appears available but we see "_npx" anywhere in the path, force script
   const pathsHaveNpx = __dirname.includes('_npx') ||
                        (process.argv[1] && process.argv[1].includes('_npx')) ||
                        (process.env._ && process.env._.includes('_npx'));
 
-  if (pathsHaveNpx) {
-    console.log('[HANDOFF] Detected _npx in paths - forcing script fallback');
-  }
+  // Legacy handoff code removed
 
-  const rawModeCheck = ensureRawModeSupport();
-  console.log(`[HANDOFF] Raw mode supported: ${rawModeCheck.supported}`);
-  if (!rawModeCheck.supported && rawModeCheck.message) {
-    console.log(`[HANDOFF] Raw mode check detail: ${rawModeCheck.message}`);
-  }
+  // Legacy handoff code removed
 
   const fallbackMessage = rawModeCheck.supported
     ? '[HANDOFF] Using script fallback to ensure TTY compatibility...'
@@ -753,60 +690,12 @@ async function handoffToExecutor(executor: string, cwd: string): Promise<void> {
       ? '[HANDOFF] No TTY detected, using script fallback...'
       : '[HANDOFF] Using script fallback due to raw mode limitations...';
 
-  // For npx: Simply spawn Claude with inherited stdio
-  if (isNpxSubprocess || pathsHaveNpx) {
-    console.log('[HANDOFF] NPX detected - launching Claude...');
-    console.log('');
-
-    // Small delay to let npx setup complete
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    console.log('Starting Claude installation workflow...');
-    console.log('');
-    console.log('[HANDOFF] Using script fallback for npx environment...');
-
-    await runWithScriptOrExit(spawn, execSync, command, args, cwd);
-    return;
-  }
-
-  console.log(fallbackMessage);
-  await runWithScriptOrExit(spawn, execSync, command, args, cwd);
+  // Legacy handoff code removed
 }
+*/
+// Legacy handoff code removed
 
-interface RawModeCheckResult {
-  supported: boolean;
-  message?: string;
-}
-
-function ensureRawModeSupport(): RawModeCheckResult {
-  if (!process.stdin.isTTY) {
-    return { supported: false, message: 'stdin is not a TTY' };
-  }
-
-  const setRawMode = process.stdin.setRawMode?.bind(process.stdin);
-  if (typeof setRawMode !== 'function') {
-    return { supported: false, message: 'stdin does not expose setRawMode' };
-  }
-
-  const wasRaw = process.stdin.isRaw;
-  try {
-    setRawMode(true);
-    setRawMode(wasRaw);
-    return { supported: true };
-  } catch (error: any) {
-    const code = error?.code;
-    const detail = code === 'EIO'
-      ? 'setRawMode failed with EIO'
-      : error?.message ?? String(error);
-    try {
-      setRawMode(wasRaw);
-    } catch {
-      // ignore restore errors
-    }
-    return { supported: false, message: detail };
-  }
-}
-
+/*
 async function runWithScriptFallback(
   spawnFn: typeof import('child_process').spawn,
   execSyncFn: typeof import('child_process').execSync,
@@ -882,3 +771,4 @@ async function runWithScriptOrExit(
     process.exit(1);
   }
 }
+*/

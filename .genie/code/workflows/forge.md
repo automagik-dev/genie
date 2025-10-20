@@ -565,7 +565,7 @@ Status: APPROVED
 ## Proposed Groups
 ### Group A – phase-0-consolidation
 - **Scope:** Migrate .agent-os/ to .genie/, remove duplicates
-- **Inputs:** *, @.genie/agents/*
+- **Inputs:** *, @.genie/code/agents/*, @.genie/create/agents/*
 - **Deliverables:** Consolidated structure, cleaned commands
 - **Evidence:** .genie/wishes/{{PROJECT_NAME}}-feature/qa/group-a/
 - **Tracker:** placeholder-group-a

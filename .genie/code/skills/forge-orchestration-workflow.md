@@ -470,7 +470,7 @@ Genie: Reports status, then continues checking periodically
 - `@.genie/code/workflows/forge.md` - Forge workflow documentation
 - `@.genie/code/workflows/review.md` - Review workflow documentation (when exists)
 - `@.genie/code/skills/forge-integration.md` - Forge-as-entry-point pattern
-- `@.genie/code/skills/role-clarity-protocol.md` - Agent role boundaries
+- `@.genie/skills/role-clarity-protocol.md` - Agent role boundaries
 
 ---
 

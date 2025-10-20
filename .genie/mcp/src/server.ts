@@ -26,7 +26,7 @@ import { transformDisplayPath } from './lib/display-transform';
 
 const execFileAsync = promisify(execFile);
 
-const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
+const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
 
 // Find actual workspace root by searching upward for .genie/ directory
@@ -765,7 +765,7 @@ server.addPrompt({
 
 Create structured prompt using:"
 
-## Genie Prompting Framework (@.genie/agents/core/prompt.md)
+## Genie Prompting Framework (@.genie/skills/prompt.md)
 
 **1. Task Breakdown:**
 <task_breakdown>

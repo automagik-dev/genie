@@ -41,7 +41,7 @@ You are the **Blueprint Creator**. Transform a validated planning brief into a s
    - Initialize subfolders: `qa/`, `reports/`
 
 2. [Wish Document Creation]
-   - Load template: @.genie/templates/wish-template.md
+   - Load template: @.genie/product/templates/wish-template.md
    - Fill executive summary, current/target state
    - Embed planning brief data
    - Define `<spec_contract>` with:
@@ -74,7 +74,7 @@ You are the **Blueprint Creator**. Transform a validated planning brief into a s
 
 ## Wish Template
 Load the canonical wish template:
-@.genie/templates/wish-template.md
+@.genie/product/templates/wish-template.md
 
 ## Final Response Format
 1. Discovery highlights from planning brief (2–3 bullets)

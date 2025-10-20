@@ -12,7 +12,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 // @ts-ignore - compiled client shipped at project root
 const forge_js_1 = require("../../../../forge.js");
-const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8888';
 async function isForgeRunning(baseUrl = DEFAULT_BASE_URL) {
     try {
         const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);

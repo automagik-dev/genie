@@ -87,7 +87,7 @@ When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching 
 - Should have created Forge implementation task and delegated
 - Pattern: "Proceed" after discovery → self-execute instead of creating next Forge task
 - **Root cause**: Perceived simplicity (2 files) led to delegation bypass
-- **Skills violated**: forge-integration.md, delegation-discipline.md, role-clarity-protocol.md
+- **Skills violated**: @.genie/code/skills/forge-integration.md, @.genie/skills/delegation-discipline.md, @.genie/skills/role-clarity-protocol.md
 - **Evidence**: Commit caf65641, wish #120-A, learn session 4b35e28c-f64e-48e3-aeb8-549e90718f21
 
 **Evidence timeline (learning progression):**

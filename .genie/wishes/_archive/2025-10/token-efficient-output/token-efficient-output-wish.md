@@ -1,6 +1,7 @@
 # 🧞 Token-Efficient AI-to-AI Orchestration Output
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** COMPLETE ✅
+**Note:** Referenced file (transcript-utils.ts) removed in refactoring - preserved for historical context
 **GitHub Issue:** #42 - [Feature] Token-efficient AI-to-AI orchestration output modes (CLOSED)
 **PR:** #46 - Token-Efficient Output + Multi-Template System (MERGED 2025-10-15)
 **Mission Link:** @.genie/product/mission.md (AI orchestration efficiency)
@@ -63,7 +64,7 @@
 | Felipe guidance | session | "No users, Ink was mistake, keep it simple" | implementation |
 |  | repo | Current Ink rendering (560 lines, delete target) | Group A |
 |  | repo | ViewEnvelope builders (delete target) | Group A |
-| @.genie/cli/src/executors/transcript-utils.ts | repo | ChatMessage[] parsing (keep, it's clean) | Group B |
+| .genie/cli/src/executors/transcript-utils.ts (removed in refactoring) | repo | ChatMessage[] parsing (keep, it's clean) | Group B |
 |  | repo | Ink-based executor selection (replace) | Group C |
 
 ## Discovery Summary
@@ -99,7 +100,7 @@ Replace verbose 4-layer Ink rendering pipeline with simple 2-layer markdown form
 ## Current State
 
 **What exists today:**
-- JSONL events parsed to `ChatMessage[]` (@.genie/cli/src/executors/transcript-utils.ts:253-378)
+- JSONL events parsed to `ChatMessage[]` (.genie/cli/src/executors/transcript-utils.ts (removed in refactoring):253-378)
 - Ink rendering with React components (, 560 lines)
 - Executor selection using Ink ()
 

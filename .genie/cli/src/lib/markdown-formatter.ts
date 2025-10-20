@@ -5,7 +5,11 @@
  * Provides 3 output modes optimized for different orchestration scenarios.
  */
 
-import { ChatMessage } from '../executors/transcript-utils.js';
+export interface ChatMessage {
+  title: string;
+  body: string[];
+  role?: string;
+}
 
 // ============================================================================
 // Types

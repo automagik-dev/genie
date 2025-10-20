@@ -66,7 +66,7 @@ Complete backup at `.genie-backup-YYYYMMDD-HHmmss/` (rollback safety).
 
 - **Core agents**: Framework defaults (will be removed, loaded from npm)
 - **Custom agents**: Your project-specific agents (preserved)
-- **Modified**: Edited core agents (changes extracted to .genie/custom/)
+- **Modified**: Edited core agents (changes merged inline as "Project Notes"; `custom/` retired)
 
 #### 2d. Migration
 ```
@@ -75,8 +75,8 @@ Complete backup at `.genie-backup-YYYYMMDD-HHmmss/` (rollback safety).
    Removed: core/implementor.md, core/tests.md, core/commit.md, ...
 
 📦 Installing new template structure...
-   Created: .genie/custom/ (customization injection points)
    Updated: .claude/ (npm package references)
+   Note: `.genie/custom/` has been retired. Use "Project Notes" sections in agents/skills.
 ```
 
 #### 2e. Template Update
@@ -133,12 +133,8 @@ your-project/
 ```
 your-project/
 └── .genie/
-    ├── agents/
-    │   └── my-agent.md          ← Your agent (preserved)
-    └── custom/                  ← NEW: Customization stubs
-        ├── implementor.md       ← Override core agents here
-        ├── commit.md
-        └── tests.md
+    └── agents/
+        └── my-agent.md          ← Your agent (preserved)
 
 Core agents loaded from:
 /usr/local/lib/node_modules/automagik-genie/.genie/agents/
@@ -156,7 +152,7 @@ When you run `genie run implementor`:
 1. Check `.genie/agents/implementor.md` (your local override)
 2. Check `.genie/agents/core/implementor.md` (your local override)
 3. **Load from npm:** `/usr/local/lib/.../core/implementor.md` ✅
-4. **Inject customizations:** `.genie/custom/implementor.md` (if exists)
+4. **Project Notes:** Merge any repo-specific guidance into the local agent/skill doc (no `custom/` path)
 
 **Result:** Core agent from npm + your customizations
 
@@ -275,4 +271,3 @@ genie update                           # Step 2: Project (auto-migrates)
 - ✅ Custom agents preserved
 - ✅ Easy future updates
 - ✅ Clean project structure
-

@@ -129,7 +129,7 @@ CLAUDE.md (1,234 tokens)
    └─ @.genie/STATE.md (456 tokens)
 
 ### Custom Overrides (loaded conditionally)
-.genie/custom/routing.md (1,234 tokens) → loaded by genie agent only
+.genie/skills/routing-decision-matrix.md (1,234 tokens) → loaded by genie agent only
 .genie/custom/implementor.md (890 tokens) → loaded by implementor agent
 ... (8 more overrides)
 ```

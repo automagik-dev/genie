@@ -14,21 +14,14 @@ export interface SessionEntry {
   name?: string;  // Friendly session name (user-provided or auto-generated)
   preset?: string;
   mode?: string;
-  logFile?: string;
-  lastPrompt?: string;
+  executor?: string;
+  executorVariant?: string | null;
+  sessionId?: string | null;
+  status?: string;
   created?: string;
   lastUsed?: string;
-  status?: string;
+  lastPrompt?: string;
   background?: boolean;
-  runnerPid?: number | null;
-  executor?: string;  // executor key (codex, opencode, claude, etc.)
-  executorVariant?: string | null;
-  executorPid?: number | null;
-  exitCode?: number | null;
-  signal?: string | null;
-  startTime?: string;
-  sessionId?: string | null;  // Forge task attempt ID when executor === 'forge'
-  [key: string]: unknown;
 }
 
 export interface SessionStore {
@@ -220,7 +213,7 @@ function resolveDefaultExecutor(config: SessionLoadConfig = {}, defaults: Sessio
   return (
     config.defaults?.executor ||
     defaults.defaults?.executor ||
-    'codex'
+    'opencode'
   );
 }
 

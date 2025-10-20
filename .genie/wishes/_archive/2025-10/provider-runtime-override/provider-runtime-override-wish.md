@@ -1,6 +1,7 @@
 # 🧞 PROVIDER RUNTIME OVERRIDE WISH
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** COMPLETE ✅
+**Note:** Some referenced files (run.ts, resume.ts) removed in refactoring - preserved for historical context
 **GitHub Issue:** #40 - Provider runtime override with intelligent fallbacks
 **Roadmap Item:** EXEC-PROVIDER – Runtime provider selection with intelligent fallbacks
 **Mission Link:** @.genie/product/mission.md §Pitch
@@ -61,7 +62,7 @@
 | @.genie/cli/src/lib/executor-config.ts:9-15 | code | Current executor resolution (mode → defaults) | implementation |
 | @.genie/cli/src/lib/config.ts:154-157 | code | Runtime provider.json loading (already works!) | implementation |
 | @.genie/cli/src/lib/config.ts:188-204 | code | loadWorkspaceProvider() and applyProviderOverrides() | implementation |
-| @.genie/cli/src/commands/run.ts | code | Run command (needs --provider flag integration) | implementation |
+| .genie/cli/src/commands/run.ts (removed in refactoring) | code | Run command (needs --provider flag integration) | implementation |
 |  | state | Provider selected at init, read at runtime | implementation |
 | User clarification (items #7-9) | requirements | Runtime override with fallbacks, binary detection | entire wish |
 |  | template | Wish structure requirements | wish structure |
@@ -271,8 +272,8 @@ DEBUG=1 genie run plan "test"
 
 **Surfaces:**
 - @.genie/cli/src/genie.ts – CLI argument parsing
-- @.genie/cli/src/commands/run.ts – run command logic
-- @.genie/cli/src/commands/resume.ts – resume command logic
+- .genie/cli/src/commands/run.ts (removed in refactoring) – run command logic
+- .genie/cli/src/commands/resume.ts (removed in refactoring) – resume command logic
 
 **Deliverables:**
 1. Add `--provider` flag to CLI parser (`genie.ts`):
@@ -357,7 +358,7 @@ genie resume plan --provider claude
 **Goal:** Validate provider availability before execution
 
 **Surfaces:**
-- @.genie/cli/src/commands/run.ts – validation integration
+- .genie/cli/src/commands/run.ts (removed in refactoring) – validation integration
 
 **Deliverables:**
 1. Create `executor-validator.ts` module:

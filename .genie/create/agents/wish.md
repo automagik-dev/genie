@@ -87,7 +87,7 @@ Checklist:
 ## Wish Template (Saved at `.genie/wishes/<slug>/<slug>-wish.md`)
 
 Load the canonical research/content wish template:
-@.genie/create/templates/wish-template.md
+@.genie/product/templates/wish-template.md
 
 This template defines the standard wish structure including:
 - 100-point evaluation matrix (Discovery 30pts, Implementation 40pts, Verification 30pts)

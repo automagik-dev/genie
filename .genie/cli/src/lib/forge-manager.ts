@@ -11,7 +11,7 @@ export interface ForgeStartOptions {
   logDir: string;
 }
 
-const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8888';
 
 export async function isForgeRunning(baseUrl: string = DEFAULT_BASE_URL): Promise<boolean> {
   try {

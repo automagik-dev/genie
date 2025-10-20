@@ -28,7 +28,7 @@ const child_process_1 = require("child_process");
 const util_1 = require("util");
 const display_transform_1 = require("./lib/display-transform");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
-const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
+const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
 // Find actual workspace root by searching upward for .genie/ directory
 function findWorkspaceRoot() {
@@ -712,7 +712,7 @@ server.addPrompt({
 
 Create structured prompt using:"
 
-## Genie Prompting Framework (@.genie/agents/core/prompt.md)
+## Genie Prompting Framework (@.genie/skills/prompt.md)
 
 **1. Task Breakdown:**
 <task_breakdown>

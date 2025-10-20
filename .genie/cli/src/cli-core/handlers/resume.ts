@@ -1,22 +1,5 @@
-import path from 'path';
-import fs from 'fs';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
-import type { SessionEntry } from '../../session-store';
-import { findSessionEntry } from '../../lib/session-helpers';
-import {
-  resolveAgentIdentifier,
-  loadAgentSpec,
-  resolveExecutorKey,
-  requireExecutor,
-  extractExecutorOverrides,
-  buildExecutorConfig,
-  resolveExecutorPaths,
-  deriveStartTime,
-  deriveLogFile,
-  persistStore,
-  executeRun
-} from './shared';
 import { createForgeExecutor } from '../../lib/forge-executor';
 
 export function createResumeHandler(ctx: HandlerContext): Handler {
@@ -29,123 +12,22 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
     const sessionName = cmdArgs[0];
     const prompt = cmdArgs.slice(1).join(' ').trim();
-    const found = findSessionEntry(store, sessionName, ctx.paths);
+    const entry = store.sessions[sessionName];
 
-    if (!found) {
-      // CRITICAL: Do NOT access filesystem directly - this violates Forge worktree isolation
-      // See: .genie/discovery/filesystem-restrictions-audit.md (Violation #3)
-      //
-      // OLD CODE (filesystem violation - REMOVED):
-      //   - executor.tryLocateSessionFileBySessionId()
-      //   - fs.existsSync(sessionFilePath)
-      //
-      // TODO (Wish #120-A): Use Forge MCP to check if session exists
-      // Proposed implementation:
-      //   try {
-      //     const task = await mcp__automagik_forge__get_task({ task_id: sessionName });
-      //     if (task) {
-      //       throw new Error(
-      //         `❌ Session '${sessionName}' is not tracked in CLI state.\n\n` +
-      //         `Forge task exists: ${task.id}\n` +
-      //         `Status: ${task.status}\n\n` +
-      //         `This session cannot be resumed because CLI tracking information is missing.\n` +
-      //         `This may happen if sessions.json was corrupted or deleted.\n\n` +
-      //         `Options:\n` +
-      //         `  1. View the session: npx automagik-genie view ${sessionName}\n` +
-      //         `  2. Start a new session: npx automagik-genie run <agent> "<prompt>"\n` +
-      //         `  3. (Advanced) Manually restore sessions.json entry`
-      //       );
-      //     }
-      //   } catch (error) {
-      //     // Session doesn't exist in Forge either
-      //   }
-      //
-      // For now: Simply throw error (no filesystem violations)
+    if (!entry || !entry.sessionId) {
       throw new Error(`❌ No session found with name '${sessionName}'`);
     }
 
-    const { agentName, entry: session } = found;
-    if (!session || !session.sessionId) {
-      throw new Error(`❌ No active session for agent '${agentName}'`);
-    }
+    const forgeExecutor = createForgeExecutor();
+    await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    await forgeExecutor.resumeSession(entry.sessionId, prompt);
 
-    const agentSpec = loadAgentSpec(ctx, agentName);
-    const agentMeta = agentSpec.meta || {};
-    const agentGenie = agentMeta.genie || {};
-    if (!parsed.options.backgroundExplicit && typeof agentGenie.background === 'boolean') {
-      parsed.options.background = agentGenie.background;
-    }
-    const defaultMode = ctx.config.defaults?.executionMode || ctx.config.defaults?.preset || 'default';
-    const storedMode = session.mode || session.preset;
-    const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
-    const modeName = typeof storedMode === 'string' && storedMode.trim().length
-      ? storedMode.trim()
-      : typeof agentMode === 'string' && agentMode.trim().length
-        ? agentMode.trim()
-        : defaultMode;
-    session.mode = modeName;
-    session.preset = modeName;
+    entry.lastPrompt = prompt.slice(0, 200);
+    entry.lastUsed = new Date().toISOString();
+    entry.status = 'running';
+    store.sessions[sessionName] = entry;
+    await ctx.sessionService.save(store);
 
-    const executorKey = session.executor || agentGenie.executor || resolveExecutorKey(ctx, modeName);
-    const executor = requireExecutor(ctx, executorKey);
-    const executorOverrides = extractExecutorOverrides(ctx, agentGenie, executorKey);
-    const executorConfig = buildExecutorConfig(ctx, modeName, executorKey, executorOverrides);
-    const executorPaths = resolveExecutorPaths(ctx.paths, executorKey);
-    const command = executor.buildResumeCommand({
-      config: executorConfig,
-      sessionId: session.sessionId || undefined,
-      prompt
-    });
-
-    const startTime = deriveStartTime();
-    const logFile = deriveLogFile(agentName, startTime, ctx.paths);
-
-    session.lastPrompt = prompt ? prompt.slice(0, 200) : session.lastPrompt;
-    session.lastUsed = new Date().toISOString();
-    session.logFile = logFile;
-    session.status = 'starting';
-    session.background = parsed.options.background;
-    session.runnerPid = parsed.options.backgroundRunner ? process.pid : null;
-    session.executor = executorKey;
-    session.executorPid = null;
-    session.exitCode = null;
-    session.signal = null;
-    await persistStore(ctx, store);
-
-    // ALWAYS use Forge for resume operations (complete executor replacement)
-    // Check if background launch requested (and not already background runner)
-    if (parsed.options.background && !parsed.options.backgroundRunner) {
-      try {
-        const forgeExecutor = createForgeExecutor();
-        await forgeExecutor.resumeSession(session.sessionId, prompt);
-        process.stdout.write(`✓ Resumed session ${session.name}\n`);
-        return;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stdout.write(`\n▸ Failed to resume via Forge: ${message}\n`);
-        // Don't fallback - Forge is the only executor now
-        throw error;
-      }
-    }
-
-    await executeRun(ctx, {
-      agentName,
-      command,
-      executorKey,
-      executor,
-      executorConfig,
-      executorPaths,
-      prompt,
-      store,
-      entry: session,
-      paths: ctx.paths,
-      config: ctx.config,
-      startTime,
-      logFile,
-      background: parsed.options.background,
-      runnerPid: parsed.options.backgroundRunner ? process.pid : null,
-      cliOptions: parsed.options,
-      executionMode: modeName
-    });
+    process.stdout.write(`✓ Resumed ${sessionName} via Forge\n`);
   };
 }

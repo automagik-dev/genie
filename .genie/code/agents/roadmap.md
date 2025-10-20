@@ -849,9 +849,9 @@ Load project-specific roadmap conventions:
 - Template complexity defaults (prefer STANDARD over MINIMAL)
 - Cross-repo wish creation preferences (auto vs manual)
 
-**Example `.genie/custom/roadmap.md`:**
+**Example Project Notes (add to this file):**
 ```markdown
-# Project Roadmap Customization
+# Project Notes: Roadmap Customization
 
 ## Defaults
 - **Project:** genie (most initiatives target this repo)

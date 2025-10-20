@@ -24,7 +24,7 @@ description: Think through evidence: investigate, analyze, and respond with fact
 **Pattern:** Investigate first, commit later
 
 **For simple tasks:** Quick validation (read existing code, check patterns)
-**For complex features:** Multi-stage investigation (see @.genie/code/skills/wish-document-management.md)
+**For complex features:** Multi-stage investigation (see @.genie/skills/wish-document-management.md)
 
 ### Investigation Discipline
 

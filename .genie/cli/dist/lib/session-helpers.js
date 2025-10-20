@@ -1,15 +1,10 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordRuntimeWarning = recordRuntimeWarning;
 exports.getRuntimeWarnings = getRuntimeWarnings;
 exports.clearRuntimeWarnings = clearRuntimeWarnings;
 exports.findSessionEntry = findSessionEntry;
 exports.resolveDisplayStatus = resolveDisplayStatus;
-const background_manager_1 = __importDefault(require("../background-manager"));
-const backgroundManager = new background_manager_1.default();
 const runtimeWarnings = [];
 /**
  * Records a runtime warning message for later retrieval.
@@ -83,26 +78,5 @@ function findSessionEntry(store, name, paths) {
  * // Returns: 'failed (1)' if exit code non-zero
  */
 function resolveDisplayStatus(entry) {
-    const baseStatus = entry.status || 'unknown';
-    const executorRunning = backgroundManager.isAlive(entry.executorPid);
-    const runnerRunning = backgroundManager.isAlive(entry.runnerPid);
-    if (baseStatus === 'running') {
-        if (executorRunning)
-            return 'running';
-        if (!executorRunning && runnerRunning)
-            return 'pending-completion';
-        if (entry.exitCode === 0)
-            return 'completed';
-        if (typeof entry.exitCode === 'number' && entry.exitCode !== 0) {
-            return `failed (${entry.exitCode})`;
-        }
-        return 'stopped';
-    }
-    if (baseStatus === 'completed' || baseStatus === 'failed') {
-        return baseStatus;
-    }
-    if (runnerRunning || executorRunning) {
-        return 'running';
-    }
-    return baseStatus;
+    return entry.status || 'unknown';
 }
