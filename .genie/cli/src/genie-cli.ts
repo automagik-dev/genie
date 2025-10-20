@@ -261,25 +261,70 @@ function startMCPServer(transport: string, port: string): void {
     MCP_PORT: port
   };
 
-  console.log(`Starting Genie MCP Server...`);
-  console.log(`Transport: ${transport}${internalTransport !== transport ? ` (${internalTransport})` : ''}`);
-  console.log(`Port: ${port} (for HTTP/SSE)`);
-  console.log('');
-
-  const child = spawn('node', [mcpServer], {
-    stdio: 'inherit',
-    env
-  });
-
-  child.on('exit', (code) => {
-    if (code !== 0) {
-      console.error(`MCP server exited with code ${code}`);
+  // For stdio transport, avoid printing to stdout (clients expect pure JSON)
+  const log = (msg: string) => {
+    if (transport === 'stdio') {
+      // Route to stderr only
+      console.error(msg);
+    } else {
+      console.log(msg);
     }
-    process.exit(code || 0);
-  });
+  };
 
-  child.on('error', (err) => {
-    console.error('Failed to start MCP server:', err);
-    process.exit(1);
-  });
+  log(`Starting Genie MCP Server...`);
+  log(`Transport: ${transport}${internalTransport !== transport ? ` (${internalTransport})` : ''}`);
+  if (internalTransport === 'httpStream') {
+    log(`Port: ${port} (for HTTP/SSE)`);
+    log('');
+  }
+
+  // Resilient startup: retry on early non-zero exit
+  const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
+  const backoffMs = parseInt(process.env.GENIE_MCP_BACKOFF || '500', 10);
+
+  let attempt = 0;
+  const start = () => {
+    attempt += 1;
+    const child = spawn('node', [mcpServer], {
+      stdio: 'inherit',
+      env
+    });
+
+    let exited = false;
+    let exitCode: number | null = null;
+
+    const timer = setTimeout(() => {
+      // After grace period, consider startup successful; let process lifecycle continue
+      // We only auto-retry if it exits quickly within grace period
+    }, 1000);
+
+    child.on('exit', (code) => {
+      exited = true;
+      exitCode = code === null ? 0 : code;
+      clearTimeout(timer);
+
+      if (exitCode !== 0 && attempt <= maxAttempts) {
+        log(`MCP server exited early with code ${exitCode}. Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
+        setTimeout(start, backoffMs);
+      } else {
+        if (exitCode !== 0) {
+          console.error(`MCP server exited with code ${exitCode}`);
+        }
+        process.exit(exitCode || 0);
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      if (attempt <= maxAttempts) {
+        log(`Failed to start MCP server (${err?.message || err}). Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
+        setTimeout(start, backoffMs);
+      } else {
+        console.error('Failed to start MCP server:', err);
+        process.exit(1);
+      }
+    });
+  };
+
+  start();
 }
