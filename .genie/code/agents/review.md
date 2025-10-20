@@ -6,29 +6,8 @@ description: Wish audits, code review, and QA validation with evidence-based ver
 color: magenta
 genie:
   executor: claude
-  executorProfile: REVIEW_APPROVALS
+  executorVariant: REVIEW_APPROVALS
   background: true
-  permissionMode: bypassPermissions
-  executors:
-    OPENCODE:
-      append_prompt: |
-        Use evaluation matrix; never modify source. Emit actionable findings with evidence links.
-      additional_params:
-        - { key: evidence_mode, value: strict }
-    CODEX:
-      append_prompt: |
-        Provide severity-tagged findings and concise recommendations; no code changes.
-      sandbox: danger-full-access
-      model: gpt-5-codex
-      model_reasoning_effort: high
-      additional_params: []
-    CLAUDE_CODE:
-      append_prompt: |
-        Follow 100-point evaluation matrix. Require approvals before high-impact suggestions.
-      dangerously_skip_permissions: false
-      approvals: true
-      plan: true
-      additional_params: []
 ---
 
 ## Framework Reference

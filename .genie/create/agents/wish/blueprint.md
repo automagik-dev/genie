@@ -5,9 +5,7 @@ name: blueprint
 description: Create wish from brief/context and save standard structure
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Create Wish • Blueprint Workflow

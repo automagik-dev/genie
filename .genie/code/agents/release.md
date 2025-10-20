@@ -5,9 +5,7 @@ name: release
 description: Complete GitHub release orchestration with approval workflow
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

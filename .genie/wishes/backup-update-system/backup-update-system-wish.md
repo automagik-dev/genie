@@ -5,7 +5,6 @@
 **GitHub Issue:** #38 - Enhanced backup & update system with customization preservation
 **Roadmap Item:** INIT-BACKUP-UPDATE – Framework version migration with user customization preservation
 **Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 0/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)

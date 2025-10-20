@@ -47,6 +47,16 @@ genie:
 
 Any additional executor-level parameters—such as `append_prompt`, `approvals`, or `additional_params`—should be declared in `.genie/config.yaml` under the corresponding executor + variant. The CLI syncs that structure to Forge via `PUT /api/profiles` every time you run/resume/view a session.
 
+### Precedence
+
+When a run starts, Genie applies overrides in this order:
+
+1. Workspace defaults in `.genie/config.yaml`
+2. Agent front matter (`genie.executor`, `genie.executorVariant`, `genie.model`)
+3. CLI flags at call-time (`genie run … --executor <id> --model <name>`)
+
+The last value wins. If you pass a `--model` that matches a profile in `.genie/config.yaml`, the corresponding variant is selected automatically; otherwise the CLI sends an on-the-fly model override to Forge.
+
 ### Discovering available Forge options
 
 1. **List executor profiles**  

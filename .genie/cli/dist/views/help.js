@@ -119,17 +119,23 @@ function buildRunHelpView() {
             { name: '<prompt>', description: 'Initial prompt or task description' }
         ],
         options: [
+            { flag: '--executor, -x', description: 'Override executor for this run' },
+            { flag: '--model, -m', description: 'Override model for the selected executor' },
+            { flag: '--name, -n', description: 'Custom session name (defaults to agent-timestamp)' },
+            { flag: '--background, -b', description: 'Force background execution (default from config/agent)' },
             { flag: '--help, -h', description: 'Show this help message' }
         ],
         examples: [
             'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
             'genie run code/review "Audit release branch for regressions"',
-            'genie run create/writer "Draft the launch announcement outline"'
+            'genie run create/writer "Draft the launch announcement outline"',
+            'genie run code/commit "Stage and commit hotfix" --executor opencode --model gpt-4.1-coding'
         ],
         notes: [
-            'Agents run in background mode by default (detached)',
+            'Precedence: workspace defaults → agent front matter → CLI flags',
             'Use quotes around prompts containing spaces or special characters',
-            'Agent identifiers can be found with: genie list agents'
+            'Agent identifiers can be found with: genie list agents',
+            'Executor/model values must exist in Forge or the workspace profile sync will fail'
         ]
     });
 }

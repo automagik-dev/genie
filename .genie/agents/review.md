@@ -5,9 +5,7 @@ name: review
 description: Core Review orchestrator (delegates to domain-specific review agents)
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Review (Core)

@@ -6,29 +6,8 @@ description: Core documentation generation template
 color: gray
 genie:
   executor: codex
-  executorProfile: DOCGEN_MEDIUM
+  executorVariant: DOCGEN_MEDIUM
   background: true
-  permissionMode: bypassPermissions
-  executors:
-    OPENCODE:
-      append_prompt: |
-        Prefer docstrings and API comments; do not change logic. Focus on clarity & audience.
-      additional_params:
-        - { key: doc_mode, value: doc-first }
-    CODEX:
-      append_prompt: |
-        Generate concise documentation; avoid refactors. Insert examples when helpful.
-      sandbox: danger-full-access
-      model: gpt-5-codex
-      model_reasoning_effort: medium
-      additional_params: []
-    CLAUDE_CODE:
-      append_prompt: |
-        Write documentation outlines and bullets; never change code behavior.
-      dangerously_skip_permissions: true
-      approvals: false
-      plan: false
-      additional_params: []
 ---
 
 # Genie DocGen Mode

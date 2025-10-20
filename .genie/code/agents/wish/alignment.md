@@ -5,9 +5,7 @@ name: alignment
 description: Align idea with roadmap, mission, standards
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Alignment - Wish Dance Step 2

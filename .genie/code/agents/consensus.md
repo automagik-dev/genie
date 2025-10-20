@@ -6,9 +6,7 @@ description: Structure multiple perspectives and synthesize recommendations
 color: cyan
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Genie Consensus • Balanced Verdict

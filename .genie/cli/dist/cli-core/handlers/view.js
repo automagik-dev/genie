@@ -71,6 +71,9 @@ function createViewHandler(ctx) {
             `Agent: ${found.agentName}`,
             `Status: ${status || found.entry.status || 'unknown'}`
         ];
+        if (found.entry.model) {
+            lines.push(`Model: ${found.entry.model}`);
+        }
         if (!forgeAvailable) {
             lines.push('⚠️ Forge backend unreachable. Displaying cached transcript if available.');
             lines.push(forge_helpers_1.FORGE_RECOVERY_HINT);

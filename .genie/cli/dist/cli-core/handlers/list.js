@@ -44,6 +44,7 @@ function createListHandler(ctx) {
                         agent: session.agent,
                         status: session.status,
                         executor: [session.executor, session.variant].filter(Boolean).join('/'),
+                        model: session.model || undefined,
                         started: session.created,
                         updated: session.updated
                     })));
@@ -62,6 +63,7 @@ function createListHandler(ctx) {
                 agent: entry.agent,
                 status: entry.status || 'unknown',
                 executor: [entry.executor, entry.executorVariant].filter(Boolean).join('/'),
+                model: entry.model || undefined,
                 started: entry.created,
                 updated: entry.lastUsed
             }));

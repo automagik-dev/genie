@@ -6,9 +6,7 @@ description: Debug issues, report bugs, or create plan/wish/forge workflow for f
 color: red
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Debug Agent • Investigation & Resolution Orchestrator

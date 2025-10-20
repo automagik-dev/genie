@@ -6,9 +6,7 @@ description: Core instrumentation planning template
 color: violet
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Genie Tracer Mode

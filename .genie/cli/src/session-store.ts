@@ -16,6 +16,7 @@ export interface SessionEntry {
   mode?: string;
   executor?: string;
   executorVariant?: string | null;
+  model?: string | null;
   sessionId?: string | null;
   status?: string;
   created?: string;

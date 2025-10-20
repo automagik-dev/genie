@@ -5,33 +5,8 @@ name: commit
 description: Execute commit and push routine (with safety checks)
 genie:
   executor: opencode
-  executorProfile: COMMIT_CONVENTIONAL
+  executorVariant: COMMIT_CONVENTIONAL
   background: false
-  permissionMode: default
-  executors:
-    OPENCODE:
-      append_prompt: |
-        ## Commit Mode (Conventional Commits)
-        Format: type(scope): subject (<=72 chars). Body: why, not what. Footer: refs.
-      additional_params:
-        - { key: commit_style, value: conventional }
-        - { key: max_subject, value: "72" }
-    CODEX:
-      append_prompt: |
-        ## Commit Mode (Codex)
-        Adhere to Conventional Commits strictly; propose succinct subject lines.
-      sandbox: danger-full-access
-      model: gpt-5-codex
-      model_reasoning_effort: medium
-      additional_params: []
-    CLAUDE_CODE:
-      append_prompt: |
-        ## Commit Mode (Claude Code)
-        Validate Conventional Commit formatting before proposing a message.
-      dangerously_skip_permissions: false
-      approvals: true
-      plan: false
-      additional_params: []
 ---
 
 ## Framework Reference

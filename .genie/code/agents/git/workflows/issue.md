@@ -6,9 +6,7 @@ description: GitHub issue lifecycle management (list, update, assign, close, lin
 color: cyan
 genie:
   executor: claude
-  model: haiku
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

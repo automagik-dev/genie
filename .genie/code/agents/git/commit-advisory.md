@@ -4,8 +4,6 @@
 name: git/commit-advisory
 genie:
   executor: claude
-  model: haiku
-  permissionMode: default
   background: false
 ---
 

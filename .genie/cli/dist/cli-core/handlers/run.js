@@ -15,7 +15,7 @@ function createRunHandler(ctx) {
         const resolvedAgentName = (0, agent_resolver_1.resolveAgentIdentifier)(agentName);
         const agentSpec = (0, agent_resolver_1.loadAgentSpec)(resolvedAgentName);
         const agentGenie = agentSpec.meta?.genie || {};
-        const { executorKey, executorVariant, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
+        const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
         try {
             await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
@@ -32,7 +32,8 @@ function createRunHandler(ctx) {
                 prompt,
                 executorKey,
                 executorVariant,
-                executionMode: modeName
+                executionMode: modeName,
+                model
             });
         }
         catch (error) {
@@ -48,6 +49,7 @@ function createRunHandler(ctx) {
             name: sessionName,
             executor: executorKey,
             executorVariant,
+            model: model || undefined,
             status: 'running',
             created: now,
             lastUsed: now,
@@ -57,25 +59,20 @@ function createRunHandler(ctx) {
             background: parsed.options.background
         };
         await ctx.sessionService.save(store);
-        process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorKey}/${executorVariant})\n`);
+        const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
+        const modelSuffix = model ? `, model=${model}` : '';
+        process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);
         process.stdout.write(`  Session name: ${sessionName}\n`);
         process.stdout.write(`  View: genie view ${sessionName}\n`);
     };
 }
 function resolveExecutionSelection(config, parsed, agentGenie) {
-    let executor = (config.defaults?.executor || 'opencode').toLowerCase();
-    let variant = (config.defaults?.executorVariant || 'DEFAULT').toUpperCase();
-    let modeName = parsed.options.mode?.trim() || config.defaults?.executionMode || 'default';
-    if (parsed.options.mode) {
-        const modeConfig = config.executionModes?.[parsed.options.mode];
-        if (!modeConfig) {
-            throw new Error(`Execution mode '${parsed.options.mode}' not found.`);
-        }
-        if (modeConfig.executor)
-            executor = modeConfig.executor.toLowerCase();
-        if (modeConfig.executorVariant)
-            variant = modeConfig.executorVariant.toUpperCase();
-        modeName = parsed.options.mode;
+    let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
+    let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
+    let model = typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
+    let modeName = 'default';
+    if (typeof config.defaults?.executionMode === 'string' && config.defaults.executionMode.trim().length) {
+        modeName = config.defaults.executionMode.trim();
     }
     if (typeof agentGenie.executionMode === 'string' && agentGenie.executionMode.trim().length) {
         modeName = agentGenie.executionMode.trim();
@@ -87,7 +84,43 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
     if (typeof agentVariant === 'string' && agentVariant.trim().length) {
         variant = agentVariant.trim().toUpperCase();
     }
+    if (typeof agentGenie.model === 'string' && agentGenie.model.trim().length) {
+        model = agentGenie.model.trim();
+    }
+    if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
+        executor = parsed.options.executor.trim().toLowerCase();
+    }
+    if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
+        model = parsed.options.model.trim();
+        const matchedVariant = findVariantForModel(config, executor, model);
+        if (matchedVariant) {
+            variant = matchedVariant;
+        }
+    }
     if (!variant.length)
         variant = 'DEFAULT';
-    return { executorKey: executor, executorVariant: variant, modeName };
+    return { executorKey: executor, executorVariant: variant, model, modeName };
+}
+function findVariantForModel(config, executorKey, model) {
+    const executors = config.forge?.executors;
+    if (!executors)
+        return null;
+    const normalizedExecutor = executorKey.trim().toUpperCase();
+    const executorProfiles = executors[normalizedExecutor];
+    if (!executorProfiles || typeof executorProfiles !== 'object')
+        return null;
+    const desiredModel = model.trim();
+    for (const [variantName, profileSpec] of Object.entries(executorProfiles)) {
+        if (!profileSpec || typeof profileSpec !== 'object')
+            continue;
+        for (const profileKey of Object.keys(profileSpec)) {
+            const profileConfig = profileSpec[profileKey];
+            if (profileConfig && typeof profileConfig === 'object' && typeof profileConfig.model === 'string') {
+                if (profileConfig.model.trim() === desiredModel) {
+                    return variantName.trim().toUpperCase();
+                }
+            }
+        }
+    }
+    return null;
 }

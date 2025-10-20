@@ -3,7 +3,6 @@
 **Status:** DRAFT
 **Roadmap Item:** RM-P1-EC-01 – @.genie/product/roadmap.md §Phase 1 — Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 0/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)
@@ -30,7 +29,6 @@
 | No planning brief received | gap | Awaiting `/plan` context; assumptions logged as ASM-1 | wish |
 | @.genie/product/mission.md | repo | Highlights meta-agent focus on evidence-first governance | wish |
 | @.genie/product/roadmap.md | repo | Phase 1 emphasizes instrumentation and evidence checklist gating | wish, execution |
-| @.genie/standards/best-practices.md | repo | Reinforces simplicity, clarity, and DRY principles for documentation | wish |
 
 ## Discovery Summary
 - Primary analyst: Codex Wish Architect (human-in-the-loop)
@@ -61,7 +59,7 @@ Create a roadmap-aligned automation checklist for the QA Codex run that clarifie
 
 ### Group B – automation-checklist-draft
 - Goal: Draft the Codex QA automation checklist with phases, owners, and evidence hooks
-- Surfaces: Outputs from Group A, `@.genie/standards/best-practices.md`, Codex QA charter (once sourced)
+- Surfaces: Outputs from Group A, Codex QA charter (once sourced)
 - Deliverables: Checklist v1 with sections for prerequisites, execution steps, evidence capture, and review gates
 - Evidence: `validation/group-b/` with draft iterations, comparison notes, and reviewer feedback
 - Suggested personas: `writer`, `qa`, `editor`

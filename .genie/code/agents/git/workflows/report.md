@@ -6,9 +6,7 @@ description: GitHub issue creation workflow with template selection
 color: cyan
 genie:
   executor: claude
-  model: haiku
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

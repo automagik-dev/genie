@@ -6,9 +6,7 @@ description: Document strategic initiatives in automagik-roadmap with guided tem
 color: purple
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

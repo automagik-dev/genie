@@ -6,9 +6,7 @@ description: Core Git operations (branch, commit, push) - lean agent
 color: cyan
 genie:
   executor: claude
-  model: haiku
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

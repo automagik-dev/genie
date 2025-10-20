@@ -31,7 +31,8 @@ function parseArguments(argv) {
         requestHelp: undefined,
         full: false,
         live: false,
-        mode: undefined,
+        executor: undefined,
+        model: undefined,
         name: undefined
     };
     const filtered = [];
@@ -54,11 +55,19 @@ function parseArguments(argv) {
             options.backgroundExplicit = true;
             continue;
         }
-        if (token === '--mode' || token === '-m') {
+        if (token === '--executor' || token === '-x') {
             const nextToken = raw[i + 1];
             if (nextToken && !nextToken.startsWith('-')) {
-                options.mode = nextToken;
-                i++; // Skip next token
+                options.executor = nextToken;
+                i++;
+                continue;
+            }
+        }
+        if (token === '--model' || token === '-m') {
+            const nextToken = raw[i + 1];
+            if (nextToken && !nextToken.startsWith('-')) {
+                options.model = nextToken;
+                i++;
                 continue;
             }
         }

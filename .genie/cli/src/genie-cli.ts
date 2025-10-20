@@ -29,11 +29,19 @@ program
   .command('run <agent> <prompt>')
   .description('Run an agent with a prompt')
   .option('-b, --background', 'Run in background mode')
+  .option('-x, --executor <executor>', 'Override executor for this run')
+  .option('-m, --model <model>', 'Override model for the selected executor')
   .option('-n, --name <name>', 'Friendly session name for easy identification')
-  .action((agent: string, prompt: string, options: { background?: boolean; name?: string }) => {
+  .action((agent: string, prompt: string, options: { background?: boolean; executor?: string; model?: string; name?: string }) => {
     const args = ['run', agent, prompt];
     if (options.background) {
       args.push('--background');
+    }
+    if (options.executor) {
+      args.push('--executor', options.executor);
+    }
+    if (options.model) {
+      args.push('--model', options.model);
     }
     if (options.name) {
       args.push('--name', options.name);

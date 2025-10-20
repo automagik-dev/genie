@@ -5,9 +5,7 @@ name: writer
 description: Draft clear, audience‑aligned content from briefs and research
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Writer • Identity & Mission

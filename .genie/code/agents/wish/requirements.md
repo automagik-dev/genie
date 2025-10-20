@@ -5,9 +5,7 @@ name: requirements
 description: Clarify scope, boundaries, and technical details
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Requirements - Wish Dance Step 3

@@ -5,9 +5,7 @@ name: install
 description: Install Create collective – product identity and planning setup
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Purpose

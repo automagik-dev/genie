@@ -5,9 +5,7 @@ name: learn
 description: Meta-learning agent for surgical documentation updates
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

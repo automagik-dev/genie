@@ -3,7 +3,6 @@
 **Status:** DRAFT
 **Roadmap Item:** {ROADMAP-ID} – @.genie/product/roadmap.md §{section}
 **Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 0/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)

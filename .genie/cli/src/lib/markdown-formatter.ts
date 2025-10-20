@@ -32,6 +32,7 @@ export interface SessionEntry {
   agent: string;
   status: string;
   executor: string;
+  model?: string;
   started?: string;
   updated?: string;
 }
@@ -99,12 +100,13 @@ export function formatSessionList(sessions: SessionEntry[]): string {
 
   const parts: string[] = [];
   parts.push('## Active Sessions\n');
-  parts.push('| Session ID | Agent | Status | Executor |');
-  parts.push('|------------|-------|--------|----------|');
+  parts.push('| Session ID | Agent | Status | Executor | Model |');
+  parts.push('|------------|-------|--------|----------|-------|');
 
   for (const session of sessions) {
     const id = trimSessionId(session.sessionId);
-    parts.push(`| ${id} | ${session.agent} | ${session.status} | ${session.executor} |`);
+    const model = session.model ? session.model : '';
+    parts.push(`| ${id} | ${session.agent} | ${session.status} | ${session.executor} | ${model} |`);
   }
 
   return parts.join('\n') + '\n';

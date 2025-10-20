@@ -6,9 +6,7 @@ description: Critical evaluation via questions, debate, or direct challenge
 color: orange
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Genie Challenge • Critical Evaluation

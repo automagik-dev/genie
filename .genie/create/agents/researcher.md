@@ -5,9 +5,7 @@ name: researcher
 description: Investigate topics, curate sources, and synthesize findings for Create
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Researcher • Identity & Mission

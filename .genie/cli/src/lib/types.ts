@@ -6,7 +6,8 @@ export interface CLIOptions {
   requestHelp?: boolean;
   full: boolean;
   live: boolean;
-  mode?: string;
+  executor?: string;
+  model?: string;
   name?: string;  // Friendly session name for run command
 }
 
@@ -30,6 +31,7 @@ export interface GenieConfig {
     background?: boolean;
     executor?: string;
     executorVariant?: string;
+    model?: string;
   };
   paths?: ConfigPaths;
   forge?: {

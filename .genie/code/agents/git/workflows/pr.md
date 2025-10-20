@@ -6,9 +6,7 @@ description: Pull request creation workflow with proper descriptions
 color: cyan
 genie:
   executor: claude
-  model: haiku
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

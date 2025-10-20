@@ -13,6 +13,7 @@ export interface CreateSessionParams {
   executorKey: string;
   executorVariant?: string;
   executionMode: string;
+  model?: string;
 }
 
 export interface ForgeSessionSummary {
@@ -21,6 +22,7 @@ export interface ForgeSessionSummary {
   status: string;
   executor?: string | null;
   variant?: string | null;
+  model?: string | null;
   created?: string;
   updated?: string;
 }
@@ -42,7 +44,7 @@ export class ForgeExecutor {
   }
 
   async createSession(params: CreateSessionParams): Promise<string> {
-    const { agentName, prompt, executorKey, executorVariant, executionMode } = params;
+    const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
 
     const projectId = await this.getOrCreateGenieProject();
     const requestBody = {
@@ -51,7 +53,7 @@ export class ForgeExecutor {
         title: `Genie: ${agentName} (${executionMode})`,
         description: prompt
       },
-      executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant),
+      executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
       base_branch: 'main'
     };
 
@@ -92,6 +94,7 @@ export class ForgeExecutor {
       status: task.status || 'unknown',
       executor: (task.executor_profile_id?.executor || '').toLowerCase() || null,
       variant: task.executor_profile_id?.variant || null,
+      model: task.executor_profile_id?.model || null,
       created: task.created_at,
       updated: task.updated_at
     }));
@@ -121,7 +124,11 @@ export class ForgeExecutor {
     return newProject.id;
   }
 
-  private mapExecutorToProfile(executorKey: string, variant?: string): { executor: string; variant: string } {
+  private mapExecutorToProfile(
+    executorKey: string,
+    variant?: string,
+    model?: string
+  ): { executor: string; variant: string; model?: string } {
     const mapping: Record<string, string> = {
       'claude': 'CLAUDE_CODE',
       'claude-code': 'CLAUDE_CODE',
@@ -138,10 +145,16 @@ export class ForgeExecutor {
     const executor = mapping[normalizedKey] || normalizedKey.toUpperCase();
     const resolvedVariant = (variant || 'DEFAULT').toUpperCase();
 
-    return {
+    const profile: { executor: string; variant: string; model?: string } = {
       executor,
       variant: resolvedVariant
     };
+
+    if (model && model.trim().length) {
+      profile.model = model.trim();
+    }
+
+    return profile;
   }
 
   private extractAgentNameFromTitle(title: string): string {

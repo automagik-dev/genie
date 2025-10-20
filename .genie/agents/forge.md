@@ -5,9 +5,7 @@ name: forge
 description: Genie-level Forge orchestrator that delegates to domain-specific Forge workflows
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Forge (Core Agent)

@@ -16,7 +16,7 @@ class ForgeExecutor {
         await this.forge.request('PUT', '/profiles', { body: { executors: profiles } });
     }
     async createSession(params) {
-        const { agentName, prompt, executorKey, executorVariant, executionMode } = params;
+        const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
         const projectId = await this.getOrCreateGenieProject();
         const requestBody = {
             task: {
@@ -24,7 +24,7 @@ class ForgeExecutor {
                 title: `Genie: ${agentName} (${executionMode})`,
                 description: prompt
             },
-            executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant),
+            executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
             base_branch: 'main'
         };
         const attempt = await this.forge.createAndStartTask(requestBody);
@@ -61,6 +61,7 @@ class ForgeExecutor {
             status: task.status || 'unknown',
             executor: (task.executor_profile_id?.executor || '').toLowerCase() || null,
             variant: task.executor_profile_id?.variant || null,
+            model: task.executor_profile_id?.model || null,
             created: task.created_at,
             updated: task.updated_at
         }));
@@ -84,7 +85,7 @@ class ForgeExecutor {
         this.config.genieProjectId = newProject.id;
         return newProject.id;
     }
-    mapExecutorToProfile(executorKey, variant) {
+    mapExecutorToProfile(executorKey, variant, model) {
         const mapping = {
             'claude': 'CLAUDE_CODE',
             'claude-code': 'CLAUDE_CODE',
@@ -99,10 +100,14 @@ class ForgeExecutor {
         const normalizedKey = executorKey.trim().toLowerCase();
         const executor = mapping[normalizedKey] || normalizedKey.toUpperCase();
         const resolvedVariant = (variant || 'DEFAULT').toUpperCase();
-        return {
+        const profile = {
             executor,
             variant: resolvedVariant
         };
+        if (model && model.trim().length) {
+            profile.model = model.trim();
+        }
+        return profile;
     }
     extractAgentNameFromTitle(title) {
         const match = title.match(/^Genie: ([^\(]+)/);

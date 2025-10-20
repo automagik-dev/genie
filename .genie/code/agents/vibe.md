@@ -5,9 +5,7 @@ name: sleepy
 description: Autonomous wish coordinator with Genie orchestrator validation
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

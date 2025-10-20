@@ -73,6 +73,10 @@ export function createViewHandler(ctx: HandlerContext): Handler {
       `Status: ${status || found.entry.status || 'unknown'}`
     ];
 
+    if (found.entry.model) {
+      lines.push(`Model: ${found.entry.model}`);
+    }
+
     if (!forgeAvailable) {
       lines.push('⚠️ Forge backend unreachable. Displaying cached transcript if available.');
       lines.push(FORGE_RECOVERY_HINT);

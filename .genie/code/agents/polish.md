@@ -6,9 +6,7 @@ description: Type-checking, linting, and formatting for code quality
 color: purple
 genie:
   executor: claude
-  model: haiku
   background: true
-  permissionMode: bypassPermissions
 ---
 
 ## Framework Reference

@@ -6,9 +6,7 @@ description: Risk and impact assessment framework (universal)
 color: maroon
 genie:
   executor: claude
-  model: sonnet
   background: true
-  permissionMode: bypassPermissions
 ---
 
 # Audit Agent (Universal Framework)
