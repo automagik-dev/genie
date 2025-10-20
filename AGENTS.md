@@ -84,7 +84,7 @@ See `.genie/` directory for comprehensive documentation:
   - `@.genie/code/teams/tech-council/oettam.md` (Performance-driven, benchmark-focused)
   - `@.genie/code/teams/tech-council/jt.md` (Simplicity-focused, terse)
 
-**Consultation protocol:** `@.genie/agents/code/skills/team-consultation-protocol.md`
+**Consultation protocol:** `@.genie/code/skills/team-consultation-protocol.md`
 
 ## @ Tool Semantics
 **Critical:** @ is a lightweight path reference, NOT a content loader.

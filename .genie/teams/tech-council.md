@@ -1,9 +1,9 @@
 # Tech Council - Architectural Advisory Team
 
 ## Team Members
-@.genie/agents/nayr.md
-@.genie/agents/oettam.md
-@.genie/agents/jt.md
+@.genie/code/teams/tech-council/nayr.md
+@.genie/code/teams/tech-council/oettam.md
+@.genie/code/teams/tech-council/jt.md
 
 ## Purpose
 Provide architectural consultation and approval for major technical decisions in the automagik-genie codebase.
