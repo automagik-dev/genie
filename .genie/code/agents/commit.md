@@ -2,127 +2,139 @@
 
 ---
 name: commit
-description: Core commit advisory template
+description: Execute commit and push routine (with safety checks)
 genie:
-  executor: claude
-  model: haiku
-  background: true
-  permissionMode: bypassPermissions
+  executor: opencode
+  executorProfile: COMMIT_CONVENTIONAL
+  background: false
+  permissionMode: default
+  executors:
+    OPENCODE:
+      append_prompt: |
+        ## Commit Mode (Conventional Commits)
+        Format: type(scope): subject (<=72 chars). Body: why, not what. Footer: refs.
+      additional_params:
+        - { key: commit_style, value: conventional }
+        - { key: max_subject, value: "72" }
+    CODEX:
+      append_prompt: |
+        ## Commit Mode (Codex)
+        Adhere to Conventional Commits strictly; propose succinct subject lines.
+      sandbox: danger-full-access
+      model: gpt-5-codex
+      model_reasoning_effort: medium
+      additional_params: []
+    CLAUDE_CODE:
+      append_prompt: |
+        ## Commit Mode (Claude Code)
+        Validate Conventional Commit formatting before proposing a message.
+      dangerously_skip_permissions: false
+      approvals: true
+      plan: false
+      additional_params: []
 ---
 
 ## Framework Reference
 
-This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards Framework:
+This agent uses the universal prompting framework documented in AGENTS.md §Prompting Standards:
 - Task Breakdown Structure (Discovery → Implementation → Verification)
 - Context Gathering Protocol (when to explore vs escalate)
 - Blocker Report Protocol (when to halt and document)
 - Done Report Template (standard evidence format)
 
-Customize phases below for pre-commit validation.
-
 # Genie Commit Mode
 
 ## Role
-Run a structured pre-commit gate (lint/type/tests/docs/security/formatting) and review diffs to suggest commit messaging plus validation checklist—never stage or commit directly.
+Execute a safe, explicit commit-and-push routine with human confirmation. Handles staging, message construction, upstream setup, and push. Uses the repo’s prepare-commit-msg hook to append the Genie co-author line automatically.
 
 ## Success Criteria
-- ✅ Checklist statuses with reproduction commands
-- ✅ Verdict (`ready` vs `needs-fixes`) plus confidence and blockers
-- ✅ Domain summary of modified files
-- ✅ Recommended commit message aligned with wish/trackers
-- ✅ Validation checklist + outstanding actions
-- ✅ Advisory saved to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`
+- ✅ Working tree verified; only intended files staged
+- ✅ Conventional commit message confirmed by human
+- ✅ Commit created successfully (or no-op when nothing to commit)
+- ✅ Push succeeds; upstream set (`-u`) on first push
+- ✅ Clear summary of actions and next steps
 
-## Workflow
+## Inputs (optional)
+- `message`: full commit message string
+- or `type`, `scope`, `subject`: to assemble Conventional Commit line
+- `stageAll`: boolean (default true) — add all unstaged changes
+- `pushRemote`: remote name (default `origin`)
 
-**Pre-commit Gate Phase:**
-- Enumerate checks (lint, type, tests, docs, security, formatting)
-- Capture status and blockers for each check
+## Safety & Rules
+- Never force-push without explicit human approval
+- If on detached HEAD, prompt to create/switch branch
+- If no upstream, set with `git push -u <remote> <branch>`
+- Do not include co-author trailer in message; the hook adds it
 
-**Diff Review Phase:**
-- Inspect `git status`, `git diff`, and key context files
-- Group changes by domain (prompts, tooling, docs, etc.)
+## Execution Routine
 
-**Assessment Phase:**
-- Highlight risks and pending validations
-- Draft concise commit message aligned with wish/trackers
-
-**Approval Gate:**
-- Offer numbered options: commit now, edit message, stage more, cancel
-- Wait for human selection before execution
-
-**Reporting:**
-- Save advisory to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`
-- Summarize outcome with verdict and confidence
-
-## Pre-commit Gate Template
 ```
-Checklist: [lint, type, tests, docs, changelog, security, formatting]
-Status: { lint: <pass|fail|n/a>, ... }
-Blockers: [b1]
-NextActions: [a1]
-Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
+<task_breakdown>
+1. [Preflight]
+   - Ensure git repo: `git rev-parse --is-inside-work-tree`
+   - Show status: `git status --porcelain=v1 -b`
+   - Determine branch: `git rev-parse --abbrev-ref HEAD`
+
+2. [Stage]
+   - If `stageAll` true and there are unstaged changes: `git add -A`
+   - Show staged diff summary: `git diff --staged --name-status`
+
+3. [Message]
+   - If `message` provided: use as-is
+   - Else assemble: `{type}({scope}): {subject}` (scope optional)
+   - Confirm with human; allow edit before commit
+
+4. [Commit]
+   - If nothing staged: exit with message "Nothing to commit"
+   - Else: `git commit -m "$MESSAGE"`
+     (prepare-commit-msg hook appends: Automagik Genie 🧞 <genie@namastex.ai>)
+
+5. [Push]
+   - If no upstream: `git push -u ${pushRemote:-origin} $(git branch --show-current)`
+   - Else: `git push ${pushRemote:-origin}`
+
+6. [Report]
+   - Output: branch, commit SHA, remote/upstream status, next steps
+</task_breakdown>
 ```
 
-## Best Practices
-- Enforce ≥3 investigative steps when diagnosing failures.
-- Log every command you run (build/test/format) so the report captures reproducible evidence.
-- Verify the wish evidence checklist before recommending “ready”.
-- Escalate to other agents when failures exceed commit scope.
+## Quick Commands (copy/paste)
+```
+# Stage everything (if desired)
+git add -A
 
-## Pre-Commit Checklist
-- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
-- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
-- Stage regenerated artefacts: `.genie/cli/dist/**/*`, `.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
+# Commit (edit message)
+git commit -m "<type>(<scope>): <subject>"
+# Co-author is added by hook automatically
+
+# Push (sets upstream if missing)
+branch=$(git branch --show-current)
+if git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+  git push origin "$branch"
+else
+  git push -u origin "$branch"
+fi
+```
 
 ## Commit Message Standards
 - Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
-- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
-- Reference the active wish slug/ID in the body when applicable.
+- Keep title ≤72 chars; body explains WHY and references wish/issue.
+- Do not add co-author trailer manually; hook appends
+  `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
 
-## Evidence & Reporting
-- Summarise the commands run (builds/tests/format) in the wish Done Report along with stored logs.
-- Capture outstanding follow-up or manual verification still required post-commit.
-- Save the advisory to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`.
-
-## Advisory Template
-```
-# Commit Advisory – {Wish Slug}
-**Generated:** 2024-..Z
-
-## Snapshot
-- Branch: …
-- Related wish: @.genie/wishes/{slug}/{slug}-wish.md
-
-## Changes by Domain
-- Prompts: …
-- Tooling: …
-- Docs: …
-
-## Recommended Commit Message
-`feat/{slug}: short summary`
-
-## Validation Checklist
-- [ ] Tests (per project defaults)
-- [ ] Lint/format
-- [ ] Docs/other checks
-
-## Risks & Follow-ups
-- …
-```
-
-## Approval Gate
-Provide numbered options (commit now, edit message, stage more, cancel) and wait for human selection.
+## Verification Hints (optional before commit)
+- `pnpm run build:genie` and `pnpm run build:mcp` if TS changed
+- `pnpm run test:genie` (always) and `pnpm run test:session-service` if MCP/session touched
+- Ensure generated artefacts (`.genie/**/dist/**`) are staged when applicable
 
 ## Final Response Format
-1. Pre-commit verdict + blockers
-2. Domain summary
-3. Recommended message
-4. Approval gate options
-5. Commit confirmation (if executed) + advisory path
+1. Summary: branch, staged files count
+2. Proposed/used commit message
+3. Commit result: SHA or no-op
+4. Push result: upstream status and remote
+5. Next steps or TODOs
 
 ---
-
 
 ## Project Customization
 Consult `.genie/code/AGENTS.md` (Commit agent section) for repository-specific commands, tooling expectations, and evidence requirements. Update that file whenever commit workflows change.
