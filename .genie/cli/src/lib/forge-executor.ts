@@ -34,6 +34,7 @@ export interface CreateSessionParams {
   store: SessionStore;
   entry: SessionEntry;
   executorKey: string;
+  executorVariant?: string;
   executionMode: string;
   startTime: number;
 }
@@ -66,6 +67,7 @@ export class ForgeExecutor {
       store,
       entry,
       executorKey,
+      executorVariant,
       executionMode,
       startTime
     } = params;
@@ -88,7 +90,7 @@ export class ForgeExecutor {
         title: `Genie: ${agentName} (${executionMode})`,
         description: prompt,
       },
-      executor_profile_id: this.mapExecutorToProfile(executorKey),
+      executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant),
       base_branch: 'main', // TODO: Make configurable
     };
 
@@ -106,6 +108,7 @@ export class ForgeExecutor {
     entry.background = true;
     entry.created = new Date(startTime).toISOString();
     entry.lastUsed = new Date().toISOString();
+    entry.executorVariant = executorVariant ? executorVariant.toUpperCase() : 'DEFAULT';
 
     // Save to session store
     saveSessions(paths, store);
@@ -221,21 +224,27 @@ export class ForgeExecutor {
   /**
    * Map Genie executor key to Forge executor profile ID object
    */
-  private mapExecutorToProfile(executorKey: string): { executor: string; variant: null } {
+  private mapExecutorToProfile(executorKey: string, variant?: string): { executor: string; variant: string } {
     // Map Genie executor names to Forge profile IDs
     const mapping: Record<string, string> = {
+      'claude': 'CLAUDE_CODE',
       'claude-code': 'CLAUDE_CODE',
       'codex': 'CODEX',
+      'opencode': 'OPENCODE',
       'gemini': 'GEMINI',
       'cursor': 'CURSOR',
+      'qwen_code': 'QWEN_CODE',
+      'amp': 'AMP',
+      'copilot': 'COPILOT'
     };
 
-    const executor = mapping[executorKey] || 'CLAUDE_CODE';
+    const normalizedKey = executorKey.trim().toLowerCase();
+    const executor = mapping[normalizedKey] || normalizedKey.toUpperCase();
+    const resolvedVariant = (variant || 'DEFAULT').toUpperCase();
 
-    // Return ExecutorProfileId object structure expected by Forge API
     return {
       executor,
-      variant: null,
+      variant: resolvedVariant
     };
   }
 
@@ -243,6 +252,10 @@ export class ForgeExecutor {
    * Map Forge task to Genie session entry
    */
   private mapTaskToSession(task: any): SessionEntry {
+    const rawExecutor = task?.executor_profile_id?.executor;
+    const executor = typeof rawExecutor === 'string' ? rawExecutor.toLowerCase() : 'forge';
+    const variant = task?.executor_profile_id?.variant ?? null;
+
     return {
       sessionId: task.id,
       agent: this.extractAgentNameFromTitle(task.title),
@@ -250,7 +263,8 @@ export class ForgeExecutor {
       created: task.created_at,
       lastUsed: task.updated_at,
       background: true,
-      executor: 'forge', // Mark as Forge-managed
+      executor,
+      executorVariant: variant,
     };
   }
 

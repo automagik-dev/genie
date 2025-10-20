@@ -14,6 +14,7 @@ exports.deepClone = deepClone;
 exports.mergeDeep = mergeDeep;
 exports.resolveAgentIdentifier = resolveAgentIdentifier;
 exports.listAgents = listAgents;
+exports.listCollectives = listCollectives;
 exports.agentExists = agentExists;
 exports.loadAgentSpec = loadAgentSpec;
 exports.deriveStartTime = deriveStartTime;
@@ -158,15 +159,21 @@ function resolveAgentIdentifier(input) {
         return 'forge';
     throw new Error(`❌ Agent '${input}' not found. Try 'genie list agents' to see available ids.`);
 }
-// transformDisplayPath imported from ../../lib/display-transform (single source of truth)
 function listAgents() {
     return (0, agent_resolver_1.listAgents)().map(agent => ({
         id: agent.id,
         displayId: agent.displayId,
         label: agent.label,
         meta: agent.meta,
-        folder: agent.folder ?? null
+        folder: agent.folder ?? null,
+        collective: agent.collective ?? null
     }));
+}
+function listCollectives(options) {
+    const all = (0, agent_resolver_1.listCollectives)();
+    if (options?.includeDocOnly)
+        return all;
+    return all.filter(info => Boolean(info.agentsDir));
 }
 function agentExists(id) {
     return (0, agent_resolver_1.agentExists)(id);

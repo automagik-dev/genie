@@ -21,7 +21,8 @@ export interface SessionEntry {
   status?: string;
   background?: boolean;
   runnerPid?: number | null;
-  executor?: string;  // 'forge' for Forge-managed sessions, 'codex'/'claude' for traditional
+  executor?: string;  // executor key (codex, opencode, claude, etc.)
+  executorVariant?: string | null;
   executorPid?: number | null;
   exitCode?: number | null;
   signal?: string | null;

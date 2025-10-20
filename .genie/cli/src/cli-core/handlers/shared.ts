@@ -14,9 +14,13 @@ import {
 import { INTERNAL_SESSION_ID_ENV, INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from '../../lib/constants';
 import {
   listAgents as resolverListAgents,
+  listCollectives as resolverListCollectives,
   agentExists as resolverAgentExists,
-  loadAgentSpec as resolverLoadAgentSpec
+  loadAgentSpec as resolverLoadAgentSpec,
+  CollectiveInfo
 } from '../../lib/agent-resolver';
+
+export type { CollectiveInfo } from '../../lib/agent-resolver';
 
 export interface ExecuteRunArgs {
   agentName: string;
@@ -208,6 +212,7 @@ interface ListedAgent {
   label: string;
   meta: any;
   folder: string | null;
+  collective?: string | null;
 }
 
 export function listAgents(): ListedAgent[] {
@@ -216,8 +221,15 @@ export function listAgents(): ListedAgent[] {
     displayId: agent.displayId,
     label: agent.label,
     meta: agent.meta,
-    folder: agent.folder ?? null
+    folder: agent.folder ?? null,
+    collective: agent.collective ?? null
   }));
+}
+
+export function listCollectives(options?: { includeDocOnly?: boolean }): CollectiveInfo[] {
+  const all = resolverListCollectives();
+  if (options?.includeDocOnly) return all;
+  return all.filter(info => Boolean(info.agentsDir));
 }
 
 export function agentExists(id: string): boolean {

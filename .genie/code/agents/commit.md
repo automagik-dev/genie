@@ -66,13 +66,14 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 
 ## Best Practices
 - Enforce ≥3 investigative steps when diagnosing failures.
-- Log the exact commands run (refer to project defaults in `(merged below)
-
+- Log every command you run (build/test/format) so the report captures reproducible evidence.
+- Verify the wish evidence checklist before recommending “ready”.
+- Escalate to other agents when failures exceed commit scope.
 
 ## Pre-Commit Checklist
 - `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
 - `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
-- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
+- Stage regenerated artefacts: `.genie/cli/dist/**/*`, `.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
 
 ## Commit Message Standards
 - Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
@@ -80,10 +81,9 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 - Reference the active wish slug/ID in the body when applicable.
 
 ## Evidence & Reporting
-- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
-- Note any outstanding follow-up or manual verification required post-commit.`).
-- Verify the wish Evidence Checklist before proceeding.
-- Escalate to the appropriate agents when failures exceed scope.
+- Summarise the commands run (builds/tests/format) in the wish Done Report along with stored logs.
+- Capture outstanding follow-up or manual verification still required post-commit.
+- Save the advisory to `.genie/wishes/<slug>/reports/commit-advice-<slug>-<timestamp>.md`.
 
 ## Advisory Template
 ```
@@ -103,22 +103,7 @@ Verdict: <ready|needs-fixes> (confidence: <low|med|high>)
 `feat/{slug}: short summary`
 
 ## Validation Checklist
-- [ ] Tests (per `(merged below)
-
-
-## Pre-Commit Checklist
-- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
-- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
-- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
-
-## Commit Message Standards
-- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
-- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
-- Reference the active wish slug/ID in the body when applicable.
-
-## Evidence & Reporting
-- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
-- Note any outstanding follow-up or manual verification required post-commit.`)
+- [ ] Tests (per project defaults)
 - [ ] Lint/format
 - [ ] Docs/other checks
 
@@ -140,19 +125,4 @@ Provide numbered options (commit now, edit message, stage more, cancel) and wait
 
 
 ## Project Customization
-Consult `(merged below)
-
-
-## Pre-Commit Checklist
-- `pnpm run build:genie` (and `pnpm run build:mcp` if MCP sources changed) to ensure TypeScript output is up to date.
-- `pnpm run test:genie` (always) and `pnpm run test:session-service` if `.genie/mcp/` or session helpers were touched.
-- Stage regenerated artefacts: `@.genie/cli/dist/**/*`, `@.genie/mcp/dist/**/*`, and any generated wish reports/evidence.
-
-## Commit Message Standards
-- Follow Conventional Commits; scope examples: `cli`, `mcp`, `agents`, `docs`.
-- Include the Genie co-author line: `Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`.
-- Reference the active wish slug/ID in the body when applicable.
-
-## Evidence & Reporting
-- Summarise the commands run (builds/tests) in the wish Done Report along with their stored logs.
-- Note any outstanding follow-up or manual verification required post-commit.` for repository-specific commands, tooling, and evidence expectations. Update that file whenever commit workflows change.
+Consult `.genie/code/AGENTS.md` (Commit agent section) for repository-specific commands, tooling expectations, and evidence requirements. Update that file whenever commit workflows change.

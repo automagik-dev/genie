@@ -52,6 +52,7 @@ export interface GenieConfig {
 export interface AgentSpec {
   meta?: Record<string, any>;
   instructions: string;
+  filePath?: string;
 }
 
 export interface ExecuteRunArgs {

@@ -24,7 +24,16 @@ function createRunHandler(ctx) {
         const defaultMode = ctx.config.defaults?.executionMode || ctx.config.defaults?.preset || 'default';
         const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
         const modeName = typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode;
-        const executorKey = agentGenie.executor || (0, shared_1.resolveExecutorKey)(ctx, modeName);
+        const explicitExecutor = typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length
+            ? parsed.options.executor.trim()
+            : null;
+        const executorKey = (explicitExecutor || agentGenie.executor || (0, shared_1.resolveExecutorKey)(ctx, modeName)).trim();
+        const rawVariant = agentGenie.executorProfile ??
+            agentGenie.executor_variant ??
+            agentGenie.executorVariant ??
+            agentGenie.variant ??
+            agentGenie.profile;
+        const executorVariant = typeof rawVariant === 'string' && rawVariant.trim().length ? rawVariant.trim() : 'DEFAULT';
         const executor = (0, shared_1.requireExecutor)(ctx, executorKey);
         const executorOverrides = (0, shared_1.extractExecutorOverrides)(ctx, agentGenie, executorKey);
         const executorConfig = (0, shared_1.buildExecutorConfig)(ctx, modeName, executorKey, executorOverrides);
@@ -67,6 +76,7 @@ function createRunHandler(ctx) {
             background: parsed.options.background,
             runnerPid: parsed.options.backgroundRunner ? process.pid : null,
             executor: executorKey,
+            executorVariant,
             executorPid: null,
             exitCode: null,
             signal: null,
@@ -84,6 +94,7 @@ function createRunHandler(ctx) {
                 store,
                 entry,
                 executorKey,
+                executorVariant,
                 executionMode: modeName,
                 startTime
             });
@@ -91,7 +102,10 @@ function createRunHandler(ctx) {
                 return;
             }
         }
-        const agentPath = path_1.default.join('.genie', 'agents', `${resolvedAgentName}.md`);
+        if (!agentSpec.filePath) {
+            throw new Error(`❌ Agent '${resolvedAgentName}' is missing a source file path`);
+        }
+        const agentPath = path_1.default.relative(process.cwd(), agentSpec.filePath);
         const command = executor.buildRunCommand({
             config: executorConfig,
             agentPath,

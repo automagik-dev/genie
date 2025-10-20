@@ -126,15 +126,16 @@ program
 });
 // List command
 program
-    .command('list <type>')
-    .description('List agents or sessions')
+    .command('list [type]')
+    .description('List collectives (default) or sessions')
     .action((type) => {
-    const validTypes = ['agents', 'agents', 'sessions'];
-    if (!validTypes.includes(type)) {
-        console.error('Error: list command accepts "agents" or "sessions" (agents is alias for agents)');
+    const normalized = (type || 'collectives').toLowerCase();
+    const validTypes = ['collectives', 'agents', 'sessions'];
+    if (!validTypes.includes(normalized)) {
+        console.error('Error: list command accepts "collectives" (default) or "sessions"');
         process.exit(1);
     }
-    execGenie(['list', type]);
+    execGenie(['list', normalized]);
 });
 // View command
 program
