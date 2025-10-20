@@ -27,12 +27,16 @@ program
     .command('run <agent> <prompt>')
     .description('Run an agent with a prompt')
     .option('-b, --background', 'Run in background mode')
+    .option('--legacy', 'Force legacy (non-Forge) execution for background mode')
     .option('-e, --executor <executor>', 'Override executor (codex or claude)')
     .option('-n, --name <name>', 'Friendly session name for easy identification')
     .action((agent, prompt, options) => {
     const args = ['run', agent, prompt];
     if (options.background) {
         args.push('--background');
+    }
+    if (options.legacy) {
+        args.push('--legacy');
     }
     if (options.executor) {
         args.push('--executor', options.executor);
@@ -184,6 +188,44 @@ program
         args.push(subcommand);
     }
     execGenie(args);
+});
+// Forge command
+program
+    .command('forge [action]')
+    .description('Manage Automagik Forge backend (start, status, stop)')
+    .action(async (action) => {
+    const { isForgeRunning, startForgeInBackground, waitForForgeReady, stopForge } = require('./lib/forge-manager');
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const logDir = require('path').join(process.cwd(), '.genie', 'state');
+    const act = (action || 'status').toLowerCase();
+    if (act === 'status') {
+        const up = await isForgeRunning(baseUrl);
+        console.log(up ? `Forge is running at ${baseUrl}` : 'Forge is not running');
+        return;
+    }
+    if (act === 'start') {
+        if (await isForgeRunning(baseUrl)) {
+            console.log(`Forge already running at ${baseUrl}`);
+            return;
+        }
+        console.log('Starting Forge via npx automagik-forge...');
+        startForgeInBackground({ logDir, baseUrl });
+        const ready = await waitForForgeReady(baseUrl, 15000, 500);
+        if (ready)
+            console.log(`Forge ready at ${baseUrl}`);
+        else {
+            console.error('Forge did not become ready in time (15s). Check logs at .genie/state/forge.log');
+            process.exitCode = 1;
+        }
+        return;
+    }
+    if (act === 'stop') {
+        const ok = stopForge(logDir);
+        console.log(ok ? 'Forge stop signal sent' : 'Could not stop Forge (no PID)');
+        return;
+    }
+    console.error(`Unknown forge action: ${action}. Use start|status|stop`);
+    process.exitCode = 1;
 });
 // MCP command
 program

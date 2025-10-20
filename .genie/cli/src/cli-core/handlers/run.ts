@@ -94,7 +94,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     // Don't persist yet - wait for sessionId extraction
 
     // Check if background launch requested (and not already background runner)
-    if (parsed.options.background && !parsed.options.backgroundRunner) {
+    if (parsed.options.background && !parsed.options.backgroundRunner && !parsed.options.legacy) {
       const handledBackground = await handleForgeBackgroundLaunch({
         agentName: resolvedAgentName,
         prompt,

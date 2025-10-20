@@ -6,6 +6,7 @@ export interface CLIOptions {
   background: boolean;
   backgroundExplicit: boolean;
   backgroundRunner: boolean;
+  legacy?: boolean;
   requestHelp?: boolean;
   full: boolean;
   live: boolean;

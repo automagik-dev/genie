@@ -27,6 +27,7 @@ export function parseArguments(argv: string[]): ParsedCommand {
     background: false,
     backgroundExplicit: false,
     backgroundRunner: false,
+    legacy: undefined,
     requestHelp: undefined,
     full: false,
     live: false,
@@ -82,6 +83,10 @@ export function parseArguments(argv: string[]): ParsedCommand {
     if (token === '--') {
       filtered.push(...raw.slice(i + 1));
       break;
+    }
+    if (token === '--legacy') {
+      options.legacy = true;
+      continue;
     }
     filtered.push(token);
   }
