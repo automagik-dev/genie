@@ -2,6 +2,7 @@ import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { listAgents } from './shared';
 import { createForgeExecutor } from '../../lib/forge-executor';
+import { formatSessionList } from '../../lib/markdown-formatter';
 
 export function createListHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -15,16 +16,49 @@ export function createListHandler(ctx: HandlerContext): Handler {
 
     if (target === 'agents' || target === 'agents') {
       const agents = listAgents();
-      return {
-        type: 'agents',
-        agents: agents.map(agent => ({
-          id: agent.id,
-          displayId: agent.displayId,
-          label: agent.label,
-          folder: agent.folder,
-          meta: agent.meta
-        }))
-      };
+      const sections = new Map<string, typeof agents>();
+
+      agents.forEach(agent => {
+        const section = agent.folder || 'core';
+        if (!sections.has(section)) {
+          sections.set(section, []);
+        }
+        sections.get(section)!.push(agent);
+      });
+
+      const orderedSections = Array.from(sections.entries()).sort(([a], [b]) => {
+        if (a === 'core') return -1;
+        if (b === 'core') return 1;
+        return a.localeCompare(b);
+      });
+
+      const lines: string[] = [];
+      lines.push(`## Genie Agents`);
+      lines.push(`**Total:** ${agents.length}`);
+      lines.push('');
+
+      orderedSections.forEach(([section, items]) => {
+        lines.push(`**${section}:**`);
+        items
+          .sort((a, b) => a.displayId.localeCompare(b.displayId))
+          .forEach(agent => {
+            let line = `  • ${agent.displayId}`;
+            if (agent.label && agent.label !== agent.displayId) {
+              line += ` (${agent.label})`;
+            }
+            const description =
+              (agent.meta?.description || agent.meta?.summary || '').trim();
+            if (description) {
+              line += ` - ${description}`;
+            }
+            lines.push(line);
+          });
+        lines.push('');
+      });
+
+      lines.push('Use `genie run <agent> "<prompt>"` to start a session.');
+      await ctx.emitView(lines.join('\n'), parsed.options);
+      return;
     }
 
     if (target === 'sessions') {
@@ -33,18 +67,17 @@ export function createListHandler(ctx: HandlerContext): Handler {
         const forgeExecutor = createForgeExecutor();
         const forgeSessions = await forgeExecutor.listSessions();
 
-        return {
-          type: 'sessions',
-          sessions: forgeSessions.map(entry => ({
-            name: entry.name || entry.sessionId,
-            agent: entry.agent,
-            status: entry.status || 'unknown',
-            created: entry.created || null,
-            lastUsed: entry.lastUsed || entry.created || null,
-            mode: 'default',
-            logFile: null
-          }))
-        };
+        const sessions = forgeSessions.map(entry => ({
+          sessionId: entry.sessionId || entry.name || 'unknown',
+          agent: entry.agent,
+          status: entry.status || 'unknown',
+          executor: 'forge',
+          started: entry.created || undefined,
+          updated: entry.lastUsed || entry.created || undefined
+        }));
+        const markdown = formatSessionList(sessions);
+        await ctx.emitView(markdown, parsed.options);
+        return;
       } catch (error) {
         console.warn('Failed to fetch Forge sessions, falling back to local store');
       }
@@ -59,8 +92,8 @@ export function createListHandler(ctx: HandlerContext): Handler {
           name: entry.name || key,  // key IS the name in v3
           agent: entry.agent,
           status: resolveDisplayStatus(entry, ctx),
-          created: entry.created || null,
-          lastUsed: entry.lastUsed || entry.created || null,
+          created: entry.created || undefined,
+          lastUsed: entry.lastUsed || entry.created || undefined,
           mode: entry.mode || entry.preset,
           logFile: entry.logFile
         };
@@ -73,10 +106,18 @@ export function createListHandler(ctx: HandlerContext): Handler {
         return bTime - aTime;
       });
 
-      return {
-        type: 'sessions',
-        sessions
-      };
+      const markdown = formatSessionList(
+        sessions.map(session => ({
+          sessionId: session.name,
+          agent: session.agent,
+          status: session.status,
+          executor: session.mode || 'default',
+          started: session.created || undefined,
+          updated: session.lastUsed || undefined
+        }))
+      );
+      await ctx.emitView(markdown, parsed.options);
+      return;
     }
 
     throw new Error(`Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);

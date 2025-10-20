@@ -16,7 +16,6 @@ exports.resolveAgentIdentifier = resolveAgentIdentifier;
 exports.listAgents = listAgents;
 exports.agentExists = agentExists;
 exports.loadAgentSpec = loadAgentSpec;
-exports.extractFrontMatter = extractFrontMatter;
 exports.deriveStartTime = deriveStartTime;
 exports.sanitizeLogFilename = sanitizeLogFilename;
 exports.deriveLogFile = deriveLogFile;
@@ -27,8 +26,8 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const background_1 = require("../../views/background");
-const display_transform_1 = require("../../lib/display-transform");
 const constants_1 = require("../../lib/constants");
+const agent_resolver_1 = require("../../lib/agent-resolver");
 function applyStoreMerge(target, next) {
     target.version = next.version;
     target.sessions = next.sessions;
@@ -161,75 +160,19 @@ function resolveAgentIdentifier(input) {
 }
 // transformDisplayPath imported from ../../lib/display-transform (single source of truth)
 function listAgents() {
-    const baseDir = '.genie/agents';
-    const records = [];
-    if (!fs_1.default.existsSync(baseDir))
-        return records;
-    const visit = (dirPath, relativePath) => {
-        const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
-        entries.forEach((entry) => {
-            const entryPath = path_1.default.join(dirPath, entry.name);
-            if (entry.isDirectory()) {
-                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name);
-                return;
-            }
-            if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md')
-                return;
-            const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
-            const content = fs_1.default.readFileSync(entryPath, 'utf8');
-            const { meta } = extractFrontMatter(content, () => { });
-            const metaObj = meta || {};
-            if (metaObj.hidden === true || metaObj.disabled === true)
-                return;
-            // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
-            const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
-            records.push({ id: normalizedId, displayId, label, meta: metaObj, folder: displayFolder });
-        });
-    };
-    visit(baseDir, null);
-    return records;
+    return (0, agent_resolver_1.listAgents)().map(agent => ({
+        id: agent.id,
+        displayId: agent.displayId,
+        label: agent.label,
+        meta: agent.meta,
+        folder: agent.folder ?? null
+    }));
 }
 function agentExists(id) {
-    if (!id)
-        return false;
-    const normalized = id.replace(/\\/g, '/');
-    const file = path_1.default.join('.genie', 'agents', `${normalized}.md`);
-    return fs_1.default.existsSync(file);
+    return (0, agent_resolver_1.agentExists)(id);
 }
 function loadAgentSpec(ctx, name) {
-    const base = name.endsWith('.md') ? name.slice(0, -3) : name;
-    const agentPath = path_1.default.join('.genie', 'agents', `${base}.md`);
-    if (!fs_1.default.existsSync(agentPath)) {
-        throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
-    }
-    const content = fs_1.default.readFileSync(agentPath, 'utf8');
-    const { meta, body } = extractFrontMatter(content, ctx.recordStartupWarning);
-    return {
-        meta,
-        instructions: body.replace(/^(\r?\n)+/, '')
-    };
-}
-function extractFrontMatter(source, onWarning) {
-    if (!source.startsWith('---')) {
-        return { meta: {}, body: source };
-    }
-    const end = source.indexOf('\n---', 3);
-    if (end === -1) {
-        return { meta: {}, body: source };
-    }
-    const raw = source.slice(3, end).trim();
-    const body = source.slice(end + 4);
-    try {
-        const YAML = require('yaml');
-        const parsed = YAML.parse(raw) || {};
-        return { meta: parsed, body };
-    }
-    catch {
-        onWarning('[genie] YAML module unavailable or failed to parse; front matter metadata ignored.');
-        return { meta: {}, body };
-    }
+    return (0, agent_resolver_1.loadAgentSpec)(name);
 }
 function deriveStartTime() {
     const fromEnv = process.env[constants_1.INTERNAL_START_TIME_ENV];

@@ -11,8 +11,12 @@ import {
   buildBackgroundStartingView,
   buildRunCompletionView
 } from '../../views/background';
-import { transformDisplayPath } from '../../lib/display-transform';
 import { INTERNAL_SESSION_ID_ENV, INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from '../../lib/constants';
+import {
+  listAgents as resolverListAgents,
+  agentExists as resolverAgentExists,
+  loadAgentSpec as resolverLoadAgentSpec
+} from '../../lib/agent-resolver';
 
 export interface ExecuteRunArgs {
   agentName: string;
@@ -206,79 +210,22 @@ interface ListedAgent {
   folder: string | null;
 }
 
-// transformDisplayPath imported from ../../lib/display-transform (single source of truth)
-
 export function listAgents(): ListedAgent[] {
-  const baseDir = '.genie/agents';
-  const records: ListedAgent[] = [];
-  if (!fs.existsSync(baseDir)) return records;
-  const visit = (dirPath: string, relativePath: string | null) => {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-    entries.forEach((entry) => {
-      const entryPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        visit(entryPath, relativePath ? path.join(relativePath, entry.name) : entry.name);
-        return;
-      }
-      if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md') return;
-      const rawId = relativePath ? path.join(relativePath, entry.name) : entry.name;
-      const normalizedId = rawId.replace(/\.md$/i, '').split(path.sep).join('/');
-      const content = fs.readFileSync(entryPath, 'utf8');
-      const { meta } = extractFrontMatter(content, () => {});
-      const metaObj = meta || {};
-      if (metaObj.hidden === true || metaObj.disabled === true) return;
-
-      // Transform display path (strip template/category folders)
-      const { displayId, displayFolder } = transformDisplayPath(normalizedId);
-      const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
-
-      records.push({ id: normalizedId, displayId, label, meta: metaObj, folder: displayFolder });
-    });
-  };
-
-  visit(baseDir, null);
-  return records;
+  return resolverListAgents().map(agent => ({
+    id: agent.id,
+    displayId: agent.displayId,
+    label: agent.label,
+    meta: agent.meta,
+    folder: agent.folder ?? null
+  }));
 }
 
 export function agentExists(id: string): boolean {
-  if (!id) return false;
-  const normalized = id.replace(/\\/g, '/');
-  const file = path.join('.genie', 'agents', `${normalized}.md`);
-  return fs.existsSync(file);
+  return resolverAgentExists(id);
 }
 
 export function loadAgentSpec(ctx: HandlerContext, name: string): AgentSpec {
-  const base = name.endsWith('.md') ? name.slice(0, -3) : name;
-  const agentPath = path.join('.genie', 'agents', `${base}.md`);
-  if (!fs.existsSync(agentPath)) {
-    throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
-  }
-  const content = fs.readFileSync(agentPath, 'utf8');
-  const { meta, body } = extractFrontMatter(content, ctx.recordStartupWarning);
-  return {
-    meta,
-    instructions: body.replace(/^(\r?\n)+/, '')
-  };
-}
-
-export function extractFrontMatter(source: string, onWarning: (message: string) => void): { meta?: Record<string, any>; body: string } {
-  if (!source.startsWith('---')) {
-    return { meta: {}, body: source };
-  }
-  const end = source.indexOf('\n---', 3);
-  if (end === -1) {
-    return { meta: {}, body: source };
-  }
-  const raw = source.slice(3, end).trim();
-  const body = source.slice(end + 4);
-  try {
-    const YAML = require('yaml');
-    const parsed = YAML.parse(raw) || {};
-    return { meta: parsed, body };
-  } catch {
-    onWarning('[genie] YAML module unavailable or failed to parse; front matter metadata ignored.');
-    return { meta: {}, body };
-  }
+  return resolverLoadAgentSpec(name);
 }
 
 export function deriveStartTime(): number {

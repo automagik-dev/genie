@@ -37,6 +37,85 @@ const fallbackParseFrontMatter = (raw) => {
     });
     return meta;
 };
+const COLLECTIVE_MARKER = 'AGENTS.md';
+const AGENT_DIRECTORY_NAME = 'agents';
+const LEGACY_AGENT_DIR = path_1.default.join('.genie', AGENT_DIRECTORY_NAME);
+function realpathOrNull(target) {
+    try {
+        return fs_1.default.realpathSync(target);
+    }
+    catch {
+        return null;
+    }
+}
+function toAgentPathSegments(id) {
+    if (!id)
+        return null;
+    const segments = id
+        .split('/')
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+    if (!segments.length)
+        return null;
+    if (segments.some((segment) => segment === '.' || segment === '..')) {
+        return null;
+    }
+    return segments;
+}
+function discoverCollectiveAgentDirectories(genieRoot, maxDepth = 1) {
+    const discovered = new Set();
+    if (!fs_1.default.existsSync(genieRoot) || !fs_1.default.statSync(genieRoot).isDirectory()) {
+        return [];
+    }
+    const queue = [{ dir: genieRoot, depth: 0 }];
+    while (queue.length) {
+        const { dir, depth } = queue.shift();
+        const markerPath = path_1.default.join(dir, COLLECTIVE_MARKER);
+        const agentsDir = path_1.default.join(dir, AGENT_DIRECTORY_NAME);
+        if (fs_1.default.existsSync(markerPath) &&
+            fs_1.default.existsSync(agentsDir) &&
+            fs_1.default.statSync(agentsDir).isDirectory()) {
+            const resolved = realpathOrNull(agentsDir) ?? path_1.default.resolve(agentsDir);
+            discovered.add(resolved);
+            // Do not traverse beyond located collectives; they manage their own hierarchy
+        }
+        if (depth >= maxDepth)
+            continue;
+        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
+        entries.forEach((entry) => {
+            if (!entry.isDirectory())
+                return;
+            if (entry.name.startsWith('.'))
+                return;
+            const nextDir = path_1.default.join(dir, entry.name);
+            queue.push({ dir: nextDir, depth: depth + 1 });
+        });
+    }
+    return Array.from(discovered);
+}
+function getLocalAgentDirectories() {
+    const dirs = new Set();
+    if (fs_1.default.existsSync(LEGACY_AGENT_DIR) && fs_1.default.statSync(LEGACY_AGENT_DIR).isDirectory()) {
+        const resolvedLegacy = realpathOrNull(LEGACY_AGENT_DIR) ?? path_1.default.resolve(LEGACY_AGENT_DIR);
+        dirs.add(resolvedLegacy);
+    }
+    const genieRoot = path_1.default.join(process.cwd(), '.genie');
+    discoverCollectiveAgentDirectories(genieRoot, 2).forEach((dir) => dirs.add(dir));
+    return Array.from(dirs);
+}
+function findAgentFile(id, searchDirs) {
+    const segments = toAgentPathSegments(id);
+    if (!segments)
+        return null;
+    const relativePath = path_1.default.join(...segments) + '.md';
+    for (const baseDir of searchDirs) {
+        const filePath = path_1.default.join(baseDir, relativePath);
+        if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isFile()) {
+            return filePath;
+        }
+    }
+    return null;
+}
 // Resolve npm package location for core agents
 const getPackageAgentsDir = () => {
     try {
@@ -60,18 +139,17 @@ const resolveAgentPath = (id) => {
             candidates.add(`${prefix}/${normalized}`);
         });
     }
-    // Check local .genie/agents first (user project - takes precedence)
+    const localDirs = getLocalAgentDirectories();
+    // Check local collectives first (user project - takes precedence)
     for (const candidate of candidates) {
-        const file = path_1.default.join('.genie', 'agents', `${candidate}.md`);
-        if (fs_1.default.existsSync(file))
+        if (findAgentFile(candidate, localDirs))
             return candidate;
     }
     // Fallback to npm package location (core agents)
     const packageAgentsDir = getPackageAgentsDir();
     if (packageAgentsDir) {
         for (const candidate of candidates) {
-            const file = path_1.default.join(packageAgentsDir, `${candidate}.md`);
-            if (fs_1.default.existsSync(file))
+            if (findAgentFile(candidate, [packageAgentsDir]))
                 return candidate;
         }
     }
@@ -119,7 +197,8 @@ function listAgents() {
         });
     };
     // Visit local agents first (user project)
-    visit('.genie/agents', null);
+    const localDirs = getLocalAgentDirectories();
+    localDirs.forEach((dir) => visit(dir, null));
     // Visit npm package agents second (core agents)
     const packageAgentsDir = getPackageAgentsDir();
     if (packageAgentsDir) {
@@ -206,27 +285,22 @@ function loadAgentSpec(name) {
             throw new Error(`❌ Agent '${name}' not found`);
         }
     }
-    // Try local .genie/agents first
-    let agentPath = path_1.default.join('.genie', 'agents', `${normalized}.md`);
-    let content;
-    if (fs_1.default.existsSync(agentPath)) {
-        content = fs_1.default.readFileSync(agentPath, 'utf8');
+    let content = null;
+    const localPath = findAgentFile(normalized, getLocalAgentDirectories());
+    if (localPath) {
+        content = fs_1.default.readFileSync(localPath, 'utf8');
     }
-    else {
-        // Fallback to npm package location
+    if (!content) {
         const packageAgentsDir = getPackageAgentsDir();
         if (packageAgentsDir) {
-            agentPath = path_1.default.join(packageAgentsDir, `${normalized}.md`);
-            if (fs_1.default.existsSync(agentPath)) {
-                content = fs_1.default.readFileSync(agentPath, 'utf8');
-            }
-            else {
-                throw new Error(`❌ Agent '${name}' not found`);
+            const packagePath = findAgentFile(normalized, [packageAgentsDir]);
+            if (packagePath) {
+                content = fs_1.default.readFileSync(packagePath, 'utf8');
             }
         }
-        else {
-            throw new Error(`❌ Agent '${name}' not found`);
-        }
+    }
+    if (!content) {
+        throw new Error(`❌ Agent '${name}' not found`);
     }
     const { meta, body } = extractFrontMatter(content);
     return {
