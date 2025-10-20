@@ -244,8 +244,44 @@ function createForgeExecutor(config = {}) {
  * ```
  */
 async function handleForgeBackgroundLaunch(params) {
-    const forgeExecutor = createForgeExecutor();
+    // Lazy import to avoid cyclic deps
+    const { isForgeRunning, startForgeInBackground, waitForForgeReady } = require('./forge-manager');
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     try {
+        // Respect non-interactive runs: if not TTY and Forge isn't running, fall back to legacy
+        const interactive = process.stdin.isTTY && process.stdout.isTTY;
+        let forgeReady = await isForgeRunning(baseUrl);
+        if (!forgeReady) {
+            const force = process.env.GENIE_USE_FORGE;
+            if (force === '1') {
+                process.stdout.write(`▸ Forge not detected. Starting via npx automagik-forge...\n`);
+                startForgeInBackground({ logDir: params.paths.backgroundDir, baseUrl });
+                forgeReady = await waitForForgeReady(baseUrl, 15000, 500);
+            }
+            else if (force === '0' || !interactive) {
+                process.stdout.write(`▸ Forge not detected. Running in legacy mode.\n`);
+                return false;
+            }
+            else {
+                // Prompt user
+                const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+                const answer = await new Promise((resolve) => rl.question('Forge not detected. Start it now? (y/N) ', (ans) => { rl.close(); resolve(ans); }));
+                if (answer.trim().toLowerCase() === 'y') {
+                    process.stdout.write(`▸ Starting Forge via npx automagik-forge...\n`);
+                    startForgeInBackground({ logDir: params.paths.backgroundDir, baseUrl });
+                    forgeReady = await waitForForgeReady(baseUrl, 15000, 500);
+                }
+                else {
+                    process.stdout.write(`▸ Skipping Forge. Running in legacy mode.\n`);
+                    return false;
+                }
+            }
+        }
+        if (!forgeReady) {
+            process.stdout.write(`▸ Forge did not become ready in time. Falling back to legacy mode.\n`);
+            return false;
+        }
+        const forgeExecutor = createForgeExecutor();
         await forgeExecutor.createSession(params);
         return true; // Handled as background
     }

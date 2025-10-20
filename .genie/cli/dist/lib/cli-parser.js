@@ -28,6 +28,7 @@ function parseArguments(argv) {
         background: false,
         backgroundExplicit: false,
         backgroundRunner: false,
+        legacy: undefined,
         requestHelp: undefined,
         full: false,
         live: false,
@@ -82,6 +83,10 @@ function parseArguments(argv) {
         if (token === '--') {
             filtered.push(...raw.slice(i + 1));
             break;
+        }
+        if (token === '--legacy') {
+            options.legacy = true;
+            continue;
         }
         filtered.push(token);
     }
