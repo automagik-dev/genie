@@ -42,7 +42,7 @@ function startForgeInBackground(opts) {
     const err = fs_1.default.openSync(logPath, 'a');
     // Prefer explicit start subcommand; fall back to default
     const child = (0, child_process_1.spawn)('npx', ['--yes', 'automagik-forge', 'start'], {
-        env: process.env,
+        env: { ...process.env, npm_config_yes: 'true', NPM_CONFIG_YES: 'true', CI: '1' },
         detached: true,
         stdio: ['ignore', out, err]
     });

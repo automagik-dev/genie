@@ -44,7 +44,7 @@ export function startForgeInBackground(opts: ForgeStartOptions): { childPid: num
 
   // Prefer explicit start subcommand; fall back to default
   const child = spawn('npx', ['--yes', 'automagik-forge', 'start'], {
-    env: process.env,
+    env: { ...process.env, npm_config_yes: 'true', NPM_CONFIG_YES: 'true', CI: '1' },
     detached: true,
     stdio: ['ignore', out, err]
   });
@@ -72,4 +72,3 @@ export function stopForge(logDir: string): boolean {
   } catch {}
   return false;
 }
-
