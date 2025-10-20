@@ -4,6 +4,7 @@ exports.createRunHandler = createRunHandler;
 const agent_resolver_1 = require("../../lib/agent-resolver");
 const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
+const forge_helpers_1 = require("../../lib/forge-helpers");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -16,14 +17,29 @@ function createRunHandler(ctx) {
         const agentGenie = agentSpec.meta?.genie || {};
         const { executorKey, executorVariant, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
-        await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
-        const attemptId = await forgeExecutor.createSession({
-            agentName: resolvedAgentName,
-            prompt,
-            executorKey,
-            executorVariant,
-            executionMode: modeName
-        });
+        try {
+            await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+        }
+        catch (error) {
+            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
+            throw new Error(`Forge backend unavailable while starting a session. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+        }
+        let attemptId;
+        try {
+            attemptId = await forgeExecutor.createSession({
+                agentName: resolvedAgentName,
+                prompt,
+                executorKey,
+                executorVariant,
+                executionMode: modeName
+            });
+        }
+        catch (error) {
+            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            ctx.recordRuntimeWarning(`Forge session creation failed: ${reason}`);
+            throw new Error(`Forge backend rejected session creation. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+        }
         const sessionName = parsed.options.name || (0, session_store_1.generateSessionName)(resolvedAgentName);
         const now = new Date().toISOString();
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
@@ -70,9 +86,6 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
     const agentVariant = agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
     if (typeof agentVariant === 'string' && agentVariant.trim().length) {
         variant = agentVariant.trim().toUpperCase();
-    }
-    if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-        executor = parsed.options.executor.trim().toLowerCase();
     }
     if (!variant.length)
         variant = 'DEFAULT';

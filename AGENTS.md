@@ -71,9 +71,10 @@ See `.genie/` directory for comprehensive documentation:
 @CORE_AGENTS.md
 
 ### Core Workflows
-- `@.genie/code/workflows/wish.md` - Discovery & planning orchestrator
-- `@.genie/code/workflows/forge.md` - Execution breakdown & implementation
-- `@.genie/code/workflows/review.md` - Validation & quality assurance
+- `@.genie/workflows/forge/` - Global Forge workflows (domain-agnostic)
+- `@.genie/code/workflows/wish.md` - Discovery & planning orchestrator (Code)
+- `@.genie/code/workflows/forge.md` - Execution breakdown & implementation (Code)
+- `@.genie/code/workflows/review.md` - Validation & quality assurance (Code)
 
 ### Supporting Components
 - `@.genie/code/agents/wish/blueprint.md` - Wish document creation

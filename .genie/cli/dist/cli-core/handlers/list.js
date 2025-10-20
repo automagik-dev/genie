@@ -8,6 +8,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const agent_resolver_1 = require("../../lib/agent-resolver");
 const forge_executor_1 = require("../../lib/forge-executor");
+const forge_helpers_1 = require("../../lib/forge-helpers");
 const markdown_formatter_1 = require("../../lib/markdown-formatter");
 const utils_1 = require("../../lib/utils");
 const COLLECTIVE_MARKER = 'AGENTS.md';
@@ -18,24 +19,42 @@ function createListHandler(ctx) {
         if (target === 'collectives' || target === 'agents') {
             return listCollectivesView(ctx, parsed);
         }
+        if (target === 'workflows') {
+            return listWorkflowsView(ctx, parsed);
+        }
+        if (target === 'skills') {
+            return listSkillsView(ctx, parsed);
+        }
         if (target === 'sessions') {
             const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
-            await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+            let forgeAvailable = true;
             try {
-                const sessions = await forgeExecutor.listSessions();
-                const markdown = (0, markdown_formatter_1.formatSessionList)(sessions.map((session) => ({
-                    sessionId: session.id,
-                    agent: session.agent,
-                    status: session.status,
-                    executor: [session.executor, session.variant].filter(Boolean).join('/'),
-                    started: session.created,
-                    updated: session.updated
-                })));
-                await ctx.emitView(markdown, parsed.options);
-                return;
+                await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
             }
-            catch (err) {
-                console.warn('Failed to fetch Forge sessions, falling back to local store');
+            catch (error) {
+                forgeAvailable = false;
+                const reason = (0, forge_helpers_1.describeForgeError)(error);
+                ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
+            }
+            if (forgeAvailable) {
+                try {
+                    const sessions = await forgeExecutor.listSessions();
+                    const markdown = (0, markdown_formatter_1.formatSessionList)(sessions.map((session) => ({
+                        sessionId: session.id,
+                        agent: session.agent,
+                        status: session.status,
+                        executor: [session.executor, session.variant].filter(Boolean).join('/'),
+                        started: session.created,
+                        updated: session.updated
+                    })));
+                    await ctx.emitView(markdown, parsed.options);
+                    return;
+                }
+                catch (error) {
+                    forgeAvailable = false;
+                    const reason = (0, forge_helpers_1.describeForgeError)(error);
+                    ctx.recordRuntimeWarning(`Forge session listing failed: ${reason}`);
+                }
             }
             const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
             const sessions = Object.entries(store.sessions || {}).map(([name, entry]) => ({
@@ -47,10 +66,16 @@ function createListHandler(ctx) {
                 updated: entry.lastUsed
             }));
             const markdown = (0, markdown_formatter_1.formatSessionList)(sessions);
-            await ctx.emitView(markdown, parsed.options);
+            const fallbackLines = [
+                '⚠️ Forge backend unreachable. Showing cached sessions from `.genie/state/agents/sessions.json`.',
+                forge_helpers_1.FORGE_RECOVERY_HINT,
+                '',
+                markdown.trim()
+            ];
+            await ctx.emitView(fallbackLines.join('\n'), parsed.options);
             return;
         }
-        throw new Error(`Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
+        throw new Error(`Unknown list target '${targetRaw}'. Try 'agents', 'workflows', 'skills', or 'sessions'.`);
     };
 }
 async function listCollectivesView(ctx, parsed) {
@@ -127,7 +152,11 @@ function listMarkdownDocs(dir, exclude = new Set()) {
 function buildCollectiveSummary(info, agents) {
     const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
     const relativePath = path_1.default.relative(workspaceRoot, info.root) || '.genie';
-    const workflows = agents.filter(agent => agent.id.includes('/workflows/'));
+    // Discover documented workflows under <collective>/workflows (markdown)
+    const workflowsDir = path_1.default.join(info.root, 'workflows');
+    const workflows = fs_1.default.existsSync(workflowsDir) && fs_1.default.statSync(workflowsDir).isDirectory()
+        ? listMarkdownDocs(workflowsDir)
+        : [];
     const agentTree = agents.length ? renderTree(buildTree(agents)) : [];
     const skillsDir = path_1.default.join(info.root, 'skills');
     const skills = fs_1.default.existsSync(skillsDir) && fs_1.default.statSync(skillsDir).isDirectory()
@@ -166,9 +195,11 @@ function buildCollectiveSummary(info, agents) {
         relativePath,
         counts,
         docs,
+        workflows,
         skills,
         teams,
         agentsDir: info.agentsDir ? path_1.default.relative(workspaceRoot, info.agentsDir) : null,
+        workflowsDir: workflows.length ? path_1.default.relative(workspaceRoot, workflowsDir) : null,
         skillsDir: skills.length ? path_1.default.relative(workspaceRoot, skillsDir) : null,
         teamsDir: teams.length ? path_1.default.relative(workspaceRoot, teamsDir) : null,
         agentTree,
@@ -245,4 +276,46 @@ function formatInlineList(items, label, limit = 6) {
         truncated.push(`… (+${items.length - limit})`);
     }
     return `${label}: ${truncated.join(', ')}`;
+}
+async function listWorkflowsView(ctx, parsed) {
+    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
+    const globalWorkflowsDir = path_1.default.join(workspaceRoot, 'workflows');
+    const globalWorkflows = listMarkdownDocs(globalWorkflowsDir);
+    const collectives = (0, agent_resolver_1.listCollectives)();
+    const ordered = collectives.slice().sort((a, b) => a.collective.localeCompare(b.collective));
+    const lines = [];
+    lines.push(`# Workflows Index`);
+    lines.push('');
+    lines.push(`## Global (.genie/workflows/)`);
+    lines.push(globalWorkflows.length ? `- ${globalWorkflows.join('\n- ')}` : '_None_');
+    lines.push('');
+    ordered.forEach(info => {
+        const wfDir = path_1.default.join(info.root, 'workflows');
+        const items = listMarkdownDocs(wfDir);
+        lines.push(`## ${info.collective} (${path_1.default.relative(workspaceRoot, wfDir)})`);
+        lines.push(items.length ? `- ${items.join('\n- ')}` : '_None_');
+        lines.push('');
+    });
+    await ctx.emitView(lines.join('\n'), parsed.options);
+}
+async function listSkillsView(ctx, parsed) {
+    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
+    const globalSkillsDir = path_1.default.join(workspaceRoot, 'skills');
+    const globalSkills = listMarkdownDocs(globalSkillsDir);
+    const collectives = (0, agent_resolver_1.listCollectives)();
+    const ordered = collectives.slice().sort((a, b) => a.collective.localeCompare(b.collective));
+    const lines = [];
+    lines.push(`# Skills Index`);
+    lines.push('');
+    lines.push(`## Global (.genie/skills/)`);
+    lines.push(globalSkills.length ? `- ${globalSkills.join('\n- ')}` : '_None_');
+    lines.push('');
+    ordered.forEach(info => {
+        const skillsDir = path_1.default.join(info.root, 'skills');
+        const items = listMarkdownDocs(skillsDir);
+        lines.push(`## ${info.collective} (${path_1.default.relative(workspaceRoot, skillsDir)})`);
+        lines.push(items.length ? `- ${items.join('\n- ')}` : '_None_');
+        lines.push('');
+    });
+    await ctx.emitView(lines.join('\n'), parsed.options);
 }

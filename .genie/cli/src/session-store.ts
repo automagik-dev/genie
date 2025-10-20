@@ -57,7 +57,12 @@ export function generateSessionName(agentName: string): string {
   const timestamp = now.toISOString()
     .replace(/[-:T]/g, '')
     .slice(2, 12); // YYMMDDHHmm
-  return `${agentName}-${timestamp}`;
+  const slug = agentName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'session';
+  return `${slug}-${timestamp}`;
 }
 
 export function loadSessions(

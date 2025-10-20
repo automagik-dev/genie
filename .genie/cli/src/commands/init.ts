@@ -35,7 +35,6 @@ import { configureBothExecutors } from '../lib/mcp-config';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
 interface InitFlags {
-  provider?: string;
   yes?: boolean;
   force?: boolean;
   template?: TemplateType;
@@ -213,15 +212,6 @@ function parseFlags(args: string[]): InitFlags {
     const token = args[i];
 
     // Handle flags
-    if (token === '--provider' && args[i + 1]) {
-      flags.provider = args[i + 1];
-      i++;
-      continue;
-    }
-    if (token.startsWith('--provider=')) {
-      flags.provider = token.split('=')[1];
-      continue;
-    }
     if (token === '--yes' || token === '-y') {
       flags.yes = true;
       continue;
@@ -359,10 +349,6 @@ async function promptTemplateChoice(): Promise<TemplateType> {
 
   process.exit(0);
 }
-
-// Removed provider-specific prompt; we select executors directly
-
-// No provider state written anymore
 
 async function writeVersionState(cwd: string, backupId: string, _legacyBackedUp: boolean): Promise<void> {
   const versionPath = resolveWorkspaceVersionPath(cwd);
@@ -616,7 +602,7 @@ async function runInstallViaCli(cwd: string, template: TemplateType, flags?: Ini
     const workflowPath = template === 'create'
       ? '@.genie/create/workflows/install.md'
       : '@.genie/code/workflows/install.md';
-    const agentId = template === 'create' ? 'create/agents/install' : 'code/agents/install';
+    const agentId = template === 'create' ? 'create/install' : 'code/install';
     const prompt = [
       'Use the install subagent to set up Genie in this repo.',
       '@agent-install',

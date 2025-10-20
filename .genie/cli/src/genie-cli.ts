@@ -29,19 +29,11 @@ program
   .command('run <agent> <prompt>')
   .description('Run an agent with a prompt')
   .option('-b, --background', 'Run in background mode')
-  .option('--legacy', 'Force legacy (non-Forge) execution for background mode')
-  .option('-e, --executor <executor>', 'Override executor (codex or claude)')
   .option('-n, --name <name>', 'Friendly session name for easy identification')
-  .action((agent: string, prompt: string, options: { background?: boolean; legacy?: boolean; executor?: string; name?: string }) => {
+  .action((agent: string, prompt: string, options: { background?: boolean; name?: string }) => {
     const args = ['run', agent, prompt];
     if (options.background) {
       args.push('--background');
-    }
-    if (options.legacy) {
-      args.push('--legacy');
-    }
-    if (options.executor) {
-      args.push('--executor', options.executor);
     }
     if (options.name) {
       args.push('--name', options.name);
@@ -53,15 +45,11 @@ program
 program
   .command('init [template]')
   .description('Initialize Genie configuration in the current workspace')
-  .option('--provider <provider>', 'Choose provider (codex or claude)')
   .option('-y, --yes', 'Accept defaults without prompting')
-  .action((template: string | undefined, options: { provider?: string; yes?: boolean }) => {
+  .action((template: string | undefined, options: { yes?: boolean }) => {
     const args = ['init'];
     if (template) {
       args.push(template);
-    }
-    if (options.provider) {
-      args.push('--provider', options.provider);
     }
     if (options.yes) {
       args.push('--yes');
@@ -138,9 +126,9 @@ program
   .description('List collectives (default) or sessions')
   .action((type: string | undefined) => {
     const normalized = (type || 'collectives').toLowerCase();
-    const validTypes = ['collectives', 'agents', 'sessions'];
+    const validTypes = ['collectives', 'agents', 'sessions', 'workflows', 'skills'];
     if (!validTypes.includes(normalized)) {
-      console.error('Error: list command accepts "collectives" (default) or "sessions"');
+      console.error('Error: list command accepts collectives (default), agents, workflows, skills, or sessions');
       process.exit(1);
     }
     execGenie(['list', normalized]);
@@ -191,25 +179,18 @@ program
     execGenie(['statusline']);
   });
 
-// Model command
-program
-  .command('model [subcommand]')
-  .description('Configure default executor (show, detect, codex, claude)')
-  .action((subcommand?: string) => {
-    const args = ['model'];
-    if (subcommand) {
-      args.push(subcommand);
-    }
-    execGenie(args);
-  });
-
-// Forge command
 program
   .command('forge [action]')
-  .description('Manage Automagik Forge backend (start, status, stop)')
+  .description('Manage Automagik Forge backend (start, status, stop, restart)')
   .action(async (action?: string) => {
-    const { isForgeRunning, startForgeInBackground, waitForForgeReady, stopForge } = require('./lib/forge-manager');
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const {
+      isForgeRunning,
+      startForgeInBackground,
+      waitForForgeReady,
+      stopForge,
+      restartForge
+    } = require('./lib/forge-manager');
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
     const logDir = require('path').join(process.cwd(), '.genie', 'state');
 
     const act = (action || 'status').toLowerCase();
@@ -233,12 +214,23 @@ program
       }
       return;
     }
+    if (act === 'restart') {
+      console.log(`Restarting Forge at ${baseUrl}...`);
+      const ready = await restartForge({ baseUrl, logDir, token: process.env.FORGE_TOKEN });
+      if (ready) {
+        console.log(`Forge ready at ${baseUrl}`);
+        return;
+      }
+      console.error('Forge did not become ready in time (20s). Check logs at .genie/state/forge.log');
+      process.exitCode = 1;
+      return;
+    }
     if (act === 'stop') {
       const ok = stopForge(logDir);
       console.log(ok ? 'Forge stop signal sent' : 'Could not stop Forge (no PID)');
       return;
     }
-    console.error(`Unknown forge action: ${action}. Use start|status|stop`);
+    console.error(`Unknown forge action: ${action}. Use start|status|stop|restart`);
     process.exitCode = 1;
   });
 

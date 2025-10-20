@@ -7,6 +7,7 @@ exports.isForgeRunning = isForgeRunning;
 exports.waitForForgeReady = waitForForgeReady;
 exports.startForgeInBackground = startForgeInBackground;
 exports.stopForge = stopForge;
+exports.restartForge = restartForge;
 const child_process_1 = require("child_process");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -70,4 +71,15 @@ function stopForge(logDir) {
     }
     catch { }
     return false;
+}
+async function restartForge(opts) {
+    const baseUrl = opts.baseUrl || DEFAULT_BASE_URL;
+    const logDir = opts.logDir;
+    const wasRunning = await isForgeRunning(baseUrl);
+    if (wasRunning) {
+        stopForge(logDir);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    startForgeInBackground({ baseUrl, token: opts.token, logDir });
+    return waitForForgeReady(baseUrl, 20000, 500);
 }

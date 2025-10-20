@@ -75,6 +75,37 @@ function transformDisplayPath(normalizedId) {
  */
 function getSemanticDisplayMessage(normalizedId) {
     const parts = normalizedId.split('/');
+    if (parts.length === 2) {
+        const [collective, agent] = parts;
+        if (collective === 'code') {
+            return `🧞 Starting code agent: ${agent}`;
+        }
+        if (collective === 'create') {
+            return `🧞 Starting create agent: ${agent}`;
+        }
+        if (collective === 'genie') {
+            return `🧞 Starting genie agent: ${agent}`;
+        }
+    }
+    if (parts.length >= 3) {
+        const [collective, scope, ...rest] = parts;
+        const remainder = rest.join('/');
+        if (collective === 'code') {
+            if (scope === 'qa' && rest[0] === 'workflows') {
+                return `🧞 Starting qa workflow: ${rest.slice(1).join('/')}`;
+            }
+            if (rest[0] === 'workflows') {
+                return `🧞 Starting code workflow: ${rest.slice(1).join('/')}`;
+            }
+            return `🧞 Starting code agent: ${[scope, ...rest].join('/')}`;
+        }
+        if (collective === 'create') {
+            if (rest[0] === 'workflows') {
+                return `🧞 Starting create workflow: ${rest.slice(1).join('/')}`;
+            }
+            return `🧞 Starting create agent: ${[scope, ...rest].join('/')}`;
+        }
+    }
     // Template base orchestrators
     if (normalizedId === 'code/code') {
         return '🧞 Starting code orchestrator';

@@ -1,6 +1,7 @@
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
 export function createStopHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -21,17 +22,19 @@ export function createStopHandler(ctx: HandlerContext): Handler {
     }
 
     const forgeExecutor = createForgeExecutor();
-    await forgeExecutor.stopSession(entry.sessionId);
+    try {
+      await forgeExecutor.stopSession(entry.sessionId);
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge stop failed: ${reason}`);
+      throw new Error(`Forge backend unavailable while stopping '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
+    }
 
     entry.status = 'stopped';
     entry.lastUsed = new Date().toISOString();
     store.sessions[sessionName] = entry;
     await ctx.sessionService.save(store);
 
-    return {
-      success: true,
-      name: sessionName,
-      message: `Session ${sessionName} stopped via Forge`
-    };
+    process.stdout.write(`✓ Session ${sessionName} stopped via Forge\n`);
   };
 }

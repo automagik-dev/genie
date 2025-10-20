@@ -22,6 +22,7 @@
     ".genie/standards/**/*.md",
     ".genie/guides/**/*.md",
     ".genie/product/templates/**/*.md",
+    ".genie/workflows/**/*",
     ".genie/scripts/**/*",
     "bin/automagik-genie.js",
     "bin/mcp.js",

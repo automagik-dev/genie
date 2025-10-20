@@ -148,15 +148,6 @@ function parseFlags(args) {
     for (let i = 0; i < args.length; i++) {
         const token = args[i];
         // Handle flags
-        if (token === '--provider' && args[i + 1]) {
-            flags.provider = args[i + 1];
-            i++;
-            continue;
-        }
-        if (token.startsWith('--provider=')) {
-            flags.provider = token.split('=')[1];
-            continue;
-        }
         if (token === '--yes' || token === '-y') {
             flags.yes = true;
             continue;
@@ -290,8 +281,6 @@ async function promptTemplateChoice() {
     console.log('');
     process.exit(0);
 }
-// Removed provider-specific prompt; we select executors directly
-// No provider state written anymore
 async function writeVersionState(cwd, backupId, _legacyBackedUp) {
     const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
     const version = (0, package_1.getPackageVersion)();
@@ -523,7 +512,7 @@ async function runInstallViaCli(cwd, template, flags) {
         const workflowPath = template === 'create'
             ? '@.genie/create/workflows/install.md'
             : '@.genie/code/workflows/install.md';
-        const agentId = template === 'create' ? 'create/agents/install' : 'code/agents/install';
+        const agentId = template === 'create' ? 'create/install' : 'code/install';
         const prompt = [
             'Use the install subagent to set up Genie in this repo.',
             '@agent-install',

@@ -3,6 +3,7 @@ import type { ParsedCommand } from '../types';
 import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
 import { generateSessionName } from '../../session-store';
 import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -19,15 +20,28 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const { executorKey, executorVariant, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
 
     const forgeExecutor = createForgeExecutor();
-    await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    try {
+      await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
+      throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}`);
+    }
 
-    const attemptId = await forgeExecutor.createSession({
-      agentName: resolvedAgentName,
-      prompt,
-      executorKey,
-      executorVariant,
-      executionMode: modeName
-    });
+    let attemptId: string;
+    try {
+      attemptId = await forgeExecutor.createSession({
+        agentName: resolvedAgentName,
+        prompt,
+        executorKey,
+        executorVariant,
+        executionMode: modeName
+      });
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge session creation failed: ${reason}`);
+      throw new Error(`Forge backend rejected session creation. ${FORGE_RECOVERY_HINT}`);
+    }
 
     const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
     const now = new Date().toISOString();
@@ -85,10 +99,6 @@ function resolveExecutionSelection(
     agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
   if (typeof agentVariant === 'string' && agentVariant.trim().length) {
     variant = agentVariant.trim().toUpperCase();
-  }
-
-  if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-    executor = parsed.options.executor.trim().toLowerCase();
   }
 
   if (!variant.length) variant = 'DEFAULT';

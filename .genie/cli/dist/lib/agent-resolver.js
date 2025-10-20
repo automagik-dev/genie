@@ -112,30 +112,58 @@ function findAgentFile(id, collectives) {
     const segments = toAgentPathSegments(id);
     if (!segments)
         return null;
-    const relativePath = path_1.default.join(...segments) + '.md';
     for (const info of collectives) {
         if (!info.agentsDir)
             continue;
-        const filePath = path_1.default.join(info.agentsDir, relativePath);
-        if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isFile()) {
-            return { path: filePath, collective: info.collective };
+        const candidateSegments = [];
+        candidateSegments.push(segments);
+        if (segments.length > 1 && segments[0] === info.collective) {
+            candidateSegments.push(segments.slice(1));
+            if (segments[1] === 'agents') {
+                candidateSegments.push(segments.slice(2));
+            }
+        }
+        if (segments[0] === 'agents') {
+            candidateSegments.push(segments.slice(1));
+        }
+        const seen = new Set();
+        for (const candidate of candidateSegments) {
+            if (!candidate.length)
+                continue;
+            const key = candidate.join('/');
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            const filePath = path_1.default.join(info.agentsDir, ...candidate) + '.md';
+            if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isFile()) {
+                const relativeId = candidate.join('/').replace(/\\/g, '/');
+                return { path: filePath, collective: info.collective, relativeId };
+            }
         }
     }
     return null;
 }
 const resolveAgentPath = (id) => {
     const normalized = id.replace(/\\/g, '/');
+    const collectives = getLocalCollectives().filter(info => Boolean(info.agentsDir));
     const candidates = new Set([normalized]);
     if (!normalized.includes('/')) {
-        ['core', 'qa'].forEach((prefix) => {
-            candidates.add(`${prefix}/${normalized}`);
+        collectives
+            .map(info => info.collective)
+            .filter((name) => Boolean(name) && name !== 'root')
+            .forEach((collectiveName) => {
+            candidates.add(`${collectiveName}/${normalized}`);
         });
     }
-    const collectives = getLocalCollectives().filter(info => Boolean(info.agentsDir));
     // Check local collectives first (user project - takes precedence)
     for (const candidate of candidates) {
-        if (findAgentFile(candidate, collectives))
-            return candidate;
+        const found = findAgentFile(candidate, collectives);
+        if (found) {
+            const relativeId = found.relativeId;
+            return found.collective && found.collective !== 'root'
+                ? `${found.collective}/${relativeId}`
+                : relativeId;
+        }
     }
     return null;
 };
@@ -164,21 +192,24 @@ function listAgents() {
             if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md')
                 return;
             const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
+            const relativeId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
+            const canonicalId = collective && collective !== 'root'
+                ? `${collective}/${relativeId}`.replace(/\\/g, '/')
+                : relativeId.replace(/\\/g, '/');
             // Skip if already seen (local agents override npm package agents)
-            if (seenIds.has(normalizedId))
+            if (seenIds.has(canonicalId))
                 return;
-            seenIds.add(normalizedId);
+            seenIds.add(canonicalId);
             const content = fs_1.default.readFileSync(entryPath, 'utf8');
             const { meta } = extractFrontMatter(content);
             const metaObj = meta || {};
             if (metaObj.hidden === true || metaObj.disabled === true)
                 return;
             // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
+            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(canonicalId);
             const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
             records.push({
-                id: normalizedId,
+                id: canonicalId,
                 displayId,
                 label,
                 meta: metaObj,

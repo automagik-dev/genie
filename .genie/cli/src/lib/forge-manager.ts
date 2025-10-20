@@ -72,3 +72,17 @@ export function stopForge(logDir: string): boolean {
   } catch {}
   return false;
 }
+
+export async function restartForge(opts: ForgeStartOptions): Promise<boolean> {
+  const baseUrl = opts.baseUrl || DEFAULT_BASE_URL;
+  const logDir = opts.logDir;
+
+  const wasRunning = await isForgeRunning(baseUrl);
+  if (wasRunning) {
+    stopForge(logDir);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  startForgeInBackground({ baseUrl, token: opts.token, logDir });
+  return waitForForgeReady(baseUrl, 20000, 500);
+}

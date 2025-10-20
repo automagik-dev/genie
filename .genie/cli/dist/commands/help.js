@@ -6,7 +6,7 @@ const help_1 = require("../views/help");
 async function runHelp(parsed, config, _paths) {
     const backgroundDefault = Boolean(config.defaults && config.defaults.background);
     const commandRows = [
-        { command: 'init', args: '[--provider codex|claude] [--yes]', description: 'Initialize Genie in this workspace' },
+        { command: 'init', args: '[template] [--yes]', description: 'Initialize Genie in this workspace' },
         { command: 'update', args: '[--dry-run] [--force]', description: 'Apply template updates with backups' },
         { command: 'rollback', args: '[--id <backup>]', description: 'Restore a previous Genie snapshot' },
         { command: 'run', args: '<agent> "<prompt>"', description: 'Start or attach to an agent' },
@@ -15,6 +15,7 @@ async function runHelp(parsed, config, _paths) {
         { command: 'resume', args: '<sessionId> "<prompt>"', description: 'Continue a background session' },
         { command: 'view', args: '<sessionId> [--full]', description: 'Show transcript for a session' },
         { command: 'stop', args: '<sessionId>', description: 'End a background session' },
+        { command: 'forge', args: '[start|status|stop|restart]', description: 'Control the Automagik Forge backend' },
         { command: 'statusline', args: '', description: 'Emit deprecated status line output' },
         { command: 'help', args: '', description: 'Show this panel' }
     ];
@@ -31,11 +32,12 @@ async function runHelp(parsed, config, _paths) {
             ]
         },
         examples: [
-            'genie init --provider codex',
+            'genie init code --yes',
             'genie update --dry-run',
-            'genie run plan "[Discovery] mission @.genie/product/mission.md"',
+            'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
             'genie run --help  # Show help for run command',
-            'genie view RUN-1234',
+            'genie forge restart',
+            'genie view code-analyze-2510201015',
             'genie list agents --help  # Show help for list command'
         ]
     });

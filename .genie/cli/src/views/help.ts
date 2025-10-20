@@ -146,9 +146,9 @@ export function buildRunHelpView(): string {
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
-      'genie run plan "[Discovery] mission @.genie/product/mission.md"',
-      'genie run forge "Break down the approved wish into execution groups"',
-      'genie run implementor "Implement the user authentication feature"'
+      'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
+      'genie run code/review "Audit release branch for regressions"',
+      'genie run create/writer "Draft the launch announcement outline"'
     ],
     notes: [
       'Agents run in background mode by default (detached)',
@@ -171,9 +171,9 @@ export function buildResumeHelpView(): string {
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
-      'genie resume implementor-2510181230 "Please add error handling to the implementation"',
-      'genie resume plan-2510180915 "Review the test coverage and suggest improvements"',
-      'genie resume forge-2510181015 "Update the documentation with the new API changes"'
+      'genie resume code-analyze-2510201015 "Follow up on the architectural risks"',
+      'genie resume code-review-2510201110 "Re-run the verification checklist"',
+      'genie resume create-writer-2510201205 "Add a release timeline section"'
     ],
     notes: [
       'Session names can be found with: genie list sessions',
@@ -189,19 +189,20 @@ export function buildListHelpView(): string {
     description: 'Display available agents or active sessions',
     usage: 'genie list <target> [--help]',
     arguments: [
-      { name: '<target>', description: 'What to list: "agents" or "sessions"' }
+      { name: '<target>', description: 'What to list: "collectives", "agents", "workflows", "skills", or "sessions"' }
     ],
     options: [
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
+      'genie list collectives',
       'genie list agents',
       'genie list sessions'
     ],
     notes: [
-      'Default target is "agents" if none specified',
+      'Default target is "collectives" if none specified',
       'Sessions show both active runs and recent history',
-      'Agent list shows all available agents organized by category'
+      'Agent list shows all available agents organized by collective'
     ]
   });
 }

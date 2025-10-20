@@ -61,6 +61,26 @@ function main() {
     if (code !== 0) exitCode = 1;
   }
 
+  // Generate/update workspace summary tree (staged automatically by the script)
+  try {
+    const genCode = run('generate-workspace-summary.js');
+    if (genCode !== 0) {
+      console.warn('⚠️  Workspace summary generation failed (non-blocking)');
+    }
+  } catch (e) {
+    console.warn('⚠️  Workspace summary generation error (non-blocking)');
+  }
+
+  // Migrate QA workflows from scenarios-from-bugs.md (auto-generate stubs)
+  try {
+    const migCode = run('migrate-qa-from-bugs.js');
+    if (migCode !== 0) {
+      console.warn('⚠️  QA migration script failed (non-blocking)');
+    }
+  } catch (e) {
+    console.warn('⚠️  QA migration error (non-blocking)');
+  }
+
   // Optionally run Genie workflow (non-blocking)
   console.log('');
   const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');

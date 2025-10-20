@@ -1,6 +1,7 @@
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
 export function createResumeHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -19,8 +20,21 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     }
 
     const forgeExecutor = createForgeExecutor();
-    await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
-    await forgeExecutor.resumeSession(entry.sessionId, prompt);
+    try {
+      await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
+      throw new Error(`Forge backend unavailable while resuming '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
+    }
+
+    try {
+      await forgeExecutor.resumeSession(entry.sessionId, prompt);
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge resume failed: ${reason}`);
+      throw new Error(`Forge backend rejected resume for '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
+    }
 
     entry.lastPrompt = prompt.slice(0, 200);
     entry.lastUsed = new Date().toISOString();
