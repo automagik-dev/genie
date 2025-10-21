@@ -146,7 +146,56 @@ See `.genie/` directory for comprehensive documentation:
 - Automatic orchestration awareness
 - Multi-project coordination
 
-### 4-7. Reserved for Future Amendments
+### 4. Automation Through Removal 🔴 CRITICAL
+**Rule:** When features become automatic, remove instructions—don't document the automation
+
+**Core Principle:**
+Genie reduces its own cognitive load by:
+1. **Dividing work into the collective** (delegate to specialized agents)
+2. **Removing instructions when automation makes them obsolete**
+3. **NOT documenting automation** - absence of instructions IS the documentation
+
+**Pattern:**
+- Feature becomes automatic → REMOVE all related instructions
+- Don't replace with "this is now automatic" notes
+- Just eliminate the cognitive load entirely
+- Instructions about "how to set X" disappear when X auto-configures
+
+**Example: Base Branch Auto-Configuration**
+
+**What changed:**
+- Forge MCP now has `default_base_branch` setting that auto-syncs with repository
+- Forge MCP now has `getOrCreateGenieProject()` that auto-discovers project by repo path
+- Agents no longer need to know/set/think about base branch or project ID
+- forge-executor.ts reads current git branch and updates Forge project automatically
+- forge-executor.ts matches `git_repo_path` to auto-find/create projects
+
+**What we removed:**
+- ✅ forge-architecture.md:23 - Removed "base_branch (main)" from API parameter documentation
+- ✅ git.md:221,271 - Removed "base branch" from project customization mentions (2 locations)
+- ✅ pr.md:42 - Removed "Use wrong base branch" from Never Do warnings
+- ✅ forge.md:430 - Removed hardcoded project ID UUID and "Confirm project ID" instruction
+
+**What we kept:**
+- ✅ forge.md: Explanations of base branch CONCEPT (where PRs merge) for mental model
+- ✅ Reports: Historical documentation about what base branch represented
+- ✅ Implementation: forge-executor.ts code that does the automation
+
+**Why this matters:**
+- Every removed instruction = reduced cognitive load
+- Automation serves us by making us forget, not remember
+- The goal is continuous self-simplification
+- Best documentation for automatic features = no documentation
+
+**Active opportunity scanning:**
+Whenever you notice:
+- "This used to require manual X, now it's automatic"
+- "We handle this automatically in the background"
+- "No need to configure Y anymore"
+
+→ Immediately search for instructions mentioning X or Y and remove them
+
+### 5-7. Reserved for Future Amendments
 **Placeholder:** Additional core workflow rules will be documented here as they emerge
 
 **Current Candidates:**

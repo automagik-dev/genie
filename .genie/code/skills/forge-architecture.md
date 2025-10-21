@@ -20,7 +20,7 @@ description: How Forge creates tasks, worktrees, branches, and metadata encoding
 
 ### 2. Task Attempt Start
 - **API:** `mcp__automagik_forge__start_task_attempt`
-- **Parameters:** task_id, executor (CLAUDE_CODE, etc.), base_branch (main)
+- **Parameters:** task_id, executor (CLAUDE_CODE, etc.)
 - **Returns:** attempt_id (UUID format, e.g., `35a403e3-fe62-4545-bffe-0285dbfa472d`)
 
 ### 3. Worktree Creation (Automatic)

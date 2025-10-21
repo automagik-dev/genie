@@ -158,6 +158,40 @@ mcp__automagik_forge__create_task(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62
 
 ---
 
+## 📊 CURRENT SESSION (2025-10-21 03:07 UTC)
+
+**Status:** 🔴 BLOCKED - Genie CLI broken, RC tasks not launched
+**Branch:** dev
+**Last Commits:**
+- bdd894b9: fix: forge executor base branch (first attempt - wrong)
+- 3cef9c5b: fix: use Forge project default_base_branch fallback (second attempt - wrong)
+- 7d8a7001: fix: sync git branch TO Forge default_base_branch (CORRECT) ✅
+
+### ✅ Completed This Session
+1. **Bug Fix #154:** Forge executor now syncs current git branch TO Forge `default_base_branch` (closes #154)
+2. **Kanban Cleanup:** Deleted 12 dead task attempts (all wrong base branch)
+
+### 🔴 Current Problem
+**Broken genie CLI:** Ran `pnpm uninstall -g automagik-genie` during troubleshooting, removed from PATH
+**Impact:** Cannot launch RC tasks until fixed
+
+### ⏭️ RC Tasks (Not Launched Yet)
+1. Fix identity-smoke.sh test (commit-advisory.js always outputs validation sections)
+2. Populate PR #153 with RC info
+3. Document Forge orchestration learnings
+
+### 🧠 Key Learnings
+- **Forge Orchestration:** Isolated worktrees, human merge gate, no cross-task waiting
+- **Sequential Dependencies:** Must ask human to merge between dependent tasks
+- **This Project:** Always dev, never main
+- **Base Branch:** Sync TO Forge, don't pass parameter (automated via #154 fix)
+- **Forge URLs:** Must include attempt ID for browser viewing
+
+### 🔧 Recovery Steps
+1. Fix genie: `pnpm install -g .`
+2. Launch RC tasks with fixed CLI
+3. Monitor with sleep intervals until completion
+
 **Status:** ✅ CLEAN - All changes committed and pushed to dev
-**Last Commits:** d43edc30 (Seven Amendments), 7b6cdf49 (bug fixes)
-**Ready For:** Final RC release or continued development
+**Last Commits:** 7d8a7001 (bug fix #154 - correct implementation)
+**Ready For:** Session reset, then launch RC tasks
