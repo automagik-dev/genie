@@ -411,38 +411,59 @@ async function startGenieServer() {
         MCP_TRANSPORT: 'httpStream',
         MCP_PORT: mcpPort
     };
+    // Track runtime stats for shutdown report
+    let requestCount = 0;
+    let errorCount = 0;
+    let lastHealthCheck = Date.now();
     // Handle graceful shutdown (stop both Forge and MCP)
     let mcpChild = null;
     let isShuttingDown = false;
-    process.on('SIGINT', () => {
+    process.on('SIGINT', async () => {
         // Prevent multiple shutdown attempts
         if (isShuttingDown)
             return;
         isShuttingDown = true;
         console.log('');
-        console.log('🛑 Shutting down...');
-        // Stop MCP immediately (synchronous)
-        if (mcpChild) {
+        console.log('');
+        console.log(genieGradient('━'.repeat(60)));
+        console.log(genieGradient('🛑 Shutting down Genie...'));
+        console.log(genieGradient('━'.repeat(60)));
+        // Calculate session stats
+        const sessionDuration = Date.now() - startTime;
+        const uptimeStr = formatUptime(sessionDuration);
+        // Stop MCP immediately
+        if (mcpChild && !mcpChild.killed) {
             mcpChild.kill('SIGTERM');
+            console.log('📡 MCP server stopped');
         }
-        // Stop Forge and wait for completion before exiting
-        (async () => {
-            try {
-                const stopped = await (0, forge_manager_1.stopForge)(logDir);
-                if (stopped) {
-                    console.log('✅ All services stopped');
-                }
-                else {
-                    console.log('✅ MCP stopped (Forge was not started by this session)');
-                }
+        // Stop Forge and wait for completion
+        try {
+            const stopped = await (0, forge_manager_1.stopForge)(logDir);
+            if (stopped) {
+                console.log('📦 Forge backend stopped');
             }
-            catch (error) {
-                console.error('⚠️  Error during shutdown:', error);
+            else {
+                console.log('⚠️  Forge was not started by this session');
             }
-            finally {
-                process.exit(0);
-            }
-        })();
+        }
+        catch (error) {
+            console.error(`❌ Error stopping Forge: ${error}`);
+        }
+        // Display goodbye stats report
+        console.log('');
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log(performanceGradient('📊 Session Summary'));
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log(`   ${successGradient('⏱')}  Uptime:          ${uptimeStr}`);
+        console.log(`   ${successGradient('🚀')} Startup time:    ${timings.total || 0}ms (${((timings.total || 0) / 1000).toFixed(1)}s)`);
+        console.log(`   ${successGradient('✓')} Services:        Forge + MCP`);
+        console.log(`   ${performanceGradient('👋')} Status:          ${performanceGradient('Clean shutdown')}`);
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log('');
+        console.log(successGradient('✨ Genie stopped. See you next time! ✨'));
+        console.log('');
+        // Exit cleanly
+        process.exit(0);
     });
     // Resilient startup: retry on early non-zero exit
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
