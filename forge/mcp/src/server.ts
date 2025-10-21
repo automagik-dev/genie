@@ -32,7 +32,7 @@ import { registerStatusResources } from './resources/status.js';
 // Configuration
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8081;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'httpStream';
-const FORGE_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const FORGE_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8888';
 const FORGE_API_KEY = process.env.FORGE_API_KEY;
 
 // Initialize logger
