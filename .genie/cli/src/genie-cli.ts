@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning } from './lib/forge-manager';
 
 const program = new Command();
 
@@ -187,69 +188,20 @@ program
     execGenie(['statusline']);
   });
 
+// Start command (default - starts Forge + MCP with SSE)
 program
-  .command('forge [action]')
-  .description('Manage Automagik Forge backend (start, status, stop, restart)')
-  .action(async (action?: string) => {
-    const {
-      isForgeRunning,
-      startForgeInBackground,
-      waitForForgeReady,
-      stopForge,
-      restartForge
-    } = require('./lib/forge-manager');
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
-    const logDir = require('path').join(process.cwd(), '.genie', 'state');
-
-    const act = (action || 'status').toLowerCase();
-    if (act === 'status') {
-      const up = await isForgeRunning(baseUrl);
-      console.log(up ? `Forge is running at ${baseUrl}` : 'Forge is not running');
-      return;
-    }
-    if (act === 'start') {
-      if (await isForgeRunning(baseUrl)) {
-        console.log(`Forge already running at ${baseUrl}`);
-        return;
-      }
-      console.log('Starting Forge via npx automagik-forge...');
-      startForgeInBackground({ logDir, baseUrl });
-      const ready = await waitForForgeReady(baseUrl, 15000, 500);
-      if (ready) console.log(`Forge ready at ${baseUrl}`);
-      else {
-        console.error('Forge did not become ready in time (15s). Check logs at .genie/state/forge.log');
-        process.exitCode = 1;
-      }
-      return;
-    }
-    if (act === 'restart') {
-      console.log(`Restarting Forge at ${baseUrl}...`);
-      const ready = await restartForge({ baseUrl, logDir, token: process.env.FORGE_TOKEN });
-      if (ready) {
-        console.log(`Forge ready at ${baseUrl}`);
-        return;
-      }
-      console.error('Forge did not become ready in time (20s). Check logs at .genie/state/forge.log');
-      process.exitCode = 1;
-      return;
-    }
-    if (act === 'stop') {
-      const ok = stopForge(logDir);
-      console.log(ok ? 'Forge stop signal sent' : 'Could not stop Forge (no PID)');
-      return;
-    }
-    console.error(`Unknown forge action: ${action}. Use start|status|stop|restart`);
-    process.exitCode = 1;
+  .command('start')
+  .description('Start Genie server (Forge backend + MCP with SSE on port 8885)')
+  .action(async () => {
+    await startGenieServer();
   });
 
-// MCP command
+// MCP command (stdio only - for Claude Desktop integration)
 program
   .command('mcp')
-  .description('Start MCP server')
-  .option('-t, --transport <type>', 'Transport type: stdio, sse, http', 'stdio')
-  .option('-p, --port <port>', 'Port for HTTP/SSE transport', '8080')
-  .action((options: { transport: string; port: string }) => {
-    startMCPServer(options.transport, options.port);
+  .description('Start MCP server in stdio mode (for Claude Desktop). Requires Forge to be running.')
+  .action(async () => {
+    await startMCPStdio();
   });
 
 // Parse arguments
@@ -272,24 +224,10 @@ function execGenie(args: string[]): void {
 }
 
 /**
- * Start MCP server with specified transport
+ * Start Genie server (Forge + MCP with SSE transport on port 8885)
+ * This is the main entry point for npx automagik-genie
  */
-function startMCPServer(transport: string, port: string): void {
-  // Validate transport
-  const validTransports = ['stdio', 'sse', 'http'];
-  if (!validTransports.includes(transport)) {
-    console.error(`Error: Invalid transport "${transport}". Valid options: ${validTransports.join(', ')}`);
-    process.exit(1);
-  }
-
-  // Map user-facing transport names to internal transport names
-  const transportMap: Record<string, string> = {
-    stdio: 'stdio',
-    sse: 'httpStream',  // SSE maps to httpStream internally
-    http: 'httpStream'
-  };
-
-  const internalTransport = transportMap[transport];
+async function startGenieServer(): Promise<void> {
   const mcpServer = path.join(__dirname, '../../mcp/dist/server.js');
 
   // Check if MCP server exists
@@ -298,29 +236,70 @@ function startMCPServer(transport: string, port: string): void {
     process.exit(1);
   }
 
+  // Phase 1: Start Forge in background
+  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+  const logDir = path.join(process.cwd(), '.genie', 'state');
+
+  console.log('🚀 Starting Genie services...');
+  console.log('');
+
+  // Check if Forge is already running
+  const forgeRunning = await isForgeRunning(baseUrl);
+
+  if (!forgeRunning) {
+    console.log('📦 Starting Forge backend...');
+    startForgeInBackground({ baseUrl, logDir });
+
+    // Wait for Forge to be ready
+    const forgeReady = await waitForForgeReady(baseUrl, 15000, 500);
+
+    if (!forgeReady) {
+      console.error('❌ Forge did not start in time (15s). Check logs at .genie/state/forge.log');
+      process.exit(1);
+    }
+
+    console.log(`📦 Forge:  ${baseUrl} ✓`);
+  } else {
+    console.log(`📦 Forge:  ${baseUrl} ✓ (already running)`);
+  }
+
+  // Phase 2: Start MCP server with SSE transport
+  const mcpPort = process.env.MCP_PORT || '8885';
+  console.log(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`);
+  console.log('');
+  console.log('Ready for connections.');
+  console.log('Press Ctrl+C to stop all services.');
+  console.log('');
+
   // Set environment variables
   const env = {
     ...process.env,
-    MCP_TRANSPORT: internalTransport,
-    MCP_PORT: port
+    MCP_TRANSPORT: 'httpStream',
+    MCP_PORT: mcpPort
   };
 
-  // For stdio transport, avoid printing to stdout (clients expect pure JSON)
-  const log = (msg: string) => {
-    if (transport === 'stdio') {
-      // Route to stderr only
-      console.error(msg);
-    } else {
-      console.log(msg);
+  // Handle graceful shutdown (stop both Forge and MCP)
+  let mcpChild: ReturnType<typeof spawn> | null = null;
+
+  process.on('SIGINT', () => {
+    console.log('');
+    console.log('🛑 Shutting down...');
+
+    // Stop MCP
+    if (mcpChild) {
+      mcpChild.kill('SIGTERM');
     }
-  };
 
-  log(`Starting Genie MCP Server...`);
-  log(`Transport: ${transport}${internalTransport !== transport ? ` (${internalTransport})` : ''}`);
-  if (internalTransport === 'httpStream') {
-    log(`Port: ${port} (for HTTP/SSE)`);
-    log('');
-  }
+    // Stop Forge
+    const stopped = stopForge(logDir);
+    if (stopped) {
+      console.log('✅ All services stopped');
+    } else {
+      console.log('✅ MCP stopped (Forge was not started by this session)');
+    }
+
+    process.exit(0);
+  });
 
   // Resilient startup: retry on early non-zero exit
   const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
@@ -329,46 +308,94 @@ function startMCPServer(transport: string, port: string): void {
   let attempt = 0;
   const start = () => {
     attempt += 1;
-    const child = spawn('node', [mcpServer], {
+    mcpChild = spawn('node', [mcpServer], {
       stdio: 'inherit',
       env
     });
-
-    let exited = false;
-    let exitCode: number | null = null;
 
     const timer = setTimeout(() => {
       // After grace period, consider startup successful; let process lifecycle continue
       // We only auto-retry if it exits quickly within grace period
     }, 1000);
 
-    child.on('exit', (code) => {
-      exited = true;
-      exitCode = code === null ? 0 : code;
+    mcpChild.on('exit', (code) => {
+      const exitCode = code === null ? 0 : code;
       clearTimeout(timer);
 
       if (exitCode !== 0 && attempt <= maxAttempts) {
-        log(`MCP server exited early with code ${exitCode}. Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
+        console.log(`MCP server exited early with code ${exitCode}. Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
         setTimeout(start, backoffMs);
       } else {
         if (exitCode !== 0) {
           console.error(`MCP server exited with code ${exitCode}`);
         }
+        // Don't exit immediately - let SIGINT handler clean up Forge
+        stopForge(logDir);
         process.exit(exitCode || 0);
       }
     });
 
-    child.on('error', (err) => {
+    mcpChild.on('error', (err) => {
       clearTimeout(timer);
       if (attempt <= maxAttempts) {
-        log(`Failed to start MCP server (${err?.message || err}). Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
+        console.log(`Failed to start MCP server (${err?.message || err}). Retrying (${attempt}/${maxAttempts}) in ${backoffMs}ms...`);
         setTimeout(start, backoffMs);
       } else {
         console.error('Failed to start MCP server:', err);
+        stopForge(logDir);
         process.exit(1);
       }
     });
   };
 
   start();
+}
+
+/**
+ * Start MCP in stdio mode (for Claude Desktop integration)
+ * Requires Forge to already be running
+ */
+async function startMCPStdio(): Promise<void> {
+  const mcpServer = path.join(__dirname, '../../mcp/dist/server.js');
+
+  // Check if MCP server exists
+  if (!fs.existsSync(mcpServer)) {
+    console.error('Error: MCP server not built. Run: pnpm run build:mcp');
+    process.exit(1);
+  }
+
+  // Check if Forge is running
+  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+  const forgeRunning = await isForgeRunning(baseUrl);
+
+  if (!forgeRunning) {
+    console.error('❌ Forge is not running.');
+    console.error('');
+    console.error('Please start the Genie server first:');
+    console.error('  npx automagik-genie');
+    console.error('');
+    console.error('This will start both Forge backend and MCP server.');
+    process.exit(1);
+  }
+
+  // Set environment for stdio transport
+  const env = {
+    ...process.env,
+    MCP_TRANSPORT: 'stdio'
+  };
+
+  // Start MCP in stdio mode
+  const child = spawn('node', [mcpServer], {
+    stdio: 'inherit',
+    env
+  });
+
+  child.on('exit', (code) => {
+    process.exit(code === null ? 0 : code);
+  });
+
+  child.on('error', (err) => {
+    console.error('Failed to start MCP server:', err);
+    process.exit(1);
+  });
 }
