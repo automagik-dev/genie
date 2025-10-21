@@ -24,13 +24,24 @@ async function isForgeRunning(baseUrl = DEFAULT_BASE_URL) {
         return false;
     }
 }
-async function waitForForgeReady(baseUrl = DEFAULT_BASE_URL, timeoutMs = 15000, intervalMs = 500) {
+async function waitForForgeReady(baseUrl = DEFAULT_BASE_URL, timeoutMs = 30000, intervalMs = 500, showProgress = false) {
     const start = Date.now();
+    let lastDot = 0;
     while (Date.now() - start < timeoutMs) {
-        if (await isForgeRunning(baseUrl))
+        if (await isForgeRunning(baseUrl)) {
+            if (showProgress)
+                process.stderr.write('\n');
             return true;
+        }
+        // Show progress dots every 2 seconds
+        if (showProgress && Date.now() - lastDot > 2000) {
+            process.stderr.write('.');
+            lastDot = Date.now();
+        }
         await new Promise(r => setTimeout(r, intervalMs));
     }
+    if (showProgress)
+        process.stderr.write('\n');
     return false;
 }
 function startForgeInBackground(opts) {
@@ -41,9 +52,14 @@ function startForgeInBackground(opts) {
     const pidPath = path_1.default.join(logDir, 'forge.pid');
     const out = fs_1.default.openSync(logPath, 'a');
     const err = fs_1.default.openSync(logPath, 'a');
-    // Prefer explicit start subcommand; fall back to default
-    const child = (0, child_process_1.spawn)('npx', ['--yes', 'automagik-forge', 'start'], {
-        env: { ...process.env, npm_config_yes: 'true', NPM_CONFIG_YES: 'true', CI: '1' },
+    // Use bundled automagik-forge binary directly (blazing fast - no extraction!)
+    // Path works for both pnpm and npm installations
+    const forgeBin = path_1.default.join(__dirname, '../../../../node_modules/.pnpm/automagik-forge@0.3.18/node_modules/automagik-forge/dist/linux-x64/automagik-forge');
+    // Fallback to standard node_modules structure (npm)
+    const forgeBinFallback = path_1.default.join(__dirname, '../../../../node_modules/automagik-forge/dist/linux-x64/automagik-forge');
+    const binPath = fs_1.default.existsSync(forgeBin) ? forgeBin : forgeBinFallback;
+    const child = (0, child_process_1.spawn)(binPath, ['start'], {
+        env: { ...process.env },
         detached: true,
         stdio: ['ignore', out, err]
     });

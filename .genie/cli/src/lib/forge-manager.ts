@@ -23,12 +23,26 @@ export async function isForgeRunning(baseUrl: string = DEFAULT_BASE_URL): Promis
   }
 }
 
-export async function waitForForgeReady(baseUrl: string = DEFAULT_BASE_URL, timeoutMs = 15000, intervalMs = 500): Promise<boolean> {
+export async function waitForForgeReady(baseUrl: string = DEFAULT_BASE_URL, timeoutMs = 30000, intervalMs = 500, showProgress = false): Promise<boolean> {
   const start = Date.now();
+  let lastDot = 0;
+
   while (Date.now() - start < timeoutMs) {
-    if (await isForgeRunning(baseUrl)) return true;
+    if (await isForgeRunning(baseUrl)) {
+      if (showProgress) process.stderr.write('\n');
+      return true;
+    }
+
+    // Show progress dots every 2 seconds
+    if (showProgress && Date.now() - lastDot > 2000) {
+      process.stderr.write('.');
+      lastDot = Date.now();
+    }
+
     await new Promise(r => setTimeout(r, intervalMs));
   }
+
+  if (showProgress) process.stderr.write('\n');
   return false;
 }
 
@@ -42,9 +56,17 @@ export function startForgeInBackground(opts: ForgeStartOptions): { childPid: num
   const out = fs.openSync(logPath, 'a');
   const err = fs.openSync(logPath, 'a');
 
-  // Prefer explicit start subcommand; fall back to default
-  const child = spawn('npx', ['--yes', 'automagik-forge', 'start'], {
-    env: { ...process.env, npm_config_yes: 'true', NPM_CONFIG_YES: 'true', CI: '1' },
+  // Use bundled automagik-forge binary directly (blazing fast - no extraction!)
+  // Path works for both pnpm and npm installations
+  const forgeBin = path.join(__dirname, '../../../../node_modules/.pnpm/automagik-forge@0.3.18/node_modules/automagik-forge/dist/linux-x64/automagik-forge');
+
+  // Fallback to standard node_modules structure (npm)
+  const forgeBinFallback = path.join(__dirname, '../../../../node_modules/automagik-forge/dist/linux-x64/automagik-forge');
+
+  const binPath = fs.existsSync(forgeBin) ? forgeBin : forgeBinFallback;
+
+  const child = spawn(binPath, ['start'], {
+    env: { ...process.env },
     detached: true,
     stdio: ['ignore', out, err]
   });
