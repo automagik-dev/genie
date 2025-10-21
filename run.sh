@@ -134,30 +134,35 @@ else
 
     if [[ "$init_workspace" =~ ^[Yy]$ ]]; then
         echo ""
-        template=$(select_template)
-        echo ""
-        echo "🚀 Initializing Genie with '$template' template..."
+        echo "🚀 Starting Genie initialization..."
         echo ""
 
+        # Run genie init (will use Ink wizard)
         if command -v genie &> /dev/null; then
-            genie init $template
+            genie init
         else
-            pnpm dlx automagik-genie@next init $template
+            pnpm dlx automagik-genie@next init
         fi
 
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "  ✅ Setup complete!"
-        echo ""
-        echo "  Next steps:"
-        if command -v genie &> /dev/null; then
-            echo "    • Run: genie"
+        # After init completes, automatically start genie server
+        if [ $? -eq 0 ]; then
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "  ✅ Installation complete!"
+            echo "  🚀 Starting Genie server..."
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+
+            if command -v genie &> /dev/null; then
+                exec genie
+            else
+                exec pnpm dlx automagik-genie@next
+            fi
         else
-            echo "    • Run: ./run.sh"
+            echo ""
+            echo "❌ Initialization failed. Please check the errors above."
+            exit 1
         fi
-        echo "    • Or configure Claude Code MCP:"
-        echo "      npx automagik-genie mcp -t stdio"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     else
         echo ""
         echo "💡 Run './run.sh' anytime to set up your workspace"

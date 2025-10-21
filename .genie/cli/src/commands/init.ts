@@ -7,6 +7,8 @@ import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import { promptExecutorChoice } from '../lib/executor-prompt.js';
 import { EXECUTORS } from '../lib/executor-registry';
+import { runInitWizard } from '../views/init-wizard.js';
+import { runInstallChat } from '../views/install-chat.js';
 import {
   getPackageRoot,
   getTemplateGeniePath,
@@ -62,10 +64,50 @@ export async function runInit(
     const cwd = process.cwd();
     const packageRoot = getPackageRoot();
 
-    // Determine template type
-    // Direct: genie init code/create (automation-friendly)
-    // Interactive: genie init (human discovery)
-    const template = flags.template || await promptTemplateChoice();
+    // Check if running in interactive mode (TTY) or automation mode (--yes flag or explicit template)
+    const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template;
+    let template: string;
+    let executor: string;
+    let model: string | undefined;
+    let shouldInitGit = false;
+
+    if (isInteractive) {
+      // Run beautiful Ink-based onboarding wizard
+      const gitDir = path.join(cwd, '.git');
+      const hasGit = await pathExists(gitDir);
+
+      const onboardingConfig = await runOnboardingWizard({
+        templates: [
+          {
+            value: 'code',
+            label: '💻 code',
+            description: 'Full-stack development with Git, testing, CI/CD',
+            agents: ['install', 'wish', 'forge', 'review', 'implementor', 'tests']
+          },
+          {
+            value: 'create',
+            label: '✍️  create',
+            description: 'Research, writing, content creation',
+            agents: ['install', 'wish', 'writer', 'researcher', 'editor']
+          }
+        ],
+        executors: Object.keys(EXECUTORS).map(key => ({
+          value: key,
+          label: EXECUTORS[key].label
+        })),
+        hasGit
+      });
+
+      template = onboardingConfig.template;
+      executor = onboardingConfig.executor;
+      model = onboardingConfig.model;
+      shouldInitGit = onboardingConfig.initGit;
+    } else {
+      // Automation mode: use flags or defaults
+      template = flags.template || 'code';
+      executor = Object.keys(EXECUTORS)[0] || 'codex';
+      model = undefined;
+    }
 
     const templateGenie = getTemplateGeniePath(template);
     const targetGenie = resolveTargetGeniePath(cwd);
@@ -123,16 +165,9 @@ export async function runInit(
       return;
     }
 
-    // Check for .git directory, offer initialization if missing
-    const gitDir = path.join(cwd, '.git');
-    const hasGit = await pathExists(gitDir);
-    if (!hasGit) {
-      console.log('');
-      console.log('⚠️  No .git directory found');
-      console.log('🧞 Forge requires git to track work');
-      console.log('');
-
-      if (flags.yes || await promptYesNo('Initialize git repository?', true)) {
+    // Initialize git if needed (wizard already prompted in interactive mode)
+    if (shouldInitGit || (!isInteractive && !await pathExists(path.join(cwd, '.git')))) {
+      if (!isInteractive && flags.yes) {
         const { execSync } = await import('child_process');
         execSync('git init', { cwd, stdio: 'inherit' });
         try {
@@ -140,11 +175,14 @@ export async function runInit(
         } catch {
           // Ignore if branch rename fails (already on main)
         }
-        console.log('✅ Git initialized');
-        console.log('');
-      } else {
-        console.log('⚠️  Skipping git init (Forge may not work correctly)');
-        console.log('');
+      } else if (shouldInitGit) {
+        const { execSync } = await import('child_process');
+        execSync('git init', { cwd, stdio: 'inherit' });
+        try {
+          execSync('git branch -m main', { cwd, stdio: 'pipe' });
+        } catch {
+          // Ignore if branch rename fails (already on main)
+        }
       }
     }
 
@@ -208,7 +246,13 @@ export async function runInit(
 
     await ensureDir(backupsRoot);
 
-    const { executor, model } = await selectExecutorAndModel(flags);
+    // Use wizard selections in interactive mode, or select defaults in automation mode
+    if (!isInteractive && !executor) {
+      const selected = await selectExecutorAndModel(flags);
+      executor = selected.executor;
+      model = selected.model;
+    }
+
     await writeVersionState(cwd, backupId, false);
     await initializeProviderStatus(cwd);
     await applyExecutorDefaults(targetGenie, executor, model);

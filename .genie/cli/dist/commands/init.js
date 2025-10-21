@@ -10,6 +10,7 @@ const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const executor_registry_1 = require("../lib/executor-registry");
+const onboarding_js_1 = require("../views/onboarding.js");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
@@ -21,10 +22,48 @@ async function runInit(parsed, _config, _paths) {
         const flags = parseFlags(parsed.commandArgs);
         const cwd = process.cwd();
         const packageRoot = (0, paths_1.getPackageRoot)();
-        // Determine template type
-        // Direct: genie init code/create (automation-friendly)
-        // Interactive: genie init (human discovery)
-        const template = flags.template || await promptTemplateChoice();
+        // Check if running in interactive mode (TTY) or automation mode (--yes flag or explicit template)
+        const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template;
+        let template;
+        let executor;
+        let model;
+        let shouldInitGit = false;
+        if (isInteractive) {
+            // Run beautiful Ink-based onboarding wizard
+            const gitDir = path_1.default.join(cwd, '.git');
+            const hasGit = await (0, fs_utils_1.pathExists)(gitDir);
+            const onboardingConfig = await (0, onboarding_js_1.runOnboardingWizard)({
+                templates: [
+                    {
+                        value: 'code',
+                        label: '💻 code',
+                        description: 'Full-stack development with Git, testing, CI/CD',
+                        agents: ['install', 'wish', 'forge', 'review', 'implementor', 'tests']
+                    },
+                    {
+                        value: 'create',
+                        label: '✍️  create',
+                        description: 'Research, writing, content creation',
+                        agents: ['install', 'wish', 'writer', 'researcher', 'editor']
+                    }
+                ],
+                executors: Object.keys(executor_registry_1.EXECUTORS).map(key => ({
+                    value: key,
+                    label: executor_registry_1.EXECUTORS[key].label
+                })),
+                hasGit
+            });
+            template = onboardingConfig.template;
+            executor = onboardingConfig.executor;
+            model = onboardingConfig.model;
+            shouldInitGit = onboardingConfig.initGit;
+        }
+        else {
+            // Automation mode: use flags or defaults
+            template = flags.template || 'code';
+            executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
+            model = undefined;
+        }
         const templateGenie = (0, paths_1.getTemplateGeniePath)(template);
         const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
         const templateExists = await (0, fs_utils_1.pathExists)(templateGenie);
@@ -68,15 +107,9 @@ async function runInit(parsed, _config, _paths) {
             ]), parsed.options);
             return;
         }
-        // Check for .git directory, offer initialization if missing
-        const gitDir = path_1.default.join(cwd, '.git');
-        const hasGit = await (0, fs_utils_1.pathExists)(gitDir);
-        if (!hasGit) {
-            console.log('');
-            console.log('⚠️  No .git directory found');
-            console.log('🧞 Forge requires git to track work');
-            console.log('');
-            if (flags.yes || await promptYesNo('Initialize git repository?', true)) {
+        // Initialize git if needed (wizard already prompted in interactive mode)
+        if (shouldInitGit || (!isInteractive && !await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git')))) {
+            if (!isInteractive && flags.yes) {
                 const { execSync } = await import('child_process');
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
@@ -85,12 +118,16 @@ async function runInit(parsed, _config, _paths) {
                 catch {
                     // Ignore if branch rename fails (already on main)
                 }
-                console.log('✅ Git initialized');
-                console.log('');
             }
-            else {
-                console.log('⚠️  Skipping git init (Forge may not work correctly)');
-                console.log('');
+            else if (shouldInitGit) {
+                const { execSync } = await import('child_process');
+                execSync('git init', { cwd, stdio: 'inherit' });
+                try {
+                    execSync('git branch -m main', { cwd, stdio: 'pipe' });
+                }
+                catch {
+                    // Ignore if branch rename fails (already on main)
+                }
             }
         }
         const backupId = (0, fs_utils_1.toIsoId)();
@@ -147,7 +184,12 @@ async function runInit(parsed, _config, _paths) {
             }
         }
         await (0, fs_utils_1.ensureDir)(backupsRoot);
-        const { executor, model } = await selectExecutorAndModel(flags);
+        // Use wizard selections in interactive mode, or select defaults in automation mode
+        if (!isInteractive && !executor) {
+            const selected = await selectExecutorAndModel(flags);
+            executor = selected.executor;
+            model = selected.model;
+        }
         await writeVersionState(cwd, backupId, false);
         await initializeProviderStatus(cwd);
         await applyExecutorDefaults(targetGenie, executor, model);
