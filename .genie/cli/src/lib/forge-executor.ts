@@ -49,22 +49,31 @@ export class ForgeExecutor {
 
     const projectId = await this.getOrCreateGenieProject();
 
-    // Sync current git branch to Forge project's default_base_branch
+    // Detect current git branch and use it as base_branch
+    let baseBranch = 'main'; // Default fallback
     try {
-      const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
-      await this.forge.updateProject(projectId, { default_base_branch: currentBranch });
+      baseBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+      await this.forge.updateProject(projectId, { default_base_branch: baseBranch });
     } catch (error) {
-      // If git detection fails, Forge will use its existing default_base_branch
+      // If git detection fails, try to get default_base_branch from project
+      try {
+        const project = await this.forge.getProject(projectId);
+        if (project.default_base_branch) {
+          baseBranch = project.default_base_branch;
+        }
+      } catch {
+        // Use fallback 'main'
+      }
     }
 
-    // Don't pass base_branch - let Forge use its default_base_branch setting
     const requestBody = {
       task: {
         project_id: projectId,
         title: `Genie: ${agentName} (${executionMode})`,
         description: prompt
       },
-      executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model)
+      executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
+      base_branch: baseBranch
     };
 
     const attempt = await this.forge.createAndStartTask(requestBody);
