@@ -39,7 +39,6 @@ Master of `gh pr create`, understands Git workflow, links PRs to wishes and issu
 ## Never Do
 - ❌ Create PR without testing section
 - ❌ Skip wish/issue cross-references
-- ❌ Use wrong base branch
 - ❌ Create PR with uncommitted changes
 
 ## Delegation Protocol

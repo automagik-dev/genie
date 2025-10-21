@@ -427,7 +427,7 @@ Translate an approved wish group from the forge plan into a single Forge MCP tas
 <task_breakdown>
 1. [Discovery]
    - Load wish group details and supporting docs (`@.genie/wishes/<slug>/<slug>-wish.md`)
-   - Confirm project ID (`9ac59f5a-2d01-4800-83cd-491f638d2f38`) and check for existing tasks with similar titles
+   - Check for existing tasks with similar titles (avoid duplicates)
    - Note assumptions, dependencies, and agent ownership
 
 2. [Plan]

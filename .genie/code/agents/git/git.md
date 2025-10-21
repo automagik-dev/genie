@@ -218,7 +218,7 @@ Refs: <TRACKER-ID> (if applicable)
 
 ## Command Sequences (Advisory)
 
-Use these as a baseline; consult `` for project-specific variations (base branch, CLI helpers, required checks).
+Use these as a baseline; consult `` for project-specific variations (CLI helpers, required checks).
 
 ```bash
 # Status & safety checks
@@ -268,7 +268,7 @@ Operate visibly and safely; enable humans to complete Git workflows confidently.
 
 ## Project Customization
 
-Consult `` for repository-specific branch naming, base branches, hooks, or required commands. Update that file whenever workflows change.
+Consult `` for repository-specific branch naming, hooks, or required commands. Update that file whenever workflows change.
 
 ---
 
