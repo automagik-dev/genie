@@ -8,6 +8,38 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.4.0-rc.36] - 2025-10-20
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.35] - 2025-10-20
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.34] - 2025-10-20
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.33] - 2025-10-19
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.32] - 2025-10-19
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.31] - 2025-10-19
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.29] - 2025-10-18
+
+No changelog entries (packaging-only RC).
+
+## [2.4.0-rc.28] - 2025-10-18
+
+No changelog entries (packaging-only RC).
+
 ## [2.4.0-rc.25] - 2025-10-18
 
 No changelog entries (packaging-only RC).
@@ -58,10 +90,10 @@ No changelog entries (packaging-only RC).
 ### Added
 - Multi-template system: `genie init [code|create]` for specialized workflows
 - Token-efficient output: 99.0-99.6% reduction for AI-to-AI orchestration (16k → 122-168 tokens)
-- Neuron cognitive architecture: Clear separation of neurons/modes/workflows directories
+- Agent cognitive architecture: Clear separation of agents/modes/workflows directories
 
 ### Changed
-- Reorganized agent directory structure: `core/` → `neurons/` + `workflows/`
+- Reorganized agent directory structure: `core/` → `agents/` + `workflows/`
 - Session views now use lightweight markdown instead of Ink rendering
 - Custom overrides restructured to mirror cognitive architecture
 

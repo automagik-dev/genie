@@ -1,8 +1,0 @@
-.genie/agents/workflows/wish.md:97:@.genie/templates/wish-template.md
-.genie/agents/workflows/review.md:100:@.genie/templates/review-report-template.md
-.genie/agents/workflows/qa.md:243:@.genie/templates/qa-done-report-template.md
-templates/code/.genie/agents/workflows/wish.md:87:@.genie/templates/wish-template.md
-templates/code/.genie/agents/workflows/review.md:90:@.genie/templates/review-report-template.md
-templates/code/.genie/agents/workflows/qa.md:113:@.genie/templates/qa-done-report-template.md
-templates/create/.genie/agents/workflows/wish.md:88:@.genie/templates/wish-template.md
-templates/create/.genie/agents/workflows/review.md:92:@.genie/templates/review-report-template.md

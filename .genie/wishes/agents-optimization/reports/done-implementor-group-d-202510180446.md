@@ -10,29 +10,29 @@
 
 ## Summary
 
-Group D extraction task was **already completed** in a previous session. All meta-learning patterns have been successfully extracted from AGENTS.md to the learn neuron file.
+Group D extraction task was **already completed** in a previous session. All meta-learning patterns have been successfully extracted from AGENTS.md to the learn agent file.
 
 ---
 
 ## Discovery
 
-**Objective:** Extract meta-learning patterns from AGENTS.md (lines 1260-1279) to learn neuron
+**Objective:** Extract meta-learning patterns from AGENTS.md (lines 1260-1279) to learn agent
 
 **Finding:** Work already complete. Investigation revealed:
 
 1. **AGENTS.md current state:**
    - Only 769 lines (optimized from original 2272 lines)
-   - References meta-learning via skill: `@.genie/agents/code/skills/meta-learn-protocol.md:36`
+   - References meta-learning via skill: `@.genie/skills/meta-learn.md:36`
    - No duplicate content present
 
 2. **Skill file created:**
    - Location: `.genie/agents/code/skills/meta-learn-protocol.md`
    - Size: 59 lines
    - Contains recognition patterns and usage guidance
-   - Properly references learn neuron for full implementation
+   - Properly references learn agent for full implementation
 
-3. **Neuron file populated:**
-   - Location: `.genie/agents/neurons/learn.md`
+3. **Agent file populated:**
+   - Location: `.genie/agents/learn.md`
    - Size: 904 lines, 59KB
    - Contains all required sections:
      - ✅ Framework Reference (lines 11-18)
@@ -55,16 +55,16 @@ Group D extraction task was **already completed** in a previous session. All met
 ```
 AGENTS.md
   ↓ (line 36)
-@.genie/agents/code/skills/meta-learn-protocol.md
+@.genie/skills/meta-learn.md
   ↓ (embedded patterns + reference)
-@.genie/agents/neurons/learn.md (904 lines)
+@.genie/code/agents/learn.md (904 lines)
 ```
 
 **Benefits achieved:**
 - ✅ AGENTS.md token reduction: ~19 lines removed (already reflected in 769-line total)
 - ✅ @ reference pattern: Lightweight pointer instead of duplication
 - ✅ Knowledge preservation: All meta-learning patterns present
-- ✅ Loading architecture: Skill → neuron (correct hierarchy)
+- ✅ Loading architecture: Skill → agent (correct hierarchy)
 
 ---
 
@@ -74,18 +74,18 @@ AGENTS.md
 ```bash
 # AGENTS.md references skill
 grep "meta-learn-protocol" AGENTS.md
-# Result: Line 36: @.genie/agents/code/skills/meta-learn-protocol.md
+# Result: Line 36: @.genie/skills/meta-learn.md
 
 # Skill file contains patterns
 cat .genie/agents/code/skills/meta-learn-protocol.md
 # Result: Recognition patterns, when to use, how to invoke, anti-patterns
 
-# Neuron file contains complete implementation
-wc -l .genie/agents/neurons/learn.md
+# Agent file contains complete implementation
+wc -l .genie/agents/learn.md
 # Result: 904 lines, 59KB
 
 # Content validation
-grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/neurons/learn.md
+grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/learn.md
 # Result: All sections present
 ```
 
@@ -93,7 +93,7 @@ grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/neuro
 ```bash
 # Verify @ reference usage (not full content load)
 # AGENTS.md: 1 reference to skill file ✅
-# Skill file: Contains guidance + reference to neuron ✅
+# Skill file: Contains guidance + reference to agent ✅
 # No circular references ✅
 # No content duplication ✅
 ```
@@ -126,12 +126,12 @@ From wish Group D requirements:
   - grep validates all sections exist in learn.md
   - No content loss detected
   - Skill file provides high-level guidance
-  - Neuron file contains complete implementation
+  - Agent file contains complete implementation
 
-- [x] **Architecture correct:** Skill → neuron hierarchy ✅
+- [x] **Architecture correct:** Skill → agent hierarchy ✅
   - AGENTS.md loads skill via @
   - Skill provides recognition patterns
-  - Neuron contains complete implementation
+  - Agent contains complete implementation
   - No circular references
 
 ---
@@ -141,7 +141,7 @@ From wish Group D requirements:
 **Read-only verification:**
 - `/home/namastex/workspace/automagik-genie/AGENTS.md` (769 lines)
 - `/home/namastex/workspace/automagik-genie/.genie/agents/code/skills/meta-learn-protocol.md` (59 lines)
-- `/home/namastex/workspace/automagik-genie/.genie/agents/neurons/learn.md` (904 lines)
+- `/home/namastex/workspace/automagik-genie/.genie/agents/learn.md` (904 lines)
 
 **No modifications made** - work already complete.
 
@@ -158,14 +158,14 @@ wc -l AGENTS.md
 
 # Reference validation
 grep "meta-learn-protocol" AGENTS.md
-# Output: 36:@.genie/agents/code/skills/meta-learn-protocol.md
+# Output: 36:@.genie/skills/meta-learn.md
 
-# Neuron file check
-wc -l .genie/agents/neurons/learn.md
-# Output: 904 .genie/agents/neurons/learn.md
+# Agent file check
+wc -l .genie/agents/learn.md
+# Output: 904 .genie/agents/learn.md
 
 # Content validation
-grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/neurons/learn.md | wc -l
+grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/learn.md | wc -l
 # Output: Multiple matches (all sections present)
 ```
 
@@ -179,8 +179,8 @@ grep -E "Teaching Input|Surgical Edit|Absorption|Meta-Learn" .genie/agents/neuro
 
 **Status:**
 - AGENTS.md: 769 lines (on track toward ≤500 line target)
-- Meta-learning patterns: Successfully extracted to learn.md neuron
-- Architecture: Correct @ reference pattern (skill → neuron)
+- Meta-learning patterns: Successfully extracted to learn.md agent
+- Architecture: Correct @ reference pattern (skill → agent)
 - Knowledge: 100% preserved, no loss detected
 
 **Next steps:**

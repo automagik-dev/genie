@@ -223,7 +223,7 @@ version: '1.0.0'  // Hardcoded, stale
 ```
 Found 26 available agents:
 
-**neurons:**
+**agents:**
 ...
 ```
 
@@ -252,7 +252,7 @@ Genie MCP v2.4.0-rc.2
 
 Found 26 available agents:
 
-**neurons:**
+**agents:**
 ...
 ```
 

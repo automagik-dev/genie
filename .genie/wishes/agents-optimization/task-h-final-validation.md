@@ -17,7 +17,7 @@
 
 **Current state:**
 - AGENTS.md: ~1425 lines (after Task F, before final condensing)
-- All sections extracted to neurons/docs
+- All sections extracted to agents/docs
 - Custom overrides absorbed
 
 **Dependencies:**
@@ -45,13 +45,13 @@
 
    # Architectural Foundations (~150 lines)
    ## Genie Loading Architecture (critical)
-   ## Neuron Delegation Hierarchy (critical)
+   ## Agent Invocation Hierarchy (critical)
 
    # Natural Flow Protocol (~20 lines summary)
-   @.genie/agents/neurons/plan.md
-   @.genie/agents/genie/neurons/wish/wish.md
-   @.genie/agents/neurons/forge.md
-   @.genie/agents/genie/neurons/review/review.md
+   @.genie/code/agents/plan.md
+   @.genie/agents/genie/agents/wish/wish.md
+   @.genie/code/agents/forge.md
+   @.genie/agents/genie/agents/review/review.md
 
    # Universal Workflow Architecture (~20 lines summary)
    # Critical Behavioral Overrides (~150 lines)
@@ -62,7 +62,7 @@
 
    # Agent Playbook (~80 lines)
    - Identity & Tone (concise)
-   - @ references to neurons for patterns
+   - @ references to agents for patterns
 
    # File/Naming Rules (~30 lines)
    ```
@@ -112,7 +112,7 @@ done
 ```bash
 # List agents (should not error)
 # Note: May fail due to Bug #101, document if so
-# Expected: Shows all neurons successfully registered
+# Expected: Shows all agents successfully registered
 ```
 
 **Build/test validation:**

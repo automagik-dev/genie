@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listAgents = listAgents;
+exports.listCollectives = listCollectives;
 exports.resolveAgentIdentifier = resolveAgentIdentifier;
 exports.agentExists = agentExists;
 exports.loadAgentSpec = loadAgentSpec;
@@ -37,42 +38,131 @@ const fallbackParseFrontMatter = (raw) => {
     });
     return meta;
 };
-// Resolve npm package location for core agents
-const getPackageAgentsDir = () => {
+const COLLECTIVE_MARKER = 'AGENTS.md';
+const AGENT_DIRECTORY_NAME = 'agents';
+function realpathOrNull(target) {
     try {
-        // Resolve from compiled dist location: dist/ -> package root
-        const packageRoot = path_1.default.resolve(__dirname, '../../../..');
-        const agentsDir = path_1.default.join(packageRoot, '.genie', 'agents');
-        if (fs_1.default.existsSync(agentsDir)) {
-            return agentsDir;
-        }
-        return null;
+        return fs_1.default.realpathSync(target);
     }
     catch {
         return null;
     }
-};
-const resolveAgentPath = (id) => {
-    const normalized = id.replace(/\\/g, '/');
-    const candidates = new Set([normalized]);
-    if (!normalized.includes('/')) {
-        ['core', 'qa'].forEach((prefix) => {
-            candidates.add(`${prefix}/${normalized}`);
+}
+function toAgentPathSegments(id) {
+    if (!id)
+        return null;
+    const segments = id
+        .split('/')
+        .map((segment) => segment.trim())
+        .filter(Boolean);
+    if (!segments.length)
+        return null;
+    if (segments.some((segment) => segment === '.' || segment === '..')) {
+        return null;
+    }
+    return segments;
+}
+function discoverCollectiveDirectories(genieRoot, maxDepth = 1) {
+    const discovered = new Map();
+    if (!fs_1.default.existsSync(genieRoot) || !fs_1.default.statSync(genieRoot).isDirectory()) {
+        return [];
+    }
+    const queue = [{ dir: genieRoot, depth: 0 }];
+    while (queue.length) {
+        const { dir, depth } = queue.shift();
+        const markerPath = path_1.default.join(dir, COLLECTIVE_MARKER);
+        if (fs_1.default.existsSync(markerPath)) {
+            const resolvedRoot = realpathOrNull(dir) ?? path_1.default.resolve(dir);
+            const relative = path_1.default.relative(genieRoot, resolvedRoot);
+            const segments = relative.split(path_1.default.sep).filter(Boolean);
+            const collective = segments.length ? segments.join('/') : 'root';
+            let agentsDir = null;
+            const candidateAgentsDir = path_1.default.join(dir, AGENT_DIRECTORY_NAME);
+            if (fs_1.default.existsSync(candidateAgentsDir) && fs_1.default.statSync(candidateAgentsDir).isDirectory()) {
+                agentsDir = realpathOrNull(candidateAgentsDir) ?? path_1.default.resolve(candidateAgentsDir);
+            }
+            if (!discovered.has(resolvedRoot)) {
+                discovered.set(resolvedRoot, { collective, root: resolvedRoot, agentsDir });
+            }
+            // Do not traverse beyond located collectives; they manage their own hierarchy
+        }
+        if (depth >= maxDepth)
+            continue;
+        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
+        entries.forEach((entry) => {
+            if (!entry.isDirectory())
+                return;
+            if (entry.name.startsWith('.'))
+                return;
+            const nextDir = path_1.default.join(dir, entry.name);
+            queue.push({ dir: nextDir, depth: depth + 1 });
         });
     }
-    // Check local .genie/agents first (user project - takes precedence)
-    for (const candidate of candidates) {
-        const file = path_1.default.join('.genie', 'agents', `${candidate}.md`);
-        if (fs_1.default.existsSync(file))
-            return candidate;
+    return Array.from(discovered.values());
+}
+function getLocalCollectives() {
+    const dirs = new Map();
+    const genieRoot = path_1.default.join(process.cwd(), '.genie');
+    discoverCollectiveDirectories(genieRoot, 2).forEach((info) => {
+        dirs.set(info.root, info);
+    });
+    return Array.from(dirs.values());
+}
+function findAgentFile(id, collectives) {
+    const segments = toAgentPathSegments(id);
+    if (!segments)
+        return null;
+    for (const info of collectives) {
+        if (!info.agentsDir)
+            continue;
+        const candidateSegments = [];
+        candidateSegments.push(segments);
+        if (segments.length > 1 && segments[0] === info.collective) {
+            candidateSegments.push(segments.slice(1));
+            if (segments[1] === 'agents') {
+                candidateSegments.push(segments.slice(2));
+            }
+        }
+        if (segments[0] === 'agents') {
+            candidateSegments.push(segments.slice(1));
+        }
+        const seen = new Set();
+        for (const candidate of candidateSegments) {
+            if (!candidate.length)
+                continue;
+            const key = candidate.join('/');
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            const filePath = path_1.default.join(info.agentsDir, ...candidate) + '.md';
+            if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isFile()) {
+                const relativeId = candidate.join('/').replace(/\\/g, '/');
+                return { path: filePath, collective: info.collective, relativeId };
+            }
+        }
     }
-    // Fallback to npm package location (core agents)
-    const packageAgentsDir = getPackageAgentsDir();
-    if (packageAgentsDir) {
-        for (const candidate of candidates) {
-            const file = path_1.default.join(packageAgentsDir, `${candidate}.md`);
-            if (fs_1.default.existsSync(file))
-                return candidate;
+    return null;
+}
+const resolveAgentPath = (id) => {
+    const normalized = id.replace(/\\/g, '/');
+    const collectives = getLocalCollectives().filter(info => Boolean(info.agentsDir));
+    const candidates = new Set([normalized]);
+    if (!normalized.includes('/')) {
+        collectives
+            .map(info => info.collective)
+            .filter((name) => Boolean(name) && name !== 'root')
+            .forEach((collectiveName) => {
+            candidates.add(`${collectiveName}/${normalized}`);
+        });
+    }
+    // Check local collectives first (user project - takes precedence)
+    for (const candidate of candidates) {
+        const found = findAgentFile(candidate, collectives);
+        if (found) {
+            const relativeId = found.relativeId;
+            return found.collective && found.collective !== 'root'
+                ? `${found.collective}/${relativeId}`
+                : relativeId;
         }
     }
     return null;
@@ -82,50 +172,59 @@ const resolveAgentPath = (id) => {
  * Lists all available agent definitions from both local and npm package locations.
  *
  * Recursively scans for .md files, extracts metadata, and filters out hidden/disabled agents.
- * Checks local .genie/agents first (user agents), then npm package (core agents).
+ * Checks local collectives (directories with AGENTS.md + agents/) first, then the packaged core agents.
  *
  * @returns {ListedAgent[]} - Array of agent records with id, label, metadata, and folder path
  */
 function listAgents() {
     const records = [];
     const seenIds = new Set();
-    const visit = (baseDir, relativePath) => {
+    const visit = (baseDir, relativePath, collective) => {
         if (!fs_1.default.existsSync(baseDir))
             return;
         const entries = fs_1.default.readdirSync(baseDir, { withFileTypes: true });
         entries.forEach((entry) => {
             const entryPath = path_1.default.join(baseDir, entry.name);
             if (entry.isDirectory()) {
-                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name);
+                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name, collective);
                 return;
             }
             if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md')
                 return;
             const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
+            const relativeId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
+            const canonicalId = collective && collective !== 'root'
+                ? `${collective}/${relativeId}`.replace(/\\/g, '/')
+                : relativeId.replace(/\\/g, '/');
             // Skip if already seen (local agents override npm package agents)
-            if (seenIds.has(normalizedId))
+            if (seenIds.has(canonicalId))
                 return;
-            seenIds.add(normalizedId);
+            seenIds.add(canonicalId);
             const content = fs_1.default.readFileSync(entryPath, 'utf8');
             const { meta } = extractFrontMatter(content);
             const metaObj = meta || {};
             if (metaObj.hidden === true || metaObj.disabled === true)
                 return;
             // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
+            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(canonicalId);
             const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
-            records.push({ id: normalizedId, displayId, label, meta: metaObj, folder: displayFolder });
+            records.push({
+                id: canonicalId,
+                displayId,
+                label,
+                meta: metaObj,
+                folder: displayFolder,
+                collective: collective ?? null
+            });
         });
     };
     // Visit local agents first (user project)
-    visit('.genie/agents', null);
-    // Visit npm package agents second (core agents)
-    const packageAgentsDir = getPackageAgentsDir();
-    if (packageAgentsDir) {
-        visit(packageAgentsDir, null);
-    }
+    const collectives = getLocalCollectives().filter(info => Boolean(info.agentsDir));
+    collectives.forEach((info) => visit(info.agentsDir, null, info.collective));
     return records;
+}
+function listCollectives() {
+    return getLocalCollectives();
 }
 /**
  * Resolves agent identifier to canonical agent path.
@@ -185,7 +284,7 @@ function agentExists(id) {
 }
 /**
  * Loads agent specification from markdown file with frontmatter metadata.
- * Checks local .genie/agents first, then npm package location.
+ * Checks local collectives first, then npm package location.
  *
  * @param {string} name - Agent name/path (with or without .md extension)
  * @returns {AgentSpec} - Object containing metadata and instructions
@@ -206,32 +305,17 @@ function loadAgentSpec(name) {
             throw new Error(`❌ Agent '${name}' not found`);
         }
     }
-    // Try local .genie/agents first
-    let agentPath = path_1.default.join('.genie', 'agents', `${normalized}.md`);
-    let content;
-    if (fs_1.default.existsSync(agentPath)) {
-        content = fs_1.default.readFileSync(agentPath, 'utf8');
+    const collectives = getLocalCollectives().filter(info => Boolean(info.agentsDir));
+    const fileInfo = findAgentFile(normalized, collectives);
+    if (!fileInfo) {
+        throw new Error(`❌ Agent '${name}' not found`);
     }
-    else {
-        // Fallback to npm package location
-        const packageAgentsDir = getPackageAgentsDir();
-        if (packageAgentsDir) {
-            agentPath = path_1.default.join(packageAgentsDir, `${normalized}.md`);
-            if (fs_1.default.existsSync(agentPath)) {
-                content = fs_1.default.readFileSync(agentPath, 'utf8');
-            }
-            else {
-                throw new Error(`❌ Agent '${name}' not found`);
-            }
-        }
-        else {
-            throw new Error(`❌ Agent '${name}' not found`);
-        }
-    }
+    const content = fs_1.default.readFileSync(fileInfo.path, 'utf8');
     const { meta, body } = extractFrontMatter(content);
     return {
         meta,
-        instructions: body.replace(/^(\r?\n)+/, '')
+        instructions: body.replace(/^(\r?\n)+/, ''),
+        filePath: fileInfo.path
     };
 }
 /**

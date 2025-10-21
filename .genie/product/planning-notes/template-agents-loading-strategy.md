@@ -12,7 +12,7 @@
 When users run `genie init`, the entire `.genie/agents/` directory is copied to their workspace, including core workflow agents (plan, wish, forge, review, orchestrator, vibe) and all core delivery agents. This violates the architectural vision where:
 
 1. **Core agents** should remain in the NPM package and be loaded automatically by MCP
-2. **Only custom agent overrides** should live in workspace `.genie/custom/`
+2. **No separate custom overrides folder** — project-specific guidance lives inline as "Project Notes" within agents/skills
 3. **Template scaffolding** (standards, product docs, guides) should be copied to workspace
 
 **Current Behavior:**
@@ -22,8 +22,8 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
 
 **Expected Behavior:**
 - Core agents loaded from NPM package location
-- Workspace contains only `.genie/custom/` with project-specific overrides
-- MCP server resolves: NPM core agents + workspace custom agents
+- Workspace contains no `.genie/custom/` folder
+- MCP server resolves: NPM core agents + inline project notes inside agents/skills
 
 ---
 
@@ -37,17 +37,15 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
    - Add `agents` to blacklist (prevents copy)?
    - Create allowlist of folders to copy instead?
 
-3. **Custom Stubs:** Should init create empty `.genie/custom/*.md` stubs?
-   - Pro: Guides users to customization pattern
-   - Con: Clutters fresh installs
+3. **Project Notes Guidance:** Provide guidance on adding "Project Notes" sections in agents/skills instead of creating stubs
 
 4. **Migration Path:** How do existing users upgrade?
    - Do they need to manually remove copied agents?
    - Can we provide a migration script?
 
 5. **Template Content:** What exactly should be in `templates/.genie/`?
-   - Only: custom/, standards/, product/, guides/, state/?
-   - Or: agents/README.md + custom/?
+   - standards/, product/, guides/, state/
+   - No `custom/` directory
 
 ---
 
@@ -57,12 +55,12 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
 
 **Changes:**
 1. Update `.genie/cli/src/lib/paths.ts:16` to add `'agents'` to blacklist
-2. Create `.genie/custom/` stubs in templates/
+2. Remove `custom/` entirely; add docs on "Project Notes" pattern
 3. Update MCP server to load core agents from package location
 
 **Pros:**
 - Minimal code changes
-- Clear separation: package agents vs workspace custom
+- Clear separation: package agents vs workspace docs
 
 **Cons:**
 - Loses `.genie/agents/README.md` in user projects (could be valuable reference)
@@ -72,7 +70,7 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
 
 **Changes:**
 1. Create `templates/.genie/` with only:
-   - `custom/` (empty stubs)
+   - (no `custom/`)
    - `standards/`
    - `product/`
    - `guides/`
@@ -111,32 +109,8 @@ export function getTemplateRelativeBlacklist(): Set<string> {
 }
 ```
 
-### Task 2: Create Custom Stubs in Templates
-**Directory:** `templates/.genie/custom/`
-**Files:** Create empty `.md` files for each core agent that supports customization:
-- `analyze.md`
-- `debug.md`
-- `git-workflow.md`
-- `implementor.md`
-- `tests.md`
-- `polish.md`
-- etc. (see agents README for full list)
-
-**Template Content:**
-```markdown
-# Project Customization: <Agent Name>
-
-<!-- Add project-specific guidance for <agent> here -->
-
-## Commands
-<!-- Preferred commands for this project -->
-
-## Evidence Paths
-<!-- Where to store artifacts -->
-
-## Domain Rules
-<!-- Project-specific constraints -->
-```
+### Task 2: Document Project Notes Pattern
+Provide a short section in AGENTS.md describing how to add "Project Notes" inside agents/skills for repository-specific guidance (no stubs created).
 
 ### Task 3: Verify MCP Agent Resolution
 **File:** `.genie/mcp/src/server.ts`
@@ -147,7 +121,7 @@ export function getTemplateRelativeBlacklist(): Set<string> {
 **Files to Update:**
 - `AGENTS.md` - Note that core agents live in NPM package
 - `` - Architecture diagram
-- Templates `AGENTS.md` - User-facing version explaining customization
+- Templates `AGENTS.md` - User-facing version explaining Project Notes pattern
 
 ### Task 5: Test & Validate
 ```bash
@@ -155,7 +129,7 @@ export function getTemplateRelativeBlacklist(): Set<string> {
 cd /tmp/test-genie-init
 node /path/to/genie.js init --yes
 ls -la .genie/  # Should NOT contain agents/ folder
-ls -la .genie/custom/  # Should contain stub files
+test ! -d .genie/custom/  # custom folder retired
 ```
 
 ---
@@ -163,9 +137,9 @@ ls -la .genie/custom/  # Should contain stub files
 ## Success Criteria
 
 - ✅ `genie init` does NOT copy `.genie/agents/` to user projects
-- ✅ `genie init` DOES create `.genie/custom/` with stubs
+- ✅ No `.genie/custom/` directory created
 - ✅ MCP server loads core agents from NPM package location
-- ✅ Custom agent overrides work (test with one stub)
+- ✅ Project Notes pattern documented and discoverable
 - ✅ Documentation updated to reflect new architecture
 - ✅ No breaking changes to MCP tool signatures
 

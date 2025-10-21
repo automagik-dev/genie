@@ -9,11 +9,11 @@
 
 ## Test Categories
 
-### 1. Universal Neurons Structure (~15 expected)
+### 1. Universal Agents Structure (~15 expected)
 
 **Test Command:**
 ```bash
-ls .genie/agents/neurons/*.md 2>/dev/null | wc -l
+ls .genie/agents/*.md 2>/dev/null | wc -l
 ```
 
 **Expected:** ~15 files
@@ -39,12 +39,12 @@ review.md, risk-audit.md, roadmap.md, socratic.md, vibe.md
 
 ---
 
-### 2. Code-Specific Neurons (~5 flat + git/ expected)
+### 2. Code-Specific Agents (~5 flat + git/ expected)
 
 **Test Command:**
 ```bash
-ls .genie/agents/code/neurons/*.md 2>/dev/null | wc -l
-ls -d .genie/agents/code/neurons/git 2>/dev/null | wc -l
+ls .genie/agents/code/agents/*.md 2>/dev/null | wc -l
+ls -d .genie/agents/code/agents/git 2>/dev/null | wc -l
 ```
 
 **Expected:** ~5-9 files + git/ directory
@@ -71,7 +71,7 @@ git/ (directory)
 
 **Test Command:**
 ```bash
-ls .genie/agents/code/neurons/git/workflows/*.md 2>/dev/null | wc -l
+ls .genie/agents/code/agents/git/workflows/*.md 2>/dev/null | wc -l
 ```
 
 **Expected:** 3 files
@@ -85,11 +85,11 @@ issue.md, pr.md, report.md
 
 ---
 
-### 4. Create-Specific Neurons (1 expected)
+### 4. Create-Specific Agents (1 expected)
 
 **Test Command:**
 ```bash
-ls .genie/agents/create/neurons/*.md 2>/dev/null | wc -l
+ls .genie/agents/create/agents/*.md 2>/dev/null | wc -l
 ```
 
 **Expected:** 1 file
@@ -119,10 +119,10 @@ wish.md
 ```javascript
 const tests = [
   ['code/code', '🧞 Starting code orchestrator'],
-  ['neurons/plan', '🧞 Starting neuron: plan'],
-  ['code/neurons/implementor', '🧞 Starting code neuron: implementor'],
-  ['code/neurons/git/workflows/issue', '🧞 Starting git workflow: issue'],
-  ['create/neurons/wish', '🧞 Starting create neuron: wish']
+  ['agents/plan', '🧞 Starting agent: plan'],
+  ['code/agents/implementor', '🧞 Starting code agent: implementor'],
+  ['code/agents/git/workflows/issue', '🧞 Starting git workflow: issue'],
+  ['create/agents/wish', '🧞 Starting create agent: wish']
 ];
 ```
 
@@ -131,7 +131,7 @@ const tests = [
 **Implementation:**
 - Function: `getSemanticDisplayMessage()` in display-transform.ts
 - Integration: run.ts updated to use semantic messages
-- Coverage: All neuron types, workflows, and orchestrators
+- Coverage: All agent types, workflows, and orchestrators
 
 ---
 
@@ -143,22 +143,22 @@ genie list agents
 ```
 
 **Expected:** All agents discoverable with correct display names
-**Actual:** 25 agents discovered across neurons/, workflows/, and neurons/modes/
+**Actual:** 25 agents discovered across agents/, workflows/, and agents/modes/
 **Status:** ✅ PASS
 
 **Sample Output:**
 ```
-### neurons
-- neurons/commit: Core commit advisory template
-- neurons/git: Complete Git/GitHub workflow management
-- neurons/implementor: End-to-end feature implementation
-- neurons/install: Install Genie template and CLI setup
-- neurons/learn: Meta-learning agent
+### agents
+- agents/commit: Core commit advisory template
+- agents/git: Complete Git/GitHub workflow management
+- agents/implementor: End-to-end feature implementation
+- agents/install: Install Genie template and CLI setup
+- agents/learn: Meta-learning agent
 ...
 
-### neurons/modes
-- neurons/modes/analyze: System analysis and investigations
-- neurons/modes/audit: Risk assessment and security audit
+### agents/modes
+- agents/modes/analyze: System analysis and investigations
+- agents/modes/audit: Risk assessment and security audit
 ...
 
 ### workflows
@@ -208,11 +208,11 @@ pnpm run build
 
 | Case | Input | Expected Behavior | Status |
 |------|-------|-------------------|--------|
-| Universal neuron with subdirectory | neurons/audit/ | audit/ directory preserved for workflows | ✅ PASS |
-| Git neuron parent | code/neurons/git/git.md | Resolves correctly | ✅ PASS |
-| Git workflow | code/neurons/git/workflows/issue.md | Displays as "git workflow: issue" | ✅ PASS |
-| Template override | code/neurons/wish.md vs create/neurons/wish.md | Both exist, template-specific | ✅ PASS |
-| QA workflows | neurons/qa/workflows/*.md | 8 QA workflows preserved | ✅ PASS |
+| Universal agent with subdirectory | agents/audit/ | audit/ directory preserved for workflows | ✅ PASS |
+| Git agent parent | code/agents/git/git.md | Resolves correctly | ✅ PASS |
+| Git workflow | code/agents/git/workflows/issue.md | Displays as "git workflow: issue" | ✅ PASS |
+| Template override | code/agents/wish.md vs create/agents/wish.md | Both exist, template-specific | ✅ PASS |
+| QA workflows | agents/qa/workflows/*.md | 8 QA workflows preserved | ✅ PASS |
 
 ---
 
@@ -233,27 +233,27 @@ pnpm run build
 
 ## Architecture Validation
 
-### Universal Neurons ✅
+### Universal Agents ✅
 - ✅ Shared across templates (no duplication)
-- ✅ Flat structure in neurons/
+- ✅ Flat structure in agents/
 - ✅ 21 files (exceeds target of ~15)
 - ✅ Proper classification (orchestration, strategic, meta-learning)
 
-### Template-Specific Neurons ✅
-- ✅ Code neurons: 10 files in code/neurons/
-- ✅ Create neurons: 1 file in create/neurons/
+### Template-Specific Agents ✅
+- ✅ Code agents: 10 files in code/agents/
+- ✅ Create agents: 1 file in create/agents/
 - ✅ Only when behavior differs
 - ✅ Template overrides work (wish.md in both templates)
 
 ### Resolution Logic ✅
 - ✅ Template-specific checked first
-- ✅ Falls back to universal (../neurons/)
+- ✅ Falls back to universal (../agents/)
 - ✅ Scalable for future templates
 
 ### Display Output ✅
-- ✅ Universal neurons: "Starting neuron: X"
-- ✅ Code neurons: "Starting code neuron: X"
-- ✅ Create neurons: "Starting create neuron: X"
+- ✅ Universal agents: "Starting agent: X"
+- ✅ Code agents: "Starting code agent: X"
+- ✅ Create agents: "Starting create agent: X"
 - ✅ Git workflows: "Starting git workflow: X"
 - ✅ Orchestrators: "Starting code orchestrator"
 

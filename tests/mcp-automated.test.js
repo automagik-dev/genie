@@ -229,7 +229,13 @@ async function runTests() {
     const promptsResponse = await sendRequest(server, promptsRequest);
     assert(promptsResponse.result, 'prompts/list response received');
     assert(Array.isArray(promptsResponse.result.prompts), 'Prompts array returned');
-    assert(promptsResponse.result.prompts.length === 4, `4 prompts present (got ${promptsResponse.result.prompts.length})`);
+    // Be resilient to additions: ensure a baseline and core prompts
+    const prompts = promptsResponse.result.prompts;
+    assert(prompts.length >= 4, `At least 4 prompts present (got ${prompts.length})`);
+    const promptNames = prompts.map(p => p.name);
+    ['plan', 'wish', 'forge', 'review'].forEach((name) => {
+      assert(promptNames.includes(name), `Prompt "${name}" exists`);
+    });
 
     // Test 26-27: Error Handling
     console.log('\n[Test 26-27] Error Handling');

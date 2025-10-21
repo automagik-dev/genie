@@ -14,9 +14,9 @@ exports.deepClone = deepClone;
 exports.mergeDeep = mergeDeep;
 exports.resolveAgentIdentifier = resolveAgentIdentifier;
 exports.listAgents = listAgents;
+exports.listCollectives = listCollectives;
 exports.agentExists = agentExists;
 exports.loadAgentSpec = loadAgentSpec;
-exports.extractFrontMatter = extractFrontMatter;
 exports.deriveStartTime = deriveStartTime;
 exports.sanitizeLogFilename = sanitizeLogFilename;
 exports.deriveLogFile = deriveLogFile;
@@ -27,8 +27,8 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const background_1 = require("../../views/background");
-const display_transform_1 = require("../../lib/display-transform");
-const background_manager_1 = require("../../background-manager");
+const constants_1 = require("../../lib/constants");
+const agent_resolver_1 = require("../../lib/agent-resolver");
 function applyStoreMerge(target, next) {
     target.version = next.version;
     target.sessions = next.sessions;
@@ -159,81 +159,30 @@ function resolveAgentIdentifier(input) {
         return 'forge';
     throw new Error(`❌ Agent '${input}' not found. Try 'genie list agents' to see available ids.`);
 }
-// transformDisplayPath imported from ../../lib/display-transform (single source of truth)
 function listAgents() {
-    const baseDir = '.genie/agents';
-    const records = [];
-    if (!fs_1.default.existsSync(baseDir))
-        return records;
-    const visit = (dirPath, relativePath) => {
-        const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
-        entries.forEach((entry) => {
-            const entryPath = path_1.default.join(dirPath, entry.name);
-            if (entry.isDirectory()) {
-                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name);
-                return;
-            }
-            if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md')
-                return;
-            const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
-            const content = fs_1.default.readFileSync(entryPath, 'utf8');
-            const { meta } = extractFrontMatter(content, () => { });
-            const metaObj = meta || {};
-            if (metaObj.hidden === true || metaObj.disabled === true)
-                return;
-            // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
-            const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
-            records.push({ id: normalizedId, displayId, label, meta: metaObj, folder: displayFolder });
-        });
-    };
-    visit(baseDir, null);
-    return records;
+    return (0, agent_resolver_1.listAgents)().map(agent => ({
+        id: agent.id,
+        displayId: agent.displayId,
+        label: agent.label,
+        meta: agent.meta,
+        folder: agent.folder ?? null,
+        collective: agent.collective ?? null
+    }));
+}
+function listCollectives(options) {
+    const all = (0, agent_resolver_1.listCollectives)();
+    if (options?.includeDocOnly)
+        return all;
+    return all.filter(info => Boolean(info.agentsDir));
 }
 function agentExists(id) {
-    if (!id)
-        return false;
-    const normalized = id.replace(/\\/g, '/');
-    const file = path_1.default.join('.genie', 'agents', `${normalized}.md`);
-    return fs_1.default.existsSync(file);
+    return (0, agent_resolver_1.agentExists)(id);
 }
 function loadAgentSpec(ctx, name) {
-    const base = name.endsWith('.md') ? name.slice(0, -3) : name;
-    const agentPath = path_1.default.join('.genie', 'agents', `${base}.md`);
-    if (!fs_1.default.existsSync(agentPath)) {
-        throw new Error(`❌ Agent '${name}' not found in .genie/agents`);
-    }
-    const content = fs_1.default.readFileSync(agentPath, 'utf8');
-    const { meta, body } = extractFrontMatter(content, ctx.recordStartupWarning);
-    return {
-        meta,
-        instructions: body.replace(/^(\r?\n)+/, '')
-    };
-}
-function extractFrontMatter(source, onWarning) {
-    if (!source.startsWith('---')) {
-        return { meta: {}, body: source };
-    }
-    const end = source.indexOf('\n---', 3);
-    if (end === -1) {
-        return { meta: {}, body: source };
-    }
-    const raw = source.slice(3, end).trim();
-    const body = source.slice(end + 4);
-    try {
-        const YAML = require('yaml');
-        const parsed = YAML.parse(raw) || {};
-        return { meta: parsed, body };
-    }
-    catch {
-        onWarning('[genie] YAML module unavailable or failed to parse; front matter metadata ignored.');
-        return { meta: {}, body };
-    }
+    return (0, agent_resolver_1.loadAgentSpec)(name);
 }
 function deriveStartTime() {
-    const { INTERNAL_START_TIME_ENV } = require('../../background-manager');
-    const fromEnv = process.env[INTERNAL_START_TIME_ENV];
+    const fromEnv = process.env[constants_1.INTERNAL_START_TIME_ENV];
     if (!fromEnv)
         return Date.now();
     const parsed = Number(fromEnv);
@@ -256,8 +205,7 @@ function sanitizeLogFilename(agentName) {
     return normalized.length ? normalized : fallback;
 }
 function deriveLogFile(agentName, startTime, paths) {
-    const { INTERNAL_LOG_PATH_ENV } = require('../../background-manager');
-    const envPath = process.env[INTERNAL_LOG_PATH_ENV];
+    const envPath = process.env[constants_1.INTERNAL_LOG_PATH_ENV];
     if (envPath)
         return envPath;
     const filename = `${sanitizeLogFilename(agentName)}-${startTime}.log`;
@@ -269,31 +217,62 @@ async function maybeHandleBackgroundLaunch(ctx, params) {
     if (!parsed.options.background || parsed.options.backgroundRunner) {
         return false;
     }
+    // Check if Forge backend is available
+    const forgeEnabled = process.env.FORGE_BASE_URL || process.env.GENIE_USE_FORGE === 'true';
+    if (forgeEnabled) {
+        // Use Forge executor for background sessions
+        try {
+            const { handleForgeBackgroundLaunch } = require('../../lib/forge-executor');
+            const prompt = params.prompt || '';
+            const handled = await handleForgeBackgroundLaunch({
+                agentName,
+                prompt,
+                config,
+                paths,
+                store,
+                entry,
+                executorKey: params.executorKey,
+                executionMode,
+                startTime
+            });
+            if (handled) {
+                return true;
+            }
+            // If Forge fails, fall through to traditional background launcher
+            process.stdout.write(`⚠️  Forge backend unavailable, using traditional background launcher\n`);
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            process.stdout.write(`⚠️  Forge error: ${message}\n`);
+            process.stdout.write(`⚠️  Falling back to traditional background launcher\n`);
+        }
+    }
+    // Traditional background launcher (fallback)
     const runnerPid = backgroundManager.launch({
         rawArgs: parsed.options.rawArgs,
         startTime,
         logFile,
         backgroundConfig: config.background,
         scriptPath: __filename,
-        env: entry.sessionId ? { [background_manager_1.INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
+        env: entry.sessionId ? { [constants_1.INTERNAL_SESSION_ID_ENV]: entry.sessionId } : undefined
     });
     entry.runnerPid = runnerPid;
     entry.status = 'running';
     entry.background = parsed.options.background;
-    // Use sessionId as key (no temp keys)
-    if (!entry.sessionId) {
-        throw new Error('Session ID must be generated before background launch');
+    // Use name as key (v3 architecture)
+    if (!entry.name) {
+        throw new Error('Session name must be set before background launch');
     }
-    store.sessions[entry.sessionId] = entry;
+    store.sessions[entry.name] = entry;
     await persistStore(ctx, store);
     process.stdout.write(`▸ Launching ${agentName} in background...\n`);
-    process.stdout.write(`▸ Session ID: ${entry.sessionId}\n\n`);
+    process.stdout.write(`▸ Session: ${entry.name}\n\n`);
     process.stdout.write('  View output:\n');
-    process.stdout.write(`    npx automagik-genie view ${entry.sessionId}\n\n`);
+    process.stdout.write(`    npx automagik-genie view ${entry.name}\n\n`);
     process.stdout.write('  Continue conversation:\n');
-    process.stdout.write(`    npx automagik-genie resume ${entry.sessionId} "<your message>"\n\n`);
+    process.stdout.write(`    npx automagik-genie resume ${entry.name} "<your message>"\n\n`);
     process.stdout.write('  Stop session:\n');
-    process.stdout.write(`    npx automagik-genie stop ${entry.sessionId}\n`);
+    process.stdout.write(`    npx automagik-genie stop ${entry.name}\n`);
     return true;
 }
 async function executeRun(ctx, args) {
@@ -324,11 +303,11 @@ async function executeRun(ctx, args) {
     entry.executorPid = proc.pid || null;
     if (runnerPid)
         entry.runnerPid = runnerPid;
-    // Use sessionId as key (no temp keys)
-    if (!entry.sessionId) {
-        throw new Error('Session ID must be generated before execution');
+    // Use name as key (v3 architecture)
+    if (!entry.name) {
+        throw new Error('Session name must be set before execution');
     }
-    store.sessions[entry.sessionId] = entry;
+    store.sessions[entry.name] = entry;
     await persistStore(ctx, store);
     let filteredStdout = null;
     if (proc.stdout) {
@@ -404,7 +383,7 @@ async function executeRun(ctx, args) {
             void ctx.emitView((0, background_1.buildRunCompletionView)({
                 agentName,
                 outcome: 'failure',
-                sessionId: entry.sessionId,
+                sessionName: entry.name,
                 executorKey,
                 model: executorConfig.exec?.model || executorConfig.model || null,
                 permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,
@@ -430,7 +409,7 @@ async function executeRun(ctx, args) {
             const envelope = (0, background_1.buildRunCompletionView)({
                 agentName,
                 outcome,
-                sessionId: entry.sessionId,
+                sessionName: entry.name,
                 executorKey,
                 model: executorConfig.exec?.model || executorConfig.model || null,
                 permissionMode: executorConfig.exec?.permissionMode || executorConfig.permissionMode || null,

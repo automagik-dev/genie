@@ -1,10 +1,10 @@
 # 🧞 ENHANCED BACKUP & UPDATE SYSTEM WISH
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** DRAFT
+**Note:** Referenced file (update.ts) removed in refactoring - preserved for historical context
 **GitHub Issue:** #38 - Enhanced backup & update system with customization preservation
 **Roadmap Item:** INIT-BACKUP-UPDATE – Framework version migration with user customization preservation
 **Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 0/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)
@@ -58,7 +58,7 @@
 ## Context Ledger
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
-| @.genie/cli/src/commands/update.ts:133+ | code | Current backup mechanism (update flow) | implementation |
+| .genie/cli/src/commands/update.ts (removed in refactoring):133+ | code | Current backup mechanism (update flow) | implementation |
 | @.genie/cli/src/commands/init.ts:86-106 | code | Backup mechanism (init flow) | implementation |
 | @.genie/cli/src/lib/fs-utils.ts:64-72 | code | Atomic snapshot implementation | implementation |
 | @.genie/cli/src/commands/rollback.ts | code | Existing rollback command | implementation |
@@ -133,7 +133,7 @@ Current `genie update` command works but **overwrites user customizations**. Thi
 **Goal:** Include `AGENTS.md`, `CLAUDE.md`, and `.claude/` in update backup snapshots
 
 **Surfaces:**
-- @.genie/cli/src/commands/update.ts:133+ – `createBackup()` function (primary target)
+- .genie/cli/src/commands/update.ts (removed in refactoring):133+ – `createBackup()` function (primary target)
 - @.genie/cli/src/commands/init.ts:86-106 – Init backup flow (secondary alignment)
 - @.genie/cli/src/lib/fs-utils.ts:64-72 – `snapshotDirectory()` helper (reuse atomic pattern)
 
@@ -180,7 +180,7 @@ ls -la .genie/backups/<timestamp>/root-docs/
 **Goal:** Integrate `update.md` agent into existing `genie update` command for intelligent merge
 
 **Surfaces:**
-- @.genie/cli/src/commands/update.ts:73-77 – Post-backup, pre-template-copy hook point
+- .genie/cli/src/commands/update.ts (removed in refactoring):73-77 – Post-backup, pre-template-copy hook point
 **Current behavior:**
 ```typescript
 // update.ts:73-77
@@ -313,7 +313,7 @@ genie update --interactive
 
 **Surfaces:**
 - v2.0.0-to-v2.1.0.md – example migration guide
-- @.genie/cli/src/commands/update.ts – instruction loading logic
+- .genie/cli/src/commands/update.ts (removed in refactoring) – instruction loading logic
 
 **Deliverables:**
 1. Create `.genie/updates/` directory structure:

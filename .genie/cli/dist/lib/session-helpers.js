@@ -1,17 +1,10 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordRuntimeWarning = recordRuntimeWarning;
 exports.getRuntimeWarnings = getRuntimeWarnings;
 exports.clearRuntimeWarnings = clearRuntimeWarnings;
 exports.findSessionEntry = findSessionEntry;
 exports.resolveDisplayStatus = resolveDisplayStatus;
-const fs_1 = __importDefault(require("fs"));
-const session_store_1 = require("../session-store");
-const background_manager_1 = __importDefault(require("../background-manager"));
-const backgroundManager = new background_manager_1.default();
 const runtimeWarnings = [];
 /**
  * Records a runtime warning message for later retrieval.
@@ -39,61 +32,33 @@ function clearRuntimeWarnings() {
     runtimeWarnings.length = 0;
 }
 /**
- * Finds a session entry by session ID across all agents.
+ * Finds a session entry by name.
  *
- * First searches by sessionId field, then scans log files for session_id markers.
- * Updates session metadata and saves if found in logs.
+ * In v3, sessions are keyed by name. This does a direct lookup.
  *
- * @param {SessionStore} store - Session store containing agent sessions
- * @param {string} sessionId - Session identifier to search for
- * @param {Required<ConfigPaths>} paths - Configuration paths for saving updates
+ * @param {SessionStore} store - Session store containing sessions (name-keyed in v3)
+ * @param {string} name - Session name to search for
+ * @param {Required<ConfigPaths>} paths - Configuration paths (unused in v3)
  * @returns {{ agentName: string; entry: SessionEntry } | null} - Found session or null
  *
  * @example
- * const result = findSessionEntry(store, 'abc-123', paths);
+ * const result = findSessionEntry(store, '115-session-architecture', paths);
  * if (result) {
  *   console.log(`Found session for agent: ${result.agentName}`);
  * }
  */
-function findSessionEntry(store, sessionIdOrName, paths) {
-    if (!sessionIdOrName || typeof sessionIdOrName !== 'string')
+function findSessionEntry(store, name, paths) {
+    if (!name || typeof name !== 'string')
         return null;
-    const trimmed = sessionIdOrName.trim();
+    const trimmed = name.trim();
     if (!trimmed)
         return null;
-    // 1. Direct lookup by sessionId (UUID) or session key
-    for (const [sid, entry] of Object.entries(store.sessions || {})) {
-        if (entry && (entry.sessionId === trimmed || sid === trimmed)) {
-            return { agentName: entry.agent, entry };
-        }
+    // v3: Direct lookup by name (sessions are name-keyed)
+    const entry = store.sessions[trimmed];
+    if (entry) {
+        return { agentName: entry.agent, entry };
     }
-    // 2. Lookup by friendly name
-    for (const [sid, entry] of Object.entries(store.sessions || {})) {
-        if (entry && entry.name === trimmed) {
-            return { agentName: entry.agent, entry };
-        }
-    }
-    // 3. Fallback: scan log files for session_id markers
-    for (const [sid, entry] of Object.entries(store.sessions || {})) {
-        const logFile = entry.logFile;
-        if (!logFile || !fs_1.default.existsSync(logFile))
-            continue;
-        try {
-            const content = fs_1.default.readFileSync(logFile, 'utf8');
-            const marker = new RegExp(`"session_id":"${trimmed}"`);
-            if (marker.test(content)) {
-                // Update session entry with discovered sessionId (but keep same key)
-                entry.sessionId = trimmed;
-                entry.lastUsed = new Date().toISOString();
-                (0, session_store_1.saveSessions)(paths, store);
-                return { agentName: entry.agent, entry };
-            }
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            recordRuntimeWarning(`[genie] Failed to scan log ${logFile}: ${message}`);
-        }
-    }
+    // Not found - provide helpful error message
     return null;
 }
 /**
@@ -113,26 +78,5 @@ function findSessionEntry(store, sessionIdOrName, paths) {
  * // Returns: 'failed (1)' if exit code non-zero
  */
 function resolveDisplayStatus(entry) {
-    const baseStatus = entry.status || 'unknown';
-    const executorRunning = backgroundManager.isAlive(entry.executorPid);
-    const runnerRunning = backgroundManager.isAlive(entry.runnerPid);
-    if (baseStatus === 'running') {
-        if (executorRunning)
-            return 'running';
-        if (!executorRunning && runnerRunning)
-            return 'pending-completion';
-        if (entry.exitCode === 0)
-            return 'completed';
-        if (typeof entry.exitCode === 'number' && entry.exitCode !== 0) {
-            return `failed (${entry.exitCode})`;
-        }
-        return 'stopped';
-    }
-    if (baseStatus === 'completed' || baseStatus === 'failed') {
-        return baseStatus;
-    }
-    if (runnerRunning || executorRunning) {
-        return 'running';
-    }
-    return baseStatus;
+    return entry.status || 'unknown';
 }

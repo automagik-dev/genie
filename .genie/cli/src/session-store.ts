@@ -1,29 +1,33 @@
 import fs from 'fs';
 
+/**
+ * Session entry metadata
+ *
+ * Forge Integration (Wish #120-A):
+ * - When `executor === 'forge'`, `sessionId` is the Forge task attempt ID
+ * - Forge sessions use Forge backend for all operations (create, resume, stop, view)
+ * - Traditional sessions use background-launcher.ts with PID-based management
+ * - Both types coexist in the same session store (backwards compatibility)
+ */
 export interface SessionEntry {
   agent: string;
   name?: string;  // Friendly session name (user-provided or auto-generated)
   preset?: string;
   mode?: string;
-  logFile?: string;
-  lastPrompt?: string;
+  executor?: string;
+  executorVariant?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+  status?: string;
   created?: string;
   lastUsed?: string;
-  status?: string;
+  lastPrompt?: string;
   background?: boolean;
-  runnerPid?: number | null;
-  executor?: string;
-  executorPid?: number | null;
-  exitCode?: number | null;
-  signal?: string | null;
-  startTime?: string;
-  sessionId?: string | null;
-  [key: string]: unknown;
 }
 
 export interface SessionStore {
   version: number;
-  sessions: Record<string, SessionEntry>; // keyed by sessionId, not agent name
+  sessions: Record<string, SessionEntry>; // keyed by name (v3) or sessionId (v2)
   // Legacy format compatibility (will be migrated on load)
   agents?: Record<string, SessionEntry>;
 }
@@ -54,7 +58,12 @@ export function generateSessionName(agentName: string): string {
   const timestamp = now.toISOString()
     .replace(/[-:T]/g, '')
     .slice(2, 12); // YYMMDDHHmm
-  return `${agentName}-${timestamp}`;
+  const slug = agentName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'session';
+  return `${slug}-${timestamp}`;
 }
 
 export function loadSessions(
@@ -69,7 +78,7 @@ export function loadSessions(
   if (storePath && fs.existsSync(storePath)) {
     store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
   } else {
-    store = { version: 2, sessions: {} };
+    store = { version: 3, sessions: {} };
   }
 
   const defaultExecutor = resolveDefaultExecutor(config, defaults);
@@ -99,7 +108,7 @@ function normalizeSessionStore(
   callbacks: { onWarning?: (message: string) => void } = {}
 ): SessionStore {
   if (!data || typeof data !== 'object') {
-    return { version: 2, sessions: {} };
+    return { version: 3, sessions: {} };
   }
 
   const incoming = data as Partial<SessionStore> & {
@@ -107,45 +116,84 @@ function normalizeSessionStore(
     sessions?: Record<string, SessionEntry>;
   };
 
-  // Version 2 format (sessions keyed by sessionId)
-  if (incoming.sessions) {
+  // Version 3 format (sessions keyed by name) - current
+  if (incoming.version === 3 && incoming.sessions) {
     return {
-      version: 2,
+      version: 3,
       sessions: incoming.sessions
     };
   }
 
-  // Version 1 format (agents keyed by agent name) - MIGRATE
-  if (incoming.agents) {
-    callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v2 (sessionId-keyed)');
+  // Version 2 format (sessions keyed by sessionId) - MIGRATE to v3
+  if (incoming.version === 2 && incoming.sessions) {
+    callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
 
     const sessions: Record<string, SessionEntry> = {};
-    Object.entries(incoming.agents).forEach(([agentName, entry]) => {
-      // Skip metadata fields (version, sessions, executor) that got mixed into agents during corruption
-      if (typeof entry !== 'object' || entry === null) return;
-      if (agentName === 'version' || agentName === 'sessions' || agentName === 'executor') return;
+    Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+      if (!entry || typeof entry !== 'object') return;
 
-      // Skip entries that don't look like sessions (no agent or sessionId field)
-      if (!entry.agent && !entry.sessionId) return;
-
-      // Generate sessionId if missing (fallback to agent name for old entries)
-      const sessionId = entry.sessionId || `legacy-${agentName}-${Date.now()}`;
-      sessions[sessionId] = {
+      // Use existing name or generate one from sessionId
+      const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
+      sessions[name] = {
         ...entry,
-        agent: entry.agent || agentName,
-        sessionId
+        name
       };
     });
 
     return {
-      version: 2,
+      version: 3,
+      sessions
+    };
+  }
+
+  // Version 2 without explicit version number
+  if (incoming.sessions && !incoming.version) {
+    callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
+
+    const sessions: Record<string, SessionEntry> = {};
+    Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+      if (!entry || typeof entry !== 'object') return;
+
+      const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
+      sessions[name] = {
+        ...entry,
+        name
+      };
+    });
+
+    return {
+      version: 3,
+      sessions
+    };
+  }
+
+  // Version 1 format (agents keyed by agent name) - MIGRATE to v3
+  if (incoming.agents) {
+    callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v3 (name-keyed)');
+
+    const sessions: Record<string, SessionEntry> = {};
+    Object.entries(incoming.agents).forEach(([agentName, entry]) => {
+      if (typeof entry !== 'object' || entry === null) return;
+      if (agentName === 'version' || agentName === 'sessions' || agentName === 'executor') return;
+      if (!entry.agent && !entry.sessionId) return;
+
+      const name = entry.name || `migrated-${agentName}`;
+      sessions[name] = {
+        ...entry,
+        agent: entry.agent || agentName,
+        name
+      };
+    });
+
+    return {
+      version: 3,
       sessions
     };
   }
 
   // Empty or malformed
   return {
-    version: 2,
+    version: 3,
     sessions: {}
   };
 }
@@ -171,7 +219,7 @@ function resolveDefaultExecutor(config: SessionLoadConfig = {}, defaults: Sessio
   return (
     config.defaults?.executor ||
     defaults.defaults?.executor ||
-    'codex'
+    'opencode'
   );
 }
 

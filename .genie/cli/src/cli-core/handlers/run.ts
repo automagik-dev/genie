@@ -1,21 +1,9 @@
-import path from 'path';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
-import type { SessionEntry } from '../../session-store';
-import {
-  resolveAgentIdentifier,
-  loadAgentSpec,
-  resolveExecutorKey,
-  requireExecutor,
-  extractExecutorOverrides,
-  buildExecutorConfig,
-  resolveExecutorPaths,
-  deriveStartTime,
-  deriveLogFile,
-  persistStore,
-  maybeHandleBackgroundLaunch,
-  executeRun
-} from './shared';
+import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
+import { generateSessionName } from '../../session-store';
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -26,116 +14,137 @@ export function createRunHandler(ctx: HandlerContext): Handler {
 
     const prompt = promptParts.join(' ').trim();
     const resolvedAgentName = resolveAgentIdentifier(agentName);
-    const agentSpec = loadAgentSpec(ctx, resolvedAgentName);
-    const agentMeta = agentSpec.meta || {};
-    const agentGenie = agentMeta.genie || {};
+    const agentSpec = loadAgentSpec(resolvedAgentName);
+    const agentGenie = agentSpec.meta?.genie || {};
 
-    if (!parsed.options.backgroundExplicit && typeof agentGenie.background === 'boolean') {
-      parsed.options.background = agentGenie.background;
+    const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
+
+    const forgeExecutor = createForgeExecutor();
+    try {
+      await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
+      console.error(`[DEBUG] syncProfiles error:`, error);
+      throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}\nReason: ${reason}`);
     }
 
-    const defaultMode = ctx.config.defaults?.executionMode || ctx.config.defaults?.preset || 'default';
-    const agentMode = agentGenie.mode || agentGenie.executionMode || agentGenie.preset;
-    const modeName = typeof agentMode === 'string' && agentMode.trim().length ? agentMode.trim() : defaultMode;
-    const executorKey = agentGenie.executor || resolveExecutorKey(ctx, modeName);
-    const executor = requireExecutor(ctx, executorKey);
-    const executorOverrides = extractExecutorOverrides(ctx, agentGenie, executorKey);
-    const executorConfig = buildExecutorConfig(ctx, modeName, executorKey, executorOverrides);
+    let attemptId: string;
+    try {
+      attemptId = await forgeExecutor.createSession({
+        agentName: resolvedAgentName,
+        prompt,
+        executorKey,
+        executorVariant,
+        executionMode: modeName,
+        model
+      });
+    } catch (error) {
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge session creation failed: ${reason}`);
+      throw new Error(`Forge backend rejected session creation. ${FORGE_RECOVERY_HINT}`);
+    }
 
-    // Debug: log executor config
-    console.error(`[DEBUG run.ts] agentGenie:`, JSON.stringify(agentGenie));
-    console.error(`[DEBUG run.ts] executorOverrides:`, JSON.stringify(executorOverrides));
-    console.error(`[DEBUG run.ts] executorConfig:`, JSON.stringify(executorConfig));
+    const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
+    const now = new Date().toISOString();
 
-    const executorPaths = resolveExecutorPaths(ctx.paths, executorKey);
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-
-    const startTime = deriveStartTime();
-    const logFile = deriveLogFile(resolvedAgentName, startTime, ctx.paths);
-
-    // Import generateSessionName and generate/reuse UUID
-    const { generateSessionName } = require('../../session-store');
-    const uuidv4 = () => {
-      try {
-        const { randomUUID } = require('crypto');
-        if (typeof randomUUID === 'function') return randomUUID();
-      } catch {}
-      const { randomBytes } = require('crypto');
-      return randomBytes(16).toString('hex');
-    };
-    const { INTERNAL_SESSION_ID_ENV } = require('../../background-manager');
-
-    // If running as background runner, reuse propagated sessionId to avoid duplicates
-    const envSessionId = process.env[INTERNAL_SESSION_ID_ENV];
-    const sessionId = (parsed.options.backgroundRunner && typeof envSessionId === 'string' && envSessionId.trim().length)
-      ? envSessionId.trim()
-      : uuidv4();
-
-    const entry: SessionEntry = {
+    store.sessions[sessionName] = {
       agent: resolvedAgentName,
-      name: parsed.options.name || generateSessionName(resolvedAgentName),
-      preset: modeName,
-      mode: modeName,
-      logFile,
-      lastPrompt: prompt.slice(0, 200),
-      created: new Date().toISOString(),
-      lastUsed: new Date().toISOString(),
-      status: 'starting',
-      background: parsed.options.background,
-      runnerPid: parsed.options.backgroundRunner ? process.pid : null,
+      name: sessionName,
       executor: executorKey,
-      executorPid: null,
-      exitCode: null,
-      signal: null,
-      startTime: new Date(startTime).toISOString(),
-      sessionId: sessionId // UUID assigned immediately
+      executorVariant,
+      model: model || undefined,
+      status: 'running',
+      created: now,
+      lastUsed: now,
+      lastPrompt: prompt.slice(0, 200),
+      mode: modeName,
+      sessionId: attemptId,
+      background: parsed.options.background
     };
+    await ctx.sessionService.save(store);
 
-    // Don't persist yet - wait for sessionId extraction
-
-    const handledBackground = await maybeHandleBackgroundLaunch(ctx, {
-      parsed,
-      config: ctx.config,
-      paths: ctx.paths,
-      store,
-      entry,
-      agentName: resolvedAgentName,
-      executorKey,
-      executionMode: modeName,
-      startTime,
-      logFile,
-      allowResume: true
-    });
-
-    if (handledBackground) {
-      return;
-    }
-
-    const agentPath = path.join('.genie', 'agents', `${resolvedAgentName}.md`);
-    const command = executor.buildRunCommand({
-      config: executorConfig,
-      agentPath,
-      prompt
-    });
-
-    await executeRun(ctx, {
-      agentName,
-      command,
-      executorKey,
-      executor,
-      executorConfig,
-      executorPaths,
-      prompt,
-      store,
-      entry,
-      paths: ctx.paths,
-      config: ctx.config,
-      startTime,
-      logFile,
-      background: parsed.options.background,
-      runnerPid: parsed.options.backgroundRunner ? process.pid : null,
-      cliOptions: parsed.options,
-      executionMode: modeName
-    });
+    const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
+    const modelSuffix = model ? `, model=${model}` : '';
+    process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);
+    process.stdout.write(`  Session name: ${sessionName}\n`);
+    process.stdout.write(`  View: genie view ${sessionName}\n`);
   };
+}
+
+function resolveExecutionSelection(
+  config: HandlerContext['config'],
+  parsed: ParsedCommand,
+  agentGenie: Record<string, any>
+): { executorKey: string; executorVariant: string; model?: string; modeName: string } {
+  let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
+  let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
+  let model: string | undefined =
+    typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
+
+  let modeName = 'default';
+  if (typeof config.defaults?.executionMode === 'string' && config.defaults.executionMode.trim().length) {
+    modeName = config.defaults.executionMode.trim();
+  }
+  if (typeof agentGenie.executionMode === 'string' && agentGenie.executionMode.trim().length) {
+    modeName = agentGenie.executionMode.trim();
+  }
+
+  if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
+    executor = agentGenie.executor.trim().toLowerCase();
+  }
+
+  const agentVariant =
+    agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
+  if (typeof agentVariant === 'string' && agentVariant.trim().length) {
+    variant = agentVariant.trim().toUpperCase();
+  }
+
+  if (typeof agentGenie.model === 'string' && agentGenie.model.trim().length) {
+    model = agentGenie.model.trim();
+  }
+
+  if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
+    executor = parsed.options.executor.trim().toLowerCase();
+  }
+
+  if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
+    model = parsed.options.model.trim();
+    const matchedVariant = findVariantForModel(config, executor, model);
+    if (matchedVariant) {
+      variant = matchedVariant;
+    }
+  }
+
+  if (!variant.length) variant = 'DEFAULT';
+
+  return { executorKey: executor, executorVariant: variant, model, modeName };
+}
+
+function findVariantForModel(
+  config: HandlerContext['config'],
+  executorKey: string,
+  model: string
+): string | null {
+  const executors = config.forge?.executors;
+  if (!executors) return null;
+
+  const normalizedExecutor = executorKey.trim().toUpperCase();
+  const executorProfiles = executors[normalizedExecutor];
+  if (!executorProfiles || typeof executorProfiles !== 'object') return null;
+
+  const desiredModel = model.trim();
+  for (const [variantName, profileSpec] of Object.entries(executorProfiles)) {
+    if (!profileSpec || typeof profileSpec !== 'object') continue;
+    for (const profileKey of Object.keys(profileSpec)) {
+      const profileConfig: any = (profileSpec as any)[profileKey];
+      if (profileConfig && typeof profileConfig === 'object' && typeof profileConfig.model === 'string') {
+        if (profileConfig.model.trim() === desiredModel) {
+          return variantName.trim().toUpperCase();
+        }
+      }
+    }
+  }
+  return null;
 }

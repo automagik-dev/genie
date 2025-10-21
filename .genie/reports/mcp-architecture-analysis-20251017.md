@@ -617,7 +617,7 @@ if (!entry || typeof entry !== 'object') return;
 export function transformDisplayPath(normalizedId: string): TransformResult {
   const parts = normalizedId.split('/');
   const templateFolders = ['code', 'create'];
-  const categoryFolders = ['neurons', 'workflows'];
+  const categoryFolders = ['agents', 'workflows'];
 
   // Step 1: Strip template folder (code/, create/)
   let remaining = parts;
@@ -625,17 +625,17 @@ export function transformDisplayPath(normalizedId: string): TransformResult {
     remaining = remaining.slice(1);
   }
 
-  // Step 2: Strip category folder (neurons/, workflows/)
+  // Step 2: Strip category folder (agents/, workflows/)
   if (categoryFolders.includes(remaining[0])) {
     if (remaining.length === 2) {
-      // Top-level: neurons/plan → plan
+      // Top-level: agents/plan → plan
       return { displayId: remaining[1], displayFolder: null };
     }
     if (remaining.length === 3 && remaining[1] === remaining[2]) {
-      // Parent: neurons/git/git → git
+      // Parent: agents/git/git → git
       return { displayId: remaining[1], displayFolder: null };
     }
-    // Child: neurons/git/issue → git/issue
+    // Child: agents/git/issue → git/issue
     const displayId = remaining.slice(1).join('/');
     const displayFolder = remaining[1];
     return { displayId, displayFolder };
@@ -656,8 +656,8 @@ export function transformDisplayPath(normalizedId: string): TransformResult {
 
 ✅ **STRENGTH:** Parent-child relationship preservation (lines 51-58):
 ```typescript
-// neurons/git/git → git (parent)
-// neurons/git/issue → git/issue (child, folder=git)
+// agents/git/git → git (parent)
+// agents/git/issue → git/issue (child, folder=git)
 ```
 - Folder hierarchy visible in displayFolder field
 
@@ -670,7 +670,7 @@ export function transformDisplayPath(normalizedId: string): TransformResult {
 ⚠️ **LOW:** Hardcoded template/category lists (lines 36-37):
 ```typescript
 const templateFolders = ['code', 'create'];
-const categoryFolders = ['neurons', 'workflows'];
+const categoryFolders = ['agents', 'workflows'];
 ```
 - Future templates (e.g., `research/`) require code changes
 - **Recommendation:** Load from config or convention (any top-level folder in `.genie/agents/`)
@@ -681,14 +681,14 @@ const categoryFolders = ['neurons', 'workflows'];
 
 | Input | Expected | Actual | Pass? |
 |-------|----------|--------|-------|
-| `code/neurons/implementor` | `implementor` | ✅ `implementor` | ✅ |
-| `neurons/plan` | `plan` | ✅ `plan` | ✅ |
-| `code/neurons/git/git` | `git` | ✅ `git` | ✅ |
-| `code/neurons/git/workflows/issue` | `git/workflows/issue` | ⚠️ `git/workflows/issue` (folder: `git`) | ⚠️ |
+| `code/agents/implementor` | `implementor` | ✅ `implementor` | ✅ |
+| `agents/plan` | `plan` | ✅ `plan` | ✅ |
+| `code/agents/git/git` | `git` | ✅ `git` | ✅ |
+| `code/agents/git/workflows/issue` | `git/workflows/issue` | ⚠️ `git/workflows/issue` (folder: `git`) | ⚠️ |
 
 **Issue:** Last example has path `git/workflows/issue` but intended `git/issue`:
 - **Root cause:** `workflows/` is category folder, should be stripped
-- **Expected behavior:** `code/neurons/git/workflows/issue` → `git/issue`
+- **Expected behavior:** `code/agents/git/workflows/issue` → `git/issue`
 - **Current behavior:** Treats `workflows` as part of path
 
 **Fix needed:** Recursive category stripping:

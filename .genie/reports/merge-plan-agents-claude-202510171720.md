@@ -36,7 +36,7 @@
 | Universal Workflow Architecture | 392-527 | Cross-variant workflow (code/create/NL) | Architecture |
 | Evidence & Storage Conventions | 530-539 | Artifact management | Standards |
 | Testing & Evaluation | 536-539 | Validation approach | Standards |
-| Prompting Standards | 541-655 | @ / ! / patterns, neural file networks | Core Framework |
+| Prompting Standards | 541-655 | @ / ! / patterns, agent file networks | Core Framework |
 | Branch & Tracker Guidance | 657-668 | Git workflow conventions | Standards |
 | Blocker Protocol | 670-673 | Escalation handling | Workflow |
 | MCP Quick Reference | 675-724 | Tool usage patterns | Technical |
@@ -196,7 +196,7 @@ No exact duplicates found.
 ...
 @.genie/MASTER-PLAN.md
 
-# ⚠️ Session State (Permanent Neuron Coordination)
+# ⚠️ Session State (Permanent Agent Coordination)
 ...
 @.genie/SESSION-STATE.md
 
@@ -278,7 +278,7 @@ No exact duplicates found.
 # Key concepts from AGENTS.md
 grep -i "plan.*wish.*forge.*review" MERGED.md
 grep -i "evidence-based thinking" MERGED.md
-grep -i "neuron.*session" MERGED.md
+grep -i "agent.*session" MERGED.md
 grep -i "permissionmode.*default" MERGED.md
 
 # Key concepts from CLAUDE.md
@@ -485,14 +485,14 @@ echo -n "Triad Maintenance: "
 grep -qi "triad maintenance" MERGED.md && echo "✅" || echo "❌"
 
 # Technical patterns
-echo -n "Neuron Sessions: "
-grep -qi "neuron.*session" MERGED.md && echo "✅" || echo "❌"
+echo -n "Agent Sessions: "
+grep -qi "agent.*session" MERGED.md && echo "✅" || echo "❌"
 
 echo -n "Permission Mode: "
 grep -qi "permissionmode.*default" MERGED.md && echo "✅" || echo "❌"
 
 echo -n "@ / ! / patterns: "
-grep -qi "neural file network" MERGED.md && echo "✅" || echo "❌"
+grep -qi "agent file network" MERGED.md && echo "✅" || echo "❌"
 
 echo ""
 echo "=== CLAUDE.md Content Verification ==="

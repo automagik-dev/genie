@@ -3,110 +3,91 @@ import path from 'path';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { findSessionEntry } from '../../lib/session-helpers';
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+
+function readLocalTranscript(entry: Record<string, any>): string | null {
+  const logPath = typeof entry.logFile === 'string' ? entry.logFile : null;
+  if (!logPath) return null;
+  const absolute = path.isAbsolute(logPath) ? logPath : path.join(process.cwd(), logPath);
+  if (!fs.existsSync(absolute)) return null;
+  try {
+    return fs.readFileSync(absolute, 'utf8');
+  } catch {
+    return null;
+  }
+}
 
 export function createViewHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
-    const [sessionId] = parsed.commandArgs;
-    if (!sessionId) {
-      throw new Error('Usage: genie view <sessionId> [--full]');
+    const [sessionName] = parsed.commandArgs;
+    if (!sessionName) {
+      throw new Error('Usage: genie view <session-name> [--full]');
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
+    const found = findSessionEntry(store, sessionName, ctx.paths);
 
-    // Try sessions.json first
-    let found: { agentName: string; entry: any } | null = findSessionEntry(store, sessionId, ctx.paths);
-    let orphanedSession = false;
-
-    // If not found in sessions.json, try direct session file lookup
-    if (!found) {
-      const executorKey = ctx.config.defaults?.executor || ctx.defaultExecutorKey;
-      const executor = ctx.executors[executorKey];
-
-      if (executor?.tryLocateSessionFileBySessionId && executor.resolvePaths) {
-        const executorConfig = ctx.config.executors?.[executorKey] || {};
-        const executorPaths = executor.resolvePaths({
-          config: executorConfig,
-          baseDir: ctx.paths.baseDir,
-          resolvePath: (target: string, base?: string) =>
-            path.isAbsolute(target) ? target : path.resolve(base || ctx.paths.baseDir || '.', target)
-        });
-
-        const sessionsDir = executorPaths.sessionsDir;
-        if (sessionsDir) {
-          const sessionFilePath = executor.tryLocateSessionFileBySessionId(sessionId, sessionsDir);
-          if (sessionFilePath && fs.existsSync(sessionFilePath)) {
-            orphanedSession = true;
-            const sessionFileContent = fs.readFileSync(sessionFilePath, 'utf8');
-
-            return {
-              sessionId,
-              agent: 'unknown',
-              status: 'orphaned',
-              transcript: sessionFileContent,
-              source: 'orphaned session file',
-              filePath: sessionFilePath
-            };
-          }
-        }
-      }
-
-      throw new Error(`❌ No run found with session id '${sessionId}'`);
+    if (!found || !found.entry.sessionId) {
+      throw new Error(`❌ No session found with name '${sessionName}'`);
     }
 
-    const { agentName, entry } = found;
-    const executorKey = entry.executor || ctx.config.defaults?.executor || ctx.defaultExecutorKey;
-    const executor = ctx.executors[executorKey];
-    const logFile = entry.logFile;
+    const forgeExecutor = createForgeExecutor();
 
-    if (!logFile || !fs.existsSync(logFile)) {
-      throw new Error('❌ Log not found for this run');
+    let forgeAvailable = true;
+    try {
+      await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+    } catch (error) {
+      forgeAvailable = false;
+      const reason = describeForgeError(error);
+      ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
     }
 
-    const raw = fs.readFileSync(logFile, 'utf8');
-    const allLines = raw.split(/\r?\n/);
+    let status: string | null = null;
+    let transcript: string | null = null;
 
-    // Try to locate and read from session file for full conversation history
-    let sessionFileContent: string | null = null;
-    if (entry.sessionId && entry.startTime && executor?.locateSessionFile) {
-      const executorConfig = ctx.config.executors?.[executorKey] || {};
-      const executorPaths = executor.resolvePaths({
-        config: executorConfig,
-        baseDir: ctx.paths.baseDir,
-        resolvePath: (target: string, base?: string) =>
-          path.isAbsolute(target) ? target : path.resolve(base || ctx.paths.baseDir || '.', target)
-      });
-      const sessionsDir = executorPaths.sessionsDir;
-      const startTime = new Date(entry.startTime).getTime();
-
-      if (sessionsDir && !Number.isNaN(startTime)) {
-        const sessionFilePath = executor.locateSessionFile({
-          sessionId: entry.sessionId,
-          startTime,
-          sessionsDir
-        });
-
-        if (sessionFilePath && fs.existsSync(sessionFilePath)) {
-          try {
-            sessionFileContent = fs.readFileSync(sessionFilePath, 'utf8');
-          } catch {
-            // Fall back to CLI log if session file read fails
-          }
-        }
+    if (forgeAvailable) {
+      try {
+        const remoteStatus = await forgeExecutor.getSessionStatus(found.entry.sessionId);
+        status = remoteStatus.status || null;
+        transcript = await forgeExecutor.fetchLatestLogs(found.entry.sessionId);
+      } catch (error) {
+        forgeAvailable = false;
+        const reason = describeForgeError(error);
+        ctx.recordRuntimeWarning(`Forge view failed: ${reason}`);
       }
     }
 
-    const transcript = sessionFileContent || raw;
+    const localTranscript = readLocalTranscript(found.entry as Record<string, any>);
 
-    return {
-      sessionId: entry.sessionId || sessionId,
-      agent: agentName,
-      status: entry.status || 'unknown',
-      transcript,
-      source: sessionFileContent ? 'session file' : 'CLI log',
-      mode: entry.mode || entry.preset,
-      created: entry.created,
-      lastUsed: entry.lastUsed,
-      logFile
-    };
+    if (!forgeAvailable && !transcript && localTranscript) {
+      transcript = localTranscript;
+    } else if (forgeAvailable && !transcript && localTranscript) {
+      ctx.recordRuntimeWarning('Forge returned no logs; using cached log file.');
+      transcript = localTranscript;
+    }
+
+    const lines = [
+      `Session: ${found.entry.name || sessionName}`,
+      `Agent: ${found.agentName}`,
+      `Status: ${status || found.entry.status || 'unknown'}`
+    ];
+
+    if (found.entry.model) {
+      lines.push(`Model: ${found.entry.model}`);
+    }
+
+    if (!forgeAvailable) {
+      lines.push('⚠️ Forge backend unreachable. Displaying cached transcript if available.');
+      lines.push(FORGE_RECOVERY_HINT);
+    }
+
+    if (transcript) {
+      lines.push('', transcript);
+    } else {
+      lines.push('', '(No logs available)');
+    }
+
+    await ctx.emitView(lines.join('\n'), parsed.options);
   };
 }

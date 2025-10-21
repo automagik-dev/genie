@@ -180,7 +180,7 @@ genie info executors
 **NOT in this wish:**
 - ❌ Template unification (Wish #120-C)
 - ❌ Advanced inspection (detailed diffs, commit history) (Wish #120-C)
-- ❌ Migration & updating neuron (Wish #120-C)
+- ❌ Migration & updating agent (Wish #120-C)
 - ❌ SSE automations (safe auto-actions) (Wish #120-C)
 - ❌ Advanced task management (CRUD, state tree) (Wish #120-C)
 
@@ -368,12 +368,12 @@ genie info executors
     - Color-coded labels
 
 12. **Add `genie wish attach-image` command**
-    - During wish creation (integrate with wish neuron)
+    - During wish creation (integrate with wish agent)
     - Upload image, attach to wish document
     - Markdown reference: `![Architecture](image-id)`
 
 13. **Add `genie review attach-image` command**
-    - During review (integrate with review neuron)
+    - During review (integrate with review agent)
     - Upload image, attach to review
     - Compare before/after screenshots
 
@@ -606,7 +606,7 @@ genie review approve <id>  # One command to merge!
 ## 🚀 Next Steps (After Completion)
 
 **Immediate Follow-Ups:**
-1. **Wish #120-C:** Advanced features (templates, migration neuron, SSE automations, advanced inspection)
+1. **Wish #120-C:** Advanced features (templates, migration agent, SSE automations, advanced inspection)
 
 **Dependencies Unlocked:**
 - This wish establishes patterns for SSE event handling

@@ -6,10 +6,9 @@ const help_1 = require("../views/help");
 async function runHelp(parsed, config, _paths) {
     const backgroundDefault = Boolean(config.defaults && config.defaults.background);
     const commandRows = [
-        { command: 'init', args: '[--provider codex|claude] [--yes]', description: 'Initialize Genie in this workspace' },
-        { command: 'update', args: '[--dry-run] [--force]', description: 'Apply template updates with backups' },
+        { command: 'init', args: '[template] [--yes]', description: 'Initialize Genie in this workspace' },
         { command: 'rollback', args: '[--id <backup>]', description: 'Restore a previous Genie snapshot' },
-        { command: 'run', args: '<agent> "<prompt>"', description: 'Start or attach to an agent' },
+        { command: 'run', args: '<agent> "<prompt>" [-x <executor>] [-m <model>]', description: 'Start or attach to an agent' },
         { command: 'list agents', args: '', description: 'Show all available agents' },
         { command: 'list sessions', args: '', description: 'Display active and recent runs' },
         { command: 'resume', args: '<sessionId> "<prompt>"', description: 'Continue a background session' },
@@ -31,11 +30,11 @@ async function runHelp(parsed, config, _paths) {
             ]
         },
         examples: [
-            'genie init --provider codex',
-            'genie update --dry-run',
-            'genie run plan "[Discovery] mission @.genie/product/mission.md"',
+            'genie init code --yes',
+            'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
+            'genie run code/commit "Stage hotfix commit" --executor opencode --model gpt-4.1-coding',
             'genie run --help  # Show help for run command',
-            'genie view RUN-1234',
+            'genie view code-analyze-2510201015',
             'genie list agents --help  # Show help for list command'
         ]
     });

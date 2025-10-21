@@ -1,236 +1,183 @@
 "use strict";
-/**
- * ForgeExecutor - Proof of Concept
- *
- * Replaces background-launcher.ts polling timeout race condition with
- * Forge's guaranteed task attempt creation and real-time WebSocket streaming.
- *
- * Key improvements:
- * 1. No polling timeout race (createTaskAttempt is atomic)
- * 2. Worktree isolation (parallel safety)
- * 3. Real-time log streaming (WebSocket, not file polling)
- * 4. Native session resume (followUpTaskAttempt)
- * 5. Unified session model (Forge task attempts = sessions)
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ForgeExecutor = void 0;
 exports.createForgeExecutor = createForgeExecutor;
-exports.handleForgeBackgroundLaunch = handleForgeBackgroundLaunch;
-const session_store_1 = require("../session-store");
-// Import ForgeClient from root
-const forge_1 = require("../../../../forge");
-/**
- * ForgeExecutor - Main class for Forge backend integration
- */
+// @ts-ignore - forge.js is compiled JS without type declarations
+const forge_js_1 = require("../../../../forge.js");
+const child_process_1 = require("child_process");
 class ForgeExecutor {
     constructor(config) {
         this.config = config;
-        this.forge = new forge_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
+        this.forge = new forge_js_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
     }
-    /**
-     * Create a new Genie session via Forge task attempt
-     *
-     * Replaces background-launcher.ts:maybeHandleBackgroundLaunch
-     *
-     * @returns Task attempt ID (this IS the session ID)
-     */
+    async syncProfiles(profiles) {
+        // Skip profile sync for now - Forge manages profiles separately
+        // TODO: Fix profile sync API format mismatch
+        return;
+    }
     async createSession(params) {
-        const { agentName, prompt, config, paths, store, entry, executorKey, executionMode, startTime } = params;
-        // Get or create Genie project
+        const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
         const projectId = await this.getOrCreateGenieProject();
-        process.stdout.write(`▸ Creating Forge task for ${agentName}...\n`);
-        // Create task + start attempt (all-in-one atomic operation)
-        // No polling timeout race - this either succeeds or throws error
-        const attempt = await this.forge.createAndStartTask(projectId, {
-            title: `Genie: ${agentName} (${executionMode})`,
-            description: prompt,
-            executor_profile_id: this.mapExecutorToProfile(executorKey),
-            base_branch: 'main', // TODO: Make configurable
-        });
-        process.stdout.write(`▸ Task attempt created: ${attempt.id}\n`);
-        process.stdout.write(`▸ Worktree: ${this.getWorktreePath(attempt.id)}\n`);
-        process.stdout.write(`▸ Branch: ${this.getBranchName(attempt.id)}\n\n`);
-        // Update session entry
-        entry.sessionId = attempt.id;
-        entry.status = 'running';
-        entry.background = true;
-        entry.created = new Date(startTime).toISOString();
-        entry.lastUsed = new Date().toISOString();
-        // Save to session store
-        (0, session_store_1.saveSessions)(paths, store);
-        // Display usage instructions
-        this.displaySessionInfo(attempt.id, agentName);
+        // Detect current git branch and use it as base_branch
+        let baseBranch = 'main'; // Default fallback
+        try {
+            baseBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+            await this.forge.updateProject(projectId, { default_base_branch: baseBranch });
+        }
+        catch (error) {
+            // If git detection fails, try to get default_base_branch from project
+            try {
+                const project = await this.forge.getProject(projectId);
+                if (project.default_base_branch) {
+                    baseBranch = project.default_base_branch;
+                }
+            }
+            catch {
+                // Use fallback 'main'
+            }
+        }
+        // Use emoji format per @.genie/code/skills/emoji-naming-convention.md
+        const emojiPrefix = this.getAgentEmoji(agentName);
+        const formattedTitle = `[${emojiPrefix}] ${agentName}: ${executionMode}`;
+        const requestBody = {
+            task: {
+                project_id: projectId,
+                title: formattedTitle,
+                description: prompt
+            },
+            executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
+            base_branch: baseBranch
+        };
+        const attempt = await this.forge.createAndStartTask(requestBody);
         return attempt.id;
     }
-    /**
-     * Resume an existing session with follow-up prompt
-     *
-     * Replaces re-spawning genie.js with new prompt
-     */
     async resumeSession(sessionId, followUpPrompt) {
-        process.stdout.write(`▸ Resuming session ${sessionId}...\n`);
         await this.forge.followUpTaskAttempt(sessionId, followUpPrompt);
-        process.stdout.write(`▸ Follow-up prompt sent\n`);
-        process.stdout.write(`▸ View output: npx automagik-genie view ${sessionId}\n\n`);
     }
-    /**
-     * Stop a running session
-     */
     async stopSession(sessionId) {
-        process.stdout.write(`▸ Stopping session ${sessionId}...\n`);
         await this.forge.stopTaskAttemptExecution(sessionId);
-        process.stdout.write(`▸ Session stopped\n`);
     }
-    /**
-     * Get session status
-     */
     async getSessionStatus(sessionId) {
         const attempt = await this.forge.getTaskAttempt(sessionId);
-        return {
-            status: attempt.status || 'unknown',
-            logs: undefined, // TODO: Implement log retrieval
-        };
+        return { status: attempt.status || 'unknown' };
     }
-    /**
-     * Stream session logs via WebSocket
-     *
-     * TODO: Implement WebSocket streaming
-     * Returns WebSocket URL for now
-     */
-    getLogsStreamUrl(sessionId) {
-        // Need to get process ID from task attempt first
-        // For now, return the task attempt ID (will implement full streaming later)
-        return this.forge.getRawLogsStreamUrl(sessionId);
+    async fetchLatestLogs(sessionId) {
+        try {
+            const processes = await this.forge.listExecutionProcesses(sessionId);
+            if (!Array.isArray(processes) || !processes.length)
+                return null;
+            const latest = processes[processes.length - 1];
+            return latest?.output || null;
+        }
+        catch {
+            return null;
+        }
     }
-    /**
-     * List all Genie sessions (via Forge tasks)
-     */
     async listSessions() {
         const projectId = await this.getOrCreateGenieProject();
         const tasks = await this.forge.listTasks(projectId);
-        return tasks.map((task) => this.mapTaskToSession(task));
+        return tasks.map((task) => ({
+            id: task.id,
+            agent: this.extractAgentNameFromTitle(task.title),
+            status: task.status || 'unknown',
+            executor: (task.executor_profile_id?.executor || '').toLowerCase() || null,
+            variant: task.executor_profile_id?.variant || null,
+            model: task.executor_profile_id?.model || null,
+            created: task.created_at,
+            updated: task.updated_at
+        }));
     }
-    // ============================================================================
-    // Private Helper Methods
-    // ============================================================================
-    /**
-     * Get or create the Genie project in Forge
-     */
     async getOrCreateGenieProject() {
-        // If pre-configured project ID, use it
         if (this.config.genieProjectId) {
             return this.config.genieProjectId;
         }
-        // Otherwise, find or create "Genie Sessions" project
+        const currentRepoPath = process.cwd();
         const projects = await this.forge.listProjects();
-        const genieProject = projects.find((p) => p.name === 'Genie Sessions');
-        if (genieProject) {
-            this.config.genieProjectId = genieProject.id;
-            return genieProject.id;
+        const existingProject = projects.find((p) => p.git_repo_path === currentRepoPath);
+        if (existingProject) {
+            this.config.genieProjectId = existingProject.id;
+            return existingProject.id;
         }
-        // Create new project
         const newProject = await this.forge.createProject({
             name: 'Genie Sessions',
-            repo_path: process.cwd(), // Current working directory
+            git_repo_path: currentRepoPath,
+            use_existing_repo: true
         });
         this.config.genieProjectId = newProject.id;
         return newProject.id;
     }
-    /**
-     * Map Genie executor key to Forge executor profile ID
-     */
-    mapExecutorToProfile(executorKey) {
-        // Map Genie executor names to Forge profile IDs
+    mapExecutorToProfile(executorKey, variant, model) {
         const mapping = {
+            'claude': 'CLAUDE_CODE',
             'claude-code': 'CLAUDE_CODE',
             'codex': 'CODEX',
+            'opencode': 'OPENCODE',
             'gemini': 'GEMINI',
             'cursor': 'CURSOR',
+            'qwen_code': 'QWEN_CODE',
+            'amp': 'AMP',
+            'copilot': 'COPILOT'
         };
-        return mapping[executorKey] || 'CLAUDE_CODE';
-    }
-    /**
-     * Map Forge task to Genie session entry
-     */
-    mapTaskToSession(task) {
-        return {
-            sessionId: task.id,
-            agent: this.extractAgentNameFromTitle(task.title),
-            status: task.status || 'unknown',
-            created: task.created_at,
-            lastUsed: task.updated_at,
-            background: true,
-            executor: 'forge', // Mark as Forge-managed
+        const normalizedKey = executorKey.trim().toLowerCase();
+        const executor = mapping[normalizedKey] || normalizedKey.toUpperCase();
+        const resolvedVariant = (variant || 'DEFAULT').toUpperCase();
+        const profile = {
+            executor,
+            variant: resolvedVariant
         };
+        if (model && model.trim().length) {
+            profile.model = model.trim();
+        }
+        return profile;
     }
-    /**
-     * Extract agent name from task title
-     * Format: "Genie: {agentName} ({mode})"
-     */
     extractAgentNameFromTitle(title) {
-        const match = title.match(/^Genie: ([^\(]+)/);
-        return match ? match[1].trim() : 'unknown';
+        // Handle old format "Genie: agent (mode)" and new emoji format "[🧞] agent: mode"
+        const oldMatch = title.match(/^Genie: ([^\(]+)/);
+        if (oldMatch)
+            return oldMatch[1].trim();
+        const emojiMatch = title.match(/^\[[\p{Emoji}]\]\s+([^:]+)/u);
+        return emojiMatch ? emojiMatch[1].trim() : title;
     }
-    /**
-     * Get worktree path for task attempt
-     */
-    getWorktreePath(attemptId) {
-        // Forge uses: /var/tmp/automagik-forge/worktrees/{prefix}-{slug}
-        // For now, return placeholder (will be populated by Forge backend)
-        return `/var/tmp/automagik-forge/worktrees/${attemptId}`;
-    }
-    /**
-     * Get branch name for task attempt
-     */
-    getBranchName(attemptId) {
-        // Forge uses: forge/{prefix}-{slug}
-        return `forge/${attemptId}`;
-    }
-    /**
-     * Display session information to user
-     */
-    displaySessionInfo(sessionId, agentName) {
-        process.stdout.write(`  View output:\n`);
-        process.stdout.write(`    npx automagik-genie view ${sessionId}\n\n`);
-        process.stdout.write(`  Continue conversation:\n`);
-        process.stdout.write(`    npx automagik-genie resume ${sessionId} "..."\n\n`);
-        process.stdout.write(`  Stop the agent:\n`);
-        process.stdout.write(`    npx automagik-genie stop ${sessionId}\n\n`);
+    getAgentEmoji(agentName) {
+        // Map agent names to emojis per @.genie/code/skills/emoji-naming-convention.md
+        const normalized = agentName.toLowerCase().trim();
+        // Agent emojis
+        const agentEmojis = {
+            // Orchestrators & Planning
+            'genie': '🧞',
+            'wish': '💭',
+            'plan': '📋',
+            'forge': '⚙️',
+            // Execution agents (robots do the work)
+            'implementor': '🤖',
+            'tests': '🤖',
+            'polish': '🤖',
+            'refactor': '🤖',
+            // Validation & Review
+            'review': '✅',
+            // Tools & Utilities
+            'git': '🔧',
+            'release': '🚀',
+            'commit': '📦',
+            // Analysis & Learning
+            'learn': '📚',
+            'debug': '🐞',
+            'analyze': '🔍',
+            'thinkdeep': '🧠',
+            // Communication & Consensus
+            'consensus': '🤝',
+            'prompt': '📝',
+            'roadmap': '🗺️'
+        };
+        return agentEmojis[normalized] || '🧞'; // Default to genie emoji
     }
 }
 exports.ForgeExecutor = ForgeExecutor;
-/**
- * Factory function to create ForgeExecutor instance
- */
 function createForgeExecutor(config = {}) {
     const defaultConfig = {
-        forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:3000',
+        forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
         forgeToken: process.env.FORGE_TOKEN,
-        genieProjectId: process.env.GENIE_PROJECT_ID,
+        genieProjectId: process.env.GENIE_PROJECT_ID
     };
     return new ForgeExecutor({ ...defaultConfig, ...config });
-}
-/**
- * Integration function to replace background-launcher.ts
- *
- * Usage in genie.ts:
- * ```typescript
- * import { createForgeExecutor } from './lib/forge-executor';
- *
- * // Replace background-launcher.maybeHandleBackgroundLaunch with:
- * const forgeExecutor = createForgeExecutor();
- * const sessionId = await forgeExecutor.createSession(params);
- * ```
- */
-async function handleForgeBackgroundLaunch(params) {
-    const forgeExecutor = createForgeExecutor();
-    try {
-        await forgeExecutor.createSession(params);
-        return true; // Handled as background
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stdout.write(`\n▸ Failed to create Forge task: ${message}\n`);
-        return false; // Not handled, continue as foreground
-    }
 }

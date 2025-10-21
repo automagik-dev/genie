@@ -143,7 +143,7 @@ grep "@.genie/docs/" AGENTS.md
 **Content preservation:**
 ```bash
 # Delegation enforcement patterns preserved
-grep -E "list_agents|scoping|git neuron" .genie/docs/delegation-enforcement.md | wc -l
+grep -E "list_agents|scoping|git agent" .genie/docs/delegation-enforcement.md | wc -l
 # Multiple matches ✅
 
 # MCP interface patterns preserved

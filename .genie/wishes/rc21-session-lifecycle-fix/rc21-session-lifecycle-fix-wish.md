@@ -3,7 +3,6 @@
 **Status:** ✅ COMPLETE
 **Roadmap Item:** release/rc21 – @.genie/product/roadmap.md §Releases
 **Mission Link:** @.genie/product/mission.md §Reliability
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 100/100 (all groups complete)
 
 ## Context Ledger

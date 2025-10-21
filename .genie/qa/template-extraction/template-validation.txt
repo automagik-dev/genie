@@ -1,4 +1,0 @@
-.genie/templates/context-template.md
-.genie/templates/qa-done-report-template.md
-.genie/templates/review-report-template.md
-.genie/templates/wish-template.md

@@ -334,7 +334,7 @@ PHASE 4: Production (Week 4)
 
 ## 🎓 Learning Opportunities
 
-### Delegate to Learn Neuron
+### Delegate to Learn Agent
 
 **When:** After each major milestone (Group A, B, C, D complete)
 
@@ -346,8 +346,8 @@ PHASE 4: Production (Week 4)
 
 **How:**
 1. Update learn task (#077e3e89) with observation
-2. Delegate to learn neuron via `mcp__genie__run agent="learn"`
-3. Learn neuron documents findings in framework files
+2. Delegate to learn agent via `mcp__genie__run agent="learn"`
+3. Learn agent documents findings in framework files
 4. Update learn task with outcome summary
 
 ---
@@ -426,7 +426,7 @@ Based on the **consolidated Forge ⇄ Genie integration decision matrix**, this 
 **Key Changes:**
 - **+21 tasks** added across Groups A-D (+105% expansion)
 - **Timeline:** 4 weeks → 6-8 weeks (+50-100%)
-- **Scope:** Core replacement + Git integration + Notifications + Updating neuron
+- **Scope:** Core replacement + Git integration + Notifications + Updating agent
 - **ROI:** Still extremely high (9.2/10 maintained)
 
 **Detailed Analysis:** See `.genie/reports/FORGE-GENIE-INTEGRATION-ANALYSIS-20251018.md`
@@ -450,12 +450,12 @@ Based on the **consolidated Forge ⇄ Genie integration decision matrix**, this 
 10. ✅ `abortTaskAttemptConflicts()` - Rollback/cleanup merge conflicts
 11. ✅ `createTaskAttemptPullRequest()` - Automated PR creation
 12. ✅ `attachExistingPullRequest()` - Auto-link existing PR via naming convention
-13. ✅ `getTaskAttemptChildren()` - State tree synchronization (neuron coordination)
+13. ✅ `getTaskAttemptChildren()` - State tree synchronization (agent coordination)
 
 **Rationale:**
 - Decision matrix marked all 9 endpoints as **YES (HIGH PRIORITY)**
 - Git operations enable zero-click workflow (PR automation)
-- State tree sync critical for multi-neuron coordination
+- State tree sync critical for multi-agent coordination
 - Health check prevents operations against unavailable backend
 
 **Verification (Expanded):**
@@ -553,7 +553,7 @@ notifications:
 
 ---
 
-### Expanded Group D: Migration & Testing + Updating Neuron (Week 5-6) [+4 tasks]
+### Expanded Group D: Migration & Testing + Updating Agent (Week 5-6) [+4 tasks]
 
 **Original Scope:**
 1. Migration script (sessions.json → Forge tasks)
@@ -563,13 +563,13 @@ notifications:
 5. Migration guide for users
 6. Rollback plan
 
-**NEW - Updating Neuron + Version Management (4 items):**
+**NEW - Updating Agent + Version Management (4 items):**
 7. ✅ Create `/update` directory structure
 8. ✅ Implement version files (diff-based: "what changed between versions")
-9. ✅ Create updating neuron (handles version comparisons + migrations)
+9. ✅ Create updating agent (handles version comparisons + migrations)
 10. ✅ Document update workflow and version file format
 
-**Updating Neuron Structure:**
+**Updating Agent Structure:**
 ```
 .genie/
 ├── update/
@@ -578,11 +578,11 @@ notifications:
 │   ├── migration-scripts/
 │   │   ├── 2.3.0-to-2.4.0.ts
 │   │   └── 2.4.0-to-2.5.0.ts
-│   └── update-neuron.md             # Neuron instructions
+│   └── update-agent.md             # Agent instructions
 ```
 
 **Rationale:**
-- Decision matrix marked updating neuron as **NEW CAPABILITY**
+- Decision matrix marked updating agent as **NEW CAPABILITY**
 - Version files provide clarity on changes (diff-based approach)
 - Centralized update logic (all updates under `/update`)
 - Enables automated version migrations
@@ -592,7 +592,7 @@ notifications:
 - 10 parallel sessions safe (zero conflicts)
 - Performance targets met
 - Migration script works correctly
-- Updating neuron functional (version comparisons + migrations)
+- Updating agent functional (version comparisons + migrations)
 - Version files accurate and complete
 - Documentation complete
 
@@ -611,7 +611,7 @@ notifications:
 | Task updates | Not supported | Full CRUD | updateTask() success rate |
 | State tree sync | Manual (SESSION-STATE.md) | Automatic (API) | getTaskAttemptChildren() accuracy |
 | Notifications | None | Real-time (< 5s) | Event → Omni delivery time |
-| Version migrations | Manual | Automated (updating neuron) | Migration success rate |
+| Version migrations | Manual | Automated (updating agent) | Migration success rate |
 
 ---
 
@@ -622,7 +622,7 @@ notifications:
 | **Group A** | 1 week | 2-3 weeks | +100-200% | +9 Git integration tasks (complex) |
 | **Group B** | 1 week | 1-2 weeks | +0-100% | +4 inspection endpoints (medium) |
 | **Group C** | 1 week | 1-2 weeks | +0-100% | +4 advanced features + Omni (medium) |
-| **Group D** | 1 week | 1-2 weeks | +0-100% | +4 updating neuron tasks (medium) |
+| **Group D** | 1 week | 1-2 weeks | +0-100% | +4 updating agent tasks (medium) |
 | **TOTAL** | 4 weeks | 6-8 weeks | +50-100% | +21 tasks total |
 
 ---
@@ -650,7 +650,7 @@ notifications:
 ├── update/                             # NEW - Version management
 │   ├── version-files/
 │   ├── migration-scripts/
-│   └── update-neuron.md
+│   └── update-agent.md
 ├── cli/src/lib/
 │   ├── git-operations.ts               # NEW - Git integration
 │   ├── notification-service.ts         # NEW - Omni integration
@@ -729,7 +729,7 @@ notifications:
 ✅ **PROCEED WITH EXPANDED SCOPE**
 
 **Justification:**
-1. ✅ Decision matrix adds high-value features (Git ops, notifications, updating neuron)
+1. ✅ Decision matrix adds high-value features (Git ops, notifications, updating agent)
 2. ✅ Timeline remains reasonable (6-8 weeks, phased approach)
 3. ✅ ROI still extremely high (9.2/10 maintained)
 4. ✅ All new tasks have clear mitigations

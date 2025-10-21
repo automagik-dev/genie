@@ -1,7 +1,7 @@
 # Task B: Extract Prompting Standards
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** B
-**Target:** `.genie/agents/genie/neurons/prompt/prompt.md`
+**Target:** `.genie/agents/genie/agents/prompt/prompt.md`
 **Lines to extract:** AGENTS.md 1001-1115, 1769-1882
 
 ---
@@ -18,7 +18,7 @@
 **Current state:**
 - AGENTS.md: ~2134 lines (after Task A)
 - Target sections contain prompting framework
-- prompt.md exists at `.genie/agents/genie/neurons/prompt/prompt.md`
+- prompt.md exists at `.genie/agents/genie/agents/prompt/prompt.md`
 
 **Dependencies:**
 - Requires Task A complete
@@ -39,7 +39,7 @@
 
 3. **Replace in AGENTS.md:**
    - Remove lines 1001-1115, 1769-1882
-   - Insert @ reference: `@.genie/agents/neurons/prompt.md (prompting standards)`
+   - Insert @ reference: `@.genie/code/agents/prompt.md (prompting standards)`
    - Keep surrounding sections intact
 
 4. **Validation:**
@@ -54,22 +54,22 @@
 **Pattern preservation:**
 ```bash
 # @ / ! / patterns
-grep -q "@ / ! / Feature Reference" .genie/agents/genie/neurons/prompt/prompt.md && echo "✅ @ patterns preserved"
+grep -q "@ / ! / Feature Reference" .genie/agents/genie/agents/prompt/prompt.md && echo "✅ @ patterns preserved"
 
 # Task breakdown
-grep -q "Task Breakdown Structure" .genie/agents/genie/neurons/prompt/prompt.md && echo "✅ Task breakdown preserved"
+grep -q "Task Breakdown Structure" .genie/agents/genie/agents/prompt/prompt.md && echo "✅ Task breakdown preserved"
 
 # Context gathering
-grep -q "Context Gathering Protocol" .genie/agents/genie/neurons/prompt/prompt.md && echo "✅ Context protocol preserved"
+grep -q "Context Gathering Protocol" .genie/agents/genie/agents/prompt/prompt.md && echo "✅ Context protocol preserved"
 
 # Blocker reports
-grep -q "Blocker Report Protocol" .genie/agents/genie/neurons/prompt/prompt.md && echo "✅ Blocker protocol preserved"
+grep -q "Blocker Report Protocol" .genie/agents/genie/agents/prompt/prompt.md && echo "✅ Blocker protocol preserved"
 ```
 
 **AGENTS.md update:**
 ```bash
 # @ reference added
-grep -q "@.genie/agents/neurons/prompt.md" AGENTS.md && echo "✅ Reference added"
+grep -q "@.genie/code/agents/prompt.md" AGENTS.md && echo "✅ Reference added"
 
 # Old content removed
 ! grep -q "@ / ! / Feature Reference" AGENTS.md && echo "✅ Content removed"
@@ -87,4 +87,4 @@ wc -l AGENTS.md
 ## Evidence Location
 
 **Done Report:** `.genie/wishes/agents-optimization/reports/done-implementor-task-b-<timestamp>.md`
-**Diff:** `git diff AGENTS.md .genie/agents/genie/neurons/prompt/prompt.md`
+**Diff:** `git diff AGENTS.md .genie/agents/genie/agents/prompt/prompt.md`

@@ -42,7 +42,7 @@
 
 ### Group B: Workflow Automation Candidates ✅ COMPLETED
 - Identify 4 candidates from skills that could automate
-- Design specifications (prompt neuron session 221956dc)
+- Design specifications (prompt agent session 221956dc)
 - Implement scripts (implementor session 7acc797f - pending permissions)
 - **Evidence:** Comprehensive JSON specs + implementations ready
 
@@ -54,16 +54,16 @@
 
 ### Group D: Routing Flowchart ✅ COMPLETED
 - Create orchestrator decision matrix
-- Define when to delegate to each neuron
+- Define when to delegate to each agent
 - Document critical routing rules (release, teaching, etc.)
-- **Evidence:** `.genie/custom/routing.md` (15KB)
+- **Evidence:** `.genie/skills/routing-decision-matrix.md` (routing flow + rules)
 
 ### Group E: CLI Loading Strategy ✅ COMPLETED
 - Document tier loading logic
 - Calculate token efficiency gains
 - Validate performance implications
 - Plan future evolution
-- **Evidence:** `.genie/custom/cli-loading-strategy.md` (12KB)
+- **Evidence:** `.genie/cli/LOADING_STRATEGY.md` (token efficiency strategy)
 
 ---
 
@@ -84,8 +84,8 @@
 4. track-promise.js - Say-do gap detector
 
 **Documentation:**
-- routing.md: Orchestrator decision flowchart
-- cli-loading-strategy.md: Token efficiency strategy
+- routing-decision-matrix.md: Orchestrator decision flowchart
+- CLI/LOADING_STRATEGY.md: Token efficiency strategy
 - AGENTS.md: Reorganized Core Skills section
 
 ---
@@ -96,10 +96,10 @@
 - [x] Priority tiers justified (token efficiency + behavioral importance)
 - [x] 4 workflow candidates identified with full specs
 - [x] AGENTS.md reorganized with markers
-- [x] routing.md created (decision flowchart + critical rules)
-- [x] cli-loading-strategy.md created (implementation + validation)
+- [x] routing-decision-matrix updated (flowchart + critical rules)
+- [x] CLI loading strategy documented (implementation + validation)
 - [x] Token efficiency calculated: 74% baseline reduction
-- [x] All files committed to `.genie/custom/` (no breaking changes)
+- [x] Knowledge integrated into core docs (no separate `custom/` folder)
 
 ---
 
@@ -125,7 +125,7 @@
 - ✅ Wish documents: problem, goal, groups, evidence, learnings
 - ✅ Wish enables streamlined framework process: `Plan → Wish → Forge → Review`
 
-**Next:** Learn neuron should document this as new skill: "wish-initiation-rule" or similar
+**Next:** Learn agent should document this as new skill: "wish-initiation-rule" or similar
 
 ---
 

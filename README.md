@@ -34,7 +34,7 @@
 
 ## 🚀 What is Automagik Genie?
 
-**Automagik Genie** is your persistent conversational development partner. Just talk naturally—Genie orchestrates agents, maintains context through neuron sessions, and guides you through Plan → Wish → Forge → Review without exposing commands or complexity.
+**Automagik Genie** is your persistent conversational development partner. Just talk naturally—Genie orchestrates agents, maintains context through agent sessions, and guides you through Plan → Wish → Forge → Review without exposing commands or complexity.
 
 It ships a ready-to-run `.genie/` workspace, keeps it in sync with upstream templates, and exposes a battle-tested CLI + MCP server with natural language routing.
 
@@ -91,41 +91,30 @@ Genie is the canonical source of prompts, agents, and project metadata. Other Au
 
 ---
 
-## 🧠 Agent Neural Tree
+## 🧠 Agent Agent Tree
 
-Genie's architecture uses **universal neurons** (shared across all templates) and **template-specific neurons** (code/create). This enables scalability without duplication.
+Genie's architecture uses **universal agents** (shared across all templates) and **template-specific agents** (code/create). This enables scalability without duplication.
 
 <!-- AGENT_TREE_START -->
 ```mermaid
 graph TB
-    %% Genie Agent Neural Tree
+    %% Genie Agent Tree
 
-    %% Universal Neurons (17)
-    UNIVERSAL[Universal Neurons]:::universal
-    analyze[analyze]:::neuron
-    UNIVERSAL --> analyze
-    audit[audit]:::neuron
-    UNIVERSAL --> audit
-    challenge[challenge]:::neuron
-    UNIVERSAL --> challenge
-    consensus[consensus]:::neuron
-    UNIVERSAL --> consensus
-    debug[debug]:::neuron
-    UNIVERSAL --> debug
-    more_universal[...12 more]:::more
-    UNIVERSAL --> more_universal
-
-    %% Code Template
-    CODE[Code Orchestrator]:::orchestrator
-    code_commit[commit]:::code_neuron
+    %% Code Collective
+    CODE[Code Collective]:::orchestrator
+    code_analyze[analyze]:::code_agent
+    CODE --> code_analyze
+    code_audit[audit]:::code_agent
+    CODE --> code_audit
+    code_challenge[challenge]:::code_agent
+    CODE --> code_challenge
+    code_commit[commit]:::code_agent
     CODE --> code_commit
-    code_git[git]:::code_neuron
-    CODE --> code_git
-    code_implementor[implementor]:::code_neuron
-    CODE --> code_implementor
-    code_install[install]:::code_neuron
-    CODE --> code_install
-    more_code[...4 more]:::more
+    code_consensus[consensus]:::code_agent
+    CODE --> code_consensus
+    code_debate[debate]:::code_agent
+    CODE --> code_debate
+    more_code[...24 more]:::more
     CODE --> more_code
 
     %% Git Workflows
@@ -133,17 +122,25 @@ graph TB
     code_git --> git_pr[pr]:::workflow
     code_git --> git_report[report]:::workflow
 
-    %% Create Template
-    CREATE[Create Orchestrator]:::orchestrator
-    create_wish[wish]:::create_neuron
+    %% Code Workflows
+    workflow_forge[forge]:::workflow
+    CODE --> workflow_forge
+    workflow_session-state-updater[session-state-updater]:::workflow
+    CODE --> workflow_session-state-updater
+    workflow_session-state-updater-example[session-state-updater-example]:::workflow
+    CODE --> workflow_session-state-updater-example
+    workflow_wish[wish]:::workflow
+    CODE --> workflow_wish
+
+    %% Create Collective
+    CREATE[Create Collective]:::orchestrator
+    create_wish[wish]:::create_agent
     CREATE --> create_wish
 
     %% Styling
-    classDef universal fill:#e1f5ff,stroke:#0288d1,stroke-width:2px
     classDef orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:3px
-    classDef neuron fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef code_neuron fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef create_neuron fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef code_agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef create_agent fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     classDef workflow fill:#fff9c4,stroke:#fbc02d,stroke-width:1px
     classDef more fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray: 5 5
 ```
@@ -189,7 +186,7 @@ npx automagik-genie rollback --help
 After running `init` you'll have:
 
 - `.genie/agents/` – prompt and core agents shipped with Genie
-- `.genie/custom/` – project-specific overrides consumed by the core agents (entrypoints stay immutable)
+- Project-specific guidance lives inline as "Project Notes" inside relevant `.genie/agents/*` or `.genie/skills/*` docs (no separate `custom/` directory)
 - `.genie/product/` – mission, roadmap, environment docs
 - `.genie/state/` – provider, version, provider-status state
 - `.genie/backups/<timestamp>/` – snapshots of previous states
@@ -206,7 +203,7 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 2. **Connect:** Configure your tool (Claude Code, Cursor, etc.) with the MCP command
 3. **Just talk:** "I want to build an auth system"
 4. **Genie guides you:** Through Plan → Wish → Forge → Review naturally
-5. **Neuron sessions:** Genie maintains persistent conversations with specialist agents (genie, implementor, tests) that remember context and iterate over time
+5. **Agent sessions:** Genie maintains persistent conversations with specialist agents (genie, implementor, tests) that remember context and iterate over time
 
 **No slash commands. No agent names. Just conversation.**
 
@@ -214,14 +211,14 @@ Genie ships with a FastMCP server so any MCP-compatible coding agent can orchest
 
 | Tool | Description | Example Usage |
 |------|-------------|---------------|
-| `mcp__genie__run` | Start a new neuron session | Genie uses this to start persistent conversations |
-| `mcp__genie__resume` | Continue a neuron session | Genie resumes to build context over time |
+| `mcp__genie__run` | Start a new agent session | Genie uses this to start persistent conversations |
+| `mcp__genie__resume` | Continue a agent session | Genie resumes to build context over time |
 | `mcp__genie__list_agents` | List available agents | "Show all agents" |
 | `mcp__genie__list_sessions` | Inspect active/archived sessions | "Which sessions ran today?" |
-| `mcp__genie__view` | Fetch session transcript | View conversation history with neurons |
-| `mcp__genie__stop` | Halt a running session | Stop long-running neuron work |
+| `mcp__genie__view` | Fetch session transcript | View conversation history with agents |
+| `mcp__genie__stop` | Halt a running session | Stop long-running agent work |
 
-**Neuron Sessions:** Genie creates persistent conversations with specialist agents (genie, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
+**Agent Sessions:** Genie creates persistent conversations with specialist agents (genie, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
 
 ### Claude Code Configuration
 
@@ -250,8 +247,8 @@ Genie includes a comprehensive **git hook automation system** that maintains doc
 - ✅ **User file protection** - Blocks `.genie/TODO.md` and `.genie/USERCONTEXT.md` from commits
 - ✅ **Cross-reference validation** - Catches broken `@file.md` references before commit
 - ✅ **Token efficiency gate** - Blocks commits if token count increases >5% without justification
-- ✅ **Neural graph auto-generation** - Updates AGENTS.md with token counts and dependency tree
-- ✅ **Agent registry auto-generation** - Scans folders and updates agent/neuron/skill lists
+- ✅ **Agent graph auto-generation** - Updates AGENTS.md with token counts and dependency tree
+- ✅ **Agent registry auto-generation** - Scans folders and updates agent/agent/skill lists
 - ✅ **Universal headers injection** - Adds `Last Updated` timestamps to all .md files
 - ✅ **Forge task linking** - Auto-links Forge task metadata to wish documents
 
@@ -272,21 +269,21 @@ The token efficiency gate ensures AGENTS.md stays lean:
 
 ```bash
 # Commit triggers validation
-git commit -m "feat: add comprehensive audit neuron"
+git commit -m "feat: add comprehensive audit agent"
 
 # ❌ Token count increased by 8.2% (threshold: 5%)
 #    Current: 95,234 | Baseline: 88,000 | Change: +7,234
 #
 # If this increase is justified:
-#    git config commit.token-override "Added audit neuron with 18 validation rules"
+#    git config commit.token-override "Added audit agent with 18 validation rules"
 
 # Justify and retry
-git config commit.token-override "Added audit neuron (18 validation rules)"
-git commit -m "feat: add comprehensive audit neuron"
+git config commit.token-override "Added audit agent (18 validation rules)"
+git commit -m "feat: add comprehensive audit agent"
 
 # ✅ Token efficiency validated (justified increase)
-# ✅ Neural graph updated in AGENTS.md (Total: 95,234 tokens)
-# ✅ Agent registry updated (Neurons: 18 total)
+# ✅ Agent graph updated in AGENTS.md (Total: 95,234 tokens)
+# ✅ Agent registry updated (Agents: 18 total)
 # ✅ All pre-commit validations passed
 ```
 
@@ -299,19 +296,19 @@ Two sections in **AGENTS.md** are automatically maintained:
 ## Agent Registry (Auto-Generated)
 **Last Updated:** 2025-10-18 16:45:59 UTC
 
-**Universal Neurons:** 16 total
+**Universal Agents:** 16 total
 - analyze, audit, debate, design-review, forge, learn, plan, prompt, qa, review, ...
 
-**Code Neurons:** 15 total
+**Code Agents:** 15 total
 - commit, debug, git, implementor, polish, refactor, release, tests, ...
 
 **Code Skills:** 32 total
 - delegation-discipline, evidence-based-thinking, forge-integration, ...
 ```
 
-**Neural Graph:**
+**Agent Graph:**
 ```markdown
-## Neural Graph Architecture (Auto-Generated)
+## Agent Graph Architecture (Auto-Generated)
 **Last Updated:** 2025-10-18 16:45:24 UTC
 **Total Tokens:** 23,622 (baseline for efficiency validation)
 
@@ -344,8 +341,8 @@ You can run any automation script manually:
 # Validate cross-references
 node .genie/scripts/validate-cross-references.js
 
-# Update neural graph
-node .genie/scripts/update-neural-graph.js
+# Update agent graph
+node .genie/scripts/update-agent-graph.js
 
 # Update agent registry
 node .genie/scripts/update-agent-registry.js

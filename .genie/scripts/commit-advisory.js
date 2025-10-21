@@ -306,7 +306,8 @@ class CommitAdvisory {
       /\[auto\]/i,
       /^chore:\s*(auto-|update.*timestamp|update.*token count)/i,
       /^chore:\s*update\s+(AGENTS|STATE|CHANGELOG)\.md/i,
-      /neural graph/i
+      /agent graph/i,
+      /\(automagik-forge\s+[a-f0-9-]+\)/i  // Forge task references (e.g., "automagik-forge e7f23ead")
     ];
 
     return patterns.some(pattern => pattern.test(full));
@@ -544,6 +545,9 @@ class CommitAdvisory {
     this.commits = this.getCommitsToPush();
 
     if (this.commits.length === 0) {
+      this.passes.push('No commits to analyze (working tree clean).');
+      const report = this.generateReport(branch, 0);
+      console.log(report);
       this.log('yellow', '⚠️ ', 'No commits to analyze');
       return 0;
     }

@@ -15,7 +15,7 @@
 ```bash
 rm -rf .genie/state/agents/sessions.json .genie/state/agents/logs/* || true
 for i in 1 2; do
-  node bin/automagik-genie.js run neurons/plan "RC21 QA $i" >/dev/null 2>&1
+  node bin/automagik-genie.js run agents/plan "RC21 QA $i" >/dev/null 2>&1
   sleep 1
 done
 ```
@@ -68,7 +68,7 @@ rg "liveStore\.agents" .genie/cli/src/
   "version": 2,
   "sessions": {
     "3a28f869-cf6b-413b-979b-cef0b6b65216": {
-      "agent": "neurons/plan",
+      "agent": "agents/plan",
       "sessionId": "3a28f869-cf6b-413b-979b-cef0b6b65216",
       "status": "completed",
       ...
@@ -208,7 +208,7 @@ rg '\.\/genie' .genie/cli/src/
 rm -rf .genie/state/agents/sessions.json .genie/state/agents/logs/*
 
 # Validation script
-for i in 1 2; do node bin/automagik-genie.js run neurons/plan "RC21 QA $i" >/dev/null 2>&1; sleep 1; done
+for i in 1 2; do node bin/automagik-genie.js run agents/plan "RC21 QA $i" >/dev/null 2>&1; sleep 1; done
 
 # Session count
 jq '.sessions | length' .genie/state/agents/sessions.json  # → 1

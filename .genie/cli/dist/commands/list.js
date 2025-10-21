@@ -54,12 +54,12 @@ async function runRuns(parsed, config, paths) {
 async function runList(parsed, config, paths) {
     const [targetRaw] = parsed.commandArgs;
     if (!targetRaw) {
-        console.log('Usage: genie list <neurons|sessions>');
-        console.log('       genie list agents       # (alias for neurons)');
+        console.log('Usage: genie list <agents|sessions>');
+        console.log('       genie list agents       # (alias for agents)');
         return;
     }
     const target = targetRaw.toLowerCase();
-    if (target === 'agents' || target === 'neurons') {
+    if (target === 'agents' || target === 'agents') {
         await emitAgentCatalog(parsed);
         return;
     }
@@ -67,7 +67,7 @@ async function runList(parsed, config, paths) {
         await runRuns(parsed, config, paths);
         return;
     }
-    console.error(`Error: Unknown list target '${targetRaw}'. Try 'neurons' or 'sessions'.`);
+    console.error(`Error: Unknown list target '${targetRaw}'. Try 'agents' or 'sessions'.`);
     process.exitCode = 1;
 }
 function buildTree(agents) {
@@ -82,7 +82,7 @@ function buildTree(agents) {
         const parts = agent.id.split('/');
         let current = root;
         // Determine type based on path
-        let nodeType = 'neuron';
+        let nodeType = 'agent';
         if (agent.id.includes('/workflows/'))
             nodeType = 'workflow';
         else if (agent.id.includes('/skills/'))
@@ -113,7 +113,7 @@ function renderTree(node, prefix = '', isLast = true, depth = 0) {
     const lines = [];
     if (depth > 0) {
         const connector = isLast ? '└── ' : '├── ';
-        const icon = node.type === 'neuron' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
+        const icon = node.type === 'agent' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
         const desc = node.description ? ` - ${(0, utils_1.truncateText)(node.description, 80)}` : '';
         lines.push(`${prefix}${connector}${icon} ${node.name}${desc}`);
     }
@@ -136,25 +136,25 @@ function renderTree(node, prefix = '', isLast = true, depth = 0) {
     return lines;
 }
 async function emitAgentCatalog(parsed) {
-    const agents = (0, agent_resolver_1.listAgents)();
+    const allAgents = (0, agent_resolver_1.listAgents)();
     // Separate by category
-    const neurons = agents.filter(a => !a.id.includes('/workflows/') && !a.id.includes('/skills/'));
-    const workflows = agents.filter(a => a.id.includes('/workflows/'));
-    const skills = agents.filter(a => a.id.includes('/skills/'));
+    const agents = allAgents.filter(a => !a.id.includes('/workflows/') && !a.id.includes('/skills/'));
+    const workflows = allAgents.filter(a => a.id.includes('/workflows/'));
+    const skills = allAgents.filter(a => a.id.includes('/skills/'));
     console.log(`## 🧞 Genie Agent Hierarchy\n`);
-    console.log(`**Total:** ${agents.length} agents (${neurons.length} neurons, ${workflows.length} workflows, ${skills.length} skills)\n`);
+    console.log(`**Total:** ${agents.length} agents (${agents.length} agents, ${workflows.length} workflows, ${skills.length} skills)\n`);
     // Build and render tree
     const tree = buildTree(agents);
     const treeLines = renderTree(tree);
     console.log(treeLines.join('\n'));
     console.log('\n## 💡 Quick Guide\n');
     console.log('**Icons:**');
-    console.log('  🧠 Neuron (main executable agent)');
-    console.log('  ⚙️  Workflow (neuron-scoped sub-task)');
+    console.log('  🧠 Agent (main executable agent)');
+    console.log('  ⚙️  Workflow (agent-scoped sub-task)');
     console.log('  💡 Skill (capability/pattern)');
     console.log('  📁 Folder (organizational grouping)\n');
     console.log('**Commands:**');
-    console.log('  genie run <neuron-id> "<prompt>"    # Start a neuron');
+    console.log('  genie run <agent-id> "<prompt>"    # Start a agent');
     console.log('  genie list sessions                 # View active sessions');
     console.log('  genie view <session-id>             # View session transcript');
 }

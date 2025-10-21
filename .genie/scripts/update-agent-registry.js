@@ -20,15 +20,15 @@ const SECTION_HEADER = '## Agent Registry (Auto-Generated)';
 
 // Folders to scan
 const SCAN_PATHS = {
-  'Universal Neurons': '.genie/agents/neurons',
-  'Code Neurons': '.genie/agents/code/neurons',
-  'Create Neurons': '.genie/agents/create/neurons',
-  'Code Skills': '.genie/agents/code/skills',
+  'Universal Skills': '.genie/skills',
+  'Code Agents': '.genie/code/agents',
+  'Create Agents': '.genie/create/agents',
+  'Code Skills': '.genie/code/skills',
 };
 
 /**
  * Scan a directory for .md files (non-recursive for top-level agents)
- * For neurons with workflows (like git), only count the parent neuron file
+ * For agents with workflows (like git), only count the parent agent file
  */
 function scanDirectory(dirPath) {
   const fullPath = path.join(process.cwd(), dirPath);
@@ -46,9 +46,9 @@ function scanDirectory(dirPath) {
       const agentName = entry.name.replace(/\.md$/, '');
       agents.push(agentName);
     } else if (entry.isDirectory()) {
-      // For directories like git/, look for the main neuron file (git.md)
-      const neuronFile = path.join(fullPath, entry.name, `${entry.name}.md`);
-      if (fs.existsSync(neuronFile)) {
+      // For directories like git/, look for the main agent file (git.md)
+      const agentFile = path.join(fullPath, entry.name, `${entry.name}.md`);
+      if (fs.existsSync(agentFile)) {
         agents.push(entry.name);
       }
     }
@@ -200,14 +200,14 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log('  --help, -h   Show this help message');
   console.log('');
   console.log('Description:');
-  console.log('  Scans agent/neuron/skill folders and auto-generates registry section');
+  console.log('  Scans agent/skill folders and auto-generates registry section');
   console.log('  in AGENTS.md between AUTO-GENERATED markers.');
   console.log('');
   console.log('Scanned folders:');
-  console.log('  - .genie/agents/neurons/ (Universal Neurons)');
-  console.log('  - .genie/agents/code/neurons/ (Code Neurons)');
-  console.log('  - .genie/agents/create/neurons/ (Create Neurons)');
-  console.log('  - .genie/agents/code/skills/ (Code Skills)');
+  console.log('  - .genie/skills/ (Universal Skills)');
+  console.log('  - .genie/code/agents/ (Code Agents)');
+  console.log('  - .genie/create/agents/ (Create Agents)');
+  console.log('  - .genie/code/skills/ (Code Skills)');
   process.exit(0);
 }
 

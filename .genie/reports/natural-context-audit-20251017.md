@@ -11,7 +11,7 @@
 
 **Key Findings:**
 - ✅ **3 files** already using @ / ! patterns excellently (STATE.md, SESSION-STATE.md, MASTER-PLAN.md)
-- 🟡 **15+ high-impact opportunities** for @ neural file networks
+- 🟡 **15+ high-impact opportunities** for @ agent file networks
 - 🟡 **20+ opportunities** for ! dynamic data injection
 - ❌ **0 opportunities** for / (MCP command triggers) - not applicable to documentation files
 
@@ -85,7 +85,7 @@
 
 ## Universal Standards
 @AGENTS.md                           # Prompting Standards Framework
-@.genie/agents/neurons/prompt.md  # Prompt crafting workflow
+@.genie/skills/prompt.md             # Prompt crafting workflow
 
 ## Agent Types
 ### Workflow Orchestrators
@@ -93,7 +93,7 @@
 <!-- rest of structure -->
 ```
 
-**Impact:** Agent README becomes neural hub linking to all framework docs
+**Impact:** Agent README becomes agent hub linking to all framework docs
 **Effort:** 15 minutes
 
 ---
@@ -143,22 +143,22 @@ This agent uses the universal prompting framework (see above):
 
 ---
 
-### 5. All Neuron Agents (implementor.md, tests.md, polish.md, release.md, etc.)
+### 5. All Agents (implementor.md, tests.md, polish.md, release.md, etc.)
 **Current State:** Same pattern as workflow agents (line 12-18)
 **@ Opportunity:** Same as workflow agents above
 
 **Files Affected (9 total):**
-- `.genie/agents/neurons/implementor.md` (line 12-18)
-- `.genie/agents/neurons/orchestrator.md` (line 12-18)
-- `.genie/agents/neurons/tests.md` (expected)
-- `.genie/agents/neurons/polish.md` (expected)
-- `.genie/agents/neurons/release.md` (expected)
-- `.genie/agents/neurons/commit.md` (expected)
-- `.genie/agents/neurons/learn.md` (expected)
-- `.genie/agents/neurons/install.md` (expected)
-- `.genie/agents/neurons/roadmap.md` (expected)
+- `.genie/agents/implementor.md` (line 12-18)
+- `.genie/agents/orchestrator.md` (line 12-18)
+- `.genie/agents/tests.md` (expected)
+- `.genie/agents/polish.md` (expected)
+- `.genie/agents/release.md` (expected)
+- `.genie/agents/commit.md` (expected)
+- `.genie/agents/learn.md` (expected)
+- `.genie/agents/install.md` (expected)
+- `.genie/agents/roadmap.md` (expected)
 
-**Impact:** 9 neuron agents get auto-synchronized framework knowledge
+**Impact:** 9 agents get auto-synchronized framework knowledge
 **Effort:** 15 minutes (batch edit pattern)
 
 ---
@@ -171,24 +171,24 @@ This agent uses the universal prompting framework (see above):
 
 When you need to delegate work to specialist agents (implementor, tests, release, etc.), load routing guidance:
 
-@.genie/agents/code/routing.md
+@.genie/code/routing.md
 ```
 
-**Status:** ✅ ALREADY OPTIMAL (line 58 has @.genie/agents/code/routing.md)
+**Status:** ✅ ALREADY OPTIMAL (line 58 has @.genie/code/routing.md)
 
 ---
 
 ### 7. orchestrator.md Routing Reference
 **Current State:** Line 36-42 references routing.md
 
-**Status:** ✅ ALREADY OPTIMAL (line 40 has @.genie/agents/code/routing.md)
+**Status:** ✅ ALREADY OPTIMAL (line 40 has @.genie/code/routing.md)
 
 ---
 
 ### 8. implementor.md Custom Reference
 **Current State:** Line 104-112 references custom file
 
-**Status:** ✅ ALREADY OPTIMAL (line 112 has @.genie/agents/code/neurons/implementor.md)
+**Status:** ✅ ALREADY OPTIMAL (line 112 has @.genie/code/agents/implementor.md)
 
 ---
 
@@ -261,7 +261,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-### 13. All Mode Files (.genie/agents/neurons/modes/*.md - 9 files)
+### 13. All Mode Files (.genie/agents/modes/*.md - 9 files)
 **Current State:** Mode definitions with framework references (expected pattern)
 **Files:**
 - analyze.md
@@ -289,7 +289,7 @@ This mode uses the universal prompting framework (see above):
 
 ---
 
-### 14. Custom Override Files (.genie/custom/neurons/*.md - 5+ files)
+### 14. Custom Override Files (.genie/custom/agents/*.md - 5+ files)
 **Current State:** Project-specific overrides
 **No @ patterns to core agents**
 
@@ -300,7 +300,7 @@ This mode uses the universal prompting framework (see above):
 **Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ## Core Agent Reference
-@.genie/agents/code/neurons/implementor.md
+@.genie/code/agents/implementor.md
 
 ## Project-Specific Configuration
 <!-- overrides here -->
@@ -321,7 +321,7 @@ This mode uses the universal prompting framework (see above):
 **Project:** !`basename $(pwd)`
 **Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
-## Neuron Architecture
+## Agent Architecture
 @.genie/agents/README.md       # Agent structure reference
              # Natural language routing patterns
 
@@ -338,23 +338,22 @@ This mode uses the universal prompting framework (see above):
 
 ### @ (File Reference) Patterns Discovered
 
-**Already Optimal (4 patterns):**
-1. ✅ orchestrator.md:40 → @.genie/agents/code/routing.md
-2. ✅ plan.md:58 → @.genie/agents/code/routing.md
-3. ✅ implementor.md:112 → @.genie/agents/code/neurons/implementor.md
-4. ✅ wish.md:97 → @.genie/templates/wish-template.md
+**Already Optimal (3 patterns):**
+1. ✅ orchestrator.md:40 → @.genie/code/routing.md
+2. ✅ plan.md:58 → @.genie/code/routing.md
+3. ✅ implementor.md:112 → @.genie/code/agents/implementor.md
 
 **High-Impact Additions (15 patterns):**
 1. 🟡  → `@AGENTS.md`, @.genie/MASTER-PLAN.md
-2. 🟡 .genie/README.md → `@.genie/agents/README.md`, 
-3. 🟡 .genie/agents/README.md → `@AGENTS.md`, @.genie/agents/neurons/prompt.md
+2. 🟡 .genie/README.md → `@.genie/agents/README.md`,
+3. 🟡 .genie/agents/README.md → `@AGENTS.md` (note: prompt.md removed in refactoring)
 4. 🟡 5 workflow agents → @AGENTS.md (plan, wish, forge, review, qa)
-5. 🟡 9 neuron agents → @AGENTS.md (implementor, tests, polish, etc.)
+5. 🟡 9 agents → @AGENTS.md (implementor, tests, polish, etc.)
 6. 🟡 9 mode files → @AGENTS.md (analyze, challenge, debug, etc.)
-7. 🟡 5+ custom files → @.genie/agents/neurons/<agent>.md
+7. 🟡 5+ custom files → @.genie/code/agents/<agent>.md
 8. 🟡 .genie/custom/routing.md → `@.genie/agents/README.md`, 
 
-**Neural File Network Map:**
+**Agent File Network Map:**
 ```
 CLAUDE.md
   ↓  (line 2)
@@ -431,11 +430,11 @@ CLAUDE.md
 ## 🎯 Implementation Plan
 
 ### Phase 1: Core Framework (HIGH Priority - 1 hour)
-**Objective:** Establish neural file network foundation
+**Objective:** Establish agent file network foundation
 
 1. **Batch edit: All agents → @AGENTS.md** (30 min)
    - 5 workflow agents (plan, wish, forge, review, qa)
-   - 9 neuron agents (implementor, tests, polish, etc.)
+   - 9 agents (implementor, tests, polish, etc.)
    - 9 mode files (analyze, challenge, debug, etc.)
    - Pattern: Replace framework reference text with `@AGENTS.md` + minimal description
 
@@ -444,8 +443,8 @@ CLAUDE.md
    - Add @.genie/MASTER-PLAN.md for architectural context
    - Add version + timestamp via !
 
-3. **.genie/agents/README.md → Neural hub** (10 min)
-   - Add `@AGENTS.md`, @.genie/agents/neurons/prompt.md at top
+3. **.genie/agents/README.md → Agent hub** (10 min)
+   - Add `@AGENTS.md`, .genie/skills/prompt.md (updated path) at top
    - Add version + timestamp via !
 
 4. **.genie/README.md → Auto-sync** (10 min)
@@ -494,7 +493,7 @@ grep -r "!\`" .genie/ .claude/ | wc -l
 1. **Test @ loading:**
    ```bash
    # Pick any agent, invoke via MCP, verify AGENTS.md content appears
-   # Example: Check implementor neuron loads framework
+   # Example: Check implementor agent loads framework
    ```
 
 2. **Test ! execution:**
@@ -554,7 +553,7 @@ grep -r "!\`" .genie/ .claude/ | wc -l
 **Confidence:** HIGH (95%)
 
 **Reasoning:**
-1. **@ patterns** create knowledge graphs (proven benefit from git neuron split -68% context)
+1. **@ patterns** create knowledge graphs (proven benefit from git agent split -68% context)
 2. **! patterns** eliminate manual sync work (proven by STATE.md, SESSION-STATE.md, TODO.md)
 3. **Batch operation** feasible (consistent pattern across 23+ files)
 4. **Low risk** (@ loads existing files, ! runs safe read-only commands)
@@ -571,10 +570,10 @@ grep -r "!\`" .genie/ .claude/ | wc -l
    - Mitigation: Audit shows clear hierarchy (no cycles detected)
 
 **Next Steps:**
-1. Delegate Phase 1 to implementor neuron (batch edit 23 files)
+1. Delegate Phase 1 to implementor agent (batch edit 23 files)
 2. Validate @ loading works correctly (spot check 3 agents)
 3. Proceed to Phase 2 if Phase 1 successful
-4. Document learnings in AGENTS.md (new pattern: neural file networks)
+4. Document learnings in AGENTS.md (new pattern: agent file networks)
 
 ---
 
@@ -590,7 +589,7 @@ grep -r "!\`" .genie/ .claude/ | wc -l
 2. `.genie/README.md` - 164 lines, agent architecture
 3. `.genie/agents/README.md` - 164 lines, agent hub
 4-8. Workflow agents (5 files) - plan, wish, forge, review, qa
-9-17. Neuron agents (9 files) - implementor, tests, polish, etc.
+9-17. Agent agents (9 files) - implementor, tests, polish, etc.
 18-26. Mode files (9 files) - analyze, challenge, debug, etc.
 27-31. Custom overrides (5+ files)
 32. `.genie/custom/routing.md`

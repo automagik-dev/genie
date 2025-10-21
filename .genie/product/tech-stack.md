@@ -10,7 +10,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 
 ## Agent Assets
 - **Prompts:** Markdown agents under `.genie/agents/` with shared personas in `.genie/agents/core/`
-- **Custom Overrides:** Repository-specific adjustments live in `.genie/custom/` (bug-reporter, tests, qa, learn, polish, project-manager, etc.)
+- **Project Overrides:** Add a short "Project Notes" section inside relevant agent or skill docs (no separate `custom/` directory)
 - **State:** Session and ledger files stored in `.genie/state/` (never edit manually; inspect via MCP genie tools: `mcp__genie__list_sessions`, `mcp__genie__view`)
 
 ## Testing & Validation

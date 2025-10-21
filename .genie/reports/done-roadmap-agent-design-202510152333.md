@@ -10,7 +10,7 @@
 
 **Delivered:**
 1. ✅ Comprehensive design exploration (4 viable approaches analyzed)
-2. ✅ Roadmap agent implementation (`.genie/agents/neurons/roadmap.md`)
+2. ✅ Roadmap agent implementation (`.genie/agents/roadmap.md`)
 3. ✅ Routing trigger integration (`.genie/custom/routing.md`)
 4. ✅ Documentation updates (`` cognitive architecture)
 5. ✅ Strategic recommendations for phased rollout
@@ -35,7 +35,7 @@ Felipe needs an agent to populate roadmap initiatives properly in the `automagik
 **What I explored:**
 1. ✅ Existing `automagik-roadmap` infrastructure (GitHub issue templates, label system)
 2. ✅ Genie workflow architecture (Plan → Wish → Forge → Review)
-3. ✅ Agent patterns (implementor, git, release neurons)
+3. ✅ Agent patterns (implementor, git, release agents)
 4. ✅ Routing mechanisms (orchestrator delegation, natural language triggers)
 5. ✅ Cross-repo linking requirements (initiative ↔ wishes)
 
@@ -44,7 +44,7 @@ Felipe needs an agent to populate roadmap initiatives properly in the `automagik
 - 3 complexity levels well-defined: MINIMAL (8 sections, 15-30min), STANDARD (12 sections, 1-2h), COMPREHENSIVE (20+ sections, 4-8h)
 - Issue #29 example demonstrates COMPREHENSIVE template in production
 - RASCI, 5W2H, timeline, risk matrix all structured
-- Git neuron can handle cross-repo operations
+- Git agent can handle cross-repo operations
 - Natural routing pattern fits Genie's cognitive architecture
 
 ---
@@ -111,7 +111,7 @@ Felipe needs an agent to populate roadmap initiatives properly in the `automagik
 **Pros:**
 - Natural language interface
 - Integrates with Plan → Wish → Forge flow
-- Persistent neuron sessions enable iteration
+- Persistent agent sessions enable iteration
 - Proactive guidance
 
 **Cons:**
@@ -178,7 +178,7 @@ Genie: "Done! Initiative #29 documented. Breaking into wishes now..."
 ## Implementation Completed
 
 ### 1. Roadmap Agent Prompt
-**File:** `.genie/agents/neurons/roadmap.md`
+**File:** `.genie/agents/roadmap.md`
 **Lines:** 700+ comprehensive agent specification
 
 **Key sections:**
@@ -244,13 +244,13 @@ Forge/Review reference initiative context
 
 **Before:**
 ```
-Execution Specialists (6 total - direct neurons)
+Execution Specialists (6 total - direct agents)
 - implementor, tests, polish, review, git, release
 ```
 
 **After:**
 ```
-Execution Specialists (7 total - direct neurons)
+Execution Specialists (7 total - direct agents)
 Delivery: implementor, tests, polish, review
 Infrastructure: git, release
 Strategic documentation: roadmap
@@ -267,7 +267,7 @@ Workflow: learn
      - Check roadmap for existing entries
 +    - If initiative doesn't exist and complexity is strategic:
 +      * Suggest: "Want me to document this as roadmap initiative first?"
-+      * If yes → invoke roadmap neuron, get initiative ID
++      * If yes → invoke roadmap agent, get initiative ID
 +      * Continue with wish creation, auto-link to initiative
 ```
 
@@ -317,7 +317,7 @@ Workflow: learn
 
 ### Decision 1: Standalone Agent (Not Orchestrator Mode)
 **Rationale:** Roadmap work is heavyweight (400+ line prompt), has its own workflow, produces Done Reports
-**Pattern:** Direct invocation like analyze/debug/audit neurons
+**Pattern:** Direct invocation like analyze/debug/audit agents
 **Invocation:** `mcp__genie__run with agent="roadmap"`
 
 ### Decision 2: Progressive Disclosure (Not All-at-Once)
@@ -433,7 +433,7 @@ mcp__genie__run with:
 ### Phase 3: Cross-Repo Linking (Week 5, Optional)
 **Status:** 🎯 PENDING
 - [ ] Test cross-repo access (genie/omni/forge/hive/spark/tools)
-- [ ] Implement wish creation delegation to git neuron
+- [ ] Implement wish creation delegation to git agent
 - [ ] Test bidirectional linking (initiative → wishes, wishes → initiative)
 - [ ] Validate graceful degradation (access denied scenarios)
 
@@ -510,7 +510,7 @@ User: "STANDARD"
 **Question:** If `automagik-roadmap` templates change, should agent self-update or require manual sync?
 
 **Option A (Manual sync):**
-- Template changes require updating `.genie/agents/neurons/roadmap.md`
+- Template changes require updating `.genie/agents/roadmap.md`
 - Explicit, controlled, version-stable
 
 **Option B (Auto-sync):**
@@ -581,7 +581,7 @@ User: "STANDARD"
 ## Files Created/Modified
 
 ### Created
-- `.genie/agents/neurons/roadmap.md` (700+ lines)
+- `.genie/agents/roadmap.md` (700+ lines)
 - `.genie/reports/done-roadmap-agent-design-202510152333.md` (this file)
 
 ### Modified
@@ -606,9 +606,9 @@ User: "STANDARD"
 
 ### Internal References
 - **Genie workflow:** `@AGENTS.md` §Natural Flow Protocol
-- **Git neuron:** `.genie/agents/neurons/git.md`
+- **Git agent:** `.genie/agents/git.md`
 - **Routing guidance:** `.genie/custom/routing.md`
-- **Implementor pattern:** `.genie/agents/neurons/implementor.md`
+- **Implementor pattern:** `.genie/agents/implementor.md`
 
 ---
 
@@ -620,7 +620,7 @@ User: "STANDARD"
 1. ✅ **Respects existing infrastructure** - Templates already well-structured in automagik-roadmap
 2. ✅ **Incremental rollout** - Phase 1 (standalone) → Phase 2 (integration) reduces risk
 3. ✅ **Graceful failure modes** - Initiative creation always succeeds, cross-repo degrades cleanly
-4. ✅ **Aligns with Genie philosophy** - Natural language, proactive guidance, persistent neurons
+4. ✅ **Aligns with Genie philosophy** - Natural language, proactive guidance, persistent agents
 5. ✅ **Enables iteration** - Progressive disclosure + template guidance reduces user friction
 6. ✅ **Evidence-based** - Template selection uses measurable signals, not guesses
 

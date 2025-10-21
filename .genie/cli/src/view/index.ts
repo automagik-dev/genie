@@ -3,4 +3,4 @@ export { formatTranscriptMarkdown, formatSessionList } from '../lib/markdown-for
 export type { OutputMode, SessionMeta, SessionEntry } from '../lib/markdown-formatter.js';
 
 // ChatMessage type for transcript parsing
-export type { ChatMessage, ChatRole } from '../executors/transcript-utils.js';
+export type { ChatMessage } from '../lib/markdown-formatter.js';

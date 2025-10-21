@@ -27,8 +27,8 @@
 - System error: `execConfig.permissionMode = bypassPermissions`, `--dangerously-skip-permissions`
 
 **Recursive Bug Discovered:**
-- Attempted to delegate issue creation to git neuron
-- Git neuron start ALSO failed with same error
+- Attempted to delegate issue creation to git agent
+- Git agent start ALSO failed with same error
 - Demonstrates the bug's severity: can't use agents to report the bug affecting agents
 
 ---
@@ -103,7 +103,7 @@ gh issue create \
 - Related to existing #89 (CLI output references non-existent ./genie)
 
 ### Delegation vs Emergency Bypass
-- Primary approach: Delegate to git neuron (proper orchestration)
+- Primary approach: Delegate to git agent (proper orchestration)
 - When delegation fails: Use direct bash + gh CLI (emergency bypass justified)
 - This session demonstrates correct escalation path
 

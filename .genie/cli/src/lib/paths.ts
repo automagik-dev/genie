@@ -28,7 +28,7 @@ export type TemplateType = 'code' | 'create';
 
 export function getTemplateGeniePath(_template: TemplateType = 'code'): string {
   // Copy directly from framework's .genie/ directory
-  // Template variants (code vs create) handled by install/update neurons
+  // Template variants (code vs create) handled by install/update agents
   return path.join(getPackageRoot(), '.genie');
 }
 
@@ -48,7 +48,6 @@ export function getTemplateRelativeBlacklist(): Set<string> {
     'cli',        // Framework CLI code
     'mcp',        // Framework MCP code
     'backups',    // User backups
-    'agents',     // User custom agents (preserve entirely)
     'wishes',     // User wishes (preserve entirely)
     'reports',    // User reports (preserve entirely)
     'state'       // User session state (preserve entirely)

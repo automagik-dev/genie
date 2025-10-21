@@ -11,7 +11,7 @@ async function test() {
   console.log('═══════════════════════════════════════════════════════\n');
 
   try {
-    const forge = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:3000');
+    const forge = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887');
 
     console.log('1️⃣  Checking if "Genie Sessions" project already exists...');
     const projects = await forge.listProjects();
