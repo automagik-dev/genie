@@ -106,7 +106,7 @@ async function main(): Promise<void> {
             '• Backs up existing .genie and AGENTS.md under .genie/backups/<id>/.',
             '• Prompts for default executor and model (arrow keys), updates .genie/config.yaml.',
             '• Configures MCP: genie@next and Forge in .mcp.json.',
-            '• Starts a private Forge on 8888 and creates an Install task.'
+            '• Starts a private Forge on 8887 and creates an Install task.'
           ]), parsed.options);
           return;
         }

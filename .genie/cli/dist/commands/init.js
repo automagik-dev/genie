@@ -517,7 +517,7 @@ async function runInstallViaCli(cwd, template, flags) {
             '@agent-install',
             workflowPath
         ].join('\n');
-        const baseUrl = flags?.forgeBaseUrl ? flags.forgeBaseUrl : (flags?.forgePort ? `http://localhost:${flags.forgePort}` : 'http://localhost:8888');
+        const baseUrl = flags?.forgeBaseUrl ? flags.forgeBaseUrl : (flags?.forgePort ? `http://localhost:${flags.forgePort}` : 'http://localhost:8887');
         const child = spawn(process.execPath, [cliPath, 'run', agentId, prompt], {
             cwd,
             stdio: 'inherit',

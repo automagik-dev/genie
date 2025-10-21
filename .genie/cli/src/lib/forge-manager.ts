@@ -11,7 +11,7 @@ export interface ForgeStartOptions {
   logDir: string;
 }
 
-const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 
 export async function isForgeRunning(baseUrl: string = DEFAULT_BASE_URL): Promise<boolean> {
   try {
@@ -56,8 +56,8 @@ export function startForgeInBackground(opts: ForgeStartOptions): { childPid: num
   const out = fs.openSync(logPath, 'a');
   const err = fs.openSync(logPath, 'a');
 
-  // Extract port from baseUrl (e.g., http://localhost:8888 -> 8888)
-  const port = new URL(baseUrl).port || '8888';
+  // Extract port from baseUrl (e.g., http://localhost:8887 -> 8887)
+  const port = new URL(baseUrl).port || '8887';
 
   // Use bundled automagik-forge binary directly (blazing fast - no extraction!)
   // Path works for both pnpm and npm installations
