@@ -57,15 +57,31 @@ interface CliResult {
 
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
 
-// Helper: List available agents from .genie/code/agents and .genie/create/agents
+// Helper: List available agents from all collectives
 function listAgents(): Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> {
   const agents: Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> = [];
 
-  // Search in both code and create collectives
-  const searchDirs = [
-    path.join(WORKSPACE_ROOT, '.genie/code/agents'),
-    path.join(WORKSPACE_ROOT, '.genie/create/agents')
-  ];
+  // Auto-discover all collectives by scanning .genie/ directory
+  const searchDirs: string[] = [];
+  const genieDir = path.join(WORKSPACE_ROOT, '.genie');
+
+  if (fs.existsSync(genieDir)) {
+    const entries = fs.readdirSync(genieDir, { withFileTypes: true });
+    entries.forEach(entry => {
+      if (entry.isDirectory()) {
+        const agentsPath = path.join(genieDir, entry.name, 'agents');
+        if (fs.existsSync(agentsPath)) {
+          searchDirs.push(agentsPath);
+        }
+      }
+    });
+  }
+
+  // Fallback: Include root agents directory if it exists
+  const rootAgentsPath = path.join(WORKSPACE_ROOT, '.genie/agents');
+  if (fs.existsSync(rootAgentsPath) && !searchDirs.includes(rootAgentsPath)) {
+    searchDirs.push(rootAgentsPath);
+  }
 
   const visit = (dirPath: string, relativePath: string | null) => {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -336,6 +352,25 @@ server.addTool({
   }),
   execute: async (args) => {
     try {
+      // Early validation: Check if agent exists BEFORE trying to run
+      const availableAgents = listAgents();
+      const agentExists = availableAgents.some(a => a.id === args.agent || a.displayId === args.agent);
+
+      if (!agentExists) {
+        // Fast fail with helpful error message
+        const suggestions = availableAgents
+          .filter(a => a.id.includes(args.agent) || a.displayId.includes(args.agent))
+          .slice(0, 3)
+          .map(a => `  • ${a.displayId}`)
+          .join('\n');
+
+        const errorMsg = `❌ **Agent not found:** '${args.agent}'\n\n` +
+          (suggestions ? `Did you mean:\n${suggestions}\n\n` : '') +
+          `💡 Use list_agents tool to see all available agents.`;
+
+        return getVersionHeader() + errorMsg;
+      }
+
       const cliArgs = ['run', args.agent];
       if (args.name?.length) {
         cliArgs.push('--name', args.name);

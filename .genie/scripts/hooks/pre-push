@@ -72,11 +72,18 @@ function main() {
     process.exit(1);
   }
   // Step 2: commit advisory (validates traceability)
-  // Changed to WARNING ONLY - enforcement at PR approval time
   const advisoryCode = runNodeScript('commit-advisory.js');
+
+  // Block on main branch, warn on dev/feature branches
   if (advisoryCode === 2) {
-    console.warn('⚠️  Commit validation issues detected (blocking at PR approval)');
-    console.warn('    See output above for details');
+    if (currentBranch === 'main' || currentBranch === 'master') {
+      console.error('❌ Pre-push blocked - fix commit validation errors before pushing to main');
+      console.error('    See output above for details');
+      process.exit(1);
+    } else {
+      console.warn('⚠️  Commit validation issues detected (blocking at PR approval)');
+      console.warn('    See output above for details');
+    }
   }
   if (advisoryCode === 1 && !process.env.GENIE_SKIP_WISH_CHECK) {
     console.warn('⚠️  Commit advisory warnings (will be checked at PR approval)');

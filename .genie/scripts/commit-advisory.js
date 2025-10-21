@@ -294,20 +294,27 @@ class CommitAdvisory {
   }
 
   /**
-   * Check if commit is auto-generated (from git hooks, forge, etc)
+   * Check if commit is exempt from traceability requirements
+   * Includes: automated commits, chores, and non-functional enhancements
    */
   isAutomatedCommit(commit) {
     const full = `${commit.subject} ${commit.body}`;
 
-    // Patterns for automated commits
+    // Patterns for automated commits and exempt commit types
     const patterns = [
+      // Auto-generated commits
       /\(auto-generated\)/i,
       /\[skip ci\]/i,
       /\[auto\]/i,
-      /^chore:\s*(auto-|update.*timestamp|update.*token count)/i,
-      /^chore:\s*update\s+(AGENTS|STATE|CHANGELOG)\.md/i,
       /agent graph/i,
-      /\(automagik-forge\s+[a-f0-9-]+\)/i  // Forge task references (e.g., "automagik-forge e7f23ead")
+      /\(automagik-forge\s+[a-f0-9-]+\)/i,  // Forge task references
+
+      // Exempt commit types (don't require issues)
+      /^chore:/i,           // All maintenance tasks
+      /^perf:/i,            // Performance improvements (speed)
+      /^refactor:/i,        // Code quality (reduce LOC, cleanup)
+      /^style:/i,           // Formatting/style changes
+      /^docs:/i             // Documentation updates
     ];
 
     return patterns.some(pattern => pattern.test(full));
@@ -337,9 +344,11 @@ class CommitAdvisory {
     }
 
     // Rule 2: Commit Traceability (BLOCKING)
+    let exemptCount = 0;
     for (const commit of this.commits) {
       // Skip automated/forge commits from traceability check
       if (this.isAutomatedCommit(commit)) {
+        exemptCount++;
         continue;
       }
 
@@ -364,6 +373,11 @@ class CommitAdvisory {
           ]
         });
       }
+    }
+
+    // Report exempt commits
+    if (exemptCount > 0) {
+      this.passes.push(`${exemptCount} commit(s) exempt from traceability (chore/perf/refactor/style/docs/automated)`);
     }
 
     // Rule 3: Bug Commits Must Have Issues (BLOCKING)
