@@ -6,15 +6,14 @@
  * Provides 3 output modes optimized for different orchestration scenarios.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.formatTranscriptMarkdown = formatTranscriptMarkdown;
-exports.formatSessionList = formatSessionList;
+exports.formatSessionList = exports.formatTranscriptMarkdown = void 0;
 // ============================================================================
 // Constants
 // ============================================================================
 const TOKEN_BUDGET = {
-    final: 500, // ~2000 chars
-    recent: 300, // ~1200 chars
-    overview: 400, // ~1600 chars
+    final: 500,
+    recent: 300,
+    overview: 400,
     full: Infinity // No truncation - complete transcript
 };
 const CHARS_PER_TOKEN = 4; // Rough estimate for token counting
@@ -47,6 +46,7 @@ function formatTranscriptMarkdown(messages, meta, mode) {
             return formatRecentMode(messages, meta, parts); // Default to recent
     }
 }
+exports.formatTranscriptMarkdown = formatTranscriptMarkdown;
 /**
  * Format session list into compact markdown table
  *
@@ -68,6 +68,7 @@ function formatSessionList(sessions) {
     }
     return parts.join('\n') + '\n';
 }
+exports.formatSessionList = formatSessionList;
 // ============================================================================
 // Mode-Specific Formatters
 // ============================================================================

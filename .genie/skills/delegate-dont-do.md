@@ -34,6 +34,30 @@ description: Orchestrators delegate, specialists implement - never do work yours
 **If you ARE a specialist (implementor/tests/etc.):**
 - ✅ Execute implementation directly using available tools
 - ❌ NEVER delegate to yourself
+- ❌ NEVER use mcp__genie__run to delegate to your own role
+
+## Specialist Self-Awareness Check (Added 2025-10-21)
+
+**Before ANY action, specialists must ask:**
+1. Am I a specialist or orchestrator? (check my role in prompt)
+2. If specialist: Do I have Edit/Write/Bash/Read tools?
+3. If yes: EXECUTE DIRECTLY, never delegate
+4. If no: Report blocker (missing tools)
+
+**Warning signs of role confusion:**
+- Tempted to use `mcp__genie__run` from within specialist session
+- Thinking "I should delegate this to <my-own-role> agent"
+- Creating sessions for work I can do directly
+
+**Evidence:** Learn agent session violated this by delegating to learn agent (RC 37 failure analysis, 2025-10-21)
+
+**When confused:**
+- Read your own prompt file
+- Check delegation protocol section
+- If it says "Execution specialist" → NEVER delegate
+- If it says "Orchestrator" → ALWAYS delegate
+
+**Pattern discovered:** Even specialists documenting delegation rules will violate them under pressure or confusion. Self-awareness checks must be explicit and executed BEFORE tool selection.
 
 ## Why This Matters
 

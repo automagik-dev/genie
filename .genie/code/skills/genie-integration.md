@@ -99,8 +99,49 @@ Use `mcp__genie__run with agent="reasoning/<mode>"`:
 
 Verdict templates live inside the specialized skill files (e.g., `.genie/agents/refactor.md`). Core files remain immutable.
 
+## Real-Time Agent Monitoring (Added 2025-10-21)
+
+**Problem:** `genie view` may show "Forge backend unreachable" errors even when agents are actively working and completing tasks successfully.
+
+**Root cause:** Display bug in Genie CLI - checks wrong port (8888 vs 8887) or uses HTTP health check instead of MCP connectivity verification.
+
+**Investigation before panic:**
+1. Check Forge MCP connectivity: `mcp__automagik_forge__list_tasks(project_id="...")`
+2. Check task status: Look for task in "in-progress" state
+3. Check executor process: `ps aux | grep <executor-name>` (opencode, claude, etc.)
+4. Check Forge process: `ps aux | grep forge` and `netstat -tlnp | grep 8887`
+
+**If Forge MCP works:** Trust delegation, ignore "unreachable" message in genie view
+
+**Monitoring pattern:**
+```bash
+# Don't poll rapidly - use intervals
+sleep 30  # or 60 seconds between checks
+# Then check status again
+```
+
+**Decision tree:**
+- `genie view` shows "unreachable" + Forge MCP works → Display bug, trust delegation
+- `genie view` shows "unreachable" + Forge MCP fails → Real failure, investigate
+- Task status "in-progress" + process running → Wait patiently
+- Task status "failed" + process not running → Actual failure, investigate logs
+
+**Future improvements needed:**
+- Fix Genie CLI port detection (use 8887, not 8888)
+- Use MCP connectivity check instead of HTTP health endpoint
+- Add real-time status polling to `genie view` using Forge advanced APIs
+- Create `genie status` command for quick health checks
+- Implement session→task→attempt mapping for better monitoring
+
+**See also:** `@.genie/skills/error-investigation-protocol.md` for complete investigation toolkit
+
+**Evidence:** RC 37 failure analysis (2025-10-21) - orchestrator panicked due to misleading "unreachable" message, created redundant sessions, lost work. Meanwhile agents completed successfully.
+
 ## Anti-Patterns
 
 - Using Genie to bypass human approval.
 - Spawning Genie repeatedly without integrating prior outcomes.
 - Treating Genie outputs as implementation orders without validation.
+- **Panicking due to "unreachable" errors without investigating actual system state (Added 2025-10-21)**
+- **Creating redundant agent sessions instead of monitoring existing ones (Added 2025-10-21)**
+- **Bypassing delegation when display shows errors but system is working (Added 2025-10-21)**

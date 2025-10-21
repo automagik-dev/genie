@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runRollback = runRollback;
+exports.runRollback = void 0;
 const path_1 = __importDefault(require("path"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
@@ -65,6 +65,7 @@ async function runRollback(parsed, _config, _paths) {
         process.exitCode = 1;
     }
 }
+exports.runRollback = runRollback;
 function parseFlags(args) {
     const flags = {};
     for (let i = 0; i < args.length; i++) {

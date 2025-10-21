@@ -3,9 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.configureCodexMcp = configureCodexMcp;
-exports.configureClaudeMcp = configureClaudeMcp;
-exports.configureBothExecutors = configureBothExecutors;
+exports.configureBothExecutors = exports.configureClaudeMcp = exports.configureCodexMcp = void 0;
 const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
@@ -61,6 +59,7 @@ args = ["automagik-genie@next", "mcp"]
     }
     await fs_1.promises.writeFile(codexConfigPath, newContent, 'utf8');
 }
+exports.configureCodexMcp = configureCodexMcp;
 /**
  * Configure Claude Code MCP server (project-local .mcp.json or global)
  */
@@ -109,6 +108,7 @@ async function configureClaudeMcp(projectDir) {
     console.log(`✅ ${existingGenie ? 'Updated' : 'Added'} Genie MCP configuration for Claude Code${projectDir ? ' (project-local)' : ' (global)'}`);
     console.log(`✅ ${existingForge ? 'Updated' : 'Added'} Forge MCP configuration${projectDir ? ' (project-local)' : ' (global)'}`);
 }
+exports.configureClaudeMcp = configureClaudeMcp;
 /**
  * Configure MCP for both executors
  */
@@ -132,3 +132,4 @@ async function configureBothExecutors(projectDir) {
     }
     console.log('');
 }
+exports.configureBothExecutors = configureBothExecutors;

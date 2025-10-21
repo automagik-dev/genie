@@ -3,13 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.formatRelativeTime = formatRelativeTime;
-exports.formatPathRelative = formatPathRelative;
-exports.truncateText = truncateText;
-exports.sanitizeLogFilename = sanitizeLogFilename;
-exports.safeIsoString = safeIsoString;
-exports.deepClone = deepClone;
-exports.mergeDeep = mergeDeep;
+exports.mergeDeep = exports.deepClone = exports.safeIsoString = exports.sanitizeLogFilename = exports.truncateText = exports.formatPathRelative = exports.formatRelativeTime = void 0;
 const path_1 = __importDefault(require("path"));
 /**
  * Formats ISO timestamp as human-readable relative time.
@@ -47,6 +41,7 @@ function formatRelativeTime(value) {
         return `${weeks}w ago`;
     return new Date(value).toLocaleDateString();
 }
+exports.formatRelativeTime = formatRelativeTime;
 /**
  * Formats absolute path as relative to base directory.
  *
@@ -64,6 +59,7 @@ function formatPathRelative(targetPath, baseDir) {
         return targetPath;
     }
 }
+exports.formatPathRelative = formatPathRelative;
 /**
  * Truncates text to maximum length with ellipsis.
  *
@@ -79,6 +75,7 @@ function truncateText(text, maxLength = 64) {
     const sliceLength = Math.max(0, maxLength - 3);
     return text.slice(0, sliceLength).trimEnd() + '...';
 }
+exports.truncateText = truncateText;
 /**
  * Sanitizes agent name for safe use as log filename.
  *
@@ -106,6 +103,7 @@ function sanitizeLogFilename(agentName) {
         .replace(/^\.+|\.+$/g, '');
     return normalized.length ? normalized : fallback;
 }
+exports.sanitizeLogFilename = sanitizeLogFilename;
 /**
  * Converts timestamp string to ISO string with validation.
  *
@@ -118,6 +116,7 @@ function safeIsoString(value) {
         return null;
     return new Date(timestamp).toISOString();
 }
+exports.safeIsoString = safeIsoString;
 /**
  * Derives session start time from environment or current time.
  *
@@ -131,6 +130,7 @@ function safeIsoString(value) {
 function deepClone(input) {
     return JSON.parse(JSON.stringify(input));
 }
+exports.deepClone = deepClone;
 /**
  * Deep merge source into target recursively
  */
@@ -149,3 +149,4 @@ function mergeDeep(target, source) {
     });
     return base;
 }
+exports.mergeDeep = mergeDeep;

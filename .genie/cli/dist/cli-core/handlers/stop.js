@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createStopHandler = createStopHandler;
+exports.createStopHandler = void 0;
 const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
 function createStopHandler(ctx) {
@@ -34,3 +34,4 @@ function createStopHandler(ctx) {
         process.stdout.write(`✓ Session ${sessionName} stopped via Forge\n`);
     };
 }
+exports.createStopHandler = createStopHandler;

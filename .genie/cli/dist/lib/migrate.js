@@ -3,12 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.detectInstallType = detectInstallType;
-exports.backupGenie = backupGenie;
-exports.analyzeAgents = analyzeAgents;
-exports.extractCustomizations = extractCustomizations;
-exports.copyTemplates = copyTemplates;
-exports.runMigration = runMigration;
+exports.runMigration = exports.copyTemplates = exports.extractCustomizations = exports.analyzeAgents = exports.backupGenie = exports.detectInstallType = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
@@ -88,6 +83,7 @@ function detectInstallType() {
     const hasOldCoreAgents = topLevelAgents.some(f => ['plan', 'wish', 'forge', 'review', 'orchestrator', 'vibe'].includes(f.replace('.md', '')));
     return hasOldCoreAgents ? 'old_genie' : 'already_new';
 }
+exports.detectInstallType = detectInstallType;
 /**
  * Creates timestamped backup of .genie/ directory
  */
@@ -97,6 +93,7 @@ function backupGenie() {
     (0, child_process_1.execSync)(`cp -r .genie "${backupPath}"`);
     return backupPath;
 }
+exports.backupGenie = backupGenie;
 /**
  * Analyzes which agents are custom (user-created) vs core (framework)
  */
@@ -136,6 +133,7 @@ function analyzeAgents() {
     walkDir(agentsDir);
     return result;
 }
+exports.analyzeAgents = analyzeAgents;
 /**
  * Extracts customizations from modified core agents (custom folder retired)
  */
@@ -145,6 +143,7 @@ function extractCustomizations(coreAgents) {
     // For now: no-op (document that custom folder is retired)
     return extracted;
 }
+exports.extractCustomizations = extractCustomizations;
 /**
  * Copies templates from npm package to user project
  */
@@ -196,6 +195,7 @@ function copyTemplates(options = {}) {
         }
     }
 }
+exports.copyTemplates = copyTemplates;
 /**
  * Main migration orchestrator
  */
@@ -302,3 +302,4 @@ async function runMigration(options = {}) {
     }
     return result;
 }
+exports.runMigration = runMigration;

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runHelp = runHelp;
+exports.runHelp = void 0;
 const view_helpers_1 = require("../lib/view-helpers");
 const help_1 = require("../views/help");
 async function runHelp(parsed, config, _paths) {
@@ -40,3 +40,4 @@ async function runHelp(parsed, config, _paths) {
     });
     await (0, view_helpers_1.emitView)(envelope, parsed.options);
 }
+exports.runHelp = runHelp;

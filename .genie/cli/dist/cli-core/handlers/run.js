@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createRunHandler = createRunHandler;
+exports.createRunHandler = void 0;
 const agent_resolver_1 = require("../../lib/agent-resolver");
 const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
@@ -67,6 +67,7 @@ function createRunHandler(ctx) {
         process.stdout.write(`  View: genie view ${sessionName}\n`);
     };
 }
+exports.createRunHandler = createRunHandler;
 function resolveExecutionSelection(config, parsed, agentGenie) {
     let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
     let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
