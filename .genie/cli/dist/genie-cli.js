@@ -464,18 +464,31 @@ async function startGenieServer() {
         console.log(successGradient('✨ Genie stopped. See you next time! ✨'));
         console.log('');
     };
-    // Install SIGINT handler - keep event loop alive with interval
+    // Install SIGINT handler - MUST block synchronously until shutdown completes
     process.on('SIGINT', () => {
-        // Keep event loop alive while shutdown completes
-        const keepAlive = setInterval(() => { }, 1000);
+        let shutdownComplete = false;
+        let shutdownError = null;
+        // Start async shutdown
         shutdown()
             .catch((error) => {
-            console.error('Fatal error during shutdown:', error);
+            shutdownError = error;
         })
             .finally(() => {
-            clearInterval(keepAlive);
-            process.exit(0);
+            shutdownComplete = true;
         });
+        // Busy-wait until shutdown completes (blocks event loop but prevents exit)
+        const start = Date.now();
+        const timeout = 10000; // 10 second timeout
+        while (!shutdownComplete && (Date.now() - start) < timeout) {
+            // Spin - this keeps Node.js from exiting
+        }
+        if (shutdownError) {
+            console.error('Fatal error during shutdown:', shutdownError);
+        }
+        if (!shutdownComplete) {
+            console.error('⚠️  Shutdown timed out after 10s');
+        }
+        process.exit(0);
     });
     // Resilient startup: retry on early non-zero exit
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
