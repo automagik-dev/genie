@@ -67,6 +67,88 @@ See `.genie/` directory for comprehensive documentation:
 ## Workflow Architecture
 **Pattern:** `Wish → Forge → Review`
 
+## Seven Amendments (Core Workflow Rules)
+
+### 1. No Wish Without Issue 🔴 CRITICAL
+**Rule:** Every wish execution MUST be linked to a GitHub issue
+
+**Process:**
+1. User requests work → Check for GitHub issue
+2. No issue? → Create issue first (requires discovery)
+3. Issue created → Create Forge task linked to issue
+4. Forge task → Execute wish workflow
+
+**Routing:**
+- New work without issue → Route to discovery skill
+- Discovery complete → Create GitHub issue
+- Issue exists → Create Forge task with issue reference
+
+**Enforcement:**
+- Genie checks for issue before creating wish task
+- Forge tasks must reference GitHub issue number
+- SESSION-STATE.md tracks issue↔task mapping
+
+**Why:**
+- Single source of truth (GitHub issues)
+- Prevents duplicate/orphaned work
+- Enables community visibility
+- Links wish→task→PR→issue lifecycle
+
+### 2. File Organization Pattern
+**Rule:** Root AGENTS.md contains full content, .genie/AGENTS.md is alias
+
+**Structure:**
+```
+/AGENTS.md              # Full framework documentation (source)
+/.genie/AGENTS.md       # @AGENTS.md (alias reference)
+```
+
+**Reason:**
+- Root file = primary discovery point
+- .genie/ = implementation details
+- Alias pattern established, documented
+
+**Maintenance:**
+- Update root AGENTS.md (source of truth)
+- .genie/AGENTS.md stays as @reference
+- Both patterns valid, this is our choice
+
+### 3. Real-Time State Awareness
+**Rule:** SESSION-STATE.md must reflect live Forge Kanban state
+
+**Implementation:**
+- MCP startup sync (query all projects)
+- Git hook auto-update (pre-commit)
+- Optional: Polling loop (30s intervals)
+- Future: Forge MCP resources (push-based)
+
+**Schema:**
+```markdown
+## 📊 PROJECT: Name (id)
+### 🔥 In Progress (N)
+- task_id | Title | attempt: xxx
+### 👀 In Review (N)
+### 📝 Todo (N)
+
+## 🔗 GITHUB ISSUES MAPPING
+- #NNN → task_id, task_id
+```
+
+**Benefits:**
+- Genie always knows current state
+- Zero "what are you working on?" questions
+- Automatic orchestration awareness
+- Multi-project coordination
+
+### 4-7. Reserved for Future Amendments
+**Placeholder:** Additional core workflow rules will be documented here as they emerge
+
+**Current Candidates:**
+- MCP skill execution pattern
+- Genie MCP dynamic skill loading
+- Template derivation from .genie consciousness
+- Agent delegation hierarchy enforcement
+
 ## Core Agents (Global)
 @CORE_AGENTS.md
 
