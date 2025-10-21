@@ -5,12 +5,16 @@
  * Aggregates token usage metrics from execution process logs
  * Parses JSONL events to extract input/output/total tokens
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.collectTokensForAttempt = collectTokensForAttempt;
 exports.collectAllTokenMetrics = collectAllTokenMetrics;
 exports.formatTokenMetrics = formatTokenMetrics;
 // @ts-ignore - compiled client shipped at project root
 const forge_js_1 = require("../../../../forge.js");
+const ws_1 = __importDefault(require("ws"));
 /**
  * Parse token events from JSONL logs
  */
@@ -35,6 +39,15 @@ function parseTokensFromLogs(logs) {
             const actualEvent = envelope.payload || envelope;
             const payload = actualEvent.msg || actualEvent;
             const type = payload?.type || event?.type;
+            // stream_event with message_start (Claude Code executor via WebSocket)
+            if (type === 'stream_event' && event.event?.type === 'message_start') {
+                const usage = event.event.message?.usage;
+                if (usage) {
+                    metrics.input += usage.input_tokens || 0;
+                    metrics.output += usage.output_tokens || 0;
+                    metrics.cached += (usage.cache_read_input_tokens || 0) + (usage.cache_creation_input_tokens || 0);
+                }
+            }
             // Result events (Claude executor)
             if (type === 'result' && event.success !== false) {
                 if (event.tokens) {
@@ -87,6 +100,63 @@ function parseTokensFromLogs(logs) {
     return metrics;
 }
 /**
+ * Fetch logs from execution process via WebSocket
+ * Uses Forge's raw-logs WebSocket endpoint which reads from database
+ * Extracts STDOUT content from JsonPatch operations and parses JSONL events
+ */
+async function fetchLogsViaWebSocket(baseUrl, processId, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+        const wsUrl = baseUrl.replace(/^http/, 'ws') + `/api/execution-processes/${processId}/raw-logs/ws`;
+        let logs = '';
+        let ws = null;
+        const timeout = setTimeout(() => {
+            if (ws)
+                ws.close();
+            resolve(logs); // Return whatever we collected
+        }, timeoutMs);
+        try {
+            ws = new ws_1.default(wsUrl);
+            ws.on('message', (data) => {
+                try {
+                    const msg = JSON.parse(data.toString());
+                    // Finished signal indicates end of stream
+                    if (msg.type === 'finished') {
+                        clearTimeout(timeout);
+                        if (ws)
+                            ws.close();
+                        resolve(logs);
+                        return;
+                    }
+                    // Extract STDOUT content from JsonPatch operations
+                    if (msg.JsonPatch && Array.isArray(msg.JsonPatch)) {
+                        for (const patch of msg.JsonPatch) {
+                            if (patch.value?.type === 'STDOUT' && patch.value?.content) {
+                                // STDOUT content contains newline-delimited JSON events
+                                logs += patch.value.content;
+                            }
+                        }
+                    }
+                }
+                catch {
+                    // Skip invalid messages
+                }
+            });
+            ws.on('error', () => {
+                clearTimeout(timeout);
+                resolve(logs); // Return whatever we collected before error
+            });
+            ws.on('close', () => {
+                clearTimeout(timeout);
+                resolve(logs);
+            });
+        }
+        catch {
+            clearTimeout(timeout);
+            resolve(''); // Connection failed
+        }
+    });
+}
+/**
  * Collect token metrics for a single task attempt
  */
 async function collectTokensForAttempt(client, attemptId) {
@@ -103,21 +173,23 @@ async function collectTokensForAttempt(client, attemptId) {
         if (!processes || processes.length === 0) {
             return aggregated;
         }
+        const baseUrl = client.baseUrl || 'http://localhost:8887';
         for (const process of processes) {
             try {
-                // Get full process details with logs
-                const fullProcess = await client.getExecutionProcess(process.id);
-                const logs = fullProcess.logs || fullProcess.output || '';
-                const processMetrics = parseTokensFromLogs(logs);
-                aggregated.input += processMetrics.input;
-                aggregated.output += processMetrics.output;
-                aggregated.cached += processMetrics.cached;
-                aggregated.total += processMetrics.total;
-                aggregated.costUsd += processMetrics.costUsd;
-                aggregated.processCount++;
+                // Fetch logs via WebSocket (reads from database for completed processes)
+                const logs = await fetchLogsViaWebSocket(baseUrl, process.id);
+                if (logs) {
+                    const processMetrics = parseTokensFromLogs(logs);
+                    aggregated.input += processMetrics.input;
+                    aggregated.output += processMetrics.output;
+                    aggregated.cached += processMetrics.cached;
+                    aggregated.total += processMetrics.total;
+                    aggregated.costUsd += processMetrics.costUsd;
+                    aggregated.processCount++;
+                }
             }
             catch {
-                // Skip process if we can't fetch its details
+                // Skip process if we can't fetch its logs
                 continue;
             }
         }
