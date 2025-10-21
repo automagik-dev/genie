@@ -158,27 +158,97 @@ mcp__automagik_forge__create_task(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62
 
 ---
 
-## 📊 CURRENT SESSION (2025-10-21 03:07 UTC)
+## 📊 CURRENT SESSION (2025-10-21 05:30 UTC)
 
-**Status:** 🔴 BLOCKED - Genie CLI broken, RC tasks not launched
+**Status:** 🟢 ACTIVE - Discovery Phase
+**Branch:** `forge/8333-new-idea`
+**Worktree:** `/var/tmp/automagik-forge/worktrees/8333-new-idea`
+**Task:** ed0770b7-6f9e-47f8-b0a7-58c1ca517fd1
+
+### 🎯 Bounty Marketplace - Genie as Project Manager
+
+**Role:** I am the **Project Manager** for the entire GitHub Contributor Bounty Marketplace initiative.
+
+**Vision:** Transform GitHub into a freelance marketplace where contributors earn points (convertible to money) for quality code.
+
+**Core Philosophy:** "Pay people to DELETE code, not ADD code"
+
+**Current Phase:** Discovery (answering open questions before wish creation)
+
+---
+
+**Principles Captured:**
+1. **Primary metric:** Minimal lines of code (LOC) to solve problems
+2. **Competitive marketplace:** Multiple PRs for same issue → best LOC wins
+3. **Quality multipliers:** 2x (wish creator), LOC reduction, clean merge, per-commit
+4. **Anti-gaming rules:** No external deps, no self-invented features, no code golf, no dirty commits
+
+**Open Questions (Waiting for Felipe + Colleagues):**
+- **Economics:** Points-to-money conversion rate? Bounty pool funding?
+- **Governance:** Who's on Tech Council? Complexity scoring rubric?
+- **Technical:** Leaderboard hosting? Points persistence mechanism?
+- **Legal:** Tax implications? Payment processing for international contributors?
+- **Anti-gaming:** How to detect malicious LOC reduction? Dispute resolution?
+
+---
+
+**My Identity:**
+- **Task:** ed0770b7-6f9e-47f8-b0a7-58c1ca517fd1 ("Project Manager: GitHub Contributor Bounty Marketplace")
+- **Role:** Orchestrate all agents from idea → launch
+- **Power:** Can create Learn tasks, delegate to Git agent, manage entire initiative
+
+---
+
+**Permanent Agents I'm Orchestrating:**
+
+### Active (Created)
+1. **Learn: Task Naming Convention** (86b1fe30)
+   - Standardize naming across GitHub/Forge/Agents
+   - Create rubric for task/issue/agent naming
+   - Status: Ready for work
+
+2. **Git Agent** (758a3cdf)
+   - My extension for GitHub operations
+   - Handles: Issues, PRs, labels, syncing
+   - Status: Ready for delegation (persistent agent)
+
+### Planned (Future)
+3. **Learn: GitHub Infrastructure Audit** - Validate templates, labels, workflows
+4. **Learn: Existing Bounty Systems** - Research Gitcoin, Bountysource
+5. **Wish Agent** - Create formal wish document
+6. **Tech Council** - Review/approve wish, assign complexity
+7. **Forge Agent** - Implement bounty system
+8. **Review Agent** - Quality assurance before launch
+
+---
+
+**Current Status:** Discovery phase complete on Genie side. Waiting for Felipe to:
+- Present to colleagues
+- Get approval/feedback
+- Answer open questions (economics, governance, technical, legal, anti-gaming)
+- Signal readiness for wish creation
+
+**Next Actions When Ready:**
+1. Delegate to Learn agent: Task naming standardization
+2. Delegate to Git agent: Create "Make a Wish" GitHub issue
+3. Continue orchestrating agents through full workflow
+
+**State Preserved In:**
+- This session state file
+- Forge task ed0770b7 (full discovery documentation)
+- Forge task 86b1fe30 (Learn: naming convention)
+- Forge task 758a3cdf (Git agent setup)
+
+---
+
+## 📊 PREVIOUS SESSION (2025-10-21 03:07 UTC)
+
+**Status:** ✅ COMPLETED
 **Branch:** dev
-**Last Commits:**
-- bdd894b9: fix: forge executor base branch (first attempt - wrong)
-- 3cef9c5b: fix: use Forge project default_base_branch fallback (second attempt - wrong)
-- 7d8a7001: fix: sync git branch TO Forge default_base_branch (CORRECT) ✅
 
-### ✅ Completed This Session
-1. **Bug Fix #154:** Forge executor now syncs current git branch TO Forge `default_base_branch` (closes #154)
+### ✅ Completed
+1. **Bug Fix #154:** Forge executor now syncs current git branch TO Forge `default_base_branch`
 2. **Kanban Cleanup:** Deleted 12 dead task attempts (all wrong base branch)
-
-### 🔴 Current Problem
-**Broken genie CLI:** Ran `pnpm uninstall -g automagik-genie` during troubleshooting, removed from PATH
-**Impact:** Cannot launch RC tasks until fixed
-
-### ⏭️ RC Tasks (Not Launched Yet)
-1. Fix identity-smoke.sh test (commit-advisory.js always outputs validation sections)
-2. Populate PR #153 with RC info
-3. Document Forge orchestration learnings
 
 ### 🧠 Key Learnings
 - **Forge Orchestration:** Isolated worktrees, human merge gate, no cross-task waiting
@@ -186,12 +256,3 @@ mcp__automagik_forge__create_task(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62
 - **This Project:** Always dev, never main
 - **Base Branch:** Sync TO Forge, don't pass parameter (automated via #154 fix)
 - **Forge URLs:** Must include attempt ID for browser viewing
-
-### 🔧 Recovery Steps
-1. Fix genie: `pnpm install -g .`
-2. Launch RC tasks with fixed CLI
-3. Monitor with sleep intervals until completion
-
-**Status:** ✅ CLEAN - All changes committed and pushed to dev
-**Last Commits:** 7d8a7001 (bug fix #154 - correct implementation)
-**Ready For:** Session reset, then launch RC tasks
