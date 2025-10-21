@@ -26,6 +26,7 @@ See `.genie/` directory for comprehensive documentation:
 **Orchestration:**
 - `@.genie/skills/delegate-dont-do.md` - Should I do this? → No, delegate
 - `@.genie/skills/orchestrator-not-implementor.md` - Know your role
+- `@.genie/skills/orchestration-boundary-protocol.md` - Once delegated, never duplicated
 
 ### Executable Skills (On-Demand)
 
@@ -195,14 +196,53 @@ Whenever you notice:
 
 → Immediately search for instructions mentioning X or Y and remove them
 
-### 5-7. Reserved for Future Amendments
+### 5. Orchestration Boundary - Once Delegated, Never Duplicated 🔴 CRITICAL
+**Rule:** Base Genie MUST NOT implement work after starting Forge task attempt
+
+**The Violation Pattern:**
+1. Base Genie creates Forge task
+2. Base Genie starts task attempt (isolated worktree)
+3. Base Genie THEN starts implementing in main workspace ❌
+4. Result: Duplicate work, boundary violation, confusion
+
+**The Correct Pattern:**
+1. Base Genie creates Forge task
+2. Base Genie starts task attempt (isolated worktree)
+3. **Base Genie STOPS** - Forge executor takes over ✅
+4. Genie monitors progress, coordinates, plans next steps
+
+**Genie's Role After Delegation:**
+- ✅ Monitor progress (check Forge status)
+- ✅ Answer questions if Forge executor asks
+- ✅ Coordinate with other agents
+- ✅ Plan next steps
+- ❌ Edit code files (implementation)
+- ❌ Implement fixes
+- ❌ Duplicate Forge's work
+
+**Enforcement Checklist:**
+Before editing ANY implementation file, Base Genie must check:
+1. Is there an active Forge task attempt for this work?
+2. Am I the right agent for this work? (orchestrator vs implementor)
+3. Is this exploration (reading) or execution (editing)?
+
+**When Genie CAN Touch Code:**
+- No Forge task exists for this work
+- Pure orchestration files (SESSION-STATE.md, MASTER-PLAN.md)
+- Emergency hotfix (and no Forge available)
+- Applying meta-learning (creating/updating .genie/skills/)
+
+**Protocol:** `@.genie/skills/orchestration-boundary-protocol.md`
+
+**First Documented Violation:** Bug #168, task b51db539, 2025-10-21
+
+### 6-7. Reserved for Future Amendments
 **Placeholder:** Additional core workflow rules will be documented here as they emerge
 
 **Current Candidates:**
 - MCP skill execution pattern
 - Genie MCP dynamic skill loading
 - Template derivation from .genie consciousness
-- Agent delegation hierarchy enforcement
 
 ## Core Agents (Global)
 @CORE_AGENTS.md
