@@ -19,13 +19,15 @@ class ForgeExecutor {
     async createSession(params) {
         const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
         const projectId = await this.getOrCreateGenieProject();
-        // Auto-detect current branch instead of hardcoding 'main'
-        let baseBranch = 'dev'; // Default fallback for this project
+        // Auto-detect current branch, fallback to Forge project's default
+        let baseBranch;
         try {
             baseBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
         }
         catch (error) {
-            // If git command fails, use fallback
+            // If git detection fails, get default from Forge project settings
+            const project = await this.forge.getProject(projectId);
+            baseBranch = project.default_base_branch || 'main';
         }
         const requestBody = {
             task: {
