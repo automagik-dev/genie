@@ -440,6 +440,37 @@ async function startGenieServer() {
         console.log(genieGradient('━'.repeat(60)));
         console.log(genieGradient('🛑 Shutting down Genie...'));
         console.log(genieGradient('━'.repeat(60)));
+        // Check for running tasks before killing Forge
+        const runningTasks = await (0, forge_manager_1.getRunningTasks)(baseUrl);
+        if (runningTasks.length > 0) {
+            console.log('');
+            console.log('⚠️  WARNING: Running tasks detected!');
+            console.log('');
+            console.log(`${runningTasks.length} task(s) are currently running:`);
+            console.log('');
+            runningTasks.forEach((task, index) => {
+                console.log(`${index + 1}. ${task.projectName} → ${task.taskTitle}`);
+                console.log(`   ${task.url}`);
+                console.log('');
+            });
+            // Prompt for confirmation
+            const readline = require('readline').createInterface({
+                input: process.stdin,
+                output: process.stdout
+            });
+            const answer = await new Promise((resolve) => {
+                readline.question('Kill these tasks and shutdown? [y/N]: ', resolve);
+            });
+            readline.close();
+            if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
+                console.log('');
+                console.log('❌ Shutdown cancelled. Tasks are still running.');
+                console.log('   Press Ctrl+C again to force shutdown.');
+                console.log('');
+                isShuttingDown = false; // Reset flag to allow retry
+                return;
+            }
+        }
         // Calculate session stats
         const sessionDuration = Date.now() - startTime;
         const uptimeStr = formatUptime(sessionDuration);
@@ -448,6 +479,8 @@ async function startGenieServer() {
             mcpChild.kill('SIGTERM');
             console.log('📡 MCP server stopped');
         }
+        // Kill Forge child process immediately (prevents orphaned processes)
+        (0, forge_manager_1.killForgeProcess)();
         // Stop Forge and wait for completion
         try {
             const stopped = await (0, forge_manager_1.stopForge)(logDir);

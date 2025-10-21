@@ -1,6 +1,6 @@
 {
   "name": "automagik-genie",
-  "version": "2.4.2-rc.24",
+  "version": "2.4.2-rc.28",
   "description": "Self-evolving AI agent orchestration framework with Model Context Protocol support",
   "main": ".genie/cli/dist/genie.js",
   "bin": {
@@ -92,6 +92,12 @@
     "fastmcp": "^3.18.0",
     "gradient-string": "^2.0.2",
     "ink": "^5.0.1",
+    "ink-big-text": "^2.0.0",
+    "ink-box": "^2.0.0",
+    "ink-gradient": "^3.0.0",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
     "react": "^18.3.1",
     "yaml": "^2.8.1",
     "zod": "^4.1.11"
