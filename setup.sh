@@ -82,7 +82,20 @@ echo ""
 
 # Step 3: Run Genie
 echo "Step 3: Launching Genie..."
-print_success "Running: pnpm dlx automagik-genie@next"
 echo ""
+echo "Choose template:"
+echo "  1. code   - Software development (full-stack, testing, git)"
+echo "  2. create - Research, writing, planning (self-adaptive AI)"
+echo ""
+read -p "Template [1]: " template_choice
+template_choice=${template_choice:-1}
 
-pnpm dlx automagik-genie@next
+if [ "$template_choice" = "2" ]; then
+    print_success "Running: pnpm dlx automagik-genie@next init create"
+    echo ""
+    pnpm dlx automagik-genie@next init create
+else
+    print_success "Running: pnpm dlx automagik-genie@next init code"
+    echo ""
+    pnpm dlx automagik-genie@next init code
+fi

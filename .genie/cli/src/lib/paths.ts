@@ -26,10 +26,9 @@ export function getPackageRoot(): string {
 
 export type TemplateType = 'code' | 'create';
 
-export function getTemplateGeniePath(_template: TemplateType = 'code'): string {
-  // Copy directly from framework's .genie/ directory
-  // Template variants (code vs create) handled by install/update agents
-  return path.join(getPackageRoot(), '.genie');
+export function getTemplateGeniePath(template: TemplateType = 'code'): string {
+  // Copy from framework's .genie/code/ or .genie/create/ directory
+  return path.join(getPackageRoot(), '.genie', template);
 }
 
 export function getTemplateClaudePath(_template: TemplateType = 'code'): string {
