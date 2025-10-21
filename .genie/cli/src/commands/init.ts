@@ -123,6 +123,31 @@ export async function runInit(
       return;
     }
 
+    // Check for .git directory, offer initialization if missing
+    const gitDir = path.join(cwd, '.git');
+    const hasGit = await pathExists(gitDir);
+    if (!hasGit) {
+      console.log('');
+      console.log('⚠️  No .git directory found');
+      console.log('🧞 Forge requires git to track work');
+      console.log('');
+
+      if (flags.yes || await promptYesNo('Initialize git repository?', true)) {
+        const { execSync } = await import('child_process');
+        execSync('git init', { cwd, stdio: 'inherit' });
+        try {
+          execSync('git branch -m main', { cwd, stdio: 'pipe' });
+        } catch {
+          // Ignore if branch rename fails (already on main)
+        }
+        console.log('✅ Git initialized');
+        console.log('');
+      } else {
+        console.log('⚠️  Skipping git init (Forge may not work correctly)');
+        console.log('');
+      }
+    }
+
     const backupId = toIsoId();
     const targetExists = await pathExists(targetGenie);
     const backupsRoot = resolveBackupsRoot(cwd);
@@ -150,7 +175,7 @@ export async function runInit(
       await ensureDir(path.dirname(backupsRoot));
     }
 
-    await copyTemplateGenie(templateGenie, targetGenie);
+    await copyTemplateFiles(packageRoot, template, targetGenie);
 
     await copyTemplateRootFiles(packageRoot, cwd, template);
     await migrateAgentsDocs(cwd);
@@ -244,20 +269,35 @@ function parseFlags(args: string[]): InitFlags {
   return flags;
 }
 
-async function copyTemplateGenie(templateGenie: string, targetGenie: string): Promise<void> {
+async function copyTemplateFiles(
+  packageRoot: string,
+  template: TemplateType,
+  targetGenie: string
+): Promise<void> {
   const blacklist = getTemplateRelativeBlacklist();
-  const hasExisting = await pathExists(targetGenie);
-  if (!hasExisting) {
-    await ensureDir(targetGenie);
-  }
-  await copyDirectory(templateGenie, targetGenie, {
+  await ensureDir(targetGenie);
+
+  // 1. Copy root agents/workflows from package .genie/
+  const rootGenieDir = path.join(packageRoot, '.genie');
+  await copyDirectory(rootGenieDir, targetGenie, {
     filter: (relPath) => {
       if (!relPath) return true;
-      const firstSegment = relPath.split(path.sep)[0];
-      if (blacklist.has(firstSegment)) {
-        return false;
-      }
-      return true;
+      const firstSeg = relPath.split(path.sep)[0];
+      // Only copy: agents, workflows, skills, AGENTS.md, config.yaml
+      if (['agents', 'workflows', 'skills'].includes(firstSeg)) return true;
+      if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
+      return false;
+    }
+  });
+
+  // 2. Copy chosen collective DIRECTORY (preserving structure)
+  const collectiveSource = path.join(packageRoot, '.genie', template);
+  const collectiveTarget = path.join(targetGenie, template);
+  await copyDirectory(collectiveSource, collectiveTarget, {
+    filter: (relPath) => {
+      if (!relPath) return true;
+      const firstSeg = relPath.split(path.sep)[0];
+      return !blacklist.has(firstSeg);
     }
   });
 }
@@ -575,7 +615,22 @@ async function promptText(question: string, defaultValue?: string): Promise<stri
   return trimmed.length ? trimmed : defaultValue;
 }
 
-function mapExecutorToForgeProfile(executorKey: string): { executor: string; variant: string } {
+async function promptYesNo(question: string, defaultYes: boolean = true): Promise<boolean> {
+  if (!process.stdout.isTTY) return defaultYes;
+  const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
+  const suffix = defaultYes ? ' [Y/n]' : ' [y/N]';
+  const answer: string = await new Promise((resolve) =>
+    rl.question(`${question}${suffix}: `, (ans: string) => {
+      rl.close();
+      resolve(ans);
+    })
+  );
+  const trimmed = answer.trim().toLowerCase();
+  if (trimmed === '') return defaultYes;
+  return trimmed === 'y' || trimmed === 'yes';
+}
+
+function mapExecutorToForgeProfile(executorKey: string): { executor: string; variant: string} {
   const mapping: Record<string, string> = {
     'claude': 'CLAUDE_CODE',
     'claude-code': 'CLAUDE_CODE',
