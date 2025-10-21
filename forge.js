@@ -32,7 +32,8 @@ class ForgeClient {
             body: options?.body ? JSON.stringify(options.body) : undefined,
         });
         if (!response.ok) {
-            throw new Error(`[${response.status}] ${response.statusText}`);
+            const errorBody = await response.text();
+            throw new Error(`[${response.status}] ${response.statusText}: ${errorBody}`);
         }
         const result = await response.json();
         if (!result.success) {
