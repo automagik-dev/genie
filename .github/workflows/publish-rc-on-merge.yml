@@ -107,8 +107,7 @@ jobs:
           **Release:** https://github.com/${{ github.repository }}/releases/tag/v${VERSION}
           **Triggered by:** PR #${{ github.event.pull_request.number }}
 
-          This PR will be auto-merged." \
-              --label "release"
+          This PR will be auto-merged."
 
             # Auto-merge the PR
             gh pr merge "${BRANCH}" --squash --auto --delete-branch
