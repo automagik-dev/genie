@@ -418,7 +418,8 @@ async function startGenieServer() {
     // Handle graceful shutdown (stop both Forge and MCP)
     let mcpChild = null;
     let isShuttingDown = false;
-    process.on('SIGINT', async () => {
+    // Shutdown function that actually does the work
+    const shutdown = async () => {
         // Prevent multiple shutdown attempts
         if (isShuttingDown)
             return;
@@ -462,8 +463,19 @@ async function startGenieServer() {
         console.log('');
         console.log(successGradient('✨ Genie stopped. See you next time! ✨'));
         console.log('');
-        // Exit cleanly
-        process.exit(0);
+    };
+    // Install SIGINT handler - keep event loop alive with interval
+    process.on('SIGINT', () => {
+        // Keep event loop alive while shutdown completes
+        const keepAlive = setInterval(() => { }, 1000);
+        shutdown()
+            .catch((error) => {
+            console.error('Fatal error during shutdown:', error);
+        })
+            .finally(() => {
+            clearInterval(keepAlive);
+            process.exit(0);
+        });
     });
     // Resilient startup: retry on early non-zero exit
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
