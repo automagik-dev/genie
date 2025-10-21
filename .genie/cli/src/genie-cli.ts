@@ -374,7 +374,13 @@ async function startGenieServer(): Promise<void> {
 
   if (!forgeRunning) {
     process.stderr.write('📦 Starting Forge backend');
-    startForgeInBackground({ baseUrl, logDir });
+    const startResult = startForgeInBackground({ baseUrl, logDir });
+
+    if (!startResult.ok) {
+      console.error(`\n❌ Failed to start Forge: ${startResult.error.message}`);
+      console.error(`   Check logs at ${logDir}/forge.log`);
+      process.exit(1);
+    }
 
     // Wait for Forge to be ready (60s timeout with progress dots - accounts for .zip extraction on first run)
     const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, true);
@@ -404,7 +410,7 @@ async function startGenieServer(): Promise<void> {
   // Handle graceful shutdown (stop both Forge and MCP)
   let mcpChild: ReturnType<typeof spawn> | null = null;
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     console.log('');
     console.log('🛑 Shutting down...');
 
@@ -414,7 +420,7 @@ async function startGenieServer(): Promise<void> {
     }
 
     // Stop Forge
-    const stopped = stopForge(logDir);
+    const stopped = await stopForge(logDir);
     if (stopped) {
       console.log('✅ All services stopped');
     } else {
@@ -462,8 +468,10 @@ async function startGenieServer(): Promise<void> {
           console.error(`MCP server exited with code ${exitCode}`);
         }
         // Don't exit immediately - let SIGINT handler clean up Forge
-        stopForge(logDir);
-        process.exit(exitCode || 0);
+        (async () => {
+          await stopForge(logDir);
+          process.exit(exitCode || 0);
+        })();
       }
     });
 
@@ -474,8 +482,10 @@ async function startGenieServer(): Promise<void> {
         setTimeout(start, backoffMs);
       } else {
         console.error('Failed to start MCP server:', err);
-        stopForge(logDir);
-        process.exit(1);
+        (async () => {
+          await stopForge(logDir);
+          process.exit(1);
+        })();
       }
     });
   };
