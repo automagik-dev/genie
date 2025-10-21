@@ -7,12 +7,14 @@
  * - Task counts (by status)
  * - Task attempt counts (total + running)
  * - Active execution processes
+ * - Token usage metrics
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.collectForgeStats = collectForgeStats;
 exports.formatStatsForDashboard = formatStatsForDashboard;
 // @ts-ignore - compiled client shipped at project root
 const forge_js_1 = require("../../../../forge.js");
+const token_tracker_js_1 = require("./token-tracker.js");
 async function collectForgeStats(baseUrl = 'http://localhost:8887') {
     try {
         const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
@@ -35,6 +37,14 @@ async function collectForgeStats(baseUrl = 'http://localhost:8887') {
                 paused: 0,
                 completed: 0,
                 failed: 0,
+            },
+            tokens: {
+                input: 0,
+                output: 0,
+                cached: 0,
+                total: 0,
+                costUsd: 0,
+                processCount: 0
             },
             hasRunningWork: false,
         };
@@ -102,6 +112,13 @@ async function collectForgeStats(baseUrl = 'http://localhost:8887') {
         catch {
             // Failed to fetch attempts - API may not support it in this version
         }
+        // Collect token usage metrics
+        try {
+            stats.tokens = await (0, token_tracker_js_1.collectAllTokenMetrics)(baseUrl);
+        }
+        catch {
+            // Failed to collect token metrics - keep defaults (zeros)
+        }
         return stats;
     }
     catch (error) {
@@ -142,6 +159,12 @@ function formatStatsForDashboard(stats) {
     }
     else {
         lines.push(`   Attempts: None active`);
+    }
+    // Token usage (compact format)
+    if (stats.tokens && stats.tokens.total > 0) {
+        const totalK = (stats.tokens.total / 1000).toFixed(1);
+        const costDisplay = stats.tokens.costUsd > 0 ? ` ($${stats.tokens.costUsd.toFixed(3)})` : '';
+        lines.push(`   Tokens: ${totalK}k total${costDisplay}`);
     }
     return lines.join('\n');
 }

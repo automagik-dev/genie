@@ -18,6 +18,7 @@ const fs_1 = __importDefault(require("fs"));
 const gradient_string_1 = __importDefault(require("gradient-string"));
 const forge_manager_1 = require("./lib/forge-manager");
 const forge_stats_1 = require("./lib/forge-stats");
+const token_tracker_1 = require("./lib/token-tracker");
 const program = new commander_1.Command();
 // Genie-themed gradients 🧞✨
 const genieGradient = (0, gradient_string_1.default)(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
@@ -453,18 +454,61 @@ async function startGenieServer() {
         catch (error) {
             console.error(`❌ Error stopping Forge: ${error}`);
         }
-        // Display goodbye stats report
+        // Collect final stats for goodbye report
+        const finalStats = await (0, forge_stats_1.collectForgeStats)(baseUrl);
+        // Display epic goodbye report with Genie's face
         console.log('');
-        console.log(performanceGradient('━'.repeat(60)));
-        console.log(performanceGradient('📊 Session Summary'));
-        console.log(performanceGradient('━'.repeat(60)));
-        console.log(`   ${successGradient('⏱')}  Uptime:          ${uptimeStr}`);
-        console.log(`   ${successGradient('🚀')} Startup time:    ${timings.total || 0}ms (${((timings.total || 0) / 1000).toFixed(1)}s)`);
-        console.log(`   ${successGradient('✓')} Services:        Forge + MCP`);
-        console.log(`   ${performanceGradient('👋')} Status:          ${performanceGradient('Clean shutdown')}`);
-        console.log(performanceGradient('━'.repeat(60)));
+        console.log(genieGradient('━'.repeat(80)));
+        console.log(genieGradient('                    🧞 ✨ GENIE SESSION COMPLETE ✨ 🧞                     '));
+        console.log(genieGradient('━'.repeat(80)));
         console.log('');
-        console.log(successGradient('✨ Genie stopped. See you next time! ✨'));
+        // Genie ASCII art face
+        const genieFace = `
+         ✨             ⭐️
+            ╱|、
+          (˚ˎ 。7   🌙   ~  Your wish is my command  ~
+           |、˜〵
+          じしˉ,)ノ
+                     💫    ⭐️`;
+        console.log(genieGradient(genieFace));
+        console.log('');
+        console.log(performanceGradient('━'.repeat(80)));
+        console.log(performanceGradient('📊  SESSION STATISTICS'));
+        console.log(performanceGradient('━'.repeat(80)));
+        console.log('');
+        console.log(`   ${successGradient('⏱  Uptime:')}          ${uptimeStr}`);
+        console.log(`   ${successGradient('🚀 Startup time:')}    ${timings.total || 0}ms (${((timings.total || 0) / 1000).toFixed(1)}s)`);
+        console.log(`   ${successGradient('✓  Services:')}        Forge + MCP`);
+        console.log('');
+        // Token usage stats (detailed)
+        if (finalStats?.tokens && finalStats.tokens.total > 0) {
+            console.log(performanceGradient('━'.repeat(80)));
+            console.log(performanceGradient('🪙  TOKEN USAGE THIS SESSION'));
+            console.log(performanceGradient('━'.repeat(80)));
+            console.log('');
+            console.log((0, token_tracker_1.formatTokenMetrics)(finalStats.tokens, false));
+            console.log('');
+        }
+        // Work summary
+        if (finalStats) {
+            console.log(performanceGradient('━'.repeat(80)));
+            console.log(performanceGradient('📋  WORK SUMMARY'));
+            console.log(performanceGradient('━'.repeat(80)));
+            console.log('');
+            console.log(`   ${successGradient('📁 Projects:')}       ${finalStats.projects.total} total`);
+            console.log(`   ${successGradient('📝 Tasks:')}          ${finalStats.tasks.total} total`);
+            console.log(`   ${successGradient('🔄 Attempts:')}       ${finalStats.attempts.total} total`);
+            if (finalStats.attempts.completed > 0) {
+                console.log(`      ✅ ${finalStats.attempts.completed} completed`);
+            }
+            if (finalStats.attempts.failed > 0) {
+                console.log(`      ❌ ${finalStats.attempts.failed} failed`);
+            }
+            console.log('');
+        }
+        console.log(genieGradient('━'.repeat(80)));
+        console.log(genieGradient('                 ✨ Until next time, keep making magic! ✨                '));
+        console.log(genieGradient('━'.repeat(80)));
         console.log('');
     };
     // Install SIGINT handler - keeps process alive without blocking event loop

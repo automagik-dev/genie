@@ -6,10 +6,12 @@
  * - Task counts (by status)
  * - Task attempt counts (total + running)
  * - Active execution processes
+ * - Token usage metrics
  */
 
 // @ts-ignore - compiled client shipped at project root
 import { ForgeClient } from '../../../../forge.js';
+import { TokenMetrics, collectAllTokenMetrics } from './token-tracker.js';
 
 export interface ForgeStats {
   projects: {
@@ -32,6 +34,7 @@ export interface ForgeStats {
     completed: number;
     failed: number;
   };
+  tokens: TokenMetrics;
   hasRunningWork: boolean;
 }
 
@@ -58,6 +61,14 @@ export async function collectForgeStats(baseUrl: string = 'http://localhost:8887
         paused: 0,
         completed: 0,
         failed: 0,
+      },
+      tokens: {
+        input: 0,
+        output: 0,
+        cached: 0,
+        total: 0,
+        costUsd: 0,
+        processCount: 0
       },
       hasRunningWork: false,
     };
@@ -127,6 +138,13 @@ export async function collectForgeStats(baseUrl: string = 'http://localhost:8887
       // Failed to fetch attempts - API may not support it in this version
     }
 
+    // Collect token usage metrics
+    try {
+      stats.tokens = await collectAllTokenMetrics(baseUrl);
+    } catch {
+      // Failed to collect token metrics - keep defaults (zeros)
+    }
+
     return stats;
   } catch (error) {
     // Forge is not available or errored
@@ -171,6 +189,13 @@ export function formatStatsForDashboard(stats: ForgeStats | null): string {
     }
   } else {
     lines.push(`   Attempts: None active`);
+  }
+
+  // Token usage (compact format)
+  if (stats.tokens && stats.tokens.total > 0) {
+    const totalK = (stats.tokens.total / 1000).toFixed(1);
+    const costDisplay = stats.tokens.costUsd > 0 ? ` ($${stats.tokens.costUsd.toFixed(3)})` : '';
+    lines.push(`   Tokens: ${totalK}k total${costDisplay}`);
   }
 
   return lines.join('\n');
