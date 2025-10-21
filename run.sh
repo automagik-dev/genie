@@ -55,10 +55,10 @@ else
     echo ""
     echo "   Option 1: Install globally (recommended)"
     echo "   $ pnpm install -g automagik-genie@next"
-    echo "   $ genie init"
+    echo "   $ genie init code    # or: genie init create"
     echo ""
     echo "   Option 2: Quick test without install"
-    echo "   $ pnpm dlx automagik-genie@next init"
+    echo "   $ pnpm dlx automagik-genie@next init code"
     echo ""
     read -p "Install Genie globally? [y/N]: " install
 
@@ -74,15 +74,36 @@ else
 
         if [[ "$init" =~ ^[Yy]$ ]]; then
             echo ""
-            genie init
+            echo "Choose template:"
+            echo "  1. code   - Software development (full-stack, testing, git)"
+            echo "  2. create - Research, writing, planning (self-adaptive AI)"
+            echo ""
+            read -p "Template [1]: " template_choice
+            template_choice=${template_choice:-1}
+
+            if [ "$template_choice" = "2" ]; then
+                genie init create
+            else
+                genie init code
+            fi
         else
             echo ""
-            echo "💡 Run 'genie init' when ready to set up this project"
+            echo "💡 Run 'genie init code' or 'genie init create' when ready to set up this project"
         fi
     else
         echo ""
-        echo "Running quick test via pnpm dlx..."
-        pnpm dlx automagik-genie@next init
+        echo "Choose template:"
+        echo "  1. code   - Software development (full-stack, testing, git)"
+        echo "  2. create - Research, writing, planning (self-adaptive AI)"
+        echo ""
+        read -p "Template [1]: " template_choice
+        template_choice=${template_choice:-1}
+
+        if [ "$template_choice" = "2" ]; then
+            pnpm dlx automagik-genie@next init create
+        else
+            pnpm dlx automagik-genie@next init code
+        fi
     fi
 fi
 
