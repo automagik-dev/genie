@@ -82,7 +82,7 @@ echo ""
 
 # Step 3: Run Genie
 echo "Step 3: Launching Genie..."
-print_success "Running: pnpm dlx automagik-genie@latest"
+print_success "Running: pnpm dlx automagik-genie@next"
 echo ""
 
-pnpm dlx automagik-genie@latest
+pnpm dlx automagik-genie@next
