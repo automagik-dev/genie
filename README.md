@@ -161,12 +161,12 @@ graph TB
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh | bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh -o /tmp/genie-run.sh && bash /tmp/genie-run.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1 | iex
+$script = irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1; powershell -Command $script
 ```
 
 **What this does:**
@@ -182,12 +182,12 @@ irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1 
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.sh -o /tmp/genie-setup.sh && bash /tmp/genie-setup.sh
 ```
 
 **Windows (PowerShell as Administrator):**
 ```powershell
-irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.ps1 | iex
+$script = irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.ps1; powershell -Command $script
 ```
 
 **What this does:**
