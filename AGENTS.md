@@ -236,7 +236,54 @@ Before editing ANY implementation file, Base Genie must check:
 
 **First Documented Violation:** Bug #168, task b51db539, 2025-10-21
 
-### 6-7. Reserved for Future Amendments
+### 6. Automated Publishing - PR Merge = Auto RC 🔴 CRITICAL
+**Rule:** NEVER manually publish RCs. GitHub Actions does it automatically when PRs merge to main.
+
+**The Automated Workflow:**
+```
+PR merges to main
+  ↓
+GitHub Action triggers automatically
+  ↓
+Version bump (rc.N → rc.N+1)
+  ↓
+npm publish automagik-genie@next
+  ↓
+GitHub release created
+```
+
+**What Genie Must NOT Do:**
+- ❌ Run `pnpm bump:rc` after PR merge
+- ❌ Run `pnpm publish` manually
+- ❌ Create GitHub releases manually
+- ❌ Think "I need to publish this RC"
+
+**What Genie MUST Do:**
+- ✅ Create PR to merge dev → main
+- ✅ Wait for PR to merge
+- ✅ Trust GitHub Actions to handle publishing
+- ✅ Verify published version: `npm view automagik-genie@next version`
+
+**Evidence of Automation:**
+When PR merges to main, check:
+```bash
+gh run list --branch main --limit 3
+```
+You'll see "Publish to NPM" workflow automatically triggered.
+
+**Why This Exists:**
+Genie kept trying to manually publish RCs after PR merges, duplicating work and creating confusion. The bump script already triggers GitHub Actions via `workflow_dispatch`. The workflow is **fully automated** - no manual intervention needed.
+
+**Learning Reinforcement:**
+Every time you think "I should publish this RC":
+1. STOP
+2. Check: Is this a PR merge to main?
+3. If YES → GitHub Actions handles it
+4. If NO → Only manual publish for hotfixes (rare)
+
+**First Violation:** 2025-10-21, tried to publish rc.28 manually after PR #175 merge (rc.29 was already auto-published)
+
+### 7. Reserved for Future Amendment
 **Placeholder:** Additional core workflow rules will be documented here as they emerge
 
 **Current Candidates:**
