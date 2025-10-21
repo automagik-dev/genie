@@ -14,7 +14,6 @@ async function runHelp(parsed, config, _paths) {
         { command: 'resume', args: '<sessionId> "<prompt>"', description: 'Continue a background session' },
         { command: 'view', args: '<sessionId> [--full]', description: 'Show transcript for a session' },
         { command: 'stop', args: '<sessionId>', description: 'End a background session' },
-        { command: 'forge', args: '[start|status|stop|restart]', description: 'Control the Automagik Forge backend' },
         { command: 'statusline', args: '', description: 'Emit deprecated status line output' },
         { command: 'help', args: '', description: 'Show this panel' }
     ];
@@ -35,7 +34,6 @@ async function runHelp(parsed, config, _paths) {
             'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
             'genie run code/commit "Stage hotfix commit" --executor opencode --model gpt-4.1-coding',
             'genie run --help  # Show help for run command',
-            'genie forge restart',
             'genie view code-analyze-2510201015',
             'genie list agents --help  # Show help for list command'
         ]
