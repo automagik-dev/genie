@@ -14,7 +14,7 @@
 # This file enables session memory, user preferences, decision tracking, and parallel work for THIS project.
 # Each team member has their own context file (not shared in git).
 # If missing, install/update agent will create it from template.
-# Note: .genie/USERCONTEXT.md is gitignored - not loaded via @ reference
+# TODO: Create USERCONTEXT.md template and uncomment @ reference
 
 # Claude Code Entry Point
 
