@@ -23,11 +23,7 @@ const packageJson = JSON.parse(
 program
   .name('genie')
   .description('Self-evolving AI agent orchestration framework')
-  .version(packageJson.version)
-  .action(async () => {
-    // Default action: start Genie server
-    await startGenieServer();
-  });
+  .version(packageJson.version);
 
 // Run command
 program
@@ -192,14 +188,6 @@ program
     execGenie(['statusline']);
   });
 
-// Start command (explicit, same as default action)
-program
-  .command('start')
-  .description('Start Genie server (default if no command specified)')
-  .action(async () => {
-    await startGenieServer();
-  });
-
 // MCP command (stdio only - for Claude Desktop integration)
 program
   .command('mcp')
@@ -208,8 +196,14 @@ program
     await startMCPStdio();
   });
 
-// Parse arguments
-program.parse(process.argv);
+// If no command was provided, start the server
+const args = process.argv.slice(2);
+if (!args.length) {
+  startGenieServer();
+} else {
+  // Parse arguments for other commands
+  program.parse(process.argv);
+}
 
 /**
  * Execute the legacy genie CLI
