@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning } from './lib/forge-manager';
+import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
 
 const program = new Command();
 
@@ -265,6 +266,10 @@ async function startHealthMonitoring(baseUrl: string, mcpPort: string, mcpChild:
     const mcpHealthy = mcpChild && !mcpChild.killed;
     const mcpStatus = mcpHealthy ? '🟢' : '🔴';
 
+    // Collect Forge statistics (only if healthy)
+    const forgeStats = forgeHealthy ? await collectForgeStats(baseUrl) : null;
+    const statsDisplay = formatStatsForDashboard(forgeStats);
+
     // Build dashboard
     const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🧞 GENIE SERVER - Executive Summary
@@ -273,6 +278,7 @@ async function startHealthMonitoring(baseUrl: string, mcpPort: string, mcpChild:
 ${forgeStatus} **Forge Backend**
    Status: ${forgeHealthy ? 'Running' : 'Down'}
    URL: ${baseUrl}
+${statsDisplay}
 
 ${mcpStatus} **MCP Server**
    Status: ${mcpHealthy ? 'Running' : 'Down'}

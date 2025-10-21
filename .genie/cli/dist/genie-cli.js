@@ -16,6 +16,7 @@ const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
 const forge_manager_1 = require("./lib/forge-manager");
+const forge_stats_1 = require("./lib/forge-stats");
 const program = new commander_1.Command();
 // Get package version
 const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
@@ -244,6 +245,9 @@ async function startHealthMonitoring(baseUrl, mcpPort, mcpChild) {
         // Check MCP health
         const mcpHealthy = mcpChild && !mcpChild.killed;
         const mcpStatus = mcpHealthy ? '🟢' : '🔴';
+        // Collect Forge statistics (only if healthy)
+        const forgeStats = forgeHealthy ? await (0, forge_stats_1.collectForgeStats)(baseUrl) : null;
+        const statsDisplay = (0, forge_stats_1.formatStatsForDashboard)(forgeStats);
         // Build dashboard
         const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🧞 GENIE SERVER - Executive Summary
@@ -252,6 +256,7 @@ async function startHealthMonitoring(baseUrl, mcpPort, mcpChild) {
 ${forgeStatus} **Forge Backend**
    Status: ${forgeHealthy ? 'Running' : 'Down'}
    URL: ${baseUrl}
+${statsDisplay}
 
 ${mcpStatus} **MCP Server**
    Status: ${mcpHealthy ? 'Running' : 'Down'}
