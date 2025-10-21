@@ -7,8 +7,9 @@ import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import { promptExecutorChoice } from '../lib/executor-prompt.js';
 import { EXECUTORS } from '../lib/executor-registry';
-import { runInitWizard } from '../views/init-wizard.js';
-import { runInstallChat } from '../views/install-chat.js';
+// TODO: Enable once ESM imports resolved
+// import { runInitWizard } from '../views/init-wizard.js';
+// import { runInstallChat } from '../views/install-chat.js';
 import {
   getPackageRoot,
   getTemplateGeniePath,
@@ -72,44 +73,26 @@ export async function runInit(
     let shouldInitGit = false;
 
     if (isInteractive) {
-      // Run beautiful Ink-based onboarding wizard
-      const gitDir = path.join(cwd, '.git');
-      const hasGit = await pathExists(gitDir);
+      // TODO: Enable Ink wizard once ESM imports resolved
+      // For now, use existing prompts or require explicit template flag
+      // const wizardConfig = await runInitWizard({...});
 
-      const onboardingConfig = await runOnboardingWizard({
-        templates: [
-          {
-            value: 'code',
-            label: '💻 code',
-            description: 'Full-stack development with Git, testing, CI/CD',
-            agents: ['install', 'wish', 'forge', 'review', 'implementor', 'tests']
-          },
-          {
-            value: 'create',
-            label: '✍️  create',
-            description: 'Research, writing, content creation',
-            agents: ['install', 'wish', 'writer', 'researcher', 'editor']
-          }
-        ],
-        executors: Object.keys(EXECUTORS).map(key => ({
-          value: key,
-          label: EXECUTORS[key].label
-        })),
-        hasGit
-      });
-
-      template = onboardingConfig.template;
-      executor = onboardingConfig.executor;
-      model = onboardingConfig.model;
-      shouldInitGit = onboardingConfig.initGit;
+      console.log('');
+      console.log('🧞 Genie Init');
+      console.log('');
+      console.log('For now, please run: genie init code  OR  genie init create');
+      console.log('');
+      console.log('Interactive wizard coming soon!');
+      console.log('');
+      process.exit(0);
     } else {
       // Automation mode: use flags or defaults
-      template = flags.template || 'code';
+      template = (flags.template || 'code') as TemplateType;
       executor = Object.keys(EXECUTORS)[0] || 'codex';
       model = undefined;
     }
 
-    const templateGenie = getTemplateGeniePath(template);
+    const templateGenie = getTemplateGeniePath(template as TemplateType);
     const targetGenie = resolveTargetGeniePath(cwd);
 
     const templateExists = await pathExists(templateGenie);
@@ -133,7 +116,7 @@ export async function runInit(
       const { executor, model } = await selectExecutorAndModel(flags);
       await applyExecutorDefaults(targetGenie, executor, model);
       await configureBothExecutors(cwd);
-      await runInstallViaCli(cwd, template);
+      // TODO: Add install chat flow here (future enhancement)
       await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
       return;
     }
@@ -213,9 +196,9 @@ export async function runInit(
       await ensureDir(path.dirname(backupsRoot));
     }
 
-    await copyTemplateFiles(packageRoot, template, targetGenie);
+    await copyTemplateFiles(packageRoot, template as TemplateType, targetGenie);
 
-    await copyTemplateRootFiles(packageRoot, cwd, template);
+    await copyTemplateRootFiles(packageRoot, cwd, template as TemplateType);
     await migrateAgentsDocs(cwd);
 
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
@@ -260,7 +243,7 @@ export async function runInit(
     // Configure MCP servers for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
-      await runInstallViaCli(cwd, template);
+    // TODO: Add install chat flow here (future enhancement)
     const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
     await emitView(buildInitSummaryView(summary), parsed.options);
   } catch (error) {

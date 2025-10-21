@@ -10,7 +10,9 @@ const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const executor_registry_1 = require("../lib/executor-registry");
-const onboarding_js_1 = require("../views/onboarding.js");
+// TODO: Enable once ESM imports resolved
+// import { runInitWizard } from '../views/init-wizard.js';
+// import { runInstallChat } from '../views/install-chat.js';
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
@@ -29,38 +31,21 @@ async function runInit(parsed, _config, _paths) {
         let model;
         let shouldInitGit = false;
         if (isInteractive) {
-            // Run beautiful Ink-based onboarding wizard
-            const gitDir = path_1.default.join(cwd, '.git');
-            const hasGit = await (0, fs_utils_1.pathExists)(gitDir);
-            const onboardingConfig = await (0, onboarding_js_1.runOnboardingWizard)({
-                templates: [
-                    {
-                        value: 'code',
-                        label: '💻 code',
-                        description: 'Full-stack development with Git, testing, CI/CD',
-                        agents: ['install', 'wish', 'forge', 'review', 'implementor', 'tests']
-                    },
-                    {
-                        value: 'create',
-                        label: '✍️  create',
-                        description: 'Research, writing, content creation',
-                        agents: ['install', 'wish', 'writer', 'researcher', 'editor']
-                    }
-                ],
-                executors: Object.keys(executor_registry_1.EXECUTORS).map(key => ({
-                    value: key,
-                    label: executor_registry_1.EXECUTORS[key].label
-                })),
-                hasGit
-            });
-            template = onboardingConfig.template;
-            executor = onboardingConfig.executor;
-            model = onboardingConfig.model;
-            shouldInitGit = onboardingConfig.initGit;
+            // TODO: Enable Ink wizard once ESM imports resolved
+            // For now, use existing prompts or require explicit template flag
+            // const wizardConfig = await runInitWizard({...});
+            console.log('');
+            console.log('🧞 Genie Init');
+            console.log('');
+            console.log('For now, please run: genie init code  OR  genie init create');
+            console.log('');
+            console.log('Interactive wizard coming soon!');
+            console.log('');
+            process.exit(0);
         }
         else {
             // Automation mode: use flags or defaults
-            template = flags.template || 'code';
+            template = (flags.template || 'code');
             executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
             model = undefined;
         }
@@ -84,7 +69,7 @@ async function runInit(parsed, _config, _paths) {
             const { executor, model } = await selectExecutorAndModel(flags);
             await applyExecutorDefaults(targetGenie, executor, model);
             await (0, mcp_config_1.configureBothExecutors)(cwd);
-            await runInstallViaCli(cwd, template);
+            // TODO: Add install chat flow here (future enhancement)
             await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
             return;
         }
@@ -195,7 +180,7 @@ async function runInit(parsed, _config, _paths) {
         await applyExecutorDefaults(targetGenie, executor, model);
         // Configure MCP servers for both Codex and Claude Code
         await (0, mcp_config_1.configureBothExecutors)(cwd);
-        await runInstallViaCli(cwd, template);
+        // TODO: Add install chat flow here (future enhancement)
         const summary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
         await (0, view_helpers_1.emitView)(buildInitSummaryView(summary), parsed.options);
     }
