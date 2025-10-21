@@ -183,7 +183,7 @@ export class ForgeExecutor {
 
 export function createForgeExecutor(config: Partial<ForgeExecutorConfig> = {}): ForgeExecutor {
   const defaultConfig: ForgeExecutorConfig = {
-    forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8888',
+    forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
     forgeToken: process.env.FORGE_TOKEN,
     genieProjectId: process.env.GENIE_PROJECT_ID
   };
