@@ -22,7 +22,11 @@ const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__d
 program
     .name('genie')
     .description('Self-evolving AI agent orchestration framework')
-    .version(packageJson.version);
+    .version(packageJson.version)
+    .action(async () => {
+    // Default action: start Genie server
+    await startGenieServer();
+});
 // Run command
 program
     .command('run <agent> <prompt>')
@@ -176,10 +180,10 @@ program
     .action(() => {
     execGenie(['statusline']);
 });
-// Start command (default - starts Forge + MCP with SSE)
+// Start command (explicit, same as default action)
 program
     .command('start')
-    .description('Start Genie server (Forge backend + MCP with SSE on port 8885)')
+    .description('Start Genie server (default if no command specified)')
     .action(async () => {
     await startGenieServer();
 });
