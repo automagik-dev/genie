@@ -10,9 +10,6 @@ const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const executor_registry_1 = require("../lib/executor-registry");
-// TODO: Enable once ESM imports resolved
-// import { runInitWizard } from '../views/init-wizard.js';
-// import { runInstallChat } from '../views/install-chat.js';
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
@@ -31,17 +28,27 @@ async function runInit(parsed, _config, _paths) {
         let model;
         let shouldInitGit = false;
         if (isInteractive) {
-            // TODO: Enable Ink wizard once ESM imports resolved
-            // For now, use existing prompts or require explicit template flag
-            // const wizardConfig = await runInitWizard({...});
-            console.log('');
-            console.log('🧞 Genie Init');
-            console.log('');
-            console.log('For now, please run: genie init code  OR  genie init create');
-            console.log('');
-            console.log('Interactive wizard coming soon!');
-            console.log('');
-            process.exit(0);
+            // Use dynamic import to load ESM Ink components
+            // @ts-expect-error - .mjs file exists at runtime
+            const { runInitWizard } = await import('../views/init-wizard.mjs');
+            const templates = [
+                { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
+                { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
+            ];
+            const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
+                label: executor_registry_1.EXECUTORS[key].label,
+                value: key
+            }));
+            const hasGit = await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git'));
+            const wizardConfig = await runInitWizard({
+                templates,
+                executors,
+                hasGit
+            });
+            template = wizardConfig.template;
+            executor = wizardConfig.executor;
+            model = wizardConfig.model;
+            shouldInitGit = wizardConfig.initGit;
         }
         else {
             // Automation mode: use flags or defaults
