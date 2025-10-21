@@ -9,3 +9,14 @@ Write-Host ""
 
 # Run Genie using pnpm dlx (no install)
 pnpm dlx automagik-genie@next
+
+# Offer to install permanently
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "💡 Want to install Genie permanently?" -ForegroundColor Yellow
+Write-Host "   Run: pnpm install -g automagik-genie@next" -ForegroundColor White
+Write-Host ""
+Write-Host "   Then use 'genie' command from anywhere!" -ForegroundColor White
+Write-Host ""
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
