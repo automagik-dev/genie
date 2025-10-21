@@ -21,10 +21,41 @@ async function runInit(parsed, _config, _paths) {
         const flags = parseFlags(parsed.commandArgs);
         const cwd = process.cwd();
         const packageRoot = (0, paths_1.getPackageRoot)();
-        // Determine template type
-        // Direct: genie init code/create (automation-friendly)
-        // Interactive: genie init (human discovery)
-        const template = flags.template || await promptTemplateChoice();
+        // Check if running in interactive mode (TTY) or automation mode (--yes flag or explicit template)
+        const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template;
+        let template;
+        let executor;
+        let model;
+        let shouldInitGit = false;
+        if (isInteractive) {
+            // Use dynamic import to load ESM Ink components
+            // @ts-expect-error - .mjs file exists at runtime
+            const { runInitWizard } = await import('../views/init-wizard.mjs');
+            const templates = [
+                { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
+                { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
+            ];
+            const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
+                label: executor_registry_1.EXECUTORS[key].label,
+                value: key
+            }));
+            const hasGit = await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git'));
+            const wizardConfig = await runInitWizard({
+                templates,
+                executors,
+                hasGit
+            });
+            template = wizardConfig.template;
+            executor = wizardConfig.executor;
+            model = wizardConfig.model;
+            shouldInitGit = wizardConfig.initGit;
+        }
+        else {
+            // Automation mode: use flags or defaults
+            template = (flags.template || 'code');
+            executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
+            model = undefined;
+        }
         const templateGenie = (0, paths_1.getTemplateGeniePath)(template);
         const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
         const templateExists = await (0, fs_utils_1.pathExists)(templateGenie);
@@ -45,7 +76,7 @@ async function runInit(parsed, _config, _paths) {
             const { executor, model } = await selectExecutorAndModel(flags);
             await applyExecutorDefaults(targetGenie, executor, model);
             await (0, mcp_config_1.configureBothExecutors)(cwd);
-            await runInstallViaCli(cwd, template);
+            // TODO: Add install chat flow here (future enhancement)
             await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
             return;
         }
@@ -68,15 +99,9 @@ async function runInit(parsed, _config, _paths) {
             ]), parsed.options);
             return;
         }
-        // Check for .git directory, offer initialization if missing
-        const gitDir = path_1.default.join(cwd, '.git');
-        const hasGit = await (0, fs_utils_1.pathExists)(gitDir);
-        if (!hasGit) {
-            console.log('');
-            console.log('⚠️  No .git directory found');
-            console.log('🧞 Forge requires git to track work');
-            console.log('');
-            if (flags.yes || await promptYesNo('Initialize git repository?', true)) {
+        // Initialize git if needed (wizard already prompted in interactive mode)
+        if (shouldInitGit || (!isInteractive && !await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git')))) {
+            if (!isInteractive && flags.yes) {
                 const { execSync } = await import('child_process');
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
@@ -85,12 +110,16 @@ async function runInit(parsed, _config, _paths) {
                 catch {
                     // Ignore if branch rename fails (already on main)
                 }
-                console.log('✅ Git initialized');
-                console.log('');
             }
-            else {
-                console.log('⚠️  Skipping git init (Forge may not work correctly)');
-                console.log('');
+            else if (shouldInitGit) {
+                const { execSync } = await import('child_process');
+                execSync('git init', { cwd, stdio: 'inherit' });
+                try {
+                    execSync('git branch -m main', { cwd, stdio: 'pipe' });
+                }
+                catch {
+                    // Ignore if branch rename fails (already on main)
+                }
             }
         }
         const backupId = (0, fs_utils_1.toIsoId)();
@@ -147,13 +176,18 @@ async function runInit(parsed, _config, _paths) {
             }
         }
         await (0, fs_utils_1.ensureDir)(backupsRoot);
-        const { executor, model } = await selectExecutorAndModel(flags);
+        // Use wizard selections in interactive mode, or select defaults in automation mode
+        if (!isInteractive && !executor) {
+            const selected = await selectExecutorAndModel(flags);
+            executor = selected.executor;
+            model = selected.model;
+        }
         await writeVersionState(cwd, backupId, false);
         await initializeProviderStatus(cwd);
         await applyExecutorDefaults(targetGenie, executor, model);
         // Configure MCP servers for both Codex and Claude Code
         await (0, mcp_config_1.configureBothExecutors)(cwd);
-        await runInstallViaCli(cwd, template);
+        // TODO: Add install chat flow here (future enhancement)
         const summary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
         await (0, view_helpers_1.emitView)(buildInitSummaryView(summary), parsed.options);
     }

@@ -25,6 +25,9 @@ const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 const HEALTH_CHECK_TIMEOUT = 3000; // 3s per health check
 const MAX_HEALTH_RETRIES = 3;
 
+// Track Forge child process for graceful shutdown
+let forgeChildProcess: ChildProcess | null = null;
+
 /**
  * Health check with retry logic and exponential backoff
  */
@@ -224,6 +227,9 @@ export function startForgeInBackground(opts: ForgeStartOptions): Result<ForgePro
     }
   });
 
+  // Track child process for graceful shutdown
+  forgeChildProcess = child;
+
   // Detach so it survives parent exit
   child.unref();
 
@@ -249,6 +255,88 @@ export function startForgeInBackground(opts: ForgeStartOptions): Result<ForgePro
       binPath
     }
   };
+}
+
+/**
+ * Check for running task attempts and return them with URLs
+ */
+export async function getRunningTasks(baseUrl: string = DEFAULT_BASE_URL): Promise<Array<{
+  projectId: string;
+  projectName: string;
+  taskId: string;
+  taskTitle: string;
+  attemptId: string;
+  url: string;
+}>> {
+  try {
+    const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+
+    // Get all projects
+    const projects = await client.listProjects();
+    const runningTasks: Array<{
+      projectId: string;
+      projectName: string;
+      taskId: string;
+      taskTitle: string;
+      attemptId: string;
+      url: string;
+    }> = [];
+
+    // Check each project for running attempts
+    for (const project of projects) {
+      const tasks = await client.listTasks(project.id);
+
+      for (const task of tasks) {
+        // Check if task has running attempts
+        const attempts = await client.listAttempts(project.id, task.id);
+        const runningAttempts = attempts.filter((a: any) => a.status === 'running' || a.status === 'pending');
+
+        for (const attempt of runningAttempts) {
+          runningTasks.push({
+            projectId: project.id,
+            projectName: project.name || 'Unnamed Project',
+            taskId: task.id,
+            taskTitle: task.title || 'Untitled Task',
+            attemptId: attempt.id,
+            url: `${baseUrl}/projects/${project.id}/tasks/${task.id}/attempts/${attempt.id}`
+          });
+        }
+      }
+    }
+
+    return runningTasks;
+  } catch (error) {
+    // If we can't check, return empty array (don't block shutdown)
+    return [];
+  }
+}
+
+/**
+ * Kill Forge child process immediately (for Ctrl+C shutdown)
+ * Sends SIGTERM to the entire process group
+ */
+export function killForgeProcess(): void {
+  if (!forgeChildProcess || forgeChildProcess.killed) {
+    return;
+  }
+
+  try {
+    const pid = forgeChildProcess.pid;
+    if (pid) {
+      // Kill the entire process group (negative PID)
+      // This ensures all child processes are terminated
+      try {
+        process.kill(-pid, 'SIGTERM');
+      } catch (err) {
+        // If process group kill fails, try killing the process directly
+        forgeChildProcess.kill('SIGTERM');
+      }
+    }
+  } catch (error) {
+    // Ignore errors - process might already be dead
+  } finally {
+    forgeChildProcess = null;
+  }
 }
 
 /**
