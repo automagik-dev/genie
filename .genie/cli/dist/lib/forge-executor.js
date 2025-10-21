@@ -19,24 +19,22 @@ class ForgeExecutor {
     async createSession(params) {
         const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
         const projectId = await this.getOrCreateGenieProject();
-        // Auto-detect current branch, fallback to Forge project's default
-        let baseBranch;
+        // Sync current git branch to Forge project's default_base_branch
         try {
-            baseBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+            const currentBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+            await this.forge.updateProject(projectId, { default_base_branch: currentBranch });
         }
         catch (error) {
-            // If git detection fails, get default from Forge project settings
-            const project = await this.forge.getProject(projectId);
-            baseBranch = project.default_base_branch || 'main';
+            // If git detection fails, Forge will use its existing default_base_branch
         }
+        // Don't pass base_branch - let Forge use its default_base_branch setting
         const requestBody = {
             task: {
                 project_id: projectId,
                 title: `Genie: ${agentName} (${executionMode})`,
                 description: prompt
             },
-            executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
-            base_branch: baseBranch
+            executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model)
         };
         const attempt = await this.forge.createAndStartTask(requestBody);
         return attempt.id;
