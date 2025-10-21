@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createListHandler = void 0;
+exports.createListHandler = createListHandler;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const agent_resolver_1 = require("../../lib/agent-resolver");
@@ -80,7 +80,6 @@ function createListHandler(ctx) {
         throw new Error(`Unknown list target '${targetRaw}'. Try 'agents', 'workflows', 'skills', or 'sessions'.`);
     };
 }
-exports.createListHandler = createListHandler;
 async function listCollectivesView(ctx, parsed) {
     const allCollectives = (0, agent_resolver_1.listCollectives)();
     const activeCollectives = allCollectives.filter(info => info.agentsDir);

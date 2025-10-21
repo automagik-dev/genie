@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runCleanup = void 0;
+exports.runCleanup = runCleanup;
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 async function runCleanup(parsed, _config, _paths) {
@@ -11,4 +11,3 @@ async function runCleanup(parsed, _config, _paths) {
     ];
     await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Cleanup command deprecated', messages), parsed.options);
 }
-exports.runCleanup = runCleanup;

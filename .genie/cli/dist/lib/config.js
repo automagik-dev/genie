@@ -3,7 +3,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.applyDefaults = exports.prepareDirectories = exports.resolvePaths = exports.loadConfig = exports.buildDefaultConfig = exports.clearStartupWarnings = exports.getStartupWarnings = exports.recordStartupWarning = void 0;
+exports.recordStartupWarning = recordStartupWarning;
+exports.getStartupWarnings = getStartupWarnings;
+exports.clearStartupWarnings = clearStartupWarnings;
+exports.buildDefaultConfig = buildDefaultConfig;
+exports.loadConfig = loadConfig;
+exports.resolvePaths = resolvePaths;
+exports.prepareDirectories = prepareDirectories;
+exports.applyDefaults = applyDefaults;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const utils_1 = require("./utils");
@@ -48,19 +55,15 @@ const startupWarnings = [];
 function recordStartupWarning(message) {
     startupWarnings.push(message);
 }
-exports.recordStartupWarning = recordStartupWarning;
 function getStartupWarnings() {
     return [...startupWarnings];
 }
-exports.getStartupWarnings = getStartupWarnings;
 function clearStartupWarnings() {
     startupWarnings.length = 0;
 }
-exports.clearStartupWarnings = clearStartupWarnings;
 function buildDefaultConfig() {
     return (0, utils_1.deepClone)(BASE_CONFIG);
 }
-exports.buildDefaultConfig = buildDefaultConfig;
 function loadConfig() {
     let config = (0, utils_1.deepClone)(buildDefaultConfig());
     const configFilePath = fs_1.default.existsSync(CONFIG_PATH) ? CONFIG_PATH : null;
@@ -108,7 +111,6 @@ function loadConfig() {
     config.executionModes = config.executionModes || {};
     return config;
 }
-exports.loadConfig = loadConfig;
 function resolvePaths(paths) {
     const baseDir = paths.baseDir ? path_1.default.resolve(paths.baseDir) : (0, paths_1.findWorkspaceRoot)();
     return {
@@ -118,7 +120,6 @@ function resolvePaths(paths) {
         backgroundDir: paths.backgroundDir || path_1.default.join(baseDir, '.genie/state/agents/background')
     };
 }
-exports.resolvePaths = resolvePaths;
 function prepareDirectories(paths) {
     [paths.logsDir, paths.backgroundDir, path_1.default.dirname(paths.sessionsFile)].forEach((dir) => {
         if (!fs_1.default.existsSync(dir)) {
@@ -126,10 +127,8 @@ function prepareDirectories(paths) {
         }
     });
 }
-exports.prepareDirectories = prepareDirectories;
 function applyDefaults(options, defaults) {
     if (!options.backgroundExplicit) {
         options.background = Boolean(defaults?.background);
     }
 }
-exports.applyDefaults = applyDefaults;

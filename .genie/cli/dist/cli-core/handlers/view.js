@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createViewHandler = void 0;
+exports.createViewHandler = createViewHandler;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const session_helpers_1 = require("../../lib/session-helpers");
@@ -87,4 +87,3 @@ function createViewHandler(ctx) {
         await ctx.emitView(lines.join('\n'), parsed.options);
     };
 }
-exports.createViewHandler = createViewHandler;
