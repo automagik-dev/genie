@@ -13,7 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 // @ts-ignore - compiled client shipped at project root
 const forge_js_1 = require("../../../../forge.js");
-const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 async function isForgeRunning(baseUrl = DEFAULT_BASE_URL) {
     try {
         const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
@@ -52,8 +52,8 @@ function startForgeInBackground(opts) {
     const pidPath = path_1.default.join(logDir, 'forge.pid');
     const out = fs_1.default.openSync(logPath, 'a');
     const err = fs_1.default.openSync(logPath, 'a');
-    // Extract port from baseUrl (e.g., http://localhost:8888 -> 8888)
-    const port = new URL(baseUrl).port || '8888';
+    // Extract port from baseUrl (e.g., http://localhost:8887 -> 8887)
+    const port = new URL(baseUrl).port || '8887';
     // Use bundled automagik-forge binary directly (blazing fast - no extraction!)
     // Path works for both pnpm and npm installations
     const forgeBin = path_1.default.join(__dirname, '../../../../node_modules/.pnpm/automagik-forge@0.3.18/node_modules/automagik-forge/dist/linux-x64/automagik-forge');

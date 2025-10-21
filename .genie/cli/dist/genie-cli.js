@@ -292,9 +292,9 @@ async function startGenieServer() {
         process.exit(1);
     }
     // Phase 1: Start Forge in background
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
-    const forgePort = new URL(baseUrl).port || '8888';
+    const forgePort = new URL(baseUrl).port || '8887';
     console.log('🚀 Starting Genie services...');
     console.log('');
     // Check for port conflicts BEFORE trying to start
@@ -441,7 +441,7 @@ async function startMCPStdio() {
         process.exit(1);
     }
     // Check if Forge is running
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
     if (!forgeRunning) {
         console.error('❌ Forge is not running.');
