@@ -65,10 +65,14 @@ export class ForgeExecutor {
       }
     }
 
+    // Use emoji format per @.genie/code/skills/emoji-naming-convention.md
+    const emojiPrefix = this.getAgentEmoji(agentName);
+    const formattedTitle = `[${emojiPrefix}] ${agentName}: ${executionMode}`;
+
     const requestBody = {
       task: {
         project_id: projectId,
-        title: `Genie: ${agentName} (${executionMode})`,
+        title: formattedTitle,
         description: prompt
       },
       executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
@@ -176,8 +180,53 @@ export class ForgeExecutor {
   }
 
   private extractAgentNameFromTitle(title: string): string {
-    const match = title.match(/^Genie: ([^\(]+)/);
-    return match ? match[1].trim() : title;
+    // Handle old format "Genie: agent (mode)" and new emoji format "[🧞] agent: mode"
+    const oldMatch = title.match(/^Genie: ([^\(]+)/);
+    if (oldMatch) return oldMatch[1].trim();
+
+    const emojiMatch = title.match(/^\[[\p{Emoji}]\]\s+([^:]+)/u);
+    return emojiMatch ? emojiMatch[1].trim() : title;
+  }
+
+  private getAgentEmoji(agentName: string): string {
+    // Map agent names to emojis per @.genie/code/skills/emoji-naming-convention.md
+    const normalized = agentName.toLowerCase().trim();
+
+    // Agent emojis
+    const agentEmojis: Record<string, string> = {
+      // Orchestrators & Planning
+      'genie': '🧞',
+      'wish': '💭',
+      'plan': '📋',
+      'forge': '⚙️',
+
+      // Execution agents (robots do the work)
+      'implementor': '🤖',
+      'tests': '🤖',
+      'polish': '🤖',
+      'refactor': '🤖',
+
+      // Validation & Review
+      'review': '✅',
+
+      // Tools & Utilities
+      'git': '🔧',
+      'release': '🚀',
+      'commit': '📦',
+
+      // Analysis & Learning
+      'learn': '📚',
+      'debug': '🐞',
+      'analyze': '🔍',
+      'thinkdeep': '🧠',
+
+      // Communication & Consensus
+      'consensus': '🤝',
+      'prompt': '📝',
+      'roadmap': '🗺️'
+    };
+
+    return agentEmojis[normalized] || '🧞'; // Default to genie emoji
   }
 }
 

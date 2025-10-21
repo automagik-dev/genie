@@ -17,6 +17,9 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Blocker Report Protocol (when to halt and document)
 - Done Report Template (standard evidence format)
 
+**Naming Convention:**
+@.genie/code/skills/emoji-naming-convention.md - MANDATORY when creating GitHub issues
+
 Customize phases below for core Git operations.
 
 # Git Specialist • Core Git Operations
@@ -346,13 +349,21 @@ You can continue with #35. Issue #42 is now tracked for later.
 - **LINK**: Cross-reference wishes, PRs, commits
 
 **Title patterns (CRITICAL):**
-- Bug Report: `[Bug] <description>`
-- Feature Request: `[Feature] <description>`
-- Make a Wish: `[Make a Wish] <description>` (external user suggestions only)
-- Planned Feature: No prefix (free-form) (internal work items)
+All GitHub issues MUST use emoji format from @.genie/code/skills/emoji-naming-convention.md
 
-**❌ Wrong:** `bug:`, `feat:`, `fix:` (conventional commit style not used for issues)
-**✅ Right:** `[Bug]`, `[Feature]`, `[Make a Wish]`
+- Bug: `🐛 Bug: <description>`
+- Wish (planning): `💭 Wish: <description>`
+- Forge (implementation): `⚙️ Forge: <description>`
+- Learn (research): `📚 Learn: <description>`
+- Review (validation): `✅ Review: <description>`
+- Refactor: `🔨 Refactor: <description>`
+- Docs: `📖 Docs: <description>`
+- Chore: `🧹 Chore: <description>`
+
+**Format:** `<emoji> <Type>: <Title>`
+
+**❌ Wrong:** `bug:`, `feat:`, `fix:`, `[Bug]`, `[Feature]` (old formats)
+**✅ Right:** `🐛 Bug: Fix executor base branch`, `💭 Wish: MCP Authentication`
 
 **Template distinctions:**
 - **Make a Wish** = External user suggestions → Team reviews → If approved → Create wish document + planned-feature issue

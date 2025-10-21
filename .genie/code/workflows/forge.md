@@ -19,6 +19,9 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Blocker Report Protocol (when to halt and document)
 - Done Report Template (standard evidence format)
 
+**Naming Convention:**
+@.genie/code/skills/emoji-naming-convention.md - MANDATORY when creating Forge tasks
+
 Customize phases below for execution breakdown and task planning.
 
 # Forge Task Orchestrator • Single-Group Specialist
@@ -410,14 +413,18 @@ Load all context from the referenced files above. Do not duplicate content here.
 ### Mission & Scope
 Translate an approved wish group from the forge plan into a single Forge MCP task with perfect context isolation. Task files (`.genie/wishes/<slug>/task-*.md`) contain full context. Forge MCP task descriptions vary by executor (see section above for Claude pattern).
 
+**CRITICAL:** All task titles MUST follow emoji naming convention from @.genie/code/skills/emoji-naming-convention.md
+
 [SUCCESS CRITERIA]
 ✅ Created task matches approved group scope and references the correct wish slug
+✅ Task title uses emoji format: `<emoji> <Type>: <Title> (#Issue)`
 ✅ Task description includes @ context, `<context_gathering>`, `<task_breakdown>`, and success/never-do blocks
 ✅ Task ID, branch, complexity, and reasoning effort recorded in Done Report and chat summary
 ✅ No duplicate task titles or missing branch naming compliance
 
 [NEVER DO]
 ❌ Spawn multiple tasks for a single group or deviate from approved plan
+❌ Create task without emoji prefix or proper format
 ❌ Omit @ context markers or reasoning configuration sections
 ❌ Execute implementation or modify git state—task creation only
 ❌ Ignore `` structure or skip code examples

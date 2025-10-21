@@ -17,6 +17,9 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Blocker Report Protocol (when to halt and document)
 - Done Report Template (standard evidence format)
 
+**Naming Convention:**
+@.genie/code/skills/emoji-naming-convention.md - MANDATORY for all GitHub issue titles
+
 Customize phases below for GitHub issue creation workflow.
 
 # Report Specialist • GitHub Issue Creation Workflow
@@ -33,14 +36,14 @@ Master of issue templates, understands Genie conventions, guides proper issue cr
 
 ## Success Criteria
 - ✅ Correct template selected for issue type
-- ✅ Proper title pattern ([Bug], [Feature], [Make a Wish], or no prefix)
+- ✅ Emoji format title: `<emoji> <Type>: <Title>` (see @.genie/code/skills/emoji-naming-convention.md)
 - ✅ All required fields populated
 - ✅ Template labels applied (manual fix if using CLI)
 - ✅ Return issue URL for reference
 
 ## Never Do
 - ❌ Create issues without using templates
-- ❌ Skip required fields or use wrong title patterns
+- ❌ Skip emoji prefix or use old title patterns ([Bug], [Feature], etc.)
 - ❌ Use make-a-wish template for internal planning
 - ❌ Force all issues into planned-feature without roadmap initiative
 
@@ -103,7 +106,7 @@ For issue lifecycle management (list, update, close):
 ### 1. Bug Report (`.github/ISSUE_TEMPLATE/bug-report.yml`)
 **When to use:** Bugs, regressions, broken functionality
 
-**Title pattern:** `[Bug] <description>`
+**Title pattern:** `🐛 Bug: <description>`
 
 **Required fields:**
 - Summary (one-line description)
@@ -117,7 +120,10 @@ For issue lifecycle management (list, update, close):
 ### 2. Feature Request (`.github/ISSUE_TEMPLATE/feature-request.yml`)
 **When to use:** Enhancements, new capabilities, improvements
 
-**Title pattern:** `[Feature] <description>`
+**Title pattern:** Use emoji format based on type:
+- New feature (planning): `💭 Wish: <description>`
+- Implementation: `⚙️ Forge: <description>`
+- Research: `📚 Learn: <description>`
 
 **Required fields:**
 - Feature summary
@@ -136,7 +142,7 @@ For issue lifecycle management (list, update, close):
 ### 3. Make a Wish (`.github/ISSUE_TEMPLATE/make-a-wish.yml`)
 **When to use:** External user suggestions/requests needing triage and approval
 
-**Title pattern:** `[Make a Wish] <description>`
+**Title pattern:** `💭 Wish: <description>` (external user suggestion)
 
 **Purpose:** Lightweight template for users to submit feature ideas. Team reviews → If approved → Creates wish document + planned-feature issue.
 
@@ -157,7 +163,12 @@ For issue lifecycle management (list, update, close):
 ### 4. Planned Feature (`.github/ISSUE_TEMPLATE/planned-feature.yml`)
 **When to use:** Internal work items for features already decided/approved
 
-**Title pattern:** No prefix (free-form)
+**Title pattern:** Use emoji format based on work type:
+- Implementation: `⚙️ Forge: <description>`
+- Bug fix: `🐛 Bug: <description>`
+- Refactor: `🔨 Refactor: <description>`
+- Docs: `📖 Docs: <description>`
+- Chore: `🧹 Chore: <description>`
 
 **Purpose:** Track implementation of approved features. Links to roadmap initiatives and wish documents.
 
@@ -193,24 +204,28 @@ For issue lifecycle management (list, update, close):
 WHO is creating the issue?
 ├─ External user (community, customer)
 │  └─ Use: make-a-wish
-│     Title: [Make a Wish] <description>
+│     Title: 💭 Wish: <description>
 │     Purpose: Team triages and reviews
 │
 └─ Internal (founder, team member, agent)
    │
    ├─ Is there an existing roadmap initiative?
    │  ├─ YES → Use: planned-feature
-   │  │         Title: <description> (no prefix)
+   │  │         Title: <emoji> <Type>: <description>
    │  │         Required: initiative number in body
    │  │         Auto-links to roadmap
    │  │
    │  └─ NO → What kind of work?
-   │            ├─ New feature/enhancement → Use: feature-request
-   │            │                            Title: [Feature] <description>
-   │            │                            Labels: type:enhancement
+   │            ├─ New feature (planning) → Use: feature-request
+   │            │                           Title: 💭 Wish: <description>
+   │            │                           Labels: type:enhancement
+   │            │
+   │            ├─ New feature (impl) → Use: planned-feature
+   │            │                       Title: ⚙️ Forge: <description>
+   │            │                       Labels: planned-feature
    │            │
    │            └─ Bug/defect → Use: bug-report
-   │                            Title: [Bug] <description>
+   │                            Title: 🐛 Bug: <description>
    │                            Labels: type:bug
 ```
 
@@ -267,7 +282,7 @@ Implement pause/resume mechanism...
 EOF
 
 gh issue create \
-  --title "feat: Interactive permission system" \
+  --title "⚙️ Forge: Interactive permission system" \
   --body-file /tmp/issue-body.md \
   --label "type:enhancement" \
   --label "status:needs-review"
@@ -278,7 +293,7 @@ rm /tmp/issue-body.md
 ### Method 2: Inline Body (Simple Cases)
 ```bash
 gh issue create \
-  --title "bug: Permission prompts auto-skip" \
+  --title "🐛 Bug: Permission prompts auto-skip" \
   --body "Steps to reproduce: ..." \
   --label "type:bug"
 ```
