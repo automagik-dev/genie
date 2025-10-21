@@ -11,8 +11,7 @@
  * - MCP server (server.ts)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.transformDisplayPath = transformDisplayPath;
-exports.getSemanticDisplayMessage = getSemanticDisplayMessage;
+exports.getSemanticDisplayMessage = exports.transformDisplayPath = void 0;
 /**
  * Transforms agent paths for display by stripping template/category folders
  * while preserving parent/child workflow relationships.
@@ -58,6 +57,7 @@ function transformDisplayPath(normalizedId) {
     const displayFolder = remaining.length > 1 ? remaining.slice(0, -1).join('/') : null;
     return { displayId, displayFolder };
 }
+exports.transformDisplayPath = transformDisplayPath;
 /**
  * Generates a semantic display message for agent startup.
  *
@@ -143,3 +143,4 @@ function getSemanticDisplayMessage(normalizedId) {
     const { displayId } = transformDisplayPath(normalizedId);
     return `🧞 Starting agent: ${displayId}`;
 }
+exports.getSemanticDisplayMessage = getSemanticDisplayMessage;

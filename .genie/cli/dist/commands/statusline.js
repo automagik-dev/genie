@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.runStatusline = runStatusline;
+exports.runStatusline = void 0;
 const child_process_1 = require("child_process");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
@@ -19,6 +19,7 @@ async function runStatusline(_parsed, _config, _paths) {
     process.stdout.write(parts.join(' | ') + '\n');
     process.stderr.write('⚠️  `statusline` is deprecated. Refer to the migration guide for updated integrations.\n');
 }
+exports.runStatusline = runStatusline;
 async function readProvider(cwd) {
     const providerPath = (0, paths_1.resolveWorkspaceProviderPath)(cwd);
     const state = await (0, fs_utils_1.readJsonFile)(providerPath);

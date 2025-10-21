@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createResumeHandler = createResumeHandler;
+exports.createResumeHandler = void 0;
 const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
 function createResumeHandler(ctx) {
@@ -41,3 +41,4 @@ function createResumeHandler(ctx) {
         process.stdout.write(`✓ Resumed ${sessionName} via Forge\n`);
     };
 }
+exports.createResumeHandler = createResumeHandler;

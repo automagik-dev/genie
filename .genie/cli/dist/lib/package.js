@@ -3,8 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.readPackageJson = readPackageJson;
-exports.getPackageVersion = getPackageVersion;
+exports.getPackageVersion = exports.readPackageJson = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const paths_1 = require("./paths");
@@ -17,7 +16,9 @@ function readPackageJson() {
     }
     return cachedPackageJson;
 }
+exports.readPackageJson = readPackageJson;
 function getPackageVersion() {
     const pkg = readPackageJson();
     return pkg.version ?? '0.0.0';
 }
+exports.getPackageVersion = getPackageVersion;

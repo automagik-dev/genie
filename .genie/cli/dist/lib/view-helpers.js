@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.emitView = emitView;
+exports.emitView = void 0;
 /**
  * emitView - Token-efficient markdown output (replaces Ink rendering)
  *
@@ -22,3 +22,4 @@ async function emitView(content, options, opts = {}) {
         stream.write('\n');
     }
 }
+exports.emitView = emitView;

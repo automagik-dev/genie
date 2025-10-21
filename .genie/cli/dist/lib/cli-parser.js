@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseArguments = parseArguments;
+exports.parseArguments = void 0;
 /**
  * Parses command-line arguments into a structured command object.
  *
@@ -87,3 +87,4 @@ function parseArguments(argv) {
     }
     return { command, commandArgs: filtered, options };
 }
+exports.parseArguments = parseArguments;
