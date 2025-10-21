@@ -34,12 +34,29 @@ jobs:
 
       - name: Auto-bump RC version on push to main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           pnpm install
-          pnpm run bump:rc
-          git push origin main --follow-tags
+
+          # Capture old version before bump
+          OLD_VERSION=$(node -p "require('./package.json').version")
+
+          # Run bump (will fail if tag exists, that's OK)
+          pnpm run bump:rc || echo "Bump failed (tag may exist)"
+
+          # Check if version changed
+          NEW_VERSION=$(node -p "require('./package.json').version")
+
+          if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
+            echo "bumped=true" >> $GITHUB_OUTPUT
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            git push origin main --follow-tags
+          else
+            echo "bumped=false" >> $GITHUB_OUTPUT
+            echo "No version bump needed (tag already exists)"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -171,6 +188,62 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GENIE_SKIP_IDENTITY_SMOKE: '1'
+
+      - name: Create GitHub Release
+        if: steps.npm_version.outputs.exists == '0'
+        run: |
+          VERSION="${{ steps.tagref.outputs.version }}"
+
+          # Determine if this is an RC release
+          if [[ "$VERSION" == *"-rc."* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+            RELEASE_TYPE="Release Candidate"
+            INSTALL_CMD="npm install automagik-genie@next"
+          else
+            PRERELEASE_FLAG=""
+            RELEASE_TYPE="Stable Release"
+            INSTALL_CMD="npm install automagik-genie"
+          fi
+
+          # Extract changelog for this version
+          CHANGELOG_SECTION=$(awk "/^## \[${VERSION}\]/,/^## \[/{print}" CHANGELOG.md | sed '$d')
+
+          # Create release notes
+          cat > /tmp/release-notes.md <<EOF
+          # ${RELEASE_TYPE}: v${VERSION}
+
+          ${CHANGELOG_SECTION}
+
+          ## Installation
+
+          \`\`\`bash
+          ${INSTALL_CMD}
+          \`\`\`
+
+          ## Usage
+
+          For RC releases, use the \`@next\` tag to get the latest release candidate.
+          These are pre-release versions for testing new features before stable release.
+
+          \`\`\`bash
+          # Install latest RC
+          npm install automagik-genie@next
+
+          # Or install specific version
+          npm install automagik-genie@${VERSION}
+          \`\`\`
+
+          ---
+          📦 [View on NPM](https://www.npmjs.com/package/automagik-genie/v/${VERSION})
+          EOF
+
+          # Create GitHub release
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release-notes.md \
+            ${PRERELEASE_FLAG}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Success notification
         run: |
