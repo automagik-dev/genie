@@ -88,7 +88,29 @@ function printCommand(description, command) {
   console.log('');
 }
 
-// Install git hooks first (silent)
+/**
+ * Apply performance patches to dependencies
+ */
+function applyPerformancePatches() {
+  const forgeCliPath = path.join(__dirname, '..', 'node_modules', 'automagik-forge', 'bin', 'cli.js');
+  const patchedCliPath = path.join(__dirname, '..', 'patches', 'automagik-forge-cli.js');
+
+  // Check if patch exists and forge is installed
+  if (fs.existsSync(patchedCliPath) && fs.existsSync(forgeCliPath)) {
+    try {
+      // Apply blazing-fast startup patch (removes extraction delay)
+      fs.copyFileSync(patchedCliPath, forgeCliPath);
+      fs.chmodSync(forgeCliPath, 0o755);
+    } catch (err) {
+      // Silently fail - don't break installation
+    }
+  }
+}
+
+// Apply performance patches first
+applyPerformancePatches();
+
+// Install git hooks (silent)
 installGitHooks();
 
 console.log('');
