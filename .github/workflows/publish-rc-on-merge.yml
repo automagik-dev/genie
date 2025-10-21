@@ -47,6 +47,37 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Clean up conflicting RC tags
+        run: |
+          # Get current version and calculate next RC
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Extract major.minor.patch-rc.N pattern
+          if [[ $CURRENT_VERSION =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+            BASE="${BASH_REMATCH[1]}"
+            RC_NUM="${BASH_REMATCH[2]}"
+            NEXT_RC=$((RC_NUM + 1))
+            NEXT_TAG="v${BASE}-rc.${NEXT_RC}"
+
+            echo "Next RC tag would be: $NEXT_TAG"
+
+            # Check if tag exists locally or remotely
+            if git tag -l | grep -q "^${NEXT_TAG}$"; then
+              echo "⚠️  Tag $NEXT_TAG exists locally, deleting..."
+              git tag -d "$NEXT_TAG"
+            fi
+
+            if git ls-remote --tags origin | grep -q "refs/tags/${NEXT_TAG}$"; then
+              echo "⚠️  Tag $NEXT_TAG exists remotely, deleting..."
+              git push origin ":refs/tags/${NEXT_TAG}" || echo "Failed to delete remote tag (may not have permission)"
+            fi
+
+            echo "✅ Ready to create $NEXT_TAG"
+          else
+            echo "Current version is not an RC, bump will create first RC"
+          fi
+
       - name: Bump RC version
         run: pnpm run bump:rc
         env:
