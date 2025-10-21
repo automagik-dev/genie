@@ -108,19 +108,14 @@ export async function runInit(
       console.log('agents stored locally. The new architecture (v2.1.0+) loads');
       console.log('core agents from the npm package for easier updates.');
       console.log('');
-      console.log('Recommended: Run `genie update` instead of `genie init`');
-      console.log('This will automatically migrate to the new architecture.');
-      console.log('');
-      console.log('Or run `genie migrate` for migration only.');
+      console.log('Run `genie init --yes` to force reinitialize (creates backup).');
       console.log('');
 
       await emitView(
         buildInfoView(
-          'Migration Recommended',
+          'Old Installation Detected',
           [
-            'Use `genie update` to migrate and update in one step.',
-            'Or use `genie migrate` for migration only.',
-            'Or use `genie init --yes` to force reinitialize (not recommended).'
+            'Use `genie init --yes` to force reinitialize (creates backup first).'
           ]
         ),
         parsed.options

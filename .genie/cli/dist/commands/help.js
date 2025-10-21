@@ -7,7 +7,6 @@ async function runHelp(parsed, config, _paths) {
     const backgroundDefault = Boolean(config.defaults && config.defaults.background);
     const commandRows = [
         { command: 'init', args: '[template] [--yes]', description: 'Initialize Genie in this workspace' },
-        { command: 'update', args: '[--dry-run] [--force]', description: 'Apply template updates with backups' },
         { command: 'rollback', args: '[--id <backup>]', description: 'Restore a previous Genie snapshot' },
         { command: 'run', args: '<agent> "<prompt>" [-x <executor>] [-m <model>]', description: 'Start or attach to an agent' },
         { command: 'list agents', args: '', description: 'Show all available agents' },
@@ -33,7 +32,6 @@ async function runHelp(parsed, config, _paths) {
         },
         examples: [
             'genie init code --yes',
-            'genie update --dry-run',
             'genie run code/analyze "[Discovery] mission @.genie/product/mission.md"',
             'genie run code/commit "Stage hotfix commit" --executor opencode --model gpt-4.1-coding',
             'genie run --help  # Show help for run command',

@@ -9,7 +9,7 @@ export async function runStatus(
 ): Promise<void> {
   const messages = [
     'The legacy `status` command is deprecated.',
-    'Use `genie update --status` (coming soon) or consult the migration guide for current workflows.',
+    'Consult the documentation for current workflows.',
     'Documentation: https://github.com/namastexlabs/automagik-genie/docs/migration-guide.md'
   ];
   await emitView(buildInfoView('Status command deprecated', messages), parsed.options);
