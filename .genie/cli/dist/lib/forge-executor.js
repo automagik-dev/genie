@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createForgeExecutor = exports.ForgeExecutor = void 0;
+exports.ForgeExecutor = void 0;
+exports.createForgeExecutor = createForgeExecutor;
 // @ts-ignore - forge.js is compiled JS without type declarations
 const forge_js_1 = require("../../../../forge.js");
 const child_process_1 = require("child_process");
@@ -35,10 +36,13 @@ class ForgeExecutor {
                 // Use fallback 'main'
             }
         }
+        // Use emoji format per @.genie/code/skills/emoji-naming-convention.md
+        const emojiPrefix = this.getAgentEmoji(agentName);
+        const formattedTitle = `[${emojiPrefix}] ${agentName}: ${executionMode}`;
         const requestBody = {
             task: {
                 project_id: projectId,
-                title: `Genie: ${agentName} (${executionMode})`,
+                title: formattedTitle,
                 description: prompt
             },
             executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
@@ -127,8 +131,45 @@ class ForgeExecutor {
         return profile;
     }
     extractAgentNameFromTitle(title) {
-        const match = title.match(/^Genie: ([^\(]+)/);
-        return match ? match[1].trim() : title;
+        // Handle old format "Genie: agent (mode)" and new emoji format "[🧞] agent: mode"
+        const oldMatch = title.match(/^Genie: ([^\(]+)/);
+        if (oldMatch)
+            return oldMatch[1].trim();
+        const emojiMatch = title.match(/^\[[\p{Emoji}]\]\s+([^:]+)/u);
+        return emojiMatch ? emojiMatch[1].trim() : title;
+    }
+    getAgentEmoji(agentName) {
+        // Map agent names to emojis per @.genie/code/skills/emoji-naming-convention.md
+        const normalized = agentName.toLowerCase().trim();
+        // Agent emojis
+        const agentEmojis = {
+            // Orchestrators & Planning
+            'genie': '🧞',
+            'wish': '💭',
+            'plan': '📋',
+            'forge': '⚙️',
+            // Execution agents (robots do the work)
+            'implementor': '🤖',
+            'tests': '🤖',
+            'polish': '🤖',
+            'refactor': '🤖',
+            // Validation & Review
+            'review': '✅',
+            // Tools & Utilities
+            'git': '🔧',
+            'release': '🚀',
+            'commit': '📦',
+            // Analysis & Learning
+            'learn': '📚',
+            'debug': '🐞',
+            'analyze': '🔍',
+            'thinkdeep': '🧠',
+            // Communication & Consensus
+            'consensus': '🤝',
+            'prompt': '📝',
+            'roadmap': '🗺️'
+        };
+        return agentEmojis[normalized] || '🧞'; // Default to genie emoji
     }
 }
 exports.ForgeExecutor = ForgeExecutor;
@@ -140,4 +181,3 @@ function createForgeExecutor(config = {}) {
     };
     return new ForgeExecutor({ ...defaultConfig, ...config });
 }
-exports.createForgeExecutor = createForgeExecutor;

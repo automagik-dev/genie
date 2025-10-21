@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildAgentCatalogView = void 0;
+exports.buildAgentCatalogView = buildAgentCatalogView;
 function buildAgentCatalogView(params) {
     const { total, groups } = params;
     const lines = [];
@@ -34,4 +34,3 @@ function buildAgentCatalogView(params) {
     lines.push('```');
     return lines.join('\n');
 }
-exports.buildAgentCatalogView = buildAgentCatalogView;

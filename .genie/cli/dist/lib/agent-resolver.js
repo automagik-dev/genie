@@ -3,7 +3,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.extractFrontMatter = exports.loadAgentSpec = exports.agentExists = exports.resolveAgentIdentifier = exports.listCollectives = exports.listAgents = void 0;
+exports.listAgents = listAgents;
+exports.listCollectives = listCollectives;
+exports.resolveAgentIdentifier = resolveAgentIdentifier;
+exports.agentExists = agentExists;
+exports.loadAgentSpec = loadAgentSpec;
+exports.extractFrontMatter = extractFrontMatter;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const config_1 = require("./config");
@@ -218,11 +223,9 @@ function listAgents() {
     collectives.forEach((info) => visit(info.agentsDir, null, info.collective));
     return records;
 }
-exports.listAgents = listAgents;
 function listCollectives() {
     return getLocalCollectives();
 }
-exports.listCollectives = listCollectives;
 /**
  * Resolves agent identifier to canonical agent path.
  *
@@ -268,7 +271,6 @@ function resolveAgentIdentifier(input) {
         return 'forge';
     throw new Error(`❌ Agent '${input}' not found. Try 'genie list agents' to see available ids.`);
 }
-exports.resolveAgentIdentifier = resolveAgentIdentifier;
 /**
  * Checks if an agent exists at the given path.
  *
@@ -280,7 +282,6 @@ function agentExists(id) {
         return false;
     return resolveAgentPath(id) !== null;
 }
-exports.agentExists = agentExists;
 /**
  * Loads agent specification from markdown file with frontmatter metadata.
  * Checks local collectives first, then npm package location.
@@ -317,7 +318,6 @@ function loadAgentSpec(name) {
         filePath: fileInfo.path
     };
 }
-exports.loadAgentSpec = loadAgentSpec;
 /**
  * Extracts YAML frontmatter and body content from markdown source.
  *
@@ -353,4 +353,3 @@ function extractFrontMatter(source) {
         return { meta: fallbackParseFrontMatter(raw), body };
     }
 }
-exports.extractFrontMatter = extractFrontMatter;

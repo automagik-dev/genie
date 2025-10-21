@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildRunCompletionView = exports.buildBackgroundStartView = exports.buildBackgroundPendingView = exports.buildBackgroundStartingView = void 0;
+exports.buildBackgroundStartingView = buildBackgroundStartingView;
+exports.buildBackgroundPendingView = buildBackgroundPendingView;
+exports.buildBackgroundStartView = buildBackgroundStartView;
+exports.buildRunCompletionView = buildRunCompletionView;
 function buildBackgroundStartingView(params) {
     const frame = params.frame ?? '⠋';
     return `${frame} **Launching background run**
@@ -11,7 +14,6 @@ function buildBackgroundStartingView(params) {
 - Spawning detached runner for this agent.
 - Session name will appear once the executor boots.`;
 }
-exports.buildBackgroundStartingView = buildBackgroundStartingView;
 function buildBackgroundPendingView(params) {
     const frame = params.frame ?? '⠙';
     return `${frame} **Linking session name**
@@ -20,7 +22,6 @@ function buildBackgroundPendingView(params) {
 - Waiting for the executor to publish the session name.
 - You will see management commands as soon as it is ready.`;
 }
-exports.buildBackgroundPendingView = buildBackgroundPendingView;
 function buildBackgroundStartView(params) {
     const lines = [];
     lines.push(`# ▸ GENIE • ${params.agentName}`);
@@ -69,7 +70,6 @@ function buildBackgroundStartView(params) {
     }
     return lines.join('\n');
 }
-exports.buildBackgroundStartView = buildBackgroundStartView;
 function buildRunCompletionView(params) {
     const icon = params.outcome === 'success' ? '✅' : params.outcome === 'warning' ? '⚠️' : '❌';
     const title = params.outcome === 'success'
@@ -121,4 +121,3 @@ function buildRunCompletionView(params) {
     }
     return lines.join('\n');
 }
-exports.buildRunCompletionView = buildRunCompletionView;

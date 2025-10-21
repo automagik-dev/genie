@@ -6,7 +6,8 @@
  * Addresses Genie RISK-2: Session store concurrency via SessionService with file locking
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createHandlers = exports.SessionService = void 0;
+exports.SessionService = void 0;
+exports.createHandlers = createHandlers;
 var session_service_1 = require("./session-service");
 Object.defineProperty(exports, "SessionService", { enumerable: true, get: function () { return session_service_1.SessionService; } });
 const run_1 = require("./handlers/run");
@@ -29,4 +30,3 @@ function createHandlers(context) {
         stop: (0, stop_1.createStopHandler)(context)
     };
 }
-exports.createHandlers = createHandlers;
