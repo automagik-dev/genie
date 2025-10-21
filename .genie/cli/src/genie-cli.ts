@@ -23,7 +23,7 @@ const packageJson = JSON.parse(
 
 program
   .name('genie')
-  .description('Self-evolving AI agent orchestration framework')
+  .description('Self-evolving AI agent orchestration framework\n\nRun with no arguments to start Genie server (Forge + MCP)')
   .version(packageJson.version);
 
 // Run command
@@ -168,7 +168,7 @@ program
 // Status command
 program
   .command('status')
-  .description('Deprecated status shim (see migration guide)')
+  .description('Show Genie server status (Forge backend, MCP server, statistics)')
   .action(() => {
     execGenie(['status']);
   });
