@@ -76,8 +76,9 @@ export async function collectForgeStats(baseUrl: string = 'http://localhost:8887
       const uniqueTaskIds = new Set(allAttempts.map((a: any) => a.task_id));
       stats.tasks.total = uniqueTaskIds.size;
 
-      // For live status, only check the most recent 5 attempts (keeps dashboard fast)
-      const recentAttempts = allAttempts.slice(0, 5);
+      // For live status, check recent attempts (balance between accuracy and speed)
+      // Check up to 15 attempts to get better distribution
+      const recentAttempts = allAttempts.slice(0, 15);
 
       for (const attempt of recentAttempts) {
         try {
@@ -89,12 +90,13 @@ export async function collectForgeStats(baseUrl: string = 'http://localhost:8887
             const latestProcess = processes[processes.length - 1];
 
             // Note: Forge uses 'status' not 'state'
+            // Known statuses: running, paused, completed, failed, killed
             if (latestProcess.status === 'running') {
               stats.attempts.running++;
               stats.hasRunningWork = true;
             } else if (latestProcess.status === 'paused') {
               stats.attempts.paused++;
-            } else if (latestProcess.status === 'failed' || latestProcess.status === 'stopped') {
+            } else if (latestProcess.status === 'failed' || latestProcess.status === 'killed') {
               stats.attempts.failed++;
             } else if (latestProcess.status === 'completed') {
               stats.attempts.completed++;
