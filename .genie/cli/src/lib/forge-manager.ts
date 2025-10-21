@@ -90,11 +90,15 @@ export async function waitForForgeReady(
 
 /**
  * Resolve automagik-forge binary path (version-agnostic)
+ *
+ * When installed via npm/pnpm/npx, automagik-forge is a sibling dependency in parent node_modules.
+ * __dirname is .genie/cli/dist/lib/, so we go up 5 levels to reach parent node_modules/
  */
 function resolveForgeBinary(): Result<string> {
-  const baseDir = path.join(__dirname, '../../../../node_modules');
+  const baseDir = path.join(__dirname, '../../../../../');
 
-  // Try standard npm structure first (fastest)
+  // Try standard npm/npx structure first (fastest)
+  // automagik-forge is a sibling in node_modules/
   const npmPath = path.join(baseDir, 'automagik-forge/bin/cli.js');
   if (fs.existsSync(npmPath)) {
     return { ok: true, value: npmPath };
