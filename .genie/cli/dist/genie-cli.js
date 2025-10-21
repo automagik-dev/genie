@@ -15,9 +15,14 @@ const commander_1 = require("commander");
 const child_process_1 = require("child_process");
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
+const gradient_string_1 = __importDefault(require("gradient-string"));
 const forge_manager_1 = require("./lib/forge-manager");
 const forge_stats_1 = require("./lib/forge-stats");
 const program = new commander_1.Command();
+// Genie-themed gradients 🧞✨
+const genieGradient = (0, gradient_string_1.default)(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
+const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00']); // Gold → Dark Orange
+const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff']); // Green → Cyan
 // Get package version
 const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
 program
@@ -290,6 +295,8 @@ Press Ctrl+C to stop all services
  * This is the main entry point for npx automagik-genie
  */
 async function startGenieServer() {
+    const startTime = Date.now();
+    const timings = {};
     const mcpServer = path_1.default.join(__dirname, '../../mcp/dist/server.js');
     // Check if MCP server exists
     if (!fs_1.default.existsSync(mcpServer)) {
@@ -300,10 +307,14 @@ async function startGenieServer() {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
     const forgePort = new URL(baseUrl).port || '8887';
-    console.log('🚀 Starting Genie services...');
+    console.log(genieGradient('━'.repeat(60)));
+    console.log(genieGradient('🧞 ✨ GENIE - Autonomous Agent Orchestration'));
+    console.log(genieGradient('━'.repeat(60)));
     console.log('');
     // Check for port conflicts BEFORE trying to start
+    const conflictCheckStart = Date.now();
     const portConflict = await checkPortConflict(forgePort);
+    timings.portConflictCheck = Date.now() - conflictCheckStart;
     if (portConflict) {
         console.log(`⚠️  Port ${forgePort} is already in use by:`);
         console.log(`   PID: ${portConflict.pid}`);
@@ -336,29 +347,36 @@ async function startGenieServer() {
         }
     }
     // Check if Forge is already running (health check)
+    const healthCheckStart = Date.now();
     const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+    timings.initialHealthCheck = Date.now() - healthCheckStart;
     if (!forgeRunning) {
+        const forgeSpawnStart = Date.now();
         process.stderr.write('📦 Starting Forge backend');
         const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
+        timings.forgeSpawn = Date.now() - forgeSpawnStart;
         if (!startResult.ok) {
             console.error(`\n❌ Failed to start Forge: ${startResult.error.message}`);
             console.error(`   Check logs at ${logDir}/forge.log`);
             process.exit(1);
         }
-        // Wait for Forge to be ready (60s timeout with progress dots - accounts for .zip extraction on first run)
+        // Wait for Forge to be ready (parallel with MCP startup below)
+        const forgeReadyStart = Date.now();
         const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, true);
+        timings.forgeReady = Date.now() - forgeReadyStart;
         if (!forgeReady) {
             console.error('\n❌ Forge did not start in time (60s). Check logs at .genie/state/forge.log');
             process.exit(1);
         }
-        console.log(`📦 Forge:  ${baseUrl} ✓`);
+        console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
     }
     else {
-        console.log(`📦 Forge:  ${baseUrl} ✓ (already running)`);
+        console.log(successGradient(`📦 Forge:  ${baseUrl} ✓ (already running)`));
+        timings.forgeReady = 0; // Already running
     }
     // Phase 2: Start MCP server with SSE transport
     const mcpPort = process.env.MCP_PORT || '8885';
-    console.log(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`);
+    console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
     console.log('');
     // Set environment variables
     const env = {
@@ -401,10 +419,24 @@ async function startGenieServer() {
             // Start health monitoring dashboard (only once, not on retries)
             if (!monitoringStarted && mcpChild) {
                 monitoringStarted = true;
+                // Calculate total startup time
+                const totalTime = Date.now() - startTime;
+                timings.total = totalTime;
+                // Always show performance metrics (colorful and genie-themed!)
                 console.log('');
-                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-                console.log('🩺 Starting health monitoring...');
-                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                console.log(performanceGradient('━'.repeat(60)));
+                console.log(performanceGradient('⚡ Performance Metrics'));
+                console.log(performanceGradient('━'.repeat(60)));
+                console.log(`   ${successGradient('✓')} Port check:      ${timings.portConflictCheck || 0}ms`);
+                console.log(`   ${successGradient('✓')} Health check:    ${timings.initialHealthCheck || 0}ms`);
+                console.log(`   ${successGradient('✓')} Forge spawn:     ${timings.forgeSpawn || 0}ms`);
+                console.log(`   ${successGradient('✓')} Forge ready:     ${timings.forgeReady || 0}ms`);
+                console.log(`   ${performanceGradient('⚡')} Total startup:   ${performanceGradient(`${totalTime}ms (${(totalTime / 1000).toFixed(1)}s)`)}`);
+                console.log(performanceGradient('━'.repeat(60)));
+                console.log('');
+                console.log(genieGradient('━'.repeat(60)));
+                console.log(genieGradient('🩺 Starting health monitoring...'));
+                console.log(genieGradient('━'.repeat(60)));
                 startHealthMonitoring(baseUrl, mcpPort, mcpChild);
             }
         }, 1000);

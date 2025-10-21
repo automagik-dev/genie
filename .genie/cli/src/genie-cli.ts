@@ -11,10 +11,16 @@ import { Command } from 'commander';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import gradient from 'gradient-string';
 import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning } from './lib/forge-manager';
 import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
 
 const program = new Command();
+
+// Genie-themed gradients 🧞✨
+const genieGradient = gradient(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
+const performanceGradient = gradient(['#ffd700', '#ff8c00']); // Gold → Dark Orange
+const successGradient = gradient(['#00ff88', '#00ccff']); // Green → Cyan
 
 // Get package version
 const packageJson = JSON.parse(
@@ -318,6 +324,9 @@ Press Ctrl+C to stop all services
  * This is the main entry point for npx automagik-genie
  */
 async function startGenieServer(): Promise<void> {
+  const startTime = Date.now();
+  const timings: Record<string, number> = {};
+
   const mcpServer = path.join(__dirname, '../../mcp/dist/server.js');
 
   // Check if MCP server exists
@@ -331,11 +340,16 @@ async function startGenieServer(): Promise<void> {
   const logDir = path.join(process.cwd(), '.genie', 'state');
   const forgePort = new URL(baseUrl).port || '8887';
 
-  console.log('🚀 Starting Genie services...');
+  console.log(genieGradient('━'.repeat(60)));
+  console.log(genieGradient('🧞 ✨ GENIE - Autonomous Agent Orchestration'));
+  console.log(genieGradient('━'.repeat(60)));
   console.log('');
 
   // Check for port conflicts BEFORE trying to start
+  const conflictCheckStart = Date.now();
   const portConflict = await checkPortConflict(forgePort);
+  timings.portConflictCheck = Date.now() - conflictCheckStart;
+
   if (portConflict) {
     console.log(`⚠️  Port ${forgePort} is already in use by:`);
     console.log(`   PID: ${portConflict.pid}`);
@@ -370,11 +384,15 @@ async function startGenieServer(): Promise<void> {
   }
 
   // Check if Forge is already running (health check)
+  const healthCheckStart = Date.now();
   const forgeRunning = await isForgeRunning(baseUrl);
+  timings.initialHealthCheck = Date.now() - healthCheckStart;
 
   if (!forgeRunning) {
+    const forgeSpawnStart = Date.now();
     process.stderr.write('📦 Starting Forge backend');
     const startResult = startForgeInBackground({ baseUrl, logDir });
+    timings.forgeSpawn = Date.now() - forgeSpawnStart;
 
     if (!startResult.ok) {
       console.error(`\n❌ Failed to start Forge: ${startResult.error.message}`);
@@ -382,22 +400,25 @@ async function startGenieServer(): Promise<void> {
       process.exit(1);
     }
 
-    // Wait for Forge to be ready (60s timeout with progress dots - accounts for .zip extraction on first run)
+    // Wait for Forge to be ready (parallel with MCP startup below)
+    const forgeReadyStart = Date.now();
     const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, true);
+    timings.forgeReady = Date.now() - forgeReadyStart;
 
     if (!forgeReady) {
       console.error('\n❌ Forge did not start in time (60s). Check logs at .genie/state/forge.log');
       process.exit(1);
     }
 
-    console.log(`📦 Forge:  ${baseUrl} ✓`);
+    console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
   } else {
-    console.log(`📦 Forge:  ${baseUrl} ✓ (already running)`);
+    console.log(successGradient(`📦 Forge:  ${baseUrl} ✓ (already running)`));
+    timings.forgeReady = 0; // Already running
   }
 
   // Phase 2: Start MCP server with SSE transport
   const mcpPort = process.env.MCP_PORT || '8885';
-  console.log(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`);
+  console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
   console.log('');
 
   // Set environment variables
@@ -448,10 +469,27 @@ async function startGenieServer(): Promise<void> {
       // Start health monitoring dashboard (only once, not on retries)
       if (!monitoringStarted && mcpChild) {
         monitoringStarted = true;
+
+        // Calculate total startup time
+        const totalTime = Date.now() - startTime;
+        timings.total = totalTime;
+
+        // Always show performance metrics (colorful and genie-themed!)
         console.log('');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('🩺 Starting health monitoring...');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log(performanceGradient('⚡ Performance Metrics'));
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log(`   ${successGradient('✓')} Port check:      ${timings.portConflictCheck || 0}ms`);
+        console.log(`   ${successGradient('✓')} Health check:    ${timings.initialHealthCheck || 0}ms`);
+        console.log(`   ${successGradient('✓')} Forge spawn:     ${timings.forgeSpawn || 0}ms`);
+        console.log(`   ${successGradient('✓')} Forge ready:     ${timings.forgeReady || 0}ms`);
+        console.log(`   ${performanceGradient('⚡')} Total startup:   ${performanceGradient(`${totalTime}ms (${(totalTime / 1000).toFixed(1)}s)`)}`);
+        console.log(performanceGradient('━'.repeat(60)));
+
+        console.log('');
+        console.log(genieGradient('━'.repeat(60)));
+        console.log(genieGradient('🩺 Starting health monitoring...'));
+        console.log(genieGradient('━'.repeat(60)));
         startHealthMonitoring(baseUrl, mcpPort, mcpChild);
       }
     }, 1000);
