@@ -256,6 +256,7 @@ function formatUptime(ms) {
 }
 /**
  * Display live health monitoring dashboard with executive stats
+ * Returns the interval ID for cleanup
  */
 async function startHealthMonitoring(baseUrl, mcpPort, mcpChild, serverStartTime, startupTimings) {
     const UPDATE_INTERVAL = 5000; // 5 seconds
@@ -318,8 +319,8 @@ ${footer}`;
     };
     // Initial render
     await updateDashboard();
-    // Update every 5 seconds
-    setInterval(updateDashboard, UPDATE_INTERVAL);
+    // Update every 5 seconds and return the interval ID
+    return setInterval(updateDashboard, UPDATE_INTERVAL);
 }
 /**
  * Start Genie server (Forge + MCP with SSE transport on port 8885)
@@ -422,12 +423,18 @@ async function startGenieServer() {
     // Handle graceful shutdown (stop both Forge and MCP)
     let mcpChild = null;
     let isShuttingDown = false;
+    let healthMonitoringInterval = null;
     // Shutdown function that actually does the work
     const shutdown = async () => {
         // Prevent multiple shutdown attempts
         if (isShuttingDown)
             return;
         isShuttingDown = true;
+        // Clear health monitoring interval
+        if (healthMonitoringInterval) {
+            clearInterval(healthMonitoringInterval);
+            healthMonitoringInterval = null;
+        }
         console.log('');
         console.log('');
         console.log(genieGradient('━'.repeat(60)));
@@ -511,20 +518,19 @@ async function startGenieServer() {
         console.log(genieGradient('━'.repeat(80)));
         console.log('');
     };
-    // Install SIGINT handler - keeps process alive without blocking event loop
-    process.on('SIGINT', () => {
-        // Keep process alive by resuming stdin (non-blocking)
-        process.stdin.resume();
+    // Install signal handlers for graceful shutdown
+    const handleShutdownSignal = (signal) => {
         shutdown()
             .catch((error) => {
-            console.error('Fatal error during shutdown:', error);
+            console.error(`Fatal error during shutdown (${signal}):`, error);
+            process.exit(1);
         })
-            .finally(() => {
-            // Release stdin and exit cleanly
-            process.stdin.pause();
+            .then(() => {
             process.exit(0);
         });
-    });
+    };
+    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     // Resilient startup: retry on early non-zero exit
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
     const backoffMs = parseInt(process.env.GENIE_MCP_BACKOFF || '500', 10);

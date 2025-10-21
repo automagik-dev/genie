@@ -39,10 +39,9 @@ function getPackageRoot() {
     // ../../../../ = workspace root (dev) or package root (npm)
     return path_1.default.resolve(__dirname, '../../../..');
 }
-function getTemplateGeniePath(_template = 'code') {
-    // Copy directly from framework's .genie/ directory
-    // Template variants (code vs create) handled by install/update agents
-    return path_1.default.join(getPackageRoot(), '.genie');
+function getTemplateGeniePath(template = 'code') {
+    // Copy from framework's .genie/code/ or .genie/create/ directory
+    return path_1.default.join(getPackageRoot(), '.genie', template);
 }
 function getTemplateClaudePath(_template = 'code') {
     // .claude/ not used - Claude Code wraps core agents directly
