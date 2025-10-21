@@ -206,6 +206,81 @@ function execGenie(args) {
     });
 }
 /**
+ * Check if a port is in use and return process info
+ */
+async function checkPortConflict(port) {
+    const { execFile } = require('child_process');
+    const { promisify } = require('util');
+    const execFileAsync = promisify(execFile);
+    try {
+        const { stdout } = await execFileAsync('lsof', ['-i', `:${port}`, '-t', '-sTCP:LISTEN']);
+        const pid = stdout.trim().split('\n')[0];
+        if (pid) {
+            try {
+                const { stdout: psOut } = await execFileAsync('ps', ['-p', pid, '-o', 'command=']);
+                return { pid, command: psOut.trim() };
+            }
+            catch {
+                return { pid, command: 'unknown' };
+            }
+        }
+    }
+    catch {
+        // No process on port
+        return null;
+    }
+    return null;
+}
+/**
+ * Display live health monitoring dashboard
+ */
+async function startHealthMonitoring(baseUrl, mcpPort, mcpChild) {
+    const UPDATE_INTERVAL = 5000; // 5 seconds
+    let dashboardLines = 0;
+    const updateDashboard = async () => {
+        // Check Forge health
+        const forgeHealthy = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+        const forgeStatus = forgeHealthy ? '🟢' : '🔴';
+        // Check MCP health
+        const mcpHealthy = mcpChild && !mcpChild.killed;
+        const mcpStatus = mcpHealthy ? '🟢' : '🔴';
+        // Build dashboard
+        const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧞 GENIE SERVER - Executive Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${forgeStatus} **Forge Backend**
+   Status: ${forgeHealthy ? 'Running' : 'Down'}
+   URL: ${baseUrl}
+
+${mcpStatus} **MCP Server**
+   Status: ${mcpHealthy ? 'Running' : 'Down'}
+   URL: http://localhost:${mcpPort}/sse
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Last check: ${new Date().toLocaleTimeString()}
+Press Ctrl+C to stop all services
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+        // Clear previous dashboard if not first render
+        if (dashboardLines > 0) {
+            // Move cursor up and clear lines
+            for (let i = 0; i < dashboardLines; i++) {
+                process.stdout.write('\x1b[1A'); // Move up one line
+                process.stdout.write('\x1b[2K'); // Clear entire line
+            }
+            process.stdout.write('\r'); // Move to start of line
+        }
+        // Print new dashboard
+        console.log(dashboard);
+        // Count lines for next update
+        dashboardLines = dashboard.split('\n').length;
+    };
+    // Initial render
+    await updateDashboard();
+    // Update every 5 seconds
+    setInterval(updateDashboard, UPDATE_INTERVAL);
+}
+/**
  * Start Genie server (Forge + MCP with SSE transport on port 8885)
  * This is the main entry point for npx automagik-genie
  */
@@ -219,9 +294,43 @@ async function startGenieServer() {
     // Phase 1: Start Forge in background
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8888';
     const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
+    const forgePort = new URL(baseUrl).port || '8888';
     console.log('🚀 Starting Genie services...');
     console.log('');
-    // Check if Forge is already running
+    // Check for port conflicts BEFORE trying to start
+    const portConflict = await checkPortConflict(forgePort);
+    if (portConflict) {
+        console.log(`⚠️  Port ${forgePort} is already in use by:`);
+        console.log(`   PID: ${portConflict.pid}`);
+        console.log(`   Command: ${portConflict.command}`);
+        console.log('');
+        // Prompt user to take over
+        const readline = require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        const answer = await new Promise((resolve) => {
+            readline.question('Kill this process and start Genie server? [y/N]: ', resolve);
+        });
+        readline.close();
+        if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+            console.log(`🔪 Killing process ${portConflict.pid}...`);
+            try {
+                process.kill(parseInt(portConflict.pid), 'SIGTERM');
+                await new Promise(r => setTimeout(r, 2000)); // Wait for cleanup
+                console.log('✅ Process terminated');
+            }
+            catch (err) {
+                console.error(`❌ Failed to kill process: ${err}`);
+                process.exit(1);
+            }
+        }
+        else {
+            console.log('❌ Cancelled. Cannot start on occupied port.');
+            process.exit(1);
+        }
+    }
+    // Check if Forge is already running (health check)
     const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
     if (!forgeRunning) {
         process.stderr.write('📦 Starting Forge backend');
@@ -240,9 +349,6 @@ async function startGenieServer() {
     // Phase 2: Start MCP server with SSE transport
     const mcpPort = process.env.MCP_PORT || '8885';
     console.log(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`);
-    console.log('');
-    console.log('Ready for connections.');
-    console.log('Press Ctrl+C to stop all services.');
     console.log('');
     // Set environment variables
     const env = {
@@ -273,6 +379,7 @@ async function startGenieServer() {
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
     const backoffMs = parseInt(process.env.GENIE_MCP_BACKOFF || '500', 10);
     let attempt = 0;
+    let monitoringStarted = false;
     const start = () => {
         attempt += 1;
         mcpChild = (0, child_process_1.spawn)('node', [mcpServer], {
@@ -280,8 +387,16 @@ async function startGenieServer() {
             env
         });
         const timer = setTimeout(() => {
-            // After grace period, consider startup successful; let process lifecycle continue
-            // We only auto-retry if it exits quickly within grace period
+            // After grace period, consider startup successful
+            // Start health monitoring dashboard (only once, not on retries)
+            if (!monitoringStarted && mcpChild) {
+                monitoringStarted = true;
+                console.log('');
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                console.log('🩺 Starting health monitoring...');
+                console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                startHealthMonitoring(baseUrl, mcpPort, mcpChild);
+            }
         }, 1000);
         mcpChild.on('exit', (code) => {
             const exitCode = code === null ? 0 : code;
