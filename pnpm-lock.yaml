@@ -12,8 +12,8 @@ importers:
         specifier: ^1.18.2
         version: 1.18.2
       automagik-forge:
-        specifier: ^0.4.1
-        version: 0.4.1
+        specifier: ^0.4.2
+        version: 0.4.2
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -118,8 +118,8 @@ packages:
     resolution: {integrity: sha512-ooviqdwwgfIfNmDwo94wlshcdzfO64XV0Cg6oDsDYBJfITDz1EngD2z7DkbvCWn+XIMsIqW27sEVF6qcpJrRcg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  automagik-forge@0.4.1:
-    resolution: {integrity: sha512-xZtJG6FhmCAN4+MZrEF/DpYgCweEqrp6s+bHAOP/aeVAjZE0Kcrj2ScyDpxWcVjzLu5w9pKV4fzGYjHcV9rRKw==}
+  automagik-forge@0.4.2:
+    resolution: {integrity: sha512-Evpvnrd1hlcjxn5FAjc7cyjGlXQVVVnOxwdvFDV9prxFiZeqN2C2rNXAUU9e2MLoe97/PnET5yGApd/MNfx2MA==}
     hasBin: true
 
   base64-js@1.5.1:
@@ -905,7 +905,7 @@ snapshots:
 
   auto-bind@5.0.1: {}
 
-  automagik-forge@0.4.1: {}
+  automagik-forge@0.4.2: {}
 
   base64-js@1.5.1: {}
 
@@ -1106,7 +1106,7 @@ snapshots:
       strict-event-emitter-types: 2.0.0
       undici: 7.16.0
       uri-templates: 0.2.0
-      xsschema: 0.3.5(zod-to-json-schema@3.24.6(zod@4.1.11))(zod@3.25.76)
+      xsschema: 0.3.5(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76)
       yargs: 18.0.0
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
@@ -1560,7 +1560,7 @@ snapshots:
 
   ws@8.18.3: {}
 
-  xsschema@0.3.5(zod-to-json-schema@3.24.6(zod@4.1.11))(zod@3.25.76):
+  xsschema@0.3.5(zod-to-json-schema@3.24.6(zod@3.25.76))(zod@3.25.76):
     optionalDependencies:
       zod: 3.25.76
       zod-to-json-schema: 3.24.6(zod@3.25.76)
