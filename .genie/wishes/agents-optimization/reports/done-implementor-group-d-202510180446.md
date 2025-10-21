@@ -22,7 +22,7 @@ Group D extraction task was **already completed** in a previous session. All met
 
 1. **AGENTS.md current state:**
    - Only 769 lines (optimized from original 2272 lines)
-   - References meta-learning via skill: `@.genie/skills/meta-learn-protocol.md:36`
+   - References meta-learning via skill: `@.genie/skills/meta-learn.md:36`
    - No duplicate content present
 
 2. **Skill file created:**
@@ -55,7 +55,7 @@ Group D extraction task was **already completed** in a previous session. All met
 ```
 AGENTS.md
   ↓ (line 36)
-@.genie/skills/meta-learn-protocol.md
+@.genie/skills/meta-learn.md
   ↓ (embedded patterns + reference)
 @.genie/code/agents/learn.md (904 lines)
 ```
@@ -74,7 +74,7 @@ AGENTS.md
 ```bash
 # AGENTS.md references skill
 grep "meta-learn-protocol" AGENTS.md
-# Result: Line 36: @.genie/skills/meta-learn-protocol.md
+# Result: Line 36: @.genie/skills/meta-learn.md
 
 # Skill file contains patterns
 cat .genie/agents/code/skills/meta-learn-protocol.md
@@ -158,7 +158,7 @@ wc -l AGENTS.md
 
 # Reference validation
 grep "meta-learn-protocol" AGENTS.md
-# Output: 36:@.genie/skills/meta-learn-protocol.md
+# Output: 36:@.genie/skills/meta-learn.md
 
 # Agent file check
 wc -l .genie/agents/learn.md

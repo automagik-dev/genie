@@ -279,7 +279,7 @@ Genie (main conversation)
 
 **Skills to reference:**
 - `@.genie/skills/routing-decision-matrix.md` - Add team triggers
-- `@.genie/skills/evidence-based-thinking.md` - Team decision framework
+- `@.genie/skills/investigate-before-commit.md` - Team decision framework
 - `@.genie/skills/know-yourself.md` - Update with teams awareness
 
 **Files to update:**

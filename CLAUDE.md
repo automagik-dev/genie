@@ -14,7 +14,7 @@
 # This file enables session memory, user preferences, decision tracking, and parallel work for THIS project.
 # Each team member has their own context file (not shared in git).
 # If missing, install/update agent will create it from template.
-@.genie/USERCONTEXT.md
+.genie/USERCONTEXT.md (user-specific, gitignored)
 
 # Claude Code Entry Point
 

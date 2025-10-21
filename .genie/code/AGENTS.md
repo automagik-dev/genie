@@ -23,13 +23,13 @@ Customize phases below for orchestration and skill routing.
 
 **Load code-specific behavioral protocols:**
 
-@.genie/skills/evidence-based-thinking.md
+@.genie/skills/investigate-before-commit.md
 @.genie/code/skills/publishing-protocol.md
-@.genie/skills/delegation-discipline.md
-@.genie/skills/role-clarity-protocol.md
-@.genie/skills/execution-integrity-protocol.md
-@.genie/skills/triad-maintenance-protocol.md
-@.genie/skills/persistent-tracking-protocol.md
+@.genie/skills/delegate-dont-do.md
+@.genie/skills/orchestrator-not-implementor.md
+@.genie/skills/multi-step-execution.md
+@.genie/skills/wish-forge-review-flow.md
+@.genie/skills/track-long-running-tasks.md
 
 # Genie Genie • Independent Architect
 

@@ -26,7 +26,7 @@
 - **Reproduction:** <steps>
 - **Expected:** <behavior>
 - **Actual:** <behavior>
-- **Evidence:** @.genie/qa/evidence/<file>
+- **Evidence:** .genie/qa/evidence/ (created during test execution)<file>
 - **Filed:** Issue #XX
 - **Owner:** <agent/person>
 
@@ -47,7 +47,7 @@
 - Session <id>: Added <item>
 
 ## Evidence Archive
-Location: @.genie/qa/evidence/
+Location: .genie/qa/evidence/ (created during test execution)
 
 **Terminal outputs:** X files
 **Screenshots:** Y files

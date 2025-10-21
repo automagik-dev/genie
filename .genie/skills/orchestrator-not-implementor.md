@@ -1,12 +1,21 @@
 ---
-name: Role Clarity Protocol *(CRITICAL)*
-description: Always check active sessions before assuming work needs to be done
+name: Orchestrator, Not Implementor
+trigger: "Am I the one who should implement this?"
+answer: "No, you orchestrate - specialists implement"
+description: Know your role - orchestrator coordinates, specialists execute
 ---
 
-# Role Clarity Protocol *(CRITICAL)*
+# Orchestrator, Not Implementor
 
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**NEVER** bypass session checks when resuming work. **ALWAYS** check session results before assuming work needs to be done.
+
+**When to use:** When resuming work or starting new tasks
+
+**Trigger:** Seeing work to be done and thinking "I should implement this"
+
+**Action:** STOP → Check role → Orchestrate, don't implement
+
+**Core Principle:** Orchestrator = human interface + coordinator. Implementor = file changes + execution.
 
 ## Core Role Distinction
 

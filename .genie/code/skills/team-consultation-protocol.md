@@ -267,7 +267,7 @@ Result: 0/3 approve → REJECTED
 
 **Related skills:**
 - `@.genie/skills/routing-decision-matrix.md` - Add team triggers
-- `@.genie/skills/evidence-based-thinking.md` - Framework for analysis
+- `@.genie/skills/investigate-before-commit.md` - Framework for analysis
 - `@.genie/skills/know-yourself.md` - Self-awareness of teams capability
 
 **Update routing matrix:**
