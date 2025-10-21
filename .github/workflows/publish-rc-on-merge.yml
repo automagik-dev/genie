@@ -11,6 +11,9 @@ jobs:
     # Only run if PR was merged (not just closed) and came from dev branch
     if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
 
     steps:
       - name: Checkout code
