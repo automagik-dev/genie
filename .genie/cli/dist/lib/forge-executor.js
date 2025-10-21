@@ -4,6 +4,7 @@ exports.ForgeExecutor = void 0;
 exports.createForgeExecutor = createForgeExecutor;
 // @ts-ignore - forge.js is compiled JS without type declarations
 const forge_js_1 = require("../../../../forge.js");
+const child_process_1 = require("child_process");
 class ForgeExecutor {
     constructor(config) {
         this.config = config;
@@ -18,6 +19,14 @@ class ForgeExecutor {
     async createSession(params) {
         const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
         const projectId = await this.getOrCreateGenieProject();
+        // Auto-detect current branch instead of hardcoding 'main'
+        let baseBranch = 'dev'; // Default fallback for this project
+        try {
+            baseBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+        }
+        catch (error) {
+            // If git command fails, use fallback
+        }
         const requestBody = {
             task: {
                 project_id: projectId,
@@ -25,7 +34,7 @@ class ForgeExecutor {
                 description: prompt
             },
             executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
-            base_branch: 'main'
+            base_branch: baseBranch
         };
         const attempt = await this.forge.createAndStartTask(requestBody);
         return attempt.id;
