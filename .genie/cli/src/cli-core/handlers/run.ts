@@ -25,7 +25,8 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
-      throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}`);
+      console.error(`[DEBUG] syncProfiles error:`, error);
+      throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}\nReason: ${reason}`);
     }
 
     let attemptId: string;
