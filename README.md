@@ -153,24 +153,49 @@ graph TB
 
 ## 🎬 Start Here
 
-**New to Genie? Get started in one command:**
+**New to Genie? Choose your approach:**
 
-### Linux / macOS
+### 🚀 Quick Run (No Install)
 
+**Use this if you just want to test Genie without installing anything:**
+
+**Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh | bash
 ```
 
-### Windows (PowerShell as Administrator)
-
+**Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1 | iex
+```
+
+**What this does:**
+- ✅ Runs Genie via npx/pnpm dlx (no permanent install)
+- ✅ Perfect for quick testing
+- ✅ No dependencies required if you have Node.js
+
+---
+
+### 📦 Full Setup (Permanent Install)
+
+**Use this for permanent installation with all dependencies:**
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.sh | bash
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.ps1 | iex
 ```
 
 **What this does:**
 - ✅ Installs Node.js 22 and npm (if needed)
 - ✅ Installs pnpm package manager
-- ✅ Runs Genie automatically
+- ✅ Runs Genie automatically after setup
+
+---
 
 **Alternative:** Download and run manually from [INSTALL.md](INSTALL.md) for step-by-step instructions.
 
