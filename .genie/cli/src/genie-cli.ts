@@ -274,6 +274,7 @@ function formatUptime(ms: number): string {
 
 /**
  * Display live health monitoring dashboard with executive stats
+ * Returns the interval ID for cleanup
  */
 async function startHealthMonitoring(
   baseUrl: string,
@@ -281,7 +282,7 @@ async function startHealthMonitoring(
   mcpChild: ReturnType<typeof spawn>,
   serverStartTime: number,
   startupTimings: Record<string, number>
-): Promise<void> {
+): Promise<NodeJS.Timeout> {
   const UPDATE_INTERVAL = 5000; // 5 seconds
   let dashboardLines = 0;
 
@@ -355,8 +356,8 @@ ${footer}`;
   // Initial render
   await updateDashboard();
 
-  // Update every 5 seconds
-  setInterval(updateDashboard, UPDATE_INTERVAL);
+  // Update every 5 seconds and return the interval ID
+  return setInterval(updateDashboard, UPDATE_INTERVAL);
 }
 
 /**
@@ -476,12 +477,19 @@ async function startGenieServer(): Promise<void> {
   // Handle graceful shutdown (stop both Forge and MCP)
   let mcpChild: ReturnType<typeof spawn> | null = null;
   let isShuttingDown = false;
+  let healthMonitoringInterval: NodeJS.Timeout | null = null;
 
   // Shutdown function that actually does the work
   const shutdown = async () => {
     // Prevent multiple shutdown attempts
     if (isShuttingDown) return;
     isShuttingDown = true;
+
+    // Clear health monitoring interval
+    if (healthMonitoringInterval) {
+      clearInterval(healthMonitoringInterval);
+      healthMonitoringInterval = null;
+    }
 
     console.log('');
     console.log('');
@@ -575,21 +583,20 @@ async function startGenieServer(): Promise<void> {
     console.log('');
   };
 
-  // Install SIGINT handler - keeps process alive without blocking event loop
-  process.on('SIGINT', () => {
-    // Keep process alive by resuming stdin (non-blocking)
-    process.stdin.resume();
-
+  // Install signal handlers for graceful shutdown
+  const handleShutdownSignal = (signal: string) => {
     shutdown()
       .catch((error) => {
-        console.error('Fatal error during shutdown:', error);
+        console.error(`Fatal error during shutdown (${signal}):`, error);
+        process.exit(1);
       })
-      .finally(() => {
-        // Release stdin and exit cleanly
-        process.stdin.pause();
+      .then(() => {
         process.exit(0);
       });
-  });
+  };
+
+  process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+  process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
 
   // Resilient startup: retry on early non-zero exit
   const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
