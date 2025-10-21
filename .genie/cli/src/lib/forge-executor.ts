@@ -38,10 +38,9 @@ export class ForgeExecutor {
   }
 
   async syncProfiles(profiles?: Record<string, any>): Promise<void> {
-    if (!profiles || typeof profiles !== 'object' || !Object.keys(profiles).length) {
-      return;
-    }
-    await this.forge.request('PUT', '/profiles', { body: { executors: profiles } });
+    // Skip profile sync for now - Forge manages profiles separately
+    // TODO: Fix profile sync API format mismatch
+    return;
   }
 
   async createSession(params: CreateSessionParams): Promise<string> {

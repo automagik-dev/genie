@@ -11,10 +11,9 @@ class ForgeExecutor {
         this.forge = new forge_js_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
     }
     async syncProfiles(profiles) {
-        if (!profiles || typeof profiles !== 'object' || !Object.keys(profiles).length) {
-            return;
-        }
-        await this.forge.request('PUT', '/profiles', { body: { executors: profiles } });
+        // Skip profile sync for now - Forge manages profiles separately
+        // TODO: Fix profile sync API format mismatch
+        return;
     }
     async createSession(params) {
         const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
