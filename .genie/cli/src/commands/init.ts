@@ -7,9 +7,6 @@ import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import { promptExecutorChoice } from '../lib/executor-prompt.js';
 import { EXECUTORS } from '../lib/executor-registry';
-// TODO: Enable once ESM imports resolved
-// import { runInitWizard } from '../views/init-wizard.js';
-// import { runInstallChat } from '../views/install-chat.js';
 import {
   getPackageRoot,
   getTemplateGeniePath,
@@ -73,18 +70,32 @@ export async function runInit(
     let shouldInitGit = false;
 
     if (isInteractive) {
-      // TODO: Enable Ink wizard once ESM imports resolved
-      // For now, use existing prompts or require explicit template flag
-      // const wizardConfig = await runInitWizard({...});
+      // Use dynamic import to load ESM Ink components
+      // @ts-expect-error - .mjs file exists at runtime
+      const { runInitWizard } = await import('../views/init-wizard.mjs');
 
-      console.log('');
-      console.log('🧞 Genie Init');
-      console.log('');
-      console.log('For now, please run: genie init code  OR  genie init create');
-      console.log('');
-      console.log('Interactive wizard coming soon!');
-      console.log('');
-      process.exit(0);
+      const templates = [
+        { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
+        { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
+      ];
+
+      const executors = Object.keys(EXECUTORS).map(key => ({
+        label: EXECUTORS[key].label,
+        value: key
+      }));
+
+      const hasGit = await pathExists(path.join(cwd, '.git'));
+
+      const wizardConfig = await runInitWizard({
+        templates,
+        executors,
+        hasGit
+      });
+
+      template = wizardConfig.template;
+      executor = wizardConfig.executor;
+      model = wizardConfig.model;
+      shouldInitGit = wizardConfig.initGit;
     } else {
       // Automation mode: use flags or defaults
       template = (flags.template || 'code') as TemplateType;
