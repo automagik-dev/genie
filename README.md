@@ -16,6 +16,7 @@
 </p>
 
 <p align="center">
+  <a href="#-start-here">Start Here</a> •
   <a href="#-key-features">Features</a> •
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-mcp-integration">MCP Integration</a> •
@@ -147,6 +148,31 @@ graph TB
 <!-- AGENT_TREE_END -->
 
 **See [.genie/README.md](./.genie/README.md) for detailed agent documentation**
+
+---
+
+## 🎬 Start Here
+
+**New to Genie? Get started in one command:**
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/install.sh | bash
+```
+
+### Windows (PowerShell as Administrator)
+
+```powershell
+irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/install.ps1 | iex
+```
+
+**What this does:**
+- ✅ Installs Node.js 22 and npm (if needed)
+- ✅ Installs pnpm package manager
+- ✅ Runs Genie automatically
+
+**Alternative:** Download and run manually from [INSTALL.md](INSTALL.md) for step-by-step instructions.
 
 ---
 
