@@ -8,6 +8,19 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.4.2-rc.24] - 2025-10-21
+
+### Fixed
+- **CRITICAL**: Templates missing from npm package - Added `.genie/code/**/*` and `.genie/create/**/*` to package.json files array
+- Template parameter ignored in paths.ts - `getTemplateGeniePath()` now correctly uses template parameter to copy from `.genie/code/` or `.genie/create/`
+- Expanded executor registry from 3 to 9 executors (OpenCode, Codex, Claude, Gemini, Cursor, Qwen, Amp, Copilot)
+
+### Features
+- Smart launcher with auto-update checks - run.sh/setup.sh now check npm for latest version and prompt to update
+- Enhanced template selection menu with descriptions and emojis
+- One-command setup - `./run.sh` now handles global install, template selection, and initialization in single flow
+- Global install recommendation with clear benefits explanation
+
 ## [2.4.2-rc.22] - 2025-10-21
 
 No changelog entries (packaging-only RC).
