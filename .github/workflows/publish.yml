@@ -43,9 +43,11 @@ jobs:
           echo "ref=$REF" >> $GITHUB_OUTPUT
           echo "Resolved version $VERSION from $REF"
 
-      - name: Fetch tag ref
+      - name: Fetch and checkout tag
         if: github.event_name == 'workflow_dispatch'
-        run: git fetch --tags origin ${{ steps.tagref.outputs.ref }}:${{ steps.tagref.outputs.ref }}
+        run: |
+          git fetch --tags origin ${{ steps.tagref.outputs.ref }}:${{ steps.tagref.outputs.ref }}
+          git checkout ${{ github.event.inputs.tag }}
 
       - name: Verify package.json version matches tag
         run: |
