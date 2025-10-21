@@ -8,12 +8,15 @@ on:
 
 jobs:
   publish-rc:
-    # Only run if PR was merged (not just closed) and came from dev branch
-    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    # Only run if PR was merged from dev (not automated release PRs)
+    if: |
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'dev' &&
+      !startsWith(github.event.pull_request.title, 'chore: automated release')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Checkout code
@@ -21,6 +24,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -53,36 +57,54 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Push version bump to main
-        run: git push --follow-tags origin main
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Get version
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
-        uses: actions/create-release@v1
+      - name: Push version bump and create release
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="release/v${VERSION}"
+
+          # Create and push branch with version bump and tag
+          git checkout -b "${BRANCH}"
+          git push --follow-tags origin "${BRANCH}"
+
+          # Create GitHub Release
+          gh release create "v${VERSION}" \
+            --title "Release v${VERSION}" \
+            --notes "## 🚀 Automated Release
+
+          This RC was automatically published when dev was merged to main.
+
+          **PR:** #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}
+
+          **Install:**
+          \`\`\`bash
+          npm install automagik-genie@next
+          # or
+          pnpm install -g automagik-genie@next
+          \`\`\`
+
+          See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details." \
+            --prerelease \
+            --target "${BRANCH}"
+
+          # Create PR to merge version bump to main
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "chore: automated release v${VERSION}" \
+            --body "🤖 Automated version bump and release created by GitHub Actions.
+
+          **Version:** ${VERSION}
+          **Release:** https://github.com/${{ github.repository }}/releases/tag/v${VERSION}
+          **Triggered by:** PR #${{ github.event.pull_request.number }}
+
+          This PR will be auto-merged." \
+            --label "release"
+
+          # Auto-merge the PR
+          gh pr merge "${BRANCH}" --squash --auto --delete-branch
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          release_name: Release ${{ steps.version.outputs.version }}
-          body: |
-            ## 🚀 Automated Release
-
-            This RC was automatically published when dev was merged to main.
-
-            **PR:** #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}
-
-            **Install:**
-            ```bash
-            npm install automagik-genie@next
-            # or
-            pnpm install -g automagik-genie@next
-            ```
-
-            See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details.
-          draft: false
-          prerelease: true
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
