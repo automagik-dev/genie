@@ -1,5 +1,6 @@
 // @ts-ignore - forge.js is compiled JS without type declarations
 import { ForgeClient } from '../../../../forge.js';
+import { execSync } from 'child_process';
 
 export interface ForgeExecutorConfig {
   forgeBaseUrl: string;
@@ -47,6 +48,15 @@ export class ForgeExecutor {
     const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
 
     const projectId = await this.getOrCreateGenieProject();
+
+    // Auto-detect current branch instead of hardcoding 'main'
+    let baseBranch = 'dev'; // Default fallback for this project
+    try {
+      baseBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+    } catch (error) {
+      // If git command fails, use fallback
+    }
+
     const requestBody = {
       task: {
         project_id: projectId,
@@ -54,7 +64,7 @@ export class ForgeExecutor {
         description: prompt
       },
       executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
-      base_branch: 'main'
+      base_branch: baseBranch
     };
 
     const attempt = await this.forge.createAndStartTask(requestBody);
