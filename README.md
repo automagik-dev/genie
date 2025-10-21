@@ -170,9 +170,9 @@ irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1 
 ```
 
 **What this does:**
-- ✅ Runs Genie via npx/pnpm dlx (no permanent install)
+- ✅ Runs Genie via pnpm dlx (no permanent install)
 - ✅ Perfect for quick testing
-- ✅ No dependencies required if you have Node.js
+- ✅ Fast execution with pnpm
 
 ---
 
