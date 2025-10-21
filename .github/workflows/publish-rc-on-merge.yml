@@ -1,0 +1,87 @@
+name: Publish RC on Dev → Main Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  publish-rc:
+    # Only run if PR was merged (not just closed) and came from dev branch
+    if: github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm run test:all
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump RC version
+        run: pnpm run bump:rc
+        env:
+          SKIP_PUSH: "true"
+
+      - name: Publish to npm
+        run: npm publish --tag next
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Push version bump to main
+        run: git push --follow-tags origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## 🚀 Automated Release
+
+            This RC was automatically published when dev was merged to main.
+
+            **PR:** #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}
+
+            **Install:**
+            ```bash
+            npm install automagik-genie@next
+            # or
+            pnpm install -g automagik-genie@next
+            ```
+
+            See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details.
+          draft: false
+          prerelease: true

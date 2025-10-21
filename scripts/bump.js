@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BUMP_TYPE = process.argv[2];
-const NO_PUSH = process.argv[3] === '--no-push';
+const NO_PUSH = process.argv[3] === '--no-push' || process.env.SKIP_PUSH === 'true';
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
 
 // Colors
