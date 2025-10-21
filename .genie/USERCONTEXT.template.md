@@ -8,7 +8,7 @@
 
 ## 🎯 Quick Reference
 
-**Work Queue:** @.genie/TODO.md (prioritized tasks)
+**Work Queue:** <TODO file planned> (prioritized tasks)
 **System State:** @.genie/STATE.md (repository snapshot)
 **This File:** User preferences + relationship context
 
@@ -83,7 +83,7 @@
 **Auto-loads on session start:**
 - Claude Code loads CLAUDE.md
 - CLAUDE.md includes `@.genie/USERCONTEXT.md`
-- USERCONTEXT.md references `@.genie/TODO.md` and `@.genie/STATE.md`
+- USERCONTEXT.md references `<TODO file planned>` and `@.genie/STATE.md`
 - `!command` statements execute for fresh git context
 
 **Maintenance:**

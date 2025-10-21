@@ -312,7 +312,7 @@ Risk: Adding complexity. Mitigate by ensuring performance gain justifies added d
 
 **Skills:**
 - `@.genie/code/skills/team-consultation-protocol.md` - When to invoke
-- `@.genie/skills/evidence-based-thinking.md` - Analysis framework
+- `@.genie/skills/investigate-before-commit.md` - Analysis framework
 - `@.genie/skills/routing-decision-matrix.md` - Routing triggers
 
 **Personas:**

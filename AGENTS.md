@@ -14,39 +14,45 @@ See `.genie/` directory for comprehensive documentation:
 
 ## Core Skills Architecture
 
-### Universal Skills (Auto-loaded)
-**Tier 1 (Identity):**
-- `@.genie/skills/know-yourself.md`
+### Mandatory Skills (Auto-Loaded)
 
-**Tier 2 (Decision Framework):**
-- `@.genie/skills/evidence-based-thinking.md`
-- `@.genie/skills/routing-decision-matrix.md`
+**Identity:**
+- `@.genie/skills/know-yourself.md` - Who am I? What do I already know?
 
-**Tier 3 (System Coordination):**
-- `@.genie/skills/execution-integrity-protocol.md`
-- `@.genie/skills/persistent-tracking-protocol.md`
-- `@.genie/skills/meta-learn-protocol.md`
+**Decision Framework:**
+- `@.genie/skills/investigate-before-commit.md` - Investigate first, commit later
+- `@.genie/skills/routing-decision-matrix.md` - Where should this work go?
 
-**Tier 4 (Discovery & Tools):**
-- `@.genie/skills/delegation-discipline.md`
-- `@.genie/skills/blocker-protocol.md`
-- `@.genie/skills/chat-mode-helpers.md`
-- `@.genie/skills/experimentation-protocol.md`
-- `@.genie/skills/orchestration-protocols.md`
-- `@.genie/skills/parallel-execution.md`
+**Orchestration:**
+- `@.genie/skills/delegate-dont-do.md` - Should I do this? → No, delegate
+- `@.genie/skills/orchestrator-not-implementor.md` - Know your role
 
-**Tier 5 (Guardrails):**
-- `@.genie/skills/sequential-questioning.md`
-- `@.genie/skills/no-backwards-compatibility.md`
+### Executable Skills (On-Demand)
 
-**Tier 6 (Workflow & State Management):**
-- `@.genie/skills/role-clarity-protocol.md`
-- `@.genie/skills/triad-maintenance-protocol.md`
-- `@.genie/skills/wish-initiation-rule.md`
-- `@.genie/skills/wish-document-management.md`
-- `@.genie/skills/workspace-system.md`
-- `@.genie/skills/execution-patterns.md`
-- `@.genie/skills/missing-context-protocol.md`
+**Wish Workflow:**
+- `wish-initiation` - Should I create a wish?
+- `wish-issue-linkage` - Does this wish have an issue?
+- `wish-lifecycle` - What happens to wishes after creation?
+- `wish-forge-review-flow` - What's the execution workflow?
+
+**Execution & Tracking:**
+- `multi-step-execution` - Complex multi-step task breakdown
+- `track-long-running-tasks` - Track progress with checkpoints
+- `run-in-parallel` - Can these tasks run together?
+- `gather-context` - Not enough information
+
+**Learning & Blockers:**
+- `meta-learn` - I learned something
+- `blocker` - I'm blocked
+
+**Behavioral Guardrails:**
+- `ask-one-at-a-time` - Ask questions sequentially
+- `break-things-move-fast` - No backwards compatibility required
+
+**Environment:**
+- `worktree-isolation` - Where does work happen?
+- `chat-mode` - Conversational mode helpers
+- `experiment` - Let's try something
 
 ### Code-Specific Skills
 **Protocols & Tools:**
@@ -110,7 +116,7 @@ See `.genie/` directory for comprehensive documentation:
 
 **Maintenance:**
 - Update root AGENTS.md (source of truth)
-- .genie/AGENTS.md stays as @reference
+- .genie/AGENTS.md stays as @/AGENTS.md
 - Both patterns valid, this is our choice
 
 ### 3. Real-Time State Awareness

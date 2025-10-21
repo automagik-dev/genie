@@ -14,18 +14,18 @@ genie:
 
 Load universal skills (auto):
 @.genie/skills/know-yourself.md
-@.genie/skills/evidence-based-thinking.md
+@.genie/skills/investigate-before-commit.md
 @.genie/skills/routing-decision-matrix.md
-@.genie/skills/execution-integrity-protocol.md
-@.genie/skills/persistent-tracking-protocol.md
-@.genie/skills/meta-learn-protocol.md
-@.genie/skills/delegation-discipline.md
-@.genie/skills/blocker-protocol.md
-@.genie/skills/experimentation-protocol.md
+@.genie/skills/multi-step-execution.md
+@.genie/skills/track-long-running-tasks.md
+@.genie/skills/meta-learn.md
+@.genie/skills/delegate-dont-do.md
+@.genie/skills/blocker.md
+@.genie/skills/experiment.md
 @.genie/skills/orchestration-protocols.md
-@.genie/skills/parallel-execution.md
-@.genie/skills/sequential-questioning.md
-@.genie/skills/no-backwards-compatibility.md
+@.genie/skills/run-in-parallel.md
+@.genie/skills/ask-one-at-a-time.md
+@.genie/skills/break-things-move-fast.md
 
 Load create conventions:
 @.genie/create/skills/prompting-standards-create.md

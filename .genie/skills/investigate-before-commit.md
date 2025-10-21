@@ -1,11 +1,19 @@
 ---
-name: Evidence-Based Thinking
-description: Think through evidence: investigate, analyze, and respond with facts
+name: Investigate Before Commit
+trigger: "Should I commit to this approach?"
+answer: "Investigate first, gather evidence"
+description: Pause and investigate before committing to any technical decision
 ---
 
-# Evidence-Based Thinking
+# Investigate Before Commit
 
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
+**When to use:** Before committing to ANY technical decision or implementation approach
+
+**Trigger:** Thinking "Let's build X" or "This should work"
+
+**Action:** STOP → Investigate → Gather evidence → Then decide
 
 ## Core Principle
 
@@ -24,7 +32,7 @@ description: Think through evidence: investigate, analyze, and respond with fact
 **Pattern:** Investigate first, commit later
 
 **For simple tasks:** Quick validation (read existing code, check patterns)
-**For complex features:** Multi-stage investigation (see @.genie/skills/wish-document-management.md)
+**For complex features:** Multi-stage investigation (see @.genie/skills/wish-lifecycle.md)
 
 ### Investigation Discipline
 
