@@ -327,17 +327,17 @@ Session ID appears twice with different agent types and statuses, causing confus
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/97
 
 ### Reproduction Steps
-1. Start a learn neuron session
+1. Start a learn agent session
 2. Call `mcp__genie__list_sessions`
 3. Observe the same session ID in two separate entries with different agent types and statuses
 
 ### Expected Behavior
-Each unique neuron session should have a unique session ID. Session IDs should never collide across different agents or statuses.
+Each unique agent session should have a unique session ID. Session IDs should never collide across different agents or statuses.
 
 ### Actual Behavior
 Session ID `4946bad6-98f4-4822-b90b-6abc09d21fc7` appears twice:
-- Entry #1: neurons/git (status: running)
-- Entry #2: neurons/learn (status: completed)
+- Entry #1: agents/git (status: running)
+- Entry #2: agents/learn (status: completed)
 
 ### Validation
 - [x] Bug verified fixed
@@ -430,8 +430,8 @@ Each session should have a unique ID, even across different agent types.
 
 ### Actual Behavior
 Same session ID (`4946bad6-98f4-4822-b90b-6abc09d21fc7`) appears for:
-- Entry #1: neurons/git (status: running)
-- Entry #2: neurons/learn (status: completed)
+- Entry #1: agents/git (status: running)
+- Entry #2: agents/learn (status: completed)
 
 ### Validation
 - [x] Bug verified fixed
@@ -994,7 +994,7 @@ No description provided
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/69
 
 ### Reproduction Steps
-1. Start a neuron session with `mcp__genie__run` (e.g., prompt neuron)
+1. Start a agent session with `mcp__genie__run` (e.g., prompt agent)
 2. Work for 30-45 minutes
 3. Attempt to resume session with `mcp__genie__resume sessionId="<id>"`
 4. Observe error: "No run found" or empty response
@@ -1053,7 +1053,7 @@ Session appears in mcp__genie__list_sessions but mcp__genie__view returns "No ru
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/67
 
 ### Reproduction Steps
-1. Start a neuron session with `mcp__genie__run` (e.g., prompt neuron)
+1. Start a agent session with `mcp__genie__run` (e.g., prompt agent)
 2. Work for 30-45 minutes
 3. Attempt to resume session with `mcp__genie__resume sessionId="<id>"`
 4. Observe error: "No run found" or empty response

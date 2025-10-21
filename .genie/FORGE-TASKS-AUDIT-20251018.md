@@ -33,8 +33,8 @@
 
 | # | Task Title | Type | Issue | Status | Problem |
 |---|-----------|------|-------|--------|---------|
-| 12 | `[neuron] Git` | neuron | ❌ NONE | 🔴 NO ISSUE | Should have GitHub issue |
-| 13 | `[LEARN] Continuous Framework Learning - Permanent Meta-Neuron` | learn | ❌ NONE | 🔴 NO ISSUE | Permanent task, may not need issue |
+| 12 | `[agent] Git` | agent | ❌ NONE | 🔴 NO ISSUE | Should have GitHub issue |
+| 13 | `[LEARN] Continuous Framework Learning - Permanent Meta-Agent` | learn | ❌ NONE | 🔴 NO ISSUE | Permanent task, may not need issue |
 | 14 | `Follow-up: UUID Reuse and Build Artifact Consistency...` | investigation | ❌ NONE | 🔴 NO ISSUE | Needs issue for tracking |
 | 15 | `[ORCHESTRATION] Parallel PR Creation - Tasks #2-9` | orchestration | ❌ NONE | 🔴 NO ISSUE | Meta task, unclear if needs issue |
 | 16 | `[MASTER] Organize All Work - Create Branches...` | orchestration | ❌ NONE | 🔴 NO ISSUE | Historical master task |
@@ -94,7 +94,7 @@ TYPE values:
 
 Tasks without GitHub issues (need to create):
 
-1. **[NEURON] Git** → Create Issue: "Permanent Neuron: Git Operations"
+1. **[NEURON] Git** → Create Issue: "Permanent Agent: Git Operations"
 2. **Follow-up: UUID Reuse...** → Create Issue: "UUID Reuse & Stale Artifacts Investigation"
 3. **[TRIAGE] Incomplete Wishes** → Create Issue: "Triage & Archive Incomplete Wishes"
 

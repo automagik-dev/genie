@@ -18,7 +18,12 @@ function generateSessionName(agentName) {
     const timestamp = now.toISOString()
         .replace(/[-:T]/g, '')
         .slice(2, 12); // YYMMDDHHmm
-    return `${agentName}-${timestamp}`;
+    const slug = agentName
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        || 'session';
+    return `${slug}-${timestamp}`;
 }
 function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
     const storePath = paths.sessionsFile;
@@ -27,7 +32,7 @@ function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
         store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
     }
     else {
-        store = { version: 2, sessions: {} };
+        store = { version: 3, sessions: {} };
     }
     const defaultExecutor = resolveDefaultExecutor(config, defaults);
     return migrateSessionEntries(store, defaultExecutor);
@@ -53,45 +58,79 @@ function readJson(filePath, callbacks) {
 }
 function normalizeSessionStore(data, callbacks = {}) {
     if (!data || typeof data !== 'object') {
-        return { version: 2, sessions: {} };
+        return { version: 3, sessions: {} };
     }
     const incoming = data;
-    // Version 2 format (sessions keyed by sessionId)
-    if (incoming.sessions) {
+    // Version 3 format (sessions keyed by name) - current
+    if (incoming.version === 3 && incoming.sessions) {
         return {
-            version: 2,
+            version: 3,
             sessions: incoming.sessions
         };
     }
-    // Version 1 format (agents keyed by agent name) - MIGRATE
+    // Version 2 format (sessions keyed by sessionId) - MIGRATE to v3
+    if (incoming.version === 2 && incoming.sessions) {
+        callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
+        const sessions = {};
+        Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+            if (!entry || typeof entry !== 'object')
+                return;
+            // Use existing name or generate one from sessionId
+            const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
+            sessions[name] = {
+                ...entry,
+                name
+            };
+        });
+        return {
+            version: 3,
+            sessions
+        };
+    }
+    // Version 2 without explicit version number
+    if (incoming.sessions && !incoming.version) {
+        callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
+        const sessions = {};
+        Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+            if (!entry || typeof entry !== 'object')
+                return;
+            const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
+            sessions[name] = {
+                ...entry,
+                name
+            };
+        });
+        return {
+            version: 3,
+            sessions
+        };
+    }
+    // Version 1 format (agents keyed by agent name) - MIGRATE to v3
     if (incoming.agents) {
-        callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v2 (sessionId-keyed)');
+        callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v3 (name-keyed)');
         const sessions = {};
         Object.entries(incoming.agents).forEach(([agentName, entry]) => {
-            // Skip metadata fields (version, sessions, executor) that got mixed into agents during corruption
             if (typeof entry !== 'object' || entry === null)
                 return;
             if (agentName === 'version' || agentName === 'sessions' || agentName === 'executor')
                 return;
-            // Skip entries that don't look like sessions (no agent or sessionId field)
             if (!entry.agent && !entry.sessionId)
                 return;
-            // Generate sessionId if missing (fallback to agent name for old entries)
-            const sessionId = entry.sessionId || `legacy-${agentName}-${Date.now()}`;
-            sessions[sessionId] = {
+            const name = entry.name || `migrated-${agentName}`;
+            sessions[name] = {
                 ...entry,
                 agent: entry.agent || agentName,
-                sessionId
+                name
             };
         });
         return {
-            version: 2,
+            version: 3,
             sessions
         };
     }
     // Empty or malformed
     return {
-        version: 2,
+        version: 3,
         sessions: {}
     };
 }
@@ -116,7 +155,7 @@ function migrateSessionEntries(store, defaultExecutor) {
 function resolveDefaultExecutor(config = {}, defaults = {}) {
     return (config.defaults?.executor ||
         defaults.defaults?.executor ||
-        'codex');
+        'opencode');
 }
 exports._internals = {
     readJson,

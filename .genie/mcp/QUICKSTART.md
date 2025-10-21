@@ -199,7 +199,7 @@ After implementation, validate against standards.
 
 **What it does:**
 - Evaluates code quality, security, performance, test coverage
-- Checks against @.genie/standards/* files
+- Checks against project standards and best practices
 - Provides severity-tagged issues (CRITICAL/HIGH/MEDIUM/LOW)
 
 ---

@@ -20,7 +20,7 @@ async function test() {
 
   try {
     const forgeExecutor = createForgeExecutor({
-      forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:3000',
+      forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
       genieProjectId: projectId,
     });
 

@@ -51,9 +51,9 @@ async function testBasicLoadSave() {
     defaults: {}
   });
 
-  // Initial load should create empty store
+  // Initial load should create empty store (v3 format after migration)
   const store1 = service.load();
-  assert(store1.version === 2, 'Initial store has version 2');
+  assert(store1.version === 3, 'Initial store has version 3');
   assert(Object.keys(store1.sessions || store1.agents || {}).length === 0, 'Initial store has no sessions');
 
   // Add an agent and save

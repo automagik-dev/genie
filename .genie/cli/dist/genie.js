@@ -10,41 +10,23 @@ const session_helpers_1 = require("./lib/session-helpers");
 const help_1 = require("./views/help");
 const common_1 = require("./views/common");
 const view_helpers_1 = require("./lib/view-helpers");
-const run_1 = require("./commands/run");
-const resume_1 = require("./commands/resume");
-const list_1 = require("./commands/list");
-const view_1 = require("./commands/view");
-const stop_1 = require("./commands/stop");
+const cli_core_1 = require("./cli-core");
 const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
-const migrate_1 = require("./commands/migrate");
-const update_1 = require("./commands/update");
 const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
-const model_1 = require("./commands/model");
-const background_manager_1 = require("./background-manager");
 void main();
 async function main() {
     try {
         let parsed = (0, cli_parser_1.parseArguments)(process.argv.slice(2));
-        const envIsBackground = process.env[background_manager_1.INTERNAL_BACKGROUND_MARKER_ENV] === '1';
-        if (envIsBackground) {
-            parsed.options.background = true;
-            parsed.options.backgroundRunner = true;
-            parsed.options.backgroundExplicit = true;
-        }
-        else {
-            delete process.env[background_manager_1.INTERNAL_BACKGROUND_ENV];
-            delete process.env[background_manager_1.INTERNAL_START_TIME_ENV];
-            delete process.env[background_manager_1.INTERNAL_LOG_PATH_ENV];
-        }
         // Fast path for help commands - skip config loading
         const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
             parsed.options.requestHelp;
         let config;
         let paths;
+        let handlers = null;
         if (isHelpOnly) {
             // Minimal config for help display
             config = { defaults: { background: true } };
@@ -61,6 +43,28 @@ async function main() {
                 await (0, view_helpers_1.emitView)(envelope, parsed.options);
                 (0, config_1.clearStartupWarnings)();
             }
+            // Create handler context for run/resume/list/view/stop commands
+            const sessionService = new cli_core_1.SessionService({
+                paths,
+                loadConfig: config,
+                defaults: { defaults: config.defaults }
+            });
+            const handlerContext = {
+                config,
+                defaultConfig: config,
+                paths,
+                sessionService,
+                emitView: view_helpers_1.emitView,
+                recordRuntimeWarning: (msg) => {
+                    const { recordRuntimeWarning } = require('./lib/session-helpers');
+                    recordRuntimeWarning(msg);
+                },
+                recordStartupWarning: (msg) => {
+                    const { recordStartupWarning } = require('./lib/config');
+                    recordStartupWarning(msg);
+                }
+            };
+            handlers = (0, cli_core_1.createHandlers)(handlerContext);
         }
         switch (parsed.command) {
             case 'run':
@@ -68,38 +72,24 @@ async function main() {
                     await (0, view_helpers_1.emitView)((0, help_1.buildRunHelpView)(), parsed.options);
                     return;
                 }
-                await (0, run_1.runChat)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.run(parsed);
                 break;
             case 'init':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie init', [
-                        'Usage: genie init [--provider <codex|claude>] [--yes]',
-                        'Copies the packaged .genie templates into the current workspace, backs up any existing configuration, and records provider defaults.'
+                        'Usage: genie init [code|create] [--yes]',
+                        '• Copies packaged .genie into your repo (preserving agents, wishes, reports, state).',
+                        '• Copies AGENTS.md and .gitignore to project root (no CLAUDE.md changes).',
+                        '• Backs up existing .genie and AGENTS.md under .genie/backups/<id>/.',
+                        '• Prompts for default executor and model (arrow keys), updates .genie/config.yaml.',
+                        '• Configures MCP: genie@next and Forge in .mcp.json.',
+                        '• Starts a private Forge on 8887 and creates an Install task.'
                     ]), parsed.options);
                     return;
                 }
                 await (0, init_1.runInit)(parsed, config, paths);
-                break;
-            case 'migrate':
-                if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie migrate', [
-                        'Usage: genie migrate [--dry-run] [--force]',
-                        'Migrates old Genie installations to npm-backed architecture (v3.0+).',
-                        'Backs up existing setup, preserves custom agents, removes core agents (now in npm).'
-                    ]), parsed.options);
-                    return;
-                }
-                await (0, migrate_1.runMigrateCommand)(parsed, config, paths);
-                break;
-            case 'update':
-                if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie update', [
-                        'Usage: genie update [--dry-run] [--force]',
-                        'Bakes template changes into the workspace after creating a backup snapshot.'
-                    ]), parsed.options);
-                    return;
-                }
-                await (0, update_1.runUpdate)(parsed, config, paths);
                 break;
             case 'rollback':
                 if (parsed.options.requestHelp) {
@@ -120,50 +110,41 @@ async function main() {
             case 'statusline':
                 await (0, statusline_1.runStatusline)(parsed, config, paths);
                 break;
-            case 'model':
-                if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie model', [
-                        'Usage: genie model [subcommand]',
-                        '',
-                        'Configure default executor (codex or claude)',
-                        '',
-                        'Subcommands:',
-                        '  show    - Show current default executor (default)',
-                        '  detect  - Detect available executors',
-                        '  codex   - Set codex as default executor',
-                        '  claude  - Set claude as default executor'
-                    ]), parsed.options);
-                    return;
-                }
-                await (0, model_1.modelCommand)(parsed, config, paths);
-                break;
             case 'resume':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildResumeHelpView)(), parsed.options);
                     return;
                 }
-                await (0, resume_1.runContinue)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.resume(parsed);
                 break;
             case 'list':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildListHelpView)(), parsed.options);
                     return;
                 }
-                await (0, list_1.runList)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.list(parsed);
                 break;
             case 'view':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildViewHelpView)(), parsed.options);
                     return;
                 }
-                await (0, view_1.runView)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.view(parsed);
                 break;
             case 'stop':
                 if (parsed.options.requestHelp) {
                     await (0, view_helpers_1.emitView)((0, help_1.buildStopHelpView)(), parsed.options);
                     return;
                 }
-                await (0, stop_1.runStop)(parsed, config, paths);
+                if (!handlers)
+                    throw new Error('Handlers not initialized');
+                await handlers.stop(parsed);
                 break;
             case 'help':
             case undefined:

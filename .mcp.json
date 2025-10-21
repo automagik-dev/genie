@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "genie_qa": {
+      "command": "node",
+      "args": [
+        "/home/namastex/workspace/automagik-genie/.genie/mcp/dist/server.js"
+      ],
+      "env": {
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

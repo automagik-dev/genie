@@ -49,7 +49,7 @@ The skills prioritization implementation successfully delivers 4 high-quality wo
 # Tested with sample transcript
 ✅ Correctly detected "Let me teach you" pattern
 ✅ Correctly detected "You should have" pattern
-✅ Generated proper learn neuron invocation suggestions
+✅ Generated proper learn agent invocation suggestions
 ✅ Provided line numbers and context
 ```
 
@@ -94,7 +94,7 @@ The skills prioritization implementation successfully delivers 4 high-quality wo
 **Purpose:** Pre-MCP delegation validator
 
 **✅ Strengths:**
-- Complete routing matrix from routing.md (7 neurons)
+- Complete routing matrix from routing.md (7 agents)
 - Critical rules enforcement (release, learn, genie)
 - Fuzzy intent matching (trigger words)
 - Priority awareness (CRITICAL, HIGH, MEDIUM, LOW)
@@ -114,15 +114,15 @@ $ node validate-role.js "publish npm package" "release"
 $ node validate-role.js "publish npm package" "implementor"
 ❌ Invalid routing
 🚨 CRITICAL VIOLATIONS:
-   Violation: ALWAYS delegate release operations to release neuron
-   Correct neuron: release
+   Violation: ALWAYS delegate release operations to release agent
+   Correct agent: release
    Consequence: Releases without validation, incomplete changelog, no audit trail
 ```
 
 **✅ Critical Rules Implementation:**
-- Release operations → always delegate to release neuron ✅
-- Teaching moments → invoke learn neuron ✅
-- Strategic decisions → consult genie neuron ✅
+- Release operations → always delegate to release agent ✅
+- Teaching moments → invoke learn agent ✅
+- Strategic decisions → consult genie agent ✅
 
 **Score:** 10/10
 
@@ -351,7 +351,7 @@ Total: 4 new files, 866 lines added, 0 deletions
 **routing.md:**
 - ✅ Created (271 lines, 15KB)
 - ✅ Complete decision flowchart
-- ✅ Neuron selection matrix
+- ✅ Agent selection matrix
 - ✅ Critical routing rules
 - ✅ Session management guidance
 
@@ -382,15 +382,15 @@ Result: ✅ PASS - Detected 2 teaching signals with correct context and suggesti
 
 #### Test 2: validate-role.js (Valid Routing)
 ```bash
-Input: intent="publish npm package", neuron="release"
+Input: intent="publish npm package", agent="release"
 Expected: Valid routing with CRITICAL warning
 Result: ✅ PASS - Validated correctly with priority warnings
 ```
 
 #### Test 3: validate-role.js (Invalid Routing)
 ```bash
-Input: intent="publish npm package", neuron="implementor"
-Expected: Critical violation detected, suggest release neuron
+Input: intent="publish npm package", agent="implementor"
+Expected: Critical violation detected, suggest release agent
 Result: ✅ PASS - Caught violation with clear consequence explanation
 ```
 

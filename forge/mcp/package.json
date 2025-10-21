@@ -1,0 +1,35 @@
+{
+  "name": "@automagik/forge-mcp",
+  "version": "1.0.0",
+  "description": "Advanced Forge MCP Server - Type-safe MCP interface to Automagik Forge Backend API",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:stdio": "MCP_TRANSPORT=stdio node dist/server.js",
+    "start:http": "MCP_TRANSPORT=httpStream MCP_PORT=8081 node dist/server.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "forge",
+    "automagik",
+    "model-context-protocol",
+    "fastmcp"
+  ],
+  "author": "Automagik Team",
+  "license": "MIT",
+  "dependencies": {
+    "fastmcp": "^3.18.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

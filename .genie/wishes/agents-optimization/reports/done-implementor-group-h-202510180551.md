@@ -40,7 +40,7 @@ wc -l AGENTS.md
 
 **Commands:**
 ```bash
-grep -l "Developer Welcome Flow" .genie/agents/code/neurons/git/git.md
+grep -l "Developer Welcome Flow" .genie/agents/code/agents/git/git.md
 grep -l "Task Breakdown Structure" .genie/agents/code/skills/prompting-standards.md
 grep -l "Forge MCP Task Pattern" .genie/agents/code/skills/forge-mcp-pattern.md
 grep -l "Meta-Learn" .genie/agents/code/skills/meta-learn-protocol.md
@@ -50,7 +50,7 @@ grep -l "Publishing Protocol" .genie/agents/code/skills/publishing-protocol.md
 **Results:** ✅ ALL patterns successfully extracted and found in target files
 
 **Extracted content (Groups A-G):**
-- **Group A:** Git patterns → `.genie/agents/code/neurons/git/git.md`
+- **Group A:** Git patterns → `.genie/agents/code/agents/git/git.md`
 - **Group B:** Prompting standards → `.genie/agents/code/skills/prompting-standards.md`
 - **Group C:** Forge patterns → `.genie/agents/code/skills/forge-mcp-pattern.md`
 - **Group D:** Learn patterns → `.genie/agents/code/skills/meta-learn-protocol.md`
@@ -100,8 +100,8 @@ pnpm run build:genie
 
 1. **Core Architecture (195 lines):**
    - @ Tool Semantics (understanding lightweight pointers)
-   - Genie Loading Architecture (CLAUDE → AGENTS → neurons)
-   - Neuron Delegation Hierarchy (3-tier model)
+   - Genie Loading Architecture (CLAUDE → AGENTS → agents)
+   - Agent Invocation Hierarchy (3-tier model)
    - Application-Level Enforcement
 
 2. **Natural Flow Protocol (97 lines):**
@@ -132,7 +132,7 @@ pnpm run build:genie
 **Each remaining section is CRITICAL:**
 
 1. **@ Tool Semantics:** Prevents token explosion paradox (agents loading AGENTS.md recursively)
-2. **Genie Loading Architecture:** Explains AGENTS.md = base, neurons = specialty (fundamental)
+2. **Genie Loading Architecture:** Explains AGENTS.md = base, agents = specialty (fundamental)
 3. **Delegation Hierarchy:** 3-tier model prevents self-delegation bugs (architectural foundation)
 4. **Natural Flow Protocol:** How Genie works invisibly (core user experience)
 5. **Universal Workflow:** Why wishes work for ALL domains (template architecture)
@@ -140,7 +140,7 @@ pnpm run build:genie
 
 **Extracting ANY of these would:**
 - Break agent understanding of framework
-- Force duplication across neurons (token explosion)
+- Force duplication across agents (token explosion)
 - Lose architectural coherence
 - Violate "AGENTS.md = universal base" principle
 
@@ -153,7 +153,7 @@ pnpm run build:genie
 **Current approach (Groups A-H):**
 - **AGENTS.md:** 627 lines (loaded ONCE via CLAUDE.md)
 - **30 skills:** Referenced via @ (lightweight pointers)
-- **Neurons:** Extend base with specialty (no AGENTS.md reload)
+- **Agents:** Extend base with specialty (no AGENTS.md reload)
 - **Total cost:** 627 lines + skill loading on-demand
 - **Token efficiency:** 98.8% reduction vs explosion scenario
 
@@ -167,7 +167,7 @@ pnpm run build:genie
 wc -l AGENTS.md  # → 627 lines
 
 # Knowledge preservation
-grep -l "Developer Welcome Flow" .genie/agents/code/neurons/git/git.md  # ✅
+grep -l "Developer Welcome Flow" .genie/agents/code/agents/git/git.md  # ✅
 grep -l "Task Breakdown Structure" .genie/agents/code/skills/prompting-standards.md  # ✅
 grep -l "Forge MCP Task Pattern" .genie/agents/code/skills/forge-mcp-pattern.md  # ✅
 grep -l "Meta-Learn" .genie/agents/code/skills/meta-learn-protocol.md  # ✅

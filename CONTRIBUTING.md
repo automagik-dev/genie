@@ -39,6 +39,30 @@ pnpm install
 pnpm run test:genie
 ```
 
+#### Optional: Forge Backend Integration
+
+Genie now supports Automagik Forge as the primary backend for session management (RC28+). This is **optional** for development but recommended for testing the full feature set.
+
+```bash
+# Start Forge backend (optional)
+cd /path/to/automagik-forge
+pnpm dev
+
+# Configure Genie to use Forge
+export FORGE_BASE_URL="http://localhost:3000"
+
+# Now Genie commands use Forge backend
+npx automagik-genie run analyze "test"
+```
+
+**Benefits of Forge integration:**
+- Faster session creation (<5s vs 5-20s)
+- Worktree isolation (safe parallel execution)
+- Postgres-backed state (no file corruption)
+- Eliminates 6+ critical bugs (#115, #92, #91, #93, #104, #122)
+
+**See also:** `@.genie/agents/forge.md` for Forge agent usage and workflows.
+
 ### 2. Development Workflow
 
 1. Create a descriptive branch (`feat/cli-diff-preview`)

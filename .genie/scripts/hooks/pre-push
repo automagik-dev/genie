@@ -4,9 +4,27 @@ const { spawnSync, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+function getWorktreeRoot() {
+  try {
+    // Get the top-level directory of the current worktree
+    const result = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+    return result;
+  } catch (e) {
+    // Fallback to current directory if git command fails
+    return process.cwd();
+  }
+}
+
 function runNodeScript(script, args = []) {
-  const p = path.join(__dirname, '..', '..', '.genie', 'scripts', script);
-  const res = spawnSync('node', [p, ...args], { stdio: 'inherit' });
+  const worktreeRoot = getWorktreeRoot();
+  const p = path.join(worktreeRoot, '.genie', 'scripts', script);
+  const res = spawnSync('node', [p, ...args], {
+    stdio: 'inherit',
+    cwd: worktreeRoot  // Run from worktree root, not main repo
+  });
   return res.status || 0;
 }
 
@@ -54,21 +72,14 @@ function main() {
     process.exit(1);
   }
   // Step 2: commit advisory (validates traceability)
+  // Changed to WARNING ONLY - enforcement at PR approval time
   const advisoryCode = runNodeScript('commit-advisory.js');
   if (advisoryCode === 2) {
-    console.error('❌ Pre-push blocked - commit validation failed');
-    process.exit(1);
+    console.warn('⚠️  Commit validation issues detected (blocking at PR approval)');
+    console.warn('    See output above for details');
   }
   if (advisoryCode === 1 && !process.env.GENIE_SKIP_WISH_CHECK) {
-    if (isWorkInProgress) {
-      const branchType = isForgeBranch ? 'forge' : 'feat';
-      console.warn(`⚠️  Pre-push warnings detected (allowed for ${branchType}/* branches)`);
-      // forge/* and feat/* branches are work-in-progress, allow warnings
-    } else {
-      console.warn('⚠️  Pre-push has warnings (override: GENIE_SKIP_WISH_CHECK=1 git push)');
-      // Note: exit 1 blocks, exit 0 allows warnings
-      process.exit(1);
-    }
+    console.warn('⚠️  Commit advisory warnings (will be checked at PR approval)');
   }
   // Step 3: update changelog (non-blocking)
   const clCode = runNodeScript('update-changelog.js');

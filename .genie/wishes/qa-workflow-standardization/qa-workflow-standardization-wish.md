@@ -10,7 +10,7 @@
 ## Context Ledger
 
 - Current QA artifacts are ad‑hoc (e.g., `scripts/qa/bug1-validate.sh`).
-- Desired state: one canonical, per‑issue QA workflow that links to the GitHub issue, executes deterministically (Node), stores evidence predictably, and integrates with Learn neuron for continuous improvement.
+- Desired state: one canonical, per‑issue QA workflow that links to the GitHub issue, executes deterministically (Node), stores evidence predictably, and integrates with Learn agent for continuous improvement.
 - We consolidated repo tooling to Node; no Python helpers in this repo.
 - QA workflows must remain terminal (no further delegation) and runnable locally and in CI.
 
@@ -41,7 +41,7 @@ Directory structure (Option A — Issue‑Centric; recommended)
     common/
       validator.js            # Shared PASS/FAIL helpers, evidence writer
       github.js               # Optional: issue comment helper
-      learn-triggers.js       # When to invoke Learn neuron
+      learn-triggers.js       # When to invoke Learn agent
   scripts/
     run.js                    # CLI to execute a spec (local + CI)
     report.js                 # Format/emit reports (optional)
@@ -63,7 +63,7 @@ preconditions:
   - Build CLI: pnpm run build:genie
 steps:
   - name: Create multiple sessions
-    command: genie run neurons/plan "Test A" &
+    command: genie run agents/plan "Test A" &
     expect: background session created
   - name: List sessions
     command: genie list sessions

@@ -11,6 +11,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.18.2
         version: 1.18.2
+      automagik-forge:
+        specifier: ^0.3.18
+        version: 0.3.18
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -114,6 +117,10 @@ packages:
   auto-bind@5.0.1:
     resolution: {integrity: sha512-ooviqdwwgfIfNmDwo94wlshcdzfO64XV0Cg6oDsDYBJfITDz1EngD2z7DkbvCWn+XIMsIqW27sEVF6qcpJrRcg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
+
+  automagik-forge@0.3.18:
+    resolution: {integrity: sha512-eVRSDYbn2aIFqh3GINPtbAxD5rNuJRVa00ZiKLy5Nik1d4Ij8o+DHBGzAODXtPo+zPTevkWG0QRFU55/KHynGQ==}
+    hasBin: true
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
@@ -897,6 +904,8 @@ snapshots:
   ansi-styles@6.2.3: {}
 
   auto-bind@5.0.1: {}
+
+  automagik-forge@0.3.18: {}
 
   base64-js@1.5.1: {}
 

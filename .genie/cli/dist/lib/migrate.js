@@ -13,7 +13,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 // Core agents that ship with npm package (should NOT be in user .genie/agents/)
-// Reflects current structure: workflows/, neurons/, neurons/modes/
+// Reflects current structure: workflows/, agents/, agents/modes/
 const CORE_AGENT_IDS = [
     // Workflow orchestrators (.genie/agents/workflows/)
     'workflows/plan',
@@ -23,27 +23,27 @@ const CORE_AGENT_IDS = [
     'workflows/vibe',
     'workflows/qa',
     'workflows/prompt',
-    // Core neurons (.genie/agents/neurons/)
-    'neurons/orchestrator',
-    'neurons/commit',
-    'neurons/git',
-    'neurons/implementor',
-    'neurons/install',
-    'neurons/learn',
-    'neurons/polish',
-    'neurons/release',
-    'neurons/roadmap',
-    'neurons/tests',
-    // Strategic thinking modes (.genie/agents/neurons/modes/)
-    'neurons/modes/analyze',
-    'neurons/modes/audit',
-    'neurons/modes/challenge',
-    'neurons/modes/consensus',
-    'neurons/modes/debug',
-    'neurons/modes/docgen',
-    'neurons/modes/explore',
-    'neurons/modes/refactor',
-    'neurons/modes/tracer',
+    // Core agents (.genie/agents/agents/)
+    'agents/orchestrator',
+    'agents/commit',
+    'agents/git',
+    'agents/implementor',
+    'agents/install',
+    'agents/learn',
+    'agents/polish',
+    'agents/release',
+    'agents/roadmap',
+    'agents/tests',
+    // Strategic thinking modes (.genie/agents/agents/modes/)
+    'agents/modes/analyze',
+    'agents/modes/audit',
+    'agents/modes/challenge',
+    'agents/modes/consensus',
+    'agents/modes/debug',
+    'agents/modes/docgen',
+    'agents/modes/explore',
+    'agents/modes/refactor',
+    'agents/modes/tracer',
 ];
 /**
  * Detects if this is a clean install or needs migration
@@ -57,9 +57,9 @@ function detectInstallType() {
     if (!fs_1.default.existsSync(agentsDir)) {
         return 'clean';
     }
-    // Check for new structure (workflows/ and neurons/ subdirectories)
+    // Check for new structure (workflows/ and agents/ subdirectories)
     const workflowsDir = path_1.default.join(agentsDir, 'workflows');
-    const neuronsDir = path_1.default.join(agentsDir, 'neurons');
+    const neuronsDir = path_1.default.join(agentsDir, 'agents');
     if (fs_1.default.existsSync(workflowsDir) && fs_1.default.existsSync(neuronsDir)) {
         // Has new structure - check if agents come from npm or are in repo
         const workflowAgents = fs_1.default.existsSync(workflowsDir)
@@ -137,12 +137,12 @@ function analyzeAgents() {
     return result;
 }
 /**
- * Extracts customizations from modified core agents to .genie/custom/
+ * Extracts customizations from modified core agents (custom folder retired)
  */
 function extractCustomizations(coreAgents) {
     const extracted = [];
-    // TODO: Implement diff-based extraction
-    // For now, we'll preserve by moving to .genie/custom/
+    // TODO: Implement diff-based extraction/merge into local agent/skill docs
+    // For now: no-op (document that custom folder is retired)
     return extracted;
 }
 /**
@@ -168,20 +168,7 @@ function copyTemplates(options = {}) {
         }
         (0, child_process_1.execSync)(`cp -r "${claudeSource}" "${claudeDest}"`);
     }
-    // Copy .genie/custom/ stubs (merge with existing)
-    const customSource = path_1.default.join(templatesSource, '.genie', 'custom');
-    const customDest = path_1.default.join('.genie', 'custom');
-    if (!fs_1.default.existsSync(customDest)) {
-        fs_1.default.mkdirSync(customDest, { recursive: true });
-    }
-    const customStubs = fs_1.default.readdirSync(customSource);
-    for (const stub of customStubs) {
-        const stubSource = path_1.default.join(customSource, stub);
-        const stubDest = path_1.default.join(customDest, stub);
-        if (!fs_1.default.existsSync(stubDest)) {
-            fs_1.default.copyFileSync(stubSource, stubDest);
-        }
-    }
+    // Note: `.genie/custom/` retired — no custom stubs copied
     // Copy product/ and standards/ templates if they don't exist
     const copyIfMissing = (subdir) => {
         const source = path_1.default.join(templatesSource, '.genie', subdir);
@@ -290,7 +277,7 @@ async function runMigration(options = {}) {
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'qa'));
             // Clean up current structure directories (should be empty after core removal)
             cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'workflows'));
-            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'neurons'));
+            cleanEmptyDirs(path_1.default.join('.genie', 'agents', 'agents'));
         }
         // Step 6: Copy new templates
         console.log('📦 Installing new template structure...');

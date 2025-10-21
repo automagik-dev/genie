@@ -9,7 +9,7 @@
 
 ## Discovery
 
-**Task:** Extract Publishing Protocol (lines 1361-1402) from AGENTS.md to release neuron
+**Task:** Extract Publishing Protocol (lines 1361-1402) from AGENTS.md to release agent
 
 **Finding:** **Group E already complete** - work performed in earlier optimization pass
 
@@ -37,21 +37,21 @@
 
 **AGENTS.md reference:**
 ```markdown
-Line 19: @.genie/agents/code/skills/publishing-protocol.md
+Line 19: @.genie/code/skills/publishing-protocol.md
 ```
 
 **Grep validation:**
 ```bash
 $ grep -i "publish\|release" AGENTS.md
-19:@.genie/agents/code/skills/publishing-protocol.md
+19:@.genie/code/skills/publishing-protocol.md
 205:- **Examples:** git, implementor, tests, genie, release, learn, roadmap
-246:│   ├── release/                 # Release neuron
+246:│   ├── release/                 # Release agent
 330:    "release",
-499:- **Neurons:** implementor, tests, polish, git, release
+499:- **Agents:** implementor, tests, polish, git, release
 756:**Note:** All critical behavioral skills (Evidence-Based Thinking, Publishing Protocol, ...)
 ```
 
-All mentions are architectural (neuron hierarchy), not protocol details.
+All mentions are architectural (agent hierarchy), not protocol details.
 
 ---
 
@@ -63,7 +63,7 @@ All mentions are architectural (neuron hierarchy), not protocol details.
 - Already in publishing-protocol.md skill (50 lines)
 
 ✅ **@ reference added to AGENTS.md**
-- Line 19: `@.genie/agents/code/skills/publishing-protocol.md`
+- Line 19: `@.genie/code/skills/publishing-protocol.md`
 
 ✅ **Validation: grep "Publishing Protocol" finds release.md**
 ```bash
@@ -86,10 +86,10 @@ AGENTS.md:756:**Note:** All critical behavioral skills (Evidence-Based Thinking,
 **No action required** - extraction completed in previous optimization pass.
 
 **Architecture decision:**
-- Publishing protocol = behavioral skill (not neuron-specific)
+- Publishing protocol = behavioral skill (not agent-specific)
 - Loaded via AGENTS.md → skills section
 - Available to all agents via base context
-- Release neuron follows skill via delegation discipline
+- Release agent follows skill via delegation discipline
 
 ---
 
@@ -127,7 +127,7 @@ grep -n -i "publish\|release" AGENTS.md
 ## Success Metrics
 
 ✅ **Zero knowledge loss** - All protocol patterns preserved
-✅ **Correct location** - Skill file (behavioral, not neuron-specific)
+✅ **Correct location** - Skill file (behavioral, not agent-specific)
 ✅ **@ reference present** - Line 19 in AGENTS.md
 ✅ **Token reduction** - Protocol not duplicated in AGENTS.md body
 
@@ -137,10 +137,10 @@ grep -n -i "publish\|release" AGENTS.md
 
 ## Risks & Mitigations
 
-**Risk:** Protocol not visible to release neuron
-**Mitigation:** ✅ Release neuron loads AGENTS.md (base context) → gets all skills automatically
+**Risk:** Protocol not visible to release agent
+**Mitigation:** ✅ Release agent loads AGENTS.md (base context) → gets all skills automatically
 
-**Risk:** Duplication between skill and release neuron
+**Risk:** Duplication between skill and release agent
 **Mitigation:** ✅ Verified - release.md contains orchestration workflow, publishing-protocol.md contains behavioral rules (no overlap)
 
 ---
@@ -148,7 +148,7 @@ grep -n -i "publish\|release" AGENTS.md
 ## Follow-ups
 
 **For Group H (Final Validation):**
-- [ ] Verify release neuron follows publishing-protocol.md discipline
+- [ ] Verify release agent follows publishing-protocol.md discipline
 - [ ] Test release workflow end-to-end
 - [ ] Confirm no regression in release behavior
 

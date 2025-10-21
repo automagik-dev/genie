@@ -1,7 +1,7 @@
-# 🧞📚 Done Report: Neuron Delegation Architecture Evolution
+# 🧞📚 Done Report: Agent Invocation Architecture Evolution
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** learn (meta-learning)
-**Context:** neuron-delegation
+**Context:** agent-delegation
 **Completed:** 2025-10-17 23:15 UTC
 **Session ID:** `[pending]`
 
@@ -13,7 +13,7 @@
 
 1. **@ Tool Semantics** - Path reference vs content loading
 2. **Genie Loading Architecture** - AGENTS.md loaded once at outer level
-3. **Neuron Delegation Hierarchy** - Folder structure enforces delegation rules
+3. **Agent Invocation Hierarchy** - Folder structure enforces delegation rules
 4. **Application Enforcement** - Scoped list_agents prevents paradoxes
 5. **Persistent Tracking Protocol** - SESSION-STATE.md parent-child relationships
 
@@ -23,11 +23,11 @@
 
 - [x] Document @ Tool Semantics (path reference only, not full load)
 - [x] Document Genie Loading Architecture (AGENTS.md + specialty, never reload base)
-- [x] Document Neuron Delegation Hierarchy (Base → Neurons → Workflows)
-- [x] Document Application Enforcement (scoped list_agents per neuron)
+- [x] Document Agent Invocation Hierarchy (Base → Agents → Workflows)
+- [x] Document Application Enforcement (scoped list_agents per agent)
 - [x] Document Persistent Tracking Protocol (SESSION-STATE.md requirements)
 - [x] Update .genie/agents/README.md with folder hierarchy
-- [x] Update  with neuron model clarification
+- [x] Update  with agent model clarification
 - [x] Validate documentation accuracy
 
 ---
@@ -54,17 +54,17 @@
   grep "@AGENTS.md" CLAUDE.md          # Should show 1 reference (correct)
   ```
 
-#### Neuron Delegation Hierarchy
+#### Agent Invocation Hierarchy
 - **Architecture:** Folder structure = Delegation hierarchy = Enforcement boundary
 - **Three tiers:**
-  - Tier 1: Base Genie → Neurons only
-  - Tier 2: Neurons → Own workflows only (folder-scoped)
+  - Tier 1: Base Genie → Agents only
+  - Tier 2: Agents → Own workflows only (folder-scoped)
   - Tier 3: Workflows → Nothing (execute directly)
 - **Folder structure:**
   ```
   .genie/agents/
   ├── workflows/           # Base orchestrators
-  ├── neurons/
+  ├── agents/
   │   ├── git/
   │   │   ├── git.md           # Can delegate to git/*
   │   │   ├── issue.md         # Terminal (no delegation)
@@ -75,8 +75,8 @@
   │   └── ...
   ```
 - **Self-awareness check:**
-  1. Am I Base Genie? → Only start neurons
-  2. Am I a neuron? → Only start MY workflows
+  1. Am I Base Genie? → Only start agents
+  2. Am I a agent? → Only start MY workflows
   3. Am I a workflow? → NEVER delegate
   4. Is target in my folder? → YES = allowed, NO = forbidden
 - **Evidence of violation:** Session b3680a36 - git self-delegated 6 times (#78, #81, #86-89)
@@ -84,9 +84,9 @@
 #### Application-Level Enforcement
 - **Key innovation:** list_agents scoped by caller context
 - **Scoping examples:**
-  - Git neuron sees: git/issue, git/pr, git/report
+  - Git agent sees: git/issue, git/pr, git/report
   - Implementor sees: implementor (no workflows)
-  - Base Genie sees: top-level neurons only
+  - Base Genie sees: top-level agents only
 - **Implementation requirements:**
   1. CLI context awareness (detect caller identity)
   2. Folder structure as source of truth
@@ -96,15 +96,15 @@
 #### Persistent Tracking Protocol
 - **Purpose:** SESSION-STATE.md enables collective intelligence with memory
 - **Requirements:**
-  1. Track all active neurons (session IDs, status, purpose)
-  2. Parent-child relationships (neurons list workflow children)
+  1. Track all active agents (session IDs, status, purpose)
+  2. Parent-child relationships (agents list workflow children)
   3. Resume protocol (read SESSION-STATE.md on restart)
   4. Completion tracking (move to history with evidence)
-- **Session templates:** Provided for neuron-with-workflows and child-workflow entries
+- **Session templates:** Provided for agent-with-workflows and child-workflow entries
 - **Coordination rules:** Check before start, update when delegate, complete with outcomes
 - **No lost children:** Every workflow MUST have parent reference
 
-### 2. .genie/agents/README.md - New Section: Neuron Delegation Hierarchy (lines 30-89)
+### 2. .genie/agents/README.md - New Section: Agent Invocation Hierarchy (lines 30-89)
 
 **Added:**
 - Three-tier model explanation
@@ -114,9 +114,9 @@
 
 **Updated "How Extensions Work":**
 - Added loading hierarchy: CLAUDE.md → AGENTS.md → agent.md → custom overrides
-- **CRITICAL NOTE:** Neuron agents do NOT reload @AGENTS.md (already loaded at outer level)
+- **CRITICAL NOTE:** Agent agents do NOT reload @AGENTS.md (already loaded at outer level)
 
-### 3.  - New Section: Neuron Delegation Hierarchy (lines 119-156)
+### 3.  - New Section: Agent Invocation Hierarchy (lines 119-156)
 
 **Added:**
 - Three-tier model with clear role definitions
@@ -132,8 +132,8 @@
 
 ### Files Modified (3)
 1. **AGENTS.md** - 431 lines added (section: Architectural Foundations)
-2. **.genie/agents/README.md** - 65 lines added (section: Neuron Delegation Hierarchy)
-3. **** - 38 lines added (section: Neuron Delegation Hierarchy)
+2. **.genie/agents/README.md** - 65 lines added (section: Agent Invocation Hierarchy)
+3. **** - 38 lines added (section: Agent Invocation Hierarchy)
 
 ### Total Addition: ~534 lines of architectural documentation
 
@@ -150,12 +150,12 @@ $ grep -r "@AGENTS.md" .genie/agents/ | wc -l
 
 $ grep -r "@AGENTS.md" .genie/agents/
 .genie/agents/README.md:**See @AGENTS.md §Architectural Foundations for complete details.**
-.genie/agents/README.md:**Critical:** Neuron agents do NOT reload @AGENTS.md (already loaded at outer level via CLAUDE.md).
+.genie/agents/README.md:**Critical:** Agent agents do NOT reload @AGENTS.md (already loaded at outer level via CLAUDE.md).
 .genie/agents/workflows/plan.md:4. Review @CLAUDE.md or @AGENTS.md
-.genie/agents/neurons/learn.md:   - Identify impacted agents/docs (`@AGENTS.md`, `@.genie/agents/...`)
-.genie/agents/neurons/learn.md:- Review `@AGENTS.md` behavioural_learnings, relevant agent prompts, and wish documents.
-.genie/agents/neurons/learn.md:  - Reference to learning entry code blocks included in `@AGENTS.md`
-.genie/agents/neurons/learn.md:- `@AGENTS.md`: Added <entry/section>
+.genie/agents/learn.md:   - Identify impacted agents/docs (`@AGENTS.md`, `@.genie/agents/...`)
+.genie/agents/learn.md:- Review `@AGENTS.md` behavioural_learnings, relevant agent prompts, and wish documents.
+.genie/agents/learn.md:  - Reference to learning entry code blocks included in `@AGENTS.md`
+.genie/agents/learn.md:- `@AGENTS.md`: Added <entry/section>
 ```
 
 ✅ All references are acceptable:
@@ -176,7 +176,7 @@ $ grep "@AGENTS.md" CLAUDE.md
 ## Key Learnings Propagated
 
 ### 1. @ Optimization Was Backwards
-**Problem:** Orchestrator neuron (session 2d19c1e2) recommended loading @AGENTS.md in 23 agents
+**Problem:** Orchestrator agent (session 2d19c1e2) recommended loading @AGENTS.md in 23 agents
 - Believed @ loads full content (23KB × 23 = 529KB explosion)
 - Thought "guaranteed accuracy" justified token cost
 - **Wrong direction:** Explode tokens, not save them
@@ -185,10 +185,10 @@ $ grep "@AGENTS.md" CLAUDE.md
 - @ shows path reference ONLY (lightweight pointer)
 - Goal: SAVE tokens with pointers, not duplicate content
 - AGENTS.md already loaded at outer level via CLAUDE.md
-- Neurons = AGENTS.md + specialty (loading again = paradox)
+- Agents = AGENTS.md + specialty (loading again = paradox)
 
-### 2. Git Neuron Self-Delegation Paradox
-**Problem:** Git neuron self-delegated 6 times (session b3680a36)
+### 2. Git Agent Self-Delegation Paradox
+**Problem:** Git agent self-delegated 6 times (session b3680a36)
 - Created duplicate issues: #78, #81, #86-89
 - No folder scoping enforcement
 - All agents visible via list_agents (flat structure)
@@ -215,7 +215,7 @@ CLAUDE.md (entry point)
 
 ### 4. Persistent Tracking Requirements
 **SESSION-STATE.md must track:**
-- Parent-child relationships (neurons list workflow children)
+- Parent-child relationships (agents list workflow children)
 - Session IDs, status, purpose, context
 - Resume protocol (read on restart, present to user)
 - No orphaned children (every workflow has parent)
@@ -259,8 +259,8 @@ CLAUDE.md (entry point)
 ## Meta-Notes
 
 **Learning process observations:**
-1. **@ Tool Misunderstanding:** Orchestrator neuron (session 2d19c1e2) hallucinated optimization strategy (Phase 1 batch edit). Root cause: Didn't understand @ semantics or own loading architecture.
-2. **Evidence-based teaching:** Felipe provided concrete violation example (git neuron self-delegation) with session ID and issue numbers. This enabled precise documentation with validation.
+1. **@ Tool Misunderstanding:** Orchestrator agent (session 2d19c1e2) hallucinated optimization strategy (Phase 1 batch edit). Root cause: Didn't understand @ semantics or own loading architecture.
+2. **Evidence-based teaching:** Felipe provided concrete violation example (git agent self-delegation) with session ID and issue numbers. This enabled precise documentation with validation.
 3. **Hierarchical enforcement:** Folder structure = visual documentation + enforcement boundary. Elegant solution to delegation paradox.
 4. **Persistent tracking:** SESSION-STATE.md parent-child relationships enable resume after restart. Critical for collective intelligence.
 
@@ -284,8 +284,8 @@ $ grep "^### @ Tool Semantics" AGENTS.md
 $ grep "^### Genie Loading Architecture" AGENTS.md
 ### Genie Loading Architecture
 
-$ grep "^### Neuron Delegation Hierarchy" AGENTS.md
-### Neuron Delegation Hierarchy
+$ grep "^### Agent Invocation Hierarchy" AGENTS.md
+### Agent Invocation Hierarchy
 
 $ grep "^### Application-Level Enforcement" AGENTS.md
 ### Application-Level Enforcement

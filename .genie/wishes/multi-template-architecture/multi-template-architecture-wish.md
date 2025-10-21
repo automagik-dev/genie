@@ -4,7 +4,6 @@
 **GitHub Issue:** #37 - Multi-template architecture for project-type scaffolds
 **Roadmap Item:** INIT-TEMPLATES – Separate framework dev from distribution templates + support project-type scaffolds
 **Mission Link:** @.genie/product/mission.md §Pitch
-**Standards:** @.genie/standards/best-practices.md §Core Principles
 **Completion Score:** 0/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)

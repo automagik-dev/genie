@@ -31,7 +31,7 @@ export function parseArguments(argv: string[]): ParsedCommand {
     full: false,
     live: false,
     executor: undefined,
-    mode: undefined,
+    model: undefined,
     name: undefined
   };
 
@@ -55,19 +55,19 @@ export function parseArguments(argv: string[]): ParsedCommand {
       options.backgroundExplicit = true;
       continue;
     }
-    if (token === '--executor' || token === '-e') {
+    if (token === '--executor' || token === '-x') {
       const nextToken = raw[i + 1];
       if (nextToken && !nextToken.startsWith('-')) {
         options.executor = nextToken;
-        i++; // Skip next token
+        i++;
         continue;
       }
     }
-    if (token === '--mode' || token === '-m') {
+    if (token === '--model' || token === '-m') {
       const nextToken = raw[i + 1];
       if (nextToken && !nextToken.startsWith('-')) {
-        options.mode = nextToken;
-        i++; // Skip next token
+        options.model = nextToken;
+        i++;
         continue;
       }
     }

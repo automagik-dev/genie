@@ -2,11 +2,11 @@
 /**
  * validate-role.js
  *
- * Purpose: Pre-MCP delegation validator - ensures correct neuron routing
- * Validates: Intent → Neuron mapping per routing.md decision matrix
+ * Purpose: Pre-MCP delegation validator - ensures correct agent routing
+ * Validates: Intent → Agent mapping per routing.md decision matrix
  * Action: Warn if delegation pattern violates routing rules
  *
- * Usage: node validate-role.js <intent> <target-neuron>
+ * Usage: node validate-role.js <intent> <target-agent>
  *
  * Part of: Skills Prioritization & Architecture Automation (Wish #107)
  */
@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// Neuron routing matrix (from routing.md lines 52-61)
+// Agent routing matrix (from routing.md lines 52-61)
 const ROUTING_MATRIX = {
   'genie': {
     triggers: ['ambiguous', 'architecture', 'risk', 'complexity', 'multiple approaches', 'high-stakes', 'strategic', 'planning'],
@@ -56,26 +56,26 @@ const ROUTING_MATRIX = {
 // Critical routing rules (from routing.md lines 65-127)
 const CRITICAL_RULES = {
   'release': {
-    rule: 'ALWAYS delegate release operations to release neuron',
+    rule: 'ALWAYS delegate release operations to release agent',
     violations: ['manual npm publish', 'manual gh release', 'manual version tagging'],
     consequence: 'Releases without validation, incomplete changelog, no audit trail'
   },
   'learn': {
-    rule: 'ALWAYS invoke learn neuron when user teaches new pattern',
+    rule: 'ALWAYS invoke learn agent when user teaches new pattern',
     violations: ['say "I\'m learning" without invoking', 'mental note without documenting'],
     consequence: 'Pattern not preserved, repeated mistakes'
   },
   'genie': {
-    rule: 'CONSULT genie neuron for ambiguous or high-risk decisions',
+    rule: 'CONSULT genie agent for ambiguous or high-risk decisions',
     violations: ['implement without pressure test', 'skip analysis on complex changes'],
     consequence: 'Suboptimal architecture, missed risks'
   }
 };
 
 /**
- * Validate intent → neuron mapping
+ * Validate intent → agent mapping
  * @param {string} intent - User intent description
- * @param {string} targetNeuron - Target neuron for delegation
+ * @param {string} targetNeuron - Target agent for delegation
  * @returns {Object} - Validation result with warnings/suggestions
  */
 function validateRouting(intent, targetNeuron) {
@@ -90,33 +90,33 @@ function validateRouting(intent, targetNeuron) {
     criticalViolations: []
   };
 
-  // Check if target neuron exists
+  // Check if target agent exists
   if (!ROUTING_MATRIX[neuronLower]) {
     result.valid = false;
     result.confidence = 'none';
-    result.warnings.push(`❌ Unknown neuron: ${targetNeuron}`);
-    result.suggestions.push(`Available neurons: ${Object.keys(ROUTING_MATRIX).join(', ')}`);
+    result.warnings.push(`❌ Unknown agent: ${targetNeuron}`);
+    result.suggestions.push(`Available agents: ${Object.keys(ROUTING_MATRIX).join(', ')}`);
     return result;
   }
 
   // Check for critical rule violations
-  for (const [neuron, rule] of Object.entries(CRITICAL_RULES)) {
-    const triggers = ROUTING_MATRIX[neuron].triggers;
+  for (const [agent, rule] of Object.entries(CRITICAL_RULES)) {
+    const triggers = ROUTING_MATRIX[agent].triggers;
     const matchesCriticalIntent = triggers.some(trigger => intentLower.includes(trigger.toLowerCase()));
 
-    if (matchesCriticalIntent && neuronLower !== neuron) {
+    if (matchesCriticalIntent && neuronLower !== agent) {
       result.valid = false;
       result.confidence = 'none';
       result.criticalViolations.push({
-        neuron,
+        agent,
         rule: rule.rule,
         consequence: rule.consequence,
-        correctNeuron: neuron
+        correctNeuron: agent
       });
     }
   }
 
-  // Check if intent matches target neuron triggers
+  // Check if intent matches target agent triggers
   const targetConfig = ROUTING_MATRIX[neuronLower];
   const intentMatchesTarget = targetConfig.triggers.some(trigger =>
     intentLower.includes(trigger.toLowerCase())
@@ -124,19 +124,19 @@ function validateRouting(intent, targetNeuron) {
 
   if (!intentMatchesTarget) {
     result.confidence = 'low';
-    result.warnings.push(`⚠️  Intent "${intent}" may not match ${targetNeuron} neuron triggers`);
+    result.warnings.push(`⚠️  Intent "${intent}" may not match ${targetNeuron} agent triggers`);
 
     // Find better matches
     const betterMatches = Object.entries(ROUTING_MATRIX)
-      .filter(([neuron, config]) =>
+      .filter(([agent, config]) =>
         config.triggers.some(trigger => intentLower.includes(trigger.toLowerCase()))
       )
-      .map(([neuron, config]) => ({ neuron, priority: config.priority }));
+      .map(([agent, config]) => ({ agent, priority: config.priority }));
 
     if (betterMatches.length > 0) {
-      result.suggestions.push('Better neuron matches:');
-      betterMatches.forEach(({ neuron, priority }) => {
-        result.suggestions.push(`  - ${neuron} (${priority} priority)`);
+      result.suggestions.push('Better agent matches:');
+      betterMatches.forEach(({ agent, priority }) => {
+        result.suggestions.push(`  - ${agent} (${priority} priority)`);
       });
     }
   }
@@ -153,7 +153,7 @@ function validateRouting(intent, targetNeuron) {
 /**
  * Format validation result for display
  * @param {string} intent - User intent
- * @param {string} targetNeuron - Target neuron
+ * @param {string} targetNeuron - Target agent
  * @param {Object} result - Validation result
  * @returns {string} - Formatted output
  */
@@ -175,7 +175,7 @@ function formatValidationResult(intent, targetNeuron, result) {
     result.criticalViolations.forEach(violation => {
       output += `
    Violation: ${violation.rule}
-   Correct neuron: ${violation.correctNeuron}
+   Correct agent: ${violation.correctNeuron}
    Consequence: ${violation.consequence}
 `;
     });
@@ -204,13 +204,13 @@ if (require.main === module) {
 
   if (args.length < 2) {
     console.log(`
-Usage: node validate-role.js <intent> <target-neuron>
+Usage: node validate-role.js <intent> <target-agent>
 
-Validates intent → neuron routing per routing.md decision matrix.
+Validates intent → agent routing per routing.md decision matrix.
 
-Available neurons:
-${Object.entries(ROUTING_MATRIX).map(([neuron, config]) =>
-  `  - ${neuron} (${config.priority}): ${config.triggers.slice(0, 3).join(', ')}...`
+Available agents:
+${Object.entries(ROUTING_MATRIX).map(([agent, config]) =>
+  `  - ${agent} (${config.priority}): ${config.triggers.slice(0, 3).join(', ')}...`
 ).join('\n')}
 
 Example:
@@ -218,7 +218,7 @@ Example:
   → ✅ Valid routing (CRITICAL priority)
 
   node validate-role.js "publish npm package" "implementor"
-  → ❌ Invalid - should use release neuron
+  → ❌ Invalid - should use release agent
 `);
     process.exit(0);
   }

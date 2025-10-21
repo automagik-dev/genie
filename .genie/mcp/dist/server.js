@@ -28,7 +28,7 @@ const child_process_1 = require("child_process");
 const util_1 = require("util");
 const display_transform_1 = require("./lib/display-transform");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
-const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
+const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
 // Find actual workspace root by searching upward for .genie/ directory
 function findWorkspaceRoot() {
@@ -44,13 +44,14 @@ function findWorkspaceRoot() {
 }
 const WORKSPACE_ROOT = findWorkspaceRoot();
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
-// Helper: List available agents from .genie/agents directory
+// Helper: List available agents from .genie/code/agents and .genie/create/agents
 function listAgents() {
-    const baseDir = '.genie/agents';
     const agents = [];
-    if (!fs_1.default.existsSync(baseDir)) {
-        return agents;
-    }
+    // Search in both code and create collectives
+    const searchDirs = [
+        path_1.default.join(WORKSPACE_ROOT, '.genie/code/agents'),
+        path_1.default.join(WORKSPACE_ROOT, '.genie/create/agents')
+    ];
     const visit = (dirPath, relativePath) => {
         const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
         entries.forEach((entry) => {
@@ -83,30 +84,53 @@ function listAgents() {
             agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
         });
     };
-    visit(baseDir, null);
+    // Visit all search directories
+    searchDirs.forEach(baseDir => {
+        if (fs_1.default.existsSync(baseDir)) {
+            visit(baseDir, null);
+        }
+    });
     return agents;
 }
-// Helper: List recent sessions
-function listSessions() {
-    const sessionsFile = '.genie/state/agents/sessions.json';
-    if (!fs_1.default.existsSync(sessionsFile)) {
-        return [];
-    }
+// Helper: Safely load Forge executor from dist (package) or src (repo)
+function loadForgeExecutor() {
+    // Prefer compiled dist (works in published package)
     try {
-        const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
-        const store = JSON.parse(content);
-        const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
-            id: entry.sessionId || key,
-            name: entry.name || null,
-            agent: entry.agent || key,
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        return require('../../cli/dist/lib/forge-executor');
+    }
+    catch (_distErr) {
+        // Fallback to TypeScript sources for local dev (within repo)
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            return require('../../cli/src/lib/forge-executor');
+        }
+        catch (_srcErr) {
+            return null;
+        }
+    }
+}
+// Helper: List recent sessions (uses Forge API)
+async function listSessions() {
+    try {
+        // ALWAYS use Forge API for session listing (complete executor replacement)
+        const mod = loadForgeExecutor();
+        if (!mod || typeof mod.createForgeExecutor !== 'function') {
+            throw new Error('Forge executor unavailable (did you build the CLI?)');
+        }
+        const forgeExecutor = mod.createForgeExecutor();
+        const forgeSessions = await forgeExecutor.listSessions();
+        const sessions = forgeSessions.map((entry) => ({
+            name: entry.name || entry.sessionId || 'unknown',
+            agent: entry.agent || 'unknown',
             status: entry.status || 'unknown',
             created: entry.created || 'unknown',
             lastUsed: entry.lastUsed || entry.created || 'unknown'
         }));
         // Filter: Show running sessions + recent completed (last 10)
-        const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+        const running = sessions.filter((s) => s.status === 'running' || s.status === 'starting');
         const completed = sessions
-            .filter(s => s.status === 'completed')
+            .filter((s) => s.status === 'completed')
             .sort((a, b) => {
             if (a.lastUsed === 'unknown')
                 return 1;
@@ -125,7 +149,44 @@ function listSessions() {
         });
     }
     catch (error) {
-        return [];
+        // Fallback to local sessions.json if Forge API fails
+        console.warn('Failed to fetch Forge sessions, falling back to local store');
+        const sessionsFile = path_1.default.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
+        if (!fs_1.default.existsSync(sessionsFile)) {
+            return [];
+        }
+        try {
+            const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
+            const store = JSON.parse(content);
+            const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
+                name: entry.name || key,
+                agent: entry.agent || key,
+                status: entry.status || 'unknown',
+                created: entry.created || 'unknown',
+                lastUsed: entry.lastUsed || entry.created || 'unknown'
+            }));
+            const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+            const completed = sessions
+                .filter(s => s.status === 'completed')
+                .sort((a, b) => {
+                if (a.lastUsed === 'unknown')
+                    return 1;
+                if (b.lastUsed === 'unknown')
+                    return -1;
+                return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+            })
+                .slice(0, 10);
+            return [...running, ...completed].sort((a, b) => {
+                if (a.lastUsed === 'unknown')
+                    return 1;
+                if (b.lastUsed === 'unknown')
+                    return -1;
+                return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+            });
+        }
+        catch (error) {
+            return [];
+        }
     }
 }
 // Helper: Get Genie version from package.json
@@ -179,7 +240,7 @@ server.addTool({
     execute: async () => {
         const agents = listAgents();
         if (agents.length === 0) {
-            return getVersionHeader() + 'No agents found in .genie/agents directory.';
+            return getVersionHeader() + 'No agents found in .genie/code/agents or .genie/create/agents directories.';
         }
         let response = getVersionHeader() + `Found ${agents.length} available agents:\n\n`;
         // Group by folder
@@ -209,20 +270,17 @@ server.addTool({
 // Tool: list_sessions - View active and recent sessions
 server.addTool({
     name: 'list_sessions',
-    description: 'List active and recent Genie agent sessions. Shows session IDs, agents, status, and timing. Use this to find sessions to resume or view.',
+    description: 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.',
     parameters: zod_1.z.object({}),
     execute: async () => {
-        const sessions = listSessions();
+        const sessions = await listSessions();
         if (sessions.length === 0) {
             return getVersionHeader() + 'No sessions found. Start a new session with the "run" tool.';
         }
         let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
         sessions.forEach((session, index) => {
             const { displayId } = (0, display_transform_1.transformDisplayPath)(session.agent);
-            response += `${index + 1}. **${session.id}**\n`;
-            if (session.name) {
-                response += `   Name: ${session.name}\n`;
-            }
+            response += `${index + 1}. **${session.name}**\n`;
             response += `   Agent: ${displayId}\n`;
             response += `   Status: ${session.status}\n`;
             response += `   Created: ${session.created}\n`;
@@ -265,7 +323,7 @@ server.addTool({
     name: 'resume',
     description: 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to resume (get from list_sessions tool)'),
+        sessionId: zod_1.z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
         prompt: zod_1.z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
     }),
     execute: async (args) => {
@@ -288,7 +346,7 @@ server.addTool({
     name: 'view',
     description: 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to view (get from list_sessions tool)'),
+        sessionId: zod_1.z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
         full: zod_1.z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
     }),
     execute: async (args) => {
@@ -311,7 +369,7 @@ server.addTool({
     name: 'stop',
     description: 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.',
     parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session ID (UUID) or friendly name to stop (get from list_sessions tool)')
+        sessionId: zod_1.z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
     }),
     execute: async (args) => {
         try {
@@ -654,7 +712,7 @@ server.addPrompt({
 
 Create structured prompt using:"
 
-## Genie Prompting Framework (@.genie/agents/core/prompt.md)
+## Genie Prompting Framework (@.genie/skills/prompt.md)
 
 **1. Task Breakdown:**
 <task_breakdown>

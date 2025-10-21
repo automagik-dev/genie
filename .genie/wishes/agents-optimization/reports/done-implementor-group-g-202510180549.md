@@ -11,11 +11,11 @@
 
 ## Summary
 
-Group G task to absorb `.genie/custom/` overrides into neurons was **already completed** on 2025-10-17 in commit `1b2e65b`. Verification shows:
+Group G task to absorb `.genie/custom/` overrides into agents was **already completed** on 2025-10-17 in commit `1b2e65b`. Verification shows:
 
 - ✅ `.genie/custom/` directory fully deleted
 - ✅ All custom overrides merged into `.genie/agents/code/`
-- ✅ 23 custom files absorbed (neurons + modes)
+- ✅ 23 custom files absorbed (agents + modes)
 - ⚠️ 4 stale documentation references remain in AGENTS.md
 
 ---
@@ -42,19 +42,19 @@ $ git log --oneline --grep="custom"
 ...
 
 $ git show --stat 1b2e65b | grep "delete mode"
- delete mode 100644 .genie/custom/neurons/commit.md
- delete mode 100644 .genie/custom/neurons/implementor.md
- delete mode 100644 .genie/custom/neurons/learn.md
- delete mode 100644 .genie/custom/neurons/modes/analyze.md
- delete mode 100644 .genie/custom/neurons/modes/audit.md
- delete mode 100644 .genie/custom/neurons/modes/challenge.md
- delete mode 100644 .genie/custom/neurons/modes/consensus.md
- delete mode 100644 .genie/custom/neurons/modes/debug.md
- delete mode 100644 .genie/custom/neurons/modes/docgen.md
- delete mode 100644 .genie/custom/neurons/modes/explore.md
- delete mode 100644 .genie/custom/neurons/modes/refactor.md
- delete mode 100644 .genie/custom/neurons/modes/tracer.md
- delete mode 100644 .genie/custom/neurons/orchestrator.md
+ delete mode 100644 .genie/custom/agents/commit.md
+ delete mode 100644 .genie/custom/agents/implementor.md
+ delete mode 100644 .genie/custom/agents/learn.md
+ delete mode 100644 .genie/custom/agents/modes/analyze.md
+ delete mode 100644 .genie/custom/agents/modes/audit.md
+ delete mode 100644 .genie/custom/agents/modes/challenge.md
+ delete mode 100644 .genie/custom/agents/modes/consensus.md
+ delete mode 100644 .genie/custom/agents/modes/debug.md
+ delete mode 100644 .genie/custom/agents/modes/docgen.md
+ delete mode 100644 .genie/custom/agents/modes/explore.md
+ delete mode 100644 .genie/custom/agents/modes/refactor.md
+ delete mode 100644 .genie/custom/agents/modes/tracer.md
+ delete mode 100644 .genie/custom/agents/orchestrator.md
  ... (23 files total)
 ```
 
@@ -65,7 +65,7 @@ $ git show --stat 1b2e65b | grep "delete mode"
 - **Message:** "refactor(agents): merge custom/ into code/, fix validator & references"
 
 **Tasks completed in that commit:**
-1. ✅ Merged neurons: implementor, commit, release, tests
+1. ✅ Merged agents: implementor, commit, release, tests
 2. ✅ Moved special files: routing.md, qa.md → `.genie/agents/code/`
 3. ✅ Deleted `.genie/custom/` directory entirely (23 files)
 4. ✅ Removed all @ references to custom/ in code
@@ -79,7 +79,7 @@ total 60
 drwxr-xr-x 4 namastex namastex  4096 Oct 17 20:03 .
 drwxr-xr-x 5 namastex namastex  4096 Oct 17 18:56 ..
 -rw-r--r-- 1 namastex namastex 12208 Oct 17 20:28 code.md
-drwxr-xr-x 3 namastex namastex  4096 Oct 17 21:27 neurons
+drwxr-xr-x 3 namastex namastex  4096 Oct 17 21:27 agents
 -rw-r--r-- 1 namastex namastex  3908 Oct 17 20:03 qa.md
 -rw-r--r-- 1 namastex namastex 24985 Oct 17 20:03 routing.md
 drwxr-xr-x 2 namastex namastex  4096 Oct 17 21:11 skills
@@ -91,7 +91,7 @@ drwxr-xr-x 2 namastex namastex  4096 Oct 17 21:11 skills
 
 ```bash
 $ grep -n "custom/" AGENTS.md
-60:- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/` and load optional overrides from `.genie/custom/neurons/<agent>.md`.
+60:- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/` and load optional overrides from `.genie/custom/agents/<agent>.md`.
 74:- `.genie/custom/` – project-specific overrides for core agents and Genie skills (kept outside `agents/` to avoid double registration)
 154:3. .genie/custom/implementor.md (project overrides, if exists)
 198:- **Implementation:** Natural language routing via `.genie/custom/routing.md`
@@ -104,10 +104,10 @@ $ grep -n "custom/" AGENTS.md
 ## Files Modified in Original Work
 
 **Commit 1b2e65b modified:**
-- `.genie/agents/code/neurons/commit.md` (+51 lines)
-- `.genie/agents/code/neurons/implementor.md` (merged content)
-- `.genie/agents/code/neurons/release.md` (merged content)
-- `.genie/agents/code/neurons/tests.md` (merged content)
+- `.genie/agents/code/agents/commit.md` (+51 lines)
+- `.genie/agents/code/agents/implementor.md` (merged content)
+- `.genie/agents/code/agents/release.md` (merged content)
+- `.genie/agents/code/agents/tests.md` (merged content)
 - `.genie/agents/code/routing.md` (moved from custom/)
 - `.genie/agents/code/qa.md` (moved from custom/)
 - Deleted 23 files under `.genie/custom/`
@@ -119,9 +119,9 @@ $ grep -n "custom/" AGENTS.md
 ### ✅ Core Requirements Met
 
 - [x] `.genie/custom/` directory deleted
-- [x] All custom overrides merged into neurons
+- [x] All custom overrides merged into agents
 - [x] No custom files remain (except none - all deleted)
-- [x] Neurons contain custom patterns (verified via commit)
+- [x] Agents contain custom patterns (verified via commit)
 - [x] All @ references to custom/ removed from code
 
 ### ⚠️ Documentation Cleanup Needed
@@ -130,12 +130,12 @@ $ grep -n "custom/" AGENTS.md
 
 **Line 60:**
 ```markdown
-- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/` and load optional overrides from `.genie/custom/neurons/<agent>.md`.
+- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/` and load optional overrides from `.genie/custom/agents/<agent>.md`.
 ```
 
 **Should be:**
 ```markdown
-- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/neurons/`.
+- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/`.
 ```
 
 **Line 74:**
@@ -152,7 +152,7 @@ $ grep -n "custom/" AGENTS.md
 
 **Should be:**
 ```markdown
-3. .genie/agents/code/neurons/implementor.md (specialty + project patterns)
+3. .genie/agents/code/agents/implementor.md (specialty + project patterns)
 ```
 
 **Line 198:**

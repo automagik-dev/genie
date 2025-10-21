@@ -30,7 +30,7 @@ export async function configureCodexMcp(): Promise<void> {
 
   // Check if genie MCP server already configured correctly
   const hasGenieSection = /\[mcp_servers\.genie\]/i.test(content);
-  const hasCorrectCommand = /command\s*=\s*"npx"[\s\S]*?args\s*=\s*\[[\s\S]*?"automagik-genie"/i.test(content);
+  const hasCorrectCommand = /command\s*=\s*"npx"[\s\S]*?args\s*=\s*\[[\s\S]*?"automagik-genie@next"/i.test(content);
 
   if (hasGenieSection && hasCorrectCommand) {
     console.log('✅ Codex MCP already configured correctly');
@@ -45,7 +45,7 @@ export async function configureCodexMcp(): Promise<void> {
       /\[mcp_servers\.genie\][\s\S]*?(?=\n\[|\n\n\[|$)/,
       `[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie", "mcp"]
+args = ["automagik-genie@next", "mcp"]
 `
     );
     console.log('✅ Updated existing Genie MCP configuration in Codex');
@@ -57,14 +57,14 @@ args = ["automagik-genie", "mcp"]
       newContent = content.slice(0, insertIndex) +
         `\n\n[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie", "mcp"]
+args = ["automagik-genie@next", "mcp"]
 ` +
         content.slice(insertIndex);
     } else {
       // No mcp_servers section exists, add at end
       newContent = content + `\n\n[mcp_servers.genie]
 command = "npx"
-args = ["automagik-genie", "mcp"]
+args = ["automagik-genie@next", "mcp"]
 `;
     }
     console.log('✅ Added Genie MCP configuration to Codex');
@@ -96,7 +96,7 @@ export async function configureClaudeMcp(projectDir?: string): Promise<void> {
   // Check if genie already configured correctly
   const existingGenie = mcpConfig.mcpServers.genie;
   if (existingGenie?.command === 'npx' &&
-      existingGenie?.args?.[0] === 'automagik-genie' &&
+      existingGenie?.args?.[0] === 'automagik-genie@next' &&
       existingGenie?.args?.[1] === 'mcp') {
     console.log(`✅ Claude Code MCP already configured correctly${projectDir ? ' (project-local)' : ' (global)'}`);
     return;
@@ -105,8 +105,17 @@ export async function configureClaudeMcp(projectDir?: string): Promise<void> {
   // Add/update genie MCP server
   mcpConfig.mcpServers.genie = {
     command: 'npx',
-    args: ['automagik-genie', 'mcp']
+    args: ['automagik-genie@next', 'mcp']
   };
+
+  // Also configure Forge MCP server
+  const existingForge = mcpConfig.mcpServers.forge || mcpConfig.mcpServers['automagik-forge'];
+  // Prefer canonical key 'forge'
+  (mcpConfig.mcpServers as any).forge = {
+    command: 'npx',
+    // Use stdio by default for Claude Desktop compatibility
+    args: ['@automagik/forge-mcp', '-t', 'stdio']
+  } as any;
 
   // Ensure parent directory exists
   if (projectDir) {
@@ -117,6 +126,7 @@ export async function configureClaudeMcp(projectDir?: string): Promise<void> {
 
   await writeJsonFile(mcpPath, mcpConfig);
   console.log(`✅ ${existingGenie ? 'Updated' : 'Added'} Genie MCP configuration for Claude Code${projectDir ? ' (project-local)' : ' (global)'}`);
+  console.log(`✅ ${existingForge ? 'Updated' : 'Added'} Forge MCP configuration${projectDir ? ' (project-local)' : ' (global)'}`);
 }
 
 /**

@@ -1,6 +1,3 @@
-import type { Executor, ExecutorCommand } from '../executors/types';
-import type { SessionStore, SessionEntry } from '../session-store';
-
 export interface CLIOptions {
   rawArgs: string[];
   background: boolean;
@@ -10,7 +7,7 @@ export interface CLIOptions {
   full: boolean;
   live: boolean;
   executor?: string;
-  mode?: string;
+  model?: string;
   name?: string;  // Friendly session name for run command
 }
 
@@ -25,7 +22,6 @@ export interface ConfigPaths {
   sessionsFile?: string;
   logsDir?: string;
   backgroundDir?: string;
-  executors?: Record<string, Record<string, any>>;
 }
 
 export interface GenieConfig {
@@ -34,41 +30,24 @@ export interface GenieConfig {
     preset?: string;
     background?: boolean;
     executor?: string;
+    executorVariant?: string;
+    model?: string;
   };
   paths?: ConfigPaths;
-  executors?: Record<string, any>;
-  executionModes?: Record<string, any>;
-  presets?: Record<string, any>;
-  background?: {
-    enabled?: boolean;
-    detach?: boolean;
-    pollIntervalMs?: number;
-    sessionExtractionDelayMs?: number;
+  forge?: {
+    executors?: Record<string, any>;
+    agentProfiles?: Record<string, { executor: string; variant?: string }>;
   };
+  executionModes?: Record<string, {
+    description?: string;
+    executor?: string;
+    executorVariant?: string;
+  }>;
   __configPath?: string;
 }
 
 export interface AgentSpec {
   meta?: Record<string, any>;
   instructions: string;
-}
-
-export interface ExecuteRunArgs {
-  agentName: string;
-  command: ExecutorCommand;
-  executorKey: string;
-  executor: Executor;
-  executorConfig: any;
-  executorPaths: any;
-  prompt: string;
-  store: SessionStore;
-  entry: SessionEntry;
-  paths: Required<ConfigPaths>;
-  config: GenieConfig;
-  startTime: number;
-  logFile: string;
-  background: boolean;
-  runnerPid: number | null;
-  cliOptions: CLIOptions;
-  executionMode: string;
+  filePath?: string;
 }

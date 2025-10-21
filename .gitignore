@@ -193,3 +193,7 @@ docs/ag-ui/*.html
 # Per-user triad files (use templates to initialize)
 .genie/TODO.md
 .genie/USERCONTEXT.md
+
+# Local QA artifacts
+.genie/qa/
+.genie/mcp/dist/lib/qa.js

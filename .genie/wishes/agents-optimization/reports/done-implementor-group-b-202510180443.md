@@ -10,28 +10,28 @@
 
 ## Summary
 
-Group B extraction task was **already completed** in a previous session. All prompting standards content has been successfully extracted from AGENTS.md to the prompt neuron file.
+Group B extraction task was **already completed** in a previous session. All prompting standards content has been successfully extracted from AGENTS.md to the prompt agent file.
 
 ---
 
 ## Discovery
 
-**Objective:** Extract prompting standards from AGENTS.md (lines 1008-1115, 1769-1882) to prompt neuron
+**Objective:** Extract prompting standards from AGENTS.md (lines 1008-1115, 1769-1882) to prompt agent
 
 **Finding:** Work already complete. Investigation revealed:
 
 1. **AGENTS.md current state:**
    - Only 769 lines (optimized from original 2272 lines)
-   - References prompting standards via skill: `@.genie/agents/code/skills/prompting-standards.md:31`
+   - References prompting standards via skill: `@.genie/code/skills/prompting-standards.md:31`
    - No duplicate content present
 
 2. **Skill file created:**
    - Location: `.genie/agents/code/skills/prompting-standards.md`
    - Size: 13 lines (minimal reference file)
-   - References prompt neuron: `./.genie/agents/neurons/prompt/prompt.md`
+   - References prompt agent: `./.genie/agents/prompt/prompt.md`
 
-3. **Neuron file populated:**
-   - Location: `.genie/agents/neurons/prompt.md`
+3. **Agent file populated:**
+   - Location: `.genie/agents/prompt.md`
    - Size: 746 lines, 54KB
    - Contains all required sections:
      - ✅ Task Breakdown Structure (line 62-84)
@@ -50,16 +50,16 @@ Group B extraction task was **already completed** in a previous session. All pro
 ```
 AGENTS.md
   ↓ (line 31)
-@.genie/agents/code/skills/prompting-standards.md
+@.genie/code/skills/prompting-standards.md
   ↓ (line 12)
-@.genie/agents/neurons/prompt.md (746 lines)
+@.genie/code/agents/prompt.md (746 lines)
 ```
 
 **Benefits achieved:**
 - ✅ AGENTS.md token reduction: ~186 lines removed (already reflected in 769-line total)
 - ✅ @ reference pattern: Lightweight pointer instead of duplication
 - ✅ Knowledge preservation: All sections present in prompt.md
-- ✅ Loading architecture: Skill → neuron (correct hierarchy)
+- ✅ Loading architecture: Skill → agent (correct hierarchy)
 
 ---
 
@@ -69,18 +69,18 @@ AGENTS.md
 ```bash
 # AGENTS.md references skill
 grep "prompting-standards" AGENTS.md
-# Result: Line 31: @.genie/agents/code/skills/prompting-standards.md
+# Result: Line 31: @.genie/code/skills/prompting-standards.md
 
-# Skill file references neuron
+# Skill file references agent
 cat .genie/agents/code/skills/prompting-standards.md
-# Result: Points to ./.genie/agents/neurons/prompt/prompt.md
+# Result: Points to ./.genie/agents/prompt/prompt.md
 
-# Neuron file contains content
-wc -l .genie/agents/neurons/prompt.md
+# Agent file contains content
+wc -l .genie/agents/prompt.md
 # Result: 746 lines, 54KB
 
 # Content validation
-grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/agents/neurons/prompt.md
+grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/agents/prompt.md
 # Result: All sections present
 ```
 
@@ -88,7 +88,7 @@ grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/age
 ```bash
 # Verify @ reference usage (not full content load)
 # AGENTS.md: 1 reference to skill file ✅
-# Skill file: 1 reference to neuron file ✅
+# Skill file: 1 reference to agent file ✅
 # No circular references ✅
 # No content duplication ✅
 ```
@@ -116,9 +116,9 @@ From wish Group B requirements:
   - grep validates all sections exist in prompt.md
   - No content loss detected
 
-- [x] **Architecture correct:** Skill → neuron hierarchy ✅
+- [x] **Architecture correct:** Skill → agent hierarchy ✅
   - AGENTS.md loads skill via @
-  - Skill points to neuron via @
+  - Skill points to agent via @
   - No circular references
 
 ---
@@ -128,7 +128,7 @@ From wish Group B requirements:
 **Read-only verification:**
 - `/home/namastex/workspace/automagik-genie/AGENTS.md` (769 lines)
 - `/home/namastex/workspace/automagik-genie/.genie/agents/code/skills/prompting-standards.md` (13 lines)
-- `/home/namastex/workspace/automagik-genie/.genie/agents/neurons/prompt.md` (746 lines)
+- `/home/namastex/workspace/automagik-genie/.genie/agents/prompt.md` (746 lines)
 
 **No modifications made** - work already complete.
 
@@ -145,14 +145,14 @@ wc -l AGENTS.md
 
 # Reference validation
 grep "prompting-standards" AGENTS.md
-# Output: 31:@.genie/agents/code/skills/prompting-standards.md
+# Output: 31:@.genie/code/skills/prompting-standards.md
 
-# Neuron file check
-wc -l .genie/agents/neurons/prompt.md
-# Output: 746 .genie/agents/neurons/prompt.md
+# Agent file check
+wc -l .genie/agents/prompt.md
+# Output: 746 .genie/agents/prompt.md
 
 # Content validation
-grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/agents/neurons/prompt.md | wc -l
+grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/agents/prompt.md | wc -l
 # Output: Multiple matches (all sections present)
 ```
 
@@ -166,8 +166,8 @@ grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/age
 
 **Status:**
 - AGENTS.md: 769 lines (on track toward ≤500 line target)
-- Prompting standards: Successfully extracted to prompt.md neuron
-- Architecture: Correct @ reference pattern (skill → neuron)
+- Prompting standards: Successfully extracted to prompt.md agent
+- Architecture: Correct @ reference pattern (skill → agent)
 - Knowledge: 100% preserved, no loss detected
 
 **Next steps:**

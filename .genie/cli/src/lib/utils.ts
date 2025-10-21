@@ -1,6 +1,4 @@
 import path from 'path';
-import type { ConfigPaths } from './types';
-import { INTERNAL_START_TIME_ENV, INTERNAL_LOG_PATH_ENV } from '../background-manager';
 
 /**
  * Formats ISO timestamp as human-readable relative time.
@@ -107,41 +105,6 @@ export function safeIsoString(value: string): string | null {
  *
  * @returns {number} - Unix timestamp in milliseconds
  */
-export function deriveStartTime(isBackgroundRunner = false): number {
-  if (!isBackgroundRunner) return Date.now();
-  const fromEnv = process.env[INTERNAL_START_TIME_ENV];
-  if (!fromEnv) return Date.now();
-  const parsed = Number(fromEnv);
-  if (Number.isFinite(parsed)) return parsed;
-  return Date.now();
-}
-
-/**
- * Derives log file path from agent name and start time.
- *
- * Checks environment for override path, otherwise constructs standard log filename.
- *
- * @param {string} agentName - Agent name for sanitized filename component
- * @param {number} startTime - Unix timestamp for filename uniqueness
- * @param {Required<ConfigPaths>} paths - Configuration paths with logs directory
- * @returns {string} - Absolute path to log file
- *
- * @example
- * deriveLogFile('plan', 1630000000000, paths)
- * // Returns: '.genie/state/agents/logs/plan-1630000000000.log'
- */
-export function deriveLogFile(
-  agentName: string,
-  startTime: number,
-  paths: Required<ConfigPaths>,
-  isBackgroundRunner = false
-): string {
-  const envPath = isBackgroundRunner ? process.env[INTERNAL_LOG_PATH_ENV] : undefined;
-  if (envPath) return envPath;
-  const filename = `${sanitizeLogFilename(agentName)}-${startTime}.log`;
-  return path.join(paths.logsDir || '.genie/state/agents/logs', filename);
-}
-
 /**
  * Deep clone an object using JSON serialization
  */
