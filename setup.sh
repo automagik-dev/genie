@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
 # Genie Installation Script for Linux/Mac
-# This script installs npm, pnpm, and runs Genie
+# Installs dependencies (npm, pnpm) and sets up Genie
 
 set -e  # Exit on error
 
-echo "🧞 Genie Installation Script"
-echo "============================"
+echo "🧞 Genie Installation Wizard"
+echo "============================="
 echo ""
 
 # Colors for output
@@ -26,6 +26,30 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}✗${NC} $1"
+}
+
+# Function to show template menu with descriptions
+select_template() {
+    echo ""
+    echo "📋 Choose Your Template"
+    echo "━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "  1. 💻 code"
+    echo "     Full-stack development with Git, testing, CI/CD"
+    echo "     Agents: install, wish, forge, review, implementor, tests"
+    echo ""
+    echo "  2. ✍️  create"
+    echo "     Research, writing, content creation"
+    echo "     Agents: install, wish, writer, researcher, editor"
+    echo ""
+    read -p "Select template [1]: " choice
+    choice=${choice:-1}
+
+    if [ "$choice" = "2" ]; then
+        echo "create"
+    else
+        echo "code"
+    fi
 }
 
 # Step 1: Check if npm is installed
@@ -80,22 +104,55 @@ fi
 
 echo ""
 
-# Step 3: Run Genie
-echo "Step 3: Launching Genie..."
+# Step 3: Install Genie globally
+echo "Step 3: Installing Genie..."
 echo ""
-echo "Choose template:"
-echo "  1. code   - Software development (full-stack, testing, git)"
-echo "  2. create - Research, writing, planning (self-adaptive AI)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Installing Genie globally"
+echo "  ✓ Use 'genie' command from anywhere"
+echo "  ✓ Faster startup (no download each time)"
+echo "  ✓ Auto-update checks"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-read -p "Template [1]: " template_choice
-template_choice=${template_choice:-1}
 
-if [ "$template_choice" = "2" ]; then
-    print_success "Running: pnpm dlx automagik-genie@next init create"
+pnpm install -g automagik-genie@next
+print_success "Genie installed globally!"
+
+echo ""
+
+# Step 4: Initialize workspace
+echo "Step 4: Initialize Genie workspace..."
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Initialize Genie workspace in this directory?"
+echo "  This will create .genie/ with agents and workflows"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+read -p "Initialize workspace? [Y/n]: " init_workspace
+init_workspace=${init_workspace:-Y}
+
+if [[ "$init_workspace" =~ ^[Yy]$ ]]; then
+    template=$(select_template)
     echo ""
-    pnpm dlx automagik-genie@next init create
+    echo "🚀 Initializing Genie with '$template' template..."
+    echo ""
+
+    genie init $template
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  ✅ Setup complete!"
+    echo ""
+    echo "  Next steps:"
+    echo "    • Run: genie"
+    echo "    • Or configure Claude Code MCP:"
+    echo "      npx automagik-genie mcp -t stdio"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 else
-    print_success "Running: pnpm dlx automagik-genie@next init code"
     echo ""
-    pnpm dlx automagik-genie@next init code
+    print_success "Genie installed! Run 'genie init <template>' when ready."
+    echo ""
+    echo "  Templates:"
+    echo "    • genie init code    - Development template"
+    echo "    • genie init create  - Content creation template"
 fi
