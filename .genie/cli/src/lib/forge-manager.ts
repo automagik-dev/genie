@@ -56,6 +56,9 @@ export function startForgeInBackground(opts: ForgeStartOptions): { childPid: num
   const out = fs.openSync(logPath, 'a');
   const err = fs.openSync(logPath, 'a');
 
+  // Extract port from baseUrl (e.g., http://localhost:8888 -> 8888)
+  const port = new URL(baseUrl).port || '8888';
+
   // Use bundled automagik-forge binary directly (blazing fast - no extraction!)
   // Path works for both pnpm and npm installations
   const forgeBin = path.join(__dirname, '../../../../node_modules/.pnpm/automagik-forge@0.3.18/node_modules/automagik-forge/dist/linux-x64/automagik-forge');
@@ -65,8 +68,13 @@ export function startForgeInBackground(opts: ForgeStartOptions): { childPid: num
 
   const binPath = fs.existsSync(forgeBin) ? forgeBin : forgeBinFallback;
 
-  const child = spawn(binPath, ['start'], {
-    env: { ...process.env },
+  const child = spawn(binPath, [], {
+    env: {
+      ...process.env,
+      PORT: port,
+      FORGE_PORT: port,
+      HOST: '0.0.0.0'
+    },
     detached: true,
     stdio: ['ignore', out, err]
   });
