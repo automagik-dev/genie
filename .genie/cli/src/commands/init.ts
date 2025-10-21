@@ -290,24 +290,25 @@ async function copyTemplateRootFiles(packageRoot: string, targetDir: string, tem
 
 async function migrateAgentsDocs(cwd: string): Promise<void> {
   try {
-    // Create .genie/agents.genie as a pointer to root AGENTS.md (market standard)
-    const agentsGeniePath = path.join(cwd, '.genie', 'agents.genie');
-    const content = '@AGENTS.md\n';
-    await fsp.writeFile(agentsGeniePath, content, 'utf8');
+    // Remove mistaken .genie/agents.genie if present
+    const mistaken = path.join(cwd, '.genie', 'agents.genie');
+    try { await fsp.rm(mistaken, { force: true }); } catch {}
 
-    // Ensure domain AGENTS.md include the master via @.genie/agents.genie
-    const domains = [path.join(cwd, '.genie', 'code', 'AGENTS.md'), path.join(cwd, '.genie', 'create', 'AGENTS.md')];
+    // Ensure domain AGENTS.md include the root AGENTS.md directly
+    const domains = [
+      path.join(cwd, '.genie', 'code', 'AGENTS.md'),
+      path.join(cwd, '.genie', 'create', 'AGENTS.md')
+    ];
     for (const domainFile of domains) {
       try {
         const raw = await fsp.readFile(domainFile, 'utf8');
-        if (!/@\.genie\/agents\.genie/i.test(raw)) {
-          const next = raw.trimEnd() + `\n\n@.genie/agents.genie\n`;
+        if (!/@AGENTS\.md/i.test(raw)) {
+          const next = raw.trimEnd() + `\n\n@AGENTS.md\n`;
           await fsp.writeFile(domainFile, next, 'utf8');
         }
       } catch (_) {}
     }
   } catch (err) {
-    // Soft-fail; not critical for init
     console.log(`⚠️  Agents docs migration skipped: ${(err as Error)?.message || String(err)}`);
   }
 }

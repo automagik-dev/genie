@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-const { spawnSync } = require('child_process');
+const { spawnSync, execSync } = require('child_process');
 const path = require('path');
 
+// Get git root directory (works from .git/hooks/)
+const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf8' }).trim();
+
 function run(script) {
-  const p = path.join(__dirname, '..', '..', 'scripts', script);
+  const p = path.join(gitRoot, '.genie', 'scripts', script);
   const res = spawnSync('node', [p], { stdio: 'inherit' });
   return res.status || 0;
 }
@@ -15,7 +18,7 @@ function runGenie(agent, prompt) {
   const fs = require('fs');
 
   try {
-    const genieCliPath = path.join(__dirname, '..', '..', '.genie', 'cli', 'dist', 'genie-cli.js');
+    const genieCliPath = path.join(gitRoot, '.genie', 'cli', 'dist', 'genie-cli.js');
     if (!fs.existsSync(genieCliPath)) {
       return { sessionId: null, success: true, message: 'Genie CLI not built (skipping workflow)' };
     }
@@ -25,7 +28,7 @@ function runGenie(agent, prompt) {
     // Start workflow (fire and forget, non-blocking)
     const spawn = require('child_process').spawn;
     const proc = spawn('node', [genieCliPath, 'run', agent, prompt], {
-      cwd: path.join(__dirname, '..', '..'),
+      cwd: gitRoot,
       stdio: 'ignore',
       detached: true
     });
@@ -50,7 +53,7 @@ function main() {
 
   // Run worktree access prevention check (bash script)
   console.log('🔍 Checking for Forge worktree violations...');
-  const worktreeCheckPath = path.join(__dirname, '..', 'prevent-worktree-access.sh');
+  const worktreeCheckPath = path.join(gitRoot, '.genie', 'scripts', 'prevent-worktree-access.sh');
   const worktreeCheck = spawnSync('bash', [worktreeCheckPath], { stdio: 'inherit' });
   if (worktreeCheck.status !== 0) {
     exitCode = 1;
@@ -82,14 +85,15 @@ function main() {
 
   // Generate token usage and quality summary (non-blocking)
   try {
-    const tokCode = run('count-tokens.js');
-    if (tokCode !== 0) console.warn('⚠️  Token usage script failed (non-blocking)');
-  } catch {}
+    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'count-tokens.js')], { stdio: 'inherit' });
+  } catch (e) {
+    console.warn('⚠️  Token usage script failed (non-blocking)');
+  }
   try {
-    const { spawnSync } = require('child_process');
-    const p = path.join(__dirname, '..', '..', '.genie', 'token-efficiency', 'quality-gate.js');
-    spawnSync('node', [p], { stdio: 'inherit' });
-  } catch {}
+    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'quality-gate.js')], { stdio: 'inherit' });
+  } catch (e) {
+    console.warn('⚠️  Token quality gate error (non-blocking)');
+  }
 
   // Background advisory (non-blocking)
   const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
