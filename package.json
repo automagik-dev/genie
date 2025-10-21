@@ -105,6 +105,7 @@
   "devDependencies": {
     "@types/node": "^24.5.2",
     "@types/react": "^18.3.3",
+    "@types/ws": "^8.18.1",
     "js-tiktoken": "^1.0.21",
     "typescript": "^5.9.2"
   },
