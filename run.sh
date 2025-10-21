@@ -38,17 +38,17 @@ check_for_updates() {
 
 # Function to show template menu with descriptions
 select_template() {
-    echo "📋 Choose Your Template"
-    echo "━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "  1. 💻 code"
-    echo "     Full-stack development with Git, testing, CI/CD"
-    echo "     Agents: install, wish, forge, review, implementor, tests"
-    echo ""
-    echo "  2. ✍️  create"
-    echo "     Research, writing, content creation"
-    echo "     Agents: install, wish, writer, researcher, editor"
-    echo ""
+    echo "📋 Choose Your Template" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "  1. 💻 code" >&2
+    echo "     Full-stack development with Git, testing, CI/CD" >&2
+    echo "     Agents: install, wish, forge, review, implementor, tests" >&2
+    echo "" >&2
+    echo "  2. ✍️  create" >&2
+    echo "     Research, writing, content creation" >&2
+    echo "     Agents: install, wish, writer, researcher, editor" >&2
+    echo "" >&2
     read -p "Select template [1]: " choice
     choice=${choice:-1}
 
