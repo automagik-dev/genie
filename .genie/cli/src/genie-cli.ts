@@ -430,25 +430,36 @@ async function startGenieServer(): Promise<void> {
 
   // Handle graceful shutdown (stop both Forge and MCP)
   let mcpChild: ReturnType<typeof spawn> | null = null;
+  let isShuttingDown = false;
 
-  process.on('SIGINT', async () => {
+  process.on('SIGINT', () => {
+    // Prevent multiple shutdown attempts
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
     console.log('');
     console.log('🛑 Shutting down...');
 
-    // Stop MCP
+    // Stop MCP immediately (synchronous)
     if (mcpChild) {
       mcpChild.kill('SIGTERM');
     }
 
-    // Stop Forge
-    const stopped = await stopForge(logDir);
-    if (stopped) {
-      console.log('✅ All services stopped');
-    } else {
-      console.log('✅ MCP stopped (Forge was not started by this session)');
-    }
-
-    process.exit(0);
+    // Stop Forge and wait for completion before exiting
+    (async () => {
+      try {
+        const stopped = await stopForge(logDir);
+        if (stopped) {
+          console.log('✅ All services stopped');
+        } else {
+          console.log('✅ MCP stopped (Forge was not started by this session)');
+        }
+      } catch (error) {
+        console.error('⚠️  Error during shutdown:', error);
+      } finally {
+        process.exit(0);
+      }
+    })();
   });
 
   // Resilient startup: retry on early non-zero exit
