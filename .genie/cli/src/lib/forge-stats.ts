@@ -66,15 +66,32 @@ export async function collectForgeStats(baseUrl: string = 'http://localhost:8887
     const projects = await client.listProjects();
     stats.projects.total = projects.length;
 
-    // Get all task attempts and derive task count
-    // Note: Forge 0.3.18 doesn't have project tasks endpoint, derive from attempts
+    // Fetch tasks for each project (proper task count)
+    try {
+      for (const project of projects) {
+        try {
+          const tasks = await client.listTasks(project.id);
+          stats.tasks.total += tasks.length;
+
+          // Aggregate by status
+          for (const task of tasks) {
+            const status = task.status?.toLowerCase();
+            if (status && status in stats.tasks.byStatus) {
+              stats.tasks.byStatus[status as keyof typeof stats.tasks.byStatus]++;
+            }
+          }
+        } catch {
+          // Skip project if we can't fetch tasks
+        }
+      }
+    } catch {
+      // Failed to fetch tasks
+    }
+
+    // Get all task attempts for execution status
     try {
       const allAttempts = await client.listTaskAttempts();
       stats.attempts.total = allAttempts.length;
-
-      // Derive unique task count from attempts (group by task_id)
-      const uniqueTaskIds = new Set(allAttempts.map((a: any) => a.task_id));
-      stats.tasks.total = uniqueTaskIds.size;
 
       // For live status, check recent attempts (balance between accuracy and speed)
       // Check up to 15 attempts to get better distribution
