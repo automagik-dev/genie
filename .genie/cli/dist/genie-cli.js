@@ -277,9 +277,14 @@ async function startHealthMonitoring(baseUrl, mcpPort, mcpChild, serverStartTime
         const forgeStats = forgeHealthy ? await (0, forge_stats_1.collectForgeStats)(baseUrl) : null;
         const statsDisplay = (0, forge_stats_1.formatStatsForDashboard)(forgeStats);
         // Build executive dashboard with stats
-        const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        const headerLine = '━'.repeat(60);
+        const header = genieGradient(`${headerLine}
 🧞 GENIE SERVER - Executive Dashboard
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${headerLine}`);
+        const footer = genieGradient(`${headerLine}
+Press Ctrl+C to stop all services
+${headerLine}`);
+        const dashboard = `${header}
 
 📊 **Quick Stats**
    Real-time: ${timeStr} (${dateStr})
@@ -295,9 +300,7 @@ ${mcpStatus} **MCP Server**
    Status: ${mcpHealthy ? 'Running' : 'Down'}
    URL: http://localhost:${mcpPort}/sse
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Press Ctrl+C to stop all services
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+${footer}`;
         // Clear previous dashboard if not first render
         if (dashboardLines > 0) {
             // Move cursor up and clear lines
@@ -464,31 +467,19 @@ async function startGenieServer() {
         console.log(successGradient('✨ Genie stopped. See you next time! ✨'));
         console.log('');
     };
-    // Install SIGINT handler - MUST block synchronously until shutdown completes
+    // Install SIGINT handler - keeps process alive without blocking event loop
     process.on('SIGINT', () => {
-        let shutdownComplete = false;
-        let shutdownError = null;
-        // Start async shutdown
+        // Keep process alive by resuming stdin (non-blocking)
+        process.stdin.resume();
         shutdown()
             .catch((error) => {
-            shutdownError = error;
+            console.error('Fatal error during shutdown:', error);
         })
             .finally(() => {
-            shutdownComplete = true;
+            // Release stdin and exit cleanly
+            process.stdin.pause();
+            process.exit(0);
         });
-        // Busy-wait until shutdown completes (blocks event loop but prevents exit)
-        const start = Date.now();
-        const timeout = 10000; // 10 second timeout
-        while (!shutdownComplete && (Date.now() - start) < timeout) {
-            // Spin - this keeps Node.js from exiting
-        }
-        if (shutdownError) {
-            console.error('Fatal error during shutdown:', shutdownError);
-        }
-        if (!shutdownComplete) {
-            console.error('⚠️  Shutdown timed out after 10s');
-        }
-        process.exit(0);
     });
     // Resilient startup: retry on early non-zero exit
     const maxAttempts = parseInt(process.env.GENIE_MCP_RESTARTS || '2', 10);
