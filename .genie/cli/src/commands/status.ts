@@ -1,16 +1,47 @@
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
-import { emitView } from '../lib/view-helpers';
-import { buildInfoView } from '../views/common';
+import { isForgeRunning } from '../lib/forge-manager';
+import { collectForgeStats, formatStatsForDashboard } from '../lib/forge-stats';
 
 export async function runStatus(
   parsed: ParsedCommand,
   _config: GenieConfig,
   _paths: Required<ConfigPaths>
 ): Promise<void> {
-  const messages = [
-    'The legacy `status` command is deprecated.',
-    'Consult the documentation for current workflows.',
-    'Documentation: https://github.com/namastexlabs/automagik-genie/docs/migration-guide.md'
-  ];
-  await emitView(buildInfoView('Status command deprecated', messages), parsed.options);
+  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const mcpPort = process.env.MCP_PORT || '8885';
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🧞 GENIE STATUS');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('');
+
+  // Check Forge
+  const forgeRunning = await isForgeRunning(baseUrl);
+  const forgeStatus = forgeRunning ? '🟢 Running' : '🔴 Down';
+
+  console.log(`📦 Forge Backend: ${forgeStatus}`);
+  console.log(`   URL: ${baseUrl}`);
+
+  if (forgeRunning) {
+    const stats = await collectForgeStats(baseUrl);
+    const statsDisplay = formatStatsForDashboard(stats);
+    if (statsDisplay) {
+      console.log(statsDisplay);
+    }
+  }
+
+  console.log('');
+  console.log(`📡 MCP Server:`);
+  console.log(`   Expected URL: http://localhost:${mcpPort}/sse`);
+  console.log(`   (Health check not implemented - check server logs)`);
+
+  console.log('');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  if (!forgeRunning) {
+    console.log('');
+    console.log('💡 To start Genie server:');
+    console.log('   npx automagik-genie');
+    console.log('');
+  }
 }

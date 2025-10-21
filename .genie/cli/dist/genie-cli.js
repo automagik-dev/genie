@@ -22,7 +22,7 @@ const program = new commander_1.Command();
 const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
 program
     .name('genie')
-    .description('Self-evolving AI agent orchestration framework')
+    .description('Self-evolving AI agent orchestration framework\n\nRun with no arguments to start Genie server (Forge + MCP)')
     .version(packageJson.version);
 // Run command
 program
@@ -159,7 +159,7 @@ program
 // Status command
 program
     .command('status')
-    .description('Deprecated status shim (see migration guide)')
+    .description('Show Genie server status (Forge backend, MCP server, statistics)')
     .action(() => {
     execGenie(['status']);
 });
