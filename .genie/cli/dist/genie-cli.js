@@ -224,12 +224,12 @@ async function startGenieServer() {
     // Check if Forge is already running
     const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
     if (!forgeRunning) {
-        console.log('📦 Starting Forge backend...');
+        process.stderr.write('📦 Starting Forge backend');
         (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
-        // Wait for Forge to be ready
-        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 15000, 500);
+        // Wait for Forge to be ready (30s timeout with progress dots)
+        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 30000, 500, true);
         if (!forgeReady) {
-            console.error('❌ Forge did not start in time (15s). Check logs at .genie/state/forge.log');
+            console.error('\n❌ Forge did not start in time (30s). Check logs at .genie/state/forge.log');
             process.exit(1);
         }
         console.log(`📦 Forge:  ${baseUrl} ✓`);
