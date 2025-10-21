@@ -340,10 +340,10 @@ async function startGenieServer() {
     if (!forgeRunning) {
         process.stderr.write('📦 Starting Forge backend');
         (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
-        // Wait for Forge to be ready (30s timeout with progress dots)
-        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 30000, 500, true);
+        // Wait for Forge to be ready (60s timeout with progress dots - accounts for .zip extraction on first run)
+        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, true);
         if (!forgeReady) {
-            console.error('\n❌ Forge did not start in time (30s). Check logs at .genie/state/forge.log');
+            console.error('\n❌ Forge did not start in time (60s). Check logs at .genie/state/forge.log');
             process.exit(1);
         }
         console.log(`📦 Forge:  ${baseUrl} ✓`);
