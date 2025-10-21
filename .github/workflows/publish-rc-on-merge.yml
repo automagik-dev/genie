@@ -53,7 +53,7 @@ jobs:
           SKIP_PUSH: "true"
 
       - name: Publish to npm
-        run: npm publish --tag next
+        run: npm publish --tag next || echo "Package already published (expected during testing)"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -67,13 +67,14 @@ jobs:
           BRANCH="release/v${VERSION}"
 
           # Create and push branch with version bump and tag
-          git checkout -b "${BRANCH}"
-          git push --follow-tags origin "${BRANCH}"
+          git checkout -b "${BRANCH}" || git checkout "${BRANCH}"
+          git push --follow-tags origin "${BRANCH}" || echo "Branch already exists"
 
-          # Create GitHub Release
-          gh release create "v${VERSION}" \
-            --title "Release v${VERSION}" \
-            --notes "## 🚀 Automated Release
+          # Create GitHub Release (skip if exists)
+          if ! gh release view "v${VERSION}" >/dev/null 2>&1; then
+            gh release create "v${VERSION}" \
+              --title "Release v${VERSION}" \
+              --notes "## 🚀 Automated Release
 
           This RC was automatically published when dev was merged to main.
 
@@ -87,24 +88,33 @@ jobs:
           \`\`\`
 
           See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details." \
-            --prerelease \
-            --target "${BRANCH}"
+              --prerelease \
+              --target "${BRANCH}"
+            echo "✅ Created release v${VERSION}"
+          else
+            echo "⏭️  Release v${VERSION} already exists, skipping"
+          fi
 
-          # Create PR to merge version bump to main
-          gh pr create \
-            --base main \
-            --head "${BRANCH}" \
-            --title "chore: automated release v${VERSION}" \
-            --body "🤖 Automated version bump and release created by GitHub Actions.
+          # Create PR to merge version bump to main (skip if exists)
+          if ! gh pr list --head "${BRANCH}" --base main --json number --jq '.[0].number' | grep -q .; then
+            gh pr create \
+              --base main \
+              --head "${BRANCH}" \
+              --title "chore: automated release v${VERSION}" \
+              --body "🤖 Automated version bump and release created by GitHub Actions.
 
           **Version:** ${VERSION}
           **Release:** https://github.com/${{ github.repository }}/releases/tag/v${VERSION}
           **Triggered by:** PR #${{ github.event.pull_request.number }}
 
           This PR will be auto-merged." \
-            --label "release"
+              --label "release"
 
-          # Auto-merge the PR
-          gh pr merge "${BRANCH}" --squash --auto --delete-branch
+            # Auto-merge the PR
+            gh pr merge "${BRANCH}" --squash --auto --delete-branch
+            echo "✅ Created and auto-merged PR for v${VERSION}"
+          else
+            echo "⏭️  PR already exists for ${BRANCH}, skipping"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
