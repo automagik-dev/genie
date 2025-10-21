@@ -257,13 +257,43 @@ async function checkPortConflict(port: string): Promise<{ pid: string; command: 
 }
 
 /**
- * Display live health monitoring dashboard
+ * Format uptime in human-readable format
  */
-async function startHealthMonitoring(baseUrl: string, mcpPort: string, mcpChild: ReturnType<typeof spawn>): Promise<void> {
+function formatUptime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
+  if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
+}
+
+/**
+ * Display live health monitoring dashboard with executive stats
+ */
+async function startHealthMonitoring(
+  baseUrl: string,
+  mcpPort: string,
+  mcpChild: ReturnType<typeof spawn>,
+  serverStartTime: number,
+  startupTimings: Record<string, number>
+): Promise<void> {
   const UPDATE_INTERVAL = 5000; // 5 seconds
   let dashboardLines = 0;
 
   const updateDashboard = async () => {
+    // Calculate uptime
+    const uptime = Date.now() - serverStartTime;
+    const uptimeStr = formatUptime(uptime);
+
+    // Current time
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString();
+    const dateStr = now.toLocaleDateString();
+
     // Check Forge health
     const forgeHealthy = await isForgeRunning(baseUrl);
     const forgeStatus = forgeHealthy ? '🟢' : '🔴';
@@ -276,10 +306,15 @@ async function startHealthMonitoring(baseUrl: string, mcpPort: string, mcpChild:
     const forgeStats = forgeHealthy ? await collectForgeStats(baseUrl) : null;
     const statsDisplay = formatStatsForDashboard(forgeStats);
 
-    // Build dashboard
-    const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧞 GENIE SERVER - Executive Summary
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Build executive dashboard with stats
+    const dashboard = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧞 GENIE SERVER - Executive Dashboard
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 **Quick Stats**
+   Real-time: ${timeStr} (${dateStr})
+   Uptime: ${uptimeStr}
+   Startup: ${startupTimings.total || 0}ms (${((startupTimings.total || 0) / 1000).toFixed(1)}s)
 
 ${forgeStatus} **Forge Backend**
    Status: ${forgeHealthy ? 'Running' : 'Down'}
@@ -290,10 +325,9 @@ ${mcpStatus} **MCP Server**
    Status: ${mcpHealthy ? 'Running' : 'Down'}
    URL: http://localhost:${mcpPort}/sse
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Last check: ${new Date().toLocaleTimeString()}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Press Ctrl+C to stop all services
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 
     // Clear previous dashboard if not first render
     if (dashboardLines > 0) {
@@ -501,7 +535,7 @@ async function startGenieServer(): Promise<void> {
         console.log(genieGradient('━'.repeat(60)));
         console.log(genieGradient('🩺 Starting health monitoring...'));
         console.log(genieGradient('━'.repeat(60)));
-        startHealthMonitoring(baseUrl, mcpPort, mcpChild);
+        startHealthMonitoring(baseUrl, mcpPort, mcpChild, startTime, timings);
       }
     }, 1000);
 
