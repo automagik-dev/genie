@@ -31,6 +31,10 @@
     "bin/cleanup.js",
     "bin/statusline.js",
     "genie",
+    "run.sh",
+    "run.ps1",
+    "setup.sh",
+    "setup.ps1",
     "README.md",
     "AGENTS.md",
     "CLAUDE.md"
