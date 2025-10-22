@@ -58,10 +58,11 @@ function installGitHooks() {
     }
 
     try {
-      // Copy hook file and keep CommonJS by using a shebang wrapper
+      // Copy hook file and keep CommonJS by using a shell wrapper
       // Git hooks must be executable scripts without extension, so we create
-      // a wrapper that explicitly runs node with the .cjs file
-      const wrapper = `#!/usr/bin/env node\nrequire('${source}');\n`;
+      // a bash wrapper that explicitly runs node with the .cjs file
+      // This avoids ESM/CommonJS conflicts (package.json has "type": "module")
+      const wrapper = `#!/bin/sh\nexec node "${source}" "$@"\n`;
       fs.writeFileSync(dest, wrapper, { mode: 0o755 });
     } catch (err) {
       // Silently fail - don't break installation if hooks can't be installed
