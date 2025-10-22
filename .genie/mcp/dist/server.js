@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-"use strict";
 /**
  * Genie MCP Server - MVP Implementation
  *
@@ -16,28 +15,24 @@
  *
  * Build status: ✅ CLI compiles (0 errors), ✅ MCP compiles (0 errors)
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const fastmcp_1 = require("fastmcp");
-const zod_1 = require("zod");
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
-const child_process_1 = require("child_process");
-const util_1 = require("util");
-const display_transform_1 = require("./lib/display-transform");
-const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
+import { FastMCP } from 'fastmcp';
+import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { transformDisplayPath } from './lib/display-transform';
+const execFileAsync = promisify(execFile);
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
 // Find actual workspace root by searching upward for .genie/ directory
 function findWorkspaceRoot() {
     let dir = process.cwd();
-    while (dir !== path_1.default.dirname(dir)) {
-        if (fs_1.default.existsSync(path_1.default.join(dir, '.genie'))) {
+    while (dir !== path.dirname(dir)) {
+        if (fs.existsSync(path.join(dir, '.genie'))) {
             return dir;
         }
-        dir = path_1.default.dirname(dir);
+        dir = path.dirname(dir);
     }
     // Fallback to process.cwd() if .genie not found
     return process.cwd();
@@ -49,38 +44,38 @@ function listAgents() {
     const agents = [];
     // Auto-discover all collectives by scanning .genie/ directory
     const searchDirs = [];
-    const genieDir = path_1.default.join(WORKSPACE_ROOT, '.genie');
-    if (fs_1.default.existsSync(genieDir)) {
-        const entries = fs_1.default.readdirSync(genieDir, { withFileTypes: true });
+    const genieDir = path.join(WORKSPACE_ROOT, '.genie');
+    if (fs.existsSync(genieDir)) {
+        const entries = fs.readdirSync(genieDir, { withFileTypes: true });
         entries.forEach(entry => {
             if (entry.isDirectory()) {
-                const agentsPath = path_1.default.join(genieDir, entry.name, 'agents');
-                if (fs_1.default.existsSync(agentsPath)) {
+                const agentsPath = path.join(genieDir, entry.name, 'agents');
+                if (fs.existsSync(agentsPath)) {
                     searchDirs.push(agentsPath);
                 }
             }
         });
     }
     // Fallback: Include root agents directory if it exists
-    const rootAgentsPath = path_1.default.join(WORKSPACE_ROOT, '.genie/agents');
-    if (fs_1.default.existsSync(rootAgentsPath) && !searchDirs.includes(rootAgentsPath)) {
+    const rootAgentsPath = path.join(WORKSPACE_ROOT, '.genie/agents');
+    if (fs.existsSync(rootAgentsPath) && !searchDirs.includes(rootAgentsPath)) {
         searchDirs.push(rootAgentsPath);
     }
     const visit = (dirPath, relativePath) => {
-        const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
         entries.forEach((entry) => {
-            const entryPath = path_1.default.join(dirPath, entry.name);
+            const entryPath = path.join(dirPath, entry.name);
             if (entry.isDirectory()) {
-                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name);
+                visit(entryPath, relativePath ? path.join(relativePath, entry.name) : entry.name);
                 return;
             }
             if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md') {
                 return;
             }
-            const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
+            const rawId = relativePath ? path.join(relativePath, entry.name) : entry.name;
+            const normalizedId = rawId.replace(/\.md$/i, '').split(path.sep).join('/');
             // Extract frontmatter to get name and description
-            const content = fs_1.default.readFileSync(entryPath, 'utf8');
+            const content = fs.readFileSync(entryPath, 'utf8');
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
             let name = normalizedId;
             let description;
@@ -94,13 +89,13 @@ function listAgents() {
                     description = descMatch[1].trim();
             }
             // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(normalizedId);
+            const { displayId, displayFolder } = transformDisplayPath(normalizedId);
             agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
         });
     };
     // Visit all search directories
     searchDirs.forEach(baseDir => {
-        if (fs_1.default.existsSync(baseDir)) {
+        if (fs.existsSync(baseDir)) {
             visit(baseDir, null);
         }
     });
@@ -165,12 +160,12 @@ async function listSessions() {
     catch (error) {
         // Fallback to local sessions.json if Forge API fails
         console.warn('Failed to fetch Forge sessions, falling back to local store');
-        const sessionsFile = path_1.default.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
-        if (!fs_1.default.existsSync(sessionsFile)) {
+        const sessionsFile = path.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
+        if (!fs.existsSync(sessionsFile)) {
             return [];
         }
         try {
-            const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
+            const content = fs.readFileSync(sessionsFile, 'utf8');
             const store = JSON.parse(content);
             const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
                 name: entry.name || key,
@@ -206,8 +201,8 @@ async function listSessions() {
 // Helper: Get Genie version from package.json
 function getGenieVersion() {
     try {
-        const packageJsonPath = path_1.default.join(__dirname, '..', '..', '..', 'package.json');
-        const packageJson = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf8'));
+        const packageJsonPath = path.join(__dirname, '..', '..', '..', 'package.json');
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
         return packageJson.version || '0.0.0';
     }
     catch (error) {
@@ -219,7 +214,7 @@ function getVersionHeader() {
     return `Genie MCP v${getGenieVersion()}\n\n`;
 }
 // Initialize FastMCP server
-const server = new fastmcp_1.FastMCP({
+const server = new FastMCP({
     name: 'genie',
     version: getGenieVersion(),
     instructions: `Genie is an agent orchestration system for managing AI agents that help with software development tasks.
@@ -250,7 +245,7 @@ Use agents for planning features, implementing code, reviewing changes, debuggin
 server.addTool({
     name: 'list_agents',
     description: 'List all available Genie agents with their capabilities and descriptions. Use this first to discover which agents can help with your task.',
-    parameters: zod_1.z.object({}),
+    parameters: z.object({}),
     execute: async () => {
         const agents = listAgents();
         if (agents.length === 0) {
@@ -285,7 +280,7 @@ server.addTool({
 server.addTool({
     name: 'list_sessions',
     description: 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.',
-    parameters: zod_1.z.object({}),
+    parameters: z.object({}),
     execute: async () => {
         const sessions = await listSessions();
         if (sessions.length === 0) {
@@ -293,7 +288,7 @@ server.addTool({
         }
         let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
         sessions.forEach((session, index) => {
-            const { displayId } = (0, display_transform_1.transformDisplayPath)(session.agent);
+            const { displayId } = transformDisplayPath(session.agent);
             response += `${index + 1}. **${session.name}**\n`;
             response += `   Agent: ${displayId}\n`;
             response += `   Status: ${session.status}\n`;
@@ -308,10 +303,10 @@ server.addTool({
 server.addTool({
     name: 'run',
     description: 'Start a new Genie agent session. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.',
-    parameters: zod_1.z.object({
-        agent: zod_1.z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
-        prompt: zod_1.z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
-        name: zod_1.z.string().optional().describe('Friendly session name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
+    parameters: z.object({
+        agent: z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
+        prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
+        name: z.string().optional().describe('Friendly session name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
     }),
     execute: async (args) => {
         try {
@@ -339,7 +334,7 @@ server.addTool({
             }
             const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            const { displayId } = (0, display_transform_1.transformDisplayPath)(args.agent);
+            const { displayId } = transformDisplayPath(args.agent);
             return getVersionHeader() + `Started agent session:\nAgent: ${displayId}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
         }
         catch (error) {
@@ -351,9 +346,9 @@ server.addTool({
 server.addTool({
     name: 'resume',
     description: 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.',
-    parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
-        prompt: zod_1.z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
+    parameters: z.object({
+        sessionId: z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
+        prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
     }),
     execute: async (args) => {
         try {
@@ -374,9 +369,9 @@ server.addTool({
 server.addTool({
     name: 'view',
     description: 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.',
-    parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
-        full: zod_1.z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
+    parameters: z.object({
+        sessionId: z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
+        full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
     }),
     execute: async (args) => {
         try {
@@ -397,8 +392,8 @@ server.addTool({
 server.addTool({
     name: 'stop',
     description: 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.',
-    parameters: zod_1.z.object({
-        sessionId: zod_1.z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
+    parameters: z.object({
+        sessionId: z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
     }),
     execute: async (args) => {
         try {
@@ -807,12 +802,12 @@ else {
     process.exit(1);
 }
 function resolveCliInvocation() {
-    const distEntry = path_1.default.join(WORKSPACE_ROOT, '.genie/cli/dist/genie-cli.js');
-    if (fs_1.default.existsSync(distEntry)) {
+    const distEntry = path.join(WORKSPACE_ROOT, '.genie/cli/dist/genie-cli.js');
+    if (fs.existsSync(distEntry)) {
         return { command: process.execPath, args: [distEntry] };
     }
-    const localScript = path_1.default.join(WORKSPACE_ROOT, 'genie');
-    if (fs_1.default.existsSync(localScript)) {
+    const localScript = path.join(WORKSPACE_ROOT, 'genie');
+    if (fs.existsSync(localScript)) {
         return { command: localScript, args: [] };
     }
     return { command: 'npx', args: ['automagik-genie'] };

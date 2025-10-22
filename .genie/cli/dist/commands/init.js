@@ -1,59 +1,20 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.runInit = runInit;
-const path_1 = __importDefault(require("path"));
-const fs_1 = require("fs");
-const yaml_1 = __importDefault(require("yaml"));
-const view_helpers_1 = require("../lib/view-helpers");
-const common_1 = require("../views/common");
-const executor_registry_1 = require("../lib/executor-registry");
-const paths_1 = require("../lib/paths");
-const fs_utils_1 = require("../lib/fs-utils");
-const package_1 = require("../lib/package");
-const migrate_1 = require("../lib/migrate");
-const mcp_config_1 = require("../lib/mcp-config");
+import path from 'path';
+import { promises as fsp } from 'fs';
+import YAML from 'yaml';
+import { emitView } from '../lib/view-helpers';
+import { buildErrorView, buildInfoView } from '../views/common';
+import { EXECUTORS } from '../lib/executor-registry';
+import { getPackageRoot, getTemplateGeniePath, getTemplateRelativeBlacklist, resolveTargetGeniePath, resolveWorkspaceVersionPath, resolveBackupsRoot, resolveTempBackupsRoot, resolveProviderStatusPath } from '../lib/paths';
+import { pathExists, ensureDir, copyDirectory, toIsoId, moveDirectory, writeJsonFile, snapshotDirectory } from '../lib/fs-utils';
+import { getPackageVersion } from '../lib/package';
+import { detectInstallType } from '../lib/migrate';
+import { configureBothExecutors } from '../lib/mcp-config';
 const DEFAULT_MODE_DESCRIPTION = 'Workspace automation via Forge-backed executors.';
-async function runInit(parsed, _config, _paths) {
+export async function runInit(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
         const cwd = process.cwd();
-        const packageRoot = (0, paths_1.getPackageRoot)();
+        const packageRoot = getPackageRoot();
         // Check if running in interactive mode (TTY) or automation mode (--yes flag or explicit template)
         const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template;
         let template;
@@ -63,16 +24,16 @@ async function runInit(parsed, _config, _paths) {
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
             // @ts-expect-error - .mjs file exists at runtime
-            const { runInitWizard } = await Promise.resolve().then(() => __importStar(require('../views/init-wizard.mjs')));
+            const { runInitWizard } = await import('../views/init-wizard.mjs');
             const templates = [
                 { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
                 { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
             ];
-            const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
-                label: executor_registry_1.EXECUTORS[key].label,
+            const executors = Object.keys(EXECUTORS).map(key => ({
+                label: EXECUTORS[key].label,
                 value: key
             }));
-            const hasGit = await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git'));
+            const hasGit = await pathExists(path.join(cwd, '.git'));
             const wizardConfig = await runInitWizard({
                 templates,
                 executors,
@@ -86,20 +47,20 @@ async function runInit(parsed, _config, _paths) {
         else {
             // Automation mode: use flags or defaults
             template = (flags.template || 'code');
-            executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
+            executor = Object.keys(EXECUTORS)[0] || 'codex';
             model = undefined;
         }
-        const templateGenie = (0, paths_1.getTemplateGeniePath)(template);
-        const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
-        const templateExists = await (0, fs_utils_1.pathExists)(templateGenie);
+        const templateGenie = getTemplateGeniePath(template);
+        const targetGenie = resolveTargetGeniePath(cwd);
+        const templateExists = await pathExists(templateGenie);
         if (!templateExists) {
-            await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Template missing', `Could not locate packaged .genie templates at ${templateGenie}`), parsed.options, { stream: process.stderr });
+            await emitView(buildErrorView('Template missing', `Could not locate packaged .genie templates at ${templateGenie}`), parsed.options, { stream: process.stderr });
             process.exitCode = 1;
             return;
         }
         // Check for partial installation (templates copied but executor not started)
-        const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
-        const partialInit = await (0, fs_utils_1.pathExists)(versionPath);
+        const versionPath = resolveWorkspaceVersionPath(cwd);
+        const partialInit = await pathExists(versionPath);
         if (partialInit) {
             console.log('');
             console.log('🔍 Detected partial installation');
@@ -108,13 +69,13 @@ async function runInit(parsed, _config, _paths) {
             // Skip file operations; go straight to Forge-backed setup
             const { executor, model } = await selectExecutorAndModel(flags);
             await applyExecutorDefaults(targetGenie, executor, model);
-            await (0, mcp_config_1.configureBothExecutors)(cwd);
+            await configureBothExecutors(cwd);
             // TODO: Add install chat flow here (future enhancement)
-            await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
+            await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
             return;
         }
         // Auto-detect old Genie structure and suggest migration
-        const installType = (0, migrate_1.detectInstallType)();
+        const installType = detectInstallType();
         if (installType === 'old_genie' && !flags.yes) {
             console.log('');
             console.log('╭───────────────────────────────────────────────────────────╮');
@@ -127,15 +88,15 @@ async function runInit(parsed, _config, _paths) {
             console.log('');
             console.log('Run `genie init --yes` to force reinitialize (creates backup).');
             console.log('');
-            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Old Installation Detected', [
+            await emitView(buildInfoView('Old Installation Detected', [
                 'Use `genie init --yes` to force reinitialize (creates backup first).'
             ]), parsed.options);
             return;
         }
         // Initialize git if needed (wizard already prompted in interactive mode)
-        if (shouldInitGit || (!isInteractive && !await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git')))) {
+        if (shouldInitGit || (!isInteractive && !await pathExists(path.join(cwd, '.git')))) {
             if (!isInteractive && flags.yes) {
-                const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
+                const { execSync } = await import('child_process');
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
                     execSync('git branch -m main', { cwd, stdio: 'pipe' });
@@ -145,7 +106,7 @@ async function runInit(parsed, _config, _paths) {
                 }
             }
             else if (shouldInitGit) {
-                const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
+                const { execSync } = await import('child_process');
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
                     execSync('git branch -m main', { cwd, stdio: 'pipe' });
@@ -155,52 +116,52 @@ async function runInit(parsed, _config, _paths) {
                 }
             }
         }
-        const backupId = (0, fs_utils_1.toIsoId)();
-        const targetExists = await (0, fs_utils_1.pathExists)(targetGenie);
-        const backupsRoot = (0, paths_1.resolveBackupsRoot)(cwd);
+        const backupId = toIsoId();
+        const targetExists = await pathExists(targetGenie);
+        const backupsRoot = resolveBackupsRoot(cwd);
         let backupDir;
         let stagedBackupDir = null;
         if (targetExists) {
-            backupDir = path_1.default.join(backupsRoot, backupId);
-            await (0, fs_utils_1.ensureDir)(backupDir);
-            await (0, fs_utils_1.snapshotDirectory)(targetGenie, path_1.default.join(backupDir, 'genie'));
+            backupDir = path.join(backupsRoot, backupId);
+            await ensureDir(backupDir);
+            await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
         }
         else {
-            stagedBackupDir = path_1.default.join((0, paths_1.resolveTempBackupsRoot)(cwd), backupId);
-            await (0, fs_utils_1.ensureDir)(stagedBackupDir);
+            stagedBackupDir = path.join(resolveTempBackupsRoot(cwd), backupId);
+            await ensureDir(stagedBackupDir);
             backupDir = stagedBackupDir;
         }
         // Backup AGENTS.md at repo root if present
-        const agentsMdPath = path_1.default.join(cwd, 'AGENTS.md');
-        const agentsMdExists = await (0, fs_utils_1.pathExists)(agentsMdPath);
+        const agentsMdPath = path.join(cwd, 'AGENTS.md');
+        const agentsMdExists = await pathExists(agentsMdPath);
         if (agentsMdExists) {
-            await fs_1.promises.copyFile(agentsMdPath, path_1.default.join(backupDir, 'AGENTS.md'));
+            await fsp.copyFile(agentsMdPath, path.join(backupDir, 'AGENTS.md'));
         }
         if (!targetExists) {
-            await (0, fs_utils_1.ensureDir)(path_1.default.dirname(backupsRoot));
+            await ensureDir(path.dirname(backupsRoot));
         }
         await copyTemplateFiles(packageRoot, template, targetGenie);
         await copyTemplateRootFiles(packageRoot, cwd, template);
         await migrateAgentsDocs(cwd);
         // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
-        const templateInstallMd = path_1.default.join(templateGenie, 'INSTALL.md');
-        const targetInstallMd = path_1.default.join(targetGenie, 'INSTALL.md');
-        if (await (0, fs_utils_1.pathExists)(templateInstallMd)) {
-            await fs_1.promises.copyFile(templateInstallMd, targetInstallMd);
+        const templateInstallMd = path.join(templateGenie, 'INSTALL.md');
+        const targetInstallMd = path.join(targetGenie, 'INSTALL.md');
+        if (await pathExists(templateInstallMd)) {
+            await fsp.copyFile(templateInstallMd, targetInstallMd);
         }
         if (stagedBackupDir) {
-            const finalBackupsDir = path_1.default.join(backupsRoot, backupId);
-            await (0, fs_utils_1.ensureDir)(backupsRoot);
-            await (0, fs_utils_1.ensureDir)(path_1.default.join(targetGenie, 'backups'));
-            if (!(await (0, fs_utils_1.pathExists)(finalBackupsDir))) {
-                await (0, fs_utils_1.moveDirectory)(stagedBackupDir, finalBackupsDir);
+            const finalBackupsDir = path.join(backupsRoot, backupId);
+            await ensureDir(backupsRoot);
+            await ensureDir(path.join(targetGenie, 'backups'));
+            if (!(await pathExists(finalBackupsDir))) {
+                await moveDirectory(stagedBackupDir, finalBackupsDir);
             }
             else {
-                await fs_1.promises.rm(stagedBackupDir, { recursive: true, force: true });
+                await fsp.rm(stagedBackupDir, { recursive: true, force: true });
             }
-            const tempRoot = (0, paths_1.resolveTempBackupsRoot)(cwd);
+            const tempRoot = resolveTempBackupsRoot(cwd);
             try {
-                await fs_1.promises.rm(tempRoot, { recursive: true, force: true });
+                await fsp.rm(tempRoot, { recursive: true, force: true });
             }
             catch (error) {
                 if (error && error.code !== 'ENOENT') {
@@ -208,7 +169,7 @@ async function runInit(parsed, _config, _paths) {
                 }
             }
         }
-        await (0, fs_utils_1.ensureDir)(backupsRoot);
+        await ensureDir(backupsRoot);
         // Use wizard selections in interactive mode, or select defaults in automation mode
         if (!isInteractive && !executor) {
             const selected = await selectExecutorAndModel(flags);
@@ -219,14 +180,14 @@ async function runInit(parsed, _config, _paths) {
         await initializeProviderStatus(cwd);
         await applyExecutorDefaults(targetGenie, executor, model);
         // Configure MCP servers for both Codex and Claude Code
-        await (0, mcp_config_1.configureBothExecutors)(cwd);
+        await configureBothExecutors(cwd);
         // TODO: Add install chat flow here (future enhancement)
         const summary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
-        await (0, view_helpers_1.emitView)(buildInitSummaryView(summary), parsed.options);
+        await emitView(buildInitSummaryView(summary), parsed.options);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Init failed', message), parsed.options, { stream: process.stderr });
+        await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
         process.exitCode = 1;
     }
 }
@@ -271,15 +232,15 @@ function parseFlags(args) {
     return flags;
 }
 async function copyTemplateFiles(packageRoot, template, targetGenie) {
-    const blacklist = (0, paths_1.getTemplateRelativeBlacklist)();
-    await (0, fs_utils_1.ensureDir)(targetGenie);
+    const blacklist = getTemplateRelativeBlacklist();
+    await ensureDir(targetGenie);
     // 1. Copy root agents/workflows from package .genie/
-    const rootGenieDir = path_1.default.join(packageRoot, '.genie');
-    await (0, fs_utils_1.copyDirectory)(rootGenieDir, targetGenie, {
+    const rootGenieDir = path.join(packageRoot, '.genie');
+    await copyDirectory(rootGenieDir, targetGenie, {
         filter: (relPath) => {
             if (!relPath)
                 return true;
-            const firstSeg = relPath.split(path_1.default.sep)[0];
+            const firstSeg = relPath.split(path.sep)[0];
             // Only copy: agents, workflows, skills, AGENTS.md, config.yaml
             if (['agents', 'workflows', 'skills'].includes(firstSeg))
                 return true;
@@ -289,13 +250,13 @@ async function copyTemplateFiles(packageRoot, template, targetGenie) {
         }
     });
     // 2. Copy chosen collective DIRECTORY (preserving structure)
-    const collectiveSource = path_1.default.join(packageRoot, '.genie', template);
-    const collectiveTarget = path_1.default.join(targetGenie, template);
-    await (0, fs_utils_1.copyDirectory)(collectiveSource, collectiveTarget, {
+    const collectiveSource = path.join(packageRoot, '.genie', template);
+    const collectiveTarget = path.join(targetGenie, template);
+    await copyDirectory(collectiveSource, collectiveTarget, {
         filter: (relPath) => {
             if (!relPath)
                 return true;
-            const firstSeg = relPath.split(path_1.default.sep)[0];
+            const firstSeg = relPath.split(path.sep)[0];
             return !blacklist.has(firstSeg);
         }
     });
@@ -304,41 +265,41 @@ async function copyTemplateRootFiles(packageRoot, targetDir, template) {
     // Copy AGENTS.md and .gitignore from package root; never copy CLAUDE.md
     const rootFiles = ['AGENTS.md', '.gitignore'];
     for (const file of rootFiles) {
-        const sourcePath = path_1.default.join(packageRoot, file);
-        const targetPath = path_1.default.join(targetDir, file);
-        if (await (0, fs_utils_1.pathExists)(sourcePath)) {
-            await fs_1.promises.copyFile(sourcePath, targetPath);
+        const sourcePath = path.join(packageRoot, file);
+        const targetPath = path.join(targetDir, file);
+        if (await pathExists(sourcePath)) {
+            await fsp.copyFile(sourcePath, targetPath);
         }
     }
     // If user has CLAUDE.md, ensure it references @AGENTS.md for compatibility
-    const userClaude = path_1.default.join(targetDir, 'CLAUDE.md');
-    if (await (0, fs_utils_1.pathExists)(userClaude)) {
-        const content = await fs_1.promises.readFile(userClaude, 'utf8');
+    const userClaude = path.join(targetDir, 'CLAUDE.md');
+    if (await pathExists(userClaude)) {
+        const content = await fsp.readFile(userClaude, 'utf8');
         if (!/@AGENTS\.md/i.test(content)) {
             const next = content.trimEnd() + `\n\n@AGENTS.md\n`;
-            await fs_1.promises.writeFile(userClaude, next, 'utf8');
+            await fsp.writeFile(userClaude, next, 'utf8');
         }
     }
 }
 async function migrateAgentsDocs(cwd) {
     try {
         // Remove mistaken .genie/agents.genie if present
-        const mistaken = path_1.default.join(cwd, '.genie', 'agents.genie');
+        const mistaken = path.join(cwd, '.genie', 'agents.genie');
         try {
-            await fs_1.promises.rm(mistaken, { force: true });
+            await fsp.rm(mistaken, { force: true });
         }
         catch { }
         // Ensure domain AGENTS.md include the root AGENTS.md directly
         const domains = [
-            path_1.default.join(cwd, '.genie', 'code', 'AGENTS.md'),
-            path_1.default.join(cwd, '.genie', 'create', 'AGENTS.md')
+            path.join(cwd, '.genie', 'code', 'AGENTS.md'),
+            path.join(cwd, '.genie', 'create', 'AGENTS.md')
         ];
         for (const domainFile of domains) {
             try {
-                const raw = await fs_1.promises.readFile(domainFile, 'utf8');
+                const raw = await fsp.readFile(domainFile, 'utf8');
                 if (!/@AGENTS\.md/i.test(raw)) {
                     const next = raw.trimEnd() + `\n\n@AGENTS.md\n`;
-                    await fs_1.promises.writeFile(domainFile, next, 'utf8');
+                    await fsp.writeFile(domainFile, next, 'utf8');
                 }
             }
             catch (_) { }
@@ -350,7 +311,7 @@ async function migrateAgentsDocs(cwd) {
 }
 async function selectExecutorAndModel(flags) {
     // Build list from packaged executors (Forge handles binaries internally)
-    const keys = Object.keys(executor_registry_1.EXECUTORS);
+    const keys = Object.keys(EXECUTORS);
     let defaultKey = keys.includes('codex') ? 'codex' : (keys[0] || 'codex');
     // Non-interactive default
     if (!process.stdout.isTTY || flags.yes) {
@@ -358,11 +319,11 @@ async function selectExecutorAndModel(flags) {
     }
     const executor = await promptExecutorArrow(keys, defaultKey);
     // Prompt model with default based on current config file (if present)
-    const configPath = path_1.default.join(process.cwd(), '.genie', 'config.yaml');
+    const configPath = path.join(process.cwd(), '.genie', 'config.yaml');
     let defaultModel = executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
     try {
-        const raw = await fs_1.promises.readFile(configPath, 'utf8');
-        const data = yaml_1.default.parse(raw) || {};
+        const raw = await fsp.readFile(configPath, 'utf8');
+        const data = YAML.parse(raw) || {};
         defaultModel = data?.executionModes?.default?.overrides?.exec?.model || defaultModel;
     }
     catch { }
@@ -385,10 +346,10 @@ async function promptTemplateChoice() {
     process.exit(0);
 }
 async function writeVersionState(cwd, backupId, _legacyBackedUp) {
-    const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
-    const version = (0, package_1.getPackageVersion)();
+    const versionPath = resolveWorkspaceVersionPath(cwd);
+    const version = getPackageVersion();
     const now = new Date().toISOString();
-    const existing = await fs_1.promises.readFile(versionPath, 'utf8').catch(() => null);
+    const existing = await fsp.readFile(versionPath, 'utf8').catch(() => null);
     let installedAt = now;
     if (existing) {
         try {
@@ -399,7 +360,7 @@ async function writeVersionState(cwd, backupId, _legacyBackedUp) {
             installedAt = now;
         }
     }
-    await (0, fs_utils_1.writeJsonFile)(versionPath, {
+    await writeJsonFile(versionPath, {
         version,
         installedAt,
         lastUpdated: now,
@@ -410,10 +371,10 @@ async function writeVersionState(cwd, backupId, _legacyBackedUp) {
     });
 }
 async function initializeProviderStatus(cwd) {
-    const statusPath = (0, paths_1.resolveProviderStatusPath)(cwd);
-    const existing = await (0, fs_utils_1.pathExists)(statusPath);
+    const statusPath = resolveProviderStatusPath(cwd);
+    const existing = await pathExists(statusPath);
     if (!existing) {
-        await (0, fs_utils_1.writeJsonFile)(statusPath, { entries: [] });
+        await writeJsonFile(statusPath, { entries: [] });
     }
 }
 function buildInitSummaryView(summary) {
@@ -424,7 +385,7 @@ function buildInitSummaryView(summary) {
         `📚 Template source: ${summary.templateSource}`,
         `🛠️ Started Install agent via Genie run`
     ];
-    return (0, common_1.buildInfoView)('Genie initialization complete', messages.filter(Boolean));
+    return buildInfoView('Genie initialization complete', messages.filter(Boolean));
 }
 async function applyExecutorDefaults(genieRoot, executorKey, model) {
     await Promise.all([
@@ -434,20 +395,20 @@ async function applyExecutorDefaults(genieRoot, executorKey, model) {
 }
 async function updateProjectConfig(genieRoot, executorKey, model) {
     // Prefer project-level .genie/config.yaml; fallback to legacy .genie/cli/config.yaml
-    const primaryConfigPath = path_1.default.join(genieRoot, 'config.yaml');
-    const legacyConfigPath = path_1.default.join(genieRoot, 'cli', 'config.yaml');
-    const configPath = (await fs_1.promises
+    const primaryConfigPath = path.join(genieRoot, 'config.yaml');
+    const legacyConfigPath = path.join(genieRoot, 'cli', 'config.yaml');
+    const configPath = (await fsp
         .access(primaryConfigPath)
         .then(() => true)
         .catch(() => false)) ? primaryConfigPath : legacyConfigPath;
-    const exists = await fs_1.promises
+    const exists = await fsp
         .access(configPath)
         .then(() => true)
         .catch(() => false);
     if (!exists) {
         return;
     }
-    const original = await fs_1.promises.readFile(configPath, 'utf8');
+    const original = await fsp.readFile(configPath, 'utf8');
     let updated = original;
     // defaults.executor
     updated = replaceFirst(updated, /(defaults:\s*\n\s*executor:\s*)([^\s#]+)/, `$1${executorKey}`);
@@ -462,19 +423,19 @@ async function updateProjectConfig(genieRoot, executorKey, model) {
         return block;
     });
     if (updated !== original) {
-        await fs_1.promises.writeFile(configPath, updated, 'utf8');
+        await fsp.writeFile(configPath, updated, 'utf8');
     }
 }
 async function updateAgentsForExecutor(genieRoot, executor, model) {
-    const agentsDir = path_1.default.join(genieRoot, 'agents');
+    const agentsDir = path.join(genieRoot, 'agents');
     // Skip if agents directory doesn't exist (blacklisted during init)
-    const agentsDirExists = await (0, fs_utils_1.pathExists)(agentsDir);
+    const agentsDirExists = await pathExists(agentsDir);
     if (!agentsDirExists) {
         return;
     }
     const files = await collectAgentFiles(agentsDir);
     await Promise.all(files.map(async (file) => {
-        const original = await fs_1.promises.readFile(file, 'utf8');
+        const original = await fsp.readFile(file, 'utf8');
         if (!original.startsWith('---'))
             return;
         const end = original.indexOf('\n---', 3);
@@ -483,7 +444,7 @@ async function updateAgentsForExecutor(genieRoot, executor, model) {
         const frontMatterContent = original.slice(4, end);
         let data;
         try {
-            data = yaml_1.default.parse(frontMatterContent) || {};
+            data = YAML.parse(frontMatterContent) || {};
         }
         catch {
             return; // skip files with invalid front matter
@@ -497,18 +458,18 @@ async function updateAgentsForExecutor(genieRoot, executor, model) {
         genieMeta.executor = executor;
         if (model)
             genieMeta.model = model;
-        const nextFrontMatter = yaml_1.default.stringify(data, { indent: 2 }).trimEnd();
+        const nextFrontMatter = YAML.stringify(data, { indent: 2 }).trimEnd();
         const nextContent = `---\n${nextFrontMatter}\n---${original.slice(end + 4)}`;
         if (nextContent !== original) {
-            await fs_1.promises.writeFile(file, nextContent, 'utf8');
+            await fsp.writeFile(file, nextContent, 'utf8');
         }
     }));
 }
 async function collectAgentFiles(dir) {
-    const entries = await fs_1.promises.readdir(dir, { withFileTypes: true });
+    const entries = await fsp.readdir(dir, { withFileTypes: true });
     const files = [];
     for (const entry of entries) {
-        const fullPath = path_1.default.join(dir, entry.name);
+        const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
             const nested = await collectAgentFiles(fullPath);
             files.push(...nested);
@@ -624,8 +585,8 @@ function mapExecutorToForgeProfile(executorKey) {
 }
 async function runInstallViaCli(cwd, template, flags) {
     try {
-        const { spawn } = await Promise.resolve().then(() => __importStar(require('child_process')));
-        const cliPath = path_1.default.join((0, paths_1.getPackageRoot)(), '.genie', 'cli', 'dist', 'genie.js');
+        const { spawn } = await import('child_process');
+        const cliPath = path.join(getPackageRoot(), '.genie', 'cli', 'dist', 'genie.js');
         const workflowPath = template === 'create'
             ? '@.genie/create/workflows/install.md'
             : '@.genie/code/workflows/install.md';

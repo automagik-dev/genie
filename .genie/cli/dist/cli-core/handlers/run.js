@@ -1,30 +1,27 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createRunHandler = createRunHandler;
-const agent_resolver_1 = require("../../lib/agent-resolver");
-const session_store_1 = require("../../session-store");
-const forge_executor_1 = require("../../lib/forge-executor");
-const forge_helpers_1 = require("../../lib/forge-helpers");
-function createRunHandler(ctx) {
+import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
+import { generateSessionName } from '../../session-store';
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+export function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
         if (!agentName) {
             throw new Error('Usage: genie run <agent> "<prompt>"');
         }
         const prompt = promptParts.join(' ').trim();
-        const resolvedAgentName = (0, agent_resolver_1.resolveAgentIdentifier)(agentName);
-        const agentSpec = (0, agent_resolver_1.loadAgentSpec)(resolvedAgentName);
+        const resolvedAgentName = resolveAgentIdentifier(agentName);
+        const agentSpec = loadAgentSpec(resolvedAgentName);
         const agentGenie = agentSpec.meta?.genie || {};
         const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
-        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
+        const forgeExecutor = createForgeExecutor();
         try {
             await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
         }
         catch (error) {
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            const reason = describeForgeError(error);
             ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
             console.error(`[DEBUG] syncProfiles error:`, error);
-            throw new Error(`Forge backend unavailable while starting a session. ${forge_helpers_1.FORGE_RECOVERY_HINT}\nReason: ${reason}`);
+            throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}\nReason: ${reason}`);
         }
         let attemptId;
         try {
@@ -38,11 +35,11 @@ function createRunHandler(ctx) {
             });
         }
         catch (error) {
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            const reason = describeForgeError(error);
             ctx.recordRuntimeWarning(`Forge session creation failed: ${reason}`);
-            throw new Error(`Forge backend rejected session creation. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+            throw new Error(`Forge backend rejected session creation. ${FORGE_RECOVERY_HINT}`);
         }
-        const sessionName = parsed.options.name || (0, session_store_1.generateSessionName)(resolvedAgentName);
+        const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
         const now = new Date().toISOString();
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         store.sessions[sessionName] = {

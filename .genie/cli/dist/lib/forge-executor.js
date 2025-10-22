@@ -1,14 +1,10 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ForgeExecutor = void 0;
-exports.createForgeExecutor = createForgeExecutor;
 // @ts-ignore - forge.js is compiled JS without type declarations
-const forge_js_1 = require("../../../../forge.js");
-const child_process_1 = require("child_process");
-class ForgeExecutor {
+import { ForgeClient } from '../../../../forge.js';
+import { execSync } from 'child_process';
+export class ForgeExecutor {
     constructor(config) {
         this.config = config;
-        this.forge = new forge_js_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
+        this.forge = new ForgeClient(config.forgeBaseUrl, config.forgeToken);
     }
     async syncProfiles(profiles) {
         // Skip profile sync for now - Forge manages profiles separately
@@ -21,7 +17,7 @@ class ForgeExecutor {
         // Detect current git branch and use it as base_branch
         let baseBranch = 'main'; // Default fallback
         try {
-            baseBranch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
+            baseBranch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: process.cwd() }).trim();
             await this.forge.updateProject(projectId, { default_base_branch: baseBranch });
         }
         catch (error) {
@@ -172,8 +168,7 @@ class ForgeExecutor {
         return agentEmojis[normalized] || '🧞'; // Default to genie emoji
     }
 }
-exports.ForgeExecutor = ForgeExecutor;
-function createForgeExecutor(config = {}) {
+export function createForgeExecutor(config = {}) {
     const defaultConfig = {
         forgeBaseUrl: process.env.FORGE_BASE_URL || 'http://localhost:8887',
         forgeToken: process.env.FORGE_TOKEN,

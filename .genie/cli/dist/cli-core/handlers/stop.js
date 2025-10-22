@@ -1,9 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createStopHandler = createStopHandler;
-const forge_executor_1 = require("../../lib/forge-executor");
-const forge_helpers_1 = require("../../lib/forge-helpers");
-function createStopHandler(ctx) {
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+export function createStopHandler(ctx) {
     return async (parsed) => {
         const [sessionName] = parsed.commandArgs;
         if (!sessionName) {
@@ -18,14 +15,14 @@ function createStopHandler(ctx) {
                 message: `No session found with name '${sessionName}'.`
             };
         }
-        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
+        const forgeExecutor = createForgeExecutor();
         try {
             await forgeExecutor.stopSession(entry.sessionId);
         }
         catch (error) {
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            const reason = describeForgeError(error);
             ctx.recordRuntimeWarning(`Forge stop failed: ${reason}`);
-            throw new Error(`Forge backend unavailable while stopping '${sessionName}'. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+            throw new Error(`Forge backend unavailable while stopping '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
         }
         entry.status = 'stopped';
         entry.lastUsed = new Date().toISOString();

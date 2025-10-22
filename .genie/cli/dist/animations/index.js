@@ -1,11 +1,4 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ConstellationAnimation = exports.ScrollAnimation = exports.PortalAnimation = exports.LampAnimation = void 0;
-var LampAnimation_js_1 = require("./LampAnimation.js");
-Object.defineProperty(exports, "LampAnimation", { enumerable: true, get: function () { return LampAnimation_js_1.LampAnimation; } });
-var PortalAnimation_js_1 = require("./PortalAnimation.js");
-Object.defineProperty(exports, "PortalAnimation", { enumerable: true, get: function () { return PortalAnimation_js_1.PortalAnimation; } });
-var ScrollAnimation_js_1 = require("./ScrollAnimation.js");
-Object.defineProperty(exports, "ScrollAnimation", { enumerable: true, get: function () { return ScrollAnimation_js_1.ScrollAnimation; } });
-var ConstellationAnimation_js_1 = require("./ConstellationAnimation.js");
-Object.defineProperty(exports, "ConstellationAnimation", { enumerable: true, get: function () { return ConstellationAnimation_js_1.ConstellationAnimation; } });
+export { LampAnimation } from './LampAnimation.js';
+export { PortalAnimation } from './PortalAnimation.js';
+export { ScrollAnimation } from './ScrollAnimation.js';
+export { ConstellationAnimation } from './ConstellationAnimation.js';

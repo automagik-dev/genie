@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Display Path Transformation Utility
  *
@@ -10,8 +9,6 @@
  * NOTE: This is a copy of .genie/cli/src/lib/display-transform.ts
  * Both packages (CLI and MCP) are independent, so each maintains its own copy.
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.transformDisplayPath = transformDisplayPath;
 /**
  * Transforms agent paths for display by stripping template/category folders
  * while preserving parent/child workflow relationships.
@@ -28,7 +25,7 @@ exports.transformDisplayPath = transformDisplayPath;
  * transformDisplayPath("code/agents/git/git") // { displayId: "git", displayFolder: null }
  * transformDisplayPath("code/agents/git/workflows/issue") // { displayId: "git/workflows/issue", displayFolder: "git" }
  */
-function transformDisplayPath(normalizedId) {
+export function transformDisplayPath(normalizedId) {
     const parts = normalizedId.split('/');
     const templateFolders = ['code', 'create'];
     const categoryFolders = ['agents', 'workflows'];

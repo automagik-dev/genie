@@ -1,27 +1,19 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.configureCodexMcp = configureCodexMcp;
-exports.configureClaudeMcp = configureClaudeMcp;
-exports.configureBothExecutors = configureBothExecutors;
-const fs_1 = require("fs");
-const path_1 = __importDefault(require("path"));
-const os_1 = __importDefault(require("os"));
-const fs_utils_1 = require("./fs-utils");
+import { promises as fsp } from 'fs';
+import path from 'path';
+import os from 'os';
+import { pathExists, ensureDir, writeJsonFile } from './fs-utils';
 /**
  * Configure Codex MCP server (global ~/.codex/config.toml)
  */
-async function configureCodexMcp() {
-    const codexConfigDir = path_1.default.join(os_1.default.homedir(), '.codex');
-    const codexConfigPath = path_1.default.join(codexConfigDir, 'config.toml');
-    if (!(await (0, fs_utils_1.pathExists)(codexConfigPath))) {
+export async function configureCodexMcp() {
+    const codexConfigDir = path.join(os.homedir(), '.codex');
+    const codexConfigPath = path.join(codexConfigDir, 'config.toml');
+    if (!(await pathExists(codexConfigPath))) {
         console.log('⚠️  Codex config not found at ~/.codex/config.toml');
         console.log('   Skipping Codex MCP configuration');
         return;
     }
-    const content = await fs_1.promises.readFile(codexConfigPath, 'utf8');
+    const content = await fsp.readFile(codexConfigPath, 'utf8');
     // Check if genie MCP server already configured correctly
     const hasGenieSection = /\[mcp_servers\.genie\]/i.test(content);
     const hasCorrectCommand = /command\s*=\s*"npx"[\s\S]*?args\s*=\s*\[[\s\S]*?"automagik-genie@next"/i.test(content);
@@ -59,20 +51,20 @@ args = ["automagik-genie@next", "mcp"]
         }
         console.log('✅ Added Genie MCP configuration to Codex');
     }
-    await fs_1.promises.writeFile(codexConfigPath, newContent, 'utf8');
+    await fsp.writeFile(codexConfigPath, newContent, 'utf8');
 }
 /**
  * Configure Claude Code MCP server (project-local .mcp.json or global)
  */
-async function configureClaudeMcp(projectDir) {
+export async function configureClaudeMcp(projectDir) {
     // Claude Code supports both project-local and global configs
     // We'll configure project-local if projectDir provided
     const mcpPath = projectDir
-        ? path_1.default.join(projectDir, '.mcp.json')
-        : path_1.default.join(os_1.default.homedir(), '.claude', 'claude_desktop_config.json');
+        ? path.join(projectDir, '.mcp.json')
+        : path.join(os.homedir(), '.claude', 'claude_desktop_config.json');
     let mcpConfig = { mcpServers: {} };
-    if (await (0, fs_utils_1.pathExists)(mcpPath)) {
-        const content = await fs_1.promises.readFile(mcpPath, 'utf8');
+    if (await pathExists(mcpPath)) {
+        const content = await fsp.readFile(mcpPath, 'utf8');
         mcpConfig = JSON.parse(content);
     }
     // Ensure mcpServers exists
@@ -100,19 +92,19 @@ async function configureClaudeMcp(projectDir) {
     };
     // Ensure parent directory exists
     if (projectDir) {
-        await (0, fs_utils_1.ensureDir)(projectDir);
+        await ensureDir(projectDir);
     }
     else {
-        await (0, fs_utils_1.ensureDir)(path_1.default.join(os_1.default.homedir(), '.claude'));
+        await ensureDir(path.join(os.homedir(), '.claude'));
     }
-    await (0, fs_utils_1.writeJsonFile)(mcpPath, mcpConfig);
+    await writeJsonFile(mcpPath, mcpConfig);
     console.log(`✅ ${existingGenie ? 'Updated' : 'Added'} Genie MCP configuration for Claude Code${projectDir ? ' (project-local)' : ' (global)'}`);
     console.log(`✅ ${existingForge ? 'Updated' : 'Added'} Forge MCP configuration${projectDir ? ' (project-local)' : ' (global)'}`);
 }
 /**
  * Configure MCP for both executors
  */
-async function configureBothExecutors(projectDir) {
+export async function configureBothExecutors(projectDir) {
     console.log('');
     console.log('🔧 Configuring MCP servers for executors...');
     console.log('');

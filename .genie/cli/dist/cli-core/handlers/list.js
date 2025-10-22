@@ -1,18 +1,12 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createListHandler = createListHandler;
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
-const agent_resolver_1 = require("../../lib/agent-resolver");
-const forge_executor_1 = require("../../lib/forge-executor");
-const forge_helpers_1 = require("../../lib/forge-helpers");
-const markdown_formatter_1 = require("../../lib/markdown-formatter");
-const utils_1 = require("../../lib/utils");
+import fs from 'fs';
+import path from 'path';
+import { listAgents, listCollectives } from '../../lib/agent-resolver';
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+import { formatSessionList } from '../../lib/markdown-formatter';
+import { truncateText } from '../../lib/utils';
 const COLLECTIVE_MARKER = 'AGENTS.md';
-function createListHandler(ctx) {
+export function createListHandler(ctx) {
     return async (parsed) => {
         const [targetRaw] = parsed.commandArgs;
         const target = (targetRaw || 'collectives').toLowerCase();
@@ -26,20 +20,20 @@ function createListHandler(ctx) {
             return listSkillsView(ctx, parsed);
         }
         if (target === 'sessions') {
-            const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
+            const forgeExecutor = createForgeExecutor();
             let forgeAvailable = true;
             try {
                 await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
             }
             catch (error) {
                 forgeAvailable = false;
-                const reason = (0, forge_helpers_1.describeForgeError)(error);
+                const reason = describeForgeError(error);
                 ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
             }
             if (forgeAvailable) {
                 try {
                     const sessions = await forgeExecutor.listSessions();
-                    const markdown = (0, markdown_formatter_1.formatSessionList)(sessions.map((session) => ({
+                    const markdown = formatSessionList(sessions.map((session) => ({
                         sessionId: session.id,
                         agent: session.agent,
                         status: session.status,
@@ -53,7 +47,7 @@ function createListHandler(ctx) {
                 }
                 catch (error) {
                     forgeAvailable = false;
-                    const reason = (0, forge_helpers_1.describeForgeError)(error);
+                    const reason = describeForgeError(error);
                     ctx.recordRuntimeWarning(`Forge session listing failed: ${reason}`);
                 }
             }
@@ -67,10 +61,10 @@ function createListHandler(ctx) {
                 started: entry.created,
                 updated: entry.lastUsed
             }));
-            const markdown = (0, markdown_formatter_1.formatSessionList)(sessions);
+            const markdown = formatSessionList(sessions);
             const fallbackLines = [
                 '⚠️ Forge backend unreachable. Showing cached sessions from `.genie/state/agents/sessions.json`.',
-                forge_helpers_1.FORGE_RECOVERY_HINT,
+                FORGE_RECOVERY_HINT,
                 '',
                 markdown.trim()
             ];
@@ -81,9 +75,9 @@ function createListHandler(ctx) {
     };
 }
 async function listCollectivesView(ctx, parsed) {
-    const allCollectives = (0, agent_resolver_1.listCollectives)();
+    const allCollectives = listCollectives();
     const activeCollectives = allCollectives.filter(info => info.agentsDir);
-    const agents = (0, agent_resolver_1.listAgents)();
+    const agents = listAgents();
     const agentsByCollective = new Map();
     agents.forEach(agent => {
         const key = agent.collective || 'root';
@@ -92,10 +86,10 @@ async function listCollectivesView(ctx, parsed) {
         }
         agentsByCollective.get(key).push(agent);
     });
-    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
+    const workspaceRoot = path.join(process.cwd(), '.genie');
     const workspaceDocs = listMarkdownDocs(workspaceRoot, new Set([COLLECTIVE_MARKER]));
     const supportingDirs = ['skills', 'product', 'teams']
-        .filter(dir => fs_1.default.existsSync(path_1.default.join(workspaceRoot, dir)) && fs_1.default.statSync(path_1.default.join(workspaceRoot, dir)).isDirectory());
+        .filter(dir => fs.existsSync(path.join(workspaceRoot, dir)) && fs.statSync(path.join(workspaceRoot, dir)).isDirectory());
     const orderedCollectives = activeCollectives.slice().sort((a, b) => a.collective.localeCompare(b.collective));
     const lines = [];
     lines.push(`# Genie Atlas`);
@@ -143,31 +137,31 @@ async function listCollectivesView(ctx, parsed) {
     await ctx.emitView(lines.join('\n'), parsed.options);
 }
 function listMarkdownDocs(dir, exclude = new Set()) {
-    if (!fs_1.default.existsSync(dir) || !fs_1.default.statSync(dir).isDirectory())
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory())
         return [];
-    return fs_1.default
+    return fs
         .readdirSync(dir, { withFileTypes: true })
         .filter(entry => entry.isFile() && entry.name.endsWith('.md') && !exclude.has(entry.name))
         .map(entry => entry.name.replace(/\.md$/i, ''))
         .sort((a, b) => a.localeCompare(b));
 }
 function buildCollectiveSummary(info, agents) {
-    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
-    const relativePath = path_1.default.relative(workspaceRoot, info.root) || '.genie';
+    const workspaceRoot = path.join(process.cwd(), '.genie');
+    const relativePath = path.relative(workspaceRoot, info.root) || '.genie';
     // Discover documented workflows under <collective>/workflows (markdown)
-    const workflowsDir = path_1.default.join(info.root, 'workflows');
-    const workflows = fs_1.default.existsSync(workflowsDir) && fs_1.default.statSync(workflowsDir).isDirectory()
+    const workflowsDir = path.join(info.root, 'workflows');
+    const workflows = fs.existsSync(workflowsDir) && fs.statSync(workflowsDir).isDirectory()
         ? listMarkdownDocs(workflowsDir)
         : [];
     const agentTree = agents.length ? renderTree(buildTree(agents)) : [];
-    const skillsDir = path_1.default.join(info.root, 'skills');
-    const skills = fs_1.default.existsSync(skillsDir) && fs_1.default.statSync(skillsDir).isDirectory()
+    const skillsDir = path.join(info.root, 'skills');
+    const skills = fs.existsSync(skillsDir) && fs.statSync(skillsDir).isDirectory()
         ? listMarkdownDocs(skillsDir)
         : [];
-    const teamsDir = path_1.default.join(info.root, 'teams');
+    const teamsDir = path.join(info.root, 'teams');
     const teams = [];
-    if (fs_1.default.existsSync(teamsDir) && fs_1.default.statSync(teamsDir).isDirectory()) {
-        const entries = fs_1.default.readdirSync(teamsDir, { withFileTypes: true });
+    if (fs.existsSync(teamsDir) && fs.statSync(teamsDir).isDirectory()) {
+        const entries = fs.readdirSync(teamsDir, { withFileTypes: true });
         entries.forEach(entry => {
             if (entry.name.startsWith('.'))
                 return;
@@ -200,10 +194,10 @@ function buildCollectiveSummary(info, agents) {
         workflows,
         skills,
         teams,
-        agentsDir: info.agentsDir ? path_1.default.relative(workspaceRoot, info.agentsDir) : null,
-        workflowsDir: workflows.length ? path_1.default.relative(workspaceRoot, workflowsDir) : null,
-        skillsDir: skills.length ? path_1.default.relative(workspaceRoot, skillsDir) : null,
-        teamsDir: teams.length ? path_1.default.relative(workspaceRoot, teamsDir) : null,
+        agentsDir: info.agentsDir ? path.relative(workspaceRoot, info.agentsDir) : null,
+        workflowsDir: workflows.length ? path.relative(workspaceRoot, workflowsDir) : null,
+        skillsDir: skills.length ? path.relative(workspaceRoot, skillsDir) : null,
+        teamsDir: teams.length ? path.relative(workspaceRoot, teamsDir) : null,
         agentTree,
         notes
     };
@@ -250,7 +244,7 @@ function renderTree(node, prefix = '', isLast = true, depth = 0) {
     if (depth > 0) {
         const connector = isLast ? '└── ' : '├── ';
         const icon = node.type === 'agent' ? '🧠' : node.type === 'workflow' ? '⚙️ ' : node.type === 'skill' ? '💡' : '📁';
-        const desc = node.description ? ` - ${(0, utils_1.truncateText)(node.description, 80)}` : '';
+        const desc = node.description ? ` - ${truncateText(node.description, 80)}` : '';
         lines.push(`${prefix}${connector}${icon} ${node.name}${desc}`);
     }
     const children = Array.from(node.children.values()).sort((a, b) => {
@@ -280,10 +274,10 @@ function formatInlineList(items, label, limit = 6) {
     return `${label}: ${truncated.join(', ')}`;
 }
 async function listWorkflowsView(ctx, parsed) {
-    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
-    const globalWorkflowsDir = path_1.default.join(workspaceRoot, 'workflows');
+    const workspaceRoot = path.join(process.cwd(), '.genie');
+    const globalWorkflowsDir = path.join(workspaceRoot, 'workflows');
     const globalWorkflows = listMarkdownDocs(globalWorkflowsDir);
-    const collectives = (0, agent_resolver_1.listCollectives)();
+    const collectives = listCollectives();
     const ordered = collectives.slice().sort((a, b) => a.collective.localeCompare(b.collective));
     const lines = [];
     lines.push(`# Workflows Index`);
@@ -292,19 +286,19 @@ async function listWorkflowsView(ctx, parsed) {
     lines.push(globalWorkflows.length ? `- ${globalWorkflows.join('\n- ')}` : '_None_');
     lines.push('');
     ordered.forEach(info => {
-        const wfDir = path_1.default.join(info.root, 'workflows');
+        const wfDir = path.join(info.root, 'workflows');
         const items = listMarkdownDocs(wfDir);
-        lines.push(`## ${info.collective} (${path_1.default.relative(workspaceRoot, wfDir)})`);
+        lines.push(`## ${info.collective} (${path.relative(workspaceRoot, wfDir)})`);
         lines.push(items.length ? `- ${items.join('\n- ')}` : '_None_');
         lines.push('');
     });
     await ctx.emitView(lines.join('\n'), parsed.options);
 }
 async function listSkillsView(ctx, parsed) {
-    const workspaceRoot = path_1.default.join(process.cwd(), '.genie');
-    const globalSkillsDir = path_1.default.join(workspaceRoot, 'skills');
+    const workspaceRoot = path.join(process.cwd(), '.genie');
+    const globalSkillsDir = path.join(workspaceRoot, 'skills');
     const globalSkills = listMarkdownDocs(globalSkillsDir);
-    const collectives = (0, agent_resolver_1.listCollectives)();
+    const collectives = listCollectives();
     const ordered = collectives.slice().sort((a, b) => a.collective.localeCompare(b.collective));
     const lines = [];
     lines.push(`# Skills Index`);
@@ -313,9 +307,9 @@ async function listSkillsView(ctx, parsed) {
     lines.push(globalSkills.length ? `- ${globalSkills.join('\n- ')}` : '_None_');
     lines.push('');
     ordered.forEach(info => {
-        const skillsDir = path_1.default.join(info.root, 'skills');
+        const skillsDir = path.join(info.root, 'skills');
         const items = listMarkdownDocs(skillsDir);
-        lines.push(`## ${info.collective} (${path_1.default.relative(workspaceRoot, skillsDir)})`);
+        lines.push(`## ${info.collective} (${path.relative(workspaceRoot, skillsDir)})`);
         lines.push(items.length ? `- ${items.join('\n- ')}` : '_None_');
         lines.push('');
     });
