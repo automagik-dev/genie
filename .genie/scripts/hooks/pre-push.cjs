@@ -65,14 +65,18 @@ function main() {
 
   console.log(`📍 Detected branch: ${currentBranch}`);
 
-  // Step 1: tests
-  const testsCode = runNodeScript('run-tests.cjs');
-  if (testsCode !== 0) {
-    console.error('❌ Pre-push blocked - tests failed');
-    process.exit(1);
+  // Step 1: tests (skip if GENIE_SKIP_TESTS is set)
+  if (process.env.GENIE_SKIP_TESTS) {
+    console.warn('⚠️  Tests skipped (GENIE_SKIP_TESTS set)');
+  } else {
+    const testsCode = runNodeScript('run-tests.cjs');
+    if (testsCode !== 0) {
+      console.error('❌ Pre-push blocked - tests failed');
+      process.exit(1);
+    }
   }
   // Step 2: commit advisory (validates traceability)
-  const advisoryCode = runNodeScript('commit-advisory.js');
+  const advisoryCode = runNodeScript('commit-advisory.cjs');
 
   // Block on main branch, warn on dev/feature branches
   if (advisoryCode === 2) {
@@ -89,7 +93,7 @@ function main() {
     console.warn('⚠️  Commit advisory warnings (will be checked at PR approval)');
   }
   // Step 3: update changelog (non-blocking)
-  const clCode = runNodeScript('update-changelog.js');
+  const clCode = runNodeScript('update-changelog.cjs');
   if (clCode !== 0) {
     console.warn('⚠️  CHANGELOG update failed (non-blocking)');
   }

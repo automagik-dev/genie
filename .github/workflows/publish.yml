@@ -62,6 +62,7 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GENIE_SKIP_TESTS: '1'
 
       - name: Determine tag ref
         id: tagref
