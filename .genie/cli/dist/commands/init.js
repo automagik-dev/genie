@@ -10,6 +10,7 @@ const yaml_1 = __importDefault(require("yaml"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const executor_registry_1 = require("../lib/executor-registry");
+const collective_discovery_js_1 = require("../lib/collective-discovery.js");
 const paths_1 = require("../lib/paths");
 const fs_utils_1 = require("../lib/fs-utils");
 const package_1 = require("../lib/package");
@@ -30,10 +31,22 @@ async function runInit(parsed, _config, _paths) {
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
             const { runInitWizard } = await import('../views/init-wizard.js');
-            const templates = [
-                { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
-                { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
-            ];
+            // Discover collectives dynamically from .genie/ directory
+            const genieRoot = path_1.default.join(packageRoot, '.genie');
+            const discovered = await (0, collective_discovery_js_1.discoverCollectives)(genieRoot);
+            const templates = discovered.map(c => ({
+                value: c.id,
+                label: c.label || c.name,
+                description: c.description
+            }));
+            // Fallback if discovery fails
+            if (templates.length === 0) {
+                templates.push({
+                    value: 'code',
+                    label: '💻 Code',
+                    description: 'Full-stack development with Git, testing, CI/CD'
+                });
+            }
             const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
                 label: executor_registry_1.EXECUTORS[key].label,
                 value: key

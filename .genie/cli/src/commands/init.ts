@@ -7,6 +7,7 @@ import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
 import { promptExecutorChoice } from '../lib/executor-prompt.js';
 import { EXECUTORS } from '../lib/executor-registry';
+import { discoverCollectives } from '../lib/collective-discovery.js';
 import {
   getPackageRoot,
   getTemplateGeniePath,
@@ -73,10 +74,23 @@ export async function runInit(
       // Use dynamic import to load ESM Ink components
       const { runInitWizard } = await import('../views/init-wizard.js');
 
-      const templates = [
-        { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
-        { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
-      ];
+      // Discover collectives dynamically from .genie/ directory
+      const genieRoot = path.join(packageRoot, '.genie');
+      const discovered = await discoverCollectives(genieRoot);
+      const templates = discovered.map(c => ({
+        value: c.id,
+        label: c.label || c.name,
+        description: c.description
+      }));
+
+      // Fallback if discovery fails
+      if (templates.length === 0) {
+        templates.push({
+          value: 'code',
+          label: '💻 Code',
+          description: 'Full-stack development with Git, testing, CI/CD'
+        });
+      }
 
       const executors = Object.keys(EXECUTORS).map(key => ({
         label: EXECUTORS[key].label,
