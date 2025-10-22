@@ -1,4 +1,4 @@
-import type { CLIOptions } from './types';
+import type { CLIOptions } from './types.js';
 
 /**
  * emitView - Token-efficient markdown output (replaces Ink rendering)

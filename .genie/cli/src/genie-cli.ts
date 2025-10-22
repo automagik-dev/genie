@@ -12,9 +12,9 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import gradient from 'gradient-string';
-import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager';
-import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
-import { formatTokenMetrics } from './lib/token-tracker';
+import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager.js';
+import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats.js';
+import { formatTokenMetrics } from './lib/token-tracker.js';
 
 const program = new Command();
 

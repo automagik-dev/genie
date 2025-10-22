@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { recordStartupWarning } from './config';
-import { transformDisplayPath } from './display-transform';
+import { recordStartupWarning } from './config.js';
+import { transformDisplayPath } from './display-transform.js';
 let YAML = null;
 try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
