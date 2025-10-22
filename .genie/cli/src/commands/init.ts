@@ -314,15 +314,20 @@ async function copyTemplateFiles(
   const blacklist = getTemplateRelativeBlacklist();
   await ensureDir(targetGenie);
 
-  // 1. Copy root agents/workflows from package .genie/
+  // 1. Copy root agents/workflows/skills from package .genie/
   const rootGenieDir = path.join(packageRoot, '.genie');
   await copyDirectory(rootGenieDir, targetGenie, {
     filter: (relPath) => {
       if (!relPath) return true;
       const firstSeg = relPath.split(path.sep)[0];
-      // Only copy: agents, workflows, skills, AGENTS.md, config.yaml
+
+      // Blacklist takes priority (never copy these user directories)
+      if (blacklist.has(firstSeg)) return false;
+
+      // Only copy: agents, workflows, skills, AGENTS.md, CORE_AGENTS.md, config.yaml, templates
       if (['agents', 'workflows', 'skills'].includes(firstSeg)) return true;
       if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
+      if (relPath.endsWith('.template.md')) return true; // Copy all template files
       return false;
     }
   });
@@ -340,22 +345,13 @@ async function copyTemplateFiles(
 }
 
 async function copyTemplateRootFiles(packageRoot: string, targetDir: string, template: TemplateType): Promise<void> {
-  // Copy AGENTS.md and .gitignore from package root; never copy CLAUDE.md
-  const rootFiles = ['AGENTS.md', '.gitignore'];
+  // Copy AGENTS.md, CORE_AGENTS.md, CLAUDE.md, and .gitignore from package root
+  const rootFiles = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md', '.gitignore'];
   for (const file of rootFiles) {
     const sourcePath = path.join(packageRoot, file);
     const targetPath = path.join(targetDir, file);
     if (await pathExists(sourcePath)) {
       await fsp.copyFile(sourcePath, targetPath);
-    }
-  }
-  // If user has CLAUDE.md, ensure it references @AGENTS.md for compatibility
-  const userClaude = path.join(targetDir, 'CLAUDE.md');
-  if (await pathExists(userClaude)) {
-    const content = await fsp.readFile(userClaude, 'utf8');
-    if (!/@AGENTS\.md/i.test(content)) {
-      const next = content.trimEnd() + `\n\n@AGENTS.md\n`;
-      await fsp.writeFile(userClaude, next, 'utf8');
     }
   }
 }
