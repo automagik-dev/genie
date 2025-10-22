@@ -73,6 +73,10 @@ export function resolveWorkspaceVersionPath(cwd: string = process.cwd()): string
   return path.join(resolveTargetStatePath(cwd), 'version.json');
 }
 
+export function resolveWorkspacePackageJson(cwd: string = process.cwd()): string {
+  return path.join(resolveTargetGeniePath(cwd), 'package.json');
+}
+
 export function resolveProviderStatusPath(cwd: string = process.cwd()): string {
   return path.join(resolveTargetStatePath(cwd), 'provider-status.json');
 }

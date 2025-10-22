@@ -184,12 +184,21 @@ if (!args.length) {
 
 /**
  * Smart Router: Auto-detect scenario and route appropriately
- * - New user (no .genie/) → genie init
- * - Existing user with outdated version → genie init (with backup)
- * - Existing user with current version → genie server
+ *
+ * Detection logic:
+ * 1. No .genie/ → New user → Run init
+ * 2. .genie/ exists but no version.json → Pre-version-tracking user → Run init with backup
+ * 3. version.json exists but version mismatch → Outdated → Run init with backup
+ * 4. version.json exists and versions match → Up to date → Start server
+ *
+ * The .genie/state/version.json file is the "instance check file" containing:
+ * - version: Current Genie version installed
+ * - installedAt: ISO timestamp of first install
+ * - updatedAt: ISO timestamp of last update
  */
 async function smartRouter(): Promise<void> {
   const genieDir = path.join(process.cwd(), '.genie');
+  const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
   if (!hasGenieConfig) {
@@ -204,58 +213,63 @@ async function smartRouter(): Promise<void> {
 
     // Auto-run init
     execGenie(['init']);
-  } else {
-    // Check version to determine if update is needed
-    const versionPath = path.join(genieDir, 'state', 'version.json');
-    let needsUpdate = false;
+    return;
+  }
 
-    if (fs.existsSync(versionPath)) {
-      try {
-        const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
-        const installedVersion = versionData.version;
-        const currentVersion = packageJson.version;
+  // .genie exists - check for version.json (instance check file)
+  if (!fs.existsSync(versionPath)) {
+    // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log(magicGradient('        🧞 ✨ GENIE UPGRADE AVAILABLE ✨ 🧞        '));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('Detected Genie installation from before version tracking.');
+    console.log('Upgrading to latest version with automatic backup...');
+    console.log('');
+    console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+    console.log(successGradient('✓') + ' All your wishes, reports, and state will be preserved');
+    console.log('');
 
-        if (installedVersion !== currentVersion) {
-          needsUpdate = true;
+    execGenie(['init', '--yes']);
+    return;
+  }
 
-          // SCENARIO 2: EXISTING USER WITH OUTDATED VERSION → Run init (creates backup)
-          console.log(cosmicGradient('━'.repeat(60)));
-          console.log(magicGradient('        🧞 ✨ GENIE UPDATE DETECTED ✨ 🧞        '));
-          console.log(cosmicGradient('━'.repeat(60)));
-          console.log('');
-          console.log(`Installed version: ${successGradient(installedVersion)}`);
-          console.log(`Current version:   ${performanceGradient(currentVersion)}`);
-          console.log('');
-          console.log('Updating your Genie configuration...');
-          console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
-          console.log('');
+  // version.json exists - compare versions
+  try {
+    const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+    const installedVersion = versionData.version;
+    const currentVersion = packageJson.version;
 
-          // Auto-run init (which handles backup)
-          execGenie(['init', '--yes']);
-        }
-      } catch (error) {
-        // If version file is corrupted, treat as needing update
-        needsUpdate = true;
-        execGenie(['init', '--yes']);
-      }
-    } else {
-      // No version file = very old installation, needs update
-      needsUpdate = true;
+    if (installedVersion !== currentVersion) {
+      // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('        🧞 ✨ GENIE UPDATE NEEDED ✨ 🧞        '));
+      console.log(magicGradient('        🧞 ✨ GENIE UPDATE DETECTED ✨ 🧞        '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
-      console.log('Your Genie installation needs to be updated.');
+      console.log(`Installed version: ${successGradient(installedVersion)}`);
+      console.log(`Current version:   ${performanceGradient(currentVersion)}`);
+      console.log('');
+      console.log('Updating your Genie configuration...');
       console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
       console.log('');
 
       execGenie(['init', '--yes']);
+      return;
     }
 
-    if (!needsUpdate) {
-      // SCENARIO 3: EXISTING USER WITH CURRENT VERSION → Start server
-      await startGenieServer();
-    }
+    // SCENARIO 4: UP TO DATE - Versions match → Start server
+    await startGenieServer();
+  } catch (error) {
+    // Corrupted version.json - treat as needing update
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log(magicGradient('        🧞 ✨ GENIE REPAIR NEEDED ✨ 🧞        '));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('Version file is corrupted. Repairing installation...');
+    console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+    console.log('');
+
+    execGenie(['init', '--yes']);
   }
 }
 
