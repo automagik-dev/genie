@@ -8,7 +8,6 @@ const EXECUTOR_LABELS: Record<string, string> = {
   opencode: 'OpenCode (Forge)',
   codex: 'Codex (Forge)',
   claude: 'Claude Code (Forge)',
-  'claude-code': 'Claude Code (Forge)',
   gemini: 'Gemini (Forge)',
   cursor: 'Cursor (Forge)',
   qwen_code: 'Qwen Code (Forge)',
