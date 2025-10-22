@@ -625,12 +625,16 @@ async function runInstallViaCli(cwd, template, flags) {
             workflowPath
         ].join('\n');
         const baseUrl = flags?.forgeBaseUrl ? flags.forgeBaseUrl : (flags?.forgePort ? `http://localhost:${flags.forgePort}` : 'http://localhost:8887');
+        // Spawn child process but DON'T wait for it to close
+        // The install agent is interactive and should take over the terminal
         const child = spawn(process.execPath, [cliPath, 'run', agentId, prompt], {
             cwd,
             stdio: 'inherit',
+            detached: false, // Keep attached so parent can pass signals (Ctrl+C)
             env: { ...process.env, GENIE_USE_FORGE: '1', FORGE_BASE_URL: baseUrl }
         });
-        await new Promise((resolve) => child.on('close', () => resolve()));
+        // Don't wait for close - let the interactive session take over
+        // The parent (init command) will exit, leaving the child running
     }
     catch (err) {
         console.log(`⚠️  Failed to launch Install agent via CLI: ${err?.message || String(err)}`);
