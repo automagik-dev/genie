@@ -24,15 +24,6 @@
   <a href="#-development">Development</a> •
   <a href="#-contributing">Contributing</a>
 </p>
-
----
-
-**Version:** !`node -p "require('./package.json').version"` | **Status:** !`git status --porcelain | wc -l` uncommitted files
-
-**Quick Links:** [@AGENTS.md](./AGENTS.md) • [@CLAUDE.md](./CLAUDE.md) • [.genie/README.md](./.genie/README.md)
-
----
-
 ## 🚀 What is Automagik Genie?
 
 **Automagik Genie** is your persistent AI development orchestrator. It's the command center that turns conversations with AI into structured, trackable work through the **Wish → Forge → Review** workflow.
