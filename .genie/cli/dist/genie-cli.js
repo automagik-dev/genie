@@ -170,14 +170,14 @@ else {
 /**
  * Smart Router: Auto-detect scenario and route appropriately
  * - New user (no .genie/) → genie init
- * - Existing user → genie server
- * - Check for updates periodically
+ * - Existing user with outdated version → genie init (with backup)
+ * - Existing user with current version → genie server
  */
 async function smartRouter() {
     const genieDir = path_1.default.join(process.cwd(), '.genie');
     const hasGenieConfig = fs_1.default.existsSync(genieDir);
     if (!hasGenieConfig) {
-        // NEW USER: No .genie directory → Run init wizard
+        // SCENARIO 1: NEW USER - No .genie directory → Run init wizard
         console.log(cosmicGradient('━'.repeat(60)));
         console.log(magicGradient('        🧞 ✨ Welcome to GENIE! ✨ 🧞        '));
         console.log(cosmicGradient('━'.repeat(60)));
@@ -189,8 +189,53 @@ async function smartRouter() {
         execGenie(['init']);
     }
     else {
-        // EXISTING USER: .genie exists → Start server
-        await startGenieServer();
+        // Check version to determine if update is needed
+        const versionPath = path_1.default.join(genieDir, 'state', 'version.json');
+        let needsUpdate = false;
+        if (fs_1.default.existsSync(versionPath)) {
+            try {
+                const versionData = JSON.parse(fs_1.default.readFileSync(versionPath, 'utf8'));
+                const installedVersion = versionData.version;
+                const currentVersion = packageJson.version;
+                if (installedVersion !== currentVersion) {
+                    needsUpdate = true;
+                    // SCENARIO 2: EXISTING USER WITH OUTDATED VERSION → Run init (creates backup)
+                    console.log(cosmicGradient('━'.repeat(60)));
+                    console.log(magicGradient('        🧞 ✨ GENIE UPDATE DETECTED ✨ 🧞        '));
+                    console.log(cosmicGradient('━'.repeat(60)));
+                    console.log('');
+                    console.log(`Installed version: ${successGradient(installedVersion)}`);
+                    console.log(`Current version:   ${performanceGradient(currentVersion)}`);
+                    console.log('');
+                    console.log('Updating your Genie configuration...');
+                    console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+                    console.log('');
+                    // Auto-run init (which handles backup)
+                    execGenie(['init', '--yes']);
+                }
+            }
+            catch (error) {
+                // If version file is corrupted, treat as needing update
+                needsUpdate = true;
+                execGenie(['init', '--yes']);
+            }
+        }
+        else {
+            // No version file = very old installation, needs update
+            needsUpdate = true;
+            console.log(cosmicGradient('━'.repeat(60)));
+            console.log(magicGradient('        🧞 ✨ GENIE UPDATE NEEDED ✨ 🧞        '));
+            console.log(cosmicGradient('━'.repeat(60)));
+            console.log('');
+            console.log('Your Genie installation needs to be updated.');
+            console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+            console.log('');
+            execGenie(['init', '--yes']);
+        }
+        if (!needsUpdate) {
+            // SCENARIO 3: EXISTING USER WITH CURRENT VERSION → Start server
+            await startGenieServer();
+        }
     }
 }
 /**
