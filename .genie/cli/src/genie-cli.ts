@@ -338,16 +338,12 @@ ${footer}`;
 
     // Clear previous dashboard if not first render
     if (dashboardLines > 0) {
-      // Move cursor up and clear lines
-      for (let i = 0; i < dashboardLines; i++) {
-        process.stdout.write('\x1b[1A'); // Move up one line
-        process.stdout.write('\x1b[2K'); // Clear entire line
-      }
-      process.stdout.write('\r'); // Move to start of line
+      process.stdout.write('\x1b[2J'); // Clear entire screen
+      process.stdout.write('\x1b[H'); // Move cursor to home (0,0)
     }
 
     // Print new dashboard
-    console.log(dashboard);
+    process.stdout.write(dashboard + '\n');
 
     // Count lines for next update
     dashboardLines = dashboard.split('\n').length;
