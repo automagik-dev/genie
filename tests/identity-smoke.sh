@@ -88,14 +88,14 @@ fi
 # Test 3: Validate validation scripts exist
 echo ""
 echo "Checking validation scripts..."
-if [ -f "$REPO_DIR/.genie/scripts/validate-user-files-not-committed.js" ]; then
+if [ -f "$REPO_DIR/.genie/scripts/validate-user-files-not-committed.cjs" ]; then
   echo "✅ User file validator found"
 else
   echo "❌ User file validator missing"
   exit 1
 fi
 
-if [ -f "$REPO_DIR/.genie/scripts/validate-cross-references.js" ]; then
+if [ -f "$REPO_DIR/.genie/scripts/validate-cross-references.cjs" ]; then
   echo "✅ Cross-reference validator found"
 else
   echo "❌ Cross-reference validator missing"
