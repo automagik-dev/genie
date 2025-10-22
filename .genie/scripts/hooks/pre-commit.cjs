@@ -12,35 +12,36 @@ function run(script) {
   return res.status || 0;
 }
 
-function runGenie(agent, prompt) {
-  // Run Genie workflow and capture session ID + wait for completion
-  const { execSync } = require('child_process');
-  const fs = require('fs');
-
-  try {
-    const genieCliPath = path.join(gitRoot, '.genie', 'cli', 'dist', 'genie-cli.js');
-    if (!fs.existsSync(genieCliPath)) {
-      return { sessionId: null, success: true, message: 'Genie CLI not built (skipping workflow)' };
-    }
-
-    console.log(`Running Genie workflow: ${agent}...`);
-
-    // Start workflow (fire and forget, non-blocking)
-    const spawn = require('child_process').spawn;
-    const proc = spawn('node', [genieCliPath, 'run', agent, prompt], {
-      cwd: gitRoot,
-      stdio: 'ignore',
-      detached: true
-    });
-    proc.unref();
-
-    // Return success - workflow runs in background
-    return { sessionId: null, success: true, message: `Workflow ${agent} started (runs in background)` };
-  } catch (e) {
-    console.log(`⚠️  Could not run workflow: ${e.message}`);
-    return { sessionId: null, success: true, message: 'Workflow skipped' };
-  }
-}
+// TODO: Re-enable when `genie run` CLI is stable (currently causes instability in hooks)
+// function runGenie(agent, prompt) {
+//   // Run Genie workflow and capture session ID + wait for completion
+//   const { execSync } = require('child_process');
+//   const fs = require('fs');
+//
+//   try {
+//     const genieCliPath = path.join(gitRoot, '.genie', 'cli', 'dist', 'genie-cli.js');
+//     if (!fs.existsSync(genieCliPath)) {
+//       return { sessionId: null, success: true, message: 'Genie CLI not built (skipping workflow)' };
+//     }
+//
+//     console.log(`Running Genie workflow: ${agent}...`);
+//
+//     // Start workflow (fire and forget, non-blocking)
+//     const spawn = require('child_process').spawn;
+//     const proc = spawn('node', [genieCliPath, 'run', agent, prompt], {
+//       cwd: gitRoot,
+//       stdio: 'ignore',
+//       detached: true
+//     });
+//     proc.unref();
+//
+//     // Return success - workflow runs in background
+//     return { sessionId: null, success: true, message: `Workflow ${agent} started (runs in background)` };
+//   } catch (e) {
+//     console.log(`⚠️  Could not run workflow: ${e.message}`);
+//     return { sessionId: null, success: true, message: 'Workflow skipped' };
+//   }
+// }
 
 function main() {
   console.log('## Pre-Commit');
@@ -95,9 +96,11 @@ function main() {
     console.warn('⚠️  Token quality gate error (non-blocking)');
   }
 
-  // Background advisory (non-blocking)
-  const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
-  if (workflow.message) console.log(`- Note: ${workflow.message}`);
+  // TODO: Re-enable Genie background advisory when `genie run` CLI is stable
+  // Background advisory currently disabled for performance and reliability
+  // Future: Async learning/analysis of commit patterns, wish alignment, etc.
+  // const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
+  // if (workflow.message) console.log(`- Note: ${workflow.message}`);
 
   // Token-efficient summary
   if (exitCode === 0) {

@@ -35,35 +35,39 @@
 
 ## 🚀 What is Automagik Genie?
 
-**Automagik Genie** is your persistent conversational development partner. Just talk naturally—Genie orchestrates agents, maintains context through agent sessions, and guides you through Plan → Wish → Forge → Review without exposing commands or complexity.
+**Automagik Genie** is your persistent AI development orchestrator. It's the command center that turns conversations with AI into structured, trackable work through the **Wish → Forge → Review** workflow.
 
-It ships a ready-to-run `.genie/` workspace, keeps it in sync with upstream templates, and exposes a battle-tested CLI + MCP server with natural language routing.
+**The Power:** Genie maintains persistent agent sessions that remember context across iterations, orchestrates task execution via Automagik Forge, and integrates with any AI coding tool through MCP. No slash commands, no complexity—just natural conversation that gets things done.
 
-### 🎭 Why Traditional Bootstrapping Fails
+It ships a ready-to-run `.genie/` workspace with 30+ specialized agents, integrates seamlessly with Automagik Forge for isolated task execution, and exposes a battle-tested CLI + MCP server for any AI coding platform.
 
-- **Manual setup drift** – each repo receives a slightly different `.claude` folder
-- **No update path** – templates go stale, breaking downstream agents
-- **Scattered backups** – figuring out what changed between runs is painful
-- **Agent isolation** – MCP tooling cannot rely on a consistent project schema
+### 🎭 Why Conversations Get Lost
 
-### ✅ The Genie Approach
+- **Context resets** – every AI conversation starts from scratch, losing project knowledge
+- **No task tracking** – brilliant ideas vanish in chat history, work gets duplicated
+- **No structure** – AI gives you code, you ship it, it breaks in 2 weeks (the vibe coding curse)
+- **Tool switching** – jumping between Claude, Cursor, terminal, GitHub loses momentum
 
-- **One-command initialise** – `npx automagik-genie init` migrates legacy `.claude`, writes provider preferences, and snapshots the workspace
-- **Smart updates** – `npx automagik-genie update` diff-checks templates, creates recoverable backups, and applies only what changed
-- **Automatic rollbacks** – `npx automagik-genie rollback` restores any prior snapshot in seconds
-- **MCP-native** – the CLI and the MCP server share the same state, so agents always see the latest project context
+### ✅ The Genie Solution
+
+- **Persistent Sessions** – Agent conversations remember context across iterations (like talking to the same expert over days)
+- **Structured Workflows** – Wish → Forge → Review keeps work organized and reviewable
+- **Forge Integration** – Every task executes in isolated Git worktrees, safe experimentation before merge
+- **Universal MCP** – Works with Claude Code, Cursor, Gemini CLI, or any MCP-compatible tool
+- **30+ Specialized Agents** – From architecture planning to PR reviews, each agent is an expert in their domain
 
 ---
 
 ## 🌟 Key Features
 
-- **🧞 CLI bootstrap commands** – `init`, `update`, `rollback`, `statusline`, and compatibility shims for `status`/`cleanup`
-- **📦 Template migration** – automatic conversion of historical `.claude` setups into the unified `.genie` layout
-- **🔐 Provider memory** – stores Codex/Claude preference in `.genie/state/provider.json` and respects env overrides
-- **💾 Version tracking** – `.genie/state/version.json` records install vs. update timestamps for diagnostics
-- **🛟 Snapshot backups** – every command saves `.genie/backups/<timestamp>` (and `.claude` if present) before changing files
-- **🤖 MCP server** – expose Genie agents to Claude Code, Cursor, Gemini CLI, Roo Code, and any generic MCP client
-- **📋 Ink-powered UI** – rich terminal output for help, diffs, warnings, and summary panels
+- **🤖 Persistent Agent Sessions** – Conversations that remember context across hours/days (resume anytime with full history)
+- **🔄 Wish → Forge → Review Workflow** – Structured path from idea to shipped code with safety gates
+- **🏗️ Forge Integration** – Automatic task execution in isolated Git worktrees (experiment safely before merge)
+- **📡 Universal MCP Server** – Works with Claude Code, Cursor, Gemini CLI, Roo Code, and any MCP-compatible AI tool
+- **🧠 30+ Specialized Agents** – Architecture, implementation, testing, debugging, PR review, and more
+- **📝 Session Transcripts** – Full conversation history for every agent session (audit trail + learning)
+- **🎯 Natural Language Routing** – No slash commands needed, just talk naturally
+- **⚡ Instant Startup** – Production-grade process management, Forge ready in 10-12s
 
 ---
 
@@ -210,20 +214,17 @@ pnpm install -g automagik-genie@next
 - **Git** for snapshot creation
 - (Optional) **pnpm** if you plan to run tests locally: `corepack enable`
 
-### One-Time Installation
+### First Run
 
 ```bash
-# Initialise Genie in your repository
-npx automagik-genie init --provider codex
+# Navigate to your project
+cd your-project
 
-# Show planned updates without applying them
-npx automagik-genie update --dry-run
+# Start Genie (auto-initializes on first run)
+genie
 
-# Apply template changes and create a backup
-npx automagik-genie update
-
-# Restore the most recent backup if needed
-npx automagik-genie rollback --latest
+# Or just run the MCP server for AI tool integration
+genie mcp
 ```
 
 ### CLI Help at a Glance
@@ -256,13 +257,13 @@ genie update            # Update Genie npm package (shows changelog from GitHub)
 genie update --check    # Check for updates without installing
 ```
 
-After running `init` you'll have:
+After first run you'll have:
 
-- `.genie/agents/` – prompt and core agents shipped with Genie
-- Project-specific guidance lives inline as "Project Notes" inside relevant `.genie/agents/*` or `.genie/skills/*` docs (no separate `custom/` directory)
-- `.genie/product/` – mission, roadmap, environment docs
-- `.genie/state/` – provider, version, provider-status state
-- `.genie/backups/<timestamp>/` – snapshots of previous states
+- `.genie/agents/` – 30+ specialized agents (genie, implementor, tests, git, learn, etc.)
+- `.genie/code/` – Code-specific workflows and skills
+- `.genie/product/` – Mission, roadmap, tech stack documentation
+- `.genie/state/` – Session history, Forge connection state
+- `.genie/backups/<timestamp>/` – Automatic snapshots before major changes
 
 ---
 
@@ -350,45 +351,80 @@ startForgeInBackground({ baseUrl, logDir });
 
 ## 📡 MCP Integration
 
-Genie ships with a FastMCP server so any MCP-compatible coding agent can orchestrate Genie workflows.
+Genie ships with a FastMCP server so any MCP-compatible AI tool can orchestrate Genie workflows and maintain persistent agent sessions.
 
 ### Typical Workflow
 
-1. **Setup:** Initialise Genie in your repo (`npx automagik-genie init`)
-2. **Connect:** Configure your tool (Claude Code, Cursor, etc.) with the MCP command
-3. **Just talk:** "I want to build an auth system"
-4. **Genie guides you:** Through Plan → Wish → Forge → Review naturally
-5. **Agent sessions:** Genie maintains persistent conversations with specialist agents (genie, implementor, tests) that remember context and iterate over time
+1. **Setup:** Install Genie (`curl -fsSL https://genie.namastex.ai/install | bash`)
+2. **Connect:** Add MCP config to your AI tool (Claude Code, Cursor, etc.)
+3. **Just talk:** "I want to build an auth system with social login"
+4. **Genie orchestrates:**
+   - Creates persistent agent session (remembers context)
+   - Routes to specialist (genie agent for architecture planning)
+   - Generates Wish document (structured requirements)
+   - Creates Forge tasks (isolated worktree execution)
+   - Manages Review workflow (safe merge process)
+5. **Resume anytime:** "Continue the auth system work" → Genie picks up where you left off
 
-**No slash commands. No agent names. Just conversation.**
+**No slash commands. No manual agent selection. Just natural conversation with persistent memory.**
 
 ### Available MCP Tools
 
-| Tool | Description | Example Usage |
-|------|-------------|---------------|
-| `mcp__genie__run` | Start a new agent session | Genie uses this to start persistent conversations |
-| `mcp__genie__resume` | Continue a agent session | Genie resumes to build context over time |
-| `mcp__genie__list_agents` | List available agents | "Show all agents" |
-| `mcp__genie__list_sessions` | Inspect active/archived sessions | "Which sessions ran today?" |
-| `mcp__genie__view` | Fetch session transcript | View conversation history with agents |
-| `mcp__genie__stop` | Halt a running session | Stop long-running agent work |
+| Tool | Description | What It Enables |
+|------|-------------|-----------------|
+| `mcp__genie__run` | Start a new agent session | Launch specialist agents (genie, implementor, tests, git, learn) with persistent context |
+| `mcp__genie__resume` | Continue existing session | Pick up conversations hours/days later with full context history |
+| `mcp__genie__list_agents` | List available agents | Discover 30+ specialized agents and their capabilities |
+| `mcp__genie__list_sessions` | View session history | See active sessions, completed work, and conversation archives |
+| `mcp__genie__view` | Read session transcript | Full conversation history for learning and auditing |
+| `mcp__genie__stop` | Halt running session | Gracefully stop long-running agent work |
 
-**Agent Sessions:** Genie creates persistent conversations with specialist agents (genie, implementor, tests) that remember context across iterations. This enables Socratic dialogues, iterative refinement, and longer collaboration without context resets.
+**The Power of Persistent Sessions:**
+Unlike traditional AI chats that forget everything, Genie agents maintain context across iterations. Start architecture planning on Monday, continue implementation on Wednesday, debug on Friday—each session remembers the full conversation history. This enables:
+- **Iterative refinement** without repeating context
+- **Socratic dialogue** where agents learn your preferences
+- **Long-running projects** that span days/weeks
+- **Audit trails** of every decision made
 
 ### Claude Code Configuration
+
+<details>
+<summary><b>Click to expand MCP config</b></summary>
 
 ```json
 {
   "mcpServers": {
     "automagik-genie": {
       "command": "npx",
-      "args": ["automagik-genie", "mcp", "-t", "stdio"]
+      "args": ["automagik-genie", "mcp"]
     }
   }
 }
 ```
 
-Other MCP clients (Cursor, Roo, Gemini CLI, Cline) follow the same pattern—just change the command/args if you need HTTP or SSE transports.
+**After adding config:**
+1. Restart Claude Code
+2. Verify connection: Look for "automagik-genie" in MCP servers list
+3. Start using: Just talk naturally, Genie handles the rest
+
+</details>
+
+<details>
+<summary><b>Other MCP Clients (Cursor, Roo, Gemini CLI, Cline)</b></summary>
+
+All MCP clients follow the same pattern:
+
+**Generic config:**
+```json
+{
+  "command": "npx",
+  "args": ["automagik-genie", "mcp"]
+}
+```
+
+Consult your AI tool's MCP documentation for exact configuration format.
+
+</details>
 
 ---
 
@@ -542,16 +578,20 @@ All CLI code lives under `.genie/cli/src/`. Rebuild (`pnpm run build:genie`) bef
 ## 🗺️ Roadmap
 
 ### Completed ✅
-- Reinstated bootstrap commands (`init`, `update`, `rollback`)
-- Automatic migration from legacy `.claude` directories
-- Provider/Version state tracking and backup snapshots
-- MCP server parity with the agent CLI
+- ✅ Persistent agent sessions with full context history
+- ✅ Forge integration (isolated worktree execution)
+- ✅ MCP server with 6 core tools
+- ✅ 30+ specialized agents (genie, implementor, tests, git, learn, etc.)
+- ✅ Natural language routing (no slash commands)
+- ✅ Session transcripts and audit trails
+- ✅ Wish → Forge → Review workflow
 
 ### Next Up 🚀
-- Rich diff previews during `update`
-- Extended provider health checks and auto-detection
-- JSON output mode for CI integrations
-- Replacement flows for deprecated `status` / `cleanup`
+- 🔄 **Bilateral GitHub Sync** – Two-way sync between Genie sessions and GitHub Issues
+- 🎯 **Task Templates** – Reusable patterns for common workflows (feature dev, bug hunt, refactor)
+- 📊 **Agent Analytics** – Track which agents/workflows work best for your team
+- 🔗 **Jira/Linear Integration** – Connect Genie sessions to external project management
+- 🧪 **Multi-Agent Collaboration** – Multiple agents working together on complex tasks
 
 ---
 
@@ -572,6 +612,18 @@ Automagik Genie is released under the MIT License. See [LICENSE](LICENSE) for de
 
 ---
 
-**Automagik Genie** – the faster, safer way to keep AI agents in sync with your repositories.
+---
+
+<p align="center">
+  <strong>🚀 Stop losing context. Start shipping code you understand.</strong><br>
+  <strong>Persistent Sessions + Structured Workflows + Forge Integration = Genie</strong><br><br>
+  <a href="https://github.com/namastexlabs/automagik-genie">Star us on GitHub</a> •
+  <a href="https://discord.gg/xcW8c7fF3R">Join our Discord</a>
+</p>
+
+<p align="center">
+  Made with ❤️ by <a href="https://namastex.ai">Namastex Labs</a><br>
+  <em>AI that elevates human potential, not replaces it</em>
+</p>
 
 <a href="https://deepwiki.com/namastexlabs/automagik-genie"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
