@@ -64,6 +64,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GENIE_SKIP_TESTS: '1'
           GENIE_SKIP_WISH_CHECK: '1'
+          GENIE_ALLOW_MAIN_PUSH: '1'
 
       - name: Determine tag ref
         id: tagref
