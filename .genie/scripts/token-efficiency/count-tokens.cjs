@@ -18,8 +18,11 @@ function shouldSkip(rel) {
   return (
     rel.startsWith('.git/') ||
     rel.startsWith('node_modules/') ||
+    rel.startsWith('forge/') ||  // Skip entire forge directory
     rel.includes('/dist/') ||
-    rel.includes('/.pnpm-store/')
+    rel.includes('/node_modules/') ||
+    rel.includes('/.pnpm-store/') ||
+    rel.includes('/.pnpm/')
   );
 }
 
@@ -76,20 +79,64 @@ function writeSummary(results, meta) {
   console.log(`- Notes: Token usage updated (${results.length} files)`);
 }
 
+function getFileHash(content) {
+  // Simple hash: file size + first/last 100 chars
+  const len = content.length;
+  const sample = content.slice(0, 100) + len + content.slice(-100);
+  return Buffer.from(sample).toString('base64').slice(0, 32);
+}
+
+function loadCache() {
+  try {
+    const cachePath = path.join(STATE, 'token-cache.json');
+    return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveCache(cache) {
+  try {
+    const cachePath = path.join(STATE, 'token-cache.json');
+    ensureDir(STATE);
+    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf8');
+  } catch {}
+}
+
 function main() {
   const files = listMarkdownFiles(ROOT);
+  const cache = loadCache();
   const results = [];
   let totalTokens = 0;
   let encodingUsed = null;
+  let cacheHits = 0;
 
   for (const rel of files) {
     const full = path.join(ROOT, rel);
     let content = '';
     try { content = fs.readFileSync(full, 'utf8'); } catch { continue; }
+
+    const hash = getFileHash(content);
+    const cached = cache[rel];
+
+    // Use cached result if hash matches
+    if (cached && cached.hash === hash) {
+      cacheHits++;
+      totalTokens += cached.tokens;
+      if (!encodingUsed) encodingUsed = cached.encoding;
+      results.push({ path: rel, tokens: cached.tokens, lines: cached.lines, bytes: cached.bytes, method: cached.method });
+      continue;
+    }
+
+    // Recount this file
     const { tokens, method, encoding } = countTokens(content);
     if (!encodingUsed) encodingUsed = encoding;
     totalTokens += tokens;
-    results.push({ path: rel, tokens, lines: (content.match(/\n/g) || []).length + 1, bytes: Buffer.byteLength(content, 'utf8'), method });
+    const lines = (content.match(/\n/g) || []).length + 1;
+    const bytes = Buffer.byteLength(content, 'utf8');
+
+    results.push({ path: rel, tokens, lines, bytes, method });
+    cache[rel] = { hash, tokens, lines, bytes, method, encoding };
   }
 
   results.sort((a,b)=> b.tokens - a.tokens);
@@ -100,7 +147,12 @@ function main() {
     totals: { files: results.length, tokens: totalTokens }
   };
 
+  saveCache(cache);
   writeSummary(results, meta);
+
+  if (cacheHits > 0) {
+    console.log(`  ⚡ Cache: ${cacheHits}/${files.length} files unchanged`);
+  }
 }
 
 try { main(); } catch (e) {
