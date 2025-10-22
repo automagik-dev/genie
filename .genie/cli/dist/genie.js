@@ -1,26 +1,24 @@
 #!/usr/bin/env node
-"use strict";
 /**
  * GENIE Agent CLI - Codex exec orchestration with configurable execution modes
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-const cli_parser_1 = require("./lib/cli-parser");
-const config_1 = require("./lib/config");
-const session_helpers_1 = require("./lib/session-helpers");
-const help_1 = require("./views/help");
-const common_1 = require("./views/common");
-const view_helpers_1 = require("./lib/view-helpers");
-const cli_core_1 = require("./cli-core");
-const help_2 = require("./commands/help");
-const init_1 = require("./commands/init");
-const rollback_1 = require("./commands/rollback");
-const status_1 = require("./commands/status");
-const cleanup_1 = require("./commands/cleanup");
-const statusline_1 = require("./commands/statusline");
+import { parseArguments } from './lib/cli-parser';
+import { loadConfig, applyDefaults, resolvePaths, prepareDirectories, getStartupWarnings, clearStartupWarnings } from './lib/config';
+import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers';
+import { buildRunHelpView, buildResumeHelpView, buildListHelpView, buildViewHelpView, buildStopHelpView } from './views/help';
+import { buildErrorView, buildInfoView, buildWarningView } from './views/common';
+import { emitView } from './lib/view-helpers';
+import { SessionService, createHandlers } from './cli-core';
+import { runHelp } from './commands/help';
+import { runInit } from './commands/init';
+import { runRollback } from './commands/rollback';
+import { runStatus } from './commands/status';
+import { runCleanup } from './commands/cleanup';
+import { runStatusline } from './commands/statusline';
 void main();
 async function main() {
     try {
-        let parsed = (0, cli_parser_1.parseArguments)(process.argv.slice(2));
+        let parsed = parseArguments(process.argv.slice(2));
         // Fast path for help commands - skip config loading
         const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
             parsed.options.requestHelp;
@@ -30,21 +28,21 @@ async function main() {
         if (isHelpOnly) {
             // Minimal config for help display
             config = { defaults: { background: true } };
-            paths = (0, config_1.resolvePaths)({});
+            paths = resolvePaths({});
         }
         else {
-            config = (0, config_1.loadConfig)();
-            (0, config_1.applyDefaults)(parsed.options, config.defaults);
-            paths = (0, config_1.resolvePaths)(config.paths || {});
-            (0, config_1.prepareDirectories)(paths);
-            const startupWarnings = (0, config_1.getStartupWarnings)();
+            config = loadConfig();
+            applyDefaults(parsed.options, config.defaults);
+            paths = resolvePaths(config.paths || {});
+            prepareDirectories(paths);
+            const startupWarnings = getStartupWarnings();
             if (startupWarnings.length) {
-                const envelope = (0, common_1.buildWarningView)('Configuration warnings', startupWarnings);
-                await (0, view_helpers_1.emitView)(envelope, parsed.options);
-                (0, config_1.clearStartupWarnings)();
+                const envelope = buildWarningView('Configuration warnings', startupWarnings);
+                await emitView(envelope, parsed.options);
+                clearStartupWarnings();
             }
             // Create handler context for run/resume/list/view/stop commands
-            const sessionService = new cli_core_1.SessionService({
+            const sessionService = new SessionService({
                 paths,
                 loadConfig: config,
                 defaults: { defaults: config.defaults }
@@ -54,7 +52,7 @@ async function main() {
                 defaultConfig: config,
                 paths,
                 sessionService,
-                emitView: view_helpers_1.emitView,
+                emitView,
                 recordRuntimeWarning: (msg) => {
                     const { recordRuntimeWarning } = require('./lib/session-helpers');
                     recordRuntimeWarning(msg);
@@ -64,12 +62,12 @@ async function main() {
                     recordStartupWarning(msg);
                 }
             };
-            handlers = (0, cli_core_1.createHandlers)(handlerContext);
+            handlers = createHandlers(handlerContext);
         }
         switch (parsed.command) {
             case 'run':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, help_1.buildRunHelpView)(), parsed.options);
+                    await emitView(buildRunHelpView(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -78,7 +76,7 @@ async function main() {
                 break;
             case 'init':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie init', [
+                    await emitView(buildInfoView('Genie init', [
                         'Usage: genie init [code|create] [--yes]',
                         '• Copies packaged .genie into your repo (preserving agents, wishes, reports, state).',
                         '• Copies AGENTS.md and .gitignore to project root (no CLAUDE.md changes).',
@@ -89,30 +87,30 @@ async function main() {
                     ]), parsed.options);
                     return;
                 }
-                await (0, init_1.runInit)(parsed, config, paths);
+                await runInit(parsed, config, paths);
                 break;
             case 'rollback':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie rollback', [
+                    await emitView(buildInfoView('Genie rollback', [
                         'Usage: genie rollback [--list] [--id <backupId>] [--latest]',
                         'Restores a previous snapshot stored under .genie/backups.'
                     ]), parsed.options);
                     return;
                 }
-                await (0, rollback_1.runRollback)(parsed, config, paths);
+                await runRollback(parsed, config, paths);
                 break;
             case 'status':
-                await (0, status_1.runStatus)(parsed, config, paths);
+                await runStatus(parsed, config, paths);
                 break;
             case 'cleanup':
-                await (0, cleanup_1.runCleanup)(parsed, config, paths);
+                await runCleanup(parsed, config, paths);
                 break;
             case 'statusline':
-                await (0, statusline_1.runStatusline)(parsed, config, paths);
+                await runStatusline(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, help_1.buildResumeHelpView)(), parsed.options);
+                    await emitView(buildResumeHelpView(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -121,7 +119,7 @@ async function main() {
                 break;
             case 'list':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, help_1.buildListHelpView)(), parsed.options);
+                    await emitView(buildListHelpView(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -130,7 +128,7 @@ async function main() {
                 break;
             case 'view':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, help_1.buildViewHelpView)(), parsed.options);
+                    await emitView(buildViewHelpView(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -139,7 +137,7 @@ async function main() {
                 break;
             case 'stop':
                 if (parsed.options.requestHelp) {
-                    await (0, view_helpers_1.emitView)((0, help_1.buildStopHelpView)(), parsed.options);
+                    await emitView(buildStopHelpView(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -148,20 +146,20 @@ async function main() {
                 break;
             case 'help':
             case undefined:
-                await (0, help_2.runHelp)(parsed, config, paths);
+                await runHelp(parsed, config, paths);
                 break;
             default: {
-                await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Unknown command', `Unknown command: ${parsed.command}`), parsed.options, { stream: process.stderr });
-                await (0, help_2.runHelp)(parsed, config, paths);
+                await emitView(buildErrorView('Unknown command', `Unknown command: ${parsed.command}`), parsed.options, { stream: process.stderr });
+                await runHelp(parsed, config, paths);
                 process.exitCode = 1;
                 break;
             }
         }
-        const runtimeWarnings = (0, session_helpers_1.getRuntimeWarnings)();
+        const runtimeWarnings = getRuntimeWarnings();
         if (runtimeWarnings.length) {
-            const envelope = (0, common_1.buildWarningView)('Runtime warnings', runtimeWarnings);
-            await (0, view_helpers_1.emitView)(envelope, parsed.options);
-            (0, session_helpers_1.clearRuntimeWarnings)();
+            const envelope = buildWarningView('Runtime warnings', runtimeWarnings);
+            await emitView(envelope, parsed.options);
+            clearRuntimeWarnings();
         }
     }
     catch (error) {
@@ -171,6 +169,6 @@ async function main() {
     }
 }
 async function emitEmergencyError(message) {
-    const errorMessage = (0, common_1.buildErrorView)('Fatal error', message);
+    const errorMessage = buildErrorView('Fatal error', message);
     process.stderr.write(errorMessage + '\n');
 }

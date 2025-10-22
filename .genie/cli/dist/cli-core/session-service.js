@@ -1,14 +1,8 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SessionService = void 0;
-const fs_1 = __importDefault(require("fs"));
-const promises_1 = __importDefault(require("fs/promises"));
-const path_1 = __importDefault(require("path"));
-const session_store_1 = require("../session-store");
-class SessionService {
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import path from 'path';
+import { loadSessions } from '../session-store';
+export class SessionService {
     constructor(options) {
         this.paths = options.paths;
         this.loadConfig = options.loadConfig;
@@ -19,7 +13,7 @@ class SessionService {
         const mergedCallbacks = {
             onWarning: callbacks.onWarning || this.onWarning
         };
-        return (0, session_store_1.loadSessions)(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
+        return loadSessions(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
     }
     async save(store) {
         if (!this.paths.sessionsFile) {
@@ -30,19 +24,19 @@ class SessionService {
         // Native file locking with retry logic
         return await this.retryWithLock(async () => {
             // TWIN FIX #3: Reload fresh disk state immediately before merge to prevent rollback
-            const diskStore = (0, session_store_1.loadSessions)(this.paths, this.loadConfig, this.defaults, {
+            const diskStore = loadSessions(this.paths, this.loadConfig, this.defaults, {
                 onWarning: this.onWarning
             });
             const merged = this.mergeStores(diskStore, store);
             // TWIN FIX #1: Atomic write via temp file + rename to prevent partial reads
             const tempFile = sessionFile + '.tmp';
-            await promises_1.default.writeFile(tempFile, JSON.stringify(merged, null, 2), 'utf8');
+            await fsPromises.writeFile(tempFile, JSON.stringify(merged, null, 2), 'utf8');
             // Ensure data is flushed to disk before rename
-            const fd = await promises_1.default.open(tempFile, 'r+');
+            const fd = await fsPromises.open(tempFile, 'r+');
             await fd.sync();
             await fd.close();
             // Atomic rename - readers will only see complete JSON
-            await promises_1.default.rename(tempFile, sessionFile);
+            await fsPromises.rename(tempFile, sessionFile);
             return { store: merged };
         });
     }
@@ -53,34 +47,34 @@ class SessionService {
             // TWIN FIX #2: Detect and reclaim stale locks from crashed processes
             await this.reclaimStaleLock(lockPath);
             // Exclusive lock - will retry if locked (wx = write exclusive, fails if exists)
-            handle = await promises_1.default.open(lockPath, 'wx');
+            handle = await fsPromises.open(lockPath, 'wx');
             // Write PID/timestamp for stale lock detection
             const lockInfo = JSON.stringify({
                 pid: process.pid,
                 timestamp: Date.now(),
                 host: require('os').hostname()
             });
-            await promises_1.default.writeFile(lockPath, lockInfo, 'utf8');
+            await fsPromises.writeFile(lockPath, lockInfo, 'utf8');
             const result = await fn();
             return result;
         }
         finally {
             if (handle) {
                 await handle.close();
-                await promises_1.default.unlink(lockPath).catch(() => { });
+                await fsPromises.unlink(lockPath).catch(() => { });
             }
         }
     }
     async reclaimStaleLock(lockPath) {
         try {
-            const stat = await promises_1.default.stat(lockPath);
+            const stat = await fsPromises.stat(lockPath);
             const age = Date.now() - stat.mtimeMs;
             const STALE_THRESHOLD = 30000; // 30 seconds
             if (age > STALE_THRESHOLD) {
                 // Try to read lock info to identify stale process
                 let lockInfo = {};
                 try {
-                    const content = await promises_1.default.readFile(lockPath, 'utf8');
+                    const content = await fsPromises.readFile(lockPath, 'utf8');
                     lockInfo = JSON.parse(content);
                 }
                 catch {
@@ -98,7 +92,7 @@ class SessionService {
                     }
                 }
                 // Stale lock detected - reclaim it
-                await promises_1.default.unlink(lockPath);
+                await fsPromises.unlink(lockPath);
                 if (this.onWarning) {
                     this.onWarning(`Reclaimed stale lock file (age: ${Math.round(age / 1000)}s, pid: ${lockInfo.pid || 'unknown'})`);
                 }
@@ -128,11 +122,11 @@ class SessionService {
         throw new Error('SessionService: Lock acquisition timeout after ' + maxRetries + ' retries');
     }
     async ensureFile(target) {
-        const dir = path_1.default.dirname(target);
-        await promises_1.default.mkdir(dir, { recursive: true });
-        if (!fs_1.default.existsSync(target)) {
+        const dir = path.dirname(target);
+        await fsPromises.mkdir(dir, { recursive: true });
+        if (!fs.existsSync(target)) {
             const initial = { version: 2, sessions: {} };
-            await promises_1.default.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
+            await fsPromises.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
         }
     }
     mergeStores(base, incoming) {
@@ -146,4 +140,3 @@ class SessionService {
         return merged;
     }
 }
-exports.SessionService = SessionService;

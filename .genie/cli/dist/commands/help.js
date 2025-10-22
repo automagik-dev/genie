@@ -1,9 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.runHelp = runHelp;
-const view_helpers_1 = require("../lib/view-helpers");
-const help_1 = require("../views/help");
-async function runHelp(parsed, config, _paths) {
+import { emitView } from '../lib/view-helpers';
+import { buildHelpView } from '../views/help';
+export async function runHelp(parsed, config, _paths) {
     const backgroundDefault = Boolean(config.defaults && config.defaults.background);
     const commandRows = [
         { command: 'init', args: '[template] [--yes]', description: 'Initialize Genie in this workspace' },
@@ -17,7 +14,7 @@ async function runHelp(parsed, config, _paths) {
         { command: 'statusline', args: '', description: 'Emit deprecated status line output' },
         { command: 'help', args: '', description: 'Show this panel' }
     ];
-    const envelope = (0, help_1.buildHelpView)({
+    const envelope = buildHelpView({
         backgroundDefault,
         commandRows,
         promptFramework: {
@@ -38,5 +35,5 @@ async function runHelp(parsed, config, _paths) {
             'genie list agents --help  # Show help for list command'
         ]
     });
-    await (0, view_helpers_1.emitView)(envelope, parsed.options);
+    await emitView(envelope, parsed.options);
 }

@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-// @ts-ignore - ESM module
 import { Text, Box, useInput, useApp } from 'ink';
-// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
-// @ts-ignore - ESM module
 import SelectInput from 'ink-select-input';
 import gradient from 'gradient-string';
-import { LampAnimation } from '../animations/LampAnimation';
-import { PortalAnimation } from '../animations/PortalAnimation';
-import { ScrollAnimation } from '../animations/ScrollAnimation';
-import { ConstellationAnimation } from '../animations/ConstellationAnimation';
+import { LampAnimation } from '../animations/LampAnimation.js';
+import { PortalAnimation } from '../animations/PortalAnimation.js';
+import { ScrollAnimation } from '../animations/ScrollAnimation.js';
+import { ConstellationAnimation } from '../animations/ConstellationAnimation.js';
 
 const genieGradient = gradient(['#FF6B9D', '#C06FEF', '#4D8FFF']);
 const successGradient = gradient(['#00F260', '#0575E6']);
