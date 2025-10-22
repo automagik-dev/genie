@@ -575,7 +575,7 @@ class CommitAdvisory {
       this.passes.push('No commits to analyze (working tree clean).');
       const report = this.generateReport(branch, 0);
       console.log(report);
-      this.log('yellow', '⚠️ ', 'No commits to analyze');
+      this.log('green', '✅', 'Working tree clean - no commits to push');
       return 0;
     }
 
