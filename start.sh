@@ -20,29 +20,15 @@ if ! command -v pnpm &> /dev/null; then
 
     # Set up user-local directory for package managers
     export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
 
     # Create directory if it doesn't exist
     mkdir -p "$PNPM_HOME"
 
-    # Try corepack with user-local directory (no sudo needed)
-    if command -v corepack &> /dev/null; then
-        # Set corepack to install to user directory
-        export COREPACK_HOME="$HOME/.local/share/corepack"
-        mkdir -p "$COREPACK_HOME"
+    # Always use npm with user prefix (most reliable, no sudo needed)
+    npm install -g pnpm --prefix="$HOME/.local"
 
-        # Try to use corepack without system-wide enable
-        if corepack prepare pnpm@latest --activate 2>/dev/null; then
-            # Success with corepack
-            :
-        else
-            # Corepack failed, fall back to npm
-            npm install -g pnpm --prefix="$HOME/.local"
-        fi
-    else
-        # No corepack, use npm with user prefix
-        npm install -g pnpm --prefix="$HOME/.local"
-    fi
+    # Add both possible locations to PATH
+    export PATH="$HOME/.local/bin:$PNPM_HOME:$PATH"
 
     # Add to shell profile for persistence (only if not already there)
     # This is optional - script will work without it (just need to restart shell)
@@ -53,7 +39,7 @@ if ! command -v pnpm &> /dev/null; then
                     echo ''
                     echo '# pnpm configuration (added by Genie installer)'
                     echo 'export PNPM_HOME="$HOME/.local/share/pnpm"'
-                    echo 'export PATH="$PNPM_HOME:$PATH"'
+                    echo 'export PATH="$HOME/.local/bin:$PNPM_HOME:$PATH"'
                 } >> "$profile" 2>/dev/null || true
             fi
         fi
@@ -62,7 +48,8 @@ if ! command -v pnpm &> /dev/null; then
     # Verify pnpm is available
     if ! command -v pnpm &> /dev/null; then
         echo "⚠️  pnpm installed but not in PATH. Run this command:"
-        echo "    export PATH=\"$PNPM_HOME:\$PATH\""
+        echo "    export PATH=\"$HOME/.local/bin:$PNPM_HOME:\$PATH\""
+        exit 1
     fi
 fi
 
