@@ -17,22 +17,44 @@ fi
 # 2. Ensure pnpm exists (speed!)
 if ! command -v pnpm &> /dev/null; then
     echo "Installing pnpm..."
-    # Try corepack first (built into Node.js 16.9+, no permissions needed)
+
+    # Set up user-local directory for package managers
+    export PNPM_HOME="$HOME/.local/share/pnpm"
+    export PATH="$PNPM_HOME:$PATH"
+
+    # Create directory if it doesn't exist
+    mkdir -p "$PNPM_HOME"
+
+    # Try corepack with user-local directory (no sudo needed)
     if command -v corepack &> /dev/null; then
-        corepack enable
-        corepack prepare pnpm@latest --activate
+        # Set corepack to install to user directory
+        export COREPACK_HOME="$HOME/.local/share/corepack"
+        mkdir -p "$COREPACK_HOME"
+
+        # Try to use corepack without system-wide enable
+        if corepack prepare pnpm@latest --activate 2>/dev/null; then
+            # Success with corepack
+            :
+        else
+            # Corepack failed, fall back to npm
+            npm install -g pnpm --prefix="$HOME/.local"
+        fi
     else
-        # Fallback: Install to user directory (no sudo required)
+        # No corepack, use npm with user prefix
         npm install -g pnpm --prefix="$HOME/.local"
-        export PATH="$HOME/.local/bin:$PATH"
-        # Add to shell profile for persistence
-        if [ -f "$HOME/.bashrc" ]; then
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-        fi
-        if [ -f "$HOME/.zshrc" ]; then
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
-        fi
     fi
+
+    # Add to shell profile for persistence (only if not already there)
+    for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
+        if [ -f "$profile" ]; then
+            if ! grep -q "PNPM_HOME" "$profile" 2>/dev/null; then
+                echo '' >> "$profile"
+                echo '# pnpm configuration (added by Genie installer)' >> "$profile"
+                echo 'export PNPM_HOME="$HOME/.local/share/pnpm"' >> "$profile"
+                echo 'export PATH="$PNPM_HOME:$PATH"' >> "$profile"
+            fi
+        fi
+    done
 fi
 
 # 3. Check for updates and run Genie
