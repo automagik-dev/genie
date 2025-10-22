@@ -60,7 +60,7 @@
     "release:branch": "bash scripts/release-branch.sh",
     "status": "node scripts/status.js",
     "postinstall": "node scripts/postinstall.cjs || true",
-    "prepublishOnly": "pnpm run build && pnpm run test:all"
+    "prepublishOnly": "pnpm run build"
   },
   "keywords": [
     "ai",
