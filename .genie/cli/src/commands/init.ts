@@ -140,8 +140,14 @@ export async function runInit(
       const { executor, model } = await selectExecutorAndModel(flags);
       await applyExecutorDefaults(targetGenie, executor, model);
       await configureBothExecutors(cwd);
-      // TODO: Add install chat flow here (future enhancement)
-      await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
+      await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }, false), parsed.options);
+
+      // Launch install agent (partial init path)
+      console.log('');
+      console.log('🚀 Starting Forge server and Install agent...');
+      console.log('');
+      const detectedTemplate = await detectTemplateFromGenie(targetGenie);
+      await runInstallViaCli(cwd, detectedTemplate as TemplateType, flags);
       return;
     }
 
@@ -261,9 +267,15 @@ export async function runInit(
     // Configure MCP servers for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
-    // TODO: Add install chat flow here (future enhancement)
+    // Show completion summary without install agent message (we'll start it next)
     const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
-    await emitView(buildInitSummaryView(summary), parsed.options);
+    await emitView(buildInitSummaryView(summary, false), parsed.options);
+
+    // Launch install agent via Forge-backed Genie run
+    console.log('');
+    console.log('🚀 Starting Forge server and Install agent...');
+    console.log('');
+    await runInstallViaCli(cwd, template as TemplateType, flags);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
@@ -461,15 +473,29 @@ async function initializeProviderStatus(cwd: string): Promise<void> {
   }
 }
 
-function buildInitSummaryView(summary: InitSummary) {
+function buildInitSummaryView(summary: InitSummary, includeInstallMessage: boolean = true) {
   const messages = [
     `✅ Installed Genie template at ${summary.target}`,
     `🔌 Default executor: ${summary.executor}${summary.model ? ` (model: ${summary.model})` : ''}`,
     `💾 Backup ID: ${summary.backupId ?? 'n/a'}`,
-    `📚 Template source: ${summary.templateSource}`,
-    `🛠️ Started Install agent via Genie run`
+    `📚 Template source: ${summary.templateSource}`
   ];
+
+  if (includeInstallMessage) {
+    messages.push(`🛠️ Started Install agent via Genie run`);
+  }
+
   return buildInfoView('Genie initialization complete', messages.filter(Boolean) as string[]);
+}
+
+async function detectTemplateFromGenie(genieRoot: string): Promise<string> {
+  // Detect template from .genie structure (code or create collective)
+  const codeExists = await pathExists(path.join(genieRoot, 'code'));
+  const createExists = await pathExists(path.join(genieRoot, 'create'));
+
+  if (codeExists) return 'code';
+  if (createExists) return 'create';
+  return 'code'; // fallback
 }
 async function applyExecutorDefaults(genieRoot: string, executorKey: string, model?: string): Promise<void> {
   await Promise.all([
