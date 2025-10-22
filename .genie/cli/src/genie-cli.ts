@@ -8,6 +8,9 @@
  */
 
 import { Command } from 'commander';
+import { getDirname } from './lib/esm-dirname.js';
+
+const __dirname = getDirname(import.meta.url);
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
