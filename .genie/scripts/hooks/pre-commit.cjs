@@ -43,8 +43,60 @@ function run(script) {
 //   }
 // }
 
+// Check if commit only contains files that don't require full hook validation
+function shouldSkipHooks() {
+  try {
+    const stagedFiles = execSync('git diff --cached --name-only', { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    if (stagedFiles.length === 0) return false;
+
+    // ==============================================================================
+    // SKIP PATTERNS (expand this list as needed for performance optimization)
+    // ==============================================================================
+    // Pattern 1: .genie/wishes/*.md - Wish documents that don't affect codebase
+    // Pattern 2: [FUTURE] Documentation-only commits
+    // Pattern 3: [FUTURE] Test fixtures or mock data
+    // ==============================================================================
+
+    const skipPatterns = [
+      // Pattern 1: Wish files only
+      (file) => file.startsWith('.genie/wishes/') && file.endsWith('.md'),
+
+      // Add more patterns here as needed:
+      // (file) => file.startsWith('.genie/docs/') && file.endsWith('.md'),
+      // (file) => file.startsWith('test/fixtures/') && file.endsWith('.json'),
+    ];
+
+    // Skip hooks if ALL staged files match at least one skip pattern
+    const allFilesSkippable = stagedFiles.every(file =>
+      skipPatterns.some(pattern => pattern(file))
+    );
+
+    return allFilesSkippable;
+  } catch (e) {
+    return false; // On error, run hooks normally
+  }
+}
+
+// Timing utility
+function timeExecution(label, fn) {
+  const start = Date.now();
+  const result = fn();
+  const duration = Date.now() - start;
+  console.log(`  ⏱️  ${label}: ${duration}ms`);
+  return result;
+}
+
 function main() {
+  const totalStart = Date.now();
   console.log('## Pre-Commit');
+
+  // Early exit for .genie/wishes/*.md only commits
+  if (shouldSkipHooks()) {
+    console.log('✨ Fast-path: Only wish files detected, skipping hooks');
+    console.log('- Result: ✅ Pre-commit validations skipped (wish-only commit)');
+    process.exit(0);
+  }
+
   let exitCode = 0;
   const validations = [
     'validate-user-files-not-committed.cjs',
@@ -55,43 +107,59 @@ function main() {
   // Run worktree access prevention check (bash script)
   console.log('🔍 Checking for Forge worktree violations...');
   const worktreeCheckPath = path.join(gitRoot, '.genie', 'scripts', 'prevent-worktree-access.sh');
-  const worktreeCheck = spawnSync('bash', [worktreeCheckPath], { stdio: 'inherit' });
-  if (worktreeCheck.status !== 0) {
+  const worktreeCheckCode = timeExecution('Worktree validation', () => {
+    const worktreeCheck = spawnSync('bash', [worktreeCheckPath], { stdio: 'inherit' });
+    return worktreeCheck.status || 0;
+  });
+  if (worktreeCheckCode !== 0) {
     exitCode = 1;
   }
+
   for (const v of validations) {
-    const code = run(v);
+    const code = timeExecution(v.replace('.cjs', ''), () => run(v));
     if (code !== 0) exitCode = 1;
   }
 
   // Generate/update workspace summary tree (staged automatically by the script)
   try {
-    const genCode = run('generate-workspace-summary.cjs');
-    if (genCode !== 0) {
-      console.warn('⚠️  Workspace summary generation failed (non-blocking)');
-    }
+    timeExecution('Workspace summary generation', () => {
+      const genCode = run('generate-workspace-summary.cjs');
+      if (genCode !== 0) {
+        console.warn('⚠️  Workspace summary generation failed (non-blocking)');
+      }
+      return genCode;
+    });
   } catch (e) {
     console.warn('⚠️  Workspace summary generation error (non-blocking)');
   }
 
   // Migrate QA workflows from scenarios-from-bugs.md (auto-generate stubs)
   try {
-    const migCode = run('migrate-qa-from-bugs.cjs');
-    if (migCode !== 0) {
-      console.warn('⚠️  QA migration script failed (non-blocking)');
-    }
+    timeExecution('QA migration', () => {
+      const migCode = run('migrate-qa-from-bugs.cjs');
+      if (migCode !== 0) {
+        console.warn('⚠️  QA migration script failed (non-blocking)');
+      }
+      return migCode;
+    });
   } catch (e) {
     console.warn('⚠️  QA migration error (non-blocking)');
   }
 
   // Generate token usage and quality summary (non-blocking)
   try {
-    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'count-tokens.cjs')], { stdio: 'inherit' });
+    timeExecution('Token counting', () => {
+      spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'count-tokens.cjs')], { stdio: 'inherit' });
+      return 0;
+    });
   } catch (e) {
     console.warn('⚠️  Token usage script failed (non-blocking)');
   }
   try {
-    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'quality-gate.cjs')], { stdio: 'inherit' });
+    timeExecution('Quality gate check', () => {
+      spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'quality-gate.cjs')], { stdio: 'inherit' });
+      return 0;
+    });
   } catch (e) {
     console.warn('⚠️  Token quality gate error (non-blocking)');
   }
@@ -103,6 +171,7 @@ function main() {
   // if (workflow.message) console.log(`- Note: ${workflow.message}`);
 
   // Token-efficient summary
+  const totalDuration = Date.now() - totalStart;
   if (exitCode === 0) {
     console.log('- Result: ✅ Pre-commit validations passed');
     console.log('- Reinforcer: Save tokens — keep outputs concise');
@@ -111,6 +180,7 @@ function main() {
     console.log('- Next: Fix issues above and retry commit');
     console.log('- Reinforcer: Commit small and often; attach evidence paths when relevant');
   }
+  console.log(`⏱️  Total pre-commit time: ${totalDuration}ms`);
   process.exit(exitCode);
 }
 
