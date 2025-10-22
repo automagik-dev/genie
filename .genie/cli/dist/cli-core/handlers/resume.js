@@ -1,9 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createResumeHandler = createResumeHandler;
-const forge_executor_1 = require("../../lib/forge-executor");
-const forge_helpers_1 = require("../../lib/forge-helpers");
-function createResumeHandler(ctx) {
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+export function createResumeHandler(ctx) {
     return async (parsed) => {
         const cmdArgs = parsed.commandArgs;
         if (cmdArgs.length < 2) {
@@ -16,22 +13,22 @@ function createResumeHandler(ctx) {
         if (!entry || !entry.sessionId) {
             throw new Error(`❌ No session found with name '${sessionName}'`);
         }
-        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
+        const forgeExecutor = createForgeExecutor();
         try {
             await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
         }
         catch (error) {
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            const reason = describeForgeError(error);
             ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
-            throw new Error(`Forge backend unavailable while resuming '${sessionName}'. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+            throw new Error(`Forge backend unavailable while resuming '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
         }
         try {
             await forgeExecutor.resumeSession(entry.sessionId, prompt);
         }
         catch (error) {
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
+            const reason = describeForgeError(error);
             ctx.recordRuntimeWarning(`Forge resume failed: ${reason}`);
-            throw new Error(`Forge backend rejected resume for '${sessionName}'. ${forge_helpers_1.FORGE_RECOVERY_HINT}`);
+            throw new Error(`Forge backend rejected resume for '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
         }
         entry.lastPrompt = prompt.slice(0, 200);
         entry.lastUsed = new Date().toISOString();

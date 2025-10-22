@@ -1,13 +1,9 @@
-"use strict";
 /**
  * Markdown Formatter for Token-Efficient AI-to-AI Orchestration Output
  *
  * Replaces verbose Ink rendering (16k tokens) with compact markdown (~300-500 tokens).
  * Provides 3 output modes optimized for different orchestration scenarios.
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.formatTranscriptMarkdown = formatTranscriptMarkdown;
-exports.formatSessionList = formatSessionList;
 // ============================================================================
 // Constants
 // ============================================================================
@@ -29,7 +25,7 @@ const CHARS_PER_TOKEN = 4; // Rough estimate for token counting
  * @param mode - Output mode: 'final' | 'recent' | 'overview'
  * @returns Formatted markdown string optimized for token efficiency
  */
-function formatTranscriptMarkdown(messages, meta, mode) {
+export function formatTranscriptMarkdown(messages, meta, mode) {
     const parts = [];
     // Session header
     const sessionId = meta.sessionId || 'pending';
@@ -53,7 +49,7 @@ function formatTranscriptMarkdown(messages, meta, mode) {
  * @param sessions - Array of session entries
  * @returns Markdown table with session info
  */
-function formatSessionList(sessions) {
+export function formatSessionList(sessions) {
     if (sessions.length === 0) {
         return '**No sessions found**\n';
     }

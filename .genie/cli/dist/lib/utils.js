@@ -1,16 +1,4 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.formatRelativeTime = formatRelativeTime;
-exports.formatPathRelative = formatPathRelative;
-exports.truncateText = truncateText;
-exports.sanitizeLogFilename = sanitizeLogFilename;
-exports.safeIsoString = safeIsoString;
-exports.deepClone = deepClone;
-exports.mergeDeep = mergeDeep;
-const path_1 = __importDefault(require("path"));
+import path from 'path';
 /**
  * Formats ISO timestamp as human-readable relative time.
  *
@@ -21,7 +9,7 @@ const path_1 = __importDefault(require("path"));
  * formatRelativeTime('2025-09-30T10:00:00Z')
  * // Returns: '5m ago' (if current time is 10:05:00)
  */
-function formatRelativeTime(value) {
+export function formatRelativeTime(value) {
     const timestamp = new Date(value).getTime();
     if (!Number.isFinite(timestamp))
         return 'n/a';
@@ -54,11 +42,11 @@ function formatRelativeTime(value) {
  * @param {string} baseDir - Base directory for relative calculation
  * @returns {string} - Relative path or original path if calculation fails
  */
-function formatPathRelative(targetPath, baseDir) {
+export function formatPathRelative(targetPath, baseDir) {
     if (!targetPath)
         return 'n/a';
     try {
-        return path_1.default.relative(baseDir, targetPath) || targetPath;
+        return path.relative(baseDir, targetPath) || targetPath;
     }
     catch {
         return targetPath;
@@ -71,7 +59,7 @@ function formatPathRelative(targetPath, baseDir) {
  * @param {number} [maxLength=64] - Maximum length (default: 64)
  * @returns {string} - Truncated text with '...' suffix if needed
  */
-function truncateText(text, maxLength = 64) {
+export function truncateText(text, maxLength = 64) {
     if (!text)
         return '';
     if (text.length <= maxLength)
@@ -92,7 +80,7 @@ function truncateText(text, maxLength = 64) {
  * sanitizeLogFilename('core/implementor')  // Returns: 'core-implementor'
  * sanitizeLogFilename('my-agent@@!!')    // Returns: 'my-agent'
  */
-function sanitizeLogFilename(agentName) {
+export function sanitizeLogFilename(agentName) {
     const fallback = 'agent';
     if (!agentName || typeof agentName !== 'string')
         return fallback;
@@ -112,7 +100,7 @@ function sanitizeLogFilename(agentName) {
  * @param {string} value - Timestamp string (any format Date can parse)
  * @returns {string | null} - ISO string or null if invalid timestamp
  */
-function safeIsoString(value) {
+export function safeIsoString(value) {
     const timestamp = new Date(value).getTime();
     if (!Number.isFinite(timestamp))
         return null;
@@ -128,13 +116,13 @@ function safeIsoString(value) {
 /**
  * Deep clone an object using JSON serialization
  */
-function deepClone(input) {
+export function deepClone(input) {
     return JSON.parse(JSON.stringify(input));
 }
 /**
  * Deep merge source into target recursively
  */
-function mergeDeep(target, source) {
+export function mergeDeep(target, source) {
     if (source === null || source === undefined)
         return target;
     if (Array.isArray(source)) {

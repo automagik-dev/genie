@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-"use strict";
 /**
  * Genie CLI - Unified command-line interface with commander.js
  *
@@ -7,25 +6,21 @@
  * - Agent orchestration (run, resume, list, view, stop)
  * - MCP server management (genie mcp)
  */
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const commander_1 = require("commander");
-const child_process_1 = require("child_process");
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
-const gradient_string_1 = __importDefault(require("gradient-string"));
-const forge_manager_1 = require("./lib/forge-manager");
-const forge_stats_1 = require("./lib/forge-stats");
-const token_tracker_1 = require("./lib/token-tracker");
-const program = new commander_1.Command();
+import { Command } from 'commander';
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import gradient from 'gradient-string';
+import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager';
+import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
+import { formatTokenMetrics } from './lib/token-tracker';
+const program = new Command();
 // Genie-themed gradients 🧞✨
-const genieGradient = (0, gradient_string_1.default)(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
-const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00']); // Gold → Dark Orange
-const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff']); // Green → Cyan
+const genieGradient = gradient(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
+const performanceGradient = gradient(['#ffd700', '#ff8c00']); // Gold → Dark Orange
+const successGradient = gradient(['#00ff88', '#00ccff']); // Green → Cyan
 // Get package version
-const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../package.json'), 'utf8'));
 program
     .name('genie')
     .description('Self-evolving AI agent orchestration framework\n\nRun with no arguments to start Genie server (Forge + MCP)')
@@ -175,16 +170,16 @@ else {
  * Run the intelligent entry point with animations and auto-detection
  */
 function runIntelligentEntry() {
-    const entryScript = path_1.default.join(__dirname, 'intelligent-entry-main.js');
+    const entryScript = path.join(__dirname, 'intelligent-entry-main.js');
     // Check if intelligent entry exists (might not be built yet)
-    if (!fs_1.default.existsSync(entryScript)) {
+    if (!fs.existsSync(entryScript)) {
         console.error('Warning: Intelligent entry not built. Falling back to direct server start.');
         console.error('Run: pnpm run build:genie');
         console.error('');
         startGenieServer();
         return;
     }
-    const child = (0, child_process_1.spawn)('node', [entryScript], {
+    const child = spawn('node', [entryScript], {
         stdio: 'inherit',
         env: process.env
     });
@@ -209,8 +204,8 @@ function runIntelligentEntry() {
  * Execute the legacy genie CLI
  */
 function execGenie(args) {
-    const genieScript = path_1.default.join(__dirname, 'genie.js');
-    const child = (0, child_process_1.spawn)('node', [genieScript, ...args], {
+    const genieScript = path.join(__dirname, 'genie.js');
+    const child = spawn('node', [genieScript, ...args], {
         stdio: 'inherit',
         env: process.env
     });
@@ -387,14 +382,14 @@ async function startHealthMonitoring(baseUrl, mcpPort, mcpChild, serverStartTime
         const timeStr = now.toLocaleTimeString();
         const dateStr = now.toLocaleDateString();
         // Check Forge health
-        const forgeHealthy = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+        const forgeHealthy = await isForgeRunning(baseUrl);
         const forgeStatus = forgeHealthy ? '🟢' : '🔴';
         // Check MCP health
         const mcpHealthy = mcpChild && !mcpChild.killed;
         const mcpStatus = mcpHealthy ? '🟢' : '🔴';
         // Collect Forge statistics (only if healthy)
-        const forgeStats = forgeHealthy ? await (0, forge_stats_1.collectForgeStats)(baseUrl) : null;
-        const statsDisplay = (0, forge_stats_1.formatStatsForDashboard)(forgeStats);
+        const forgeStats = forgeHealthy ? await collectForgeStats(baseUrl) : null;
+        const statsDisplay = formatStatsForDashboard(forgeStats);
         // Build executive dashboard with stats
         const headerLine = '━'.repeat(60);
         const header = genieGradient(`${headerLine}
@@ -442,15 +437,15 @@ ${footer}`;
 async function startGenieServer() {
     const startTime = Date.now();
     const timings = {};
-    const mcpServer = path_1.default.join(__dirname, '../../mcp/dist/server.js');
+    const mcpServer = path.join(__dirname, '../../mcp/dist/server.js');
     // Check if MCP server exists
-    if (!fs_1.default.existsSync(mcpServer)) {
+    if (!fs.existsSync(mcpServer)) {
         console.error('Error: MCP server not built. Run: pnpm run build:mcp');
         process.exit(1);
     }
     // Phase 1: Start Forge in background
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
+    const logDir = path.join(process.cwd(), '.genie', 'state');
     const forgePort = new URL(baseUrl).port || '8887';
     console.log(genieGradient('━'.repeat(60)));
     console.log(genieGradient('🧞 ✨ GENIE - Autonomous Agent Orchestration'));
@@ -493,12 +488,12 @@ async function startGenieServer() {
     }
     // Check if Forge is already running (health check)
     const healthCheckStart = Date.now();
-    const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+    const forgeRunning = await isForgeRunning(baseUrl);
     timings.initialHealthCheck = Date.now() - healthCheckStart;
     if (!forgeRunning) {
         const forgeSpawnStart = Date.now();
         process.stderr.write('📦 Starting Forge backend');
-        const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
+        const startResult = startForgeInBackground({ baseUrl, logDir });
         timings.forgeSpawn = Date.now() - forgeSpawnStart;
         if (!startResult.ok) {
             const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
@@ -508,7 +503,7 @@ async function startGenieServer() {
         }
         // Wait for Forge to be ready (parallel with MCP startup below)
         const forgeReadyStart = Date.now();
-        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, true);
+        const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, true);
         timings.forgeReady = Date.now() - forgeReadyStart;
         if (!forgeReady) {
             console.error('\n❌ Forge did not start in time (60s). Check logs at .genie/state/forge.log');
@@ -555,7 +550,7 @@ async function startGenieServer() {
         console.log(genieGradient('🛑 Shutting down Genie...'));
         console.log(genieGradient('━'.repeat(60)));
         // Check for running tasks before killing Forge
-        const runningTasks = await (0, forge_manager_1.getRunningTasks)(baseUrl);
+        const runningTasks = await getRunningTasks(baseUrl);
         if (runningTasks.length > 0) {
             console.log('');
             console.log('⚠️  WARNING: Running tasks detected!');
@@ -594,10 +589,10 @@ async function startGenieServer() {
             console.log('📡 MCP server stopped');
         }
         // Kill Forge child process immediately (prevents orphaned processes)
-        (0, forge_manager_1.killForgeProcess)();
+        killForgeProcess();
         // Stop Forge and wait for completion
         try {
-            const stopped = await (0, forge_manager_1.stopForge)(logDir);
+            const stopped = await stopForge(logDir);
             if (stopped) {
                 console.log('📦 Forge backend stopped');
             }
@@ -609,7 +604,7 @@ async function startGenieServer() {
             console.error(`❌ Error stopping Forge: ${error}`);
         }
         // Collect final stats for goodbye report
-        const finalStats = await (0, forge_stats_1.collectForgeStats)(baseUrl);
+        const finalStats = await collectForgeStats(baseUrl);
         // Display epic goodbye report with Genie's face
         console.log('');
         console.log(genieGradient('━'.repeat(80)));
@@ -640,7 +635,7 @@ async function startGenieServer() {
             console.log(performanceGradient('🪙  TOKEN USAGE THIS SESSION'));
             console.log(performanceGradient('━'.repeat(80)));
             console.log('');
-            console.log((0, token_tracker_1.formatTokenMetrics)(finalStats.tokens, false));
+            console.log(formatTokenMetrics(finalStats.tokens, false));
             console.log('');
         }
         // Work summary
@@ -685,7 +680,7 @@ async function startGenieServer() {
     let monitoringStarted = false;
     const start = () => {
         attempt += 1;
-        mcpChild = (0, child_process_1.spawn)('node', [mcpServer], {
+        mcpChild = spawn('node', [mcpServer], {
             stdio: 'inherit',
             env
         });
@@ -728,7 +723,7 @@ async function startGenieServer() {
                 }
                 // Don't exit immediately - let SIGINT handler clean up Forge
                 (async () => {
-                    await (0, forge_manager_1.stopForge)(logDir);
+                    await stopForge(logDir);
                     process.exit(exitCode || 0);
                 })();
             }
@@ -742,7 +737,7 @@ async function startGenieServer() {
             else {
                 console.error('Failed to start MCP server:', err);
                 (async () => {
-                    await (0, forge_manager_1.stopForge)(logDir);
+                    await stopForge(logDir);
                     process.exit(1);
                 })();
             }
@@ -755,15 +750,15 @@ async function startGenieServer() {
  * Requires Forge to already be running
  */
 async function startMCPStdio() {
-    const mcpServer = path_1.default.join(__dirname, '../../mcp/dist/server.js');
+    const mcpServer = path.join(__dirname, '../../mcp/dist/server.js');
     // Check if MCP server exists
-    if (!fs_1.default.existsSync(mcpServer)) {
+    if (!fs.existsSync(mcpServer)) {
         console.error('Error: MCP server not built. Run: pnpm run build:mcp');
         process.exit(1);
     }
     // Check if Forge is running
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+    const forgeRunning = await isForgeRunning(baseUrl);
     if (!forgeRunning) {
         console.error('❌ Forge is not running.');
         console.error('');
@@ -779,7 +774,7 @@ async function startMCPStdio() {
         MCP_TRANSPORT: 'stdio'
     };
     // Start MCP in stdio mode
-    const child = (0, child_process_1.spawn)('node', [mcpServer], {
+    const child = spawn('node', [mcpServer], {
         stdio: 'inherit',
         env
     });

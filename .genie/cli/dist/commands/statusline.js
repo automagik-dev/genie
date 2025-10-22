@@ -1,11 +1,8 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.runStatusline = runStatusline;
-const child_process_1 = require("child_process");
-const paths_1 = require("../lib/paths");
-const fs_utils_1 = require("../lib/fs-utils");
-const package_1 = require("../lib/package");
-async function runStatusline(_parsed, _config, _paths) {
+import { execSync } from 'child_process';
+import { resolveWorkspaceProviderPath, resolveWorkspaceVersionPath } from '../lib/paths';
+import { pathExists, readJsonFile } from '../lib/fs-utils';
+import { getPackageVersion } from '../lib/package';
+export async function runStatusline(_parsed, _config, _paths) {
     const cwd = process.cwd();
     const provider = await readProvider(cwd);
     const version = await readVersion(cwd);
@@ -20,29 +17,29 @@ async function runStatusline(_parsed, _config, _paths) {
     process.stderr.write('⚠️  `statusline` is deprecated. Refer to the migration guide for updated integrations.\n');
 }
 async function readProvider(cwd) {
-    const providerPath = (0, paths_1.resolveWorkspaceProviderPath)(cwd);
-    const state = await (0, fs_utils_1.readJsonFile)(providerPath);
+    const providerPath = resolveWorkspaceProviderPath(cwd);
+    const state = await readJsonFile(providerPath);
     if (state && state.provider) {
         return state.provider;
     }
     return process.env.GENIE_PROVIDER ?? 'unknown';
 }
 async function readVersion(cwd) {
-    const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
-    if (await (0, fs_utils_1.pathExists)(versionPath)) {
-        const state = await (0, fs_utils_1.readJsonFile)(versionPath);
+    const versionPath = resolveWorkspaceVersionPath(cwd);
+    if (await pathExists(versionPath)) {
+        const state = await readJsonFile(versionPath);
         if (state && state.version) {
             return state.version;
         }
     }
-    return (0, package_1.getPackageVersion)();
+    return getPackageVersion();
 }
 function readGitStatus() {
     try {
-        const branch = (0, child_process_1.execSync)('git rev-parse --abbrev-ref HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+        const branch = execSync('git rev-parse --abbrev-ref HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
             .toString()
             .trim();
-        const changes = (0, child_process_1.execSync)('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
+        const changes = execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
             .toString()
             .trim();
         const dirty = changes ? `${changes.split('\n').length} changes` : 'clean';

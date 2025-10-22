@@ -1,15 +1,5 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildHelpView = buildHelpView;
-exports.buildSubcommandHelpView = buildSubcommandHelpView;
-exports.buildRunHelpView = buildRunHelpView;
-exports.buildResumeHelpView = buildResumeHelpView;
-exports.buildListHelpView = buildListHelpView;
-exports.buildViewHelpView = buildViewHelpView;
-exports.buildStopHelpView = buildStopHelpView;
-exports.buildGeneralHelpView = buildGeneralHelpView;
 // Main help view
-function buildHelpView(params) {
+export function buildHelpView(params) {
     const lines = [];
     lines.push('# GENIE CLI');
     lines.push('');
@@ -56,7 +46,7 @@ function buildHelpView(params) {
     return lines.join('\n');
 }
 // Helper function to build subcommand help views
-function buildSubcommandHelpView(params) {
+export function buildSubcommandHelpView(params) {
     const lines = [];
     lines.push(`# genie ${params.command}`);
     lines.push('');
@@ -109,7 +99,7 @@ function buildSubcommandHelpView(params) {
     return lines.join('\n');
 }
 // Specific help views for each subcommand
-function buildRunHelpView() {
+export function buildRunHelpView() {
     return buildSubcommandHelpView({
         command: 'run',
         description: 'Start or attach to an agent session',
@@ -139,7 +129,7 @@ function buildRunHelpView() {
         ]
     });
 }
-function buildResumeHelpView() {
+export function buildResumeHelpView() {
     return buildSubcommandHelpView({
         command: 'resume',
         description: 'Continue an existing agent session',
@@ -163,7 +153,7 @@ function buildResumeHelpView() {
         ]
     });
 }
-function buildListHelpView() {
+export function buildListHelpView() {
     return buildSubcommandHelpView({
         command: 'list',
         description: 'Display available agents or active sessions',
@@ -186,7 +176,7 @@ function buildListHelpView() {
         ]
     });
 }
-function buildViewHelpView() {
+export function buildViewHelpView() {
     return buildSubcommandHelpView({
         command: 'view',
         description: 'Show transcript and details for a session',
@@ -209,7 +199,7 @@ function buildViewHelpView() {
         ]
     });
 }
-function buildStopHelpView() {
+export function buildStopHelpView() {
     return buildSubcommandHelpView({
         command: 'stop',
         description: 'End a running background session',
@@ -231,7 +221,7 @@ function buildStopHelpView() {
         ]
     });
 }
-function buildGeneralHelpView() {
+export function buildGeneralHelpView() {
     return buildSubcommandHelpView({
         command: 'help',
         description: 'Show help information for commands',
