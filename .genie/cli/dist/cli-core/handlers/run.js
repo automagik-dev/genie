@@ -1,7 +1,7 @@
-import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
-import { generateSessionName } from '../../session-store';
-import { createForgeExecutor } from '../../lib/forge-executor';
-import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver.js';
+import { generateSessionName } from '../../session-store.js';
+import { createForgeExecutor } from '../../lib/forge-executor.js';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers.js';
 export function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;

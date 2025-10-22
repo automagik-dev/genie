@@ -56,7 +56,7 @@ const __dirname = path.dirname(__filename);
 // })();
 
 async function runCliCoreTests() {
-  const cliCore = await import('../.genie/cli/dist/cli-core.js');
+  const cliCore = await import('../.genie/cli/dist/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
   assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
 
