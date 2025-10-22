@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
+// @ts-ignore - ESM module
 import { Box, Text, useInput } from 'ink';
+// @ts-ignore - ESM module
 import SelectInput from 'ink-select-input';
+// @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
+// @ts-ignore - ESM module
 import Gradient from 'ink-gradient';
+// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
     const [step, setStep] = useState(hasGit ? 'template' : 'git');
@@ -89,6 +94,7 @@ export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
             React.createElement(Text, { dimColor: true }, "ESC to cancel")))));
 };
 export async function runInitWizard(options) {
+    // @ts-ignore - Dynamic import for ESM module
     const { render } = await import('ink');
     return new Promise((resolve) => {
         const { waitUntilExit } = render(React.createElement(InitWizard, { ...options, onComplete: (config) => {

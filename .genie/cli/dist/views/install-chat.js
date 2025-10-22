@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+// @ts-ignore - ESM module
 import { Box, Text, useInput, useApp } from 'ink';
+// @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
+// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 export const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
     const { exit } = useApp();
@@ -116,6 +119,7 @@ export const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart 
             React.createElement(TextInput, { value: userInput, onChange: setUserInput, onSubmit: handleSubmit, placeholder: "Type your response..." }))));
 };
 export async function runInstallChat(options) {
+    // @ts-ignore - Dynamic import for ESM module
     const { render } = await import('ink');
     return new Promise((resolve, reject) => {
         let shouldRestart = false;
