@@ -7,7 +7,7 @@ import {
   SessionPathsConfig,
   SessionLoadConfig,
   SessionDefaults
-} from '../session-store.js';
+} from '../session-store';
 
 export interface SessionServiceOptions {
   paths: SessionPathsConfig;

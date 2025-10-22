@@ -1,10 +1,19 @@
-import fs from 'fs';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports._internals = void 0;
+exports.generateSessionName = generateSessionName;
+exports.loadSessions = loadSessions;
+exports.saveSessions = saveSessions;
+const fs_1 = __importDefault(require("fs"));
 /**
  * Generate a friendly session name from agent name and timestamp.
  * Format: "{agent}-{YYMMDDHHmm}"
  * Example: "analyze-2310171530"
  */
-export function generateSessionName(agentName) {
+function generateSessionName(agentName) {
     const now = new Date();
     const timestamp = now.toISOString()
         .replace(/[-:T]/g, '')
@@ -16,10 +25,10 @@ export function generateSessionName(agentName) {
         || 'session';
     return `${slug}-${timestamp}`;
 }
-export function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
+function loadSessions(paths = {}, config = {}, defaults = {}, callbacks = {}) {
     const storePath = paths.sessionsFile;
     let store;
-    if (storePath && fs.existsSync(storePath)) {
+    if (storePath && fs_1.default.existsSync(storePath)) {
         store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
     }
     else {
@@ -28,14 +37,14 @@ export function loadSessions(paths = {}, config = {}, defaults = {}, callbacks =
     const defaultExecutor = resolveDefaultExecutor(config, defaults);
     return migrateSessionEntries(store, defaultExecutor);
 }
-export function saveSessions(paths = {}, store) {
+function saveSessions(paths = {}, store) {
     if (!paths.sessionsFile)
         return;
     const payload = JSON.stringify(store, null, 2);
-    fs.writeFileSync(paths.sessionsFile, payload);
+    fs_1.default.writeFileSync(paths.sessionsFile, payload);
 }
 function readJson(filePath, callbacks) {
-    const content = fs.readFileSync(filePath, 'utf8');
+    const content = fs_1.default.readFileSync(filePath, 'utf8');
     if (!content.trim().length)
         return {};
     try {
@@ -148,7 +157,7 @@ function resolveDefaultExecutor(config = {}, defaults = {}) {
         defaults.defaults?.executor ||
         'opencode');
 }
-export const _internals = {
+exports._internals = {
     readJson,
     normalizeSessionStore,
     migrateSessionEntries,

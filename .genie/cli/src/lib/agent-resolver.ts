@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import type { AgentSpec } from './types.js';
-import { recordStartupWarning } from './config.js';
-import { transformDisplayPath } from './display-transform.js';
+import type { AgentSpec } from './types';
+import { recordStartupWarning } from './config';
+import { transformDisplayPath } from './display-transform';
 
 let YAML: typeof import('yaml') | null = null;
 try {

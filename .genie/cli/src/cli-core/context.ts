@@ -1,5 +1,5 @@
-import type { SessionService } from './session-service.js';
-import type { ConfigPaths, GenieConfig, CLIOptions, ParsedCommand } from './types.js';
+import type { SessionService } from './session-service';
+import type { ConfigPaths, GenieConfig, CLIOptions, ParsedCommand } from './types';
 
 export type EmitViewFn = (
   content: string,

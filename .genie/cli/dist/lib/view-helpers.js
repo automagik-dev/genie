@@ -1,3 +1,6 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.emitView = emitView;
 /**
  * emitView - Token-efficient markdown output (replaces Ink rendering)
  *
@@ -6,7 +9,7 @@
  *
  * @deprecated - Commands should use formatTranscriptMarkdown directly instead
  */
-export async function emitView(content, options, opts = {}) {
+async function emitView(content, options, opts = {}) {
     const stream = opts.stream || process.stdout;
     if (opts.forceJson) {
         // JSON output mode (rare, but supported)

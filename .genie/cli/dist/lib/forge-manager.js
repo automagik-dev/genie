@@ -1,10 +1,21 @@
-import { spawn } from 'child_process';
-import { getDirname } from './esm-dirname.js';
-const __dirname = getDirname(import.meta.url);
-import fs from 'fs';
-import path from 'path';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.isForgeRunning = isForgeRunning;
+exports.waitForForgeReady = waitForForgeReady;
+exports.startForgeInBackground = startForgeInBackground;
+exports.getRunningTasks = getRunningTasks;
+exports.killForgeProcess = killForgeProcess;
+exports.stopForge = stopForge;
+exports.restartForge = restartForge;
+exports.getForgeProcess = getForgeProcess;
+const child_process_1 = require("child_process");
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../../forge.js';
+const forge_js_1 = require("../../../../forge.js");
 const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 const HEALTH_CHECK_TIMEOUT = 3000; // 3s per health check
 const MAX_HEALTH_RETRIES = 3;
@@ -13,10 +24,10 @@ let forgeChildProcess = null;
 /**
  * Health check with retry logic and exponential backoff
  */
-export async function isForgeRunning(baseUrl = DEFAULT_BASE_URL, retries = MAX_HEALTH_RETRIES) {
+async function isForgeRunning(baseUrl = DEFAULT_BASE_URL, retries = MAX_HEALTH_RETRIES) {
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+            const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT);
             const ok = await client.healthCheck();
@@ -36,7 +47,7 @@ export async function isForgeRunning(baseUrl = DEFAULT_BASE_URL, retries = MAX_H
 /**
  * Wait for Forge to become ready with progress indication
  */
-export async function waitForForgeReady(baseUrl = DEFAULT_BASE_URL, timeoutMs = 60000, intervalMs = 500, showProgress = false) {
+async function waitForForgeReady(baseUrl = DEFAULT_BASE_URL, timeoutMs = 60000, intervalMs = 500, showProgress = false) {
     const start = Date.now();
     let lastDot = 0;
     let consecutiveFailures = 0;
@@ -66,22 +77,22 @@ export async function waitForForgeReady(baseUrl = DEFAULT_BASE_URL, timeoutMs = 
  * __dirname is .genie/cli/dist/lib/, so we go up 5 levels to reach parent node_modules/
  */
 function resolveForgeBinary() {
-    const baseDir = path.join(__dirname, '../../../../../');
+    const baseDir = path_1.default.join(__dirname, '../../../../../');
     // Try standard npm/npx structure first (fastest)
     // automagik-forge is a sibling in node_modules/
-    const npmPath = path.join(baseDir, 'automagik-forge/bin/cli.js');
-    if (fs.existsSync(npmPath)) {
+    const npmPath = path_1.default.join(baseDir, 'automagik-forge/bin/cli.js');
+    if (fs_1.default.existsSync(npmPath)) {
         return { ok: true, value: npmPath };
     }
     // Try pnpm structure with glob pattern (version-agnostic)
     try {
-        const pnpmBase = path.join(baseDir, '.pnpm');
-        if (fs.existsSync(pnpmBase)) {
-            const entries = fs.readdirSync(pnpmBase);
+        const pnpmBase = path_1.default.join(baseDir, '.pnpm');
+        if (fs_1.default.existsSync(pnpmBase)) {
+            const entries = fs_1.default.readdirSync(pnpmBase);
             const forgeDir = entries.find(e => e.startsWith('automagik-forge@'));
             if (forgeDir) {
-                const pnpmPath = path.join(pnpmBase, forgeDir, 'node_modules/automagik-forge/bin/cli.js');
-                if (fs.existsSync(pnpmPath)) {
+                const pnpmPath = path_1.default.join(pnpmBase, forgeDir, 'node_modules/automagik-forge/bin/cli.js');
+                if (fs_1.default.existsSync(pnpmPath)) {
                     return { ok: true, value: pnpmPath };
                 }
             }
@@ -112,12 +123,12 @@ function parsePort(baseUrl) {
 /**
  * Start Forge in background with comprehensive error handling
  */
-export function startForgeInBackground(opts) {
+function startForgeInBackground(opts) {
     const baseUrl = opts.baseUrl || DEFAULT_BASE_URL;
     const logDir = opts.logDir;
     // Ensure log directory exists
     try {
-        fs.mkdirSync(logDir, { recursive: true });
+        fs_1.default.mkdirSync(logDir, { recursive: true });
     }
     catch (error) {
         return {
@@ -125,8 +136,8 @@ export function startForgeInBackground(opts) {
             error: new Error(`Failed to create log directory: ${error}`)
         };
     }
-    const logPath = path.join(logDir, 'forge.log');
-    const pidPath = path.join(logDir, 'forge.pid');
+    const logPath = path_1.default.join(logDir, 'forge.log');
+    const pidPath = path_1.default.join(logDir, 'forge.pid');
     // Resolve binary path
     const binaryResult = resolveForgeBinary();
     if (!binaryResult.ok) {
@@ -138,7 +149,7 @@ export function startForgeInBackground(opts) {
     // Open log files (will be inherited by child)
     let logFd;
     try {
-        logFd = fs.openSync(logPath, 'a');
+        logFd = fs_1.default.openSync(logPath, 'a');
     }
     catch (error) {
         return {
@@ -149,7 +160,7 @@ export function startForgeInBackground(opts) {
     // Spawn process with error handling
     let child;
     try {
-        child = spawn('node', [binPath], {
+        child = (0, child_process_1.spawn)('node', [binPath], {
             env: {
                 ...process.env,
                 PORT: port,
@@ -162,7 +173,7 @@ export function startForgeInBackground(opts) {
         });
     }
     catch (error) {
-        fs.closeSync(logFd);
+        fs_1.default.closeSync(logFd);
         return {
             ok: false,
             error: new Error(`Failed to spawn Forge process: ${error}`)
@@ -170,12 +181,12 @@ export function startForgeInBackground(opts) {
     }
     // Handle spawn errors
     child.on('error', (error) => {
-        fs.appendFileSync(logPath, `\n[SPAWN ERROR] ${error}\n`);
+        fs_1.default.appendFileSync(logPath, `\n[SPAWN ERROR] ${error}\n`);
     });
     // Handle early exit (crash during startup)
     child.on('exit', (code, signal) => {
         if (code !== 0 && code !== null) {
-            fs.appendFileSync(logPath, `\n[EARLY EXIT] Process exited with code ${code}, signal ${signal}\n`);
+            fs_1.default.appendFileSync(logPath, `\n[EARLY EXIT] Process exited with code ${code}, signal ${signal}\n`);
         }
     });
     // Track child process for graceful shutdown
@@ -183,16 +194,16 @@ export function startForgeInBackground(opts) {
     // Detach so it survives parent exit
     child.unref();
     // Close our handle to log file (child has inherited it)
-    fs.closeSync(logFd);
+    fs_1.default.closeSync(logFd);
     // Write PID file
     const pid = child.pid ?? -1;
     if (pid > 0) {
         try {
-            fs.writeFileSync(pidPath, String(pid), 'utf8');
+            fs_1.default.writeFileSync(pidPath, String(pid), 'utf8');
         }
         catch (error) {
             // Non-fatal: log but continue
-            fs.appendFileSync(logPath, `\n[WARNING] Failed to write PID file: ${error}\n`);
+            fs_1.default.appendFileSync(logPath, `\n[WARNING] Failed to write PID file: ${error}\n`);
         }
     }
     return {
@@ -207,9 +218,9 @@ export function startForgeInBackground(opts) {
 /**
  * Check for running task attempts and return them with URLs
  */
-export async function getRunningTasks(baseUrl = DEFAULT_BASE_URL) {
+async function getRunningTasks(baseUrl = DEFAULT_BASE_URL) {
     try {
-        const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Get all projects
         const projects = await client.listProjects();
         const runningTasks = [];
@@ -243,7 +254,7 @@ export async function getRunningTasks(baseUrl = DEFAULT_BASE_URL) {
  * Kill Forge child process immediately (for Ctrl+C shutdown)
  * Sends SIGTERM to the entire process group
  */
-export function killForgeProcess() {
+function killForgeProcess() {
     if (!forgeChildProcess || forgeChildProcess.killed) {
         return;
     }
@@ -271,11 +282,11 @@ export function killForgeProcess() {
 /**
  * Stop Forge process with verification
  */
-export async function stopForge(logDir) {
-    const pidPath = path.join(logDir, 'forge.pid');
+async function stopForge(logDir) {
+    const pidPath = path_1.default.join(logDir, 'forge.pid');
     let pid;
     try {
-        const pidStr = fs.readFileSync(pidPath, 'utf8').trim();
+        const pidStr = fs_1.default.readFileSync(pidPath, 'utf8').trim();
         pid = parseInt(pidStr, 10);
         if (Number.isNaN(pid) || pid <= 0) {
             return false;
@@ -302,7 +313,7 @@ export async function stopForge(logDir) {
         catch {
             // Process is dead
             try {
-                fs.unlinkSync(pidPath);
+                fs_1.default.unlinkSync(pidPath);
             }
             catch { }
             return true;
@@ -311,7 +322,7 @@ export async function stopForge(logDir) {
     // Force kill if still alive
     try {
         process.kill(pid, 'SIGKILL');
-        fs.unlinkSync(pidPath);
+        fs_1.default.unlinkSync(pidPath);
     }
     catch { }
     return true;
@@ -319,7 +330,7 @@ export async function stopForge(logDir) {
 /**
  * Restart Forge with proper shutdown and startup
  */
-export async function restartForge(opts) {
+async function restartForge(opts) {
     const baseUrl = opts.baseUrl || DEFAULT_BASE_URL;
     const logDir = opts.logDir;
     // Check if already running
@@ -353,10 +364,10 @@ export async function restartForge(opts) {
 /**
  * Get Forge process info
  */
-export function getForgeProcess(logDir) {
-    const pidPath = path.join(logDir, 'forge.pid');
+function getForgeProcess(logDir) {
+    const pidPath = path_1.default.join(logDir, 'forge.pid');
     try {
-        const pidStr = fs.readFileSync(pidPath, 'utf8').trim();
+        const pidStr = fs_1.default.readFileSync(pidPath, 'utf8').trim();
         const pid = parseInt(pidStr, 10);
         if (Number.isNaN(pid) || pid <= 0) {
             return null;
@@ -372,7 +383,7 @@ export function getForgeProcess(logDir) {
         }
         catch {
             // Process is dead, clean up PID file
-            fs.unlinkSync(pidPath);
+            fs_1.default.unlinkSync(pidPath);
             return null;
         }
     }

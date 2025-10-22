@@ -1,12 +1,20 @@
+"use strict";
 /**
  * Token Usage Tracker
  *
  * Aggregates token usage metrics from execution process logs
  * Parses JSONL events to extract input/output/total tokens
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.collectTokensForAttempt = collectTokensForAttempt;
+exports.collectAllTokenMetrics = collectAllTokenMetrics;
+exports.formatTokenMetrics = formatTokenMetrics;
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../../forge.js';
-import WebSocket from 'ws';
+const forge_js_1 = require("../../../../forge.js");
+const ws_1 = __importDefault(require("ws"));
 /**
  * Parse token events from JSONL logs
  */
@@ -103,7 +111,7 @@ async function fetchLogsViaWebSocket(baseUrl, processId, timeoutMs = 2000) {
         let ws = null;
         let resolved = false;
         const cleanup = () => {
-            if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+            if (ws && ws.readyState !== ws_1.default.CLOSED && ws.readyState !== ws_1.default.CLOSING) {
                 ws.terminate(); // Force close
             }
         };
@@ -118,7 +126,7 @@ async function fetchLogsViaWebSocket(baseUrl, processId, timeoutMs = 2000) {
             safeResolve(logs); // Return whatever we collected
         }, timeoutMs);
         try {
-            ws = new WebSocket(wsUrl);
+            ws = new ws_1.default(wsUrl);
             ws.on('open', () => {
                 // Connection opened - reset timeout for data collection
             });
@@ -163,7 +171,7 @@ async function fetchLogsViaWebSocket(baseUrl, processId, timeoutMs = 2000) {
 /**
  * Collect token metrics for a single task attempt
  */
-export async function collectTokensForAttempt(client, attemptId) {
+async function collectTokensForAttempt(client, attemptId) {
     const aggregated = {
         input: 0,
         output: 0,
@@ -206,7 +214,7 @@ export async function collectTokensForAttempt(client, attemptId) {
 /**
  * Collect token metrics across all task attempts
  */
-export async function collectAllTokenMetrics(baseUrl = 'http://localhost:8887') {
+async function collectAllTokenMetrics(baseUrl = 'http://localhost:8887') {
     const aggregated = {
         input: 0,
         output: 0,
@@ -216,7 +224,7 @@ export async function collectAllTokenMetrics(baseUrl = 'http://localhost:8887') 
         processCount: 0
     };
     try {
-        const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Get all task attempts
         const attempts = await client.listTaskAttempts();
         if (!attempts || attempts.length === 0) {
@@ -242,7 +250,7 @@ export async function collectAllTokenMetrics(baseUrl = 'http://localhost:8887') 
 /**
  * Format token metrics for display
  */
-export function formatTokenMetrics(metrics, compact = false) {
+function formatTokenMetrics(metrics, compact = false) {
     if (metrics.total === 0) {
         return compact ? 'No usage yet' : '   No token usage yet';
     }

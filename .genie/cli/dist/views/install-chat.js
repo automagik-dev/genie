@@ -1,19 +1,59 @@
-import React, { useState, useEffect, useRef } from 'react';
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.InstallChat = void 0;
+exports.runInstallChat = runInstallChat;
+const react_1 = __importStar(require("react"));
 // @ts-ignore - ESM module
-import { Box, Text, useInput, useApp } from 'ink';
+const ink_1 = require("ink");
 // @ts-ignore - ESM module
-import TextInput from 'ink-text-input';
+const ink_text_input_1 = __importDefault(require("ink-text-input"));
 // @ts-ignore - ESM module
-import Spinner from 'ink-spinner';
-export const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
-    const { exit } = useApp();
-    const [messages, setMessages] = useState([]);
-    const [userInput, setUserInput] = useState('');
-    const [isAgentThinking, setIsAgentThinking] = useState(false);
-    const [sessionId, setSessionId] = useState(null);
-    const scrollRef = useRef(0);
+const ink_spinner_1 = __importDefault(require("ink-spinner"));
+const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
+    const { exit } = (0, ink_1.useApp)();
+    const [messages, setMessages] = (0, react_1.useState)([]);
+    const [userInput, setUserInput] = (0, react_1.useState)('');
+    const [isAgentThinking, setIsAgentThinking] = (0, react_1.useState)(false);
+    const [sessionId, setSessionId] = (0, react_1.useState)(null);
+    const scrollRef = (0, react_1.useRef)(0);
     // Initialize session with install agent
-    useEffect(() => {
+    (0, react_1.useEffect)(() => {
         initializeSession();
     }, []);
     const initializeSession = async () => {
@@ -72,7 +112,7 @@ export const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart 
     const addUserMessage = (content) => addMessage('user', content);
     const addSystemMessage = (content) => addMessage('system', content);
     // Handle keyboard shortcuts
-    useInput((input, key) => {
+    (0, ink_1.useInput)((input, key) => {
         // Ctrl+N: Skip/continue
         if (key.ctrl && input === 'n') {
             addSystemMessage('Skipping...');
@@ -90,40 +130,41 @@ export const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart 
     });
     // Scroll behavior: show last N messages
     const visibleMessages = messages.slice(Math.max(0, messages.length - 15));
-    return (React.createElement(Box, { flexDirection: "column", height: "100%" },
-        React.createElement(Box, { borderStyle: "single", borderColor: "cyan", paddingX: 1 },
-            React.createElement(Text, { bold: true, color: "cyan" },
+    return (react_1.default.createElement(ink_1.Box, { flexDirection: "column", height: "100%" },
+        react_1.default.createElement(ink_1.Box, { borderStyle: "single", borderColor: "cyan", paddingX: 1 },
+            react_1.default.createElement(ink_1.Text, { bold: true, color: "cyan" },
                 "\uD83E\uDDDE Install Agent (",
                 template,
                 ")"),
-            React.createElement(Box, { flexGrow: 1 }),
-            React.createElement(Text, { dimColor: true }, "Ctrl+N: Skip | Ctrl+Shift+N: Restart | ESC: Exit")),
-        React.createElement(Box, { flexDirection: "column", flexGrow: 1, paddingX: 1, paddingY: 1 },
-            visibleMessages.map((msg, idx) => (React.createElement(Box, { key: idx, marginBottom: 1, flexDirection: "column" },
-                msg.role === 'agent' && (React.createElement(Box, null,
-                    React.createElement(Text, { bold: true, color: "green" }, "\uD83E\uDD16 Agent: "),
-                    React.createElement(Text, null, msg.content))),
-                msg.role === 'user' && (React.createElement(Box, null,
-                    React.createElement(Text, { bold: true, color: "blue" }, "\uD83D\uDC64 You: "),
-                    React.createElement(Text, null, msg.content))),
-                msg.role === 'system' && (React.createElement(Box, null,
-                    React.createElement(Text, { dimColor: true },
+            react_1.default.createElement(ink_1.Box, { flexGrow: 1 }),
+            react_1.default.createElement(ink_1.Text, { dimColor: true }, "Ctrl+N: Skip | Ctrl+Shift+N: Restart | ESC: Exit")),
+        react_1.default.createElement(ink_1.Box, { flexDirection: "column", flexGrow: 1, paddingX: 1, paddingY: 1 },
+            visibleMessages.map((msg, idx) => (react_1.default.createElement(ink_1.Box, { key: idx, marginBottom: 1, flexDirection: "column" },
+                msg.role === 'agent' && (react_1.default.createElement(ink_1.Box, null,
+                    react_1.default.createElement(ink_1.Text, { bold: true, color: "green" }, "\uD83E\uDD16 Agent: "),
+                    react_1.default.createElement(ink_1.Text, null, msg.content))),
+                msg.role === 'user' && (react_1.default.createElement(ink_1.Box, null,
+                    react_1.default.createElement(ink_1.Text, { bold: true, color: "blue" }, "\uD83D\uDC64 You: "),
+                    react_1.default.createElement(ink_1.Text, null, msg.content))),
+                msg.role === 'system' && (react_1.default.createElement(ink_1.Box, null,
+                    react_1.default.createElement(ink_1.Text, { dimColor: true },
                         "\u2022 ",
                         msg.content)))))),
-            isAgentThinking && (React.createElement(Box, null,
-                React.createElement(Text, { color: "yellow" },
-                    React.createElement(Spinner, { type: "dots" }),
+            isAgentThinking && (react_1.default.createElement(ink_1.Box, null,
+                react_1.default.createElement(ink_1.Text, { color: "yellow" },
+                    react_1.default.createElement(ink_spinner_1.default, { type: "dots" }),
                     " Agent is thinking...")))),
-        React.createElement(Box, { borderStyle: "single", borderColor: "gray", paddingX: 1 },
-            React.createElement(Text, { color: "cyan" }, "\u203A "),
-            React.createElement(TextInput, { value: userInput, onChange: setUserInput, onSubmit: handleSubmit, placeholder: "Type your response..." }))));
+        react_1.default.createElement(ink_1.Box, { borderStyle: "single", borderColor: "gray", paddingX: 1 },
+            react_1.default.createElement(ink_1.Text, { color: "cyan" }, "\u203A "),
+            react_1.default.createElement(ink_text_input_1.default, { value: userInput, onChange: setUserInput, onSubmit: handleSubmit, placeholder: "Type your response..." }))));
 };
-export async function runInstallChat(options) {
+exports.InstallChat = InstallChat;
+async function runInstallChat(options) {
     // @ts-ignore - Dynamic import for ESM module
-    const { render } = await import('ink');
+    const { render } = await Promise.resolve().then(() => __importStar(require('ink')));
     return new Promise((resolve, reject) => {
         let shouldRestart = false;
-        const { waitUntilExit } = render(React.createElement(InstallChat, { ...options, onComplete: () => {
+        const { waitUntilExit } = render(react_1.default.createElement(exports.InstallChat, { ...options, onComplete: () => {
                 resolve();
             }, onRestart: () => {
                 shouldRestart = true;

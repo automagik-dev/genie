@@ -1,3 +1,6 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseArguments = parseArguments;
 /**
  * Parses command-line arguments into a structured command object.
  *
@@ -17,7 +20,7 @@
  * parseArguments(['run', 'agent', '--', '--flag-for-agent'])
  * // Returns: { command: 'run', commandArgs: ['agent', '--flag-for-agent'], options: { ... } }
  */
-export function parseArguments(argv) {
+function parseArguments(argv) {
     const raw = argv.slice();
     const command = raw.shift()?.toLowerCase();
     const options = {

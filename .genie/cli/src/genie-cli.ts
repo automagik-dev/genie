@@ -8,16 +8,13 @@
  */
 
 import { Command } from 'commander';
-import { getDirname } from './lib/esm-dirname.js';
-
-const __dirname = getDirname(import.meta.url);
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import gradient from 'gradient-string';
-import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager.js';
-import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats.js';
-import { formatTokenMetrics } from './lib/token-tracker.js';
+import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager';
+import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
+import { formatTokenMetrics } from './lib/token-tracker';
 
 const program = new Command();
 

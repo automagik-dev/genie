@@ -4,10 +4,7 @@
  * Handles animated startup with auto-detection logic
  */
 
-import { runIntelligentEntry } from './intelligent-entry.js';
-import { getDirname } from './lib/esm-dirname.js';
-
-const __dirname = getDirname(import.meta.url);
+import { runIntelligentEntry } from './intelligent-entry';
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawn } from 'child_process';

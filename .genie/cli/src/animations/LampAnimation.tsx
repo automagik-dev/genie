@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+// @ts-ignore - ESM module
 import { Text, Box } from 'ink';
 import gradient from 'gradient-string';
 

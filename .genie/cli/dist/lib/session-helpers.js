@@ -1,3 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.recordRuntimeWarning = recordRuntimeWarning;
+exports.getRuntimeWarnings = getRuntimeWarnings;
+exports.clearRuntimeWarnings = clearRuntimeWarnings;
+exports.findSessionEntry = findSessionEntry;
+exports.resolveDisplayStatus = resolveDisplayStatus;
 const runtimeWarnings = [];
 /**
  * Records a runtime warning message for later retrieval.
@@ -5,7 +12,7 @@ const runtimeWarnings = [];
  * @param {string} message - Warning message to record
  * @returns {void}
  */
-export function recordRuntimeWarning(message) {
+function recordRuntimeWarning(message) {
     runtimeWarnings.push(message);
 }
 /**
@@ -13,7 +20,7 @@ export function recordRuntimeWarning(message) {
  *
  * @returns {string[]} - Copy of all runtime warnings
  */
-export function getRuntimeWarnings() {
+function getRuntimeWarnings() {
     return [...runtimeWarnings];
 }
 /**
@@ -21,7 +28,7 @@ export function getRuntimeWarnings() {
  *
  * @returns {void}
  */
-export function clearRuntimeWarnings() {
+function clearRuntimeWarnings() {
     runtimeWarnings.length = 0;
 }
 /**
@@ -40,7 +47,7 @@ export function clearRuntimeWarnings() {
  *   console.log(`Found session for agent: ${result.agentName}`);
  * }
  */
-export function findSessionEntry(store, name, paths) {
+function findSessionEntry(store, name, paths) {
     if (!name || typeof name !== 'string')
         return null;
     const trimmed = name.trim();
@@ -70,6 +77,6 @@ export function findSessionEntry(store, name, paths) {
  * // Returns: 'completed' if exit code 0
  * // Returns: 'failed (1)' if exit code non-zero
  */
-export function resolveDisplayStatus(entry) {
+function resolveDisplayStatus(entry) {
     return entry.status || 'unknown';
 }

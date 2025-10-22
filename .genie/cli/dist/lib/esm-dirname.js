@@ -1,3 +1,4 @@
+"use strict";
 /**
  * ESM equivalent of __dirname and __filename
  *
@@ -5,11 +6,14 @@
  * import { getDirname } from './lib/esm-dirname.js';
  * const __dirname = getDirname(import.meta.url);
  */
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-export function getDirname(importMetaUrl) {
-    return dirname(fileURLToPath(importMetaUrl));
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.getDirname = getDirname;
+exports.getFilename = getFilename;
+const path_1 = require("path");
+const url_1 = require("url");
+function getDirname(importMetaUrl) {
+    return (0, path_1.dirname)((0, url_1.fileURLToPath)(importMetaUrl));
 }
-export function getFilename(importMetaUrl) {
-    return fileURLToPath(importMetaUrl);
+function getFilename(importMetaUrl) {
+    return (0, url_1.fileURLToPath)(importMetaUrl);
 }

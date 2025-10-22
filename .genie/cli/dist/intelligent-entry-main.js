@@ -1,23 +1,26 @@
 #!/usr/bin/env node
+"use strict";
 /**
  * Standalone intelligent entry point - spawned by genie-cli.ts
  * Handles animated startup with auto-detection logic
  */
-import { runIntelligentEntry } from './intelligent-entry.js';
-import { getDirname } from './lib/esm-dirname.js';
-const __dirname = getDirname(import.meta.url);
-import fs from 'fs';
-import path from 'path';
-import { execSync, spawn } from 'child_process';
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const intelligent_entry_1 = require("./intelligent-entry");
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const child_process_1 = require("child_process");
 async function main() {
     // Get current version from package.json
-    const packageJsonPath = path.join(__dirname, '../../../package.json');
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    const packageJsonPath = path_1.default.join(__dirname, '../../../package.json');
+    const packageJson = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf-8'));
     const currentVersion = packageJson.version;
     // Check for latest version
     let latestVersion = currentVersion;
     try {
-        const npmVersion = execSync('npm view automagik-genie@next version', {
+        const npmVersion = (0, child_process_1.execSync)('npm view automagik-genie@next version', {
             encoding: 'utf-8',
             stdio: ['pipe', 'pipe', 'pipe']
         }).trim();
@@ -27,11 +30,11 @@ async function main() {
         // If npm check fails, assume current version is latest
     }
     // Check if workspace is initialized (.genie directory exists)
-    const genieDir = path.join(process.cwd(), '.genie');
-    const isWorkspaceInitialized = fs.existsSync(genieDir);
+    const genieDir = path_1.default.join(process.cwd(), '.genie');
+    const isWorkspaceInitialized = fs_1.default.existsSync(genieDir);
     // Check for old version markers
-    const hasOldVersion = isWorkspaceInitialized && fs.existsSync(path.join(genieDir, '.legacy'));
-    await runIntelligentEntry({
+    const hasOldVersion = isWorkspaceInitialized && fs_1.default.existsSync(path_1.default.join(genieDir, '.legacy'));
+    await (0, intelligent_entry_1.runIntelligentEntry)({
         currentVersion,
         latestVersion,
         isWorkspaceInitialized,
@@ -39,7 +42,7 @@ async function main() {
         onUpdate: () => {
             console.log('Starting update...');
             try {
-                execSync('pnpm install -g automagik-genie@next', { stdio: 'inherit' });
+                (0, child_process_1.execSync)('pnpm install -g automagik-genie@next', { stdio: 'inherit' });
                 console.log('Update complete! Please run genie again.');
                 process.exit(0);
             }
@@ -52,7 +55,7 @@ async function main() {
             console.log('Starting workspace initialization...');
             try {
                 // Spawn genie init
-                const child = spawn('genie', ['init'], { stdio: 'inherit' });
+                const child = (0, child_process_1.spawn)('genie', ['init'], { stdio: 'inherit' });
                 child.on('exit', (code) => {
                     process.exit(code || 0);
                 });
@@ -66,13 +69,13 @@ async function main() {
             console.log('Starting workspace upgrade...');
             try {
                 // Backup old workspace
-                const backupDir = path.join(process.cwd(), '.genie.backup');
-                if (fs.existsSync(backupDir)) {
-                    fs.rmSync(backupDir, { recursive: true, force: true });
+                const backupDir = path_1.default.join(process.cwd(), '.genie.backup');
+                if (fs_1.default.existsSync(backupDir)) {
+                    fs_1.default.rmSync(backupDir, { recursive: true, force: true });
                 }
-                fs.renameSync(genieDir, backupDir);
+                fs_1.default.renameSync(genieDir, backupDir);
                 // Initialize new workspace
-                const child = spawn('genie', ['init'], { stdio: 'inherit' });
+                const child = (0, child_process_1.spawn)('genie', ['init'], { stdio: 'inherit' });
                 child.on('exit', (code) => {
                     console.log('Upgrade complete! Your old workspace is backed up at .genie.backup');
                     process.exit(code || 0);
@@ -87,8 +90,8 @@ async function main() {
             // User pressed ENTER to start - now launch the actual server
             // Spawn genie CLI with no args (which will call startGenieServer)
             process.env.GENIE_SKIP_ENTRY = 'true'; // Prevent recursion
-            const genieScript = path.join(__dirname, 'genie-cli.js');
-            const child = spawn('node', [genieScript], {
+            const genieScript = path_1.default.join(__dirname, 'genie-cli.js');
+            const child = (0, child_process_1.spawn)('node', [genieScript], {
                 stdio: 'inherit',
                 env: process.env
             });

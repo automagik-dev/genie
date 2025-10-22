@@ -1,3 +1,4 @@
+"use strict";
 /**
  * Forge Statistics Collection
  *
@@ -8,12 +9,15 @@
  * - Active execution processes
  * - Token usage metrics
  */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.collectForgeStats = collectForgeStats;
+exports.formatStatsForDashboard = formatStatsForDashboard;
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../../forge.js';
-import { collectAllTokenMetrics } from './token-tracker.js';
-export async function collectForgeStats(baseUrl = 'http://localhost:8887') {
+const forge_js_1 = require("../../../../forge.js");
+const token_tracker_js_1 = require("./token-tracker.js");
+async function collectForgeStats(baseUrl = 'http://localhost:8887') {
     try {
-        const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Initialize stats
         const stats = {
             projects: { total: 0 },
@@ -110,7 +114,7 @@ export async function collectForgeStats(baseUrl = 'http://localhost:8887') {
         }
         // Collect token usage metrics
         try {
-            stats.tokens = await collectAllTokenMetrics(baseUrl);
+            stats.tokens = await (0, token_tracker_js_1.collectAllTokenMetrics)(baseUrl);
         }
         catch {
             // Failed to collect token metrics - keep defaults (zeros)
@@ -125,7 +129,7 @@ export async function collectForgeStats(baseUrl = 'http://localhost:8887') {
 /**
  * Format stats for dashboard display
  */
-export function formatStatsForDashboard(stats) {
+function formatStatsForDashboard(stats) {
     if (!stats) {
         return '   (Unable to fetch stats)';
     }

@@ -1,7 +1,18 @@
-import fs from 'fs';
-import path from 'path';
-import { recordStartupWarning } from './config.js';
-import { transformDisplayPath } from './display-transform.js';
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.listAgents = listAgents;
+exports.listCollectives = listCollectives;
+exports.resolveAgentIdentifier = resolveAgentIdentifier;
+exports.agentExists = agentExists;
+exports.loadAgentSpec = loadAgentSpec;
+exports.extractFrontMatter = extractFrontMatter;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const config_1 = require("./config");
+const display_transform_1 = require("./display-transform");
 let YAML = null;
 try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -31,7 +42,7 @@ const COLLECTIVE_MARKER = 'AGENTS.md';
 const AGENT_DIRECTORY_NAME = 'agents';
 function realpathOrNull(target) {
     try {
-        return fs.realpathSync(target);
+        return fs_1.default.realpathSync(target);
     }
     catch {
         return null;
@@ -53,22 +64,22 @@ function toAgentPathSegments(id) {
 }
 function discoverCollectiveDirectories(genieRoot, maxDepth = 1) {
     const discovered = new Map();
-    if (!fs.existsSync(genieRoot) || !fs.statSync(genieRoot).isDirectory()) {
+    if (!fs_1.default.existsSync(genieRoot) || !fs_1.default.statSync(genieRoot).isDirectory()) {
         return [];
     }
     const queue = [{ dir: genieRoot, depth: 0 }];
     while (queue.length) {
         const { dir, depth } = queue.shift();
-        const markerPath = path.join(dir, COLLECTIVE_MARKER);
-        if (fs.existsSync(markerPath)) {
-            const resolvedRoot = realpathOrNull(dir) ?? path.resolve(dir);
-            const relative = path.relative(genieRoot, resolvedRoot);
-            const segments = relative.split(path.sep).filter(Boolean);
+        const markerPath = path_1.default.join(dir, COLLECTIVE_MARKER);
+        if (fs_1.default.existsSync(markerPath)) {
+            const resolvedRoot = realpathOrNull(dir) ?? path_1.default.resolve(dir);
+            const relative = path_1.default.relative(genieRoot, resolvedRoot);
+            const segments = relative.split(path_1.default.sep).filter(Boolean);
             const collective = segments.length ? segments.join('/') : 'root';
             let agentsDir = null;
-            const candidateAgentsDir = path.join(dir, AGENT_DIRECTORY_NAME);
-            if (fs.existsSync(candidateAgentsDir) && fs.statSync(candidateAgentsDir).isDirectory()) {
-                agentsDir = realpathOrNull(candidateAgentsDir) ?? path.resolve(candidateAgentsDir);
+            const candidateAgentsDir = path_1.default.join(dir, AGENT_DIRECTORY_NAME);
+            if (fs_1.default.existsSync(candidateAgentsDir) && fs_1.default.statSync(candidateAgentsDir).isDirectory()) {
+                agentsDir = realpathOrNull(candidateAgentsDir) ?? path_1.default.resolve(candidateAgentsDir);
             }
             if (!discovered.has(resolvedRoot)) {
                 discovered.set(resolvedRoot, { collective, root: resolvedRoot, agentsDir });
@@ -77,13 +88,13 @@ function discoverCollectiveDirectories(genieRoot, maxDepth = 1) {
         }
         if (depth >= maxDepth)
             continue;
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
         entries.forEach((entry) => {
             if (!entry.isDirectory())
                 return;
             if (entry.name.startsWith('.'))
                 return;
-            const nextDir = path.join(dir, entry.name);
+            const nextDir = path_1.default.join(dir, entry.name);
             queue.push({ dir: nextDir, depth: depth + 1 });
         });
     }
@@ -91,7 +102,7 @@ function discoverCollectiveDirectories(genieRoot, maxDepth = 1) {
 }
 function getLocalCollectives() {
     const dirs = new Map();
-    const genieRoot = path.join(process.cwd(), '.genie');
+    const genieRoot = path_1.default.join(process.cwd(), '.genie');
     discoverCollectiveDirectories(genieRoot, 2).forEach((info) => {
         dirs.set(info.root, info);
     });
@@ -123,8 +134,8 @@ function findAgentFile(id, collectives) {
             if (seen.has(key))
                 continue;
             seen.add(key);
-            const filePath = path.join(info.agentsDir, ...candidate) + '.md';
-            if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const filePath = path_1.default.join(info.agentsDir, ...candidate) + '.md';
+            if (fs_1.default.existsSync(filePath) && fs_1.default.statSync(filePath).isFile()) {
                 const relativeId = candidate.join('/').replace(/\\/g, '/');
                 return { path: filePath, collective: info.collective, relativeId };
             }
@@ -165,23 +176,23 @@ const resolveAgentPath = (id) => {
  *
  * @returns {ListedAgent[]} - Array of agent records with id, label, metadata, and folder path
  */
-export function listAgents() {
+function listAgents() {
     const records = [];
     const seenIds = new Set();
     const visit = (baseDir, relativePath, collective) => {
-        if (!fs.existsSync(baseDir))
+        if (!fs_1.default.existsSync(baseDir))
             return;
-        const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+        const entries = fs_1.default.readdirSync(baseDir, { withFileTypes: true });
         entries.forEach((entry) => {
-            const entryPath = path.join(baseDir, entry.name);
+            const entryPath = path_1.default.join(baseDir, entry.name);
             if (entry.isDirectory()) {
-                visit(entryPath, relativePath ? path.join(relativePath, entry.name) : entry.name, collective);
+                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name, collective);
                 return;
             }
             if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md')
                 return;
-            const rawId = relativePath ? path.join(relativePath, entry.name) : entry.name;
-            const relativeId = rawId.replace(/\.md$/i, '').split(path.sep).join('/');
+            const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
+            const relativeId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
             const canonicalId = collective && collective !== 'root'
                 ? `${collective}/${relativeId}`.replace(/\\/g, '/')
                 : relativeId.replace(/\\/g, '/');
@@ -189,13 +200,13 @@ export function listAgents() {
             if (seenIds.has(canonicalId))
                 return;
             seenIds.add(canonicalId);
-            const content = fs.readFileSync(entryPath, 'utf8');
+            const content = fs_1.default.readFileSync(entryPath, 'utf8');
             const { meta } = extractFrontMatter(content);
             const metaObj = meta || {};
             if (metaObj.hidden === true || metaObj.disabled === true)
                 return;
             // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = transformDisplayPath(canonicalId);
+            const { displayId, displayFolder } = (0, display_transform_1.transformDisplayPath)(canonicalId);
             const label = (metaObj.name || displayId.split('/').pop() || displayId).trim();
             records.push({
                 id: canonicalId,
@@ -212,7 +223,7 @@ export function listAgents() {
     collectives.forEach((info) => visit(info.agentsDir, null, info.collective));
     return records;
 }
-export function listCollectives() {
+function listCollectives() {
     return getLocalCollectives();
 }
 /**
@@ -230,7 +241,7 @@ export function listCollectives() {
  * resolveAgentIdentifier('implementor') // Returns: 'core/implementor'
  * resolveAgentIdentifier('forge-master') // Returns: 'forge' (legacy alias)
  */
-export function resolveAgentIdentifier(input) {
+function resolveAgentIdentifier(input) {
     const trimmed = (input || '').trim();
     if (!trimmed) {
         throw new Error('Agent id is required');
@@ -266,7 +277,7 @@ export function resolveAgentIdentifier(input) {
  * @param {string} id - Agent identifier (without .md extension)
  * @returns {boolean} - True if agent file exists
  */
-export function agentExists(id) {
+function agentExists(id) {
     if (!id)
         return false;
     return resolveAgentPath(id) !== null;
@@ -283,7 +294,7 @@ export function agentExists(id) {
  * const spec = loadAgentSpec('plan');
  * // Returns: { meta: { name: 'plan', ... }, instructions: '...' }
  */
-export function loadAgentSpec(name) {
+function loadAgentSpec(name) {
     const base = name.endsWith('.md') ? name.slice(0, -3) : name;
     let normalized = base;
     try {
@@ -299,7 +310,7 @@ export function loadAgentSpec(name) {
     if (!fileInfo) {
         throw new Error(`❌ Agent '${name}' not found`);
     }
-    const content = fs.readFileSync(fileInfo.path, 'utf8');
+    const content = fs_1.default.readFileSync(fileInfo.path, 'utf8');
     const { meta, body } = extractFrontMatter(content);
     return {
         meta,
@@ -320,7 +331,7 @@ export function loadAgentSpec(name) {
  * const { meta, body } = extractFrontMatter('---\nname: plan\n---\n# Content');
  * // Returns: { meta: { name: 'plan' }, body: '# Content' }
  */
-export function extractFrontMatter(source) {
+function extractFrontMatter(source) {
     if (!source.startsWith('---')) {
         return { meta: {}, body: source };
     }
@@ -331,7 +342,7 @@ export function extractFrontMatter(source) {
     const raw = source.slice(3, end).trim();
     const body = source.slice(end + 4);
     if (!YAML) {
-        recordStartupWarning('[genie] YAML module unavailable; falling back to basic front matter parsing.');
+        (0, config_1.recordStartupWarning)('[genie] YAML module unavailable; falling back to basic front matter parsing.');
         return { meta: fallbackParseFrontMatter(raw), body };
     }
     try {
