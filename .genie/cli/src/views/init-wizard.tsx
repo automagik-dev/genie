@@ -5,8 +5,6 @@ import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 // @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
-// @ts-ignore - ESM module
-import Spinner from 'ink-spinner';
 
 interface WizardProps {
   templates: Array<{ value: string; label: string; description: string }>;
@@ -154,9 +152,7 @@ export const InitWizard: React.FC<WizardProps> = ({
       {/* Starting */}
       {step === 'starting' && (
         <Box>
-          <Text color="green">
-            <Spinner type="dots" /> Starting install agent...
-          </Text>
+          <Text color="green">⏳ Starting install agent...</Text>
         </Box>
       )}
 

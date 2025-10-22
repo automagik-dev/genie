@@ -3,8 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 // @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
-// @ts-ignore - ESM module
-import Spinner from 'ink-spinner';
 
 interface Message {
   role: 'agent' | 'user' | 'system';
@@ -159,9 +157,7 @@ export const InstallChat: React.FC<InstallChatProps> = ({
 
         {isAgentThinking && (
           <Box>
-            <Text color="yellow">
-              <Spinner type="dots" /> Agent is thinking...
-            </Text>
+            <Text color="yellow">⏳ Agent is thinking...</Text>
           </Box>
         )}
       </Box>
