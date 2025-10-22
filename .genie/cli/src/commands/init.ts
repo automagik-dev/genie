@@ -176,20 +176,14 @@ export async function runInit(
     if (shouldInitGit || (!isInteractive && !await pathExists(path.join(cwd, '.git')))) {
       if (!isInteractive && flags.yes) {
         const { execSync } = await import('child_process');
-        execSync('git init', { cwd, stdio: 'inherit' });
-        try {
-          execSync('git branch -m main', { cwd, stdio: 'pipe' });
-        } catch {
-          // Ignore if branch rename fails (already on main)
-        }
+        // Set default branch to main to suppress git init hints
+        execSync('git config --global init.defaultBranch main 2>/dev/null || true', { cwd, stdio: 'pipe' });
+        execSync('git init', { cwd, stdio: 'pipe' });
       } else if (shouldInitGit) {
         const { execSync } = await import('child_process');
-        execSync('git init', { cwd, stdio: 'inherit' });
-        try {
-          execSync('git branch -m main', { cwd, stdio: 'pipe' });
-        } catch {
-          // Ignore if branch rename fails (already on main)
-        }
+        // Set default branch to main to suppress git init hints
+        execSync('git config --global init.defaultBranch main 2>/dev/null || true', { cwd, stdio: 'pipe' });
+        execSync('git init', { cwd, stdio: 'pipe' });
       }
     }
 
