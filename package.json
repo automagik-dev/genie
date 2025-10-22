@@ -59,7 +59,7 @@
     "release:branch": "bash scripts/release-branch.sh",
     "status": "node scripts/status.cjs",
     "postinstall": "node scripts/postinstall.cjs || true",
-    "prepublishOnly": "pnpm run build"
+    "prepack": "pnpm run build"
   },
   "keywords": [
     "ai",
