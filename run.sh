@@ -17,7 +17,22 @@ fi
 # 2. Ensure pnpm exists (speed!)
 if ! command -v pnpm &> /dev/null; then
     echo "Installing pnpm..."
-    npm install -g pnpm
+    # Try corepack first (built into Node.js 16.9+, no permissions needed)
+    if command -v corepack &> /dev/null; then
+        corepack enable
+        corepack prepare pnpm@latest --activate
+    else
+        # Fallback: Install to user directory (no sudo required)
+        npm install -g pnpm --prefix="$HOME/.local"
+        export PATH="$HOME/.local/bin:$PATH"
+        # Add to shell profile for persistence
+        if [ -f "$HOME/.bashrc" ]; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+        fi
+        if [ -f "$HOME/.zshrc" ]; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+        fi
+    fi
 fi
 
 # 3. Check for updates and run Genie
