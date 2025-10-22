@@ -45,16 +45,25 @@ if ! command -v pnpm &> /dev/null; then
     fi
 
     # Add to shell profile for persistence (only if not already there)
+    # This is optional - script will work without it (just need to restart shell)
     for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-        if [ -f "$profile" ]; then
+        if [ -f "$profile" ] && [ -w "$profile" ]; then
             if ! grep -q "PNPM_HOME" "$profile" 2>/dev/null; then
-                echo '' >> "$profile"
-                echo '# pnpm configuration (added by Genie installer)' >> "$profile"
-                echo 'export PNPM_HOME="$HOME/.local/share/pnpm"' >> "$profile"
-                echo 'export PATH="$PNPM_HOME:$PATH"' >> "$profile"
+                {
+                    echo ''
+                    echo '# pnpm configuration (added by Genie installer)'
+                    echo 'export PNPM_HOME="$HOME/.local/share/pnpm"'
+                    echo 'export PATH="$PNPM_HOME:$PATH"'
+                } >> "$profile" 2>/dev/null || true
             fi
         fi
     done
+
+    # Verify pnpm is available
+    if ! command -v pnpm &> /dev/null; then
+        echo "⚠️  pnpm installed but not in PATH. Run this command:"
+        echo "    export PATH=\"$PNPM_HOME:\$PATH\""
+    fi
 fi
 
 # 3. Check for updates and run Genie
