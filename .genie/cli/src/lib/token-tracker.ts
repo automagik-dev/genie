@@ -125,20 +125,37 @@ function parseTokensFromLogs(logs: string): TokenMetrics {
 async function fetchLogsViaWebSocket(
   baseUrl: string,
   processId: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 2000
 ): Promise<string> {
   return new Promise((resolve) => {
     const wsUrl = baseUrl.replace(/^http/, 'ws') + `/api/execution-processes/${processId}/raw-logs/ws`;
     let logs = '';
     let ws: WebSocket | null = null;
+    let resolved = false;
+
+    const cleanup = () => {
+      if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
+        ws.terminate(); // Force close
+      }
+    };
+
+    const safeResolve = (result: string) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      resolve(result);
+    };
 
     const timeout = setTimeout(() => {
-      if (ws) ws.close();
-      resolve(logs); // Return whatever we collected
+      safeResolve(logs); // Return whatever we collected
     }, timeoutMs);
 
     try {
       ws = new WebSocket(wsUrl);
+
+      ws.on('open', () => {
+        // Connection opened - reset timeout for data collection
+      });
 
       ws.on('message', (data: WebSocket.Data) => {
         try {
@@ -147,8 +164,7 @@ async function fetchLogsViaWebSocket(
           // Finished signal indicates end of stream
           if (msg.type === 'finished') {
             clearTimeout(timeout);
-            if (ws) ws.close();
-            resolve(logs);
+            safeResolve(logs);
             return;
           }
 
@@ -168,16 +184,16 @@ async function fetchLogsViaWebSocket(
 
       ws.on('error', () => {
         clearTimeout(timeout);
-        resolve(logs); // Return whatever we collected before error
+        safeResolve(logs); // Return whatever we collected before error
       });
 
       ws.on('close', () => {
         clearTimeout(timeout);
-        resolve(logs);
+        safeResolve(logs);
       });
     } catch {
       clearTimeout(timeout);
-      resolve(''); // Connection failed
+      safeResolve(''); // Connection failed
     }
   });
 }
@@ -258,8 +274,8 @@ export async function collectAllTokenMetrics(
       return aggregated;
     }
 
-    // Limit to recent attempts for performance (last 20)
-    const recentAttempts = attempts.slice(0, 20);
+    // Limit to recent attempts for performance
+    const recentAttempts = attempts.slice(0, 5);
 
     for (const attempt of recentAttempts) {
       const attemptMetrics = await collectTokensForAttempt(client, attempt.id);
