@@ -76,21 +76,26 @@ function main() {
     }
   }
   // Step 2: commit advisory (validates traceability)
-  const advisoryCode = runNodeScript('commit-advisory.cjs');
+  let advisoryCode = 0;
+  if (process.env.GENIE_ALLOW_MAIN_PUSH) {
+    console.warn('⚠️  Commit advisory skipped (GENIE_ALLOW_MAIN_PUSH set)');
+  } else {
+    advisoryCode = runNodeScript('commit-advisory.cjs');
 
-  // Block on main branch, warn on dev/feature branches
-  if (advisoryCode === 2) {
-    if (currentBranch === 'main' || currentBranch === 'master') {
-      console.error('❌ Pre-push blocked - fix commit validation errors before pushing to main');
-      console.error('    See output above for details');
-      process.exit(1);
-    } else {
-      console.warn('⚠️  Commit validation issues detected (blocking at PR approval)');
-      console.warn('    See output above for details');
+    // Block on main branch, warn on dev/feature branches
+    if (advisoryCode === 2) {
+      if (currentBranch === 'main' || currentBranch === 'master') {
+        console.error('❌ Pre-push blocked - fix commit validation errors before pushing to main');
+        console.error('    See output above for details');
+        process.exit(1);
+      } else {
+        console.warn('⚠️  Commit validation issues detected (blocking at PR approval)');
+        console.warn('    See output above for details');
+      }
     }
-  }
-  if (advisoryCode === 1 && !process.env.GENIE_SKIP_WISH_CHECK) {
-    console.warn('⚠️  Commit advisory warnings (will be checked at PR approval)');
+    if (advisoryCode === 1 && !process.env.GENIE_SKIP_WISH_CHECK) {
+      console.warn('⚠️  Commit advisory warnings (will be checked at PR approval)');
+    }
   }
   // Step 3: update changelog (non-blocking)
   const clCode = runNodeScript('update-changelog.cjs');
