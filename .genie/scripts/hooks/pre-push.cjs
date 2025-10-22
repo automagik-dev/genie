@@ -66,7 +66,7 @@ function main() {
   console.log(`📍 Detected branch: ${currentBranch}`);
 
   // Step 1: tests
-  const testsCode = runNodeScript('run-tests.js');
+  const testsCode = runNodeScript('run-tests.cjs');
   if (testsCode !== 0) {
     console.error('❌ Pre-push blocked - tests failed');
     process.exit(1);
