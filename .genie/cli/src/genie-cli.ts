@@ -202,7 +202,9 @@ if (shouldCheckVersion) {
     console.log('');
     console.log('Running init to upgrade...');
     console.log('');
-    execGenie(['init', '--yes']);
+    // Interactive if TTY available, otherwise use --yes
+    const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+    execGenie(initArgs);
     process.exit(0);
   } else if (hasGenieConfig && fs.existsSync(versionPath)) {
     // Check version mismatch
@@ -223,7 +225,9 @@ if (shouldCheckVersion) {
         console.log('Updating your Genie configuration to match the new version...');
         console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
         console.log('');
-        execGenie(['init', '--yes']);
+        // Interactive if TTY available, otherwise use --yes
+        const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+        execGenie(initArgs);
         process.exit(0);
       }
     } catch (error) {
@@ -235,7 +239,9 @@ if (shouldCheckVersion) {
       console.log('Version file is corrupted. Repairing...');
       console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
       console.log('');
-      execGenie(['init', '--yes']);
+      // Interactive if TTY available, otherwise use --yes
+      const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+      execGenie(initArgs);
       process.exit(0);
     }
   }
@@ -297,7 +303,9 @@ async function smartRouter(): Promise<void> {
     console.log(successGradient('✓') + ' All your wishes, reports, and state will be preserved');
     console.log('');
 
-    execGenie(['init', '--yes']);
+    // Interactive if TTY available, otherwise use --yes
+    const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+    execGenie(initArgs);
     return;
   }
 
@@ -320,7 +328,9 @@ async function smartRouter(): Promise<void> {
       console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
       console.log('');
 
-      execGenie(['init', '--yes']);
+      // Interactive if TTY available, otherwise use --yes
+      const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+      execGenie(initArgs);
       return;
     }
 
@@ -336,7 +346,9 @@ async function smartRouter(): Promise<void> {
     console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
     console.log('');
 
-    execGenie(['init', '--yes']);
+    // Interactive if TTY available, otherwise use --yes
+    const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+    execGenie(initArgs);
   }
 }
 
