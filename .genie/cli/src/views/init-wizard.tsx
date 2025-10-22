@@ -1,8 +1,13 @@
 import React, { useState } from 'react';
+// @ts-ignore - ESM module
 import { Box, Text, useInput } from 'ink';
+// @ts-ignore - ESM module
 import SelectInput from 'ink-select-input';
+// @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
+// @ts-ignore - ESM module
 import Gradient from 'ink-gradient';
+// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 
 interface WizardProps {
@@ -174,6 +179,7 @@ export async function runInitWizard(options: {
   executors: Array<{ value: string; label: string }>;
   hasGit: boolean;
 }): Promise<{ template: string; executor: string; model?: string; initGit: boolean }> {
+  // @ts-ignore - Dynamic import for ESM module
   const { render } = await import('ink');
 
   return new Promise((resolve) => {

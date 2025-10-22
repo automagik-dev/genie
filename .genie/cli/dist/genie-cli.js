@@ -30,6 +30,22 @@ program
     .name('genie')
     .description('Self-evolving AI agent orchestration framework\n\nRun with no arguments to start Genie server (Forge + MCP)')
     .version(packageJson.version);
+// ==================== SERVER MANAGEMENT ====================
+// Status command
+program
+    .command('status')
+    .description('Show Genie server status (Forge backend, MCP server, statistics)')
+    .action(() => {
+    execGenie(['status']);
+});
+// MCP command (stdio only - for Claude Desktop integration)
+program
+    .command('mcp')
+    .description('Start MCP server in stdio mode (for Claude Desktop). Requires Forge to be running.')
+    .action(async () => {
+    await startMCPStdio();
+});
+// ==================== AGENT ORCHESTRATION ====================
 // Run command
 program
     .command('run <agent> <prompt>')
@@ -54,73 +70,6 @@ program
     }
     execGenie(args);
 });
-// Init command
-program
-    .command('init [template]')
-    .description('Initialize Genie configuration in the current workspace')
-    .option('-y, --yes', 'Accept defaults without prompting')
-    .action((template, options) => {
-    const args = ['init'];
-    if (template) {
-        args.push(template);
-    }
-    if (options.yes) {
-        args.push('--yes');
-    }
-    execGenie(args);
-});
-// Migrate command
-program
-    .command('migrate')
-    .description('Migrate from old Genie (v2.x) to npm-backed architecture (v3.0+)')
-    .option('--dry-run', 'Show changes without applying them')
-    .option('-f, --force', 'Force migration even if already migrated')
-    .action((options) => {
-    const args = ['migrate'];
-    if (options.dryRun) {
-        args.push('--dry-run');
-    }
-    if (options.force) {
-        args.push('--force');
-    }
-    execGenie(args);
-});
-// Update command
-program
-    .command('update')
-    .description('Update Genie templates in this workspace')
-    .option('--dry-run', 'Show changes without applying them')
-    .option('-f, --force', 'Apply updates even when no changes detected')
-    .action((options) => {
-    const args = ['update'];
-    if (options.dryRun) {
-        args.push('--dry-run');
-    }
-    if (options.force) {
-        args.push('--force');
-    }
-    execGenie(args);
-});
-// Rollback command
-program
-    .command('rollback')
-    .description('Restore a previous Genie backup snapshot')
-    .option('--list', 'List available backups')
-    .option('--latest', 'Restore the most recent backup')
-    .option('--id <backupId>', 'Restore a specific backup by ID')
-    .action((options) => {
-    const args = ['rollback'];
-    if (options.list) {
-        args.push('--list');
-    }
-    if (options.latest) {
-        args.push('--latest');
-    }
-    if (options.id) {
-        args.push('--id', options.id);
-    }
-    execGenie(args);
-});
 // Resume command
 program
     .command('resume <sessionId> <prompt>')
@@ -131,12 +80,12 @@ program
 // List command
 program
     .command('list [type]')
-    .description('List collectives (default) or sessions')
+    .description('List agents, sessions, or workflows')
     .action((type) => {
-    const normalized = (type || 'collectives').toLowerCase();
-    const validTypes = ['collectives', 'agents', 'sessions', 'workflows', 'skills'];
+    const normalized = (type || 'agents').toLowerCase();
+    const validTypes = ['agents', 'sessions', 'workflows'];
     if (!validTypes.includes(normalized)) {
-        console.error('Error: list command accepts collectives (default), agents, workflows, skills, or sessions');
+        console.error('Error: list command accepts agents (default), sessions, or workflows');
         process.exit(1);
     }
     execGenie(['list', normalized]);
@@ -162,42 +111,99 @@ program
     .action((sessionId) => {
     execGenie(['stop', sessionId]);
 });
-// Status command
+// ==================== WORKSPACE MANAGEMENT ====================
+// Init command
 program
-    .command('status')
-    .description('Show Genie server status (Forge backend, MCP server, statistics)')
-    .action(() => {
-    execGenie(['status']);
+    .command('init [template]')
+    .description('Initialize Genie configuration in the current workspace')
+    .option('-y, --yes', 'Accept defaults without prompting')
+    .action((template, options) => {
+    const args = ['init'];
+    if (template) {
+        args.push(template);
+    }
+    if (options.yes) {
+        args.push('--yes');
+    }
+    execGenie(args);
 });
-// Cleanup command
+// Rollback command
 program
-    .command('cleanup')
-    .description('Deprecated cleanup shim (see migration guide)')
-    .action(() => {
-    execGenie(['cleanup']);
+    .command('rollback')
+    .description('Restore a previous Genie backup snapshot')
+    .option('--list', 'List available backups')
+    .option('--latest', 'Restore the most recent backup')
+    .option('--id <backupId>', 'Restore a specific backup by ID')
+    .action((options) => {
+    const args = ['rollback'];
+    if (options.list) {
+        args.push('--list');
+    }
+    if (options.latest) {
+        args.push('--latest');
+    }
+    if (options.id) {
+        args.push('--id', options.id);
+    }
+    execGenie(args);
 });
-// Statusline command
+// ==================== PACKAGE MANAGEMENT ====================
+// Update command (npm package with changelog from GitHub)
 program
-    .command('statusline')
-    .description('Emit statusline output (deprecated)')
-    .action(() => {
-    execGenie(['statusline']);
+    .command('update')
+    .description('Update Genie globally to latest @next version (shows changelog from GitHub)')
+    .option('--check', 'Check for updates without installing')
+    .action(async (options) => {
+    await updateGeniePackage(options.check || false);
 });
-// MCP command (stdio only - for Claude Desktop integration)
-program
-    .command('mcp')
-    .description('Start MCP server in stdio mode (for Claude Desktop). Requires Forge to be running.')
-    .action(async () => {
-    await startMCPStdio();
-});
-// If no command was provided, start the server
+// If no command was provided, run intelligent entry first, then start the server
 const args = process.argv.slice(2);
 if (!args.length) {
-    startGenieServer();
+    // Check if should show intelligent entry (interactive mode)
+    if (process.stdin.isTTY && !process.env.GENIE_SKIP_ENTRY) {
+        runIntelligentEntry();
+    }
+    else {
+        startGenieServer();
+    }
 }
 else {
     // Parse arguments for other commands
     program.parse(process.argv);
+}
+/**
+ * Run the intelligent entry point with animations and auto-detection
+ */
+function runIntelligentEntry() {
+    const entryScript = path_1.default.join(__dirname, 'intelligent-entry-main.js');
+    // Check if intelligent entry exists (might not be built yet)
+    if (!fs_1.default.existsSync(entryScript)) {
+        console.error('Warning: Intelligent entry not built. Falling back to direct server start.');
+        console.error('Run: pnpm run build:genie');
+        console.error('');
+        startGenieServer();
+        return;
+    }
+    const child = (0, child_process_1.spawn)('node', [entryScript], {
+        stdio: 'inherit',
+        env: process.env
+    });
+    child.on('exit', (code) => {
+        // If intelligent entry exits successfully, it means user chose to start
+        if (code === 0) {
+            // Don't start server - intelligent entry already handled it
+            process.exit(0);
+        }
+        else {
+            process.exit(code || 0);
+        }
+    });
+    child.on('error', (err) => {
+        console.error('Failed to start intelligent entry:', err);
+        console.error('Falling back to direct server start...');
+        console.error('');
+        startGenieServer();
+    });
 }
 /**
  * Execute the legacy genie CLI
@@ -255,6 +261,117 @@ function formatUptime(ms) {
     return `${seconds}s`;
 }
 /**
+ * Update Genie globally to latest @next version and show changelog from GitHub
+ */
+async function updateGeniePackage(checkOnly) {
+    const { execFile } = require('child_process');
+    const { promisify } = require('util');
+    const execFileAsync = promisify(execFile);
+    const https = require('https');
+    console.log(genieGradient('━'.repeat(60)));
+    console.log(genieGradient('🧞 ✨ GENIE UPDATE'));
+    console.log(genieGradient('━'.repeat(60)));
+    console.log('');
+    // Get current version
+    const currentVersion = packageJson.version;
+    console.log(`Current version:     ${currentVersion}`);
+    // Fetch latest version from npm @next tag
+    let latestVersion;
+    try {
+        const { stdout } = await execFileAsync('npm', ['view', 'automagik-genie@next', 'version']);
+        latestVersion = stdout.trim();
+        console.log(`Latest @next:        ${latestVersion}`);
+        console.log(`New version will be: ${latestVersion}`);
+        console.log('');
+    }
+    catch (error) {
+        console.error('❌ Failed to fetch latest version from npm');
+        process.exit(1);
+    }
+    // Check if already up to date
+    if (currentVersion === latestVersion) {
+        console.log(successGradient('✅ Already on latest @next version!'));
+        console.log('');
+        process.exit(0);
+    }
+    // Fetch changelog from GitHub
+    console.log('📜 Fetching changelog from GitHub...');
+    console.log('');
+    const fetchChangelog = (url) => {
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        resolve(data);
+                    }
+                    else {
+                        reject(new Error(`GitHub API returned ${res.statusCode}`));
+                    }
+                });
+            }).on('error', reject);
+        });
+    };
+    try {
+        // Fetch release from GitHub
+        const releaseData = await fetchChangelog(`https://api.github.com/repos/namastexlabs/automagik-genie/releases/tags/v${latestVersion}`);
+        const release = JSON.parse(releaseData);
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log(performanceGradient(`📦 Release: v${latestVersion}`));
+        console.log(performanceGradient('━'.repeat(60)));
+        console.log('');
+        console.log(release.body || 'No release notes available');
+        console.log('');
+    }
+    catch (error) {
+        console.log('⚠️  Could not fetch changelog (GitHub rate limit or release not found)');
+        console.log('');
+    }
+    if (checkOnly) {
+        console.log(genieGradient('━'.repeat(60)));
+        console.log(`Run ${successGradient('genie update')} to install v${latestVersion}`);
+        console.log(genieGradient('━'.repeat(60)));
+        console.log('');
+        process.exit(0);
+    }
+    // Prompt for update
+    const readline = require('readline').createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+    const answer = await new Promise((resolve) => {
+        readline.question(`Update to v${latestVersion}? [Y/n]: `, resolve);
+    });
+    readline.close();
+    if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+        console.log('');
+        console.log('❌ Update cancelled');
+        console.log('');
+        process.exit(0);
+    }
+    // Perform update
+    console.log('');
+    console.log(performanceGradient('⬆️  Updating Genie...'));
+    console.log('');
+    try {
+        await execFileAsync('pnpm', ['install', '-g', 'automagik-genie@next'], {
+            stdio: 'inherit'
+        });
+        console.log('');
+        console.log(successGradient(`✅ Successfully updated to v${latestVersion}!`));
+        console.log('');
+        console.log(genieGradient('━'.repeat(60)));
+        console.log('Run ' + successGradient('genie') + ' to start using the new version');
+        console.log(genieGradient('━'.repeat(60)));
+        console.log('');
+    }
+    catch (error) {
+        console.error('❌ Update failed:', error);
+        process.exit(1);
+    }
+}
+/**
  * Display live health monitoring dashboard with executive stats
  * Returns the interval ID for cleanup
  */
@@ -305,15 +422,11 @@ ${mcpStatus} **MCP Server**
 ${footer}`;
         // Clear previous dashboard if not first render
         if (dashboardLines > 0) {
-            // Move cursor up and clear lines
-            for (let i = 0; i < dashboardLines; i++) {
-                process.stdout.write('\x1b[1A'); // Move up one line
-                process.stdout.write('\x1b[2K'); // Clear entire line
-            }
-            process.stdout.write('\r'); // Move to start of line
+            process.stdout.write('\x1b[2J'); // Clear entire screen
+            process.stdout.write('\x1b[H'); // Move cursor to home (0,0)
         }
         // Print new dashboard
-        console.log(dashboard);
+        process.stdout.write(dashboard + '\n');
         // Count lines for next update
         dashboardLines = dashboard.split('\n').length;
     };
@@ -388,7 +501,8 @@ async function startGenieServer() {
         const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
         timings.forgeSpawn = Date.now() - forgeSpawnStart;
         if (!startResult.ok) {
-            console.error(`\n❌ Failed to start Forge: ${startResult.error.message}`);
+            const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
+            console.error(`\n❌ Failed to start Forge: ${error.message}`);
             console.error(`   Check logs at ${logDir}/forge.log`);
             process.exit(1);
         }
