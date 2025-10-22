@@ -134,6 +134,39 @@ function saveCache(cache) {
 
 function main() {
   const cache = loadCache();
+  const cacheAge = cache.__meta?.timestamp || 0;
+  const cacheAgeMinutes = (Date.now() - cacheAge) / 60000;
+
+  // If cache is fresh (<5 min old), trust it entirely without scanning
+  if (cacheAge > 0 && cacheAgeMinutes < 5) {
+    console.log(`  ⚡ Cache is fresh (${cacheAgeMinutes.toFixed(1)}m old), skipping scan`);
+
+    // Rebuild results from cache
+    const results = [];
+    let totalTokens = 0;
+    let encodingUsed = null;
+
+    for (const [relPath, entry] of Object.entries(cache)) {
+      if (relPath === '__meta') continue;
+      totalTokens += entry.tokens;
+      if (!encodingUsed) encodingUsed = entry.encoding;
+      results.push({ path: relPath, tokens: entry.tokens, lines: entry.lines, bytes: entry.bytes, method: entry.method });
+    }
+
+    results.sort((a,b)=> b.tokens - a.tokens);
+    const meta = {
+      generatedAt: new Date().toISOString(),
+      encoding: encodingUsed,
+      files: results,
+      totals: { files: results.length, tokens: totalTokens }
+    };
+
+    writeSummary(results, meta);
+    return;
+  }
+
+  // Cache is stale or missing, do full scan
+  console.log(`  🔄 Cache stale (${cacheAgeMinutes.toFixed(1)}m old), scanning...`);
   const files = listMarkdownFiles(ROOT);
 
   const results = [];
