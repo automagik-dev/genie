@@ -22,7 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
-import { transformDisplayPath } from './lib/display-transform';
+import { transformDisplayPath } from './lib/display-transform.js';
 
 const execFileAsync = promisify(execFile);
 

@@ -62,8 +62,7 @@ async function runInit(parsed, _config, _paths) {
         let shouldInitGit = false;
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
-            // @ts-expect-error - .mjs file exists at runtime
-            const { runInitWizard } = await Promise.resolve().then(() => __importStar(require('../views/init-wizard.mjs')));
+            const { runInitWizard } = await Promise.resolve().then(() => __importStar(require('../views/init-wizard.js')));
             const templates = [
                 { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
                 { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }

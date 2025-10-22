@@ -71,8 +71,7 @@ export async function runInit(
 
     if (isInteractive) {
       // Use dynamic import to load ESM Ink components
-      // @ts-expect-error - .mjs file exists at runtime
-      const { runInitWizard } = await import('../views/init-wizard.mjs');
+      const { runInitWizard } = await import('../views/init-wizard.js');
 
       const templates = [
         { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
