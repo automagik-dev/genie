@@ -89,7 +89,34 @@ function getFileHash(content) {
 function loadCache() {
   try {
     const cachePath = path.join(STATE, 'token-cache.json');
-    return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+
+    // Prune stale entries (files that no longer exist or match skip patterns)
+    const validCache = {};
+    let prunedCount = 0;
+
+    for (const [relPath, entry] of Object.entries(cache)) {
+      // Skip entries that should be excluded
+      if (shouldSkip(relPath)) {
+        prunedCount++;
+        continue;
+      }
+
+      // Skip entries for files that no longer exist
+      const fullPath = path.join(ROOT, relPath);
+      if (!fs.existsSync(fullPath)) {
+        prunedCount++;
+        continue;
+      }
+
+      validCache[relPath] = entry;
+    }
+
+    if (prunedCount > 0) {
+      console.log(`  🧹 Pruned ${prunedCount} stale cache entries`);
+    }
+
+    return validCache;
   } catch {
     return {};
   }
@@ -103,13 +130,69 @@ function saveCache(cache) {
   } catch {}
 }
 
+function getChangedMarkdownFiles() {
+  try {
+    // Get all changed .md files since last commit (including untracked)
+    const { execSync } = require('child_process');
+    const staged = execSync('git diff --cached --name-only --diff-filter=AM', { encoding: 'utf8' }).trim();
+    const unstaged = execSync('git diff --name-only', { encoding: 'utf8' }).trim();
+    const untracked = execSync('git ls-files --others --exclude-standard', { encoding: 'utf8' }).trim();
+
+    const changed = new Set();
+    for (const list of [staged, unstaged, untracked]) {
+      if (list) {
+        for (const file of list.split('\n')) {
+          if (file.endsWith('.md') && !shouldSkip(file)) {
+            changed.add(file);
+          }
+        }
+      }
+    }
+
+    return changed;
+  } catch {
+    return null; // Git command failed, do full scan
+  }
+}
+
 function main() {
-  const files = listMarkdownFiles(ROOT);
   const cache = loadCache();
+  const changedFiles = getChangedMarkdownFiles();
+
+  let files;
+  let incrementalMode = false;
+
+  if (changedFiles && changedFiles.size > 0 && Object.keys(cache).length > 0) {
+    // Incremental mode: only recount changed files, use cache for rest
+    incrementalMode = true;
+    files = Array.from(changedFiles);
+    console.log(`  ⚡ Incremental mode: ${files.length} file(s) changed`);
+  } else if (Object.keys(cache).length > 0 && (!changedFiles || changedFiles.size === 0)) {
+    // No changes, use full cache
+    console.log(`  ⚡ No changes detected, using cached results`);
+    return; // Skip entirely, cache is up-to-date
+  } else {
+    // Full scan (first run or git failed)
+    files = listMarkdownFiles(ROOT);
+  }
+
   const results = [];
   let totalTokens = 0;
   let encodingUsed = null;
   let cacheHits = 0;
+  let recounted = 0;
+
+  if (incrementalMode) {
+    // In incremental mode, start with all cached results
+    for (const [relPath, entry] of Object.entries(cache)) {
+      if (!changedFiles.has(relPath)) {
+        totalTokens += entry.tokens;
+        if (!encodingUsed) encodingUsed = entry.encoding;
+        results.push({ path: relPath, tokens: entry.tokens, lines: entry.lines, bytes: entry.bytes, method: entry.method });
+        cacheHits++;
+      }
+    }
+  }
 
   for (const rel of files) {
     const full = path.join(ROOT, rel);
@@ -119,8 +202,8 @@ function main() {
     const hash = getFileHash(content);
     const cached = cache[rel];
 
-    // Use cached result if hash matches
-    if (cached && cached.hash === hash) {
+    // Use cached result if hash matches (only in full scan mode)
+    if (!incrementalMode && cached && cached.hash === hash) {
       cacheHits++;
       totalTokens += cached.tokens;
       if (!encodingUsed) encodingUsed = cached.encoding;
@@ -137,6 +220,7 @@ function main() {
 
     results.push({ path: rel, tokens, lines, bytes, method });
     cache[rel] = { hash, tokens, lines, bytes, method, encoding };
+    recounted++;
   }
 
   results.sort((a,b)=> b.tokens - a.tokens);
@@ -150,7 +234,9 @@ function main() {
   saveCache(cache);
   writeSummary(results, meta);
 
-  if (cacheHits > 0) {
+  if (incrementalMode) {
+    console.log(`  ⚡ Incremental: ${recounted} recounted, ${cacheHits} from cache`);
+  } else if (cacheHits > 0) {
     console.log(`  ⚡ Cache: ${cacheHits}/${files.length} files unchanged`);
   }
 }
