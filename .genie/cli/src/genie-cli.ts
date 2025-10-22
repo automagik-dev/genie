@@ -171,56 +171,13 @@ program
     await updateGeniePackage(options.check || false);
   });
 
-// If no command was provided, run intelligent entry first, then start the server
+// If no command was provided, start the server directly
 const args = process.argv.slice(2);
 if (!args.length) {
-  // Check if should show intelligent entry (interactive mode)
-  if (process.stdin.isTTY && !process.env.GENIE_SKIP_ENTRY) {
-    runIntelligentEntry();
-  } else {
-    startGenieServer();
-  }
+  startGenieServer();
 } else {
   // Parse arguments for other commands
   program.parse(process.argv);
-}
-
-/**
- * Run the intelligent entry point with animations and auto-detection
- */
-function runIntelligentEntry(): void {
-  const entryScript = path.join(__dirname, 'intelligent-entry-main.js');
-
-  // Check if intelligent entry exists (might not be built yet)
-  if (!fs.existsSync(entryScript)) {
-    console.error('Warning: Intelligent entry not built. Falling back to direct server start.');
-    console.error('Run: pnpm run build:genie');
-    console.error('');
-    startGenieServer();
-    return;
-  }
-
-  const child = spawn('node', [entryScript], {
-    stdio: 'inherit',
-    env: process.env
-  });
-
-  child.on('exit', (code) => {
-    // If intelligent entry exits successfully, it means user chose to start
-    if (code === 0) {
-      // Don't start server - intelligent entry already handled it
-      process.exit(0);
-    } else {
-      process.exit(code || 0);
-    }
-  });
-
-  child.on('error', (err) => {
-    console.error('Failed to start intelligent entry:', err);
-    console.error('Falling back to direct server start...');
-    console.error('');
-    startGenieServer();
-  });
 }
 
 /**
