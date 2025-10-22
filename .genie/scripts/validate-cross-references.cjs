@@ -11,6 +11,7 @@ function walk(dir, files = []) {
       const name = e.name;
       if (['.git', 'node_modules', 'dist', 'build'].includes(name)) continue;
       if (p.includes(path.join('.genie', 'state'))) continue;
+      if (p.includes(path.join('.genie', 'backups'))) continue;
       walk(p, files);
     } else {
       const lower = e.name.toLowerCase();
