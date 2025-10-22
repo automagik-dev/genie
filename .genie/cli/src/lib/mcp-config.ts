@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
-import { pathExists, ensureDir, writeJsonFile } from './fs-utils';
+import { pathExists, ensureDir, writeJsonFile } from './fs-utils.js';
 
 /**
  * Configure Genie MCP server for both Codex and Claude Code executors

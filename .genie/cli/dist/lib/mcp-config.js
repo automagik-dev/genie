@@ -1,7 +1,7 @@
 import { promises as fsp } from 'fs';
 import path from 'path';
 import os from 'os';
-import { pathExists, ensureDir, writeJsonFile } from './fs-utils';
+import { pathExists, ensureDir, writeJsonFile } from './fs-utils.js';
 /**
  * Configure Codex MCP server (global ~/.codex/config.toml)
  */
