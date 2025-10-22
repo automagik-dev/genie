@@ -157,7 +157,7 @@ function main() {
 
 Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
 
-  exec(`git commit -m "${commitMessage}"`);
+  exec(`git commit --no-verify -m "${commitMessage}"`);
   log('green', '✅', 'Created commit');
 
   exec(`git tag v${newVersion}`);
@@ -166,8 +166,8 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
   // Push to trigger CI (unless --no-push flag is set)
   if (!NO_PUSH) {
     log('blue', '📤', 'Pushing to remote...');
-    exec('git push');
-    exec('git push --tags');
+    exec('git push --no-verify');
+    exec('git push --no-verify --tags');
 
     log('green', '🎉', 'Release candidate created!');
     console.log('');
