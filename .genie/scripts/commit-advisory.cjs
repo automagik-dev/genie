@@ -134,8 +134,9 @@ class CommitAdvisory {
    */
   parseCommitLog(log, delimiter) {
     const entries = log.split(delimiter).filter(e => e.trim());
+    // Empty entries = no commits to push (synced with remote)
+    // This is SUCCESS, not a warning
     if (entries.length === 0) {
-      this.warnings.push('No commits found in recent history');
       return [];
     }
 
