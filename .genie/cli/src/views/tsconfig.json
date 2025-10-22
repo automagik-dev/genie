@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "module": "ES2020",
-    "moduleResolution": "node",
-    "outDir": "../../.temp-esm-views",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "../../../.genie/cli/dist/views",
     "rootDir": ".",
     "target": "ES2020",
     "strict": false,
@@ -11,10 +11,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": false,
-    "jsx": "react",
-    "jsxFactory": "React.createElement",
-    "jsxFragmentFactory": "React.Fragment"
+    "declaration": false
   },
-  "include": ["init-wizard.tsx"]
+  "include": ["*.ts"]
 }
