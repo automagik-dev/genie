@@ -29,33 +29,63 @@ const templates = [
 └── {future}/       # Future collectives (blocked by hardcode)
 ```
 
-## Correct Architecture
+## Collective Detection Method
 
-### 1. Collective Index (manually maintained)
-**File:** `.genie/collectives.yaml`
-```yaml
-collectives:
-  - id: code
-    label: "💻 Code"
-    description: "Full-stack development with Git, testing, CI/CD"
-    version: "1.0.0"
+**KEY INSIGHT:** A collective is identified by the presence of a root `AGENTS.md` file.
 
-  - id: create
-    label: "✍️ Create"
-    description: "Research, writing, content creation"
-    version: "1.0.0"
+```
+.genie/
+├── code/
+│   └── AGENTS.md       ← Presence of this marks 'code' as a collective
+├── create/
+│   └── AGENTS.md       ← Presence of this marks 'create' as a collective
+└── future-collective/
+    └── AGENTS.md       ← Any directory with AGENTS.md is a collective
 ```
 
-### 2. Template Discovery
+## Correct Architecture
+
+### 1. Automatic Collective Discovery (scan directories)
 **File:** `.genie/cli/src/lib/collective-registry.ts`
 ```typescript
 export async function getAvailableCollectives(): Promise<Collective[]> {
-  const indexPath = path.join(getPackageRoot(), '.genie', 'collectives.yaml');
-  const raw = await fs.readFile(indexPath, 'utf8');
-  const data = YAML.parse(raw);
-  return data.collectives;
+  const genieRoot = path.join(getPackageRoot(), '.genie');
+  const entries = await fs.readdir(genieRoot, { withFileTypes: true });
+
+  const collectives: Collective[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    // Check for AGENTS.md (marks this as a collective)
+    const agentsPath = path.join(genieRoot, entry.name, 'AGENTS.md');
+    const hasAgents = await pathExists(agentsPath);
+
+    if (hasAgents) {
+      // Read metadata from AGENTS.md frontmatter or collective.yaml
+      const metadata = await readCollectiveMetadata(agentsPath);
+      collectives.push({
+        id: entry.name,
+        label: metadata.label || entry.name,
+        description: metadata.description || '',
+        version: metadata.version || '1.0.0'
+      });
+    }
+  }
+
+  return collectives;
 }
 ```
+
+### 2. Optional: Collective Metadata
+**File:** `.genie/code/collective.yaml` (optional enhancement)
+```yaml
+label: "💻 Code"
+description: "Full-stack development with Git, testing, CI/CD"
+version: "1.0.0"
+```
+
+If no `collective.yaml` exists, derive from directory name and AGENTS.md.
 
 ### 3. Init Flow (updated)
 **File:** `.genie/cli/src/commands/init.ts`
@@ -94,39 +124,52 @@ const wizardConfig = await runInitWizard({
 
 ## Implementation Plan
 
-### Phase 1: Create Collective Index
-- [ ] Create `.genie/collectives.yaml`
-- [ ] Add current collectives (code, create)
-- [ ] Define schema (id, label, description, version)
-
-### Phase 2: Template Discovery
+### Phase 1: Collective Auto-Discovery
 - [ ] Create `collective-registry.ts`
-- [ ] Add `getAvailableCollectives()` function
-- [ ] Handle missing/invalid index gracefully
+- [ ] Implement `getAvailableCollectives()` - scan `.genie/` for directories with `AGENTS.md`
+- [ ] Implement `readCollectiveMetadata()` - read from `collective.yaml` or fallback to defaults
+- [ ] Handle edge cases (no collectives found, permission errors)
 
-### Phase 3: Update Init Flow
+### Phase 2: Update Init Flow
 - [ ] Replace hardcoded template list in `init.ts`
-- [ ] Use dynamic discovery
-- [ ] Maintain backward compatibility
+- [ ] Use `getAvailableCollectives()` for dynamic discovery
+- [ ] Add validation (must have at least one collective)
+- [ ] Maintain backward compatibility (fallback to ['code', 'create'] if discovery fails)
+
+### Phase 3: Optional Metadata Files
+- [ ] (Optional) Create `.genie/code/collective.yaml` with metadata
+- [ ] (Optional) Create `.genie/create/collective.yaml` with metadata
+- [ ] If not present, use sensible defaults from directory name
 
 ### Phase 4: Documentation
-- [ ] Document collective index format
-- [ ] Document how to add new collectives
+- [ ] Document collective detection method (AGENTS.md presence)
+- [ ] Document collective.yaml format (optional metadata)
+- [ ] Document how to add new collectives (just create directory with AGENTS.md)
 - [ ] Update init flow documentation
 
 ## Success Criteria
 
-1. Can add new collective without changing code
-2. Init wizard discovers templates from index
-3. Missing index fails gracefully (fallback to defaults)
-4. Index is validated on package build
+1. ✅ Can add new collective by creating directory with `AGENTS.md` (no code changes)
+2. ✅ Init wizard auto-discovers all collectives from `.genie/` directory
+3. ✅ Graceful fallback if discovery fails (use ['code', 'create'] as defaults)
+4. ✅ Metadata from `collective.yaml` (if present) or intelligent defaults
+5. ✅ Adding a collective is as simple as: `mkdir .genie/new-collective && touch .genie/new-collective/AGENTS.md`
 
 ## Timeline
 
-- Phase 1-2: 2 hours
-- Phase 3: 1 hour
-- Phase 4: 1 hour
+- Phase 1: 1.5 hours (auto-discovery logic)
+- Phase 2: 1 hour (integrate into init flow)
+- Phase 3: 0.5 hours (optional metadata files)
+- Phase 4: 1 hour (documentation)
 - **Total: 4 hours**
+
+## Key Simplification
+
+**No manual index needed!** Just scan `.genie/` and look for directories containing `AGENTS.md`. This is:
+- ✅ Simpler (no YAML index to maintain)
+- ✅ Self-documenting (AGENTS.md already exists)
+- ✅ Automatic (new collective = just add directory with AGENTS.md)
+- ✅ Consistent with existing architecture
 
 ## Related Issues
 
