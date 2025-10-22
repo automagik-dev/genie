@@ -1,2 +1,0 @@
-[DEBUG] execConfig.permissionMode = bypassPermissions
-[DEBUG] Added --dangerously-skip-permissions (for bypassPermissions mode)
