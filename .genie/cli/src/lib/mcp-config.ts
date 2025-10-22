@@ -113,8 +113,7 @@ export async function configureClaudeMcp(projectDir?: string): Promise<void> {
   // Prefer canonical key 'forge'
   (mcpConfig.mcpServers as any).forge = {
     command: 'npx',
-    // Use stdio by default for Claude Desktop compatibility
-    args: ['@automagik/forge-mcp', '-t', 'stdio']
+    args: ['automagik-forge', '--mcp']
   } as any;
 
   // Ensure parent directory exists
