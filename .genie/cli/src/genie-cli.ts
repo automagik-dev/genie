@@ -173,8 +173,75 @@ program
     await updateGeniePackage(options.check || false);
   });
 
-// If no command was provided, use smart router
+// Version check for ALL commands (prevents outdated users from bypassing init)
 const args = process.argv.slice(2);
+
+// Skip version check for these commands (they're safe to run with any version)
+const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback'];
+const shouldCheckVersion = args.length > 0 && !skipVersionCheck.some(cmd => args.includes(cmd));
+
+if (shouldCheckVersion) {
+  // Check if version.json exists and matches current version
+  const genieDir = path.join(process.cwd(), '.genie');
+  const versionPath = path.join(genieDir, 'state', 'version.json');
+  const hasGenieConfig = fs.existsSync(genieDir);
+
+  if (hasGenieConfig && !fs.existsSync(versionPath)) {
+    // LOOPHOLE CLOSED: User has .genie but no version.json (pre-version-tracking)
+    // Redirect to init to create version.json
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log(magicGradient('        🧞 ✨ VERSION TRACKING UPGRADE NEEDED ✨ 🧞        '));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('Your Genie installation needs to be upgraded to support version tracking.');
+    console.log('This is a one-time upgrade that will:');
+    console.log('');
+    console.log(successGradient('✓') + ' Backup your existing .genie directory');
+    console.log(successGradient('✓') + ' Enable automatic version detection');
+    console.log(successGradient('✓') + ' Preserve all your wishes, reports, and state');
+    console.log('');
+    console.log('Running init to upgrade...');
+    console.log('');
+    execGenie(['init', '--yes']);
+    process.exit(0);
+  } else if (hasGenieConfig && fs.existsSync(versionPath)) {
+    // Check version mismatch
+    try {
+      const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+      const installedVersion = versionData.version;
+      const currentVersion = packageJson.version;
+
+      if (installedVersion !== currentVersion) {
+        // LOOPHOLE CLOSED: Version mismatch detected
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log(magicGradient('        🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞        '));
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log(`Installed version: ${successGradient(installedVersion)}`);
+        console.log(`Current version:   ${performanceGradient(currentVersion)}`);
+        console.log('');
+        console.log('Updating your Genie configuration to match the new version...');
+        console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+        console.log('');
+        execGenie(['init', '--yes']);
+        process.exit(0);
+      }
+    } catch (error) {
+      // Corrupted version.json - force init
+      console.log(cosmicGradient('━'.repeat(60)));
+      console.log(magicGradient('        🧞 ✨ VERSION FILE REPAIR NEEDED ✨ 🧞        '));
+      console.log(cosmicGradient('━'.repeat(60)));
+      console.log('');
+      console.log('Version file is corrupted. Repairing...');
+      console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+      console.log('');
+      execGenie(['init', '--yes']);
+      process.exit(0);
+    }
+  }
+}
+
+// If no command was provided, use smart router
 if (!args.length) {
   smartRouter();
 } else {
