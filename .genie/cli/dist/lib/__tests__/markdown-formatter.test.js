@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Unit tests for markdown-formatter
  *
@@ -9,8 +8,7 @@
  *
  * Run with: node .genie/cli/src/lib/__tests__/markdown-formatter.test.js
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-const markdown_formatter_js_1 = require("../markdown-formatter.js");
+import { formatTranscriptMarkdown, formatSessionList } from '../markdown-formatter.js';
 // Simple test framework
 let testCount = 0;
 let passCount = 0;
@@ -126,7 +124,7 @@ const mockSessions = [
 // ============================================================================
 describe('formatTranscriptMarkdown - final mode', () => {
     it('should format last message only', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         expect(result).toContain('## Session: abc123-def456-ghi789');
         expect(result).toContain('**Agent:** implementor');
         expect(result).toContain('**Status:** running');
@@ -134,15 +132,15 @@ describe('formatTranscriptMarkdown - final mode', () => {
         expect(result).toContain('All 3 modes implemented');
     });
     it('should include token metrics', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         expect(result).toContain('**Tokens:** 8000');
     });
     it('should handle empty messages', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)([], mockMeta, 'final');
+        const result = formatTranscriptMarkdown([], mockMeta, 'final');
         expect(result).toContain('*No messages available*');
     });
     it('should stay under token budget', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         const charCount = result.length;
         const estimatedTokens = Math.ceil(charCount / 4);
         expect(estimatedTokens).toBeLessThan(500);
@@ -153,7 +151,7 @@ describe('formatTranscriptMarkdown - final mode', () => {
 // ============================================================================
 describe('formatTranscriptMarkdown - recent mode', () => {
     it('should format last 5 messages', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'recent');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'recent');
         expect(result).toContain('## Session: abc123-def456-ghi789');
         expect(result).toContain('**Agent:** implementor');
         expect(result).toContain('**Status:** running');
@@ -167,14 +165,14 @@ describe('formatTranscriptMarkdown - recent mode', () => {
             title: `Message ${i + 1}`,
             body: [`Content ${i + 1}`]
         }));
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(manyMessages, mockMeta, 'recent');
+        const result = formatTranscriptMarkdown(manyMessages, mockMeta, 'recent');
         // Should show messages 6-10 (last 5)
         expect(result).toContain('### Message 6:');
         expect(result).toContain('### Message 10:');
         expect(result).not.toContain('### Message 5:');
     });
     it('should stay under token budget', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'recent');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'recent');
         const charCount = result.length;
         const estimatedTokens = Math.ceil(charCount / 4);
         expect(estimatedTokens).toBeLessThan(300);
@@ -185,7 +183,7 @@ describe('formatTranscriptMarkdown - recent mode', () => {
 // ============================================================================
 describe('formatTranscriptMarkdown - overview mode', () => {
     it('should include all metadata', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         expect(result).toContain('## Session: abc123-def456-ghi789');
         expect(result).toContain('**Agent:** implementor');
         expect(result).toContain('**Status:** running');
@@ -193,26 +191,26 @@ describe('formatTranscriptMarkdown - overview mode', () => {
         expect(result).toContain('**Model:** sonnet-4');
     });
     it('should include token metrics', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         expect(result).toContain('**Tokens:** 8000 (in: 5000, out: 3000)');
     });
     it('should include tool usage summary', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         expect(result).toContain('**Tools:** Read:12, Write:5, Edit:8');
     });
     it('should include message count', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         expect(result).toContain('**Messages:** 5');
     });
     it('should include key checkpoints', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         expect(result).toContain('### Key Checkpoints');
         // Should include first and last messages
         expect(result).toContain('Starting implementation');
         expect(result).toContain('Implementation complete');
     });
     it('should stay under token budget', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'overview');
         const charCount = result.length;
         const estimatedTokens = Math.ceil(charCount / 4);
         expect(estimatedTokens).toBeLessThan(400);
@@ -223,7 +221,7 @@ describe('formatTranscriptMarkdown - overview mode', () => {
             agent: 'test',
             status: 'running'
         };
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, minimalMeta, 'overview');
+        const result = formatTranscriptMarkdown(mockMessages, minimalMeta, 'overview');
         expect(result).toContain('**Agent:** test');
         expect(result).not.toContain('**Executor:**');
         expect(result).not.toContain('**Model:**');
@@ -235,13 +233,13 @@ describe('formatTranscriptMarkdown - overview mode', () => {
 // ============================================================================
 describe('formatSessionList', () => {
     it('should format sessions as markdown table', () => {
-        const result = (0, markdown_formatter_js_1.formatSessionList)(mockSessions);
+        const result = formatSessionList(mockSessions);
         expect(result).toContain('## Active Sessions');
         expect(result).toContain('| Session ID | Agent | Status | Executor |');
         expect(result).toContain('|------------|-------|--------|----------|');
     });
     it('should include all sessions', () => {
-        const result = (0, markdown_formatter_js_1.formatSessionList)(mockSessions);
+        const result = formatSessionList(mockSessions);
         expect(result).toContain('implementor');
         expect(result).toContain('tests');
         expect(result).toContain('review');
@@ -249,12 +247,12 @@ describe('formatSessionList', () => {
         expect(result).toContain('codex');
     });
     it('should trim long session IDs', () => {
-        const result = (0, markdown_formatter_js_1.formatSessionList)(mockSessions);
+        const result = formatSessionList(mockSessions);
         // Should truncate IDs longer than 10 chars
         expect(result).toContain('abc123-d...');
     });
     it('should handle empty session list', () => {
-        const result = (0, markdown_formatter_js_1.formatSessionList)([]);
+        const result = formatSessionList([]);
         expect(result).toContain('**No sessions found**');
     });
 });
@@ -268,7 +266,7 @@ describe('edge cases', () => {
             agent: 'test',
             status: 'running'
         };
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, metaNoId, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, metaNoId, 'final');
         expect(result).toContain('## Session: pending');
     });
     it('should handle very long messages', () => {
@@ -277,7 +275,7 @@ describe('edge cases', () => {
             title: 'Long output',
             body: [Array.from({ length: 1000 }, () => 'word').join(' ')]
         };
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)([longMessage], mockMeta, 'final');
+        const result = formatTranscriptMarkdown([longMessage], mockMeta, 'final');
         const charCount = result.length;
         const estimatedTokens = Math.ceil(charCount / 4);
         // Should truncate to stay under budget
@@ -289,12 +287,12 @@ describe('edge cases', () => {
             title: 'Empty message',
             body: []
         };
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)([emptyMessage], mockMeta, 'final');
+        const result = formatTranscriptMarkdown([emptyMessage], mockMeta, 'final');
         expect(result).toContain('*(empty)*');
     });
     it('should default to recent mode for invalid mode', () => {
         // TypeScript prevents this at compile time, but test runtime behavior
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'invalid');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'invalid');
         // Should fall back to recent mode
         expect(result).toContain('### Message');
     });
@@ -309,7 +307,7 @@ describe('token budget enforcement', () => {
             title: 'Huge output',
             body: [Array.from({ length: 3000 }, () => 'word').join(' ')]
         }));
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(hugeMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(hugeMessages, mockMeta, 'final');
         expect(result).toContain('[Output truncated to meet token budget]');
     });
     it('should truncate recent mode if exceeding budget', () => {
@@ -318,7 +316,7 @@ describe('token budget enforcement', () => {
             title: 'Large message',
             body: [Array.from({ length: 500 }, () => 'word').join(' ')]
         }));
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(hugeMessages, mockMeta, 'recent');
+        const result = formatTranscriptMarkdown(hugeMessages, mockMeta, 'recent');
         expect(result).toContain('[Output truncated to meet token budget]');
     });
     it('should truncate overview mode if exceeding budget', () => {
@@ -327,7 +325,7 @@ describe('token budget enforcement', () => {
             title: 'Message with very long title that exceeds normal bounds',
             body: [Array.from({ length: 200 }, () => 'word').join(' ')]
         }));
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(hugeMessages, mockMeta, 'overview');
+        const result = formatTranscriptMarkdown(hugeMessages, mockMeta, 'overview');
         expect(result).toContain('[Output truncated to meet token budget]');
     });
 });
@@ -338,22 +336,22 @@ console.log('\n🧪 Running markdown-formatter tests...\n');
 // Run all tests
 describe('formatTranscriptMarkdown - final mode', () => {
     it('should format last message only', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         expect(result).toContain('## Session: abc123-def456-ghi789');
         expect(result).toContain('**Agent:** implementor');
         expect(result).toContain('**Status:** running');
         expect(result).toContain('**Last message:** Implementation complete');
     });
     it('should include token metrics', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         expect(result).toContain('**Tokens:** 8000');
     });
     it('should handle empty messages', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)([], mockMeta, 'final');
+        const result = formatTranscriptMarkdown([], mockMeta, 'final');
         expect(result).toContain('*No messages available*');
     });
     it('should stay under token budget', () => {
-        const result = (0, markdown_formatter_js_1.formatTranscriptMarkdown)(mockMessages, mockMeta, 'final');
+        const result = formatTranscriptMarkdown(mockMessages, mockMeta, 'final');
         const estimatedTokens = Math.ceil(result.length / 4);
         expect(estimatedTokens).toBeLessThan(500);
     });

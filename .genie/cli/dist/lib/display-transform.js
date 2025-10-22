@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Display Path Transformation Utility
  *
@@ -10,9 +9,6 @@
  * - CLI handlers (shared.ts)
  * - MCP server (server.ts)
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.transformDisplayPath = transformDisplayPath;
-exports.getSemanticDisplayMessage = getSemanticDisplayMessage;
 /**
  * Transforms agent paths for display by stripping template/category folders
  * while preserving parent/child workflow relationships.
@@ -29,7 +25,7 @@ exports.getSemanticDisplayMessage = getSemanticDisplayMessage;
  * transformDisplayPath("code/agents/git/git") // { displayId: "git", displayFolder: null }
  * transformDisplayPath("code/agents/git/workflows/issue") // { displayId: "git/workflows/issue", displayFolder: "git" }
  */
-function transformDisplayPath(normalizedId) {
+export function transformDisplayPath(normalizedId) {
     const parts = normalizedId.split('/');
     const templateFolders = ['code', 'create'];
     const categoryFolders = ['agents', 'workflows'];
@@ -73,7 +69,7 @@ function transformDisplayPath(normalizedId) {
  * getSemanticDisplayMessage("code/agents/implementor") // "🧞 Starting code agent: implementor"
  * getSemanticDisplayMessage("code/agents/git/workflows/issue") // "🧞 Starting git workflow: issue"
  */
-function getSemanticDisplayMessage(normalizedId) {
+export function getSemanticDisplayMessage(normalizedId) {
     const parts = normalizedId.split('/');
     if (parts.length === 2) {
         const [collective, agent] = parts;

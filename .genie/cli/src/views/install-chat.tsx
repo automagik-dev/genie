@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-// @ts-ignore - ESM module
 import { Box, Text, useInput, useApp } from 'ink';
-// @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
-// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 
 interface Message {
@@ -185,7 +182,6 @@ export async function runInstallChat(options: {
   agent: string;
   template: string;
 }): Promise<void> {
-  // @ts-ignore - Dynamic import for ESM module
   const { render } = await import('ink');
 
   return new Promise((resolve, reject) => {
