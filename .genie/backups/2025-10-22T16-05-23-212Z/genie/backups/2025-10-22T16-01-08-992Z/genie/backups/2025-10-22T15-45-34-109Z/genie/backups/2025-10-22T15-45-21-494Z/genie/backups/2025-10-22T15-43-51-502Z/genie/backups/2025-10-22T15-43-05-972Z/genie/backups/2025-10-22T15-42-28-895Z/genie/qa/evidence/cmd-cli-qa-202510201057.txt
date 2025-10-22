@@ -1,0 +1,46 @@
+# CLI QA Codex Session (202510201057 UTC)
+$ node .genie/cli/dist/genie-cli.js run --executor codex --name qa-wish-codex wish "QA codex run: draft automation checklist"
+[DEBUG run.ts] agentGenie: {}
+[DEBUG run.ts] executorOverrides: {}
+[DEBUG run.ts] executorConfig: {"binary":"claude","exec":{"model":"gpt-5-codex","permissionMode":"default","outputFormat":"stream-json","allowedTools":[],"disallowedTools":[],"sandbox":"workspace-write","fullAuto":true},"resume":{"outputFormat":"stream-json"},"sessionExtractionDelayMs":1000}
+[DEBUG forge-executor] createSession() called with executorKey="claude"
+[DEBUG forge-executor] Current working directory: /home/namastex/workspace/automagik-genie
+[DEBUG forge-executor] Getting or creating Genie project for repo: /home/namastex/workspace/automagik-genie
+[DEBUG forge-executor] Found existing project: automagik-genie (ee8f0a72-44da-411d-a23e-f2c6529b62ce)
+[DEBUG forge-executor] Got project ID: ee8f0a72-44da-411d-a23e-f2c6529b62ce
+▸ Creating Forge task for wish...
+[DEBUG] Request body: {
+  "task": {
+    "project_id": "ee8f0a72-44da-411d-a23e-f2c6529b62ce",
+    "title": "Genie: wish (default)",
+    "description": "QA codex run: draft automation checklist"
+  },
+  "executor_profile_id": {
+    "executor": "CLAUDE_CODE",
+    "variant": null
+  },
+  "base_branch": "main"
+}
+▸ Task attempt created: a6ef7a40-a093-4451-a303-3cbbd8cf1fb6
+▸ Worktree: /var/tmp/automagik-forge/worktrees/a6ef7a40-a093-4451-a303-3cbbd8cf1fb6
+▸ Branch: forge/a6ef7a40-a093-4451-a303-3cbbd8cf1fb6
+
+  View output:
+    npx automagik-genie view a6ef7a40-a093-4451-a303-3cbbd8cf1fb6
+
+  Continue conversation:
+    npx automagik-genie resume a6ef7a40-a093-4451-a303-3cbbd8cf1fb6 "..."
+
+  Stop the agent:
+    npx automagik-genie stop a6ef7a40-a093-4451-a303-3cbbd8cf1fb6
+
+
+$ node .genie/cli/dist/genie-cli.js resume qa-wish-codex "Add acceptance criteria and evidence paths"
+❌ **Fatal error**
+
+❌ No session found with name 'qa-wish-codex'
+
+$ node .genie/cli/dist/genie-cli.js view qa-wish-codex --full
+❌ **Fatal error**
+
+❌ No session found with name 'qa-wish-codex'

@@ -1,0 +1,50 @@
+defaults:
+  executor: opencode
+  executorVariant: DEFAULT
+
+forge:
+  executors:
+    OPENCODE:
+      DEFAULT:
+        OPENCODE:
+          append_prompt: null
+      COMMIT_CONVENTIONAL:
+        OPENCODE:
+          append_prompt: |
+            ## Commit Mode (Conventional Commits)
+            Format: type(scope): subject (<=72 chars). Body: why, not what. Footer: refs.
+          additional_params:
+            - { key: commit_style, value: conventional }
+            - { key: max_subject, value: "72" }
+      DOCGEN_DOCFIRST:
+        OPENCODE:
+          append_prompt: |
+            Prefer docstrings and API comments; do not change logic. Focus on clarity & audience.
+          additional_params:
+            - { key: doc_mode, value: doc-first }
+      REVIEW_STRICT_EVIDENCE:
+        OPENCODE:
+          append_prompt: |
+            Use evaluation matrix; never modify source. Emit actionable findings with evidence links.
+    CODEX:
+      DEFAULT:
+        CODEX:
+          sandbox: danger-full-access
+          additional_params: []
+      DOCGEN_MEDIUM:
+        CODEX:
+          sandbox: danger-full-access
+          model: gpt-5-codex
+          model_reasoning_effort: medium
+          additional_params: []
+    CLAUDE_CODE:
+      DEFAULT:
+        CLAUDE_CODE:
+          append_prompt: null
+          dangerously_skip_permissions: false
+      REVIEW_APPROVALS:
+        CLAUDE_CODE:
+          append_prompt: |
+            Follow 100-point evaluation matrix. Require approvals before high-impact suggestions.
+          approvals: true
+          plan: true

@@ -1,0 +1,9 @@
+# Codex Manual Session (202510201109 UTC)
+$ npx -y @namastexlabs/codex exec --model gpt-5-codex --sandbox workspace-write --ask-for-approval on-failure "Act as Genie QA. Draft automation checklist acceptance criteria for wish QA codex run."
+error: unexpected argument '--ask-for-approval' found
+
+  tip: to pass '--ask-for-approval' as a value, use '-- --ask-for-approval'
+
+Usage: codex exec --model <MODEL> --sandbox <SANDBOX_MODE> [PROMPT]
+
+For more information, try '--help'.

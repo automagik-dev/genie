@@ -1,0 +1,9 @@
+# Genie CLI fallback configuration
+# Primary configuration now lives in .genie/config.yaml at the workspace root.
+# This file remains as a minimal default for packaged builds.
+
+defaults:
+  background: true
+
+paths:
+  baseDir: .
