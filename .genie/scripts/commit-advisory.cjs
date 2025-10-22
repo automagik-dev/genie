@@ -479,6 +479,26 @@ class CommitAdvisory {
   validateBranch() {
     const branch = this.getCurrentBranch();
     if (branch === 'main' || branch === 'master') {
+      // Whitelist: These users are authorized to commit directly to main (triggers RC auto-publish)
+      const authorizedUsers = [
+        'felipe@namastex.ai',
+        'cezar@namastex.ai'
+      ];
+
+      try {
+        const authorEmail = execSync('git config user.email', {
+          encoding: 'utf8',
+          cwd: REPO_ROOT
+        }).trim();
+
+        if (authorizedUsers.includes(authorEmail)) {
+          // Authorized user - no warning needed
+          return;
+        }
+      } catch {
+        // Can't determine author, proceed with validation
+      }
+
       // Only warn if there are non-exempt commits (actual feature work)
       const hasNonExemptCommits = this.commits.some(c => !this.isAutomatedCommit(c));
       if (hasNonExemptCommits) {
