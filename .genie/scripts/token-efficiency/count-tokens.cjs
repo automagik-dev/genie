@@ -96,6 +96,12 @@ function loadCache() {
     let prunedCount = 0;
 
     for (const [relPath, entry] of Object.entries(cache)) {
+      // Preserve metadata
+      if (relPath === '__meta') {
+        validCache.__meta = entry;
+        continue;
+      }
+
       // Skip entries that should be excluded
       if (shouldSkip(relPath)) {
         prunedCount++;
