@@ -136,18 +136,13 @@ export async function runInit(
       console.log('📦 Templates already copied, resuming setup...');
       console.log('');
 
-      // Skip file operations; go straight to Forge-backed setup
+      // Skip file operations; go straight to executor setup
       const { executor, model } = await selectExecutorAndModel(flags);
       await applyExecutorDefaults(targetGenie, executor, model);
       await configureBothExecutors(cwd);
-      await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }, false), parsed.options);
+      await emitView(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
 
-      // Launch install agent (partial init path)
-      console.log('');
-      console.log('🚀 Starting Forge server and Install agent...');
-      console.log('');
-      const detectedTemplate = await detectTemplateFromGenie(targetGenie);
-      await runInstallViaCli(cwd, detectedTemplate as TemplateType, flags);
+      // Note: Install agent is launched by start.sh after init completes
       return;
     }
 
@@ -267,15 +262,12 @@ export async function runInit(
     // Configure MCP servers for both Codex and Claude Code
     await configureBothExecutors(cwd);
 
-    // Show completion summary without install agent message (we'll start it next)
+    // Show completion summary (install agent will be launched by start.sh via exec)
     const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
-    await emitView(buildInitSummaryView(summary, false), parsed.options);
+    await emitView(buildInitSummaryView(summary), parsed.options);
 
-    // Launch install agent via Forge-backed Genie run
-    console.log('');
-    console.log('🚀 Starting Forge server and Install agent...');
-    console.log('');
-    await runInstallViaCli(cwd, template as TemplateType, flags);
+    // Note: Install agent is launched by start.sh after init completes
+    // start.sh uses 'exec genie run' to replace itself and give install agent fresh stdin
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
@@ -697,52 +689,6 @@ async function promptYesNo(question: string, defaultYes: boolean = true): Promis
   return trimmed === 'y' || trimmed === 'yes';
 }
 
-function mapExecutorToForgeProfile(executorKey: string): { executor: string; variant: string} {
-  const mapping: Record<string, string> = {
-    'claude': 'CLAUDE_CODE',
-    'claude-code': 'CLAUDE_CODE',
-    'codex': 'CODEX',
-    'opencode': 'OPENCODE',
-    'gemini': 'GEMINI',
-    'cursor': 'CURSOR',
-    'qwen_code': 'QWEN_CODE',
-    'amp': 'AMP',
-    'copilot': 'COPILOT'
-  };
-  const normalized = (executorKey || '').toLowerCase();
-  return { executor: mapping[normalized] || normalized.toUpperCase(), variant: 'DEFAULT' };
-}
-
-async function runInstallViaCli(cwd: string, template: TemplateType, flags?: InitFlags): Promise<void> {
-  try {
-    const { spawn } = await import('child_process');
-    const cliPath = path.join(getPackageRoot(), '.genie', 'cli', 'dist', 'genie.js');
-    const workflowPath = template === 'create'
-      ? '@.genie/create/workflows/install.md'
-      : '@.genie/code/workflows/install.md';
-    const agentId = template === 'create' ? 'create/install' : 'code/install';
-    const prompt = [
-      'Use the install subagent to set up Genie in this repo.',
-      '@agent-install',
-      workflowPath
-    ].join('\n');
-    const baseUrl = flags?.forgeBaseUrl ? flags.forgeBaseUrl : (flags?.forgePort ? `http://localhost:${flags.forgePort}` : 'http://localhost:8887');
-
-    // Spawn child process but DON'T wait for it to close
-    // The install agent is interactive and should take over the terminal
-    const child = spawn(process.execPath, [cliPath, 'run', agentId, prompt], {
-      cwd,
-      stdio: 'inherit',
-      detached: false, // Keep attached so parent can pass signals (Ctrl+C)
-      env: { ...process.env, GENIE_USE_FORGE: '1', FORGE_BASE_URL: baseUrl }
-    });
-
-    // Don't wait for close - let the interactive session take over
-    // The parent (init command) will exit, leaving the child running
-  } catch (err) {
-    console.log(`⚠️  Failed to launch Install agent via CLI: ${(err as Error)?.message || String(err)}`);
-  }
-}
   // Legacy handoff code removed
   /*
   console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
