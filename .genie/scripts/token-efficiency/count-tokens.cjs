@@ -126,38 +126,47 @@ function saveCache(cache) {
   try {
     const cachePath = path.join(STATE, 'token-cache.json');
     ensureDir(STATE);
+    // Add metadata timestamp for incremental detection
+    cache.__meta = { timestamp: Date.now() };
     fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf8');
   } catch {}
 }
 
-function getChangedMarkdownFiles() {
-  try {
-    // Get all changed .md files since last commit (including untracked)
-    const { execSync } = require('child_process');
-    const staged = execSync('git diff --cached --name-only --diff-filter=AM', { encoding: 'utf8' }).trim();
-    const unstaged = execSync('git diff --name-only', { encoding: 'utf8' }).trim();
-    const untracked = execSync('git ls-files --others --exclude-standard', { encoding: 'utf8' }).trim();
+function getChangedMarkdownFiles(cache) {
+  // Use cache timestamps to detect changed files (no git commands in hooks!)
+  const changed = new Set();
+  const cacheTimestamp = cache.__meta?.timestamp || 0;
 
-    const changed = new Set();
-    for (const list of [staged, unstaged, untracked]) {
-      if (list) {
-        for (const file of list.split('\n')) {
-          if (file.endsWith('.md') && !shouldSkip(file)) {
-            changed.add(file);
-          }
-        }
+  function checkFile(relPath) {
+    try {
+      const fullPath = path.join(ROOT, relPath);
+      const stats = fs.statSync(fullPath);
+      const fileMtime = stats.mtimeMs;
+
+      // File changed if: not in cache OR mtime newer than cache timestamp
+      if (!cache[relPath] || fileMtime > cacheTimestamp) {
+        changed.add(relPath);
+        return true;
       }
+      return false;
+    } catch {
+      return false; // File doesn't exist or can't read
     }
-
-    return changed;
-  } catch {
-    return null; // Git command failed, do full scan
   }
+
+  // Quick check: scan .genie and root for recently modified files
+  const quickScanDirs = ['.genie', '.'];
+  for (const dir of quickScanDirs) {
+    const files = listMarkdownFiles(path.join(ROOT, dir === '.' ? '' : dir));
+    files.forEach(f => checkFile(path.relative(ROOT, f)));
+  }
+
+  return changed.size > 0 ? changed : null;
 }
 
 function main() {
   const cache = loadCache();
-  const changedFiles = getChangedMarkdownFiles();
+  const changedFiles = getChangedMarkdownFiles(cache);
 
   let files;
   let incrementalMode = false;
