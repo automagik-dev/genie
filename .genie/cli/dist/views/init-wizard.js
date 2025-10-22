@@ -85,8 +85,8 @@ const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
     };
     return (react_1.default.createElement(ink_1.Box, { flexDirection: "column", padding: 1 },
         react_1.default.createElement(ink_1.Box, { marginBottom: 1 },
-            react_1.default.createElement(ink_gradient_1.default, { name: "rainbow" },
-                react_1.default.createElement(ink_1.Text, { bold: true }, "\uD83E\uDDDE GENIE INIT"))),
+            react_1.default.createElement(ink_gradient_1.default, { name: "cristal" },
+                react_1.default.createElement(ink_1.Text, { bold: true }, "\uD83E\uDDDE \u2728 GENIE INIT \u2728 \uD83E\uDDDE"))),
         step === 'git' && (react_1.default.createElement(ink_1.Box, { flexDirection: "column" },
             react_1.default.createElement(ink_1.Box, { marginBottom: 1 },
                 react_1.default.createElement(ink_1.Text, { color: "yellow" }, "\u26A0\uFE0F  No git repository detected")),

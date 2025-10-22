@@ -20,10 +20,12 @@ const forge_manager_1 = require("./lib/forge-manager");
 const forge_stats_1 = require("./lib/forge-stats");
 const token_tracker_1 = require("./lib/token-tracker");
 const program = new commander_1.Command();
-// Genie-themed gradients 🧞✨
-const genieGradient = (0, gradient_string_1.default)(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
-const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00']); // Gold → Dark Orange
-const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff']); // Green → Cyan
+// Universe Genie-themed gradients 🧞✨🌌
+const genieGradient = (0, gradient_string_1.default)(['#0066ff', '#9933ff', '#ff00ff']); // Deep Blue → Purple → Fuscia
+const cosmicGradient = (0, gradient_string_1.default)(['#4169e1', '#8a2be2', '#ff1493']); // Royal Blue → Blue Violet → Deep Pink
+const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00', '#ff6347']); // Gold → Orange → Tomato
+const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff', '#0099ff']); // Green → Cyan → Sky Blue
+const magicGradient = (0, gradient_string_1.default)(['#ff00ff', '#9933ff', '#0066ff']); // Fuscia → Purple → Blue (reverse)
 // Get package version
 const packageJson = JSON.parse(fs_1.default.readFileSync(path_1.default.join(__dirname, '../../../package.json'), 'utf8'));
 program
@@ -156,14 +158,40 @@ program
     .action(async (options) => {
     await updateGeniePackage(options.check || false);
 });
-// If no command was provided, start the server directly
+// If no command was provided, use smart router
 const args = process.argv.slice(2);
 if (!args.length) {
-    startGenieServer();
+    smartRouter();
 }
 else {
     // Parse arguments for other commands
     program.parse(process.argv);
+}
+/**
+ * Smart Router: Auto-detect scenario and route appropriately
+ * - New user (no .genie/) → genie init
+ * - Existing user → genie server
+ * - Check for updates periodically
+ */
+async function smartRouter() {
+    const genieDir = path_1.default.join(process.cwd(), '.genie');
+    const hasGenieConfig = fs_1.default.existsSync(genieDir);
+    if (!hasGenieConfig) {
+        // NEW USER: No .genie directory → Run init wizard
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log(magicGradient('        🧞 ✨ Welcome to GENIE! ✨ 🧞        '));
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log('No Genie configuration detected in this directory.');
+        console.log("Let's get you set up!");
+        console.log('');
+        // Auto-run init
+        execGenie(['init']);
+    }
+    else {
+        // EXISTING USER: .genie exists → Start server
+        await startGenieServer();
+    }
 }
 /**
  * Execute the legacy genie CLI
@@ -413,7 +441,8 @@ async function startGenieServer() {
     const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
     const forgePort = new URL(baseUrl).port || '8887';
     console.log(genieGradient('━'.repeat(60)));
-    console.log(genieGradient('🧞 ✨ GENIE - Autonomous Agent Orchestration'));
+    console.log(cosmicGradient('        🧞 ✨ GENIE ✨ 🧞        '));
+    console.log(magicGradient('   Autonomous Agent Orchestration   '));
     console.log(genieGradient('━'.repeat(60)));
     console.log('');
     // Check for port conflicts BEFORE trying to start
@@ -572,9 +601,9 @@ async function startGenieServer() {
         const finalStats = await (0, forge_stats_1.collectForgeStats)(baseUrl);
         // Display epic goodbye report with Genie's face
         console.log('');
-        console.log(genieGradient('━'.repeat(80)));
-        console.log(genieGradient('                    🧞 ✨ GENIE SESSION COMPLETE ✨ 🧞                     '));
-        console.log(genieGradient('━'.repeat(80)));
+        console.log(cosmicGradient('━'.repeat(80)));
+        console.log(magicGradient('                    🧞 ✨ GENIE SESSION COMPLETE ✨ 🧞                     '));
+        console.log(cosmicGradient('━'.repeat(80)));
         console.log('');
         // Genie ASCII art face
         const genieFace = `
@@ -620,9 +649,9 @@ async function startGenieServer() {
             }
             console.log('');
         }
-        console.log(genieGradient('━'.repeat(80)));
-        console.log(genieGradient('                 ✨ Until next time, keep making magic! ✨                '));
-        console.log(genieGradient('━'.repeat(80)));
+        console.log(cosmicGradient('━'.repeat(80)));
+        console.log(magicGradient('                 ✨ Until next time, keep making magic! ✨                '));
+        console.log(cosmicGradient('━'.repeat(80)));
         console.log('');
     };
     // Install signal handlers for graceful shutdown

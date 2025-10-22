@@ -18,10 +18,12 @@ import { formatTokenMetrics } from './lib/token-tracker';
 
 const program = new Command();
 
-// Genie-themed gradients 🧞✨
-const genieGradient = gradient(['#00f5ff', '#9d00ff', '#ff00ea']); // Cyan → Purple → Magenta
-const performanceGradient = gradient(['#ffd700', '#ff8c00']); // Gold → Dark Orange
-const successGradient = gradient(['#00ff88', '#00ccff']); // Green → Cyan
+// Universe Genie-themed gradients 🧞✨🌌
+const genieGradient = gradient(['#0066ff', '#9933ff', '#ff00ff']); // Deep Blue → Purple → Fuscia
+const cosmicGradient = gradient(['#4169e1', '#8a2be2', '#ff1493']); // Royal Blue → Blue Violet → Deep Pink
+const performanceGradient = gradient(['#ffd700', '#ff8c00', '#ff6347']); // Gold → Orange → Tomato
+const successGradient = gradient(['#00ff88', '#00ccff', '#0099ff']); // Green → Cyan → Sky Blue
+const magicGradient = gradient(['#ff00ff', '#9933ff', '#0066ff']); // Fuscia → Purple → Blue (reverse)
 
 // Get package version
 const packageJson = JSON.parse(
@@ -171,13 +173,41 @@ program
     await updateGeniePackage(options.check || false);
   });
 
-// If no command was provided, start the server directly
+// If no command was provided, use smart router
 const args = process.argv.slice(2);
 if (!args.length) {
-  startGenieServer();
+  smartRouter();
 } else {
   // Parse arguments for other commands
   program.parse(process.argv);
+}
+
+/**
+ * Smart Router: Auto-detect scenario and route appropriately
+ * - New user (no .genie/) → genie init
+ * - Existing user → genie server
+ * - Check for updates periodically
+ */
+async function smartRouter(): Promise<void> {
+  const genieDir = path.join(process.cwd(), '.genie');
+  const hasGenieConfig = fs.existsSync(genieDir);
+
+  if (!hasGenieConfig) {
+    // NEW USER: No .genie directory → Run init wizard
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log(magicGradient('        🧞 ✨ Welcome to GENIE! ✨ 🧞        '));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('No Genie configuration detected in this directory.');
+    console.log("Let's get you set up!");
+    console.log('');
+
+    // Auto-run init
+    execGenie(['init']);
+  } else {
+    // EXISTING USER: .genie exists → Start server
+    await startGenieServer();
+  }
 }
 
 /**
@@ -469,7 +499,8 @@ async function startGenieServer(): Promise<void> {
   const forgePort = new URL(baseUrl).port || '8887';
 
   console.log(genieGradient('━'.repeat(60)));
-  console.log(genieGradient('🧞 ✨ GENIE - Autonomous Agent Orchestration'));
+  console.log(cosmicGradient('        🧞 ✨ GENIE ✨ 🧞        '));
+  console.log(magicGradient('   Autonomous Agent Orchestration   '));
   console.log(genieGradient('━'.repeat(60)));
   console.log('');
 
@@ -652,9 +683,9 @@ async function startGenieServer(): Promise<void> {
 
     // Display epic goodbye report with Genie's face
     console.log('');
-    console.log(genieGradient('━'.repeat(80)));
-    console.log(genieGradient('                    🧞 ✨ GENIE SESSION COMPLETE ✨ 🧞                     '));
-    console.log(genieGradient('━'.repeat(80)));
+    console.log(cosmicGradient('━'.repeat(80)));
+    console.log(magicGradient('                    🧞 ✨ GENIE SESSION COMPLETE ✨ 🧞                     '));
+    console.log(cosmicGradient('━'.repeat(80)));
     console.log('');
 
     // Genie ASCII art face
@@ -705,9 +736,9 @@ async function startGenieServer(): Promise<void> {
       console.log('');
     }
 
-    console.log(genieGradient('━'.repeat(80)));
-    console.log(genieGradient('                 ✨ Until next time, keep making magic! ✨                '));
-    console.log(genieGradient('━'.repeat(80)));
+    console.log(cosmicGradient('━'.repeat(80)));
+    console.log(magicGradient('                 ✨ Until next time, keep making magic! ✨                '));
+    console.log(cosmicGradient('━'.repeat(80)));
     console.log('');
   };
 
