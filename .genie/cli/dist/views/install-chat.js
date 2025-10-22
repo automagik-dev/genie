@@ -161,7 +161,7 @@ const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
 exports.InstallChat = InstallChat;
 async function runInstallChat(options) {
     // @ts-ignore - Dynamic import for ESM module
-    const { render } = await Promise.resolve().then(() => __importStar(require('ink')));
+    const { render } = await import('ink');
     return new Promise((resolve, reject) => {
         let shouldRestart = false;
         const { waitUntilExit } = render(react_1.default.createElement(exports.InstallChat, { ...options, onComplete: () => {

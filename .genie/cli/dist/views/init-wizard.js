@@ -136,7 +136,7 @@ const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
 exports.InitWizard = InitWizard;
 async function runInitWizard(options) {
     // @ts-ignore - Dynamic import for ESM module
-    const { render } = await Promise.resolve().then(() => __importStar(require('ink')));
+    const { render } = await import('ink');
     return new Promise((resolve) => {
         const { waitUntilExit } = render(react_1.default.createElement(exports.InitWizard, { ...options, onComplete: (config) => {
                 resolve(config);
