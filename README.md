@@ -16,14 +16,73 @@
 </p>
 
 <p align="center">
-  <a href="#-start-here">Start Here</a> •
-  <a href="#-key-features">Features</a> •
-  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-getting-started">Getting Started</a> •
+  <a href="#-what-is-genie">What is Genie</a> •
   <a href="#-mcp-integration">MCP Integration</a> •
+  <a href="#-key-features">Features</a> •
   <a href="https://github.com/orgs/namastexlabs/projects/9/views/1?filterQuery=project%3Agenie">Roadmap</a> •
-  <a href="#-development">Development</a> •
   <a href="#-contributing">Contributing</a>
 </p>
+
+---
+
+## 🎬 Getting Started
+
+**New to Genie? Choose your approach:**
+
+### 🚀 Quick Run (No Install)
+
+**Use this if you just want to test Genie without installing anything:**
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://genie.namastex.ai/install | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://genie.namastex.ai/install.ps1 | iex
+```
+
+**What this does:**
+- ✅ Runs Genie via pnpm dlx (no permanent install)
+- ✅ Perfect for quick testing
+- ✅ Fast execution with pnpm
+
+---
+
+### 📦 Global Install (Recommended)
+
+**Use this for the best performance and DX:**
+
+**Linux / macOS:**
+```bash
+# Automated install (installs Node.js, pnpm, and Genie globally)
+curl -fsSL https://genie.namastex.ai/install | bash
+
+# Or install manually if you have Node.js already:
+pnpm install -g automagik-genie@next
+```
+
+**Windows (PowerShell):**
+```powershell
+# Automated install (installs Node.js, pnpm, and Genie globally)
+irm https://genie.namastex.ai/install.ps1 | iex
+```
+
+**What this does:**
+- ✅ Installs Node.js 22 (if needed)
+- ✅ Installs pnpm package manager
+- ✅ Installs Genie globally
+- ✅ Enables `genie` command anywhere
+- ✅ Enables version checking and auto-updates
+
+---
+
+**Alternative:** Download and run manually from [INSTALL.md](INSTALL.md) for step-by-step instructions.
+
+---
+
 ## 🚀 What is Automagik Genie?
 
 **Automagik Genie** is your persistent AI development orchestrator. It's the command center that turns conversations with AI into structured, trackable work through the **Wish → Forge → Review** workflow.
@@ -59,141 +118,6 @@ It ships a ready-to-run `.genie/` workspace with 30+ specialized agents, integra
 - **📝 Session Transcripts** – Full conversation history for every agent session (audit trail + learning)
 - **🎯 Natural Language Routing** – No slash commands needed, just talk naturally
 - **⚡ Instant Startup** – Production-grade process management, Forge ready in 10-12s
-
----
-
-## 🧭 How Genie Fits in the Automagik Suite
-
-```mermaid
-flowchart LR
-    subgraph Workspace
-      Repo[Your Repository]
-      GenieFolder[.genie/ structure]
-    end
-
-    InitCLI[automagik-genie init] --> GenieFolder
-    UpdateCLI[automagik-genie update] --> GenieFolder
-    RollbackCLI[automagik-genie rollback] --> GenieFolder
-
-    GenieFolder --> MCPServer[Genie MCP Server]
-    MCPServer --> Hive[Automagik Hive]
-    MCPServer --> Spark[Automagik Spark]
-    MCPServer --> Forge[Automagik Forge]
-
-    GenieFolder --> Agents[Genie Agents & Prompts]
-```
-
-Genie is the canonical source of prompts, agents, and project metadata. Other Automagik products (Hive, Spark, Forge, Omni) rely on Genie to keep repository context predictable.
-
----
-
-## 🧠 Agent Agent Tree
-
-Genie's architecture uses **universal agents** (shared across all templates) and **template-specific agents** (code/create). This enables scalability without duplication.
-
-<!-- AGENT_TREE_START -->
-```mermaid
-graph TB
-    %% Genie Agent Tree
-
-    %% Code Collective
-    CODE[Code Collective]:::orchestrator
-    code_analyze[analyze]:::code_agent
-    CODE --> code_analyze
-    code_audit[audit]:::code_agent
-    CODE --> code_audit
-    code_challenge[challenge]:::code_agent
-    CODE --> code_challenge
-    code_commit[commit]:::code_agent
-    CODE --> code_commit
-    code_consensus[consensus]:::code_agent
-    CODE --> code_consensus
-    code_debate[debate]:::code_agent
-    CODE --> code_debate
-    more_code[...24 more]:::more
-    CODE --> more_code
-
-    %% Git Workflows
-    code_git --> git_issue[issue]:::workflow
-    code_git --> git_pr[pr]:::workflow
-    code_git --> git_report[report]:::workflow
-
-    %% Code Workflows
-    workflow_forge[forge]:::workflow
-    CODE --> workflow_forge
-    workflow_session-state-updater[session-state-updater]:::workflow
-    CODE --> workflow_session-state-updater
-    workflow_session-state-updater-example[session-state-updater-example]:::workflow
-    CODE --> workflow_session-state-updater-example
-    workflow_wish[wish]:::workflow
-    CODE --> workflow_wish
-
-    %% Create Collective
-    CREATE[Create Collective]:::orchestrator
-    create_wish[wish]:::create_agent
-    CREATE --> create_wish
-
-    %% Styling
-    classDef orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:3px
-    classDef code_agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    classDef create_agent fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    classDef workflow fill:#fff9c4,stroke:#fbc02d,stroke-width:1px
-    classDef more fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray: 5 5
-```
-<!-- AGENT_TREE_END -->
-
-**See [.genie/README.md](./.genie/README.md) for detailed agent documentation**
-
----
-
-## 🎬 Start Here
-
-**New to Genie? Choose your approach:**
-
-### 🚀 Quick Run (No Install)
-
-**Use this if you just want to test Genie without installing anything:**
-
-**Linux / macOS:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh -o /tmp/genie-run.sh && bash /tmp/genie-run.sh
-```
-
-**Windows (PowerShell):**
-```powershell
-$script = irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.ps1; powershell -Command $script
-```
-
-**What this does:**
-- ✅ Runs Genie via pnpm dlx (no permanent install)
-- ✅ Perfect for quick testing
-- ✅ Fast execution with pnpm
-
----
-
-### 📦 Global Install (Recommended)
-
-**Use this for the best performance and DX:**
-
-**All Platforms:**
-```bash
-# Automated install (installs Node.js, pnpm, and Genie)
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh -o /tmp/genie.sh && bash /tmp/genie.sh
-
-# Or install manually if you have Node.js already:
-pnpm install -g automagik-genie@next
-```
-
-**What this does:**
-- ✅ Installs Node.js 22 (if needed)
-- ✅ Installs pnpm package manager
-- ✅ Installs Genie globally
-- ✅ Enables `genie` command anywhere
-- ✅ Enables version checking and auto-updates
-
----
-
-**Alternative:** Download and run manually from [INSTALL.md](INSTALL.md) for step-by-step instructions.
 
 ---
 
@@ -346,7 +270,7 @@ Genie ships with a FastMCP server so any MCP-compatible AI tool can orchestrate 
 
 ### Typical Workflow
 
-1. **Setup:** Install Genie (`curl -fsSL https://genie.namastex.ai/install | bash`)
+1. **Setup:** Install Genie with `curl -fsSL https://genie.namastex.ai/install | bash`
 2. **Connect:** Add MCP config to your AI tool (Claude Code, Cursor, etc.)
 3. **Just talk:** "I want to build an auth system with social login"
 4. **Genie orchestrates:**
@@ -416,6 +340,90 @@ All MCP clients follow the same pattern:
 Consult your AI tool's MCP documentation for exact configuration format.
 
 </details>
+
+---
+
+## 🧭 How Genie Fits in the Automagik Suite
+
+```mermaid
+flowchart LR
+    subgraph Workspace
+      Repo[Your Repository]
+      GenieFolder[.genie/ structure]
+    end
+
+    InitCLI[automagik-genie init] --> GenieFolder
+    UpdateCLI[automagik-genie update] --> GenieFolder
+    RollbackCLI[automagik-genie rollback] --> GenieFolder
+
+    GenieFolder --> MCPServer[Genie MCP Server]
+    MCPServer --> Hive[Automagik Hive]
+    MCPServer --> Spark[Automagik Spark]
+    MCPServer --> Forge[Automagik Forge]
+
+    GenieFolder --> Agents[Genie Agents & Prompts]
+```
+
+Genie is the canonical source of prompts, agents, and project metadata. Other Automagik products (Hive, Spark, Forge, Omni) rely on Genie to keep repository context predictable.
+
+---
+
+## 🧠 Agent Architecture
+
+Genie's architecture uses **universal agents** (shared across all templates) and **template-specific agents** (code/create). This enables scalability without duplication.
+
+<!-- AGENT_TREE_START -->
+```mermaid
+graph TB
+    %% Genie Agent Tree
+
+    %% Code Collective
+    CODE[Code Collective]:::orchestrator
+    code_analyze[analyze]:::code_agent
+    CODE --> code_analyze
+    code_audit[audit]:::code_agent
+    CODE --> code_audit
+    code_challenge[challenge]:::code_agent
+    CODE --> code_challenge
+    code_commit[commit]:::code_agent
+    CODE --> code_commit
+    code_consensus[consensus]:::code_agent
+    CODE --> code_consensus
+    code_debate[debate]:::code_agent
+    CODE --> code_debate
+    more_code[...24 more]:::more
+    CODE --> more_code
+
+    %% Git Workflows
+    code_git --> git_issue[issue]:::workflow
+    code_git --> git_pr[pr]:::workflow
+    code_git --> git_report[report]:::workflow
+
+    %% Code Workflows
+    workflow_forge[forge]:::workflow
+    CODE --> workflow_forge
+    workflow_session-state-updater[session-state-updater]:::workflow
+    CODE --> workflow_session-state-updater
+    workflow_session-state-updater-example[session-state-updater-example]:::workflow
+    CODE --> workflow_session-state-updater-example
+    workflow_wish[wish]:::workflow
+    CODE --> workflow_wish
+
+    %% Create Collective
+    CREATE[Create Collective]:::orchestrator
+    create_wish[wish]:::create_agent
+    CREATE --> create_wish
+
+    %% Styling
+    classDef orchestrator fill:#fff3e0,stroke:#f57c00,stroke-width:3px
+    classDef code_agent fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef create_agent fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef workflow fill:#fff9c4,stroke:#fbc02d,stroke-width:1px
+    classDef more fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray: 5 5
+```
+<!-- AGENT_TREE_END -->
+
+**See [.genie/README.md](./.genie/README.md) for detailed agent documentation**
 
 ---
 
