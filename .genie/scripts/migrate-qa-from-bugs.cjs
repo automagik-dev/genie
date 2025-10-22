@@ -75,11 +75,48 @@ function writeWorkflow(bug) {
   try { require('child_process').execSync(`git add ${outPath}`, { stdio: 'ignore' }); } catch {}
 }
 
+function getFileHash(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    return `${stats.mtimeMs}-${stats.size}`;
+  } catch {
+    return null;
+  }
+}
+
+function shouldRegenerate() {
+  const cacheFile = path.join(ROOT, '.genie', 'state', 'qa-migration-cache.json');
+  const currentHash = getFileHash(SRC);
+
+  try {
+    const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    if (cache.hash === currentHash) {
+      return false; // Source unchanged, skip regeneration
+    }
+  } catch {
+    // No cache or error reading, regenerate
+  }
+
+  // Update cache
+  try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify({ hash: currentHash, timestamp: Date.now() }), 'utf8');
+  } catch {}
+
+  return true;
+}
+
 function main() {
   if (!fs.existsSync(SRC)) {
     console.log('- Notes: No scenarios-from-bugs.md found (skipping QA migration)');
     return;
   }
+
+  if (!shouldRegenerate()) {
+    console.log('- Notes: QA workflows up-to-date (source unchanged)');
+    return;
+  }
+
   const markdown = fs.readFileSync(SRC, 'utf8');
   const bugs = parseBugs(markdown);
   if (!bugs.length) {
