@@ -36,12 +36,12 @@
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://genie.namastex.ai/install | bash
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/start.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://genie.namastex.ai/install.ps1 | iex
+irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/start.ps1 | iex
 ```
 
 **What this does:**
@@ -58,7 +58,7 @@ irm https://genie.namastex.ai/install.ps1 | iex
 **Linux / macOS:**
 ```bash
 # Automated install (installs Node.js, pnpm, and Genie globally)
-curl -fsSL https://genie.namastex.ai/install | bash
+curl -fsSL https://genie.namastex.ai/start | bash
 
 # Or install manually if you have Node.js already:
 pnpm install -g automagik-genie@next
@@ -67,7 +67,7 @@ pnpm install -g automagik-genie@next
 **Windows (PowerShell):**
 ```powershell
 # Automated install (installs Node.js, pnpm, and Genie globally)
-irm https://genie.namastex.ai/install.ps1 | iex
+irm https://genie.namastex.ai/start.ps1 | iex
 ```
 
 **What this does:**
@@ -79,7 +79,6 @@ irm https://genie.namastex.ai/install.ps1 | iex
 
 ---
 
-**Alternative:** Download and run manually from [INSTALL.md](INSTALL.md) for step-by-step instructions.
 
 ---
 
@@ -270,7 +269,7 @@ Genie ships with a FastMCP server so any MCP-compatible AI tool can orchestrate 
 
 ### Typical Workflow
 
-1. **Setup:** Install Genie with `curl -fsSL https://genie.namastex.ai/install | bash`
+1. **Setup:** Install Genie with `curl -fsSL https://genie.namastex.ai/start | bash`
 2. **Connect:** Add MCP config to your AI tool (Claude Code, Cursor, etc.)
 3. **Just talk:** "I want to build an auth system with social login"
 4. **Genie orchestrates:**
