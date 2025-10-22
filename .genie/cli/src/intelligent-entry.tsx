@@ -1,5 +1,5 @@
 import React from 'react';
-import { IntelligentEntry } from './components/IntelligentEntry.js';
+import { IntelligentEntry } from './components/IntelligentEntry';
 
 interface EntryOptions {
   currentVersion: string;
@@ -13,6 +13,7 @@ interface EntryOptions {
 }
 
 export async function runIntelligentEntry(options: EntryOptions): Promise<void> {
+  // @ts-ignore - Dynamic import for ESM module (Ink 5.x)
   const { render } = await import('ink');
 
   return new Promise((resolve) => {

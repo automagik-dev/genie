@@ -1,9 +1,9 @@
-import type { Handler, HandlerContext } from '../context.js';
-import type { ParsedCommand } from '../types.js';
-import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver.js';
-import { generateSessionName } from '../../session-store.js';
-import { createForgeExecutor } from '../../lib/forge-executor.js';
-import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers.js';
+import type { Handler, HandlerContext } from '../context';
+import type { ParsedCommand } from '../types';
+import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
+import { generateSessionName } from '../../session-store';
+import { createForgeExecutor } from '../../lib/forge-executor';
+import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {

@@ -1,4 +1,7 @@
-export function buildAgentCatalogView(params) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildAgentCatalogView = buildAgentCatalogView;
+function buildAgentCatalogView(params) {
     const { total, groups } = params;
     const lines = [];
     // Header

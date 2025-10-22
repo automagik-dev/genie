@@ -5,19 +5,19 @@
  * Addresses Genie RISK-2: Session store concurrency via SessionService with file locking
  */
 
-export { SessionService } from './session-service.js';
+export { SessionService } from './session-service';
 export type {
   SessionServiceOptions
-} from './session-service.js';
+} from './session-service';
 
-export type { HandlerContext, Handler } from './context.js';
+export type { HandlerContext, Handler } from './context';
 
-import { createRunHandler } from './handlers/run.js';
-import { createResumeHandler } from './handlers/resume.js';
-import { createViewHandler } from './handlers/view.js';
-import { createStopHandler } from './handlers/stop.js';
-import { createListHandler } from './handlers/list.js';
-import type { HandlerContext } from './context.js';
+import { createRunHandler } from './handlers/run';
+import { createResumeHandler } from './handlers/resume';
+import { createViewHandler } from './handlers/view';
+import { createStopHandler } from './handlers/stop';
+import { createListHandler } from './handlers/list';
+import type { HandlerContext } from './context';
 
 /**
  * Factory function for creating CLI command handlers

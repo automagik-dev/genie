@@ -1,24 +1,26 @@
 #!/usr/bin/env node
+"use strict";
 /**
  * GENIE Agent CLI - Codex exec orchestration with configurable execution modes
  */
-import { parseArguments } from './lib/cli-parser.js';
-import { loadConfig, applyDefaults, resolvePaths, prepareDirectories, getStartupWarnings, clearStartupWarnings } from './lib/config.js';
-import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers.js';
-import { buildRunHelpView, buildResumeHelpView, buildListHelpView, buildViewHelpView, buildStopHelpView } from './views/help.js';
-import { buildErrorView, buildInfoView, buildWarningView } from './views/common.js';
-import { emitView } from './lib/view-helpers.js';
-import { SessionService, createHandlers } from './cli-core/index.js';
-import { runHelp } from './commands/help.js';
-import { runInit } from './commands/init.js';
-import { runRollback } from './commands/rollback.js';
-import { runStatus } from './commands/status.js';
-import { runCleanup } from './commands/cleanup.js';
-import { runStatusline } from './commands/statusline.js';
+Object.defineProperty(exports, "__esModule", { value: true });
+const cli_parser_1 = require("./lib/cli-parser");
+const config_1 = require("./lib/config");
+const session_helpers_1 = require("./lib/session-helpers");
+const help_1 = require("./views/help");
+const common_1 = require("./views/common");
+const view_helpers_1 = require("./lib/view-helpers");
+const cli_core_1 = require("./cli-core");
+const help_2 = require("./commands/help");
+const init_1 = require("./commands/init");
+const rollback_1 = require("./commands/rollback");
+const status_1 = require("./commands/status");
+const cleanup_1 = require("./commands/cleanup");
+const statusline_1 = require("./commands/statusline");
 void main();
 async function main() {
     try {
-        let parsed = parseArguments(process.argv.slice(2));
+        let parsed = (0, cli_parser_1.parseArguments)(process.argv.slice(2));
         // Fast path for help commands - skip config loading
         const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
             parsed.options.requestHelp;
@@ -28,21 +30,21 @@ async function main() {
         if (isHelpOnly) {
             // Minimal config for help display
             config = { defaults: { background: true } };
-            paths = resolvePaths({});
+            paths = (0, config_1.resolvePaths)({});
         }
         else {
-            config = loadConfig();
-            applyDefaults(parsed.options, config.defaults);
-            paths = resolvePaths(config.paths || {});
-            prepareDirectories(paths);
-            const startupWarnings = getStartupWarnings();
+            config = (0, config_1.loadConfig)();
+            (0, config_1.applyDefaults)(parsed.options, config.defaults);
+            paths = (0, config_1.resolvePaths)(config.paths || {});
+            (0, config_1.prepareDirectories)(paths);
+            const startupWarnings = (0, config_1.getStartupWarnings)();
             if (startupWarnings.length) {
-                const envelope = buildWarningView('Configuration warnings', startupWarnings);
-                await emitView(envelope, parsed.options);
-                clearStartupWarnings();
+                const envelope = (0, common_1.buildWarningView)('Configuration warnings', startupWarnings);
+                await (0, view_helpers_1.emitView)(envelope, parsed.options);
+                (0, config_1.clearStartupWarnings)();
             }
             // Create handler context for run/resume/list/view/stop commands
-            const sessionService = new SessionService({
+            const sessionService = new cli_core_1.SessionService({
                 paths,
                 loadConfig: config,
                 defaults: { defaults: config.defaults }
@@ -52,7 +54,7 @@ async function main() {
                 defaultConfig: config,
                 paths,
                 sessionService,
-                emitView,
+                emitView: view_helpers_1.emitView,
                 recordRuntimeWarning: (msg) => {
                     const { recordRuntimeWarning } = require('./lib/session-helpers');
                     recordRuntimeWarning(msg);
@@ -62,12 +64,12 @@ async function main() {
                     recordStartupWarning(msg);
                 }
             };
-            handlers = createHandlers(handlerContext);
+            handlers = (0, cli_core_1.createHandlers)(handlerContext);
         }
         switch (parsed.command) {
             case 'run':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildRunHelpView(), parsed.options);
+                    await (0, view_helpers_1.emitView)((0, help_1.buildRunHelpView)(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -76,7 +78,7 @@ async function main() {
                 break;
             case 'init':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildInfoView('Genie init', [
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie init', [
                         'Usage: genie init [code|create] [--yes]',
                         '• Copies packaged .genie into your repo (preserving agents, wishes, reports, state).',
                         '• Copies AGENTS.md and .gitignore to project root (no CLAUDE.md changes).',
@@ -87,30 +89,30 @@ async function main() {
                     ]), parsed.options);
                     return;
                 }
-                await runInit(parsed, config, paths);
+                await (0, init_1.runInit)(parsed, config, paths);
                 break;
             case 'rollback':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildInfoView('Genie rollback', [
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie rollback', [
                         'Usage: genie rollback [--list] [--id <backupId>] [--latest]',
                         'Restores a previous snapshot stored under .genie/backups.'
                     ]), parsed.options);
                     return;
                 }
-                await runRollback(parsed, config, paths);
+                await (0, rollback_1.runRollback)(parsed, config, paths);
                 break;
             case 'status':
-                await runStatus(parsed, config, paths);
+                await (0, status_1.runStatus)(parsed, config, paths);
                 break;
             case 'cleanup':
-                await runCleanup(parsed, config, paths);
+                await (0, cleanup_1.runCleanup)(parsed, config, paths);
                 break;
             case 'statusline':
-                await runStatusline(parsed, config, paths);
+                await (0, statusline_1.runStatusline)(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildResumeHelpView(), parsed.options);
+                    await (0, view_helpers_1.emitView)((0, help_1.buildResumeHelpView)(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -119,7 +121,7 @@ async function main() {
                 break;
             case 'list':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildListHelpView(), parsed.options);
+                    await (0, view_helpers_1.emitView)((0, help_1.buildListHelpView)(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -128,7 +130,7 @@ async function main() {
                 break;
             case 'view':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildViewHelpView(), parsed.options);
+                    await (0, view_helpers_1.emitView)((0, help_1.buildViewHelpView)(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -137,7 +139,7 @@ async function main() {
                 break;
             case 'stop':
                 if (parsed.options.requestHelp) {
-                    await emitView(buildStopHelpView(), parsed.options);
+                    await (0, view_helpers_1.emitView)((0, help_1.buildStopHelpView)(), parsed.options);
                     return;
                 }
                 if (!handlers)
@@ -146,20 +148,20 @@ async function main() {
                 break;
             case 'help':
             case undefined:
-                await runHelp(parsed, config, paths);
+                await (0, help_2.runHelp)(parsed, config, paths);
                 break;
             default: {
-                await emitView(buildErrorView('Unknown command', `Unknown command: ${parsed.command}`), parsed.options, { stream: process.stderr });
-                await runHelp(parsed, config, paths);
+                await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Unknown command', `Unknown command: ${parsed.command}`), parsed.options, { stream: process.stderr });
+                await (0, help_2.runHelp)(parsed, config, paths);
                 process.exitCode = 1;
                 break;
             }
         }
-        const runtimeWarnings = getRuntimeWarnings();
+        const runtimeWarnings = (0, session_helpers_1.getRuntimeWarnings)();
         if (runtimeWarnings.length) {
-            const envelope = buildWarningView('Runtime warnings', runtimeWarnings);
-            await emitView(envelope, parsed.options);
-            clearRuntimeWarnings();
+            const envelope = (0, common_1.buildWarningView)('Runtime warnings', runtimeWarnings);
+            await (0, view_helpers_1.emitView)(envelope, parsed.options);
+            (0, session_helpers_1.clearRuntimeWarnings)();
         }
     }
     catch (error) {
@@ -169,6 +171,6 @@ async function main() {
     }
 }
 async function emitEmergencyError(message) {
-    const errorMessage = buildErrorView('Fatal error', message);
+    const errorMessage = (0, common_1.buildErrorView)('Fatal error', message);
     process.stderr.write(errorMessage + '\n');
 }

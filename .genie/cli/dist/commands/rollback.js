@@ -1,61 +1,67 @@
-import path from 'path';
-import { emitView } from '../lib/view-helpers';
-import { buildErrorView, buildInfoView } from '../views/common';
-import { resolveTargetGeniePath, resolveBackupsRoot, resolveWorkspaceVersionPath } from '../lib/paths';
-import { pathExists, ensureDir, toIsoId, copyDirectory, writeJsonFile, snapshotDirectory } from '../lib/fs-utils';
-import { getPackageVersion } from '../lib/package';
-import { promises as fsp } from 'fs';
-export async function runRollback(parsed, _config, _paths) {
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.runRollback = runRollback;
+const path_1 = __importDefault(require("path"));
+const view_helpers_1 = require("../lib/view-helpers");
+const common_1 = require("../views/common");
+const paths_1 = require("../lib/paths");
+const fs_utils_1 = require("../lib/fs-utils");
+const package_1 = require("../lib/package");
+const fs_1 = require("fs");
+async function runRollback(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
         const cwd = process.cwd();
-        const targetGenie = resolveTargetGeniePath(cwd);
-        const backupsRoot = resolveBackupsRoot(cwd);
-        if (!(await pathExists(targetGenie))) {
-            await emitView(buildInfoView('Nothing to rollback', ['No .genie directory found in this workspace.']), parsed.options);
+        const targetGenie = (0, paths_1.resolveTargetGeniePath)(cwd);
+        const backupsRoot = (0, paths_1.resolveBackupsRoot)(cwd);
+        if (!(await (0, fs_utils_1.pathExists)(targetGenie))) {
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Nothing to rollback', ['No .genie directory found in this workspace.']), parsed.options);
             return;
         }
-        if (!(await pathExists(backupsRoot))) {
-            await emitView(buildInfoView('No backups found', ['The .genie/backups directory is empty.']), parsed.options);
+        if (!(await (0, fs_utils_1.pathExists)(backupsRoot))) {
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('No backups found', ['The .genie/backups directory is empty.']), parsed.options);
             return;
         }
         const backupIds = await listBackupIds(backupsRoot);
         if (backupIds.length === 0) {
-            await emitView(buildInfoView('No backups found', ['The .genie/backups directory is empty.']), parsed.options);
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('No backups found', ['The .genie/backups directory is empty.']), parsed.options);
             return;
         }
         if (flags.list) {
-            await emitView(buildInfoView('Available backups', backupIds.map((id) => `• ${id}`)), parsed.options);
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Available backups', backupIds.map((id) => `• ${id}`)), parsed.options);
             return;
         }
         const targetId = selectBackupId(backupIds, flags);
         if (!targetId) {
-            await emitView(buildInfoView('Rollback cancelled', ['No backup selected. Pass --id <backupId> to choose a specific snapshot.']), parsed.options);
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Rollback cancelled', ['No backup selected. Pass --id <backupId> to choose a specific snapshot.']), parsed.options);
             return;
         }
-        const backupDir = path.join(backupsRoot, targetId, 'genie');
-        if (!(await pathExists(backupDir))) {
-            await emitView(buildErrorView('Invalid backup', `Backup ${targetId} does not contain a genie snapshot.`), parsed.options, { stream: process.stderr });
+        const backupDir = path_1.default.join(backupsRoot, targetId, 'genie');
+        if (!(await (0, fs_utils_1.pathExists)(backupDir))) {
+            await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Invalid backup', `Backup ${targetId} does not contain a genie snapshot.`), parsed.options, { stream: process.stderr });
             process.exitCode = 1;
             return;
         }
         const preBackupId = await backupCurrentState(targetGenie);
         await restoreFromBackup(targetGenie, backupDir);
         // Restore root documentation files if they exist in backup
-        const docsBackupDir = path.join(backupsRoot, targetId, 'docs');
-        if (await pathExists(docsBackupDir)) {
+        const docsBackupDir = path_1.default.join(backupsRoot, targetId, 'docs');
+        if (await (0, fs_utils_1.pathExists)(docsBackupDir)) {
             await restoreRootDocs(cwd, docsBackupDir);
         }
         await mergeBackupHistories(targetGenie, backupsRoot, preBackupId);
         await touchVersionFile(cwd, 'rollback');
-        await emitView(buildInfoView('Rollback complete', [
+        await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Rollback complete', [
             `Restored snapshot: ${targetId}`,
             `Previous state stored as backup: ${preBackupId}`
         ]), parsed.options);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        await emitView(buildErrorView('Rollback failed', message), parsed.options, { stream: process.stderr });
+        await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Rollback failed', message), parsed.options, { stream: process.stderr });
         process.exitCode = 1;
     }
 }
@@ -88,7 +94,7 @@ function parseFlags(args) {
     return flags;
 }
 async function listBackupIds(backupsRoot) {
-    const entries = await fsp.readdir(backupsRoot, { withFileTypes: true });
+    const entries = await fs_1.promises.readdir(backupsRoot, { withFileTypes: true });
     return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse();
 }
 function selectBackupId(ids, flags) {
@@ -101,78 +107,78 @@ function selectBackupId(ids, flags) {
     return undefined;
 }
 async function backupCurrentState(targetGenie) {
-    const backupId = `${toIsoId()}-pre-rollback`;
-    const backupDir = path.join(targetGenie, 'backups', backupId);
+    const backupId = `${(0, fs_utils_1.toIsoId)()}-pre-rollback`;
+    const backupDir = path_1.default.join(targetGenie, 'backups', backupId);
     const cwd = process.cwd();
-    await ensureDir(backupDir);
+    await (0, fs_utils_1.ensureDir)(backupDir);
     // Backup current .genie directory
-    await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
+    await (0, fs_utils_1.snapshotDirectory)(targetGenie, path_1.default.join(backupDir, 'genie'));
     // Backup current root framework documentation files
-    const rootDocsDir = path.join(backupDir, 'docs');
-    await ensureDir(rootDocsDir);
+    const rootDocsDir = path_1.default.join(backupDir, 'docs');
+    await (0, fs_utils_1.ensureDir)(rootDocsDir);
     const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
     for (const file of rootDocsFiles) {
-        const srcPath = path.join(cwd, file);
-        const destPath = path.join(rootDocsDir, file);
-        if (await pathExists(srcPath)) {
-            await fsp.copyFile(srcPath, destPath);
+        const srcPath = path_1.default.join(cwd, file);
+        const destPath = path_1.default.join(rootDocsDir, file);
+        if (await (0, fs_utils_1.pathExists)(srcPath)) {
+            await fs_1.promises.copyFile(srcPath, destPath);
         }
     }
     return backupId;
 }
 async function restoreFromBackup(targetGenie, backupGenieDir) {
-    const stagingDir = path.join(path.dirname(targetGenie), `.genie-restore-${toIsoId()}`);
-    await copyDirectory(backupGenieDir, stagingDir);
-    const previousDir = `${targetGenie}.previous-${toIsoId()}`;
-    await fsp.rename(targetGenie, previousDir);
-    await fsp.rename(stagingDir, targetGenie);
+    const stagingDir = path_1.default.join(path_1.default.dirname(targetGenie), `.genie-restore-${(0, fs_utils_1.toIsoId)()}`);
+    await (0, fs_utils_1.copyDirectory)(backupGenieDir, stagingDir);
+    const previousDir = `${targetGenie}.previous-${(0, fs_utils_1.toIsoId)()}`;
+    await fs_1.promises.rename(targetGenie, previousDir);
+    await fs_1.promises.rename(stagingDir, targetGenie);
     // Preserve backups from previous state by merging later
     await mergeBackups(previousDir, targetGenie);
-    await fsp.rm(previousDir, { recursive: true, force: true });
+    await fs_1.promises.rm(previousDir, { recursive: true, force: true });
 }
 async function mergeBackups(previousDir, targetGenie) {
-    const previousBackups = path.join(previousDir, 'backups');
-    const targetBackups = path.join(targetGenie, 'backups');
-    await ensureDir(targetBackups);
-    const exists = await pathExists(previousBackups);
+    const previousBackups = path_1.default.join(previousDir, 'backups');
+    const targetBackups = path_1.default.join(targetGenie, 'backups');
+    await (0, fs_utils_1.ensureDir)(targetBackups);
+    const exists = await (0, fs_utils_1.pathExists)(previousBackups);
     if (!exists) {
         return;
     }
-    const snapshots = await fsp.readdir(previousBackups, { withFileTypes: true });
+    const snapshots = await fs_1.promises.readdir(previousBackups, { withFileTypes: true });
     for (const snapshot of snapshots) {
         if (!snapshot.isDirectory())
             continue;
-        const source = path.join(previousBackups, snapshot.name);
-        const destination = path.join(targetBackups, snapshot.name);
-        if (await pathExists(destination)) {
+        const source = path_1.default.join(previousBackups, snapshot.name);
+        const destination = path_1.default.join(targetBackups, snapshot.name);
+        if (await (0, fs_utils_1.pathExists)(destination)) {
             continue;
         }
-        await fsp.rename(source, destination);
+        await fs_1.promises.rename(source, destination);
     }
 }
 async function mergeBackupHistories(targetGenie, backupsRoot, preBackupId) {
-    await ensureDir(backupsRoot);
-    const recordDir = path.join(backupsRoot, preBackupId, 'metadata');
-    await ensureDir(recordDir);
-    await fsp.writeFile(path.join(recordDir, 'note.txt'), 'Created automatically before rollback.');
+    await (0, fs_utils_1.ensureDir)(backupsRoot);
+    const recordDir = path_1.default.join(backupsRoot, preBackupId, 'metadata');
+    await (0, fs_utils_1.ensureDir)(recordDir);
+    await fs_1.promises.writeFile(path_1.default.join(recordDir, 'note.txt'), 'Created automatically before rollback.');
 }
 async function restoreRootDocs(cwd, docsBackupDir) {
     const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
     for (const file of rootDocsFiles) {
-        const srcPath = path.join(docsBackupDir, file);
-        const destPath = path.join(cwd, file);
-        if (await pathExists(srcPath)) {
-            await fsp.copyFile(srcPath, destPath);
+        const srcPath = path_1.default.join(docsBackupDir, file);
+        const destPath = path_1.default.join(cwd, file);
+        if (await (0, fs_utils_1.pathExists)(srcPath)) {
+            await fs_1.promises.copyFile(srcPath, destPath);
         }
     }
 }
 async function touchVersionFile(cwd, reason) {
-    const versionPath = resolveWorkspaceVersionPath(cwd);
-    const version = getPackageVersion();
+    const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
+    const version = (0, package_1.getPackageVersion)();
     const now = new Date().toISOString();
-    const existing = await pathExists(versionPath);
+    const existing = await (0, fs_utils_1.pathExists)(versionPath);
     if (!existing) {
-        await writeJsonFile(versionPath, {
+        await (0, fs_utils_1.writeJsonFile)(versionPath, {
             version,
             installedAt: now,
             lastUpdated: now,
@@ -182,7 +188,7 @@ async function touchVersionFile(cwd, reason) {
         });
         return;
     }
-    const raw = await fsp.readFile(versionPath, 'utf8');
+    const raw = await fs_1.promises.readFile(versionPath, 'utf8');
     const parsed = JSON.parse(raw);
     parsed.version = version;
     parsed.lastUpdated = now;
@@ -190,5 +196,5 @@ async function touchVersionFile(cwd, reason) {
         ...(parsed.migrationInfo || {}),
         lastAction: reason
     };
-    await writeJsonFile(versionPath, parsed);
+    await (0, fs_utils_1.writeJsonFile)(versionPath, parsed);
 }

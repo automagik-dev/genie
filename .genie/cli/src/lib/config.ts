@@ -1,11 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import type { GenieConfig, ConfigPaths, CLIOptions } from './types.js';
-import { deepClone, mergeDeep } from './utils.js';
-import { findWorkspaceRoot } from './paths.js';
-import { getDirname } from './esm-dirname.js';
-
-const __dirname = getDirname(import.meta.url);
+import type { GenieConfig, ConfigPaths, CLIOptions } from './types';
+import { deepClone, mergeDeep } from './utils';
+import { findWorkspaceRoot } from './paths';
 
 let YAML: typeof import('yaml') | null = null;
 try {

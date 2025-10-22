@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+"use strict";
 /**
  * Debug script to test Forge stats collection
  */
+Object.defineProperty(exports, "__esModule", { value: true });
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../forge.js';
+const forge_js_1 = require("../../../forge.js");
 async function debug() {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+    const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
     console.log('🔍 Debugging Forge Stats Collection');
     console.log('===================================\n');
     try {

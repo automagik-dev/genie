@@ -1,4 +1,4 @@
-import type { CLIOptions, ParsedCommand } from './types.js';
+import type { CLIOptions, ParsedCommand } from './types';
 
 /**
  * Parses command-line arguments into a structured command object.

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+"use strict";
 /**
  * Check all unique status values in Forge execution processes
  */
+Object.defineProperty(exports, "__esModule", { value: true });
 // @ts-ignore
-import { ForgeClient } from '../../../forge.js';
+const forge_js_1 = require("../../../forge.js");
 async function checkStatuses() {
     const baseUrl = 'http://localhost:8887';
-    const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+    const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
     try {
         const allAttempts = await client.listTaskAttempts();
         console.log(`📊 Checking ${allAttempts.length} task attempts...\n`);

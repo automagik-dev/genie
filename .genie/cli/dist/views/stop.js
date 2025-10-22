@@ -1,4 +1,7 @@
-export function buildStopView(params) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildStopView = buildStopView;
+function buildStopView(params) {
     const counts = countStatuses(params.events);
     const lines = [];
     lines.push(`# Stop signal • ${params.target}`);

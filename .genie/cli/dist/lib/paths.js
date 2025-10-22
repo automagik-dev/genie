@@ -1,16 +1,32 @@
-import fs from 'fs';
-import path from 'path';
-import { getDirname } from './esm-dirname.js';
-const __dirname = getDirname(import.meta.url);
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.findWorkspaceRoot = findWorkspaceRoot;
+exports.getPackageRoot = getPackageRoot;
+exports.getTemplateGeniePath = getTemplateGeniePath;
+exports.getTemplateClaudePath = getTemplateClaudePath;
+exports.getTemplateRootPath = getTemplateRootPath;
+exports.getTemplateRelativeBlacklist = getTemplateRelativeBlacklist;
+exports.resolveTargetGeniePath = resolveTargetGeniePath;
+exports.resolveTargetStatePath = resolveTargetStatePath;
+exports.resolveBackupsRoot = resolveBackupsRoot;
+exports.resolveWorkspaceProviderPath = resolveWorkspaceProviderPath;
+exports.resolveWorkspaceVersionPath = resolveWorkspaceVersionPath;
+exports.resolveProviderStatusPath = resolveProviderStatusPath;
+exports.resolveTempBackupsRoot = resolveTempBackupsRoot;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 // Find workspace root by searching upward for .genie/ directory
 // This locates the USER'S project root (where they run genie)
-export function findWorkspaceRoot() {
+function findWorkspaceRoot() {
     let dir = process.cwd();
-    while (dir !== path.dirname(dir)) {
-        if (fs.existsSync(path.join(dir, '.genie'))) {
+    while (dir !== path_1.default.dirname(dir)) {
+        if (fs_1.default.existsSync(path_1.default.join(dir, '.genie'))) {
             return dir;
         }
-        dir = path.dirname(dir);
+        dir = path_1.default.dirname(dir);
     }
     // Fallback to cwd if .genie not found
     return process.cwd();
@@ -18,24 +34,24 @@ export function findWorkspaceRoot() {
 // Get Genie framework package root (where automagik-genie package.json lives)
 // This is DIFFERENT from workspace root!
 // Works in both dev mode and npm mode (npx automagik-genie)
-export function getPackageRoot() {
+function getPackageRoot() {
     // __dirname = .genie/cli/dist/lib/
     // ../../../../ = workspace root (dev) or package root (npm)
-    return path.resolve(__dirname, '../../../..');
+    return path_1.default.resolve(__dirname, '../../../..');
 }
-export function getTemplateGeniePath(template = 'code') {
+function getTemplateGeniePath(template = 'code') {
     // Copy from framework's .genie/code/ or .genie/create/ directory
-    return path.join(getPackageRoot(), '.genie', template);
+    return path_1.default.join(getPackageRoot(), '.genie', template);
 }
-export function getTemplateClaudePath(_template = 'code') {
+function getTemplateClaudePath(_template = 'code') {
     // .claude/ not used - Claude Code wraps core agents directly
-    return path.join(getPackageRoot(), '.claude');
+    return path_1.default.join(getPackageRoot(), '.claude');
 }
-export function getTemplateRootPath(_template = 'code') {
+function getTemplateRootPath(_template = 'code') {
     // Root files (AGENTS.md, CLAUDE.md) copied from framework root
     return getPackageRoot();
 }
-export function getTemplateRelativeBlacklist() {
+function getTemplateRelativeBlacklist() {
     // Protect user work - these directories should NEVER be overwritten
     return new Set([
         'cli', // Framework CLI code
@@ -46,24 +62,24 @@ export function getTemplateRelativeBlacklist() {
         'state' // User session state (preserve entirely)
     ]);
 }
-export function resolveTargetGeniePath(cwd = process.cwd()) {
-    return path.resolve(cwd, '.genie');
+function resolveTargetGeniePath(cwd = process.cwd()) {
+    return path_1.default.resolve(cwd, '.genie');
 }
-export function resolveTargetStatePath(cwd = process.cwd()) {
-    return path.join(resolveTargetGeniePath(cwd), 'state');
+function resolveTargetStatePath(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetGeniePath(cwd), 'state');
 }
-export function resolveBackupsRoot(cwd = process.cwd()) {
-    return path.join(resolveTargetGeniePath(cwd), 'backups');
+function resolveBackupsRoot(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetGeniePath(cwd), 'backups');
 }
-export function resolveWorkspaceProviderPath(cwd = process.cwd()) {
-    return path.join(resolveTargetStatePath(cwd), 'provider.json');
+function resolveWorkspaceProviderPath(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetStatePath(cwd), 'provider.json');
 }
-export function resolveWorkspaceVersionPath(cwd = process.cwd()) {
-    return path.join(resolveTargetStatePath(cwd), 'version.json');
+function resolveWorkspaceVersionPath(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetStatePath(cwd), 'version.json');
 }
-export function resolveProviderStatusPath(cwd = process.cwd()) {
-    return path.join(resolveTargetStatePath(cwd), 'provider-status.json');
+function resolveProviderStatusPath(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetStatePath(cwd), 'provider-status.json');
 }
-export function resolveTempBackupsRoot(cwd = process.cwd()) {
-    return path.join(cwd, '.genie-backups-temp');
+function resolveTempBackupsRoot(cwd = process.cwd()) {
+    return path_1.default.join(cwd, '.genie-backups-temp');
 }

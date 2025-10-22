@@ -1,6 +1,9 @@
-import { isForgeRunning } from '../lib/forge-manager';
-import { collectForgeStats, formatStatsForDashboard } from '../lib/forge-stats';
-export async function runStatus(parsed, _config, _paths) {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.runStatus = runStatus;
+const forge_manager_1 = require("../lib/forge-manager");
+const forge_stats_1 = require("../lib/forge-stats");
+async function runStatus(parsed, _config, _paths) {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     const mcpPort = process.env.MCP_PORT || '8885';
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -8,13 +11,13 @@ export async function runStatus(parsed, _config, _paths) {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
     // Check Forge
-    const forgeRunning = await isForgeRunning(baseUrl);
+    const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
     const forgeStatus = forgeRunning ? '🟢 Running' : '🔴 Down';
     console.log(`📦 Forge Backend: ${forgeStatus}`);
     console.log(`   URL: ${baseUrl}`);
     if (forgeRunning) {
-        const stats = await collectForgeStats(baseUrl);
-        const statsDisplay = formatStatsForDashboard(stats);
+        const stats = await (0, forge_stats_1.collectForgeStats)(baseUrl);
+        const statsDisplay = (0, forge_stats_1.formatStatsForDashboard)(stats);
         if (statsDisplay) {
             console.log(statsDisplay);
         }
