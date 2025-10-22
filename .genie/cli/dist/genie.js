@@ -2,19 +2,19 @@
 /**
  * GENIE Agent CLI - Codex exec orchestration with configurable execution modes
  */
-import { parseArguments } from './lib/cli-parser';
-import { loadConfig, applyDefaults, resolvePaths, prepareDirectories, getStartupWarnings, clearStartupWarnings } from './lib/config';
-import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers';
-import { buildRunHelpView, buildResumeHelpView, buildListHelpView, buildViewHelpView, buildStopHelpView } from './views/help';
-import { buildErrorView, buildInfoView, buildWarningView } from './views/common';
-import { emitView } from './lib/view-helpers';
-import { SessionService, createHandlers } from './cli-core';
-import { runHelp } from './commands/help';
-import { runInit } from './commands/init';
-import { runRollback } from './commands/rollback';
-import { runStatus } from './commands/status';
-import { runCleanup } from './commands/cleanup';
-import { runStatusline } from './commands/statusline';
+import { parseArguments } from './lib/cli-parser.js';
+import { loadConfig, applyDefaults, resolvePaths, prepareDirectories, getStartupWarnings, clearStartupWarnings } from './lib/config.js';
+import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers.js';
+import { buildRunHelpView, buildResumeHelpView, buildListHelpView, buildViewHelpView, buildStopHelpView } from './views/help.js';
+import { buildErrorView, buildInfoView, buildWarningView } from './views/common.js';
+import { emitView } from './lib/view-helpers.js';
+import { SessionService, createHandlers } from './cli-core/index.js';
+import { runHelp } from './commands/help.js';
+import { runInit } from './commands/init.js';
+import { runRollback } from './commands/rollback.js';
+import { runStatus } from './commands/status.js';
+import { runCleanup } from './commands/cleanup.js';
+import { runStatusline } from './commands/statusline.js';
 void main();
 async function main() {
     try {

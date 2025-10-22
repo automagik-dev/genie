@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getPackageRoot } from './paths';
+import { getPackageRoot } from './paths.js';
 
 let cachedPackageJson: any;
 

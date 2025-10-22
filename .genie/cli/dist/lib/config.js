@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { deepClone, mergeDeep } from './utils';
-import { findWorkspaceRoot } from './paths';
+import { deepClone, mergeDeep } from './utils.js';
+import { findWorkspaceRoot } from './paths.js';
 let YAML = null;
 try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
