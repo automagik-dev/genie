@@ -14,6 +14,7 @@ exports.resolveTargetStatePath = resolveTargetStatePath;
 exports.resolveBackupsRoot = resolveBackupsRoot;
 exports.resolveWorkspaceProviderPath = resolveWorkspaceProviderPath;
 exports.resolveWorkspaceVersionPath = resolveWorkspaceVersionPath;
+exports.resolveWorkspacePackageJson = resolveWorkspacePackageJson;
 exports.resolveProviderStatusPath = resolveProviderStatusPath;
 exports.resolveTempBackupsRoot = resolveTempBackupsRoot;
 const fs_1 = __importDefault(require("fs"));
@@ -76,6 +77,9 @@ function resolveWorkspaceProviderPath(cwd = process.cwd()) {
 }
 function resolveWorkspaceVersionPath(cwd = process.cwd()) {
     return path_1.default.join(resolveTargetStatePath(cwd), 'version.json');
+}
+function resolveWorkspacePackageJson(cwd = process.cwd()) {
+    return path_1.default.join(resolveTargetGeniePath(cwd), 'package.json');
 }
 function resolveProviderStatusPath(cwd = process.cwd()) {
     return path_1.default.join(resolveTargetStatePath(cwd), 'provider-status.json');
