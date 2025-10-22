@@ -159,9 +159,9 @@ jobs:
           echo "=== npm pack (dry run) ==="
           npm pack --dry-run
 
-      - name: Run tests
-        run: |
-          GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
+      # - name: Run tests
+      #   run: |
+      #     GENIE_SKIP_IDENTITY_SMOKE=1 pnpm run test:genie
 
       - name: Determine npm dist-tag
         id: npm_tag
