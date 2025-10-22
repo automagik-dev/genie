@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -30,7 +63,7 @@ async function runInit(parsed, _config, _paths) {
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
             // @ts-expect-error - .mjs file exists at runtime
-            const { runInitWizard } = await import('../views/init-wizard.mjs');
+            const { runInitWizard } = await Promise.resolve().then(() => __importStar(require('../views/init-wizard.mjs')));
             const templates = [
                 { value: 'code', label: '💻 Code', description: 'Full-stack development with Git, testing, CI/CD' },
                 { value: 'create', label: '✍️  Create', description: 'Research, writing, content creation' }
@@ -102,7 +135,7 @@ async function runInit(parsed, _config, _paths) {
         // Initialize git if needed (wizard already prompted in interactive mode)
         if (shouldInitGit || (!isInteractive && !await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git')))) {
             if (!isInteractive && flags.yes) {
-                const { execSync } = await import('child_process');
+                const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
                     execSync('git branch -m main', { cwd, stdio: 'pipe' });
@@ -112,7 +145,7 @@ async function runInit(parsed, _config, _paths) {
                 }
             }
             else if (shouldInitGit) {
-                const { execSync } = await import('child_process');
+                const { execSync } = await Promise.resolve().then(() => __importStar(require('child_process')));
                 execSync('git init', { cwd, stdio: 'inherit' });
                 try {
                     execSync('git branch -m main', { cwd, stdio: 'pipe' });
@@ -591,7 +624,7 @@ function mapExecutorToForgeProfile(executorKey) {
 }
 async function runInstallViaCli(cwd, template, flags) {
     try {
-        const { spawn } = await import('child_process');
+        const { spawn } = await Promise.resolve().then(() => __importStar(require('child_process')));
         const cliPath = path_1.default.join((0, paths_1.getPackageRoot)(), '.genie', 'cli', 'dist', 'genie.js');
         const workflowPath = template === 'create'
             ? '@.genie/create/workflows/install.md'
