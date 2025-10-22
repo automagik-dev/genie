@@ -49,7 +49,7 @@ function installGitHooks() {
   // Install each hook
   const hooks = ['pre-commit', 'pre-push'];
   for (const hook of hooks) {
-    const source = path.join(hooksSourceDir, hook);
+    const source = path.join(hooksSourceDir, hook + '.cjs');
     const dest = path.join(gitHooksDir, hook);
 
     if (!fs.existsSync(source)) {
@@ -57,7 +57,7 @@ function installGitHooks() {
     }
 
     try {
-      // Copy hook file
+      // Copy hook file (from .cjs source, without extension in destination)
       fs.copyFileSync(source, dest);
       // Make it executable (chmod +x)
       fs.chmodSync(dest, 0o755);
