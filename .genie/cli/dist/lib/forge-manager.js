@@ -141,7 +141,8 @@ function startForgeInBackground(opts) {
     // Resolve binary path
     const binaryResult = resolveForgeBinary();
     if (!binaryResult.ok) {
-        return binaryResult;
+        const error = 'error' in binaryResult ? binaryResult.error : new Error('Unknown error');
+        return { ok: false, error };
     }
     const binPath = binaryResult.value;
     const port = parsePort(baseUrl);

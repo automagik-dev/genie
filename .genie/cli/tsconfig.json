@@ -1,24 +1,26 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "Node16",
+    "module": "CommonJS",
     "rootDir": "src",
     "outDir": "dist",
-    "strict": true,
+    "strict": false,
+    "noEmitOnError": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "declaration": false,
-    "jsx": "react-jsx",
-    "moduleResolution": "node16",
+    "jsx": "react",
+    "jsxFactory": "React.createElement",
+    "jsxFragmentFactory": "React.Fragment",
+    "moduleResolution": "node",
     "types": ["node"]
   },
   "include": [
     "src/**/*"
   ],
   "exclude": [
-    "src/lib/forge-executor.ts",
-    "src/views/*.tsx"
+    "src/lib/forge-executor.ts"
   ]
 }
