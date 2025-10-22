@@ -314,7 +314,15 @@ class CommitAdvisory {
       /^perf:/i,            // Performance improvements (speed)
       /^refactor:/i,        // Code quality (reduce LOC, cleanup)
       /^style:/i,           // Formatting/style changes
-      /^docs:/i             // Documentation updates
+      /^docs:/i,            // Documentation updates
+
+      // Infrastructure/tooling fixes (hooks, scripts, CI/CD)
+      /pre-push hook/i,
+      /pre-commit hook/i,
+      /\.genie\/scripts/i,
+      /git hook/i,
+      /hook warning/i,
+      /commit advisory/i
     ];
 
     return patterns.some(pattern => pattern.test(full));
