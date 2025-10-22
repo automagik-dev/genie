@@ -1,4 +1,7 @@
 import fs from 'fs';
+import { getDirname } from './esm-dirname.js';
+
+const __dirname = getDirname(import.meta.url);
 import path from 'path';
 import { execSync } from 'child_process';
 

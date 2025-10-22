@@ -1,5 +1,8 @@
 import fs from 'fs';
 import path from 'path';
+import { getDirname } from './esm-dirname.js';
+
+const __dirname = getDirname(import.meta.url);
 
 // Find workspace root by searching upward for .genie/ directory
 // This locates the USER'S project root (where they run genie)

@@ -1,5 +1,8 @@
 import path from 'path';
 import fs from 'fs';
+import { getDirname } from '../lib/esm-dirname.js';
+
+const __dirname = getDirname(import.meta.url);
 import { promises as fsp } from 'fs';
 import YAML from 'yaml';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';

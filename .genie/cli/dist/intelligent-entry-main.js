@@ -4,12 +4,11 @@
  * Handles animated startup with auto-detection logic
  */
 import { runIntelligentEntry } from './intelligent-entry.js';
+import { getDirname } from './lib/esm-dirname.js';
+const __dirname = getDirname(import.meta.url);
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 async function main() {
     // Get current version from package.json
     const packageJsonPath = path.join(__dirname, '../../../package.json');

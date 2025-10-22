@@ -1,4 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
+import { getDirname } from './esm-dirname.js';
+
+const __dirname = getDirname(import.meta.url);
 import fs from 'fs';
 import path from 'path';
 

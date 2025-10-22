@@ -1,4 +1,6 @@
 import path from 'path';
+import { getDirname } from '../lib/esm-dirname.js';
+const __dirname = getDirname(import.meta.url);
 import { promises as fsp } from 'fs';
 import YAML from 'yaml';
 import { emitView } from '../lib/view-helpers';

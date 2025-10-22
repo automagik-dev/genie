@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { deepClone, mergeDeep } from './utils.js';
 import { findWorkspaceRoot } from './paths.js';
+import { getDirname } from './esm-dirname.js';
+const __dirname = getDirname(import.meta.url);
 let YAML = null;
 try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
