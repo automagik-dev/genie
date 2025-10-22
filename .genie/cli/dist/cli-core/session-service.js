@@ -1,7 +1,7 @@
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
-import { loadSessions } from '../session-store';
+import { loadSessions } from '../session-store.js';
 export class SessionService {
     constructor(options) {
         this.paths = options.paths;

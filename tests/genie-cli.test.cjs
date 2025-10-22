@@ -52,7 +52,7 @@ const os = require('os');
 // })();
 
 async function runCliCoreTests() {
-  const cliCore = require('../.genie/cli/dist/cli-core');
+  const cliCore = require('../.genie/cli/dist/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
   assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
 
