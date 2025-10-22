@@ -283,7 +283,50 @@ Every time you think "I should publish this RC":
 
 **First Violation:** 2025-10-21, tried to publish rc.28 manually after PR #175 merge (rc.29 was already auto-published)
 
-### 7. Reserved for Future Amendment
+### 7. Auto-Sync Before Push 🔴 CRITICAL
+**Rule:** Git pre-push hook MUST auto-sync with remote to prevent rejections from automated commits
+
+**The Problem:**
+GitHub Actions automatically creates version bump commits (e.g., rc.68) after pushes to main. If you're working locally and push, git rejects with "remote contains work you don't have" because the automated commit happened between your last pull and your push.
+
+**The Solution:**
+Pre-push hook automatically:
+1. Fetches latest from remote branch
+2. Checks if remote is ahead
+3. Auto-rebases local commits on top of remote
+4. Proceeds with push if successful
+5. Fails early if rebase has conflicts
+
+**Implementation:**
+```bash
+# In .genie/scripts/hooks/pre-push.cjs:
+function autoSyncWithRemote(branch) {
+  git fetch origin ${branch}
+  if remote ahead:
+    git rebase origin/${branch}
+  if rebase fails:
+    error & exit (user must resolve conflicts)
+  else:
+    continue with push
+}
+```
+
+**Benefits:**
+- Zero manual `git pull --rebase` needed before push
+- Handles GitHub Actions automation transparently
+- Fails fast on conflicts (better than rejected push)
+- Repo stays perfectly synchronized
+- Works for all automated commits (version bumps, changelog updates, etc.)
+
+**Escape Hatch:**
+Set `GENIE_SKIP_AUTO_SYNC=1` to disable auto-sync (for debugging hooks)
+
+**Why This Exists:**
+Amendment #6 (Automated Publishing) means GitHub Actions creates commits automatically. Without auto-sync, every push after an automated commit requires manual `git pull --rebase`, creating friction. This amendment eliminates that friction entirely.
+
+**First Incident:** 2025-10-22, push rejected due to rc.68 auto-bump from GitHub Actions
+
+### 8. Reserved for Future Amendment
 **Placeholder:** Additional core workflow rules will be documented here as they emerge
 
 **Current Candidates:**

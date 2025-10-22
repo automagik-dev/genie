@@ -56,6 +56,68 @@ function getCurrentBranch() {
   }
 }
 
+function autoSyncWithRemote(branch) {
+  // Auto-sync with remote to prevent rejection due to automated commits (like RC version bumps)
+  if (process.env.GENIE_SKIP_AUTO_SYNC) {
+    console.log('⏭️  Auto-sync skipped (GENIE_SKIP_AUTO_SYNC set)');
+    return;
+  }
+
+  console.log('🔄 Auto-syncing with remote...');
+
+  try {
+    // Fetch latest from remote
+    execSync(`git fetch origin ${branch}`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Check if remote is ahead
+    const localCommit = execSync('git rev-parse HEAD', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+
+    const remoteCommit = execSync(`git rev-parse origin/${branch}`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+
+    if (localCommit === remoteCommit) {
+      console.log('✅ Already in sync with remote');
+      return;
+    }
+
+    // Check if we're behind
+    const behindCount = execSync(`git rev-list --count HEAD..origin/${branch}`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+
+    if (parseInt(behindCount) > 0) {
+      console.log(`📥 Remote is ${behindCount} commit(s) ahead, rebasing...`);
+
+      // Rebase on remote
+      const rebaseResult = spawnSync('git', ['rebase', `origin/${branch}`], {
+        stdio: 'inherit'
+      });
+
+      if (rebaseResult.status !== 0) {
+        console.error('❌ Auto-rebase failed - please resolve conflicts manually');
+        console.error('   Run: git rebase --abort && git pull --rebase');
+        process.exit(1);
+      }
+
+      console.log('✅ Successfully rebased on remote changes');
+    } else {
+      console.log('✅ Local is ahead of remote');
+    }
+  } catch (e) {
+    console.warn(`⚠️  Auto-sync failed: ${e.message}`);
+    console.warn('   Continuing with push (may be rejected if remote changed)');
+  }
+}
+
 function main() {
   console.log('🧞 Genie pre-push hook');
   const currentBranch = getCurrentBranch();
@@ -64,6 +126,9 @@ function main() {
   const isWorkInProgress = isForgeBranch || isFeatBranch;
 
   console.log(`📍 Detected branch: ${currentBranch}`);
+
+  // Step 0: Auto-sync with remote (prevents rejection from automated commits)
+  autoSyncWithRemote(currentBranch);
 
   // Step 1: tests (skip if GENIE_SKIP_TESTS is set)
   if (process.env.GENIE_SKIP_TESTS) {
