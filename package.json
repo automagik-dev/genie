@@ -43,7 +43,7 @@
   ],
   "scripts": {
     "build": "pnpm run build:genie && pnpm run build:mcp",
-    "build:genie": "tsc -p .genie/cli/src/views/tsconfig.json && tsc -p .genie/cli/tsconfig.json && cp -f .genie/cli/.temp-esm-views/init-wizard.js .genie/cli/dist/views/",
+    "build:genie": "tsc -p .genie/cli/src/views/tsconfig.json && tsc -p .genie/cli/tsconfig.json",
     "build:mcp": "tsc -p .genie/mcp/tsconfig.json",
     "start:mcp": "node .genie/mcp/dist/server.js",
     "start:mcp:stdio": "MCP_TRANSPORT=stdio node .genie/mcp/dist/server.js",
@@ -91,18 +91,14 @@
     "commander": "^12.1.0",
     "fastmcp": "^3.18.0",
     "gradient-string": "^2.0.2",
-    "ink": "^4.4.1",
-    "ink-big-text": "^1.2.0",
-    "ink-select-input": "^5.0.0",
-    "ink-text-input": "^5.0.1",
-    "react": "^18.3.1",
+    "prompts": "^2.4.2",
     "ws": "^8.18.3",
     "yaml": "^2.8.1",
     "zod": "^4.1.11"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
-    "@types/react": "^18.3.3",
+    "@types/prompts": "^2.4.9",
     "@types/ws": "^8.18.1",
     "js-tiktoken": "^1.0.21",
     "typescript": "^5.9.2"
