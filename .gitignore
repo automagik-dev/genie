@@ -198,3 +198,4 @@ docs/ag-ui/*.html
 # Local QA artifacts
 .genie/qa/
 .genie/mcp/dist/lib/qa.js
+.genie/backups/
