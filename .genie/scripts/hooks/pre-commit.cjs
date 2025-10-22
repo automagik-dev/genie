@@ -46,9 +46,9 @@ function main() {
   console.log('## Pre-Commit');
   let exitCode = 0;
   const validations = [
-    'validate-user-files-not-committed.js',
-    'validate-cross-references.js',
-    'forge-task-link.js',  // Auto-link Forge tasks to wishes on first commit
+    'validate-user-files-not-committed.cjs',
+    'validate-cross-references.cjs',
+    'forge-task-link.cjs',  // Auto-link Forge tasks to wishes on first commit
   ];
 
   // Run worktree access prevention check (bash script)
@@ -65,7 +65,7 @@ function main() {
 
   // Generate/update workspace summary tree (staged automatically by the script)
   try {
-    const genCode = run('generate-workspace-summary.js');
+    const genCode = run('generate-workspace-summary.cjs');
     if (genCode !== 0) {
       console.warn('⚠️  Workspace summary generation failed (non-blocking)');
     }
@@ -75,7 +75,7 @@ function main() {
 
   // Migrate QA workflows from scenarios-from-bugs.md (auto-generate stubs)
   try {
-    const migCode = run('migrate-qa-from-bugs.js');
+    const migCode = run('migrate-qa-from-bugs.cjs');
     if (migCode !== 0) {
       console.warn('⚠️  QA migration script failed (non-blocking)');
     }
@@ -85,12 +85,12 @@ function main() {
 
   // Generate token usage and quality summary (non-blocking)
   try {
-    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'count-tokens.js')], { stdio: 'inherit' });
+    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'count-tokens.cjs')], { stdio: 'inherit' });
   } catch (e) {
     console.warn('⚠️  Token usage script failed (non-blocking)');
   }
   try {
-    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'quality-gate.js')], { stdio: 'inherit' });
+    spawnSync('node', [path.join(gitRoot, '.genie', 'scripts', 'token-efficiency', 'quality-gate.cjs')], { stdio: 'inherit' });
   } catch (e) {
     console.warn('⚠️  Token quality gate error (non-blocking)');
   }

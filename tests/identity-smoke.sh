@@ -17,7 +17,7 @@ echo "────────────────────────�
 
 # Test 1: Run commit advisory validation
 echo "Testing commit advisory validation..."
-ADVISORY_OUTPUT=$(cd "$REPO_DIR" && node .genie/scripts/commit-advisory.js 2>&1 || true)
+ADVISORY_OUTPUT=$(cd "$REPO_DIR" && node .genie/scripts/commit-advisory.cjs 2>&1 || true)
 
 # Check for proper output structure
 if echo "$ADVISORY_OUTPUT" | grep -q "# Pre-Push Commit Advisory"; then
@@ -102,7 +102,7 @@ else
   exit 1
 fi
 
-if [ -f "$REPO_DIR/.genie/scripts/commit-advisory.js" ]; then
+if [ -f "$REPO_DIR/.genie/scripts/commit-advisory.cjs" ]; then
   echo "✅ Commit advisory script found"
 else
   echo "❌ Commit advisory script missing"
@@ -110,7 +110,7 @@ else
 fi
 
 # Test 4: Validate parser exists
-if [ -f "$REPO_DIR/.genie/scripts/genie-workflow-parser.js" ]; then
+if [ -f "$REPO_DIR/.genie/scripts/genie-workflow-parser.cjs" ]; then
   echo "✅ Genie workflow parser found"
 else
   echo "❌ Genie workflow parser missing"

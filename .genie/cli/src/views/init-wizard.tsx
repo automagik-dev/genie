@@ -74,8 +74,8 @@ export const InitWizard: React.FC<WizardProps> = ({
     <Box flexDirection="column" padding={1}>
       {/* Header */}
       <Box marginBottom={1}>
-        <Gradient name="rainbow">
-          <Text bold>🧞 GENIE INIT</Text>
+        <Gradient name="cristal">
+          <Text bold>🧞 ✨ GENIE INIT ✨ 🧞</Text>
         </Gradient>
       </Box>
 
