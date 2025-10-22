@@ -76,8 +76,13 @@ if command -v genie &> /dev/null; then
         echo "✅ Updated to $LATEST_VERSION"
         echo ""
     fi
-    exec genie "$@"
+    # Run genie (NOT exec - stay in script to handle exit)
+    genie "$@"
 else
     # Not installed - use dlx (auto-downloads latest)
-    exec pnpm dlx automagik-genie@next "$@"
+    pnpm dlx automagik-genie@next "$@"
 fi
+
+# After genie init completes, the install agent will already be running
+# (started automatically from init.ts runInstallViaCli)
+# Script exits naturally, user stays in the genie session
