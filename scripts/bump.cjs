@@ -142,7 +142,7 @@ function main() {
   try {
     log('blue', '📝', 'Updating CHANGELOG.md...');
     require('child_process').execSync(
-      `node ${path.join(__dirname, '..', '.genie', 'scripts', 'update-changelog.js')} rc ${newVersion}`,
+      `node ${path.join(__dirname, '..', '.genie', 'scripts', 'update-changelog.cjs')} rc ${newVersion}`,
       { stdio: 'inherit' }
     );
     log('green', '✅', 'CHANGELOG updated');
