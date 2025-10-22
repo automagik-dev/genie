@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "sessions": {
+    "code-qa-2510210533": {
+      "agent": "code/qa",
+      "name": "code-qa-2510210533",
+      "executor": "opencode",
+      "executorVariant": "DEFAULT",
+      "status": "running",
+      "created": "2025-10-21T05:33:53.409Z",
+      "lastUsed": "2025-10-21T05:33:53.409Z",
+      "lastPrompt": "Quick QA test of dev branch after bug fixes. Verify:\n1. genie CLI can create sessions\n2. Forge integration works\n3. No critical errors\n\nExecute and report findings.",
+      "mode": "default",
+      "sessionId": "848797bb-9091-4d1e-b444-34fd062a45e2",
+      "background": true,
+      "preset": "default"
+    },
+    "Publish RC.37": {
+      "agent": "code/release",
+      "name": "Publish RC.37",
+      "executor": "opencode",
+      "executorVariant": "DEFAULT",
+      "status": "running",
+      "created": "2025-10-21T06:30:46.338Z",
+      "lastUsed": "2025-10-21T06:30:46.338Z",
+      "lastPrompt": "Publish RC.37 to NPM. Current version is 2.4.0-rc.36, need to bump to rc.37 and publish with the 'next' tag.",
+      "mode": "default",
+      "sessionId": "e5cfcab1-5d1b-4766-926e-2bf5cef17371",
+      "background": true,
+      "preset": "default"
+    },
+    "Publish RC 37": {
+      "agent": "code/release",
+      "name": "Publish RC 37",
+      "executor": "opencode",
+      "executorVariant": "DEFAULT",
+      "status": "running",
+      "created": "2025-10-21T06:38:42.127Z",
+      "lastUsed": "2025-10-21T06:38:42.127Z",
+      "lastPrompt": "Publish RC 37 release. This should include:\n\n1. Version bump to v2.4.0-rc.37\n2. Update CHANGELOG.md with changes from this RC cycle\n3. Commit and tag the release\n4. Create GitHub release\n\nContext from",
+      "mode": "default",
+      "sessionId": "8169876e-2502-466c-96a1-06a08658aea3",
+      "background": true,
+      "preset": "default"
+    },
+    "code-release-2510210640": {
+      "agent": "code/release",
+      "name": "code-release-2510210640",
+      "executor": "opencode",
+      "executorVariant": "DEFAULT",
+      "status": "running",
+      "created": "2025-10-21T06:40:34.587Z",
+      "lastUsed": "2025-10-21T06:40:34.587Z",
+      "lastPrompt": "Publish RC 37 release.\n\nChanges in this RC:\n- Bug Fix #154: Forge executor now syncs current git branch TO Forge default_base_branch\n- Kanban cleanup: Deleted 12 dead task attempts\n- Fixed genie CLI i",
+      "mode": "default",
+      "sessionId": "5f3af9b5-902c-4286-a0a4-f627e5b76b48",
+      "background": true,
+      "preset": "default"
+    },
+    "RC 37 Release Failure Analysis": {
+      "agent": "learn",
+      "name": "RC 37 Release Failure Analysis",
+      "executor": "opencode",
+      "executorVariant": "DEFAULT",
+      "status": "running",
+      "created": "2025-10-21T06:44:33.392Z",
+      "lastUsed": "2025-10-21T06:44:33.392Z",
+      "lastPrompt": "Forge Task: 216fb163-476e-4c95-b0fe-d82e20eebb3d (Learn: RC 37 Release Failure - Direct Execution Anti-Pattern)\n\nYou need to reflect on and document a critical failure that just occurred:\n\n**Context:*",
+      "mode": "default",
+      "sessionId": "1d824e13-936b-4182-a49f-9198eb2fd087",
+      "background": true
+    }
+  }
+}

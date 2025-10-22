@@ -1,0 +1,7 @@
+# Ignore compiled JS in src/ but NOT in dist/
+src/**/*.js
+view/
+
+# Keep dist/ files for npm packaging
+!dist/
+!dist/**

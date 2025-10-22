@@ -327,3 +327,5 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - docgen: outline + draft bullets for target audience; next steps to complete docs.
 - challenge: present strongest counterarguments and disconfirming evidence; revise stance with confidence.
 - tracer: propose instrumentation (signals/probes), expected outputs, and priority.
+
+@AGENTS.md

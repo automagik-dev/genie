@@ -1,0 +1,203 @@
+# CLI QA Run (202510201052 UTC)
+$ node .genie/cli/dist/genie-cli.js --help
+Usage: genie [options] [command]
+
+Self-evolving AI agent orchestration framework
+
+Options:
+  -V, --version                   output the version number
+  -h, --help                      display help for command
+
+Commands:
+  run [options] <agent> <prompt>  Run an agent with a prompt
+  init [options] [template]       Initialize Genie configuration in the current
+                                  workspace
+  migrate [options]               Migrate from old Genie (v2.x) to npm-backed
+                                  architecture (v3.0+)
+  update [options]                Update Genie templates in this workspace
+  rollback [options]              Restore a previous Genie backup snapshot
+  resume <sessionId> <prompt>     Resume an existing agent session
+  list [type]                     List collectives (default) or sessions
+  view [options] <sessionId>      View session transcript
+  stop <sessionId>                Stop a running session
+  status                          Deprecated status shim (see migration guide)
+  cleanup                         Deprecated cleanup shim (see migration guide)
+  statusline                      Emit statusline output (deprecated)
+  model [subcommand]              Configure default executor (show, detect,
+                                  codex, claude)
+  forge [action]                  Manage Automagik Forge backend (start,
+                                  status, stop)
+  mcp [options]                   Start MCP server
+  help [command]                  display help for command
+
+$ node .genie/cli/dist/genie-cli.js --version
+2.4.0-rc.36
+
+$ node .genie/cli/dist/genie-cli.js list
+# Genie Atlas
+Workspace: /home/namastex/workspace/automagik-genie/.genie
+Workspace docs: FORGE-TASKS-AUDIT-20251018, MASTER-PLAN, README, SESSION-STATE, STATE, TODO, TODO.template, UPDATE, USERCONTEXT, USERCONTEXT.template
+Supporting directories (context only): skills, product, teams, custom
+
+Collectives: 2 • Agents: 56
+
+## code collective • agents=40 • workflows=12
+Path: code
+Counts → agents: 40 • workflows: 12 • skills: 20 • teams: 1
+Agents dir: code/agents
+Skills dir: code/skills
+Teams dir: code/teams
+Docs: code, qa, routing
+Skills: agent-configuration, branch-tracker-guidance, evidence-storage, execution-patterns, file-naming-rules, forge-architecture, … (+14)
+Teams: tech-council/
+├── 📁 audit
+│   ├── 🧠 risk
+│   └── 🧠 security
+├── 📁 git
+│   ├── 📁 workflows
+│   │   ├── ⚙️  issue
+│   │   ├── ⚙️  pr
+│   │   ├── ⚙️  release
+│   │   └── ⚙️  report
+│   ├── 🧠 commit-advisory
+│   └── 🧠 git
+├── 📁 qa
+│   └── 📁 workflows
+│       ├── ⚙️  bug-102-session-collision
+│       ├── ⚙️  bug-66-session-persistence
+│       ├── ⚙️  bug-90-full-transcript
+│       ├── ⚙️  bug-92-zombie-sessions
+│       ├── ⚙️  bug-xxx-background-launch
+│       ├── ⚙️  cli-commands
+│       ├── ⚙️  mcp-operations
+│       └── ⚙️  session-lifecycle
+├── 📁 update
+│   ├── 📁 versions
+│   │   ├── 🧠 generic-update
+│   │   └── 🧠 v2.3.x-to-v2.4.0
+│   └── 🧠 update
+├── 📁 wish
+│   ├── 🧠 alignment
+│   ├── 🧠 blueprint
+│   ├── 🧠 discovery
+│   └── 🧠 requirements
+├── 🧠 analyze
+├── 🧠 challenge
+├── 🧠 commit
+├── 🧠 consensus
+├── 🧠 debate
+├── 🧠 debug
+├── 🧠 deep-dive
+├── 🧠 design-review
+├── 🧠 docgen
+├── 🧠 explore
+├── 🧠 implementor
+├── 🧠 install
+├── 🧠 learn
+├── 🧠 polish
+├── 🧠 precommit
+├── 🧠 prompt
+├── 🧠 refactor
+├── 🧠 release
+├── 🧠 review
+├── 🧠 risk-audit
+├── 🧠 roadmap
+├── 🧠 socratic
+├── 🧠 test-strategy
+├── 🧠 tests
+├── 🧠 tracer
+├── 🧠 vibe
+└── 🧠 voice - Voice co-pilot orchestrator that speaks naturally, delegates hard thinking to...
+
+## create collective • agents=4 • workflows=0
+Path: create
+Counts → agents: 4 • workflows: 0 • skills: 5 • teams: 1
+Agents dir: create/agents
+Skills dir: create/skills
+Teams dir: create/teams
+Docs: create, qa, routing
+Skills: asset-naming-rules, content-evidence, prompting-standards-create, publishing-workflow, style-guide-integration
+Teams: creative-council/
+├── 🧠 editor
+├── 🧠 researcher
+├── 🧠 wish
+└── 🧠 writer
+
+Tip: Use `genie run <collective>/<agent> "<prompt>"` to start sessions.
+
+$ node .genie/cli/dist/genie-cli.js list sessions
+[DEBUG forge-executor] Found existing project: automagik-genie (ee8f0a72-44da-411d-a23e-f2c6529b62ce)
+Failed to fetch Forge sessions, falling back to local store
+## Active Sessions
+
+| Session ID | Agent | Status | Executor |
+|------------|-------|--------|----------|
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| advisor-... | neurons/learn | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | starting | default |
+| code/neu... | code/neurons/debug | starting | default |
+| neurons/... | neurons/analyze | starting | default |
+| create/n... | create/neurons/wish | starting | default |
+| create/n... | create/neurons/wish | starting | default |
+| rc30-res... | neurons/explore | stopped | default |
+| error-test | neurons/explore | completed | default |
+| rc29-qa-... | neurons/explore | failed | default |
+| rc28-com... | code/qa | completed | default |
+| rc28-git... | code/neurons/git/git | completed | default |
+| rc28-rel... | code/neurons/git/workflows/release | completed | default |
+| code/neu... | code/neurons/git/git | completed | default |
+| code/neu... | code/neurons/git/git | completed | default |
+| forge-sm... | neurons/learn | completed | default |
+| forge-te... | neurons/learn | stopped | default |
+| test-rc2... | neurons/learn | stopped | default |
+| wish-120... | neurons/forge | failed | default |
+
+
+$ node .genie/cli/dist/genie-cli.js run plan "QA smoke prompt"
+❌ **Fatal error**
+
+❌ Agent 'plan' not found. Try 'genie list agents' to see available ids.
+
+$ node .genie/cli/dist/genie-cli.js list sessions
+[DEBUG forge-executor] Found existing project: automagik-genie (ee8f0a72-44da-411d-a23e-f2c6529b62ce)
+Failed to fetch Forge sessions, falling back to local store
+## Active Sessions
+
+| Session ID | Agent | Status | Executor |
+|------------|-------|--------|----------|
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| advisor-... | neurons/learn | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | stopped | default |
+| neurons/... | neurons/analyze | starting | default |
+| code/neu... | code/neurons/debug | starting | default |
+| neurons/... | neurons/analyze | starting | default |
+| create/n... | create/neurons/wish | starting | default |
+| create/n... | create/neurons/wish | starting | default |
+| rc30-res... | neurons/explore | stopped | default |
+| error-test | neurons/explore | completed | default |
+| rc29-qa-... | neurons/explore | failed | default |
+| rc28-com... | code/qa | completed | default |
+| rc28-git... | code/neurons/git/git | completed | default |
+| rc28-rel... | code/neurons/git/workflows/release | completed | default |
+| code/neu... | code/neurons/git/git | completed | default |
+| code/neu... | code/neurons/git/git | completed | default |
+| forge-sm... | neurons/learn | completed | default |
+| forge-te... | neurons/learn | stopped | default |
+| test-rc2... | neurons/learn | stopped | default |
+| wish-120... | neurons/forge | failed | default |
+
+
+$ node .genie/cli/dist/genie-cli.js stop plan-qa-smoke

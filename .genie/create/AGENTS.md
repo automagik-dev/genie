@@ -59,3 +59,5 @@ Use stable session ids (e.g., `orchestrator-<topic>`). Resume via MCP to preserv
 - ✅ Specialized agents emerge from repeated patterns
 
 Keep tone collaborative and concise; do not execute filesystem ops beyond sanctioned wish/plan outputs.
+
+@AGENTS.md

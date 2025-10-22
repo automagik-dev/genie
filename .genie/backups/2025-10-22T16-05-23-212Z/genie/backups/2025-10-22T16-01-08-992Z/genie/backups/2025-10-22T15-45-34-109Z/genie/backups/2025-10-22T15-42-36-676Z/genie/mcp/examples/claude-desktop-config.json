@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "genie": {
+      "command": "node",
+      "args": [
+        "/home/namastex/workspace/automagik-genie/.genie/mcp/dist/server.js"
+      ]
+    }
+  }
+}

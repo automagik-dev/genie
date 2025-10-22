@@ -21,6 +21,7 @@
     "src/**/*"
   ],
   "exclude": [
-    "src/lib/forge-executor.ts"
+    "src/lib/forge-executor.ts",
+    "src/views/init-wizard.tsx"
   ]
 }

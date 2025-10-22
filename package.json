@@ -43,7 +43,7 @@
   ],
   "scripts": {
     "build": "pnpm run build:genie && pnpm run build:mcp",
-    "build:genie": "tsc -p .genie/cli/tsconfig.json",
+    "build:genie": "tsc -p .genie/cli/src/views/tsconfig.json && tsc -p .genie/cli/tsconfig.json && cp -f .genie/cli/.temp-esm-views/init-wizard.js .genie/cli/dist/views/",
     "build:mcp": "tsc -p .genie/mcp/tsconfig.json",
     "start:mcp": "node .genie/mcp/dist/server.js",
     "start:mcp:stdio": "MCP_TRANSPORT=stdio node .genie/mcp/dist/server.js",
