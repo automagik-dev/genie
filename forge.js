@@ -1,12 +1,9 @@
-"use strict";
 /**
  * Automagik Forge Backend Client
  * Type-safe TypeScript client for all Forge API endpoints
  *
  * Complete API documentation for all 80+ endpoints with full parameter details
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ForgeClient = void 0;
 /**
  * Complete Forge Backend Client
  * Provides type-safe access to all Automagik Forge API endpoints
@@ -880,5 +877,6 @@ class ForgeClient {
         return `${protocol}://${new URL(this.baseUrl).host}/api/drafts/stream/ws?project_id=${projectId}`;
     }
 }
-exports.ForgeClient = ForgeClient;
-exports.default = ForgeClient;
+
+export { ForgeClient };
+export default ForgeClient;
