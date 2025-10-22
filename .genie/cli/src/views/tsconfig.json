@@ -1,9 +1,10 @@
 {
   "compilerOptions": {
+    "module": "ES2020",
+    "moduleResolution": "node",
+    "outDir": "../../.temp-esm-views",
+    "rootDir": ".",
     "target": "ES2020",
-    "module": "NodeNext",
-    "rootDir": "src",
-    "outDir": "dist",
     "strict": false,
     "noEmitOnError": false,
     "esModuleInterop": true,
@@ -13,15 +14,7 @@
     "declaration": false,
     "jsx": "react",
     "jsxFactory": "React.createElement",
-    "jsxFragmentFactory": "React.Fragment",
-    "moduleResolution": "NodeNext",
-    "types": ["node"]
+    "jsxFragmentFactory": "React.Fragment"
   },
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": [
-    "src/lib/forge-executor.ts",
-    "src/views/init-wizard.tsx"
-  ]
+  "include": ["init-wizard.tsx"]
 }
