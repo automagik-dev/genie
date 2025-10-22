@@ -878,5 +878,6 @@ class ForgeClient {
     }
 }
 
-export { ForgeClient };
-export default ForgeClient;
+// CommonJS exports
+module.exports = { ForgeClient };
+module.exports.default = ForgeClient;
