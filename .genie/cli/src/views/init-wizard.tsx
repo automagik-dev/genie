@@ -6,8 +6,6 @@ import SelectInput from 'ink-select-input';
 // @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
 // @ts-ignore - ESM module
-import Gradient from 'ink-gradient';
-// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 
 interface WizardProps {
@@ -74,9 +72,7 @@ export const InitWizard: React.FC<WizardProps> = ({
     <Box flexDirection="column" padding={1}>
       {/* Header */}
       <Box marginBottom={1}>
-        <Gradient name="cristal">
-          <Text bold>🧞 ✨ GENIE INIT ✨ 🧞</Text>
-        </Gradient>
+        <Text bold color="cyan">🧞 ✨ GENIE INIT ✨ 🧞</Text>
       </Box>
 
       {/* Git Check */}

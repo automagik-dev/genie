@@ -6,8 +6,6 @@ import SelectInput from 'ink-select-input';
 // @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
 // @ts-ignore - ESM module
-import Gradient from 'ink-gradient';
-// @ts-ignore - ESM module
 import Spinner from 'ink-spinner';
 export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
     const [step, setStep] = useState(hasGit ? 'template' : 'git');
@@ -45,8 +43,7 @@ export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
     };
     return (React.createElement(Box, { flexDirection: "column", padding: 1 },
         React.createElement(Box, { marginBottom: 1 },
-            React.createElement(Gradient, { name: "cristal" },
-                React.createElement(Text, { bold: true }, "\uD83E\uDDDE \u2728 GENIE INIT \u2728 \uD83E\uDDDE"))),
+            React.createElement(Text, { bold: true, color: "cyan" }, "\uD83E\uDDDE \u2728 GENIE INIT \u2728 \uD83E\uDDDE")),
         step === 'git' && (React.createElement(Box, { flexDirection: "column" },
             React.createElement(Box, { marginBottom: 1 },
                 React.createElement(Text, { color: "yellow" }, "\u26A0\uFE0F  No git repository detected")),
