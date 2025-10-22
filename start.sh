@@ -53,7 +53,7 @@ if ! command -v pnpm &> /dev/null; then
     fi
 fi
 
-# 3. Check for updates and run Genie
+# 3. Check for updates and install/update Genie
 if command -v genie &> /dev/null; then
     # Get installed version
     INSTALLED_VERSION=$(genie --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' || echo "0.0.0")
@@ -76,13 +76,44 @@ if command -v genie &> /dev/null; then
         echo "✅ Updated to $LATEST_VERSION"
         echo ""
     fi
-    # Run genie (NOT exec - stay in script to handle exit)
-    genie "$@"
 else
-    # Not installed - use dlx (auto-downloads latest)
-    pnpm dlx automagik-genie@next "$@"
+    # Not installed - install it globally first
+    echo "Installing Genie..."
+    pnpm install -g automagik-genie@next
 fi
 
-# After genie init completes, the install agent will already be running
-# (started automatically from init.ts runInstallViaCli)
-# Script exits naturally, user stays in the genie session
+# 4. If no arguments, run interactive setup
+if [ $# -eq 0 ]; then
+    # Check if already initialized
+    if [ ! -f ".genie/state/version.json" ]; then
+        # First time setup - run init, then launch install agent
+        echo ""
+        echo "Running Genie initialization..."
+        echo ""
+        genie init
+
+        # After init completes, detect template and launch install agent
+        # Use exec to replace this script with genie (gives it fresh stdin)
+        echo ""
+        echo "✅ Setup complete! Launching Genie install agent..."
+        echo ""
+
+        # Detect template from .genie structure
+        if [ -d ".genie/code" ]; then
+            TEMPLATE="code"
+        elif [ -d ".genie/create" ]; then
+            TEMPLATE="create"
+        else
+            TEMPLATE="code"  # fallback
+        fi
+
+        # Replace this script with genie run (interactive install agent gets fresh stdin)
+        exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo."
+    else
+        # Already initialized - just run genie
+        exec genie
+    fi
+else
+    # Arguments provided - pass through to genie
+    exec genie "$@"
+fi
