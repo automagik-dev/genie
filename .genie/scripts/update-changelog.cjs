@@ -126,8 +126,7 @@ function ensureUnreleased() {
   ensureChangelogFile();
   const existing = fs.readFileSync(CHANGELOG_PATH, 'utf8');
   if (existing.includes('[Unreleased]')) {
-    console.log('⚠️  [Unreleased] section already exists in CHANGELOG.md');
-    console.log('   Skipping CHANGELOG update (already up to date)');
+    // Already exists - this is the desired state, no warning needed
     return 0;
   }
   const last = getLastTag();

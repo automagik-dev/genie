@@ -59,9 +59,9 @@ class CommitAdvisory {
           cwd: REPO_ROOT,
           stdio: ['pipe', 'pipe', 'ignore']
         });
-        if (log.trim()) {
-          return this.parseCommitLog(log, delimiter);
-        }
+        // Empty log = no new commits (everything pushed)
+        // This is SUCCESS, not failure - return empty commits
+        return this.parseCommitLog(log, delimiter);
       } catch {
         // Upstream doesn't exist yet (branch not pushed)
       }
@@ -470,11 +470,15 @@ class CommitAdvisory {
   validateBranch() {
     const branch = this.getCurrentBranch();
     if (branch === 'main' || branch === 'master') {
-      this.warnings.push(
-        `Pushing to "${branch}" branch directly\n` +
-        `     Suggestion: Use feature branch (feat/wish-slug) for traced work\n` +
-        `     Override: Set GENIE_ALLOW_MAIN_PUSH=1`
-      );
+      // Only warn if there are non-exempt commits (actual feature work)
+      const hasNonExemptCommits = this.commits.some(c => !this.isAutomatedCommit(c));
+      if (hasNonExemptCommits) {
+        this.warnings.push(
+          `Pushing to "${branch}" branch directly\n` +
+          `     Suggestion: Use feature branch (feat/wish-slug) for traced work\n` +
+          `     Override: Set GENIE_ALLOW_MAIN_PUSH=1`
+        );
+      }
     }
   }
 
