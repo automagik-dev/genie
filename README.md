@@ -176,24 +176,25 @@ $script = irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/mai
 
 ---
 
-### 📦 Full Setup (Permanent Install)
+### 📦 Global Install (Recommended)
 
-**Use this for permanent installation with all dependencies:**
+**Use this for the best performance and DX:**
 
-**Linux / macOS:**
+**All Platforms:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.sh -o /tmp/genie-setup.sh && bash /tmp/genie-setup.sh
-```
+# Automated install (installs Node.js, pnpm, and Genie)
+curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/run.sh -o /tmp/genie.sh && bash /tmp/genie.sh
 
-**Windows (PowerShell as Administrator):**
-```powershell
-$script = irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/setup.ps1; powershell -Command $script
+# Or install manually if you have Node.js already:
+pnpm install -g automagik-genie@next
 ```
 
 **What this does:**
-- ✅ Installs Node.js 22 and npm (if needed)
+- ✅ Installs Node.js 22 (if needed)
 - ✅ Installs pnpm package manager
-- ✅ Runs Genie automatically after setup
+- ✅ Installs Genie globally
+- ✅ Enables `genie` command anywhere
+- ✅ Enables version checking and auto-updates
 
 ---
 
@@ -227,11 +228,32 @@ npx automagik-genie rollback --latest
 
 ### CLI Help at a Glance
 
+**Server Management:**
 ```bash
-npx automagik-genie            # Shows the command palette
-npx automagik-genie init --help
-npx automagik-genie update --help
-npx automagik-genie rollback --help
+genie                  # Start Genie server (Forge + MCP)
+genie status          # Show server status and statistics
+genie mcp             # Start MCP server in stdio mode (for Claude Desktop)
+```
+
+**Agent Orchestration:**
+```bash
+genie run <agent> <prompt>     # Run an agent with a prompt
+genie resume <sessionId> <msg> # Resume an existing agent session
+genie list [type]              # List agents, sessions, or workflows
+genie view <sessionId>         # View session transcript
+genie stop <sessionId>         # Stop a running session
+```
+
+**Workspace Management:**
+```bash
+genie init [template]    # Initialize workspace
+genie rollback          # Restore previous backup
+```
+
+**Package Management:**
+```bash
+genie update            # Update Genie npm package (shows changelog from GitHub)
+genie update --check    # Check for updates without installing
 ```
 
 After running `init` you'll have:

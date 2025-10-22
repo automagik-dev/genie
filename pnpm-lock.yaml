@@ -12,8 +12,8 @@ importers:
         specifier: ^1.18.2
         version: 1.18.2
       automagik-forge:
-        specifier: ^0.4.2
-        version: 0.4.2
+        specifier: ^0.4.3
+        version: 0.4.3
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -167,8 +167,8 @@ packages:
     resolution: {integrity: sha512-ooviqdwwgfIfNmDwo94wlshcdzfO64XV0Cg6oDsDYBJfITDz1EngD2z7DkbvCWn+XIMsIqW27sEVF6qcpJrRcg==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
-  automagik-forge@0.4.2:
-    resolution: {integrity: sha512-Evpvnrd1hlcjxn5FAjc7cyjGlXQVVVnOxwdvFDV9prxFiZeqN2C2rNXAUU9e2MLoe97/PnET5yGApd/MNfx2MA==}
+  automagik-forge@0.4.3:
+    resolution: {integrity: sha512-ah4ct3B727jCN8AVgKXiX2xEyv0xjm0iVWCy54MZAV5qdiHqI9hzf0SmPSsFsxobILkF9Wc18Lf9zwLzOvywnw==}
     hasBin: true
 
   base64-js@1.5.1:
@@ -1209,7 +1209,7 @@ snapshots:
 
   auto-bind@5.0.1: {}
 
-  automagik-forge@0.4.2: {}
+  automagik-forge@0.4.3: {}
 
   base64-js@1.5.1: {}
 
