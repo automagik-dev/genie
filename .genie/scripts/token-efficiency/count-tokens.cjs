@@ -19,6 +19,7 @@ function shouldSkip(rel) {
     rel.startsWith('.git/') ||
     rel.startsWith('node_modules/') ||
     rel.startsWith('forge/') ||  // Skip entire forge directory
+    rel.startsWith('.genie/backups/') ||  // Skip backup directories (can contain 500K+ files)
     rel.includes('/dist/') ||
     rel.includes('/node_modules/') ||
     rel.includes('/.pnpm-store/') ||
