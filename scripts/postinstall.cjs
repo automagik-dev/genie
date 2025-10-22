@@ -50,6 +50,7 @@ function installGitHooks() {
   const hooks = ['pre-commit', 'pre-push'];
   for (const hook of hooks) {
     const source = path.join(hooksSourceDir, hook + '.cjs');
+    // Keep .cjs extension to avoid ESM/CommonJS issues (package.json has "type": "module")
     const dest = path.join(gitHooksDir, hook);
 
     if (!fs.existsSync(source)) {
@@ -57,10 +58,11 @@ function installGitHooks() {
     }
 
     try {
-      // Copy hook file (from .cjs source, without extension in destination)
-      fs.copyFileSync(source, dest);
-      // Make it executable (chmod +x)
-      fs.chmodSync(dest, 0o755);
+      // Copy hook file and keep CommonJS by using a shebang wrapper
+      // Git hooks must be executable scripts without extension, so we create
+      // a wrapper that explicitly runs node with the .cjs file
+      const wrapper = `#!/usr/bin/env node\nrequire('${source}');\n`;
+      fs.writeFileSync(dest, wrapper, { mode: 0o755 });
     } catch (err) {
       // Silently fail - don't break installation if hooks can't be installed
     }
