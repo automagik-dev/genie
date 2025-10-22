@@ -47,7 +47,7 @@ curl -fsSL https://genie.namastex.ai/start | bash
     ```
     ▸ Creating Forge task for code/agents/install...
     ▸ Task attempt created: <uuid>
-    Open in Forge: http://localhost:8888/tasks/<uuid>
+    Open in Forge: http://localhost:8887/tasks/<uuid>
 
       View output:
         npx automagik-genie view <uuid>
@@ -132,7 +132,7 @@ npx automagik-genie@next init code
 **Watch for:**
 1. ✅ Message: "🚀 Starting Forge server and Install agent..."
 2. ✅ Forge task creation output visible
-3. ✅ Forge URL shown: `http://localhost:8888/tasks/<uuid>`
+3. ✅ Forge URL shown: `http://localhost:8887/tasks/<uuid>`
 4. ✅ Clear instructions for continuing session
 
 **Failure Modes:**
@@ -152,7 +152,7 @@ mkdir -p "$QA_DIR" && cd "$QA_DIR"
 
 **Test 5a: Forge Not Available**
 ```bash
-# Ensure no Forge running on port 8888
+# Ensure no Forge running on port 8887
 npx automagik-genie@next init code --forge-port 9999
 ```
 
@@ -163,7 +163,7 @@ npx automagik-genie@next init code --forge-port 9999
 **Test 5b: Network Issues**
 ```bash
 # Simulate network issue
-export GENIE_FORGE_BASE_URL="http://invalid-host:8888"
+export FORGE_BASE_URL="http://invalid-host:8887"
 npx automagik-genie@next init code
 ```
 
