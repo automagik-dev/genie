@@ -4,12 +4,12 @@
  * Addresses Genie RISK-1: genie.ts main() execution on import
  * Addresses Genie RISK-2: Session store concurrency via SessionService with file locking
  */
-export { SessionService } from './session-service';
-import { createRunHandler } from './handlers/run';
-import { createResumeHandler } from './handlers/resume';
-import { createViewHandler } from './handlers/view';
-import { createStopHandler } from './handlers/stop';
-import { createListHandler } from './handlers/list';
+export { SessionService } from './session-service.js';
+import { createRunHandler } from './handlers/run.js';
+import { createResumeHandler } from './handlers/resume.js';
+import { createViewHandler } from './handlers/view.js';
+import { createStopHandler } from './handlers/stop.js';
+import { createListHandler } from './handlers/list.js';
 /**
  * Factory function for creating CLI command handlers
  *

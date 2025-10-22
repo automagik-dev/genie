@@ -1,6 +1,6 @@
 import fs from 'fs';
 import type { SessionStore, SessionEntry } from '../session-store';
-import type { ConfigPaths } from './types';
+import type { ConfigPaths } from './types.js';
 import { saveSessions } from '../session-store';
 
 const runtimeWarnings: string[] = [];
