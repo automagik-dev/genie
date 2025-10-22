@@ -43,8 +43,6 @@ const react_1 = __importStar(require("react"));
 const ink_1 = require("ink");
 // @ts-ignore - ESM module
 const ink_text_input_1 = __importDefault(require("ink-text-input"));
-// @ts-ignore - ESM module
-const ink_spinner_1 = __importDefault(require("ink-spinner"));
 const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
     const { exit } = (0, ink_1.useApp)();
     const [messages, setMessages] = (0, react_1.useState)([]);
@@ -151,9 +149,7 @@ const InstallChat = ({ mcpClient, agent, template, onComplete, onRestart }) => {
                         "\u2022 ",
                         msg.content)))))),
             isAgentThinking && (react_1.default.createElement(ink_1.Box, null,
-                react_1.default.createElement(ink_1.Text, { color: "yellow" },
-                    react_1.default.createElement(ink_spinner_1.default, { type: "dots" }),
-                    " Agent is thinking...")))),
+                react_1.default.createElement(ink_1.Text, { color: "yellow" }, "\u23F3 Agent is thinking...")))),
         react_1.default.createElement(ink_1.Box, { borderStyle: "single", borderColor: "gray", paddingX: 1 },
             react_1.default.createElement(ink_1.Text, { color: "cyan" }, "\u203A "),
             react_1.default.createElement(ink_text_input_1.default, { value: userInput, onChange: setUserInput, onSubmit: handleSubmit, placeholder: "Type your response..." }))));

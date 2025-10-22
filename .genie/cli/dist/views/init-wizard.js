@@ -5,8 +5,6 @@ import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 // @ts-ignore - ESM module
 import TextInput from 'ink-text-input';
-// @ts-ignore - ESM module
-import Spinner from 'ink-spinner';
 export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
     const [step, setStep] = useState(hasGit ? 'template' : 'git');
     const [initGit, setInitGit] = useState(false);
@@ -84,9 +82,7 @@ export const InitWizard = ({ templates, executors, hasGit, onComplete }) => {
                 React.createElement(Text, { color: "cyan" }, "\u203A "),
                 React.createElement(TextInput, { value: model, onChange: setModel, onSubmit: handleModelSubmit, placeholder: getDefaultModel() })))),
         step === 'starting' && (React.createElement(Box, null,
-            React.createElement(Text, { color: "green" },
-                React.createElement(Spinner, { type: "dots" }),
-                " Starting install agent..."))),
+            React.createElement(Text, { color: "green" }, "\u23F3 Starting install agent..."))),
         step !== 'starting' && (React.createElement(Box, { marginTop: 1 },
             React.createElement(Text, { dimColor: true }, "ESC to cancel")))));
 };
