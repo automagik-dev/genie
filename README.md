@@ -30,52 +30,34 @@
 
 **New to Genie? Choose your approach:**
 
-### 🚀 Quick Run (No Install)
-
-**Use this if you just want to test Genie without installing anything:**
+### 🚀 Quick Install
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://genie.namastex.ai/start.sh | bash
+# Download and run installer
+curl -fsSL https://genie.namastex.ai/start.sh -o /tmp/genie-install.sh && bash /tmp/genie-install.sh
+
+# Or use the shorthand alias
+curl -fsSL https://genie.namastex.ai/start -o /tmp/genie-install.sh && bash /tmp/genie-install.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://genie.namastex.ai/start.ps1 | iex
+# Download and run installer
+irm https://genie.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"; & "$env:TEMP\genie-install.ps1"
 ```
 
-**What this does:**
-- ✅ Runs Genie via pnpm dlx (no permanent install)
-- ✅ Perfect for quick testing
-- ✅ Fast execution with pnpm
-
----
-
-### 📦 Global Install (Recommended)
-
-**Use this for the best performance and DX:**
-
-**Linux / macOS:**
+**Manual install (if you have Node.js already):**
 ```bash
-# Automated install (installs Node.js, pnpm, and Genie globally)
-curl -fsSL https://genie.namastex.ai/start | bash
-
-# Or install manually if you have Node.js already:
 pnpm install -g automagik-genie@next
 ```
 
-**Windows (PowerShell):**
-```powershell
-# Automated install (installs Node.js, pnpm, and Genie globally)
-irm https://genie.namastex.ai/start.ps1 | iex
-```
-
-**What this does:**
+**What the installer does:**
 - ✅ Installs Node.js 22 (if needed)
 - ✅ Installs pnpm package manager
 - ✅ Installs Genie globally
 - ✅ Enables `genie` command anywhere
-- ✅ Enables version checking and auto-updates
+- ✅ Runs `genie` to initialize your workspace
 
 ---
 
