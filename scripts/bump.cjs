@@ -308,6 +308,5 @@ npm install -g ${pkg.name}@next
 
 See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details.`;
 }
-}
 
 main();
