@@ -195,6 +195,39 @@ git log --oneline -3   # Would show it merged!
 **Evidence:** `/tmp/session-ultrathink-analysis.md` lines 177-198, 220-240
 **Applied:** ✅ Investigation protocol documented
 
+### Learning 10: Three-Bug Pattern - Update Loop From False Positives 🔴 CRITICAL
+**Context:** Recurring bug (attempted fixes 2 times before) - users stuck in infinite update loop
+**Pattern:** Three independent bugs create failure cascade: false positive detection → early return without update → version check loops
+**Bug #1:** `detectInstallType()` in migrate.js (lines 60-75) has false positive
+- Detects "old_genie" when `.genie/agents/workflows/` or `.genie/agents/agents/` have `.md` files
+- But NEW structure (v2.1.0+) ALSO has these (copied from templates during init)
+- Modern installations incorrectly flagged as "old structure"
+**Bug #2:** `runInit()` in init.js (lines 118-135) returns early without version update
+- When 'old_genie' detected → shows message → returns (line 134)
+- `writeVersionState()` at line 214 never reached
+- `.genie/state/version.json` stays at old version
+**Bug #3:** Version check in genie-cli.js (lines 178-261) has no escape hatch
+- Always redirects to init on version mismatch
+- Doesn't check if init will complete successfully
+- Creates infinite loop when init blocked by false positive
+**Evidence Flow:**
+```
+genie → version check (genie-cli.js:204) → sees 2.4.2-rc.80 vs 2.5.0-rc.20
+  ↓
+init runs → detectInstallType() → returns 'old_genie' (FALSE POSITIVE)
+  ↓
+Shows "Old Installation" message (lines 120-130) → returns early (line 134)
+  ↓
+Version files NOT updated → User runs genie → SAME mismatch → LOOP FOREVER
+```
+**Fix Strategy:**
+1. **Immediate:** Make `detectInstallType()` check version files first (if exists, not "old_genie")
+2. **Defensive:** Update version file even when returning early for 'old_genie'
+3. **UX:** Auto-force reinit with `--yes` after showing message (don't require manual intervention)
+**Lesson:** Three-path architecture requires testing ALL paths independently (Git-diff update, NPM update, Smart router). One broken path = infinite loop.
+**Evidence:** Investigation session 2025-10-23 (this debug wish)
+**Applied:** ✅ To be fixed via debug wish with GitHub issue
+
 ## Origin: From Scattered Work to Living Framework
 
 - **May 2025:** Created by Felipe Rosa (scattered `.claude/` folders across repos)
