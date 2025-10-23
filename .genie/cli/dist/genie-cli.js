@@ -255,6 +255,45 @@ async function smartRouter() {
     const genieDir = path_1.default.join(process.cwd(), '.genie');
     const versionPath = path_1.default.join(genieDir, 'state', 'version.json');
     const hasGenieConfig = fs_1.default.existsSync(genieDir);
+    // 🚨 START FORGE FIRST - Required for all Genie operations (init, run, list, etc.)
+    // Forge must be running before any command that needs to:
+    // - Create sessions (genie run)
+    // - List executors (genie init with executor selection)
+    // - Query project/task state (genie list, genie view)
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+    if (!forgeRunning) {
+        console.log('');
+        console.log('📦 Starting Forge backend...');
+        const logDir = path_1.default.join(process.cwd(), '.genie', 'state');
+        // Ensure log directory exists before starting Forge
+        if (!fs_1.default.existsSync(logDir)) {
+            fs_1.default.mkdirSync(logDir, { recursive: true });
+        }
+        const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
+        if (!startResult.ok) {
+            const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
+            console.error('');
+            console.error('❌ Failed to start Forge backend');
+            console.error(`   ${error.message}`);
+            console.error('');
+            console.error('   Genie requires Forge to manage agent sessions.');
+            console.error(`   Check logs at ${logDir}/forge.log`);
+            console.error('');
+            process.exit(1);
+        }
+        // Wait for Forge to be ready (silent progress)
+        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, false);
+        if (!forgeReady) {
+            console.error('');
+            console.error('❌ Forge did not start in time (60s)');
+            console.error(`   Check logs at ${logDir}/forge.log`);
+            console.error('');
+            process.exit(1);
+        }
+        console.log('✅ Forge ready');
+        console.log('');
+    }
     if (!hasGenieConfig) {
         // SCENARIO 1: NEW USER - No .genie directory → Run init wizard
         console.log(cosmicGradient('━'.repeat(60)));
