@@ -305,6 +305,38 @@ Version files NOT updated → User runs genie → SAME mismatch → LOOP FOREVER
 **Evidence:** `/tmp/session-analysis-ultrathink-20251023.md` (marked complete without evidence, user noticed)
 **Applied:** ✅ Protocol documented above
 
+### Learning 14: Full URLs Are Sacred - Never Truncate Action Items 🔴 CRITICAL
+**Context:** Truncated Forge URLs with "..." thinking it was "cleaner"
+**Violation:** Presented URLs as `http://localhost:8887/projects/.../ff8b5629...` instead of full URL
+**Impact:** User can't click, can't copy-paste, must manually search Forge UI
+**Teaching:** "returning me the url of the tasks at all times is very important"
+**URL Semantics:**
+```
+http://localhost:8887/projects/{project_id}/tasks/{task_id}/attempts/{attempt_id}?view={mode}
+
+Query Parameters:
+- ?view=diffs    → Code/text editing view (pair programming on code)
+- ?view=preview  → Frontend real-time UI preview (pair programming on UI)
+```
+**Protocol for URLs:**
+1. **Never truncate** - copy verbatim from MCP output
+2. **Never abbreviate** - full URL every time
+3. **Never remove query params** - they control view mode
+4. **Present on own line** - make it visible and clickable
+5. **Format for action** - user needs to click/copy this
+**Why URLs Are Sacred:**
+- PRIMARY interface for accessing work
+- Functional action items, not decorative metadata
+- User workflow depends on clicking them
+- Query parameters control interface behavior (diffs vs preview)
+**Pattern Recognized:** Optimizing for MY aesthetics instead of USER functionality
+- Silent failures → suggest manual workaround (Learning #11)
+- Can't verify → mark complete anyway (Learning #13)
+- Have full URLs → truncate them → user can't access (Learning #14)
+**Core Fix:** URLs are not information, they're INTERFACES. Treat them as action items.
+**Evidence:** `/tmp/ultrathink-url-truncation.md` (full analysis)
+**Applied:** ✅ Protocol documented above
+
 ## Origin: From Scattered Work to Living Framework
 
 - **May 2025:** Created by Felipe Rosa (scattered `.claude/` folders across repos)
