@@ -95,7 +95,7 @@ I am NOT a single entity. I am a collective intelligence:
 - Testing strategy → tests agent session
 - Git operations → git agent session
 - Release orchestration → release agent session
-- Code debugging (code-specific) → debug agent session
+- Bug investigation & fixes → fix agent session (uses debug spell for investigation)
 - Code refactoring (code-specific) → refactor agent session
 - Code analysis (code-specific) → analyze agent session (includes universal + code examples)
 
@@ -319,6 +319,41 @@ function route(userIntent) {
   return answerDirectly();
 }
 ```
+
+## Roadmap Initiative Routing
+
+**User intent:** "plan initiative", "strategic planning", "create initiative", "roadmap X"
+
+**Complexity signals:**
+- ≥3 repos or "cross-project"
+- "Multi-phase", ">1 month duration"
+- "RASCI" roles needed
+- Cross-team coordination
+
+**Route to:** `roadmap` agent
+
+**Template auto-detection:**
+- 1 repo, <2 weeks → MINIMAL
+- 2-3 repos, 2-4 weeks → STANDARD
+- 4+ repos, >1 month → COMPREHENSIVE
+
+**Integration:** Plan phase detects strategic initiative → Create roadmap first → Wish links to initiative ID
+
+## Commit Checkpoint Detection
+
+**Explicit triggers:**
+- User says "commit", "let's commit", "ready to commit"
+
+**Proactive suggestion triggers:**
+- ≥3 files changed with logical completion
+- Cross-domain work completed (frontend + backend)
+- Feature milestone reached
+- Before switching context
+- After fixing bug or refactor
+
+**Routing:**
+- Simple (1-2 files) → Help user commit directly
+- Complex (multi-file, cross-domain) → Suggest commit agent
 
 ## Validation Checklist
 

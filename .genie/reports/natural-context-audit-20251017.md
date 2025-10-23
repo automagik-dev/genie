@@ -337,10 +337,12 @@ This mode uses the universal prompting framework (see above):
 
 ### @ (File Reference) Patterns Discovered
 
-**Already Optimal (3 patterns):**
-1. ✅ orchestrator.md:40 → @.genie/code/routing.md
-2. ✅ plan.md:58 → @.genie/code/routing.md
-3. ✅ implementor.md:112 → @.genie/code/agents/implementor.md
+**Already Optimal (1 pattern):**
+1. ✅ implementor.md:112 → @.genie/code/agents/implementor.md
+
+**Historical (removed during refactoring):**
+- orchestrator.md:40 → routing.md (routing moved to spells/)
+- plan.md:58 → routing.md (routing moved to spells/)
 
 **High-Impact Additions (15 patterns):**
 1. 🟡  → `@AGENTS.md`, @.genie/reports/architectural-evolution-may-oct-2025.md
