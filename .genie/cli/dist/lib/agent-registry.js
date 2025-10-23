@@ -174,15 +174,36 @@ class AgentRegistry {
     }
     /**
      * Generate Forge profiles for all agents across all executors
-     * Creates a variant for each agent on each executor
+     * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
      * @param forgeClient - Optional ForgeClient to fetch executors dynamically
      */
     async generateForgeProfiles(forgeClient) {
         const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
         const profiles = { executors: {} };
+        // Get current profiles to extract DEFAULT variants (for inheriting required fields)
+        let defaultVariants = {};
+        if (forgeClient) {
+            try {
+                const currentProfiles = await forgeClient.getExecutorProfiles();
+                const current = typeof currentProfiles.content === 'string'
+                    ? JSON.parse(currentProfiles.content)
+                    : currentProfiles;
+                // Extract DEFAULT variant config for each executor
+                for (const [executor, variants] of Object.entries(current.executors || {})) {
+                    if (variants.DEFAULT && variants.DEFAULT[executor]) {
+                        defaultVariants[executor] = variants.DEFAULT[executor];
+                    }
+                }
+            }
+            catch (error) {
+                // If fetching fails, proceed without defaults
+            }
+        }
         // For each executor, create agent variants
         for (const executor of executors) {
             profiles.executors[executor] = profiles.executors[executor] || {};
+            // Get base config from DEFAULT variant (inherits model, additional_params, etc.)
+            const baseConfig = defaultVariants[executor] || {};
             // Add each agent as a variant
             for (const agent of this.agents.values()) {
                 if (!agent.fullContent)
@@ -190,6 +211,9 @@ class AgentRegistry {
                 const variantName = agent.name.toUpperCase();
                 profiles.executors[executor][variantName] = {
                     [executor]: {
+                        // Inherit all fields from DEFAULT variant
+                        ...baseConfig,
+                        // Override append_prompt with agent content
                         append_prompt: agent.fullContent,
                         // Preserve any executor-specific settings from agent metadata
                         ...(agent.genie?.background !== undefined && { background: agent.genie.background })
@@ -208,9 +232,9 @@ let globalRegistry = null;
 /**
  * Get or create global agent registry
  */
-async function getAgentRegistry() {
-    if (!globalRegistry) {
-        globalRegistry = new AgentRegistry();
+async function getAgentRegistry(workspaceRoot) {
+    if (!globalRegistry || (workspaceRoot && globalRegistry['workspaceRoot'] !== workspaceRoot)) {
+        globalRegistry = new AgentRegistry(workspaceRoot);
         await globalRegistry.scan();
     }
     return globalRegistry;
@@ -218,9 +242,9 @@ async function getAgentRegistry() {
 /**
  * Force rescan of agents (useful for testing or dynamic updates)
  */
-async function rescanAgents() {
+async function rescanAgents(workspaceRoot) {
     if (!globalRegistry) {
-        globalRegistry = new AgentRegistry();
+        globalRegistry = new AgentRegistry(workspaceRoot);
     }
     await globalRegistry.scan();
     return globalRegistry;

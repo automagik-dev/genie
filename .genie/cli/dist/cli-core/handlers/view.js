@@ -36,14 +36,8 @@ function createViewHandler(ctx) {
         }
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
         let forgeAvailable = true;
-        try {
-            await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
-        }
-        catch (error) {
-            forgeAvailable = false;
-            const reason = (0, forge_helpers_1.describeForgeError)(error);
-            ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
-        }
+        // Skip profile sync in view command - not needed for read-only operations
+        // Profile sync happens on agent run, not on view
         let status = null;
         let transcript = null;
         if (forgeAvailable) {

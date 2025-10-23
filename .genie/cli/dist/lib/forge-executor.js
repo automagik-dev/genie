@@ -10,16 +10,16 @@ class ForgeExecutor {
         this.config = config;
         this.forge = new forge_js_1.ForgeClient(config.forgeBaseUrl, config.forgeToken);
     }
-    async syncProfiles(profiles) {
+    async syncProfiles(profiles, workspaceRoot) {
         try {
             // If profiles provided, use them directly
             if (profiles) {
-                await this.forge.updateExecutorProfiles(JSON.stringify(profiles));
+                await this.forge.updateExecutorProfiles(profiles);
                 return;
             }
-            // Otherwise, sync from agent registry
+            // Otherwise, sync from agent registry (pass workspace root for correct scanning)
             const { getAgentRegistry } = await import('./agent-registry.js');
-            const registry = await getAgentRegistry();
+            const registry = await getAgentRegistry(workspaceRoot || process.cwd());
             // Generate profiles for all agents × all executors (fetch executors from Forge dynamically)
             const agentProfiles = await registry.generateForgeProfiles(this.forge);
             // Get current Forge profiles to merge with
@@ -29,8 +29,8 @@ class ForgeExecutor {
                 : currentProfiles;
             // Merge agent profiles with existing profiles
             const merged = this.mergeProfiles(current, agentProfiles);
-            // Update Forge with merged profiles
-            await this.forge.updateExecutorProfiles(JSON.stringify(merged));
+            // Update Forge with merged profiles (pass object, not string)
+            await this.forge.updateExecutorProfiles(merged);
             // Count executors from merged profiles (dynamic, not hardcoded)
             const executorCount = Object.keys(merged.executors || {}).length;
             console.log(`✅ Synced ${registry.count()} agents to Forge across ${executorCount} executors`);

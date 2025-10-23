@@ -215,16 +215,39 @@ export class AgentRegistry {
 
   /**
    * Generate Forge profiles for all agents across all executors
-   * Creates a variant for each agent on each executor
+   * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
    * @param forgeClient - Optional ForgeClient to fetch executors dynamically
    */
   async generateForgeProfiles(forgeClient?: any): Promise<any> {
     const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
     const profiles: any = { executors: {} };
 
+    // Get current profiles to extract DEFAULT variants (for inheriting required fields)
+    let defaultVariants: Record<string, any> = {};
+    if (forgeClient) {
+      try {
+        const currentProfiles = await forgeClient.getExecutorProfiles();
+        const current = typeof currentProfiles.content === 'string'
+          ? JSON.parse(currentProfiles.content)
+          : currentProfiles;
+
+        // Extract DEFAULT variant config for each executor
+        for (const [executor, variants] of Object.entries(current.executors || {})) {
+          if ((variants as any).DEFAULT && (variants as any).DEFAULT[executor]) {
+            defaultVariants[executor] = (variants as any).DEFAULT[executor];
+          }
+        }
+      } catch (error) {
+        // If fetching fails, proceed without defaults
+      }
+    }
+
     // For each executor, create agent variants
     for (const executor of executors) {
       profiles.executors[executor] = profiles.executors[executor] || {};
+
+      // Get base config from DEFAULT variant (inherits model, additional_params, etc.)
+      const baseConfig = defaultVariants[executor] || {};
 
       // Add each agent as a variant
       for (const agent of this.agents.values()) {
@@ -234,6 +257,9 @@ export class AgentRegistry {
 
         profiles.executors[executor][variantName] = {
           [executor]: {
+            // Inherit all fields from DEFAULT variant
+            ...baseConfig,
+            // Override append_prompt with agent content
             append_prompt: agent.fullContent,
             // Preserve any executor-specific settings from agent metadata
             ...(agent.genie?.background !== undefined && { background: agent.genie.background })
@@ -254,9 +280,9 @@ let globalRegistry: AgentRegistry | null = null;
 /**
  * Get or create global agent registry
  */
-export async function getAgentRegistry(): Promise<AgentRegistry> {
-  if (!globalRegistry) {
-    globalRegistry = new AgentRegistry();
+export async function getAgentRegistry(workspaceRoot?: string): Promise<AgentRegistry> {
+  if (!globalRegistry || (workspaceRoot && globalRegistry['workspaceRoot'] !== workspaceRoot)) {
+    globalRegistry = new AgentRegistry(workspaceRoot);
     await globalRegistry.scan();
   }
   return globalRegistry;
@@ -265,9 +291,9 @@ export async function getAgentRegistry(): Promise<AgentRegistry> {
 /**
  * Force rescan of agents (useful for testing or dynamic updates)
  */
-export async function rescanAgents(): Promise<AgentRegistry> {
+export async function rescanAgents(workspaceRoot?: string): Promise<AgentRegistry> {
   if (!globalRegistry) {
-    globalRegistry = new AgentRegistry();
+    globalRegistry = new AgentRegistry(workspaceRoot);
   }
   await globalRegistry.scan();
   return globalRegistry;
