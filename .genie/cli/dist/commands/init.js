@@ -333,6 +333,7 @@ async function migrateAgentsDocs(cwd) {
 // Legacy template choice function removed - wizard handles all prompts now
 async function writeVersionState(cwd, backupId, _legacyBackedUp) {
     const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
+    const frameworkVersionPath = path_1.default.join(cwd, '.genie', '.framework-version');
     const version = (0, package_1.getPackageVersion)();
     const now = new Date().toISOString();
     const existing = await fs_1.promises.readFile(versionPath, 'utf8').catch(() => null);
@@ -346,6 +347,7 @@ async function writeVersionState(cwd, backupId, _legacyBackedUp) {
             installedAt = now;
         }
     }
+    // Write legacy version.json
     await (0, fs_utils_1.writeJsonFile)(versionPath, {
         version,
         installedAt,
@@ -355,6 +357,31 @@ async function writeVersionState(cwd, backupId, _legacyBackedUp) {
             claudeBackedUp: false
         }
     });
+    // Write new .framework-version for upgrade system
+    const gitCommit = await getGitCommit().catch(() => 'unknown');
+    await (0, fs_utils_1.writeJsonFile)(frameworkVersionPath, {
+        installed_version: version,
+        installed_commit: gitCommit,
+        installed_date: now,
+        package_name: 'automagik-genie',
+        customized_files: [],
+        deleted_files: [],
+        last_upgrade_date: null,
+        previous_version: null,
+        upgrade_history: []
+    });
+}
+async function getGitCommit() {
+    const { execSync } = await import('child_process');
+    try {
+        return execSync('git rev-parse --short HEAD', {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'pipe']
+        }).trim();
+    }
+    catch {
+        return 'unknown';
+    }
 }
 async function initializeProviderStatus(cwd) {
     const statusPath = (0, paths_1.resolveProviderStatusPath)(cwd);

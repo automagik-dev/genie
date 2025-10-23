@@ -26,6 +26,7 @@
     ".genie/product/templates/**/*.md",
     ".genie/workflows/**/*",
     ".genie/scripts/**/*",
+    ".genie/.framework-version.template",
     "bin/automagik-genie.js",
     "bin/mcp.js",
     "bin/rollback.js",
