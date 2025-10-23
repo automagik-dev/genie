@@ -102,7 +102,7 @@
 **Status:** PRIMARY SOURCE OF TRUTH
 
 ### Atomic Test Scenarios
-**Directory:** `@.genie/code/workflows/qa/`
+**Directory:** `@.genie/qa/scenarios/`
 **Purpose:** Specific, reproducible test scenarios
 **Types:** Bug regression tests, feature scenarios, edge cases
 **Count:** 18 scenarios (growing)
@@ -276,7 +276,7 @@ Every QA run makes the system smarter:
     ├── voice-boot-qa-workflow.md
     └── MIGRATION_PLAN.md
 
-.genie/code/workflows/qa/        # Atomic test scenarios (18 files)
+.genie/qa/scenarios/        # Atomic test scenarios (18 files)
 ├── README.md                    # Index (bidirectional links)
 ├── mcp-operations.md
 ├── session-lifecycle.md
@@ -308,7 +308,7 @@ mcp__genie__run with agent="qa" and prompt="Execute full QA for v2.X.0 release"
 **Run bug-specific validation:**
 ```bash
 # Find atomic workflow
-# Example: @.genie/code/workflows/qa/bug-102-session-collision.md
+# Example: @.genie/qa/scenarios/bug-102-session-collision.md
 # Execute test steps
 # Capture evidence
 # Update regression suite
