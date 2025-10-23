@@ -67,27 +67,11 @@ interface CliResult {
 function listAgents(): Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> {
   const agents: Array<{ id: string; displayId: string; name: string; description?: string; folder?: string }> = [];
 
-  // Auto-discover all collectives by scanning .genie/ directory
-  const searchDirs: string[] = [];
-  const genieDir = path.join(WORKSPACE_ROOT, '.genie');
-
-  if (fs.existsSync(genieDir)) {
-    const entries = fs.readdirSync(genieDir, { withFileTypes: true });
-    entries.forEach(entry => {
-      if (entry.isDirectory()) {
-        const agentsPath = path.join(genieDir, entry.name, 'agents');
-        if (fs.existsSync(agentsPath)) {
-          searchDirs.push(agentsPath);
-        }
-      }
-    });
-  }
-
-  // Fallback: Include root agents directory if it exists
-  const rootAgentsPath = path.join(WORKSPACE_ROOT, '.genie/agents');
-  if (fs.existsSync(rootAgentsPath) && !searchDirs.includes(rootAgentsPath)) {
-    searchDirs.push(rootAgentsPath);
-  }
+  // ONLY scan specific agents/ directories (not workflows/ or spells/)
+  const searchDirs: string[] = [
+    path.join(WORKSPACE_ROOT, '.genie/code/agents'),
+    path.join(WORKSPACE_ROOT, '.genie/create/agents')
+  ];
 
   const visit = (dirPath: string, relativePath: string | null) => {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -96,6 +80,7 @@ function listAgents(): Array<{ id: string; displayId: string; name: string; desc
       const entryPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
+        // Recurse into subdirectories (for sub-agents like git/workflows/, wish/)
         visit(entryPath, relativePath ? path.join(relativePath, entry.name) : entry.name);
         return;
       }
@@ -248,6 +233,22 @@ function getGenieVersion(): string {
 // Helper: Get version header for MCP outputs
 function getVersionHeader(): string {
   return `Genie MCP v${getGenieVersion()}\n\n`;
+}
+
+// Sync agent profiles to Forge on startup
+async function syncAgentProfilesToForge(): Promise<void> {
+  try {
+    const mod = loadForgeExecutor();
+    if (!mod || typeof mod.createForgeExecutor !== 'function') {
+      console.warn('⚠️  Skipping agent profile sync - Forge executor unavailable');
+      return;
+    }
+
+    const forgeExecutor = mod.createForgeExecutor();
+    await forgeExecutor.syncProfiles();
+  } catch (error: any) {
+    console.warn(`⚠️  Agent profile sync failed: ${error.message}`);
+  }
 }
 
 // Initialize FastMCP server
@@ -604,101 +605,7 @@ server.addTool({
   }
 });
 
-// Helper: List all workflows
-function listWorkflows(): Array<{ path: string; name: string; collective: string }> {
-  const workflows: Array<{ path: string; name: string; collective: string }> = [];
-
-  // Scan all collective workflow directories
-  const collectives = ['code', 'create'];
-
-  for (const collective of collectives) {
-    const workflowDir = path.join(WORKSPACE_ROOT, '.genie', collective, 'workflows');
-    if (!fs.existsSync(workflowDir)) continue;
-
-    try {
-      const files = fs.readdirSync(workflowDir).filter(f => f.endsWith('.md'));
-      for (const file of files) {
-        workflows.push({
-          path: `${collective}/workflows/${file}`,
-          name: file.replace('.md', ''),
-          collective
-        });
-      }
-    } catch (error) {
-      // Ignore read errors
-    }
-  }
-
-  return workflows;
-}
-
-// Tool: list_workflows - Discover available workflows
-server.addTool({
-  name: 'list_workflows',
-  description: 'List all Genie workflows (wish, forge, review, install, etc.). Returns workflows from .genie/code/workflows/ and .genie/create/workflows/',
-  parameters: z.object({
-    collective: z.enum(['all', 'code', 'create']).optional().describe('Filter workflows by collective. Default: all')
-  }),
-  execute: async (args) => {
-    const collectiveFilter = args.collective || 'all';
-    const allWorkflows = listWorkflows();
-
-    const filteredWorkflows = collectiveFilter === 'all'
-      ? allWorkflows
-      : allWorkflows.filter(w => w.collective === collectiveFilter);
-
-    if (filteredWorkflows.length === 0) {
-      return getVersionHeader() + `No workflows found for ${collectiveFilter}.`;
-    }
-
-    let output = getVersionHeader() + `# Genie Workflows\n\n`;
-
-    const codeWorkflows = filteredWorkflows.filter(w => w.collective === 'code');
-    const createWorkflows = filteredWorkflows.filter(w => w.collective === 'create');
-
-    if (codeWorkflows.length > 0) {
-      output += `## Code Workflows (${codeWorkflows.length})\n`;
-      output += 'Technical development workflows:\n\n';
-      for (const workflow of codeWorkflows) {
-        output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
-      }
-      output += '\n';
-    }
-
-    if (createWorkflows.length > 0) {
-      output += `## Create Workflows (${createWorkflows.length})\n`;
-      output += 'Creative work workflows:\n\n';
-      for (const workflow of createWorkflows) {
-        output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
-      }
-      output += '\n';
-    }
-
-    output += `\n**Total:** ${filteredWorkflows.length} workflows\n`;
-    output += '\nUse read_workflow to see workflow details.';
-
-    return output;
-  }
-});
-
-// Tool: read_workflow - Read specific workflow content
-server.addTool({
-  name: 'read_workflow',
-  description: 'Read the full content of a specific workflow. Use list_workflows first to see available workflows.',
-  parameters: z.object({
-    workflow_path: z.string().describe('Relative path to workflow file from .genie/ directory (e.g., "code/workflows/wish.md" or "code/workflows/forge.md")')
-  }),
-  execute: async (args) => {
-    const fullPath = path.join(WORKSPACE_ROOT, '.genie', args.workflow_path);
-
-    try {
-      const content = fs.readFileSync(fullPath, 'utf-8');
-      return getVersionHeader() + `# Workflow: ${args.workflow_path}\n\n${content}`;
-    } catch (error: any) {
-      return getVersionHeader() + `Error reading workflow: ${error.message}`;
-    }
-  }
-});
+// Workflows have been merged into spells - no separate workflow tools needed
 
 // Tool: get_workspace_info - Get workspace metadata
 server.addTool({
@@ -811,10 +718,23 @@ server.addTool({
 console.error('Starting Genie MCP Server (MVP)...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Tools: 16 total');
-console.error('  - 12 existing (agents, sessions, spells, workflows, workspace)');
-console.error('  - 4 WebSocket-native (create_wish, run_forge, run_review, transform_prompt)');
+
+// Dynamically count tools instead of hardcoding
+const coreTools = ['list_agents', 'list_sessions', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
+const wsTools = ['create_wish', 'run_forge', 'run_review', 'transform_prompt'];
+const totalTools = coreTools.length + wsTools.length;
+
+console.error(`Tools: ${totalTools} total`);
+console.error(`  - ${coreTools.length} core (agents, sessions, spells, workspace)`);
+console.error(`  - ${wsTools.length} WebSocket-native (create_wish, run_forge, run_review, transform_prompt)`);
 console.error('WebSocket: Real-time streaming enabled');
+console.error('');
+console.error('🔄 Syncing agent profiles to Forge...');
+
+// Sync agents before starting server (async but non-blocking)
+syncAgentProfilesToForge().catch(err => {
+  console.warn(`⚠️  Background agent sync failed: ${err.message}`);
+});
 
 if (TRANSPORT === 'stdio') {
   server.start({

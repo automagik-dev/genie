@@ -45,9 +45,59 @@ export class ForgeExecutor {
   }
 
   async syncProfiles(profiles?: Record<string, any>): Promise<void> {
-    // Skip profile sync for now - Forge manages profiles separately
-    // TODO: Fix profile sync API format mismatch
-    return;
+    try {
+      // If profiles provided, use them directly
+      if (profiles) {
+        await this.forge.updateExecutorProfiles(JSON.stringify(profiles));
+        return;
+      }
+
+      // Otherwise, sync from agent registry
+      const { getAgentRegistry } = await import('./agent-registry.js');
+      const registry = await getAgentRegistry();
+
+      // Generate profiles for all agents × all executors (fetch executors from Forge dynamically)
+      const agentProfiles = await registry.generateForgeProfiles(this.forge);
+
+      // Get current Forge profiles to merge with
+      const currentProfiles = await this.forge.getExecutorProfiles();
+      const current = typeof currentProfiles.content === 'string'
+        ? JSON.parse(currentProfiles.content)
+        : currentProfiles;
+
+      // Merge agent profiles with existing profiles
+      const merged = this.mergeProfiles(current, agentProfiles);
+
+      // Update Forge with merged profiles
+      await this.forge.updateExecutorProfiles(JSON.stringify(merged));
+
+      // Count executors from merged profiles (dynamic, not hardcoded)
+      const executorCount = Object.keys(merged.executors || {}).length;
+      console.log(`✅ Synced ${registry.count()} agents to Forge across ${executorCount} executors`);
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to sync agent profiles to Forge: ${error.message}`);
+    }
+  }
+
+  /**
+   * Merge agent profiles with existing Forge profiles
+   * Preserves non-agent variants (DEFAULT, APPROVALS, etc.)
+   */
+  private mergeProfiles(current: any, agents: any): any {
+    const merged: any = { executors: {} };
+
+    // Start with current profiles
+    for (const [executor, variants] of Object.entries(current.executors || {})) {
+      merged.executors[executor] = { ...(variants as object) };
+    }
+
+    // Add/overwrite agent variants
+    for (const [executor, variants] of Object.entries(agents.executors || {})) {
+      merged.executors[executor] = merged.executors[executor] || {};
+      Object.assign(merged.executors[executor], variants);
+    }
+
+    return merged;
   }
 
   async createSession(params: CreateSessionParams): Promise<CreateSessionResult> {
