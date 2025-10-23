@@ -24,6 +24,12 @@ import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
 import { transformDisplayPath } from './lib/display-transform.js';
 
+// Import WebSocket-native tools (MVP Phase 6)
+import { wishToolSchema, executeWishTool } from './tools/wish-tool.js';
+import { forgeToolSchema, executeForgeTool } from './tools/forge-tool.js';
+import { reviewToolSchema, executeReviewTool } from './tools/review-tool.js';
+import { promptToolSchema, executePromptTool } from './tools/prompt-tool.js';
+
 const execFileAsync = promisify(execFile);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
@@ -735,6 +741,66 @@ server.addTool({
   }
 });
 
+// ============================================================================
+// WEBSOCKET-NATIVE TOOLS (MVP Phase 6) - Real-time streaming + git validation
+// ============================================================================
+
+// Tool: create_wish - Create wish with GitHub issue enforcement (WebSocket streaming)
+server.addTool({
+  name: 'create_wish',
+  description: 'Create a wish with GitHub issue enforcement (Amendment 1) and real-time progress via WebSocket. Git working tree must be clean and pushed.',
+  parameters: wishToolSchema,
+  annotations: {
+    streamingHint: true
+  },
+  execute: async (args, { streamContent, reportProgress }) => {
+    await executeWishTool(args, { streamContent, reportProgress });
+  }
+});
+
+// Tool: run_forge - Run Forge task with agent and stream execution (WebSocket diff streaming)
+server.addTool({
+  name: 'run_forge',
+  description: 'Kick off a Forge task with specified agent and stream live code changes via WebSocket. Git working tree must be clean and pushed.',
+  parameters: forgeToolSchema,
+  annotations: {
+    streamingHint: true
+  },
+  execute: async (args, { streamContent, reportProgress }) => {
+    await executeForgeTool(args, { streamContent, reportProgress });
+  }
+});
+
+// Tool: run_review - Review wish with agent and stream feedback (WebSocket log streaming)
+server.addTool({
+  name: 'run_review',
+  description: 'Review a wish document with an agent and stream live feedback via WebSocket. Git working tree must be clean and pushed.',
+  parameters: reviewToolSchema,
+  annotations: {
+    streamingHint: true
+  },
+  execute: async (args, { streamContent, reportProgress }) => {
+    await executeReviewTool(args, { streamContent, reportProgress });
+  }
+});
+
+// Tool: transform_prompt - Synchronous prompt transformer (no worktree, no git validation)
+server.addTool({
+  name: 'transform_prompt',
+  description: 'Transform/enhance a prompt using an agent synchronously. Runs in current workspace (no worktree). Modern equivalent of old "background off" mode.',
+  parameters: promptToolSchema,
+  annotations: {
+    readOnlyHint: true
+  },
+  execute: async (args, { streamContent }) => {
+    await executePromptTool(args, { streamContent });
+  }
+});
+
+// ============================================================================
+// LEGACY PROMPTS (Backwards compatibility - consider deprecating)
+// ============================================================================
+
 // Prompt: wish - Create wish document
 server.addPrompt({
   name: 'wish',
@@ -803,11 +869,14 @@ Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"
 });
 
 // Start server with configured transport
-console.error('Starting Genie MCP Server...');
+console.error('Starting Genie MCP Server (MVP)...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Tools: 12 (agents, sessions, spells, workflows, workspace)');
-console.error('Prompts: 4 (wish, forge, review, prompt) - wish is the MANDATORY entry point for all work');
+console.error('Tools: 16 total');
+console.error('  - 12 existing (agents, sessions, spells, workflows, workspace)');
+console.error('  - 4 new WebSocket-native (create_wish, run_forge, run_review, transform_prompt)');
+console.error('Prompts: 4 legacy (backwards compatibility)');
+console.error('WebSocket: Real-time streaming enabled');
 
 if (TRANSPORT === 'stdio') {
   server.start({
