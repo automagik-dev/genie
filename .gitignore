@@ -200,7 +200,9 @@ docs/ag-ui/*.html
 .genie/TODO.md
 .genie/USERCONTEXT.md
 
-# Local QA artifacts
-.genie/qa/
+# Local QA evidence/outputs (workflows and checklists ARE committed)
+.genie/qa/evidence/*.json
+.genie/qa/evidence/*.log
+.genie/qa/evidence/*.tmp
 .genie/mcp/dist/lib/qa.js
 .genie/backups/
