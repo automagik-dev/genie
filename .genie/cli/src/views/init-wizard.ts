@@ -2,7 +2,7 @@ import prompts from 'prompts';
 import gradient from 'gradient-string';
 
 interface WizardConfig {
-  template: string;
+  templates: string[]; // Changed from single template to array
   executor: string;
   model?: string;
   initGit: boolean;
@@ -33,17 +33,20 @@ export async function runInitWizard(options: WizardOptions): Promise<WizardConfi
     });
   }
 
-  // Template selection
+  // Template selection (multi-select with spacebar)
   questions.push({
-    type: 'select',
-    name: 'template',
-    message: 'Choose template:',
+    type: 'multiselect',
+    name: 'templates',
+    message: 'Choose collectives (Space to select, Enter when done):',
     choices: options.templates.map(t => ({
       title: t.label,
       description: t.description,
-      value: t.value
+      value: t.value,
+      selected: false // Nothing pre-selected, user must choose
     })),
-    initial: 0
+    hint: '💡 Don\'t worry - you can add more collectives later by asking me!',
+    min: 1, // At least one collective required
+    instructions: false // Hide default instructions
   });
 
   // Executor selection
@@ -79,7 +82,7 @@ export async function runInitWizard(options: WizardOptions): Promise<WizardConfi
   const defaultModel = response.executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
 
   return {
-    template: response.template,
+    templates: response.templates || [], // Array of selected templates
     executor: response.executor,
     model: response.model || defaultModel,
     initGit: response.initGit ?? options.hasGit

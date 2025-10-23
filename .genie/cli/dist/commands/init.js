@@ -28,23 +28,28 @@ async function runInit(parsed, _config, _paths) {
         let executor;
         let model;
         let shouldInitGit = false;
+        let templates = []; // Array for multi-select
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
             const { runInitWizard } = await import('../views/init-wizard.js');
             // Discover collectives dynamically from .genie/ directory
             const genieRoot = path_1.default.join(packageRoot, '.genie');
             const discovered = await (0, collective_discovery_js_1.discoverCollectives)(genieRoot);
-            const templates = discovered.map(c => ({
+            const templateChoices = discovered.map(c => ({
                 value: c.id,
                 label: c.label || c.name,
                 description: c.description
             }));
-            // Fallback if discovery fails
-            if (templates.length === 0) {
-                templates.push({
+            // Fallback if discovery fails - provide both code and create
+            if (templateChoices.length === 0) {
+                templateChoices.push({
                     value: 'code',
                     label: '💻 Code',
-                    description: 'Full-stack development with Git, testing, CI/CD'
+                    description: 'Software dev agents (Git, PR, tests, CI/CD workflows)'
+                }, {
+                    value: 'create',
+                    label: '✍️  Create',
+                    description: 'Content creation agents (writing, research, planning)'
                 });
             }
             const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
@@ -53,11 +58,12 @@ async function runInit(parsed, _config, _paths) {
             }));
             const hasGit = await (0, fs_utils_1.pathExists)(path_1.default.join(cwd, '.git'));
             const wizardConfig = await runInitWizard({
-                templates,
+                templates: templateChoices,
                 executors,
                 hasGit
             });
-            template = wizardConfig.template;
+            templates = wizardConfig.templates; // Array from multi-select
+            template = templates[0]; // Keep first for backward compat
             executor = wizardConfig.executor;
             model = wizardConfig.model;
             shouldInitGit = wizardConfig.initGit;
@@ -65,6 +71,7 @@ async function runInit(parsed, _config, _paths) {
         else {
             // Automation mode: use flags or defaults
             template = (flags.template || 'code');
+            templates = [template];
             executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
             model = undefined;
         }
@@ -150,7 +157,10 @@ async function runInit(parsed, _config, _paths) {
         if (!targetExists) {
             await (0, fs_utils_1.ensureDir)(path_1.default.dirname(backupsRoot));
         }
-        await copyTemplateFiles(packageRoot, template, targetGenie);
+        // Copy ALL selected templates (not just the first one)
+        for (const tmpl of templates) {
+            await copyTemplateFiles(packageRoot, tmpl, targetGenie);
+        }
         await copyTemplateRootFiles(packageRoot, cwd, template);
         await migrateAgentsDocs(cwd);
         // Copy INSTALL.md workflow guide (like UPDATE.md for update command)

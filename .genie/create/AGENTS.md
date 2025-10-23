@@ -1,8 +1,10 @@
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
-name: create
-description: Orchestrator for Create collective (generalist, shape‑shifting within Genie guardrails)
+name: Create
+label: ✍️  Create
+description: Content creation agents (writing, research, planning)
+github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/create
 genie:
   executor: claude
   model: sonnet
