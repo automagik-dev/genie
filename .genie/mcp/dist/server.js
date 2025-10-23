@@ -27,6 +27,11 @@ const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 const util_1 = require("util");
 const display_transform_js_1 = require("./lib/display-transform.js");
+// Import WebSocket-native tools (MVP Phase 6)
+const wish_tool_js_1 = require("./tools/wish-tool.js");
+const forge_tool_js_1 = require("./tools/forge-tool.js");
+const review_tool_js_1 = require("./tools/review-tool.js");
+const prompt_tool_js_1 = require("./tools/prompt-tool.js");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
@@ -225,10 +230,10 @@ const server = new fastmcp_1.FastMCP({
     instructions: `Genie is an agent orchestration system for managing AI agents that help with software development tasks.
 
 **Core Capabilities:**
-- Run specialized agents (plan, forge, implementor, review, etc.) with custom prompts
-- Resume ongoing agent conversations with follow-up questions
-- List available agents and active sessions
-- View agent transcripts and stop running agents
+- **Agent Orchestration**: Run specialized agents (plan, forge, implementor, review, etc.) with custom prompts
+- **Session Management**: Resume conversations, view transcripts, stop running agents
+- **Knowledge Discovery**: Browse spells (reusable patterns), wishes (planned work), workflows (processes)
+- **Workspace Context**: Access project mission, tech stack, roadmap, and environment details
 
 **Typical Workflow:**
 1. Use 'list_agents' to discover available agents and their capabilities
@@ -237,6 +242,11 @@ const server = new fastmcp_1.FastMCP({
 4. Use 'view' to inspect agent output
 5. Use 'resume' to continue conversations with follow-up questions
 6. Use 'stop' to terminate long-running agents
+
+**Knowledge Discovery:**
+- 'list_spells' / 'read_spell' - Reusable knowledge patterns
+- 'list_workflows' / 'read_workflow' - Development processes
+- 'get_workspace_info' - Project context and metadata
 
 **Agent Types:**
 - **Workflow Agents**: plan, wish, forge, review (structured development process)
@@ -533,75 +543,192 @@ server.addTool({
         }
     }
 });
-// Prompt: wish - Create wish document
-server.addPrompt({
-    name: 'wish',
-    description: 'Create a wish document for planned work',
-    arguments: [
-        {
-            name: 'feature',
-            description: 'What you want to build',
-            required: true
+// Helper: List all workflows
+function listWorkflows() {
+    const workflows = [];
+    // Scan all collective workflow directories
+    const collectives = ['code', 'create'];
+    for (const collective of collectives) {
+        const workflowDir = path_1.default.join(WORKSPACE_ROOT, '.genie', collective, 'workflows');
+        if (!fs_1.default.existsSync(workflowDir))
+            continue;
+        try {
+            const files = fs_1.default.readdirSync(workflowDir).filter(f => f.endsWith('.md'));
+            for (const file of files) {
+                workflows.push({
+                    path: `${collective}/workflows/${file}`,
+                    name: file.replace('.md', ''),
+                    collective
+                });
+            }
         }
-    ],
-    load: async (args) => {
-        return `run wish "${args.feature}"`;
+        catch (error) {
+            // Ignore read errors
+        }
+    }
+    return workflows;
+}
+// Tool: list_workflows - Discover available workflows
+server.addTool({
+    name: 'list_workflows',
+    description: 'List all Genie workflows (wish, forge, review, install, etc.). Returns workflows from .genie/code/workflows/ and .genie/create/workflows/',
+    parameters: zod_1.z.object({
+        collective: zod_1.z.enum(['all', 'code', 'create']).optional().describe('Filter workflows by collective. Default: all')
+    }),
+    execute: async (args) => {
+        const collectiveFilter = args.collective || 'all';
+        const allWorkflows = listWorkflows();
+        const filteredWorkflows = collectiveFilter === 'all'
+            ? allWorkflows
+            : allWorkflows.filter(w => w.collective === collectiveFilter);
+        if (filteredWorkflows.length === 0) {
+            return getVersionHeader() + `No workflows found for ${collectiveFilter}.`;
+        }
+        let output = getVersionHeader() + `# Genie Workflows\n\n`;
+        const codeWorkflows = filteredWorkflows.filter(w => w.collective === 'code');
+        const createWorkflows = filteredWorkflows.filter(w => w.collective === 'create');
+        if (codeWorkflows.length > 0) {
+            output += `## Code Workflows (${codeWorkflows.length})\n`;
+            output += 'Technical development workflows:\n\n';
+            for (const workflow of codeWorkflows) {
+                output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
+            }
+            output += '\n';
+        }
+        if (createWorkflows.length > 0) {
+            output += `## Create Workflows (${createWorkflows.length})\n`;
+            output += 'Creative work workflows:\n\n';
+            for (const workflow of createWorkflows) {
+                output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
+            }
+            output += '\n';
+        }
+        output += `\n**Total:** ${filteredWorkflows.length} workflows\n`;
+        output += '\nUse read_workflow to see workflow details.';
+        return output;
     }
 });
-// Prompt: forge - Break wish into execution groups
-server.addPrompt({
-    name: 'forge',
-    description: 'Break approved wish into execution groups',
-    arguments: [
-        {
-            name: 'wish_path',
-            description: 'Path to wish file (e.g., ".genie/wishes/auth-feature/auth-feature-wish.md")',
-            required: true
+// Tool: read_workflow - Read specific workflow content
+server.addTool({
+    name: 'read_workflow',
+    description: 'Read the full content of a specific workflow. Use list_workflows first to see available workflows.',
+    parameters: zod_1.z.object({
+        workflow_path: zod_1.z.string().describe('Relative path to workflow file from .genie/ directory (e.g., "code/workflows/wish.md" or "code/workflows/forge.md")')
+    }),
+    execute: async (args) => {
+        const fullPath = path_1.default.join(WORKSPACE_ROOT, '.genie', args.workflow_path);
+        try {
+            const content = fs_1.default.readFileSync(fullPath, 'utf-8');
+            return getVersionHeader() + `# Workflow: ${args.workflow_path}\n\n${content}`;
         }
-    ],
-    load: async (args) => {
-        return `run forge "@${args.wish_path}"`;
+        catch (error) {
+            return getVersionHeader() + `Error reading workflow: ${error.message}`;
+        }
     }
 });
-// Prompt: review - Validate completed work
-server.addPrompt({
-    name: 'review',
-    description: 'Review completed work against standards',
-    arguments: [
-        {
-            name: 'scope',
-            description: 'What to review (e.g., "auth-feature wish", "PR #123")',
-            required: true
+// Tool: get_workspace_info - Get workspace metadata
+server.addTool({
+    name: 'get_workspace_info',
+    description: 'Get Genie workspace information including mission, tech stack, roadmap, and environment details. Aggregates data from .genie/product/ directory.',
+    parameters: zod_1.z.object({}),
+    execute: async () => {
+        const productDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'product');
+        let output = getVersionHeader() + '# Workspace Information\n\n';
+        // Read mission
+        const missionPath = path_1.default.join(productDir, 'mission.md');
+        if (fs_1.default.existsSync(missionPath)) {
+            const mission = fs_1.default.readFileSync(missionPath, 'utf-8');
+            output += '## Mission\n\n' + mission + '\n\n';
         }
-    ],
-    load: async (args) => {
-        return `run review "${args.scope}"`;
+        // Read tech stack
+        const techStackPath = path_1.default.join(productDir, 'tech-stack.md');
+        if (fs_1.default.existsSync(techStackPath)) {
+            const techStack = fs_1.default.readFileSync(techStackPath, 'utf-8');
+            output += '## Tech Stack\n\n' + techStack + '\n\n';
+        }
+        // Read roadmap
+        const roadmapPath = path_1.default.join(productDir, 'roadmap.md');
+        if (fs_1.default.existsSync(roadmapPath)) {
+            const roadmap = fs_1.default.readFileSync(roadmapPath, 'utf-8');
+            output += '## Roadmap\n\n' + roadmap + '\n\n';
+        }
+        // Read environment
+        const environmentPath = path_1.default.join(productDir, 'environment.md');
+        if (fs_1.default.existsSync(environmentPath)) {
+            const environment = fs_1.default.readFileSync(environmentPath, 'utf-8');
+            output += '## Environment\n\n' + environment + '\n\n';
+        }
+        return output;
     }
 });
-// Prompt: prompt - Meta-prompting helper
-server.addPrompt({
-    name: 'prompt',
-    description: 'Get help writing effective prompts using Genie patterns',
-    arguments: [
-        {
-            name: 'task',
-            description: 'What you want to accomplish',
-            required: true
-        }
-    ],
-    load: async (args) => {
-        return `run prompt "Help me write a prompt for: ${args.task}
-
-Load: @.genie/spells/prompt.md
-Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"`;
+// ============================================================================
+// WEBSOCKET-NATIVE TOOLS (MVP Phase 6) - Real-time streaming + git validation
+// ============================================================================
+// Tool: create_wish - Create wish with GitHub issue enforcement (WebSocket streaming)
+server.addTool({
+    name: 'create_wish',
+    description: 'Create a wish with GitHub issue enforcement (Amendment 1) and real-time progress via WebSocket. Git working tree must be clean and pushed.',
+    parameters: wish_tool_js_1.wishToolSchema,
+    annotations: {
+        streamingHint: true
+    },
+    execute: async (args, { streamContent, reportProgress }) => {
+        await (0, wish_tool_js_1.executeWishTool)(args, { streamContent, reportProgress });
     }
 });
+// Tool: run_forge - Run Forge task with agent and stream execution (WebSocket diff streaming)
+server.addTool({
+    name: 'run_forge',
+    description: 'Kick off a Forge task with specified agent and stream live code changes via WebSocket. Git working tree must be clean and pushed.',
+    parameters: forge_tool_js_1.forgeToolSchema,
+    annotations: {
+        streamingHint: true
+    },
+    execute: async (args, { streamContent, reportProgress }) => {
+        await (0, forge_tool_js_1.executeForgeTool)(args, { streamContent, reportProgress });
+    }
+});
+// Tool: run_review - Review wish with agent and stream feedback (WebSocket log streaming)
+server.addTool({
+    name: 'run_review',
+    description: 'Review a wish document with an agent and stream live feedback via WebSocket. Git working tree must be clean and pushed.',
+    parameters: review_tool_js_1.reviewToolSchema,
+    annotations: {
+        streamingHint: true
+    },
+    execute: async (args, { streamContent, reportProgress }) => {
+        await (0, review_tool_js_1.executeReviewTool)(args, { streamContent, reportProgress });
+    }
+});
+// Tool: transform_prompt - Synchronous prompt transformer (no worktree, no git validation)
+server.addTool({
+    name: 'transform_prompt',
+    description: 'Transform/enhance a prompt using an agent synchronously. Runs in current workspace (no worktree). Modern equivalent of old "background off" mode.',
+    parameters: prompt_tool_js_1.promptToolSchema,
+    annotations: {
+        readOnlyHint: true
+    },
+    execute: async (args, { streamContent }) => {
+        await (0, prompt_tool_js_1.executePromptTool)(args, { streamContent });
+    }
+});
+// ============================================================================
+// DEPRECATED PROMPTS - Removed per Amendment: No Backwards Compatibility
+// ============================================================================
+// These prompts were removed because Genie does not maintain backwards compatibility.
+// Users should use the new WebSocket-native tools instead:
+//   - create_wish (replaces 'wish' prompt)
+//   - run_forge (replaces 'forge' prompt)
+//   - run_review (replaces 'review' prompt)
+//   - transform_prompt (replaces 'prompt' prompt)
 // Start server with configured transport
-console.error('Starting Genie MCP Server...');
+console.error('Starting Genie MCP Server (MVP)...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Tools: 8 (list_agents, list_sessions, run, resume, view, stop, list_spells, read_spell)');
-console.error('Prompts: 4 (wish, forge, review, prompt)');
+console.error('Tools: 16 total');
+console.error('  - 12 existing (agents, sessions, spells, workflows, workspace)');
+console.error('  - 4 WebSocket-native (create_wish, run_forge, run_review, transform_prompt)');
+console.error('WebSocket: Real-time streaming enabled');
 if (TRANSPORT === 'stdio') {
     server.start({
         transportType: 'stdio'

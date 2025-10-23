@@ -186,7 +186,6 @@ const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', '
 
 // Skip version check for specific agents/spells that need to run regardless of version
 // WHY: Learn spell loads for self-enhancement, install/update handle versions themselves
-// NOTE: 'learn' is a spell (not agent), but kept in whitelist for backwards compatibility
 const BYPASS_VERSION_CHECK_AGENTS = ['learn', 'install', 'update', 'upstream-update'];
 const isRunCommand = args[0] === 'run';
 const agentName = args[1];
