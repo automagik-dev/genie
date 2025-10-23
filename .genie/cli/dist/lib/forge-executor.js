@@ -98,8 +98,39 @@ class ForgeExecutor {
             this.config.genieProjectId = existingProject.id;
             return existingProject.id;
         }
+        // Auto-detect project name from git repo or directory name
+        let projectName = 'Genie Project';
+        try {
+            // Try git remote first
+            const remoteUrl = (0, child_process_1.execSync)('git config --get remote.origin.url', {
+                encoding: 'utf8',
+                cwd: currentRepoPath,
+                stdio: ['pipe', 'pipe', 'ignore']
+            }).trim();
+            // Extract repo name from URL (e.g., "automagik-genie.git" → "automagik-genie")
+            const match = remoteUrl.match(/\/([^\/]+?)(\.git)?$/);
+            if (match && match[1]) {
+                projectName = match[1].replace(/\.git$/, '');
+            }
+        }
+        catch {
+            // Fallback to directory name if git fails
+            try {
+                const dirName = (0, child_process_1.execSync)('basename "$(pwd)"', {
+                    encoding: 'utf8',
+                    cwd: currentRepoPath,
+                    stdio: ['pipe', 'pipe', 'ignore']
+                }).trim();
+                if (dirName) {
+                    projectName = dirName;
+                }
+            }
+            catch {
+                // Keep default "Genie Project"
+            }
+        }
         const newProject = await this.forge.createProject({
-            name: 'Genie Sessions',
+            name: projectName,
             git_repo_path: currentRepoPath,
             use_existing_repo: true
         });
