@@ -15,6 +15,9 @@ import gradient from 'gradient-string';
 import { startForgeInBackground, waitForForgeReady, stopForge, isForgeRunning, killForgeProcess, getRunningTasks } from './lib/forge-manager';
 import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
 import { formatTokenMetrics } from './lib/token-tracker';
+import { runInit } from './commands/init';
+import { loadConfig } from './lib/config';
+import type { ParsedCommand, GenieConfig, ConfigPaths } from './lib/types';
 
 const program = new Command();
 
@@ -332,8 +335,73 @@ async function smartRouter(): Promise<void> {
     console.log("Let's get you set up!");
     console.log('');
 
-    // Auto-run init
-    execGenie(['init']);
+    // Run init inline instead of spawning child process
+    const initParsed: ParsedCommand = {
+      command: 'init',
+      commandArgs: [],
+      options: {
+        rawArgs: ['init'],
+        background: false,
+        backgroundExplicit: false,
+        backgroundRunner: false,
+        full: false,
+        live: false
+      }
+    };
+
+    const initConfig: GenieConfig = { defaults: {} };
+    const initPaths: Required<ConfigPaths> = {
+      baseDir: path.join(process.cwd(), '.genie'),
+      sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+      logsDir: path.join(process.cwd(), '.genie', 'state'),
+      backgroundDir: path.join(process.cwd(), '.genie', 'state')
+    };
+
+    await runInit(initParsed, initConfig, initPaths);
+
+    // After init completes, start Forge and launch install agent
+    console.log('');
+    console.log('📦 Starting Forge backend...');
+
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const logDir = path.join(genieDir, 'state');
+
+    // Ensure log directory exists
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+
+    const startResult = startForgeInBackground({ baseUrl, logDir });
+
+    if (!startResult.ok) {
+      const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
+      console.error('');
+      console.error('❌ Failed to start Forge backend');
+      console.error(`   ${error.message}`);
+      console.error('');
+      console.error('   Genie requires Forge to manage agent sessions.');
+      console.error(`   Check logs at ${logDir}/forge.log`);
+      console.error('');
+      process.exit(1);
+    }
+
+    // Wait for Forge to be ready
+    const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
+
+    if (!forgeReady) {
+      console.error('');
+      console.error('❌ Forge did not start in time (60s)');
+      console.error(`   Check logs at ${logDir}/forge.log`);
+      console.error('');
+      process.exit(1);
+    }
+
+    console.log('✅ Forge ready');
+    console.log('');
+
+    // Launch install agent using genie run
+    console.log('🚀 Starting install agent...');
+    execGenie(['run', 'install', 'Complete installation and setup wizard']);
     return;
   }
 
@@ -351,9 +419,33 @@ async function smartRouter(): Promise<void> {
     console.log(successGradient('✓') + ' All your wishes, reports, and state will be preserved');
     console.log('');
 
-    // Interactive if TTY available, otherwise use --yes
-    const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
-    execGenie(initArgs);
+    // Run init inline with --yes flag if non-interactive
+    const upgradeArgs = process.stdout.isTTY ? [] : ['--yes'];
+    const upgradeParsed: ParsedCommand = {
+      command: 'init',
+      commandArgs: upgradeArgs,
+      options: {
+        rawArgs: ['init', ...upgradeArgs],
+        background: false,
+        backgroundExplicit: false,
+        backgroundRunner: false,
+        full: false,
+        live: false
+      }
+    };
+
+    const upgradeConfig: GenieConfig = { defaults: {} };
+    const upgradePaths: Required<ConfigPaths> = {
+      baseDir: path.join(process.cwd(), '.genie'),
+      sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+      logsDir: path.join(process.cwd(), '.genie', 'state'),
+      backgroundDir: path.join(process.cwd(), '.genie', 'state')
+    };
+
+    await runInit(upgradeParsed, upgradeConfig, upgradePaths);
+
+    // After upgrade, start server
+    await startGenieServer();
     return;
   }
 
@@ -376,9 +468,33 @@ async function smartRouter(): Promise<void> {
       console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
       console.log('');
 
-      // Interactive if TTY available, otherwise use --yes
-      const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
-      execGenie(initArgs);
+      // Run init inline with --yes flag if non-interactive
+      const updateArgs = process.stdout.isTTY ? [] : ['--yes'];
+      const updateParsed: ParsedCommand = {
+        command: 'init',
+        commandArgs: updateArgs,
+        options: {
+          rawArgs: ['init', ...updateArgs],
+          background: false,
+          backgroundExplicit: false,
+          backgroundRunner: false,
+          full: false,
+          live: false
+        }
+      };
+
+      const updateConfig: GenieConfig = { defaults: {} };
+      const updatePaths: Required<ConfigPaths> = {
+        baseDir: path.join(process.cwd(), '.genie'),
+        sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+        logsDir: path.join(process.cwd(), '.genie', 'state'),
+        backgroundDir: path.join(process.cwd(), '.genie', 'state')
+      };
+
+      await runInit(updateParsed, updateConfig, updatePaths);
+
+      // After update, start server
+      await startGenieServer();
       return;
     }
 
@@ -394,9 +510,33 @@ async function smartRouter(): Promise<void> {
     console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
     console.log('');
 
-    // Interactive if TTY available, otherwise use --yes
-    const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
-    execGenie(initArgs);
+    // Run init inline with --yes flag if non-interactive
+    const repairArgs = process.stdout.isTTY ? [] : ['--yes'];
+    const repairParsed: ParsedCommand = {
+      command: 'init',
+      commandArgs: repairArgs,
+      options: {
+        rawArgs: ['init', ...repairArgs],
+        background: false,
+        backgroundExplicit: false,
+        backgroundRunner: false,
+        full: false,
+        live: false
+      }
+    };
+
+    const repairConfig: GenieConfig = { defaults: {} };
+    const repairPaths: Required<ConfigPaths> = {
+      baseDir: path.join(process.cwd(), '.genie'),
+      sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+      logsDir: path.join(process.cwd(), '.genie', 'state'),
+      backgroundDir: path.join(process.cwd(), '.genie', 'state')
+    };
+
+    await runInit(repairParsed, repairConfig, repairPaths);
+
+    // After repair, start server
+    await startGenieServer();
   }
 }
 
