@@ -1,44 +1,48 @@
 ---
-version: 1.0.0
+version: 1.0.1
 name: Meta-Learn & Behavioral Corrections
 description: Use the learn agent to capture violations and new patterns
 ---
 
 # Meta-Learn & Behavioral Corrections
 
-**Last Updated:** 2025-10-23 07:01:58 UTC
+**Last Updated:** 2025-10-23 07:07:05 UTC
 Use the unified `learn` meta-learning agent to capture violations, new patterns, workflows, and capabilities in one place. It records behavioural guardrails, propagates edits, and produces evidence reports.
 
 ## Recognition Patterns (How Base Genie Knows to Invoke Learn)
 
-**Protocol Triggers (Immediate Action):**
-- "Enter learning mode" → Load meta-learn.md, signal readiness, stand by for teaching
-- "Learning mode" / "Learn mode" → Same as above
-- "/learn" command → Direct invocation with teaching context
+🔴 **CRITICAL: Natural Language Intent Recognition**
 
-**Explicit Teaching Signals:**
-- "Let me teach you..." / "I'm going to teach you..."
-- "Here's a new pattern..." / "New framework..."
-- "From now on, when X happens, do Y..."
-- "This is how you should handle..."
+**DO NOT wait for exact phrase matches. Understand human language intent naturally.**
 
-**Behavioral Corrections:**
-- "You should have..." / "You shouldn't have..."
-- "That was wrong because..."
-- "Next time, instead of X, do Y..."
-- Pointing out violations of existing skills/protocols
+Base Genie is the human interface. Recognition means understanding what the user MEANS, not matching exact phrases.
 
-**Meta-Learnings:**
-- Identifying gaps in self-awareness ("how do you know to...")
-- Architectural clarifications that change behavior
-- New coordination protocols or workflows
-- Framework refinements that affect multiple agents
+**Protocol Triggers (Natural Language Intent Recognition):**
 
-**Pattern Establishment:**
-- Recurring workflows being formalized
-- New validation requirements
-- Updated delegation rules
-- Evidence requirements changing
+**Intent: User wants to teach/learn something**
+- Examples: "Enter learning mode", "Let's learn", "I want to teach you", "Time to learn", "Load the learning skill", "Learning mode", "/learn"
+- Recognition method: ANY natural language expression indicating learning/teaching intent
+- Response: Load meta-learn.md, signal readiness, stand by for teaching
+
+**Intent: Explicit teaching/correction is happening**
+- Examples: "Let me teach you...", "Here's a new pattern...", "From now on, when X happens, do Y...", "This is how you should handle...", "You should have...", "That was wrong because...", "Next time, instead of X, do Y..."
+- Recognition method: User is explicitly providing instruction or correction
+- Response: Invoke learn agent immediately with teaching context
+
+**Intent: Behavioral correction needed**
+- Examples: Pointing out violations, explaining what should have happened, correcting misunderstanding
+- Recognition method: User is correcting behavior or explaining proper protocol
+- Response: Invoke learn agent to document correction
+
+**Intent: Meta-learning moment**
+- Examples: Architectural clarifications, identifying gaps in self-awareness, framework refinements, coordination protocol updates
+- Recognition method: User is teaching about how the system works or should work
+- Response: Invoke learn agent to capture meta-knowledge
+
+**Intent: Pattern establishment**
+- Examples: Formalizing recurring workflows, new validation requirements, updated delegation rules, evidence requirements
+- Recognition method: User is establishing a new pattern or workflow
+- Response: Invoke learn agent to document pattern
 
 **Recognition Response:**
 
@@ -56,11 +60,13 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 5. Learn agent commits with clear format documenting what/why
 
 **Anti-Pattern:**
+- ❌ Waiting for exact phrase match instead of understanding natural language intent
 - ❌ Treating "Enter learning mode" as conversation starter instead of protocol trigger
 - ❌ Responding "What would you like me to learn?" instead of loading meta-learn.md
 - ❌ Acknowledging "I'm learning" without invoking learn agent
 - ❌ Saying "I understand" without documenting in framework
 - ❌ Making mental note without persisting to skill/agent files
+- ❌ Requiring user to say exact trigger phrases when their intent is clear
 
 **When to Use:**
 - ✅ A behavioural rule was violated and needs a corrective entry
