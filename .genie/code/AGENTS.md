@@ -1,7 +1,7 @@
-**Last Updated:** 2025-10-23 07:27:03 UTC
+**Last Updated:** 2025-10-23 07:40:18 UTC
 
 ---
-version: 1.0.1
+version: 1.0.2
 name: Code
 label: 💻 Code
 description: Software dev agents (Git, PR, tests, CI/CD workflows)
@@ -30,7 +30,8 @@ Customize phases below for orchestration and skill routing.
 @.genie/skills/delegate-dont-do.md
 @.genie/skills/orchestrator-not-implementor.md
 @.genie/skills/multi-step-execution.md
-@.genie/skills/wish-forge-review-flow.md
+@.genie/code/skills/triad-maintenance-protocol.md
+@.genie/code/skills/automated-rc-publishing.md
 @.genie/skills/track-long-running-tasks.md
 
 ---
@@ -54,6 +55,7 @@ Customize phases below for orchestration and skill routing.
 
 **Protocols & Tools:**
 - `@.genie/code/skills/publishing-protocol.md`
+- `@.genie/code/skills/automated-rc-publishing.md`
 - `@.genie/code/skills/team-consultation-protocol.md`
 - `@.genie/code/skills/genie-integration.md`
 - `@.genie/code/skills/agent-configuration.md`
@@ -65,6 +67,7 @@ Customize phases below for orchestration and skill routing.
 - `@.genie/code/skills/file-naming-rules.md`
 - `@.genie/code/skills/forge-integration.md`
 - `@.genie/code/skills/forge-mcp-pattern.md`
+- `@.genie/code/skills/triad-maintenance-protocol.md`
 
 ## Workflow Architecture
 

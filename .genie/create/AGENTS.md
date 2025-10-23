@@ -1,7 +1,7 @@
-**Last Updated:** 2025-10-23 07:10:13 UTC
+**Last Updated:** 2025-10-23 07:40:18 UTC
 
 ---
-version: 1.0.4
+version: 1.0.5
 name: Create
 label: ✍️  Create
 description: Content creation agents (writing, research, planning)
@@ -21,7 +21,7 @@ Load universal skills (auto):
 @.genie/skills/routing-decision-matrix.md
 @.genie/skills/multi-step-execution.md
 @.genie/skills/track-long-running-tasks.md
-@.genie/skills/meta-learn.md
+@.genie/skills/learn.md
 @.genie/skills/delegate-dont-do.md
 @.genie/skills/blocker.md
 @.genie/skills/experiment.md
