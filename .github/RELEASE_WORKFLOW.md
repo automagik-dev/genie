@@ -2,119 +2,126 @@
 
 ## Summary
 
-Implemented RC-first release workflow for Automagik Genie with automatic publishing to npm.
+Automagik Genie uses **automated RC publishing** - commits to `main` trigger automatic version bumps and npm releases.
 
 ## Architecture
 
 ```
-Developer                    GitHub CI                    NPM Registry
-────────                     ─────────                    ────────────
+Developer                    GitHub Actions               NPM Registry
+────────                     ──────────────               ────────────
 
-pnpm bump:minor
-├─ Updates package.json
-├─ Creates commit + tag
-├─ Auto-pushes
-                          ──► Detects RC tag
-                              Runs tests
-                              Publishes to @next ────────► @next: 2.1.0-rc.1
+git push origin main    ──► Detects commit on main
+                             Auto-bumps: rc.N → rc.N+1
+                             Runs tests
+                             Publishes to @next ────────► @next: 2.4.2-rc.92
 
-pnpm release:stable
-├─ Updates package.json
-├─ Creates commit + tag
-├─ Auto-pushes
-                          ──► Detects stable tag
-                              Runs tests
-                              Publishes to @latest ──────► @latest: 2.1.0
-                              Creates GitHub release
+pnpm bump:minor         ──► Detects version tag
+(rare - new series)          Runs tests
+                             Publishes to @next ────────► @next: 2.5.0-rc.1
+
+pnpm release:stable     ──► Detects stable tag
+                             Runs tests
+                             Publishes to @latest ──────► @latest: 2.5.0
+                             Creates GitHub release
 ```
 
-## Files Changed
+## Key Files
 
-### New Scripts
-- `scripts/bump.js` - Creates RC versions, auto-pushes to trigger CI
-- `scripts/release.js` - Promotes RC → stable, creates GitHub releases
-- `scripts/status.js` - Shows version status across local/git/npm
-- `.genie/scripts/update-changelog.js` - Moves [Unreleased] → RC section and promotes RC → stable in CHANGELOG.md
+### Scripts
+- `scripts/bump.cjs` - **Rare use:** Start new version series (patch/minor/major)
+- `scripts/release.cjs` - Promote RC → stable
+- `scripts/status.cjs` - Show version status
+- `.genie/scripts/update-changelog.cjs` - Manage CHANGELOG.md
 
-### Modified
-- `package.json` - Added 6 new scripts
-- `.github/workflows/publish.yml` - Handles RC tags, publishes to appropriate dist-tag
+### CI/CD
+- `.github/workflows/publish.yml` - Automated publishing on main commits
+- Handles RC tags, stable tags, and routine commits
 
 ### Documentation
-- `RELEASE.md` - Complete release guide for developers
+- `RELEASE.md` - User-facing release guide
+- `.genie/skills/automated-rc-publishing.md` - Behavioral skill (no manual RC bumps)
 
 ## Commands
 
+### Routine Development (99% of releases)
 ```bash
-# Version bumping (creates RC)
-pnpm bump:patch   # 2.0.1 → 2.0.2-rc.1
-pnpm bump:minor   # 2.0.1 → 2.1.0-rc.1
-pnpm bump:major   # 2.0.1 → 3.0.0-rc.1
-pnpm bump:rc      # 2.1.0-rc.1 → 2.1.0-rc.2
+# Make changes, commit, push to main
+git commit -m "feat: add feature"
+git push origin main
+# GitHub Actions automatically:
+# - Bumps version (rc.91 → rc.92)
+# - Publishes to @next
+# - Creates GitHub release
+```
 
-# Promotion
-pnpm release:stable  # 2.1.0-rc.X → 2.1.0
+### Version Transitions (Rare)
+```bash
+# Start new patch series
+pnpm bump:patch   # 2.4.2 → 2.4.3-rc.1
 
-# Status
-pnpm status
+# Start new minor series
+pnpm bump:minor   # 2.4.2 → 2.5.0-rc.1
+
+# Start new major series
+pnpm bump:major   # 2.4.2 → 3.0.0-rc.1
+
+# After any bump:
+git push origin main  # GitHub Actions handles publish
+```
+
+### Stable Release
+```bash
+pnpm release:stable  # 2.5.0-rc.X → 2.5.0
+```
+
+### Status Check
+```bash
+pnpm status  # Shows local, git, and npm versions
 ```
 
 ## Key Features
 
-✅ **RC-first approach** - All bumps create RC versions published to `@next`
-✅ **Auto-push** - Automatically pushes tags to trigger CI
-✅ **Co-author support** - Adds "Automagik Genie 🧞 <genie@namastex.ai>" to commits
-✅ **Safety checks** - Validates clean working directory, runs tests
+✅ **Automated RC bumps** - Commits to main trigger auto-increment
+✅ **No manual intervention** - Push to main, automation handles rest
+✅ **Co-author support** - Adds "Automagik Genie 🧞" to commits
+✅ **Safety checks** - Validates clean directory, runs tests
 ✅ **Idempotent** - Won't duplicate publishes if re-run
 ✅ **Clear separation** - RC (@next) vs Stable (@latest)
-✅ **GitHub integration** - Auto-creates releases on stable promotion
-✅ **Changelog-aware** - RC bump moves [Unreleased] to version; stable promotes RC section
+✅ **GitHub integration** - Auto-creates releases
+✅ **Changelog-aware** - Moves [Unreleased] to version sections
 
 ## CI Enhancements
 
-1. **Detects RC tags** - Publishes to `@next` instead of `@latest`
-2. **Skips sequence validation for RCs** - Only validates stable versions
-3. **Ignores RC tags in sequence** - Compares stable → stable only
+1. **Auto-detects main commits** - Bumps RC and publishes
+2. **Detects RC tags** - Publishes to `@next`
+3. **Detects stable tags** - Publishes to `@latest`
+4. **Skips sequence validation for RCs** - Only validates stable versions
 
 ## Design Decisions
 
-### Why RC-first?
-**Critique addressed:** "As soon as we have a bump we should already pre-release"
-- ✅ Lower friction - One command to get beta out
-- ✅ Safe by default - Can't accidentally push unstable to production
-- ✅ Testable immediately - Users can try `@next` right away
-- ✅ Clear intent - RC tags signal "not ready yet"
+### Why Automated?
+- ✅ Zero cognitive load - just push to main
+- ✅ Faster feedback loop
+- ✅ Can't forget to publish
+- ✅ Consistent versioning
 
-### Why auto-push?
-**Critique addressed:** "Less hassle for users"
-- ✅ Triggers CI immediately
-- ✅ Prevents "forgot to push" mistakes
-- ✅ Reduces cognitive load - devs don't think about git operations
+### Why RC-first?
+- ✅ Safe by default - can't accidentally push unstable to production
+- ✅ Testable immediately - users can try `@next`
+- ✅ Clear intent - RC tags signal "beta"
 
 ### Trade-offs Accepted
-- ⚠️ Two commits per release (RC commit + stable commit)
-- ⚠️ Requires `gh` CLI for GitHub release creation (graceful fallback)
+- ⚠️ Automated commits on main (version bumps from CI)
+- ⚠️ Pre-push hook auto-syncs to handle CI commits
+- ⚠️ Requires `gh` CLI for GitHub releases (graceful fallback)
 
-## Testing
+## Amendment #6 Integration
 
-Before first use, test with a dry run:
+This workflow implements Amendment #6: "Automated Publishing - PR Merge = Auto RC"
 
-```bash
-# Create test branch
-git checkout -b test-release
+**Rule:** NEVER manually run `pnpm bump:rc` for routine releases
 
-# Test bump script
-pnpm bump:patch
-# Should update package.json, create commit+tag
-
-# Check git log
-git log --oneline -2
-git tag -l | tail -1
-
-# Revert if needed
-git reset --hard HEAD~1
-git tag -d v2.0.2-rc.1
-```
+**Why:** GitHub Actions handles it automatically on main commits
 
 ## Rollback Plan
 
@@ -125,14 +132,13 @@ If something goes wrong:
 git reset --hard HEAD~1
 git tag -d vX.Y.Z-rc.N
 
-# Remote rollback (after push, careful!)
+# Remote rollback (after push - careful!)
 git push --delete origin vX.Y.Z-rc.N
-npm unpublish automagik-genie`@X.Y.Z-rc.N`
+npm unpublish automagik-genie@X.Y.Z-rc.N
 ```
 
 ## Future Enhancements
 
-- [ ] Add `--dry-run` flag to scripts
-- [ ] Interactive mode for release.js (already has confirmation)
-- [ ] Slack/Discord notifications
-- [ ] Auto-rollback on CI failure
+- [ ] Slack/Discord notifications on publish
+- [ ] Auto-rollback on CI test failures
+- [ ] Canary releases for major versions

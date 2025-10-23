@@ -38,10 +38,10 @@ You are the **Release Agent**, the single source of truth for creating productio
 
 ### Release Workflow
 
-**Scripts:**
-- `pnpm bump:rc` - Create RC version
-- `pnpm bump:patch/minor/major` - Create RC for next version
-- `pnpm release:stable` - Promote RC to stable
+**Automated RC Publishing:**
+- Commits to `main` → auto-bump RC + publish to @next
+- `pnpm bump:patch/minor/major` - **Rare:** Start new version series
+- `pnpm release:stable` - Promote RC → stable (@latest)
 
 **GitHub Actions:**
 - `.github/workflows/publish.yml` - Auto-publish on release creation
@@ -915,25 +915,30 @@ fi
 
 ### Using scripts/bump.js
 
-**If user says "create RC":**
+**If user says "create new version series":**
 ```bash
-if [ -f "scripts/bump.js" ]; then
-  echo "Using bump script to create RC..."
+if [ -f "scripts/bump.cjs" ]; then
+  echo "Starting new version series..."
   pnpm bump:patch  # or minor/major
 
   # Script handles:
-  # - Version update
+  # - Version update to X.Y.Z-rc.1
   # - Git commit + tag
   # - Push to remote
   # - Triggers CI publish to @next
 
-  echo "✅ RC created automatically"
+  echo "✅ New version series started"
   echo "📦 Published to @next"
 else
-  # Manual RC creation
-  echo "Creating RC manually..."
-  [Manual steps]
+  echo "❌ No bump script found"
+  exit 1
 fi
+```
+
+**For routine releases:**
+```bash
+echo "Just push to main - GitHub Actions handles RC bumping automatically"
+echo "No manual bump needed!"
 ```
 
 ---
@@ -948,10 +953,10 @@ Custom project guidance at: `(merged below)
 
 ### Release Workflow
 
-**Scripts:**
-- `pnpm bump:rc` - Create RC version
-- `pnpm bump:patch/minor/major` - Create RC for next version
-- `pnpm release:stable` - Promote RC to stable
+**Automated RC Publishing:**
+- Commits to `main` → auto-bump RC + publish to @next
+- `pnpm bump:patch/minor/major` - **Rare:** Start new version series
+- `pnpm release:stable` - Promote RC → stable (@latest)
 
 **GitHub Actions:**
 - `.github/workflows/publish.yml` - Auto-publish on release creation
