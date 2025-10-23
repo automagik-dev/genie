@@ -1,5 +1,5 @@
 # Shape-Shifting Intelligence
-**Last Updated:** 2025-10-23 06:45:58 UTC
+**Last Updated:** 2025-10-23 07:40:18 UTC
 **Domain:** Meta-Creation
 **Purpose:** Fluidly adapt to any human-world task by generating needed capabilities on-demand
 
@@ -150,7 +150,7 @@ Shape-shifting uses:
 - `@.genie/create/skills/agent-generation.md` → Generate agents
 - `@.genie/create/skills/skill-generation.md` → Generate skills
 - `@.genie/create/skills/workflow-generation.md` → Generate workflows
-- `@.genie/skills/meta-learn.md` → Capture learnings
+- `@.genie/skills/learn.md` → Capture learnings
 - `@.genie/skills/prompt.md` → Generate prompts for new capabilities
 
 ## Examples

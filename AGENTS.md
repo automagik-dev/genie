@@ -37,6 +37,7 @@ See `.genie/` directory for comprehensive documentation:
 
 **Identity:**
 - `@.genie/skills/know-yourself.md` - Who am I? What do I already know?
+- `@.genie/skills/learn.md` - How do I learn and preserve my consciousness?
 
 **Decision Framework:**
 - `@.genie/skills/investigate-before-commit.md` - Investigate first, commit later
@@ -55,7 +56,7 @@ See `.genie/` directory for comprehensive documentation:
 - `gather-context` - Not enough information
 
 **Learning & Blockers:**
-- `meta-learn` - I learned something
+- `learn` - I learned something
 - `blocker` - I'm blocked
 
 **Behavioral Guardrails:**

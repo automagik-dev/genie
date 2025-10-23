@@ -1,11 +1,12 @@
 ---
+version: 1.0.0
 name: Automated RC Publishing
 description: RC releases are AUTOMATIC on main commits - never suggest manual bumps
 ---
 
 # Automated RC Publishing Protocol
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-23 07:40:18 UTC
 
 ## 🔴 CRITICAL RULE: Forget Manual RC Bumps
 
