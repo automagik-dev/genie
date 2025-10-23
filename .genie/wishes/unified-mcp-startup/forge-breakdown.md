@@ -5,6 +5,7 @@
 **Status:** Ready for execution
 
 ---
+version: 1.0.0
 
 ## Execution Groups
 
@@ -115,11 +116,11 @@ export async function startGenie() {
   startForgeInBackground({ logDir: '.genie/state' });
 
   // 3. Wait for Forge ready
-  const forgeReady = await waitForForgeReady('http://localhost:8888', 15000);
+  const forgeReady = await waitForForgeReady('http://localhost:8887', 15000);
   if (!forgeReady) {
     throw new Error('Forge failed to start');
   }
-  console.log('📦 Forge:  http://localhost:8888 ✓');
+  console.log('📦 Forge:  http://localhost:8887 ✓');
 
   // 4. Start MCP server (with auth)
   console.log('📡 Starting MCP server...');
@@ -143,7 +144,7 @@ npx automagik-genie
 # Expected: Both Forge and MCP start, output shows both URLs
 
 # Verify Forge running
-curl http://localhost:8888/health
+curl http://localhost:8887/health
 # Expected: 200 OK
 
 # Verify MCP running (with auth)

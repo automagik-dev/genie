@@ -153,6 +153,9 @@ secrets.json
 .genie/.genie/
 .agent-os/cache/
 
+# Live session state (auto-generated from Forge API/websocket)
+.genie/.session
+
 # Build artifacts
 /dist
 /build

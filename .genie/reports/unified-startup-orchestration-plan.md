@@ -4,6 +4,7 @@
 **Wish Reference:** `.genie/wishes/unified-mcp-startup/unified-mcp-startup-wish.md`
 
 ---
+version: 1.0.0
 
 ## 🎯 Vision
 
@@ -21,7 +22,7 @@ $ npx automagik-genie
 
 🚀 Genie MCP Server started!
 
-📦 Forge:  http://localhost:8888 ✓
+📦 Forge:  http://localhost:8887 ✓
 📡 MCP:    http://localhost:8885/sse ✓
 🔑 Auth:   Bearer genie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
@@ -94,7 +95,7 @@ async function main() {
 🚀 Genie MCP Server v2.4.0-rc.37
 
 Services started:
-📦 Forge:  http://localhost:8888 ✓
+📦 Forge:  http://localhost:8887 ✓
 📡 MCP:    http://localhost:8885/sse ✓
 
 Ready for connections.
@@ -107,7 +108,7 @@ function showConnectionInfo() {
   console.log('🚀 Genie MCP Server v' + version);
   console.log('');
   console.log('Services started:');
-  console.log('📦 Forge:  http://localhost:8888 ✓');
+  console.log('📦 Forge:  http://localhost:8887 ✓');
   console.log('📡 MCP:    http://localhost:8885/sse ✓');
   console.log('');
   console.log('Ready for connections.');
@@ -157,7 +158,7 @@ import { startForgeInBackground, stopForge, waitForForgeReady } from '../../cli/
 
 // Before starting MCP:
 await startForgeInBackground();
-await waitForForgeReady('http://localhost:8888', 15000);
+await waitForForgeReady('http://localhost:8887', 15000);
 ```
 
 ---
