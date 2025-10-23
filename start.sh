@@ -107,8 +107,9 @@ if [ $# -eq 0 ]; then
             TEMPLATE="code"  # fallback
         fi
 
-        # Reconnect stdin to TTY for interactive install agent
-        # This fixes the curl | bash stdin consumption issue
+        # Reconnect ALL file descriptors to TTY for interactive install agent
+        # This fixes the curl | bash stdin/stdout/stderr consumption issue
+        # Interactive Ink components need full TTY for rendering + input
         if [ -t 0 ]; then
             # stdin is already a TTY, proceed normally
             exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo."
@@ -116,7 +117,8 @@ if [ $# -eq 0 ]; then
             # stdin is a pipe/file (from curl | bash), reconnect to controlling terminal
             if [ -e /dev/tty ]; then
                 echo "🔄 Reconnecting to terminal for interactive setup..."
-                exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo." < /dev/tty
+                # Reconnect stdin, stdout, stderr to /dev/tty for full interactive support
+                exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo." < /dev/tty > /dev/tty 2>&1
             else
                 # No TTY available (CI/Docker environment), show manual instructions
                 echo ""
