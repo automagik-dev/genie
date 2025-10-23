@@ -36,12 +36,12 @@
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/start.sh | bash
+curl -fsSL https://genie.namastex.ai/start.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/namastexlabs/automagik-genie/main/start.ps1 | iex
+irm https://genie.namastex.ai/start.ps1 | iex
 ```
 
 **What this does:**
