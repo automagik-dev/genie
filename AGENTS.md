@@ -491,6 +491,53 @@ git log -1 --format="%an" -- <file>
 - Each task has dedicated workspace
 - Clean separation of concerns
 
+## QA Coordination Protocol
+
+**Owner:** Master Genie (QA is core identity, not separate concern)
+**Principle:** No release without guarantee it's better than the previous one
+**Documentation:** `@.genie/qa/README.md` (master coordination)
+
+### Quality Guarantee Levels
+
+**Level 1: Every Commit** (Automated via pre-commit hooks)
+- Token efficiency, cross-references, worktree isolation, user file protection, Forge task linking
+
+**Level 2: Every Push** (Automated + Advisory via pre-push hooks + CI/CD)
+- All tests pass, commit advisory, changelog updated, CLI smoke test
+
+**Level 3: Pre-Release** (Coordinated by Master Genie)
+- **Patch (v2.5.X):** Bugfix only → Automated tests + bug-specific validation
+- **Minor (v2.X.0):** New features → Full checklist + QA Agent + regression suite (>95% pass, no critical failures)
+- **Major (vX.0.0):** Breaking changes → Exhaustive validation + exploratory testing (100% pass, zero critical)
+
+### QA Components
+
+**Primary Checklist:** `@.genie/qa/checklist.md` (260+ test items, living document, auto-updated via learn)
+**Atomic Scenarios:** `@.genie/code/workflows/qa/` (18 scenarios, bug regression + feature deep-dive)
+**Bug Regression:** `@.genie/qa/scenarios-from-bugs.md` (53 tracked bugs, auto-synced from GitHub)
+**QA Agent:** `@.genie/code/agents/qa.md` (automated execution + self-improving, required for minor/major releases)
+**Evidence Repository:** `@.genie/qa/evidence/` (reproducible test outputs, markdown committed, JSON/tmp ignored)
+
+### Pre-Release Workflow
+
+1. **Determine release type** (patch/minor/major based on changes)
+2. **Execute quality gates** (automated tests + manual based on level)
+3. **Collect evidence** (capture outputs, record status, document failures)
+4. **Learning integration** (QA Agent discovers patterns → learn agent updates checklist)
+5. **Release decision** (calculate pass rate, check critical failures, GO/NO-GO based on matrix)
+6. **Done Report** (test matrix, evidence references, bugs found/fixed, learning summary, recommendation)
+
+### Success Metrics
+
+- 🎯 Zero regressions in production (bug scenarios prevent)
+- 🎯 100% evidence-backed releases (no "works on my machine")
+- 🎯 Continuous improvement (checklist grows with every run)
+- 🎯 Fast feedback (pre-commit catches issues early)
+
+### Self-Improvement Loop
+
+Every QA run makes the system smarter: QA discovers pattern → learn agent invoked → checklist updated → next run includes new test. Result: Checklist grows organically, regression-proof, continuously improving.
+
 ## Quick Reference
 
 **Forge Project ID:** `ee8f0a72-44da-411d-a23e-f2c6529b62ce`
