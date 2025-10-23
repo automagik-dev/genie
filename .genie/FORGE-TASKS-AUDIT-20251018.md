@@ -1,6 +1,5 @@
 # 📊 Forge Tasks Audit - 2025-10-18
 
-**Last Updated:** 2025-10-18 13:08 UTC
 **Purpose:** Complete inventory of Forge tasks with naming audit + wish/issue mapping
 **Status:** 19 tasks total (13 with issues linked, 6 pending)
 
@@ -21,11 +20,11 @@
 
 | # | Task Title | Type | Issue | Status | Problem |
 |---|-----------|------|-------|--------|---------|
-| 5 | `[WISH] skills-prioritization` | wish | #107 | 🟡 INCONSISTENT | Missing issue# prefix |
+| 5 | `[WISH] spells-prioritization` | wish | #107 | 🟡 INCONSISTENT | Missing issue# prefix |
 | 6 | `[WISH] genie-arch-rebrand` | wish | #108 | 🟡 INCONSISTENT | Missing issue# prefix |
 | 7 | `[WISH] backup-update-system` | wish | #114 | 🟡 INCONSISTENT | Missing issue# prefix |
 | 8 | `[WISH] rc21-session-lifecycle-fix` | wish | #109 | 🟡 INCONSISTENT | Missing issue# prefix |
-| 9 | `[FRESH] Skills Prioritization - Start from Scratch` | wish | #107 | 🟡 INCONSISTENT | Wrong naming (should be [WISH-RETRY]) |
+| 9 | `[FRESH] Spells Prioritization - Start from Scratch` | wish | #107 | 🟡 INCONSISTENT | Wrong naming (should be [WISH-RETRY]) |
 | 10 | `Multi-Template Architecture: Dynamic Template Generation` | wish | #110 | 🟡 NO PREFIX | Missing TYPE marker + issue# |
 | 11 | `Genie Architecture Rebranding` | wish | #108 | 🟡 NO PREFIX | Missing TYPE marker + issue# |
 
@@ -67,8 +66,8 @@ TYPE values:
 
 ### Tasks Needing Rename
 
-**From:** `[WISH] skills-prioritization`
-**To:** `[WISH] #107-skills-prioritization`
+**From:** `[WISH] spells-prioritization`
+**To:** `[WISH] #107-spells-prioritization`
 
 **From:** `[WISH] genie-arch-rebrand`
 **To:** `[WISH] #108-genie-arch-rebrand`
@@ -85,7 +84,7 @@ TYPE values:
 **From:** `Genie Architecture Rebranding`
 **To:** `[WISH] #108-genie-arch-rebrand`
 
-**From:** `[FRESH] Skills Prioritization - Start from Scratch`
+**From:** `[FRESH] Spells Prioritization - Start from Scratch`
 **To:** Merge with #107 task (it's a retry, not separate)
 
 ---
@@ -107,7 +106,7 @@ Tasks without GitHub issues (need to create):
 ```
 Wish                              GitHub Issue    Forge Task Status
 ──────────────────────────────────────────────────────────────────
-skills-prioritization             #107 ✅         [WISH] (✅ DONE)
+spells-prioritization             #107 ✅         [WISH] (✅ DONE)
 genie-arch-rebrand                #108 ✅         [WISH] (🔄 IN-PROGRESS)
 rc21-session-lifecycle-fix         #109 ✅         [WISH] (✅ DONE)
 multi-template-architecture        #110 ✅         [WISH] (🔄 BLOCKED)
@@ -142,7 +141,7 @@ executor-replacement               #120 ✅         forge/120 (🔄 IN-PROGRESS)
 - TRIAGE Incomplete Wishes → Issue
 
 **Priority 3: Merge duplicate tasks (5 min)**
-- Remove `[FRESH] Skills Prioritization` (it's a retry of #107)
+- Remove `[FRESH] Spells Prioritization` (it's a retry of #107)
 - Keep single source of truth per issue
 
 **Result:** 19 tasks → properly standardized, all with issues, all mappable

@@ -1,5 +1,4 @@
 # Genie Dev Roadmap
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 The genie-dev branch is the laboratory for Genie’s self-improvement program. Phases are sequenced to keep downstream adopters safe while we iterate quickly.
 
 ## Phase 0 — Baseline Capture (✅ complete)

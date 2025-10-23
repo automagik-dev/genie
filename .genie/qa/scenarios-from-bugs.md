@@ -1,5 +1,4 @@
 # QA Scenarios from GitHub Issues
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Auto-Generated:** 2025-10-18 05:31:38 UTC
 **Source:** GitHub Issues with label `type:bug`
 **Script:** `.genie/scripts/sync-qa-from-issues.py`

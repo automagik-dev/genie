@@ -4,7 +4,6 @@
 **Session:** 2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3 (orchestrator, analyze mode)
 
 ---
-version: 1.0.0
 
 ## Executive Summary
 
@@ -35,7 +34,6 @@ version: 1.0.0
 
 **Project:** !`basename $(pwd)`
 **Version:** !`node -p "require('./package.json').version"`
-**Last Updated:** 2025-10-23 07:27:03 UTC
 
 @.genie/agents/README.md   # Load agent architecture
          # Load routing patterns
@@ -86,7 +84,7 @@ version: 1.0.0
 
 ## Universal Standards
 @AGENTS.md                           # Prompting Standards Framework
-@.genie/skills/prompt.md             # Prompt crafting workflow
+@.genie/spells/prompt.md             # Prompt crafting workflow
 
 ## Agent Types
 ### Workflow Orchestrators
@@ -445,7 +443,7 @@ CLAUDE.md
    - Add version + timestamp via !
 
 3. **.genie/agents/README.md → Agent hub** (10 min)
-   - Add `@AGENTS.md`, .genie/skills/prompt.md (updated path) at top
+   - Add `@AGENTS.md`, .genie/spells/prompt.md (updated path) at top
    - Add version + timestamp via !
 
 4. **.genie/README.md → Auto-sync** (10 min)

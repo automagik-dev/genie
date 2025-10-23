@@ -1,5 +1,4 @@
 # Forge vs Genie Executor: Side-by-Side Comparison
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Task:** Issue #120 - Replace Genie executor with Forge backend
 **Status:** POC Implementation Complete

@@ -52,5 +52,5 @@ genie consult tech-council "Should we replace background-launcher?"
 ## Permissions
 - **Read:** Entire codebase
 - **Write:** Only `.genie/teams/` folder (sessions, decisions)
-- **Tools:** All skills, internet access for research
+- **Tools:** All spells, internet access for research
 - **Output:** Markdown documentation only

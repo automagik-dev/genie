@@ -1,5 +1,4 @@
 # Done Report: Group B - Extract Prompting Standards
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Task:** agents-optimization Group B
 **Started:** 2025-10-18 04:43 UTC
@@ -22,11 +21,11 @@ Group B extraction task was **already completed** in a previous session. All pro
 
 1. **AGENTS.md current state:**
    - Only 769 lines (optimized from original 2272 lines)
-   - References prompting standards via skill: `@.genie/code/skills/prompting-standards.md:31`
+   - References prompting standards via spell: `@.genie/code/spells/prompting-standards.md:31`
    - No duplicate content present
 
-2. **Skill file created:**
-   - Location: `.genie/agents/code/skills/prompting-standards.md`
+2. **Spell file created:**
+   - Location: `.genie/agents/code/spells/prompting-standards.md`
    - Size: 13 lines (minimal reference file)
    - References prompt agent: `./.genie/agents/prompt/prompt.md`
 
@@ -50,7 +49,7 @@ Group B extraction task was **already completed** in a previous session. All pro
 ```
 AGENTS.md
   ↓ (line 31)
-@.genie/code/skills/prompting-standards.md
+@.genie/code/spells/prompting-standards.md
   ↓ (line 12)
 @.genie/code/agents/prompt.md (746 lines)
 ```
@@ -59,7 +58,7 @@ AGENTS.md
 - ✅ AGENTS.md token reduction: ~186 lines removed (already reflected in 769-line total)
 - ✅ @ reference pattern: Lightweight pointer instead of duplication
 - ✅ Knowledge preservation: All sections present in prompt.md
-- ✅ Loading architecture: Skill → agent (correct hierarchy)
+- ✅ Loading architecture: Spell → agent (correct hierarchy)
 
 ---
 
@@ -67,12 +66,12 @@ AGENTS.md
 
 **File structure validated:**
 ```bash
-# AGENTS.md references skill
+# AGENTS.md references spell
 grep "prompting-standards" AGENTS.md
-# Result: Line 31: @.genie/code/skills/prompting-standards.md
+# Result: Line 31: @.genie/code/spells/prompting-standards.md
 
-# Skill file references agent
-cat .genie/agents/code/skills/prompting-standards.md
+# Spell file references agent
+cat .genie/agents/code/spells/prompting-standards.md
 # Result: Points to ./.genie/agents/prompt/prompt.md
 
 # Agent file contains content
@@ -87,8 +86,8 @@ grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/age
 **Pattern validation:**
 ```bash
 # Verify @ reference usage (not full content load)
-# AGENTS.md: 1 reference to skill file ✅
-# Skill file: 1 reference to agent file ✅
+# AGENTS.md: 1 reference to spell file ✅
+# Spell file: 1 reference to agent file ✅
 # No circular references ✅
 # No content duplication ✅
 ```
@@ -116,9 +115,9 @@ From wish Group B requirements:
   - grep validates all sections exist in prompt.md
   - No content loss detected
 
-- [x] **Architecture correct:** Skill → agent hierarchy ✅
-  - AGENTS.md loads skill via @
-  - Skill points to agent via @
+- [x] **Architecture correct:** Spell → agent hierarchy ✅
+  - AGENTS.md loads spell via @
+  - Spell points to agent via @
   - No circular references
 
 ---
@@ -127,7 +126,7 @@ From wish Group B requirements:
 
 **Read-only verification:**
 - `/home/namastex/workspace/automagik-genie/AGENTS.md` (769 lines)
-- `/home/namastex/workspace/automagik-genie/.genie/agents/code/skills/prompting-standards.md` (13 lines)
+- `/home/namastex/workspace/automagik-genie/.genie/agents/code/spells/prompting-standards.md` (13 lines)
 - `/home/namastex/workspace/automagik-genie/.genie/agents/prompt.md` (746 lines)
 
 **No modifications made** - work already complete.
@@ -145,7 +144,7 @@ wc -l AGENTS.md
 
 # Reference validation
 grep "prompting-standards" AGENTS.md
-# Output: 31:@.genie/code/skills/prompting-standards.md
+# Output: 31:@.genie/code/spells/prompting-standards.md
 
 # Agent file check
 wc -l .genie/agents/prompt.md
@@ -167,7 +166,7 @@ grep -E "Task Breakdown|Context Gathering|@ Pattern|Success Criteria" .genie/age
 **Status:**
 - AGENTS.md: 769 lines (on track toward ≤500 line target)
 - Prompting standards: Successfully extracted to prompt.md agent
-- Architecture: Correct @ reference pattern (skill → agent)
+- Architecture: Correct @ reference pattern (spell → agent)
 - Knowledge: 100% preserved, no loss detected
 
 **Next steps:**

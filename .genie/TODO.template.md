@@ -10,7 +10,6 @@ validation_commands:
 -->
 
 # 🎯 Genie Development TODO
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Context:** Prioritized work queue for Genie framework
 
 ---

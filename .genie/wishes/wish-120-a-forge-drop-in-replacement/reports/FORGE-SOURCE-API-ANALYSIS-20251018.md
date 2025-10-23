@@ -1,5 +1,4 @@
 # Forge Source Code API Analysis
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Purpose:** Understand Forge API from actual source code
 **Source:** research/forge (git submodule)

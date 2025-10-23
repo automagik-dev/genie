@@ -1,5 +1,4 @@
 # Done Report: Group G - Absorb Custom Overrides
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Wish:** agents-optimization
 **Group:** G (Absorb .genie/custom/ Content)
@@ -82,7 +81,7 @@ drwxr-xr-x 5 namastex namastex  4096 Oct 17 18:56 ..
 drwxr-xr-x 3 namastex namastex  4096 Oct 17 21:27 agents
 -rw-r--r-- 1 namastex namastex  3908 Oct 17 20:03 qa.md
 -rw-r--r-- 1 namastex namastex 24985 Oct 17 20:03 routing.md
-drwxr-xr-x 2 namastex namastex  4096 Oct 17 21:11 skills
+drwxr-xr-x 2 namastex namastex  4096 Oct 17 21:11 spells
 ```
 
 **Result:** All merged content now lives in `.genie/agents/code/` ✅
@@ -92,7 +91,7 @@ drwxr-xr-x 2 namastex namastex  4096 Oct 17 21:11 skills
 ```bash
 $ grep -n "custom/" AGENTS.md
 60:- Specialized + delivery agents (git, implementor, polish, tests, review, commit, docgen, refactor, audit, tracer, etc.) live under `.genie/agents/` and load optional overrides from `.genie/custom/agents/<agent>.md`.
-74:- `.genie/custom/` – project-specific overrides for core agents and Genie skills (kept outside `agents/` to avoid double registration)
+74:- `.genie/custom/` – project-specific overrides for core agents and Genie spells (kept outside `agents/` to avoid double registration)
 154:3. .genie/custom/implementor.md (project overrides, if exists)
 198:- **Implementation:** Natural language routing via `.genie/custom/routing.md`
 ```
@@ -140,7 +139,7 @@ $ grep -n "custom/" AGENTS.md
 
 **Line 74:**
 ```markdown
-- `.genie/custom/` – project-specific overrides for core agents and Genie skills (kept outside `agents/` to avoid double registration)
+- `.genie/custom/` – project-specific overrides for core agents and Genie spells (kept outside `agents/` to avoid double registration)
 ```
 
 **Should be:** (remove line entirely - directory no longer exists)

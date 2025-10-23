@@ -1,5 +1,4 @@
 # Commit Advisory Guide
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **When:** Automatically runs on `git push` before code reaches remote
 **Purpose:** Ensures every commit is traced to work items (wishes/GitHub issues)
 

@@ -5,7 +5,6 @@
 **Status:** Ready for execution
 
 ---
-version: 1.0.0
 
 ## Execution Groups
 

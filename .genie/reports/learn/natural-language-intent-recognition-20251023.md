@@ -5,7 +5,6 @@
 **Type:** Behavioral Correction
 
 ---
-version: 1.0.0
 
 ## 🎯 Teaching Context
 
@@ -15,7 +14,7 @@ version: 1.0.0
 **Core teaching:**
 > "I'm your human interface. Understand human language naturally."
 >
-> "Anything that resembles 'I want you to load the meta-learning skill' should trigger it."
+> "Anything that resembles 'I want you to load the meta-learning spell' should trigger it."
 
 **Problem identified:**
 Base Genie was waiting for exact phrase matches instead of understanding natural language intent.
@@ -24,7 +23,7 @@ Base Genie was waiting for exact phrase matches instead of understanding natural
 
 ## 🔧 What Changed
 
-**File:** `.genie/skills/meta-learn.md`
+**File:** `.genie/spells/meta-learn.md`
 
 ### Before (Rigid Phrase Matching)
 ```markdown
@@ -50,7 +49,7 @@ Base Genie is the human interface. Recognition means understanding what the user
 **Protocol Triggers (Natural Language Intent Recognition):**
 
 **Intent: User wants to teach/learn something**
-- Examples: "Enter learning mode", "Let's learn", "I want to teach you", "Time to learn", "Load the learning skill", "Learning mode", "/learn"
+- Examples: "Enter learning mode", "Let's learn", "I want to teach you", "Time to learn", "Load the learning spell", "Learning mode", "/learn"
 - Recognition method: ANY natural language expression indicating learning/teaching intent
 - Response: Load meta-learn.md, signal readiness, stand by for teaching
 ...
@@ -83,8 +82,8 @@ Base Genie is the human interface. Recognition means understanding what the user
 - ✅ "Let's learn"
 - ✅ "I want to teach you"
 - ✅ "Time to learn"
-- ✅ "Load the learning skill"
-- ✅ "I want you to load the meta-learning skill"
+- ✅ "Load the learning spell"
+- ✅ "I want you to load the meta-learning spell"
 - ✅ ANY expression indicating learning/teaching intent
 
 ---
@@ -99,7 +98,7 @@ Base Genie is the human interface. Recognition means understanding what the user
 **Expected behavior:**
 - User says anything resembling "I want to teach you" → Learn agent invoked
 - User says anything resembling "Let's learn" → Learn agent invoked
-- User says anything resembling "Load learning skill" → Learn agent invoked
+- User says anything resembling "Load learning spell" → Learn agent invoked
 
 **Success criteria:**
 - Zero friction in triggering learning mode
@@ -130,19 +129,19 @@ This means:
 
 **Intent recognition should apply to:**
 - Learning mode triggers (✅ FIXED)
-- Skill invocations (review other skills for similar issues)
+- Spell invocations (review other spells for similar issues)
 - Agent delegation (understand "I want you to do X" naturally)
 - Protocol triggers (any protocol activation)
 
 **Future opportunity:**
-Audit all skills for rigid phrase matching. Replace with intent recognition patterns.
+Audit all spells for rigid phrase matching. Replace with intent recognition patterns.
 
 ---
 
 ## 📈 Metrics
 
 **Lines changed:** 36 insertions, 30 deletions
-**Files updated:** 1 (.genie/skills/meta-learn.md)
+**Files updated:** 1 (.genie/spells/meta-learn.md)
 **Version bump:** v1.0.0 → v1.0.1 (automatic via pre-commit hook)
 **Token impact:** +250 tokens (acceptable for clarity improvement)
 

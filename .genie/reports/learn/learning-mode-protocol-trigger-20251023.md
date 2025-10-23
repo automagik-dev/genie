@@ -5,7 +5,6 @@
 **Type:** Recognition Pattern Failure → Protocol Trigger Addition
 
 ---
-version: 1.0.0
 
 ## Violation
 
@@ -85,7 +84,7 @@ User said "Enter learning mode" and Base Genie responded conversationally with "
 **Anti-Pattern:**
 - ❌ Acknowledging "I'm learning" without invoking learn agent
 - ❌ Saying "I understand" without documenting in framework
-- ❌ Making mental note without persisting to skill/agent files
+- ❌ Making mental note without persisting to spell/agent files
 ```
 
 **After:**
@@ -95,7 +94,7 @@ User said "Enter learning mode" and Base Genie responded conversationally with "
 - ❌ Responding "What would you like me to learn?" instead of loading meta-learn.md
 - ❌ Acknowledging "I'm learning" without invoking learn agent
 - ❌ Saying "I understand" without documenting in framework
-- ❌ Making mental note without persisting to skill/agent files
+- ❌ Making mental note without persisting to spell/agent files
 ```
 
 ### 4. know-yourself.md - Added Learning Mode Awareness
@@ -126,10 +125,10 @@ User said "Enter learning mode" and Base Genie responded conversationally with "
 ## Complete Diff
 
 ```diff
-diff --git a/.genie/skills/know-yourself.md b/.genie/skills/know-yourself.md
+diff --git a/.genie/spells/know-yourself.md b/.genie/spells/know-yourself.md
 index c602b668..8b5d9532 100644
---- a/.genie/skills/know-yourself.md
-+++ b/.genie/skills/know-yourself.md
+--- a/.genie/spells/know-yourself.md
++++ b/.genie/spells/know-yourself.md
 @@ -95,6 +96,7 @@ Before writing instruction block, ask:
  - Know what work is in progress (via active agents)
  - Know what workflows are available (via .genie/agents/workflows/)
@@ -137,10 +136,10 @@ index c602b668..8b5d9532 100644
 +- Know when user enters learning mode (protocol trigger recognition)
  - Route decisions through appropriate agents and teams
 
-diff --git a/.genie/skills/meta-learn.md b/.genie/skills/meta-learn.md
+diff --git a/.genie/spells/meta-learn.md b/.genie/spells/meta-learn.md
 index 0c70479b..68b6a8c1 100644
---- a/.genie/skills/meta-learn.md
-+++ b/.genie/skills/meta-learn.md
+--- a/.genie/spells/meta-learn.md
++++ b/.genie/spells/meta-learn.md
 @@ -11,6 +11,12 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 
  ## Recognition Patterns (How Base Genie Knows to Invoke Learn)
@@ -180,8 +179,8 @@ index 0c70479b..68b6a8c1 100644
 ## Impact Analysis
 
 ### Files Updated
-1. `.genie/skills/meta-learn.md` - Core learning protocol
-2. `.genie/skills/know-yourself.md` - Self-awareness capabilities
+1. `.genie/spells/meta-learn.md` - Core learning protocol
+2. `.genie/spells/know-yourself.md` - Self-awareness capabilities
 
 ### Behavioral Change
 **OLD:** "Enter learning mode" → Conversational response asking what to learn
@@ -228,7 +227,7 @@ This correction itself demonstrates the meta-learning pattern:
 ---
 
 ## Files Modified
-- `.genie/skills/meta-learn.md` (v1.0.0)
-- `.genie/skills/know-yourself.md` (v1.0.0)
+- `.genie/spells/meta-learn.md` (v1.0.0)
+- `.genie/spells/know-yourself.md` (v1.0.0)
 
 **Commit:** 24201d17 - learn: Add 'Enter learning mode' protocol trigger recognition

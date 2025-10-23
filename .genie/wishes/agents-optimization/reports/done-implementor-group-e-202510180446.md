@@ -1,5 +1,4 @@
 # Done Report: Group E - Release Protocol Extraction
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Wish:** agents-optimization
 **Group:** E (Extract Release Protocol)
@@ -15,8 +14,8 @@
 
 **Evidence:**
 1. AGENTS.md already optimized (2272 → 770 lines)
-2. Publishing protocol extracted to `.genie/agents/code/skills/publishing-protocol.md`
-3. AGENTS.md line 19 loads skill via @ reference
+2. Publishing protocol extracted to `.genie/agents/code/spells/publishing-protocol.md`
+3. AGENTS.md line 19 loads spell via @ reference
 4. No release protocol content remains in AGENTS.md body
 
 ---
@@ -25,7 +24,7 @@
 
 **publishing-protocol.md location:**
 ```
-.genie/agents/code/skills/publishing-protocol.md (50 lines)
+.genie/agents/code/spells/publishing-protocol.md (50 lines)
 ```
 
 **Content:**
@@ -37,18 +36,18 @@
 
 **AGENTS.md reference:**
 ```markdown
-Line 19: @.genie/code/skills/publishing-protocol.md
+Line 19: @.genie/code/spells/publishing-protocol.md
 ```
 
 **Grep validation:**
 ```bash
 $ grep -i "publish\|release" AGENTS.md
-19:@.genie/code/skills/publishing-protocol.md
+19:@.genie/code/spells/publishing-protocol.md
 205:- **Examples:** git, implementor, tests, genie, release, learn, roadmap
 246:│   ├── release/                 # Release agent
 330:    "release",
 499:- **Agents:** implementor, tests, polish, git, release
-756:**Note:** All critical behavioral skills (Evidence-Based Thinking, Publishing Protocol, ...)
+756:**Note:** All critical behavioral spells (Evidence-Based Thinking, Publishing Protocol, ...)
 ```
 
 All mentions are architectural (agent hierarchy), not protocol details.
@@ -60,16 +59,16 @@ All mentions are architectural (agent hierarchy), not protocol details.
 **Evidence checklist (from wish):**
 
 ✅ **Sections extracted to release.md**
-- Already in publishing-protocol.md skill (50 lines)
+- Already in publishing-protocol.md spell (50 lines)
 
 ✅ **@ reference added to AGENTS.md**
-- Line 19: `@.genie/code/skills/publishing-protocol.md`
+- Line 19: `@.genie/code/spells/publishing-protocol.md`
 
 ✅ **Validation: grep "Publishing Protocol" finds release.md**
 ```bash
 $ grep -r "Publishing Protocol" .genie/agents/
-.genie/agents/code/skills/publishing-protocol.md:# Publishing Protocol *(CRITICAL)*
-AGENTS.md:756:**Note:** All critical behavioral skills (Evidence-Based Thinking, Publishing Protocol, ...)
+.genie/agents/code/spells/publishing-protocol.md:# Publishing Protocol *(CRITICAL)*
+AGENTS.md:756:**Note:** All critical behavioral spells (Evidence-Based Thinking, Publishing Protocol, ...)
 ```
 
 **Pattern preservation check:**
@@ -86,10 +85,10 @@ AGENTS.md:756:**Note:** All critical behavioral skills (Evidence-Based Thinking,
 **No action required** - extraction completed in previous optimization pass.
 
 **Architecture decision:**
-- Publishing protocol = behavioral skill (not agent-specific)
-- Loaded via AGENTS.md → skills section
+- Publishing protocol = behavioral spell (not agent-specific)
+- Loaded via AGENTS.md → spells section
 - Available to all agents via base context
-- Release agent follows skill via delegation discipline
+- Release agent follows spell via delegation discipline
 
 ---
 
@@ -112,7 +111,7 @@ grep -r "Publishing Protocol" .genie/agents/
 
 # Verify @ reference
 grep "publishing-protocol.md" AGENTS.md
-# Result: Line 19 loads skill
+# Result: Line 19 loads spell
 ```
 
 **Validation:**
@@ -127,7 +126,7 @@ grep -n -i "publish\|release" AGENTS.md
 ## Success Metrics
 
 ✅ **Zero knowledge loss** - All protocol patterns preserved
-✅ **Correct location** - Skill file (behavioral, not agent-specific)
+✅ **Correct location** - Spell file (behavioral, not agent-specific)
 ✅ **@ reference present** - Line 19 in AGENTS.md
 ✅ **Token reduction** - Protocol not duplicated in AGENTS.md body
 
@@ -138,9 +137,9 @@ grep -n -i "publish\|release" AGENTS.md
 ## Risks & Mitigations
 
 **Risk:** Protocol not visible to release agent
-**Mitigation:** ✅ Release agent loads AGENTS.md (base context) → gets all skills automatically
+**Mitigation:** ✅ Release agent loads AGENTS.md (base context) → gets all spells automatically
 
-**Risk:** Duplication between skill and release agent
+**Risk:** Duplication between spell and release agent
 **Mitigation:** ✅ Verified - release.md contains orchestration workflow, publishing-protocol.md contains behavioral rules (no overlap)
 
 ---
@@ -162,7 +161,7 @@ grep -n -i "publish\|release" AGENTS.md
 **Group E status:** ✅ **COMPLETE** (performed in earlier optimization)
 
 **Artifacts:**
-- Publishing protocol: `.genie/agents/code/skills/publishing-protocol.md` (50 lines)
+- Publishing protocol: `.genie/agents/code/spells/publishing-protocol.md` (50 lines)
 - AGENTS.md reference: Line 19
 - No duplication in AGENTS.md body
 

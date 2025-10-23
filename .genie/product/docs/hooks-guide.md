@@ -1,5 +1,4 @@
 # Git Hooks Guide (Consolidated)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 This guide consolidates and replaces prior hook docs. It reflects the current scripts in `scripts/hooks/` and how Genie integrates with validation workflows.
 

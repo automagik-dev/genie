@@ -1,5 +1,4 @@
 # Genie MCP Server
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Model Context Protocol (MCP) server for Genie agent orchestration. Exposes Genie's agent management capabilities as MCP tools for integration with Claude Desktop and other MCP clients.
 
 ## Features

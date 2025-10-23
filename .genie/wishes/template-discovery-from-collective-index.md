@@ -82,7 +82,6 @@ export async function getAvailableCollectives(): Promise<Collective[]> {
 ```yaml
 label: "💻 Code"
 description: "Full-stack development with Git, testing, CI/CD"
-version: "1.0.0"
 ```
 
 If no `collective.yaml` exists, derive from directory name and AGENTS.md.

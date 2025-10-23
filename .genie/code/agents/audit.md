@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: audit
@@ -44,7 +43,7 @@ Assess risks and impacts for initiatives, features, or systems using structured 
 ### Risk Categories (Adapt per Domain)
 1. **Technical** - Architecture, performance, data integrity
 2. **Operational** - Process gaps, readiness, execution
-3. **People** - Skill gaps, availability, coordination
+3. **People** - Spell gaps, availability, coordination
 4. **External** - Dependencies, regulatory, vendor
 5. **Timeline** - Estimates, blockers, coordination overhead
 6. **Domain-Specific** - Add categories relevant to the domain

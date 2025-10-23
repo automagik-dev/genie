@@ -1,5 +1,4 @@
 # Wish: AGENTS.md Context Optimization
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17
 **Status:** active
 **Priority:** CRITICAL
@@ -11,18 +10,18 @@
 **Problem:**
 - AGENTS.md currently 2272 lines (bloated)
 - Target: ≤500 lines
-- Must extract knowledge WITHOUT LOSS to agents/skills
+- Must extract knowledge WITHOUT LOSS to agents/spells
 - .genie/custom/ needs absorption into agents
 - Recent folder restructure affects agent paths
 
 **Scope:**
-- Extract sections → appropriate agents/skills
+- Extract sections → appropriate agents/spells
 - Replace with @ references (lightweight pointers)
 - Absorb .genie/custom/ content into agents
 - Validate final result: ≤500 lines, complete knowledge preservation
 
 **Context dependencies:**
-- New folder structure: .genie/agents/genie/agents/, .genie/agents/genie/skills/
+- New folder structure: .genie/agents/genie/agents/, .genie/agents/genie/spells/
 - @ semantics: path reference only (NOT full content load)
 - Loading architecture: CLAUDE.md → AGENTS.md → agent.md
 - Each agent = AGENTS.md (base) + specialty (extension)

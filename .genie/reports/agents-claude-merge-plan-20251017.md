@@ -1,5 +1,4 @@
 # AGENTS.md + CLAUDE.md Merge Plan
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17 17:30 UTC
 **Purpose:** Design unified knowledge base with 100% content preservation
 **Status:** Analysis complete, awaiting approval

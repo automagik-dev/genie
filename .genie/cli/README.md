@@ -1,5 +1,4 @@
 # GENIE CLI Architecture
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 This directory hosts the runtime wrapper that powers the Genie MCP server. The server is responsible for
 routing user requests, launching Codex (via `npx -y @namastexlabs/codex@0.43.0-alpha.5` or other executors), tracking background runs, and exposing
 tooling for inspection via MCP tools.

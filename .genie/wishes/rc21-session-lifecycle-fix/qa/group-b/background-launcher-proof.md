@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
     45	        const liveEntry = entry.sessionId ? liveStore.sessions?.[entry.sessionId] : undefined;
     46	        if (liveEntry?.sessionId) {

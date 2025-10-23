@@ -4,7 +4,6 @@
 **Status:** Historical documentation
 
 ---
-version: 1.0.1
 
 ## 🎯 Core Architectural Evolution
 

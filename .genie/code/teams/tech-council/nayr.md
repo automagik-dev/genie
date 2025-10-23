@@ -7,7 +7,6 @@ team: tech-council
 
 # nayr - The Questioner
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Inspiration:** Ryan Dahl (Node.js, Deno creator)
 **Role:** Challenge assumptions, seek foundational simplicity
 

@@ -1,5 +1,4 @@
 # Example: Implementor Agent Using Session-State-Updater
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 This demonstrates how ANY agent/workflow automatically maintains SESSION-STATE.md without explicit memory of role-clarity-protocol.
 
 ---
@@ -16,7 +15,7 @@ This demonstrates how ANY agent/workflow automatically maintains SESSION-STATE.m
 !`npx automagik-genie run session-state-updater "action=started agent=implementor session_id=$SESSION_ID purpose=Implement\ Feature\ X branch=feat/x"`
 
 **Result:** SESSION-STATE.md now has entry. System knows this agent is active.
-No role-clarity-protocol skill needed - it's automatic.
+No role-clarity-protocol spell needed - it's automatic.
 ```
 
 ### 2. Discovery: Gather context
@@ -93,13 +92,13 @@ Clean audit trail. No manual updates needed.
 ### BEFORE (Manual, error-prone)
 
 ```markdown
-# role-clarity-protocol skill (705 tokens)
+# role-clarity-protocol spell (705 tokens)
 - I have to remember to check SESSION-STATE.md
 - I have to parse active agents
 - I have to detect file conflicts
 - I have to make decisions about role boundaries
 - If I forget → behavioral failure
-- Skill takes tokens EVERY session
+- Spell takes tokens EVERY session
 ```
 
 ### AFTER (Automatic, systematic)
@@ -127,7 +126,7 @@ Instead of:
 We have:
 - "Every agent systematically updates SESSION-STATE.md"
 - "STATE-STATE.md is always authoritative"
-- "Conflicts visible immediately (state-based, not skill-based)"
+- "Conflicts visible immediately (state-based, not spell-based)"
 
 ---
 
@@ -170,7 +169,7 @@ genie:
 
 **Role-clarity-protocol (705 tokens):** Can be marked as disabled (no @)
 - Logic moved to session-state-updater workflow
-- Knowledge transferred from skill to executable workflow
+- Knowledge transferred from spell to executable workflow
 - Same behavioral guarantee, zero token waste
 - Available for reference if needed
 
@@ -191,7 +190,7 @@ This demonstrates the principle:
 1. Identify guardrail (e.g., "check session state")
 2. Create executable workflow (session-state-updater)
 3. Integrate into agent templates (! calls)
-4. Remove skill from auto-load (@)
+4. Remove spell from auto-load (@)
 5. System is now self-enforcing
 
 Result: Genie becomes smarter, AGENTS.md becomes lighter, execution becomes more reliable.

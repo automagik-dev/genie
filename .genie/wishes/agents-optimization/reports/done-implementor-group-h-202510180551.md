@@ -1,5 +1,4 @@
 # Done Report: Group H - Final Validation
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Task:** agents-optimization Group H (Final Validation)
 **Timestamp:** 2025-10-18 05:51 UTC
@@ -41,22 +40,22 @@ wc -l AGENTS.md
 **Commands:**
 ```bash
 grep -l "Developer Welcome Flow" .genie/agents/code/agents/git/git.md
-grep -l "Task Breakdown Structure" .genie/agents/code/skills/prompting-standards.md
-grep -l "Forge MCP Task Pattern" .genie/agents/code/skills/forge-mcp-pattern.md
-grep -l "Meta-Learn" .genie/agents/code/skills/meta-learn-protocol.md
-grep -l "Publishing Protocol" .genie/agents/code/skills/publishing-protocol.md
+grep -l "Task Breakdown Structure" .genie/agents/code/spells/prompting-standards.md
+grep -l "Forge MCP Task Pattern" .genie/agents/code/spells/forge-mcp-pattern.md
+grep -l "Meta-Learn" .genie/agents/code/spells/meta-learn-protocol.md
+grep -l "Publishing Protocol" .genie/agents/code/spells/publishing-protocol.md
 ```
 
 **Results:** ✅ ALL patterns successfully extracted and found in target files
 
 **Extracted content (Groups A-G):**
 - **Group A:** Git patterns → `.genie/agents/code/agents/git/git.md`
-- **Group B:** Prompting standards → `.genie/agents/code/skills/prompting-standards.md`
-- **Group C:** Forge patterns → `.genie/agents/code/skills/forge-mcp-pattern.md`
-- **Group D:** Learn patterns → `.genie/agents/code/skills/meta-learn-protocol.md`
-- **Group E:** Release patterns → `.genie/agents/code/skills/publishing-protocol.md`
+- **Group B:** Prompting standards → `.genie/agents/code/spells/prompting-standards.md`
+- **Group C:** Forge patterns → `.genie/agents/code/spells/forge-mcp-pattern.md`
+- **Group D:** Learn patterns → `.genie/agents/code/spells/meta-learn-protocol.md`
+- **Group E:** Release patterns → `.genie/agents/code/spells/publishing-protocol.md`
 - **Group F:** Supporting docs → `.genie/docs/{delegation-enforcement,mcp-interface}.md`
-- **Group G:** Custom absorption → Skills merged (routing.md kept)
+- **Group G:** Custom absorption → Spells merged (routing.md kept)
 
 **Zero knowledge loss confirmed.**
 
@@ -70,7 +69,7 @@ grep "^@\." AGENTS.md
 **Results:** 34 @ references validated
 
 **All references valid:**
-- 30 skill references (`.genie/agents/code/skills/*.md`)
+- 30 spell references (`.genie/agents/code/spells/*.md`)
 - 2 doc references (`.genie/docs/*.md`)
 - 2 QA references (`.genie/agents/code/qa.md`, `.genie/qa/checklist.md`)
 
@@ -123,7 +122,7 @@ pnpm run build:genie
 
 5. **Metadata & References (113 lines):**
    - Repository self-awareness
-   - 30 @ skill references (token-efficient pointers)
+   - 30 @ spell references (token-efficient pointers)
    - Directory map
    - MCP quick reference
 
@@ -152,9 +151,9 @@ pnpm run build:genie
 
 **Current approach (Groups A-H):**
 - **AGENTS.md:** 627 lines (loaded ONCE via CLAUDE.md)
-- **30 skills:** Referenced via @ (lightweight pointers)
+- **30 spells:** Referenced via @ (lightweight pointers)
 - **Agents:** Extend base with specialty (no AGENTS.md reload)
-- **Total cost:** 627 lines + skill loading on-demand
+- **Total cost:** 627 lines + spell loading on-demand
 - **Token efficiency:** 98.8% reduction vs explosion scenario
 
 ---
@@ -168,10 +167,10 @@ wc -l AGENTS.md  # → 627 lines
 
 # Knowledge preservation
 grep -l "Developer Welcome Flow" .genie/agents/code/agents/git/git.md  # ✅
-grep -l "Task Breakdown Structure" .genie/agents/code/skills/prompting-standards.md  # ✅
-grep -l "Forge MCP Task Pattern" .genie/agents/code/skills/forge-mcp-pattern.md  # ✅
-grep -l "Meta-Learn" .genie/agents/code/skills/meta-learn-protocol.md  # ✅
-grep -l "Publishing Protocol" .genie/agents/code/skills/publishing-protocol.md  # ✅
+grep -l "Task Breakdown Structure" .genie/agents/code/spells/prompting-standards.md  # ✅
+grep -l "Forge MCP Task Pattern" .genie/agents/code/spells/forge-mcp-pattern.md  # ✅
+grep -l "Meta-Learn" .genie/agents/code/spells/meta-learn-protocol.md  # ✅
+grep -l "Publishing Protocol" .genie/agents/code/spells/publishing-protocol.md  # ✅
 
 # @ references
 grep "^@\." AGENTS.md  # → 34 valid references

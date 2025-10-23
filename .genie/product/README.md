@@ -1,6 +1,5 @@
 # Product Docs Index
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 Use these as the single source of truth for product context. Reference with `@.genie/product/...` so agents auto-load content.
 

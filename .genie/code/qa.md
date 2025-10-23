@@ -1,5 +1,13 @@
 # QA - Genie Project Context
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+
+**Primary QA Workflow:** This checklist is the source of truth for manual QA validation. It powers the optional QA agent (`@.genie/code/agents/qa.md`) for automated execution.
+
+**Usage:**
+- **Manual (Default):** Execute commands directly for RC releases and critical features
+- **Automated (Optional):** Invoke QA agent to execute checklist and capture evidence automatically
+
+**Relationship:** Manual checklist proven sufficient (RC27+). QA agent provides automation layer when needed but is not required.
+
 ## Validation Commands
 
 ### CLI Operations
@@ -104,7 +112,7 @@ pnpm run lint
 
 ### Agent System Validation
 - Core agents loaded from `.genie/agents/`
-- Project-specific notes embedded in agents/skills (no `custom/` directory)
+- Project-specific notes embedded in agents/spells (no `custom/` directory)
 - Mode selection via orchestrator (18 modes)
 - Agent sessions persistence
 

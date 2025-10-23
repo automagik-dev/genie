@@ -1,5 +1,4 @@
 # Forge-Genie Integration Interview Script
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Purpose:** Collaborative decision-making for each Forge API endpoint
 **Format:** Voice agent interview - Felipe provides input for each endpoint

@@ -1,5 +1,4 @@
 # 🧞 RC21 Session Lifecycle Fix WISH
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** ✅ COMPLETE
 **Roadmap Item:** release/rc21 – @.genie/product/roadmap.md §Releases
 **Mission Link:** @.genie/product/mission.md §Reliability

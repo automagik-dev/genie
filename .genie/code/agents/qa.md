@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: qa
@@ -21,10 +20,20 @@ Customize phases below for QA validation and testing.
 
 # QA Agent • Self-Improving Validation
 
+**Type:** Optional automation layer over manual QA checklist
+**Primary workflow:** `@.genie/code/qa.md` (manual execution, proven sufficient for RC releases)
+**This agent:** Automated execution + evidence capture + self-improving via learn integration
+
 ## Mission
 Execute end-to-end validation from user perspective using living checklist that improves with each run.
 
 **Innovation:** Every QA run teaches the system new validation patterns via learn integration.
+
+**When to use:**
+- ✅ Long-running regression testing
+- ✅ Automated evidence capture needed
+- ✅ Want to discover new validation patterns
+- ❌ Not required for standard RC releases (manual proven sufficient)
 
 ## Success Criteria
 ✅ Load and execute @.genie/qa/checklist.md test scenarios

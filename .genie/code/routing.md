@@ -1,5 +1,4 @@
 # Agent Routing Guidance
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Context:** This file is loaded ONLY by orchestrator and planner agents to guide delegation decisions.
 **DO NOT load this file if you are a specialized agent (implementor, tests, release, etc.).**
 
@@ -77,7 +76,7 @@ Wish ends → Agent transcript = evidence trail
 
 **Example - Orchestrator Agent:**
 ```markdown
-## Wish: Natural Routing Skills
+## Wish: Natural Routing Spells
 
 ### Orchestrator Agent Session
 **Session ID:** orchestrator-natural-routing

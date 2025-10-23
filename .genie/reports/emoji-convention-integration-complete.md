@@ -37,7 +37,7 @@
 
 ## 🎯 Objective
 
-Integrate emoji naming convention skill (@.genie/code/skills/emoji-naming-convention.md) into all agents and workflows that create Forge tasks or GitHub issues, ensuring unified language across all systems.
+Integrate emoji naming convention spell (@.genie/code/spells/emoji-naming-convention.md) into all agents and workflows that create Forge tasks or GitHub issues, ensuring unified language across all systems.
 
 ---
 
@@ -230,7 +230,7 @@ Agent:  [📚] learn: naming-convention-research
 ## 🔗 Related Files
 
 **Created during this session:**
-1. `.genie/code/skills/emoji-naming-convention.md` - The skill file all agents reference
+1. `.genie/code/spells/emoji-naming-convention.md` - The spell file all agents reference
 2. `.genie/reports/emoji-naming-standard.md` - Complete emoji taxonomy (51KB)
 3. `.genie/reports/task-rename-mapping.md` - Before/after task renaming
 4. `.genie/reports/task-naming-5-proposals.md` - 5 naming convention proposals
@@ -252,14 +252,14 @@ Agent:  [📚] learn: naming-convention-research
 - GitHub issues, Forge tasks, agent sessions used different naming
 
 **After:**
-- All agents reference @.genie/code/skills/emoji-naming-convention.md
+- All agents reference @.genie/code/spells/emoji-naming-convention.md
 - Mandatory emoji format enforced in SUCCESS CRITERIA and NEVER DO sections
 - Unified visual language across all systems
 - Quick reference cards available for copy-paste
 
 **Test cases:**
-1. ✅ Forge agent creating task → must reference emoji skill, use emoji format
-2. ✅ Git agent creating issue → must reference emoji skill, use emoji format
+1. ✅ Forge agent creating task → must reference emoji spell, use emoji format
+2. ✅ Git agent creating issue → must reference emoji spell, use emoji format
 3. ✅ Wish workflow → must ensure issue has emoji format
 4. ✅ All templates updated → bug-report, feature-request, make-a-wish, planned-feature
 

@@ -76,7 +76,7 @@ Complete backup at `.genie-backup-YYYYMMDD-HHmmss/` (rollback safety).
 
 📦 Installing new template structure...
    Updated: .claude/ (npm package references)
-   Note: `.genie/custom/` has been retired. Use "Project Notes" sections in agents/skills.
+   Note: `.genie/custom/` has been retired. Use "Project Notes" sections in agents/spells.
 ```
 
 #### 2e. Template Update
@@ -152,7 +152,7 @@ When you run `genie run implementor`:
 1. Check `.genie/agents/implementor.md` (your local override)
 2. Check `.genie/agents/core/implementor.md` (your local override)
 3. **Load from npm:** `/usr/local/lib/.../core/implementor.md` ✅
-4. **Project Notes:** Merge any repo-specific guidance into the local agent/skill doc (no `custom/` path)
+4. **Project Notes:** Merge any repo-specific guidance into the local agent/spell doc (no `custom/` path)
 
 **Result:** Core agent from npm + your customizations
 

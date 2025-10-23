@@ -53,7 +53,7 @@ async createSession(params: CreateSessionParams): Promise<string> {
 
 ### Files Modified (4 total)
 
-#### 1. `.genie/code/skills/forge-architecture.md` (line 23)
+#### 1. `.genie/code/spells/forge-architecture.md` (line 23)
 **Before:**
 ```markdown
 - **Parameters:** task_id, executor (CLAUDE_CODE, etc.), base_branch (main)

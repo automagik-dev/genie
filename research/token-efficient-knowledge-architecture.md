@@ -9,7 +9,7 @@
 
 ## Pattern 1 – Two-Stage Lazy Entry
 1. **Bootstrap Capsule (≤500 tokens).** Replace the all-in `CLAUDE.md` load with a minimal manifest: identity sentence, non-negotiable guardrails, and a table pointing to where the rest lives. Any extra knowledge moves behind explicit lookups via `@` references.
-2. **Module Dispatch.** Create a machine-readable manifest (e.g., `bootstrap/manifest.json`) that maps skill families to file shards. The CLI resolves this manifest to decide which fragments to stream when the agent asserts it needs more.
+2. **Module Dispatch.** Create a machine-readable manifest (e.g., `bootstrap/manifest.json`) that maps spell families to file shards. The CLI resolves this manifest to decide which fragments to stream when the agent asserts it needs more.
 3. **Progressive Activation Hooks.** Teach the bootstrap to call `genie load <module>` instead of assuming the module already sits in context. The loader then brings in only the markdown chunks required for the current request.
 
 ## Pattern 2 – Redundant Prompt Pruning (Amendment #4)
@@ -18,7 +18,7 @@
 3. **Regression Guard.** Add a lint step that fails when the bootstrap capsule exceeds 500 tokens or when a removed-in-ledger phrase reappears, preventing accidental prompt bloat.
 
 ## Pattern 3 – Atomic Skill Units
-1. **Skill Shards.** Split monolithic skills into tiny (~80 token) files with YAML headers describing `purpose`, `triggers`, and `depends_on`. The bootstrap loads only shard headers; the body loads on demand.
+1. **Skill Shards.** Split monolithic spells into tiny (~80 token) files with YAML headers describing `purpose`, `triggers`, and `depends_on`. The bootstrap loads only shard headers; the body loads on demand.
 2. **Dependency Graph.** Build a directed graph from shard metadata so the loader can fetch the precise dependency chain rather than entire categories.
 3. **Task-Aligned Bundles.** Define stable bundles (e.g., “Wish Discovery”, “Forge Execution”, “Review QA”) that list minimal shard sets. Bundles stay small (<250 tokens) and can be stitched together when the issue scope crosses domains.
 

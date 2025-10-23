@@ -36,7 +36,7 @@ Eliminate "agents" concept, restructure folders to match natural hierarchy:
 
 ```
 .genie/
-├── skills/                   # Universal Genie orchestration
+├── spells/                   # Universal Genie orchestration
 │   └── *.md
 │
 ├── code/                     # Code collective
@@ -63,13 +63,13 @@ Eliminate "agents" concept, restructure folders to match natural hierarchy:
 │   │   ├── wish.md
 │   │   ├── review.md
 │   │   └── ...
-│   └── skills/               # Code-specific capabilities
+│   └── spells/               # Code-specific capabilities
 │       └── *.md
 │
 ├── create/                   # Create collective (future)
 │   ├── agents/
 │   ├── workflows/
-│   └── skills/
+│   └── spells/
 │
 └── [existing top-level dirs]
 ```
@@ -82,9 +82,9 @@ Eliminate "agents" concept, restructure folders to match natural hierarchy:
 
 **1.1 Create new structure:**
 ```bash
-mkdir -p .genie/skills
-mkdir -p .genie/code/{agents,workflows,skills}
-mkdir -p .genie/create/{agents,workflows,skills}
+mkdir -p .genie/spells
+mkdir -p .genie/code/{agents,workflows,spells}
+mkdir -p .genie/create/{agents,workflows,spells}
 ```
 
 **1.2 Move universal agents:**
@@ -138,25 +138,25 @@ mv .genie/agents/wish.md .genie/code/workflows/
 # review.md already moved above
 ```
 
-**1.5 Move skills:**
+**1.5 Move spells:**
 ```bash
-# Universal skills to .genie/skills/
-mv .genie/agents/code/skills/evidence-based-thinking.md .genie/skills/
-mv .genie/agents/code/skills/routing-decision-matrix.md .genie/skills/
-mv .genie/agents/code/skills/execution-integrity-protocol.md .genie/skills/
-mv .genie/agents/code/skills/persistent-tracking-protocol.md .genie/skills/
-mv .genie/agents/code/skills/meta-learn-protocol.md .genie/skills/
-mv .genie/agents/code/skills/delegation-discipline.md .genie/skills/
-mv .genie/agents/code/skills/blocker-protocol.md .genie/skills/
-mv .genie/agents/code/skills/chat-mode-helpers.md .genie/skills/
-mv .genie/agents/code/skills/experimentation-protocol.md .genie/skills/
-mv .genie/agents/code/skills/orchestration-protocols.md .genie/skills/
-mv .genie/agents/code/skills/parallel-execution.md .genie/skills/
-mv .genie/agents/code/skills/sequential-questioning.md .genie/skills/
-mv .genie/agents/code/skills/no-backwards-compatibility.md .genie/skills/
-mv .genie/agents/code/skills/know-yourself.md .genie/skills/
+# Universal spells to .genie/spells/
+mv .genie/agents/code/spells/evidence-based-thinking.md .genie/spells/
+mv .genie/agents/code/spells/routing-decision-matrix.md .genie/spells/
+mv .genie/agents/code/spells/execution-integrity-protocol.md .genie/spells/
+mv .genie/agents/code/spells/persistent-tracking-protocol.md .genie/spells/
+mv .genie/agents/code/spells/meta-learn-protocol.md .genie/spells/
+mv .genie/agents/code/spells/delegation-discipline.md .genie/spells/
+mv .genie/agents/code/spells/blocker-protocol.md .genie/spells/
+mv .genie/agents/code/spells/chat-mode-helpers.md .genie/spells/
+mv .genie/agents/code/spells/experimentation-protocol.md .genie/spells/
+mv .genie/agents/code/spells/orchestration-protocols.md .genie/spells/
+mv .genie/agents/code/spells/parallel-execution.md .genie/spells/
+mv .genie/agents/code/spells/sequential-questioning.md .genie/spells/
+mv .genie/agents/code/spells/no-backwards-compatibility.md .genie/spells/
+mv .genie/agents/code/spells/know-yourself.md .genie/spells/
 
-# Code-specific skills remain at .genie/code/skills/
+# Code-specific spells remain at .genie/code/spells/
 # (rest stay where they are under code/)
 ```
 
@@ -193,19 +193,19 @@ rm -rf .genie/agents/create/agents/
 grep -r "@.genie/code/agents/" .genie/ --include="*.md"
 grep -r "@.genie/code/agents/" .genie/ --include="*.md"
 grep -r "@.genie/code/workflows/" .genie/ --include="*.md"
-grep -r "@.genie/code/skills/" .genie/ --include="*.md"
+grep -r "@.genie/code/spells/" .genie/ --include="*.md"
 ```
 
 **Replacement patterns:**
 - `@.genie/code/agents/` → `@.genie/code/agents/` (check if universal or code)
 - `@.genie/code/agents/` → `@.genie/code/agents/`
 - `@.genie/code/workflows/` → `@.genie/code/workflows/`
-- `@.genie/code/skills/` → `@.genie/code/skills/` OR `@.genie/skills/` (check which)
+- `@.genie/code/spells/` → `@.genie/code/spells/` OR `@.genie/spells/` (check which)
 
 **Key files needing updates:**
 - `AGENTS.md` (massive update - use prompt agent)
 - `CLAUDE.md` (@ references)
-- All skills (cross-references)
+- All spells (cross-references)
 - All agents (self-references)
 - All workflows
 - SESSION-STATE.md
@@ -239,7 +239,7 @@ grep -ri "agent" .genie/ --include="*.md" | wc -l
 
 **Files requiring manual review:**
 - AGENTS.md (comprehensive revamp via prompt agent)
-- All skills (careful with examples)
+- All spells (careful with examples)
 - All agents (self-identification)
 
 ---
@@ -273,9 +273,9 @@ Output:
 
 ---
 
-### Phase 5: Skills Updates
+### Phase 5: Spells Updates
 
-**Skills referencing hierarchy:**
+**Spells referencing hierarchy:**
 1. `routing-decision-matrix.md` - agent invocation patterns
 2. `delegation-discipline.md` - becomes "invocation-discipline.md"?
 3. `know-yourself.md` - capabilities section
@@ -284,7 +284,7 @@ Output:
 6. `team-consultation-protocol.md` - already correct
 
 **Update strategy:**
-- Read each skill
+- Read each spell
 - Replace agent terminology
 - Update @ references
 - Verify examples match new structure
@@ -351,7 +351,7 @@ refactor: Architecture migration - agents to natural collective structure
 1. **Folder Restructure:**
    - .genie/agents/ → .genie/code/agents/
    - .genie/agents/code/agents/ → .genie/code/agents/
-   - .genie/agents/code/skills/ → split: .genie/skills/ + .genie/code/skills/
+   - .genie/agents/code/spells/ → split: .genie/spells/ + .genie/code/spells/
    - .genie/agents/workflows/ → .genie/code/workflows/
    - Clear hierarchy: Genie → Collectives (code/create) → Entities (agents/teams/workflows)
 
@@ -372,12 +372,12 @@ refactor: Architecture migration - agents to natural collective structure
 
 5. **Documentation:**
    - SESSION-STATE.md language updated
-   - All skills reflect new architecture
+   - All spells reflect new architecture
    - Teams architecture integrated naturally
 
 **Impact:**
 - Zero user-facing changes (internal restructure only)
-- Natural hierarchy: .genie/code/{agents,teams,workflows,skills}
+- Natural hierarchy: .genie/code/{agents,teams,workflows,spells}
 - Foundation for create/nl collectives
 
 **Migration Plan:** .genie/reports/architecture-migration-agents-to-agents-20251019.md
@@ -401,7 +401,7 @@ git push origin rc28
 - [ ] Folder structure matches target
 - [ ] AGENTS.md reflects natural architecture
 - [ ] SESSION-STATE.md uses agent language
-- [ ] All skills updated
+- [ ] All spells updated
 - [ ] Committed and pushed
 
 ---

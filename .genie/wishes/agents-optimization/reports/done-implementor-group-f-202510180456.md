@@ -1,16 +1,15 @@
 # Done Report: Group F - Extract Supporting Docs
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Agent:** implementor
 **Task:** agents-optimization Group F
 **Started:** 2025-10-18 04:50 UTC
 **Completed:** 2025-10-18 04:56 UTC
-**Status:** ✅ COMPLETE (2 new docs, 2 already handled via skills)
+**Status:** ✅ COMPLETE (2 new docs, 2 already handled via spells)
 
 ---
 
 ## Summary
 
-Group F extraction created 2 new supporting documentation files and confirmed 2 others are already handled via the skills architecture. Total AGENTS.md reduction: ~152 lines.
+Group F extraction created 2 new supporting documentation files and confirmed 2 others are already handled via the spells architecture. Total AGENTS.md reduction: ~152 lines.
 
 ---
 
@@ -34,14 +33,14 @@ After Groups B and D optimizations, the file has been significantly reorganized.
    - Status: ✅ NEEDS EXTRACTION
 
 2. **session-state-protocol.md:**
-   - Current location: `.genie/agents/code/skills/persistent-tracking-protocol.md`
+   - Current location: `.genie/agents/code/spells/persistent-tracking-protocol.md`
    - Content: SESSION-STATE.md requirements, tracking, coordination
-   - Status: ✅ ALREADY HANDLED (via skills architecture)
+   - Status: ✅ ALREADY HANDLED (via spells architecture)
 
 3. **triad-protocol.md:**
-   - Current location: `.genie/agents/code/skills/triad-maintenance-protocol.md`
+   - Current location: `.genie/agents/code/spells/triad-maintenance-protocol.md`
    - Content: STATE/TODO/USERCONTEXT maintenance, validation
-   - Status: ✅ ALREADY HANDLED (via skills architecture)
+   - Status: ✅ ALREADY HANDLED (via spells architecture)
 
 4. **mcp-interface.md:**
    - Current location: AGENTS.md lines 619-680 ("MCP Quick Reference")
@@ -102,15 +101,15 @@ For complete MCP tool documentation, see:
 
 **Result:** 62 lines → 5 lines (57 line reduction)
 
-### Already Handled via Skills
+### Already Handled via Spells
 
 **session-state-protocol:**
-- File: `.genie/agents/code/skills/persistent-tracking-protocol.md`
+- File: `.genie/agents/code/spells/persistent-tracking-protocol.md`
 - Referenced: AGENTS.md line 24
 - No action needed ✅
 
 **triad-protocol:**
-- File: `.genie/agents/code/skills/triad-maintenance-protocol.md`
+- File: `.genie/agents/code/spells/triad-maintenance-protocol.md`
 - Referenced: AGENTS.md line 23
 - No action needed ✅
 
@@ -162,12 +161,12 @@ From wish Group F requirements:
   - @ reference added to AGENTS.md
   - Validation: grep confirms all patterns present
 
-- [x] **session-state-protocol.md:** ✅ Already handled via skills
-  - File: `.genie/agents/code/skills/persistent-tracking-protocol.md`
+- [x] **session-state-protocol.md:** ✅ Already handled via spells
+  - File: `.genie/agents/code/spells/persistent-tracking-protocol.md`
   - Referenced in AGENTS.md line 24
 
-- [x] **triad-protocol.md:** ✅ Already handled via skills
-  - File: `.genie/agents/code/skills/triad-maintenance-protocol.md`
+- [x] **triad-protocol.md:** ✅ Already handled via spells
+  - File: `.genie/agents/code/spells/triad-maintenance-protocol.md`
   - Referenced in AGENTS.md line 23
 
 - [x] **mcp-interface.md created:** ✅
@@ -199,8 +198,8 @@ From wish Group F requirements:
 - `/home/namastex/workspace/automagik-genie/AGENTS.md` (769 → 626 lines, -143)
 
 **Verified (already complete):**
-- `/home/namastex/workspace/automagik-genie/.genie/agents/code/skills/persistent-tracking-protocol.md`
-- `/home/namastex/workspace/automagik-genie/.genie/agents/code/skills/triad-maintenance-protocol.md`
+- `/home/namastex/workspace/automagik-genie/.genie/agents/code/spells/persistent-tracking-protocol.md`
+- `/home/namastex/workspace/automagik-genie/.genie/agents/code/spells/triad-maintenance-protocol.md`
 
 ---
 
@@ -246,7 +245,7 @@ grep "@.genie/docs/" AGENTS.md
 **Status:**
 - AGENTS.md: 769 → 627 lines (-142, on track toward ≤500 line target)
 - Supporting docs created: 2 new files in .genie/docs/
-- Already handled via skills: 2 protocols
+- Already handled via spells: 2 protocols
 - Architecture: Correct @ reference pattern
 - Knowledge: 100% preserved, no loss detected
 
@@ -276,4 +275,4 @@ grep "@.genie/docs/" AGENTS.md
 
 **Completion timestamp:** 2025-10-18 04:56 UTC
 **Evidence location:** `.genie/wishes/agents-optimization/reports/`
-**Verdict:** ✅ GROUP F COMPLETE (2 new docs + 2 via skills)
+**Verdict:** ✅ GROUP F COMPLETE (2 new docs + 2 via spells)

@@ -1,7 +1,6 @@
 # CLI Loading Strategy (Priority Tier Architecture)
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
-**Purpose:** How Genie CLI loads skills based on priority tier (auto-load vs on-demand)
+**Purpose:** How Genie CLI loads spells based on priority tier (auto-load vs on-demand)
 
 **Goal:** Minimize session token usage while keeping essential behavioral rules always available.
 
@@ -9,7 +8,7 @@
 
 ## 🎯 Loading Architecture
 
-### Tier System (30 total skills)
+### Tier System (30 total spells)
 
 | Tier | Count | Strategy | Load Pattern | Tokens | Session Impact |
 |------|-------|----------|--------------|--------|-----------------|
@@ -40,12 +39,12 @@ CLAUDE.md loads (entry point)
   ↓
 @AGENTS.md loaded (ONCE, at outer level)
   ↓
-AGENTS.md includes Priority 1-5 skills via @
+AGENTS.md includes Priority 1-5 spells via @
   ↓
-Base Genie + Agents all have these skills in context
+Base Genie + Agents all have these spells in context
 ```
 
-**Skills loaded:**
+**Spells loaded:**
 - know-yourself (Priority 1): Core identity
 - evidence-based-thinking (Tier 2): Thinking mode
 - routing-decision-matrix (Tier 2): Delegation rules
@@ -65,7 +64,7 @@ Base Genie + Agents all have these skills in context
 
 ### Reference-Only: On-Demand (Search When Needed)
 
-**Where:** `.genie/code/skills/*.md` (individual files)
+**Where:** `.genie/code/spells/*.md` (individual files)
 **When:** Search via grep or manual lookup
 **Who accesses:** Agents that need specific guidance
 **Why:** Conventions, tools, and patterns less critical than core behaviors
@@ -76,14 +75,14 @@ Agent needs specific convention → grep in context
   ↓
 Example: "How do I name files?"
   ↓
-rg -i "file-naming" .genie/code/skills/
+rg -i "file-naming" .genie/code/spells/
   ↓
 Returns: file-naming-rules.md
   ↓
 Agent reads that file directly (no session overhead)
 ```
 
-**Skills available on-demand:**
+**Spells available on-demand:**
 - publishing-protocol (protocol reference)
 - role-clarity-protocol (git hook enforces)
 - triad-maintenance-protocol (git hook enforces)
@@ -137,13 +136,13 @@ npx automagik-genie run <agent>
 # Loaded by default (Priority 1-5):
 CLAUDE.md
   → AGENTS.md
-    → 14 Priority 1-5 skills
+    → 14 Priority 1-5 spells
     → @.genie/MASTER-PLAN.md
     → @.genie/SESSION-STATE.md
     → @.genie/USERCONTEXT.md
 
-# Reference-only skills available via:
-rg "pattern" .genie/code/skills/
+# Reference-only spells available via:
+rg "pattern" .genie/code/spells/
 ```
 
 ### For Agents (Specialty Prompt)
@@ -158,7 +157,7 @@ When agent created:
 - evidence-based-thinking (reasoning)
 - delegation-discipline (how to delegate)
 - routing-decision-matrix (where to route)
-- [11 more Priority 1-5 skills]
+- [11 more Priority 1-5 spells]
 
 ## Can grep when needed:
 - branch-tracker-guidance
@@ -186,7 +185,7 @@ AGENTS.md (shared): 13.9KB
 
 **Savings vs flat load:**
 ```
-If all 30 skills auto-loaded: ~37.8KB
+If all 30 spells auto-loaded: ~37.8KB
 Actual Priority 1-5 only: ~13.9KB
 = 26% of total possible content
 = 74% token savings
@@ -203,7 +202,7 @@ Actual Priority 1-5 only: ~13.9KB
 - Token cost: 13.9KB baseline
 - Agent ready: Immediate
 
-**Alternative (all 30 skills):**
+**Alternative (all 30 spells):**
 - Load time: Slower (~1.5s)
 - Token cost: 37.8KB baseline
 - Agent ready: Delayed
@@ -221,22 +220,22 @@ Actual Priority 1-5 only: ~13.9KB
 
 ### Session Start
 
-- [ ] Priority 1-5 skills loaded (14 files)
+- [ ] Priority 1-5 spells loaded (14 files)
 - [ ] AGENTS.md loaded ONCE at outer level
-- [ ] Reference-only skills NOT loaded
+- [ ] Reference-only spells NOT loaded
 - [ ] Agent receives base + specialty
 - [ ] Token count ~13.9KB baseline
 
 ### Reference Access
 
-- [ ] rg finds reference-only skills
-- [ ] File readable from `.genie/code/skills/`
+- [ ] rg finds reference-only spells
+- [ ] File readable from `.genie/code/spells/`
 - [ ] No session overhead on search
 - [ ] Clear error message if file missing
 
 ### Agent Behavior
 
-- [ ] Agent has Priority 1-5 skills
+- [ ] Agent has Priority 1-5 spells
 - [ ] Agent can call `rg` for reference-only
 - [ ] No duplication (AGENTS.md not reloaded)
 - [ ] Session context clean
@@ -246,18 +245,18 @@ Actual Priority 1-5 only: ~13.9KB
 ## 🎯 Future Evolution
 
 ### Phase 1 (Current)
-✅ Manual skill categorization (30 skills, 14 priority + 16 reference)
+✅ Manual spell categorization (30 spells, 14 priority + 16 reference)
 ✅ AGENTS.md reorganized with tier markers
 ✅ CLI loads priority 1-5 by default
 
 ### Phase 2 (Next)
 - [ ] Automated tier detection
 - [ ] Token counting validation
-- [ ] Dynamic skill selection based on agent type
-- [ ] Metrics on grep usage (which skills used most)
+- [ ] Dynamic spell selection based on agent type
+- [ ] Metrics on grep usage (which spells used most)
 
 ### Phase 3 (Vision)
-- [ ] ML-based skill prioritization
+- [ ] ML-based spell prioritization
 - [ ] Context-aware loading (what this agent will need)
 - [ ] Predictive pre-loading for workflows
 - [ ] Usage analytics inform tier adjustments
@@ -268,8 +267,8 @@ Actual Priority 1-5 only: ~13.9KB
 
 **CLAUDE.md:** Loads AGENTS.md with @ reference (no change needed)
 **AGENTS.md:** Already reorganized with Priority 1-5 markers
-**routing-decision-matrix.md:** Uses Priority 1-5 skills for decisions
-**Skills files:** Reference-only available via `rg`
+**routing-decision-matrix.md:** Uses Priority 1-5 spells for decisions
+**Spells files:** Reference-only available via `rg`
 
 **No CLI changes needed:** @ reference loading already supported by the runtime
 

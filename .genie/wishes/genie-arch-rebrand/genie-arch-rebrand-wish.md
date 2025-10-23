@@ -1,5 +1,4 @@
 # Wish: Genie Architecture Rebranding
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17
 **Status:** Planning
 **Priority:** High
@@ -12,7 +11,7 @@
 
 Current folder structure and output displays don't reflect the true architecture:
 - "genie" is redundant naming (all agents are genie - it's the template type that matters)
-- Current "workflows" and "skills" folders don't match invocability semantics
+- Current "workflows" and "spells" folders don't match invocability semantics
 - Output shows file paths (`genie/agents/git/git`) instead of conceptual names (`Starting agent: git`)
 - No clear separation between universal agents and template-specific agents
 - Create template agents exist in `templates/` but not in working `.genie/agents/`
@@ -129,7 +128,7 @@ Perfect markdown agent agent graph with:
 ├── agents/
 │   ├── genie/             # Redundant naming
 │   │   ├── genie.md
-│   │   └── skills/        # Actually agents, not skills
+│   │   └── spells/        # Actually agents, not spells
 │   ├── git/
 │   │   ├── git.md
 │   │   ├── issue.md       # Should be in workflows/
@@ -153,7 +152,7 @@ Perfect markdown agent agent graph with:
 │
 ├── code/
 │   ├── code.md
-│   ├── skills/
+│   ├── spells/
 │   └── agents/           # Code-specific ONLY
 │       ├── wish.md (override)
 │       ├── implementor.md, tests.md, release.md
@@ -165,7 +164,7 @@ Perfect markdown agent agent graph with:
 │
 └── create/
     ├── create.md
-    ├── skills/
+    ├── spells/
     └── agents/           # Create-specific ONLY
         └── wish.md (override)
 ```
@@ -178,14 +177,14 @@ Perfect markdown agent agent graph with:
 mkdir -p .genie/code/agents
 
 # Create code template
-mkdir -p .genie/agents/code/skills
+mkdir -p .genie/agents/code/spells
 mkdir -p .genie/agents/code/agents
 
 # Move genie.md → code.md
 mv .genie/agents/genie/genie.md .genie/agents/code/code.md
 
 # Create create template
-mkdir -p .genie/agents/create/skills
+mkdir -p .genie/agents/create/spells
 mkdir -p .genie/agents/create/agents
 ```
 
@@ -211,20 +210,20 @@ cp templates/create/.genie/agents/workflows/wish.md .genie/agents/create/agents/
 rmdir .genie/agents/workflows/
 ```
 
-**A4: Classify and move strategic agents from genie/skills/**
+**A4: Classify and move strategic agents from genie/spells/**
 ```bash
 # Move universal strategic agents
 for agent in analyze challenge consensus explore debate deep-dive socratic design-review risk-audit audit refactor docgen; do
-  mv .genie/agents/genie/skills/$agent.md .genie/agents/$agent.md 2>/dev/null || true
+  mv .genie/agents/genie/spells/$agent.md .genie/agents/$agent.md 2>/dev/null || true
 done
 
 # Move code-specific strategic agents
 for agent in test-strategy tracer precommit; do
-  mv .genie/agents/genie/skills/$agent.md .genie/agents/code/agents/$agent.md 2>/dev/null || true
+  mv .genie/agents/genie/spells/$agent.md .genie/agents/code/agents/$agent.md 2>/dev/null || true
 done
 
 # Clean up
-rmdir .genie/agents/genie/skills/
+rmdir .genie/agents/genie/spells/
 rmdir .genie/agents/genie/
 ```
 
@@ -276,19 +275,19 @@ cp templates/create/.genie/agents/prompt.md .genie/agents/prompt.md
 ├── agents/ (15+ universal)
 ├── code/
 │   ├── code.md
-│   ├── skills/ (empty initially)
+│   ├── spells/ (empty initially)
 │   └── agents/ (9+ code-specific)
 └── create/
     ├── create.md
-    ├── skills/ (empty initially)
+    ├── spells/ (empty initially)
     └── agents/ (1 create-specific)
 ```
 
 ---
 
-### Group B: Skills Extraction from AGENTS.md
+### Group B: Spells Extraction from AGENTS.md
 
-(Same as before - extract skills into code/skills/ and create/skills/)
+(Same as before - extract spells into code/spells/ and create/spells/)
 
 ---
 
@@ -331,9 +330,9 @@ const displayName = (agentPath: string) => {
   }
 
   // Legacy paths
-  if (agentPath.match(/^agents\/genie\/skills\/(\w+)\.md$/)) {
-    const skill = agentPath.match(/skills\/(\w+)\.md$/)?.[1]
-    return `🧞 Starting agent: ${skill} (legacy path)`
+  if (agentPath.match(/^agents\/genie\/spells\/(\w+)\.md$/)) {
+    const spell = agentPath.match(/spells\/(\w+)\.md$/)?.[1]
+    return `🧞 Starting agent: ${spell} (legacy path)`
   }
 
   // Fallback
@@ -378,8 +377,8 @@ mcp__genie__list_agents
 
 **Folder Reorganization:** ✅ COMPLETE (Group A)
 - [x] agents/ created with ~15 universal agents (21 created)
-- [x] code/ created with code.md + skills/ + agents/
-- [x] create/ created with create.md + skills/ + agents/
+- [x] code/ created with code.md + spells/ + agents/
+- [x] create/ created with create.md + spells/ + agents/
 - [x] workflows/ deleted (files moved to agents/ or code/agents/)
 - [x] agents/genie/ deleted (files classified and moved)
 - [x] ~9 code-specific agents in code/agents/ (10 created)
@@ -387,9 +386,9 @@ mcp__genie__list_agents
 - [x] 1 create-specific agent in create/agents/
 - [x] Old agents/ directory reorganized correctly
 
-**Skills Extraction:** ✅ COMPLETE (Group B - Pre-existing)
-- [x] Skills extracted into code/skills/ (32 skills exist)
-- [x] code.md includes @ references to skills (7 references)
+**Spells Extraction:** ✅ COMPLETE (Group B - Pre-existing)
+- [x] Spells extracted into code/spells/ (32 spells exist)
+- [x] code.md includes @ references to spells (7 references)
 - [x] create.md structure appropriate (simpler, conversational)
 - [x] AGENTS.md updated with @ references (all tiers documented)
 
@@ -408,7 +407,7 @@ mcp__genie__list_agents
 - [x] No regression in existing features (build passes, all tests pass)
 
 **Documentation:** ✅ COMPLETE
-- [x] AGENTS.md updated for base + template structure (skill tiers documented)
+- [x] AGENTS.md updated for base + template structure (spell tiers documented)
 - [x] QA validation report created (qa-validation-report.md)
 - [x] Work summary documented (all groups validated)
 

@@ -1,6 +1,5 @@
 # 🧞 Genie User Context: [Your Name]
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Current Repo:** automagik-genie
 **Active Since:** [Date you started]
 

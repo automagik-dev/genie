@@ -1,5 +1,4 @@
 # Task C: Extract Forge Patterns
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** C
 **Target:** `.genie/agents/genie/agents/forge/forge.md`
 **Lines to extract:** AGENTS.md 1209-1258

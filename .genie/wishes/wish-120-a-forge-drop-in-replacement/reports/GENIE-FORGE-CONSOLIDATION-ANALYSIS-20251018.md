@@ -1,5 +1,4 @@
 # Genie-Forge Architectural Consolidation Analysis
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 11:30 UTC
 **Author:** Claude Code (self-directed investigation)
 **Status:** DEEP-DIVE INVESTIGATION COMPLETE
@@ -404,7 +403,7 @@ No polling = no timeouts = no race conditions.
 **Files Analyzed:**
 - `.genie/cli/src/lib/background-launcher.ts` (timeout bug, lines 65-108)
 - `.genie/mcp/src/server.ts` (MCP Forge integration)
-- `.genie/agents/code/skills/forge-integration.md` (Forge as meta-agent)
+- `.genie/agents/code/spells/forge-integration.md` (Forge as meta-agent)
 - `.genie/scripts/forge-task-link.js` (Forge task linking automation)
 - `.genie/SESSION-STATE.md` (Current orchestration state)
 

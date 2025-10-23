@@ -1,5 +1,4 @@
 # RC21 QA Validation Results - Group B
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18 04:19 UTC
 **Tester:** Genie (automated validation)
 **Build:** v2.4.0-rc.20 (local with RC21 fixes applied)

@@ -104,15 +104,8 @@ function main() {
     'forge-task-link.cjs',  // Auto-link Forge tasks to wishes on first commit
   ];
 
-  // Auto-update .genie markdown metadata (timestamps + versions)
-  // Amendment #9: No more !date commands, use commit timestamp automation
-  timeExecution('Genie markdown metadata update', () => {
-    const updateCode = run('update-genie-markdown-metadata.cjs');
-    if (updateCode !== 0) {
-      console.warn('⚠️  Markdown metadata update failed (non-blocking)');
-    }
-    return updateCode;
-  });
+  // Amendment #7: Git is source of truth - no auto-metadata generation
+  // Disabled: update-genie-markdown-metadata.cjs (timestamps/versions duplicate git data)
 
   // Run worktree access prevention check (bash script)
   console.log('🔍 Checking for Forge worktree violations...');
@@ -130,18 +123,7 @@ function main() {
     if (code !== 0) exitCode = 1;
   }
 
-  // Generate/update workspace summary tree (staged automatically by the script)
-  try {
-    timeExecution('Workspace summary generation', () => {
-      const genCode = run('generate-workspace-summary.cjs');
-      if (genCode !== 0) {
-        console.warn('⚠️  Workspace summary generation failed (non-blocking)');
-      }
-      return genCode;
-    });
-  } catch (e) {
-    console.warn('⚠️  Workspace summary generation error (non-blocking)');
-  }
+  // Amendment #7: Removed generate-workspace-summary.cjs (redundant with hand-curated knowledge graph in AGENTS.md)
 
   // Migrate QA workflows from scenarios-from-bugs.md (auto-generate stubs)
   try {

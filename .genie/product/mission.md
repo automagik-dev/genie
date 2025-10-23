@@ -1,5 +1,4 @@
 # Genie Dev Mission
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Pitch
 
 Genie Dev is the self-development branch of the Genie framework. It turns the template into a living meta-agent that can audit, upgrade, and validate its own workflow stack while remaining installable in any host repository.

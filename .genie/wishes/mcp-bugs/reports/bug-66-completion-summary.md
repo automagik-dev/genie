@@ -1,5 +1,4 @@
 # Bug #66 Task Completion Summary
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Task:** [BUG] #66-mcp-session-disappears-after-resume
 **Genie:** Bug #66 Investigation Genie (Claude Haiku 4.5)
 **Branch:** forge/6fb9-bug-66-mcp-sessi

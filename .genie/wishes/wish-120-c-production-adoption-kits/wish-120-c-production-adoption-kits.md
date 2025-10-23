@@ -730,5 +730,4 @@ genie update apply
 
 **Document Author:** Genie (forge/120-executor-replacement)
 **Version:** 1.0.0
-**Last Updated:** 2025-10-18
 **Status:** 📝 Draft - Blocked by Wish #120-B (#144)

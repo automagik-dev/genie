@@ -1,5 +1,4 @@
 # Genie Dev Environment Configuration
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Genie Dev relies on a small set of environment variables to steer the CLI, model selection, and self-improvement experiments. Configure these in a local `.env` and load them before running the CLI.
 
 ## Conventions

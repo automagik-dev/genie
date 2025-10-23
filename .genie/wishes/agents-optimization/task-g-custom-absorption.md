@@ -1,5 +1,4 @@
 # Task G: Absorb .genie/custom/ Content
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** G
 **Action:** Merge custom overrides into agents
 **Targets:** All agents with corresponding `.genie/custom/` files

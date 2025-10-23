@@ -1,12 +1,12 @@
-# Mandatory Skills Alignment Review
+# Mandatory Spells Alignment Review
 
 **Date:** 2025-10-20
-**Purpose:** Review 5 mandatory skills against current framework state
-**Context:** Executable skills paradigm shift + Forge-first architecture
+**Purpose:** Review 5 mandatory spells against current framework state
+**Context:** Executable spells paradigm shift + Forge-first architecture
 
 ---
 
-## Skills Reviewed
+## Spells Reviewed
 
 1. `know-yourself.md` (Tier 1 - Identity)
 2. `evidence-based-thinking.md` (Tier 2 - Decision Framework)
@@ -16,14 +16,14 @@
 
 ---
 
-## Skill 1: know-yourself.md
+## Spell 1: know-yourself.md
 
 ### Current State Analysis
 
 **✅ ALIGNED SECTIONS:**
 - Token economy principles (still valid)
 - "What You Already Know" vs "What You Need Instructions For" (core principle)
-- Application to skills/agents (still relevant)
+- Application to spells/agents (still relevant)
 - Validation questions (still useful)
 
 **🔴 OUTDATED SECTIONS:**
@@ -50,7 +50,7 @@
 **KEEP:**
 - Core principle (lines 1-27)
 - Token economy (lines 29-53)
-- Application to skills/agents (lines 55-70)
+- Application to spells/agents (lines 55-70)
 - Validation (lines 72-79)
 
 **REMOVE:**
@@ -60,15 +60,15 @@
 **ADD:**
 - New section: "Current Identity (2025-10-20)"
   - Forge-first orchestration
-  - Executable skills (not all auto-loaded)
+  - Executable spells (not all auto-loaded)
   - Wish→Issue→Forge→PR workflow
-  - Real-time skill execution capability
+  - Real-time spell execution capability
 
 **NEW TOTAL:** ~120 lines (down from 202 lines, 40% reduction)
 
 ---
 
-## Skill 2: evidence-based-thinking.md
+## Spell 2: evidence-based-thinking.md
 
 ### Current State Analysis
 
@@ -82,13 +82,13 @@
 
 **🟢 NO CHANGES NEEDED**
 
-This skill is **timeless** - the evidence-based approach doesn't change with framework evolution.
+This spell is **timeless** - the evidence-based approach doesn't change with framework evolution.
 
 **TOTAL:** 102 lines (optimal, keep as-is)
 
 ---
 
-## Skill 3: routing-decision-matrix.md
+## Spell 3: routing-decision-matrix.md
 
 ### Current State Analysis
 
@@ -121,13 +121,13 @@ This skill is **timeless** - the evidence-based approach doesn't change with fra
 **VERIFY & UPDATE:**
 - Lines 89-102: Validate universal analysis agents exist
 - Lines 146-156: Update agent selection matrix with current agents
-- Add note: "Some agents are executable skills (on-demand), not persistent sessions"
+- Add note: "Some agents are executable spells (on-demand), not persistent sessions"
 
 **TOTAL:** ~338 lines (minor updates, mostly accurate)
 
 ---
 
-## Skill 4: delegation-discipline.md
+## Spell 4: delegation-discipline.md
 
 ### Current State Analysis
 
@@ -142,16 +142,16 @@ This skill is **timeless** - the evidence-based approach doesn't change with fra
 1. **"🔴 CRITICAL LEARNING: Orchestration Simplification"** (Lines 105-192)
    - References "Three-tier model: Forge Tasks → Me → Felipe"
    - References "stop over-engineering orchestration"
-   - **PROBLEM:** This section contradicts executable skills paradigm
+   - **PROBLEM:** This section contradicts executable spells paradigm
    - **ANALYSIS:**
      - "Forge Tasks = orchestrators" is CORRECT
      - "Me = execute what Forge tells me" is PARTIALLY CORRECT
-     - Missing: "I can execute skills on-demand for dynamic behavior"
-   - **FIX:** Update to reflect Forge + executable skills hybrid model
+     - Missing: "I can execute spells on-demand for dynamic behavior"
+   - **FIX:** Update to reflect Forge + executable spells hybrid model
 
 2. **Recent Violations** (Lines 73-92)
    - 2025-10-16, 2025-10-18 violations
-   - **PROBLEM:** Historical context, clutters the skill
+   - **PROBLEM:** Historical context, clutters the spell
    - **FIX:** Move to learn reports, keep only core principle
 
 ### Recommended Changes
@@ -162,11 +162,11 @@ This skill is **timeless** - the evidence-based approach doesn't change with fra
 - Pre-execution checklist concept (adapt for current model)
 
 **UPDATE:**
-- Lines 105-192: Replace with "Forge + Executable Skills Model"
+- Lines 105-192: Replace with "Forge + Executable Spells Model"
   - Forge tasks orchestrate work
-  - I execute via Forge delegation OR via skill execution
-  - Skills are callable on-demand (not background tasks)
-  - Example: Run `wish-issue-linkage-rule` skill before wish creation
+  - I execute via Forge delegation OR via spell execution
+  - Spells are callable on-demand (not background tasks)
+  - Example: Run `wish-issue-linkage-rule` spell before wish creation
 
 **REMOVE:**
 - Lines 73-92 (historical violations → move to learn report)
@@ -175,7 +175,7 @@ This skill is **timeless** - the evidence-based approach doesn't change with fra
 
 ---
 
-## Skill 5: role-clarity-protocol.md
+## Spell 5: role-clarity-protocol.md
 
 ### Current State Analysis
 
@@ -240,24 +240,24 @@ This skill is **timeless** - the evidence-based approach doesn't change with fra
 ## Key Alignment Themes
 
 ### 1. Remove Historical Violations
-All "Recent Violation" sections should move to learn reports, not live in skills.
+All "Recent Violation" sections should move to learn reports, not live in spells.
 
-**WHY:** Skills teach principles, not history. Learn reports archive violations.
+**WHY:** Spells teach principles, not history. Learn reports archive violations.
 
 ### 2. Remove Version-Specific Content
 No rc21, rc36, or version-specific evolution phases.
 
-**WHY:** Skills should be timeless principles, not snapshot documentation.
+**WHY:** Spells should be timeless principles, not snapshot documentation.
 
 ### 3. Simplify Identity Narrative
 Current "What I Am Now" is over-complicated (cloning, phases, etc.).
 
 **WHY:** Simpler identity = clearer behavior. Forge orchestrates, I execute or delegate.
 
-### 4. Align with Executable Skills
-Skills reference other skills as "callable" not "auto-loaded documentation."
+### 4. Align with Executable Spells
+Spells reference other spells as "callable" not "auto-loaded documentation."
 
-**WHY:** Paradigm shift - skills are tools, not static instructions.
+**WHY:** Paradigm shift - spells are tools, not static instructions.
 
 ### 5. Forge-First Architecture
 Forge tasks are source of truth, not SESSION-STATE.md manual tracking.
@@ -270,13 +270,13 @@ Forge tasks are source of truth, not SESSION-STATE.md manual tracking.
 
 ### Phase 1: Update know-yourself.md (HIGHEST IMPACT)
 - Remove lines 82-189 (outdated identity/evolution)
-- Add new "Current Identity" section (Forge-first + executable skills)
+- Add new "Current Identity" section (Forge-first + executable spells)
 - Focus on token efficiency + project-specific patterns
 - **Expected:** 40% token reduction
 
 ### Phase 2: Update delegation-discipline.md
 - Remove historical violations (lines 73-92)
-- Replace orchestration section with Forge + executable skills model
+- Replace orchestration section with Forge + executable spells model
 - Keep core delegation instinct pattern
 - **Expected:** 27% token reduction
 
@@ -288,7 +288,7 @@ Forge tasks are source of truth, not SESSION-STATE.md manual tracking.
 
 ### Phase 4: Minor Updates to routing-decision-matrix.md
 - Verify agent list completeness
-- Add note about executable skills (on-demand)
+- Add note about executable spells (on-demand)
 - No major structural changes
 
 ### Phase 5: Keep evidence-based-thinking.md as-is
@@ -302,8 +302,8 @@ Forge tasks are source of truth, not SESSION-STATE.md manual tracking.
 2. **Execute Phase 1** (know-yourself.md update - highest impact)
 3. **Execute Phases 2-3** (delegation-discipline, role-clarity)
 4. **Execute Phase 4** (routing-decision-matrix minor updates)
-5. **Validate** all 5 skills work together coherently
-6. **Update AGENTS.md** to reflect new skill structure
+5. **Validate** all 5 spells work together coherently
+6. **Update AGENTS.md** to reflect new spell structure
 
 ---
 

@@ -3,7 +3,7 @@
  * Advanced Forge MCP Server
  *
  * Type-safe MCP interface to Automagik Forge Backend API using FastMCP.
- * Provides 30+ tools for managing projects, tasks, and AI agent execution.
+ * Provides 30+ tools for managing projects, tasks, AI agent execution, and Genie spells.
  *
  * Features:
  * - HTTP Streaming transport (default)
@@ -12,6 +12,7 @@
  * - Authentication (API key or environment)
  * - Progress notifications
  * - Dynamic resources (logs, status)
+ * - Genie spell discovery and reading
  * - Comprehensive error handling
  */
 
@@ -24,6 +25,7 @@ import { registerHealthTools } from './tools/health.js';
 import { registerProjectTools } from './tools/projects.js';
 import { registerTaskTools } from './tools/tasks.js';
 import { registerTaskAttemptTools } from './tools/attempts.js';
+import { registerSpellTools } from './tools/spells.js';
 
 // Resource registration
 import { registerLogResources } from './resources/logs.js';
@@ -104,11 +106,12 @@ logger.info('Registering tools and resources...');
 // Create client for registration (stdio mode only)
 const registrationClient = globalClient || new ForgeClient(FORGE_BASE_URL, FORGE_API_KEY);
 
-// Register tools (30+ tools across 4 categories)
+// Register tools (30+ tools across 5 categories)
 registerHealthTools(server, registrationClient);
 registerProjectTools(server, registrationClient);
 registerTaskTools(server, registrationClient);
 registerTaskAttemptTools(server, registrationClient);
+registerSpellTools(server); // No client needed, reads from filesystem
 
 // Register resources (dynamic resources for logs and status)
 registerLogResources(server, registrationClient);

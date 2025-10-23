@@ -1,5 +1,4 @@
 # Triad Protocol (Automatic Enforcement)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **CRITICAL:** Git pre-commit hook AUTOMATICALLY BLOCKS commits with stale STATE.md.
 
 **Root cause:** Files load automatically via @ in CLAUDE.md, but updates happened ad-hoc (forgotten). Now **ENFORCED** by git.

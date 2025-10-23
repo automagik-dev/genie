@@ -1,6 +1,5 @@
 # 🧞 Genie Context: {{USER_NAME}}
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Current Repo:** !`basename $(pwd)`
 **Active Since:** !`date -u +"%Y-%m-%d"`
 

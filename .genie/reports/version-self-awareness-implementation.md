@@ -1,5 +1,4 @@
 # Version Self-Awareness Implementation
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-15 23:55 UTC
 **Status:** ✅ COMPLETE
 **Files Modified:** `.genie/mcp/src/server.ts`
@@ -51,10 +50,8 @@ function getVersionHeader(): string {
 
 ```typescript
 // Before
-version: '1.0.0',
 
 // After
-version: getGenieVersion() as `${number}.${number}.${number}`,
 ```
 
 **Type cast required:** FastMCP expects strict semver format
@@ -165,13 +162,11 @@ __dirname/../../../package.json = ROOT package.json ✅
 FastMCP requires version as template literal type:
 
 ```typescript
-version: `${number}.${number}.${number}`
 ```
 
 Type cast required because `getGenieVersion()` returns `string`:
 
 ```typescript
-version: getGenieVersion() as `${number}.${number}.${number}`,
 ```
 
 Runtime safety maintained with fallback: `'0.0.0'`
@@ -216,7 +211,6 @@ No crashes, always returns valid semver.
 
 **Server version:**
 ```typescript
-version: '1.0.0'  // Hardcoded, stale
 ```
 
 **Tool outputs:**
@@ -243,7 +237,6 @@ Transport: stdio
 
 **Server version:**
 ```typescript
-version: getGenieVersion()  // Dynamic from package.json
 ```
 
 **Tool outputs:**

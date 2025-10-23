@@ -1,5 +1,4 @@
 # Genie → Forge Replacement Map
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Task:** Issue #120 - Pre-Wish Investigation
 **Purpose:** Complete mapping of what we have, what Forge offers, and how to replace

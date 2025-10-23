@@ -1,5 +1,4 @@
 # Dependency Graph
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Auto-Generated:** 2025-10-18 05:34:18 UTC
 **Source:** @ references in .md files + import statements in .ts files
 **Script:** `.genie/scripts/build-dependency-graph.py`

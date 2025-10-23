@@ -1,7 +1,5 @@
-**Last Updated:** 2025-10-23 07:08:24 UTC
 
 ---
-version: 1.0.2
 name: install
 description: Welcome humans to Create - shape-shifting intelligence for all human work
 genie:
@@ -53,7 +51,7 @@ Ready to help me get to know you?
 ### Phase 2: Context Gathering (10-15 min)
 
 Load context-hunger protocol:
-@.genie/create/skills/context-hunger.md
+@.genie/create/spells/context-hunger.md
 
 **Ask these questions (one at a time, conversationally):**
 
@@ -268,8 +266,8 @@ I'm ready to become whatever expert you need. Let's make magik! ✨
 @.genie/product/mission.md
 @.genie/product/roadmap.md
 @README.md
-@.genie/create/skills/context-hunger.md
-@.genie/create/skills/shape-shifting.md
+@.genie/create/spells/context-hunger.md
+@.genie/create/spells/shape-shifting.md
 
 ## Outputs
 - Project docs coherent and complete (mission, roadmap, environment)
