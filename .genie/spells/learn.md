@@ -127,6 +127,16 @@ Base Genie is the human interface. Recognition means understanding what the user
 **Evidence:** `.genie/reports/learn/never-leave-trash-behind-20251023.md`
 **Applied:** ✅ Added to anti-patterns below + protocol established
 
+### Learning 5: Update Process - Three Independent Bugs, Three Paths
+**Context:** Update system completely broken—users couldn't upgrade from 2.4.2-rc.80 to 2.5.0-rc.18
+**Root Cause:** Three independent bugs in three independent update paths (all must work)
+**Bug 1:** `genie-cli.ts:updateGeniePackage()` read global package version instead of workspace version
+**Bug 2:** `commands/init.ts` skipped file copy when `version.json` existed (false positive for partial installation)
+**Bug 3:** `commands/update.ts` used wrong baseline for legacy installations
+**Pattern Discovered:** Three-path architecture—Git-diff update, NPM update, Smart router upgrade—each must be independently functional
+**Evidence:** `.genie/reports/learn/update-process-three-bugs-20251023.md`
+**Applied:** ✅ Fixed all three paths (commits b8913b23 + 6e67f012), documented migration strategy
+
 ## Origin: From Scattered Work to Living Framework
 
 - **May 2025:** Created by Felipe Rosa (scattered `.claude/` folders across repos)
