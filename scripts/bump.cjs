@@ -198,8 +198,9 @@ function main() {
     }
   }
 
-  // Git operations
-  exec('git add package.json CHANGELOG.md .genie/state/version.json');
+  // Git operations (force add version.json since .genie/state/ is gitignored with exception)
+  exec('git add package.json CHANGELOG.md');
+  exec('git add -f .genie/state/version.json');
 
   let commitMessage = `chore: pre-release v${newVersion}`;
 
