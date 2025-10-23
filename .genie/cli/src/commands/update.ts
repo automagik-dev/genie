@@ -53,8 +53,22 @@ export async function runUpdate(
       installedCommit = versionData.installed_commit;
     } else {
       // Legacy installation without .framework-version
-      // Use current package version as baseline
-      installedVersion = getPackageVersion();
+      // Check if version.json exists (old version tracking file)
+      const legacyVersionPath = path.join(genieDir, 'state', 'version.json');
+      let legacyVersion: string | null = null;
+
+      if (await pathExists(legacyVersionPath)) {
+        try {
+          const legacyData = JSON.parse(await fsp.readFile(legacyVersionPath, 'utf8'));
+          legacyVersion = legacyData.version;
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      // Use legacy version if available, otherwise assume old version
+      // Using 2.4.0-rc.1 as baseline for legacy installations (before .framework-version was added)
+      installedVersion = legacyVersion || '2.4.0-rc.1';
       installedCommit = 'unknown';
 
       await emitView(
@@ -62,11 +76,30 @@ export async function runUpdate(
           'Legacy installation detected',
           [
             'No .framework-version file found.',
-            'Assuming current package version as baseline.',
-            `Version: ${installedVersion}`
+            `Detected version: ${installedVersion}`,
+            'Creating .framework-version for future updates...'
           ]
         ),
         parsed.options
+      );
+
+      // Create .framework-version file for future updates
+      const frameworkVersion = {
+        installed_version: installedVersion,
+        installed_commit: installedCommit,
+        installed_date: new Date().toISOString(),
+        package_name: 'automagik-genie',
+        customized_files: [],
+        deleted_files: [],
+        last_upgrade_date: null,
+        previous_version: null,
+        upgrade_history: []
+      };
+
+      await fsp.writeFile(
+        versionPath,
+        JSON.stringify(frameworkVersion, null, 2),
+        'utf8'
       );
     }
 
@@ -171,7 +204,8 @@ export async function runUpdate(
           [
             `✅ Successfully upgraded to ${updateCheck.latestVersion}`,
             `Files updated: ${result.filesUpdated}`,
-            `User files preserved: ${result.filesPreserved}`
+            `User files preserved: ${result.filesPreserved}`,
+            `💾 Backup ID: ${result.backupId}`
           ]
         ),
         parsed.options
@@ -184,6 +218,8 @@ export async function runUpdate(
           [
             `⚠️  ${result.conflicts.length} file(s) have conflicts:`,
             ...result.conflicts.map(c => `   - ${c.file}`),
+            '',
+            `💾 Backup ID: ${result.backupId}`,
             '',
             '🤖 Update Agent required for conflict resolution.',
             'This feature is coming soon.',

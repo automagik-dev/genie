@@ -1,6 +1,7 @@
 import path from 'path';
 import { promises as fsp } from 'fs';
 import { execSync } from 'child_process';
+import { toIsoId } from '../fs-utils';
 import type { FrameworkDiff, UpgradeContext, UpgradeResult, ConflictInfo, FrameworkVersion } from './types';
 
 /**
@@ -13,7 +14,7 @@ export async function applyUpgrade(
   const { workspacePath, oldVersion, newVersion } = context;
 
   // Backup .genie directory
-  await backupGenieDirectory(workspacePath);
+  const backupId = await backupGenieDirectory(workspacePath);
 
   try {
     // Test if patch applies cleanly
@@ -38,7 +39,8 @@ export async function applyUpgrade(
       success: true,
       filesUpdated: diff.affectedFiles.length,
       filesPreserved: 0, // TODO: Count user files
-      conflicts: []
+      conflicts: [],
+      backupId
     };
   } catch (error) {
     // Conflicts detected
@@ -48,21 +50,25 @@ export async function applyUpgrade(
       success: false,
       filesUpdated: 0,
       filesPreserved: 0,
-      conflicts
+      conflicts,
+      backupId
     };
   }
 }
 
 /**
  * Backup .genie directory before upgrade
+ * Returns backup ID for tracking
  */
-async function backupGenieDirectory(workspacePath: string): Promise<void> {
+async function backupGenieDirectory(workspacePath: string): Promise<string> {
   const genieDir = path.join(workspacePath, '.genie');
-  const backupDir = path.join(workspacePath, `.genie.backup-${Date.now()}`);
+  const backupId = toIsoId();
+  const backupDir = path.join(workspacePath, `.genie.backup-${backupId}`);
 
   try {
     // Use cp -r for recursive copy
     execSync(`cp -r "${genieDir}" "${backupDir}"`, { stdio: 'pipe' });
+    return backupId;
   } catch (error) {
     throw new Error(
       `Failed to backup .genie directory: ${error instanceof Error ? error.message : String(error)}`

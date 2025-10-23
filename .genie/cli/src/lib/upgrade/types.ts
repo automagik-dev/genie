@@ -30,6 +30,7 @@ export interface UpgradeResult {
   filesUpdated: number;
   filesPreserved: number;
   conflicts: ConflictInfo[];
+  backupId: string;
 }
 
 export interface FrameworkVersion {

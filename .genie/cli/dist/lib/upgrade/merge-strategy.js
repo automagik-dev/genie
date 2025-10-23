@@ -7,13 +7,14 @@ exports.applyUpgrade = applyUpgrade;
 const path_1 = __importDefault(require("path"));
 const fs_1 = require("fs");
 const child_process_1 = require("child_process");
+const fs_utils_1 = require("../fs-utils");
 /**
  * Apply upgrade diff to workspace
  */
 async function applyUpgrade(diff, context) {
     const { workspacePath, oldVersion, newVersion } = context;
     // Backup .genie directory
-    await backupGenieDirectory(workspacePath);
+    const backupId = await backupGenieDirectory(workspacePath);
     try {
         // Test if patch applies cleanly
         (0, child_process_1.execSync)(`git apply --check ${diff.patchFile}`, {
@@ -33,7 +34,8 @@ async function applyUpgrade(diff, context) {
             success: true,
             filesUpdated: diff.affectedFiles.length,
             filesPreserved: 0, // TODO: Count user files
-            conflicts: []
+            conflicts: [],
+            backupId
         };
     }
     catch (error) {
@@ -43,19 +45,23 @@ async function applyUpgrade(diff, context) {
             success: false,
             filesUpdated: 0,
             filesPreserved: 0,
-            conflicts
+            conflicts,
+            backupId
         };
     }
 }
 /**
  * Backup .genie directory before upgrade
+ * Returns backup ID for tracking
  */
 async function backupGenieDirectory(workspacePath) {
     const genieDir = path_1.default.join(workspacePath, '.genie');
-    const backupDir = path_1.default.join(workspacePath, `.genie.backup-${Date.now()}`);
+    const backupId = (0, fs_utils_1.toIsoId)();
+    const backupDir = path_1.default.join(workspacePath, `.genie.backup-${backupId}`);
     try {
         // Use cp -r for recursive copy
         (0, child_process_1.execSync)(`cp -r "${genieDir}" "${backupDir}"`, { stdio: 'pipe' });
+        return backupId;
     }
     catch (error) {
         throw new Error(`Failed to backup .genie directory: ${error instanceof Error ? error.message : String(error)}`);
