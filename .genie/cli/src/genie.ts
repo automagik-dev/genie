@@ -30,6 +30,7 @@ import { runRollback } from './commands/rollback';
 import { runStatus } from './commands/status';
 import { runCleanup } from './commands/cleanup';
 import { runStatusline } from './commands/statusline';
+import { runUpdate } from './commands/update';
 
 void main();
 
@@ -130,6 +131,27 @@ async function main(): Promise<void> {
         break;
       case 'statusline':
         await runStatusline(parsed, config, paths);
+        break;
+      case 'update':
+        if (parsed.options.requestHelp) {
+          await emitView(buildInfoView('Genie update', [
+            'Usage: genie update [--preview] [--force]',
+            'Updates the Genie framework to the latest version',
+            '',
+            'Options:',
+            '  --preview   Show what would change without applying',
+            '  --force     Skip confirmation prompt',
+            '',
+            'The update command:',
+            '• Checks npm registry for newer versions',
+            '• Uses git diff to intelligently merge framework changes',
+            '• Preserves user customizations (.genie/USERCONTEXT.md, custom agents, etc.)',
+            '• Creates automatic backup before applying changes',
+            '• Handles conflicts via Update Agent (when implemented)'
+          ]), parsed.options);
+          return;
+        }
+        await runUpdate(parsed, config, paths);
         break;
       case 'resume':
         if (parsed.options.requestHelp) {

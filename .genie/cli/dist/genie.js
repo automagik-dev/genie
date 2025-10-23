@@ -17,6 +17,7 @@ const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
+const update_1 = require("./commands/update");
 void main();
 async function main() {
     try {
@@ -109,6 +110,27 @@ async function main() {
                 break;
             case 'statusline':
                 await (0, statusline_1.runStatusline)(parsed, config, paths);
+                break;
+            case 'update':
+                if (parsed.options.requestHelp) {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Genie update', [
+                        'Usage: genie update [--preview] [--force]',
+                        'Updates the Genie framework to the latest version',
+                        '',
+                        'Options:',
+                        '  --preview   Show what would change without applying',
+                        '  --force     Skip confirmation prompt',
+                        '',
+                        'The update command:',
+                        '• Checks npm registry for newer versions',
+                        '• Uses git diff to intelligently merge framework changes',
+                        '• Preserves user customizations (.genie/USERCONTEXT.md, custom agents, etc.)',
+                        '• Creates automatic backup before applying changes',
+                        '• Handles conflicts via Update Agent (when implemented)'
+                    ]), parsed.options);
+                    return;
+                }
+                await (0, update_1.runUpdate)(parsed, config, paths);
                 break;
             case 'resume':
                 if (parsed.options.requestHelp) {
