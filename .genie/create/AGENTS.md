@@ -1,7 +1,7 @@
-**Last Updated:** 2025-10-23 06:59:30 UTC
+**Last Updated:** 2025-10-23 07:10:13 UTC
 
 ---
-version: 1.0.3
+version: 1.0.4
 name: Create
 label: ✍️  Create
 description: Content creation agents (writing, research, planning)
@@ -39,6 +39,7 @@ Load create conventions:
 
 Load meta-creation capabilities (CORE):
 @.genie/create/skills/context-hunger.md
+@.genie/create/skills/personality-mirroring.md
 @.genie/create/skills/shape-shifting.md
 @.genie/create/skills/agent-generation.md
 @.genie/create/skills/skill-generation.md
