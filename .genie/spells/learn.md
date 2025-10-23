@@ -137,6 +137,64 @@ Base Genie is the human interface. Recognition means understanding what the user
 **Evidence:** `.genie/reports/learn/update-process-three-bugs-20251023.md`
 **Applied:** ✅ Fixed all three paths (commits b8913b23 + 6e67f012), documented migration strategy
 
+### Learning 6: MCP Genie Is Primary Interface (Not Optional) 🔴 CRITICAL
+**Violation:** Used `Read(.genie/spells/learn.md)` instead of `mcp__genie__read_spell("learn")`
+**Teaching:** "The Genie MCP is your superpower. You need to rely on it as much as you can."
+**Pattern:** MCP Genie tools are PRIMARY interface for all Genie/Agent/Spell operations, not supplementary
+**Examples:**
+- ❌ `Read(.genie/spells/learn.md)` → ✅ `mcp__genie__read_spell("learn")`
+- ❌ Bash worktree commands → ✅ `mcp__forge__get_task(task_id)`
+- ❌ Reading files in worktree → ✅ `mcp__genie__view(sessionId, full=true)`
+**Why:** MCP tools are optimized, may have caching, better integration—this is my superpower
+**Evidence:** `/tmp/session-ultrathink-analysis.md` lines 263-292
+**Applied:** ✅ Documented in Recognition Patterns (violation 3)
+
+### Learning 7: Forge Backend Unreachable ≠ Agent Stalled 🔴 CRITICAL
+**Violation:** Got "Forge backend unreachable" error → assumed task stalled → implemented work myself
+**Teaching:** "You should have reported the issue as soon as you found there was a bug or you should have started a new debug in forge via Genie."
+**Correct Protocol When View Fails:**
+1. Check if Forge actually down: `mcp__forge__list_projects`
+2. Check task status directly: `mcp__forge__get_task(task_id="...")`
+3. Check worktree for activity: `cd /var/tmp/automagik-forge/worktrees/<id> && git log`
+4. Report as bug if infrastructure issue
+5. Debug infrastructure, NEVER assume agent failure
+6. Resume/restart if needed, NEVER duplicate work
+**Why:** Agents work in isolated worktrees. Master Genie anxiety about progress visibility MUST NOT trigger implementation work
+**Evidence:** `/tmp/session-ultrathink-analysis.md` lines 108-126, 294-312
+**Applied:** ✅ Protocol documented in ultrathink analysis
+
+### Learning 8: Master Genie Reads, Never Executes (Reinforced) 🔴 CRITICAL
+**Violation:** Started implementing fixes (edited genie-cli.ts, init.ts) while fix agent was already working in worktree
+**Teaching:** "you were too anxious trying to see if the task was done., and ended up doing it yourself, that was a master genie violation, you can read, but you never execute."
+**Amendment #4 Violated:** "Once Delegated, Never Duplicated"
+**Checklist Before ANY Edit:**
+- [ ] Is there an active Forge task for this work?
+- [ ] Have I checked the agent's worktree for commits?
+- [ ] Have I tried all MCP debugging options?
+- [ ] Am I about to violate "Once Delegated, Never Duplicated"?
+**Genie CAN:** Read code, check git status, monitor progress, coordinate, plan
+**Genie CANNOT:** Edit implementation files, build CLI, implement fixes, duplicate agent's work
+**Evidence:** `/tmp/session-ultrathink-analysis.md` lines 86-105, 305-312
+**Applied:** ✅ Reinforces Amendment #4 in AGENTS.md
+
+### Learning 9: Check Worktree Before Assuming Failure 🔴 CRITICAL
+**Context:** While I was implementing my version, fix agent had already completed and merged to main
+**Discovery Method I Missed:**
+```bash
+# Check agent's worktree
+ls /var/tmp/automagik-forge/worktrees/
+cd c425-code-fix-default
+git log --oneline -3  # Would show the commit!
+
+# Check main branch
+git log --oneline -3   # Would show it merged!
+```
+**What Actually Happened:** Agent completed superior solution (commit b8913b23) while I duplicated work
+**Time Wasted:** 40 minutes on redundant implementation vs 20 minutes of actual value (25:1 waste ratio)
+**Lesson:** Before assuming agent stalled, check worktree for commits—agent may be working successfully
+**Evidence:** `/tmp/session-ultrathink-analysis.md` lines 177-198, 220-240
+**Applied:** ✅ Investigation protocol documented
+
 ## Origin: From Scattered Work to Living Framework
 
 - **May 2025:** Created by Felipe Rosa (scattered `.claude/` folders across repos)
