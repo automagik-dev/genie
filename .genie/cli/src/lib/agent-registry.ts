@@ -87,6 +87,9 @@ export class AgentRegistry {
           continue;
         }
 
+        // Extract markdown body (everything after frontmatter)
+        const markdownBody = content.substring(frontmatterMatch[0].length);
+
         const metadata: AgentMetadata = {
           name: frontmatter.name,
           description: frontmatter.description || '',
@@ -95,7 +98,7 @@ export class AgentRegistry {
           genie: frontmatter.genie,
           collective,
           filePath,
-          fullContent: content // Store full markdown for Forge sync
+          fullContent: markdownBody // Store only markdown body (no YAML frontmatter)
         };
 
         this.agents.set(frontmatter.name.toLowerCase(), metadata);
