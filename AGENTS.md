@@ -327,68 +327,7 @@ Amendment #6 (Automated Publishing) means GitHub Actions creates commits automat
 
 **First Incident:** 2025-10-22, push rejected due to rc.68 auto-bump from GitHub Actions
 
-### 8. Timestamp Automation - No More !date Commands 🔴 CRITICAL
-**Rule:** Markdown metadata (timestamps, versions) MUST be automated via git hooks - never use !date commands
-
-**The Problem:**
-Using `!date` commands in markdown files creates:
-- Inconsistent timestamps (depends on when shell executes)
-- No version tracking for agent evolution
-- Manual maintenance burden
-- Unreliable session continuity
-
-**The Solution:**
-Pre-commit hook automatically updates `.genie/**/*.md` files:
-1. Replaces `**Last Updated:** !date ...` with actual commit timestamp
-2. Auto-bumps `version:` field in frontmatter (semver patch increment)
-3. Tracks agent growth through version history
-4. All updates happen atomically with commit
-
-**Implementation:**
-```bash
-# In .genie/scripts/hooks/pre-commit.cjs:
-# Calls update-genie-markdown-metadata.cjs before commit
-# Script finds staged .genie/*.md files
-# Updates timestamp + version, re-stages files
-```
-
-**File Format:**
-```markdown
-**Last Updated:** 2025-10-23 06:45:01 UTC
-
----
-version: 1.0.0
-name: AgentName
-[other frontmatter fields]
----
-```
-
-**Benefits:**
-- Zero manual timestamp updates needed
-- Automatic version tracking (v1.0.0 → v1.0.1 → v1.0.2...)
-- Commit timestamp = Last Updated timestamp (perfect sync)
-- Monitor agent evolution through version increments
-- Every commit to .genie markdown = automatic metadata refresh
-
-**What Genie Must NOT Do:**
-- ❌ Use `!date` commands in markdown files
-- ❌ Manually update **Last Updated:** lines
-- ❌ Manually bump version numbers
-- ❌ Think about metadata maintenance
-
-**What Happens Automatically:**
-- ✅ Git pre-commit hook detects staged .genie/*.md files
-- ✅ Timestamp replaced with commit time
-- ✅ Version bumped (patch increment)
-- ✅ File re-staged with updates
-- ✅ Commit proceeds with fresh metadata
-
-**Why This Exists:**
-Following Amendment #4 (Automation Through Removal), when features become automatic, we eliminate manual instructions entirely. This amendment automates ALL .genie markdown metadata, removing cognitive load and ensuring consistency.
-
-**First Implementation:** 2025-10-23, automated all .genie markdown timestamp/version maintenance
-
-### 9. Reserved for Future Amendment
+### 8. Reserved for Future Amendment
 **Placeholder:** Additional core workflow rules will be documented here as they emerge
 
 **Current Candidates:**
