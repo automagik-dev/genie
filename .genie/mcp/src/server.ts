@@ -245,7 +245,8 @@ async function syncAgentProfilesToForge(): Promise<void> {
     }
 
     const forgeExecutor = mod.createForgeExecutor();
-    await forgeExecutor.syncProfiles();
+    // Pass WORKSPACE_ROOT to ensure correct scanning from MCP server context
+    await forgeExecutor.syncProfiles(undefined, WORKSPACE_ROOT);
   } catch (error: any) {
     console.warn(`⚠️  Agent profile sync failed: ${error.message}`);
   }

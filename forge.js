@@ -123,11 +123,13 @@ class ForgeClient {
     /**
      * PUT /api/profiles
      * Update executor profiles configuration
-     * @param profiles - Raw JSON string of profile configs
+     * @param profiles - Executor profiles object with `executors` key
      * @returns Updated profiles
      */
     async updateExecutorProfiles(profiles) {
-        return this.request('PUT', '/profiles', { body: { profiles } });
+        // Parse profiles if string, API expects raw object not wrapped
+        const profilesObj = typeof profiles === 'string' ? JSON.parse(profiles) : profiles;
+        return this.request('PUT', '/profiles', { body: profilesObj });
     }
     /**
      * GET /api/mcp-config?executor={executor}
