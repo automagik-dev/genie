@@ -407,7 +407,7 @@ See `@.genie/product/docs/mcp-interface.md` for complete documentation.
   - **.genie/skills/routing-decision-matrix.md** (1,251 tokens)
   - **.genie/skills/execution-integrity-protocol.md** (643 tokens)
   - **.genie/skills/persistent-tracking-protocol.md** (1,066 tokens)
-  - **.genie/skills/meta-learn-protocol.md** (648 tokens)
+  - **.genie/skills/meta-learn.md** (648 tokens)
   - **.genie/skills/delegation-discipline.md** (1,729 tokens)
   - **.genie/skills/blocker-protocol.md** (97 tokens)
   - **.genie/skills/chat-mode-helpers.md** (248 tokens)
