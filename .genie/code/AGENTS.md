@@ -26,7 +26,6 @@ Customize phases below for orchestration and spell routing.
 @.genie/spells/investigate-before-commit.md
 @.genie/code/spells/publishing-protocol.md
 @.genie/spells/delegate-dont-do.md
-@.genie/spells/orchestrator-not-implementor.md
 @.genie/spells/multi-step-execution.md
 @.genie/code/spells/triad-maintenance-protocol.md
 @.genie/code/spells/automated-rc-publishing.md
