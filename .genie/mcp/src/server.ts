@@ -22,9 +22,14 @@ import fs from 'fs';
 import path from 'path';
 import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
 import { transformDisplayPath } from './lib/display-transform.js';
 
 const execFileAsync = promisify(execFile);
+
+// ES module equivalents for __dirname and __filename
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
@@ -840,8 +845,6 @@ Show code: \`try/catch\` not "ensure error handling"
 console.error('Starting Genie MCP Server...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Protocol: MCP (Model Context Protocol)');
-console.error('Implementation: FastMCP v3.18.0');
 console.error('Tools: 6 (list_agents, list_sessions, run, resume, view, stop)');
 
 if (TRANSPORT === 'stdio') {
