@@ -1,0 +1,227 @@
+"use strict";
+/**
+ * Agent Registry - Dynamic agent metadata scanner and Forge profile sync
+ *
+ * Scans .genie/code/agents/ and .genie/create/agents/ directories
+ * to build a registry of all available agents with their metadata.
+ *
+ * Syncs agent prompts to Forge profiles as `append_prompt` variants.
+ */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AgentRegistry = void 0;
+exports.getAgentRegistry = getAgentRegistry;
+exports.rescanAgents = rescanAgents;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const yaml_1 = require("yaml");
+class AgentRegistry {
+    constructor(workspaceRoot = process.cwd()) {
+        this.agents = new Map();
+        this.workspaceRoot = workspaceRoot;
+    }
+    /**
+     * Scan all agent files and build registry
+     */
+    async scan() {
+        this.agents.clear();
+        // Scan code collective agents
+        await this.scanDirectory(path_1.default.join(this.workspaceRoot, '.genie/code/agents'), 'code');
+        // Scan create collective agents
+        await this.scanDirectory(path_1.default.join(this.workspaceRoot, '.genie/create/agents'), 'create');
+    }
+    /**
+     * Scan a directory for agent markdown files
+     */
+    async scanDirectory(dir, collective) {
+        if (!fs_1.default.existsSync(dir)) {
+            return;
+        }
+        const files = fs_1.default.readdirSync(dir);
+        for (const file of files) {
+            if (!file.endsWith('.md')) {
+                continue;
+            }
+            const filePath = path_1.default.join(dir, file);
+            const stats = fs_1.default.statSync(filePath);
+            if (!stats.isFile()) {
+                continue;
+            }
+            try {
+                const content = fs_1.default.readFileSync(filePath, 'utf-8');
+                // Parse frontmatter manually (YAML between --- markers)
+                const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+                if (!frontmatterMatch) {
+                    console.warn(`Agent file ${filePath} missing frontmatter`);
+                    continue;
+                }
+                const frontmatter = (0, yaml_1.parse)(frontmatterMatch[1]);
+                if (!frontmatter.name) {
+                    console.warn(`Agent file ${filePath} missing 'name' in frontmatter`);
+                    continue;
+                }
+                const metadata = {
+                    name: frontmatter.name,
+                    description: frontmatter.description || '',
+                    color: frontmatter.color,
+                    emoji: frontmatter.emoji, // If explicitly set in frontmatter
+                    genie: frontmatter.genie,
+                    collective,
+                    filePath,
+                    fullContent: content // Store full markdown for Forge sync
+                };
+                this.agents.set(frontmatter.name.toLowerCase(), metadata);
+            }
+            catch (error) {
+                console.warn(`Failed to parse agent file ${filePath}: ${error.message}`);
+            }
+        }
+    }
+    /**
+     * Get agent metadata by name
+     */
+    getAgent(name) {
+        return this.agents.get(name.toLowerCase());
+    }
+    /**
+     * Get all registered agents
+     */
+    getAllAgents() {
+        return Array.from(this.agents.values());
+    }
+    /**
+     * Get agent emoji (with fallback to default mapping)
+     */
+    getAgentEmoji(agentName) {
+        const normalized = agentName.toLowerCase().trim();
+        // Try to get from registered agents first
+        const agent = this.agents.get(normalized);
+        if (agent?.emoji) {
+            return agent.emoji;
+        }
+        // Fallback to default emoji mapping
+        // This ensures backward compatibility while agent files are being updated
+        const defaultEmojis = {
+            // Orchestrators & Planning
+            'genie': '🧞',
+            'wish': '💭',
+            'plan': '📋',
+            'forge': '⚙️',
+            // Execution agents (robots do the work)
+            'implementor': '🤖',
+            'tests': '🤖',
+            'polish': '🤖',
+            'refactor': '🤖',
+            // Validation & Review
+            'review': '✅',
+            // Tools & Utilities
+            'git': '🔧',
+            'release': '🚀',
+            'commit': '📦',
+            // Analysis & Learning
+            'learn': '📚',
+            'debug': '🐞',
+            'analyze': '🔍',
+            'thinkdeep': '🧠',
+            // Communication & Consensus
+            'consensus': '🤝',
+            'prompt': '📝',
+            'roadmap': '🗺️',
+            // Create collective
+            'editor': '✏️',
+            'writer': '📄',
+            'researcher': '🔬'
+        };
+        return defaultEmojis[normalized] || '🧞'; // Default to genie emoji
+    }
+    /**
+     * Check if agent exists
+     */
+    hasAgent(name) {
+        return this.agents.has(name.toLowerCase());
+    }
+    /**
+     * Get count of registered agents
+     */
+    count() {
+        return this.agents.size;
+    }
+    /**
+     * Get supported executors from Forge profiles (dynamic, not hardcoded)
+     * Fallback to common executors if Forge is unavailable
+     */
+    static async getSupportedExecutors(forgeClient) {
+        // If ForgeClient provided, fetch executors from Forge profiles
+        if (forgeClient) {
+            try {
+                const profiles = await forgeClient.getExecutorProfiles();
+                const profileData = typeof profiles.content === 'string'
+                    ? JSON.parse(profiles.content)
+                    : profiles;
+                // Extract executor names from profiles.executors object
+                if (profileData?.executors) {
+                    return Object.keys(profileData.executors);
+                }
+            }
+            catch (error) {
+                console.warn(`⚠️  Failed to fetch executors from Forge, using fallback: ${error.message}`);
+            }
+        }
+        // Fallback to common executors if Forge unavailable
+        return ['CLAUDE_CODE', 'CODEX', 'GEMINI', 'CURSOR', 'QWEN_CODE', 'AMP', 'OPENCODE', 'COPILOT'];
+    }
+    /**
+     * Generate Forge profiles for all agents across all executors
+     * Creates a variant for each agent on each executor
+     * @param forgeClient - Optional ForgeClient to fetch executors dynamically
+     */
+    async generateForgeProfiles(forgeClient) {
+        const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
+        const profiles = { executors: {} };
+        // For each executor, create agent variants
+        for (const executor of executors) {
+            profiles.executors[executor] = profiles.executors[executor] || {};
+            // Add each agent as a variant
+            for (const agent of this.agents.values()) {
+                if (!agent.fullContent)
+                    continue;
+                const variantName = agent.name.toUpperCase();
+                profiles.executors[executor][variantName] = {
+                    [executor]: {
+                        append_prompt: agent.fullContent,
+                        // Preserve any executor-specific settings from agent metadata
+                        ...(agent.genie?.background !== undefined && { background: agent.genie.background })
+                    }
+                };
+            }
+        }
+        return profiles;
+    }
+}
+exports.AgentRegistry = AgentRegistry;
+/**
+ * Global singleton instance
+ */
+let globalRegistry = null;
+/**
+ * Get or create global agent registry
+ */
+async function getAgentRegistry() {
+    if (!globalRegistry) {
+        globalRegistry = new AgentRegistry();
+        await globalRegistry.scan();
+    }
+    return globalRegistry;
+}
+/**
+ * Force rescan of agents (useful for testing or dynamic updates)
+ */
+async function rescanAgents() {
+    if (!globalRegistry) {
+        globalRegistry = new AgentRegistry();
+    }
+    await globalRegistry.scan();
+    return globalRegistry;
+}
