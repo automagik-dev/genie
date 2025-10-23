@@ -49,6 +49,7 @@ See `.genie/` directory for comprehensive documentation:
 **Behavioral Guardrails:**
 - `ask-one-at-a-time` - Ask questions sequentially
 - `break-things-move-fast` - No backwards compatibility required
+- `automated-rc-publishing` - RC releases are automatic, never suggest manual bumps
 
 **Environment:**
 - `worktree-isolation` - Where does work happen?
