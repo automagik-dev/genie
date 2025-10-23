@@ -755,15 +755,16 @@ async function updateGeniePackage(checkOnly) {
         console.log('');
         process.exit(0);
     }
-    // Prompt for update
+    // Prompt for update (default to Yes - just press Enter to accept)
     const readline = require('readline').createInterface({
         input: process.stdin,
         output: process.stdout
     });
     const answer = await new Promise((resolve) => {
-        readline.question(`Update to v${latestVersion}? [Y/n]: `, resolve);
+        readline.question(`Update to v${latestVersion} and start server? [Y/n]: `, resolve);
     });
     readline.close();
+    // Default to Yes if user just presses Enter (empty string)
     if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
         console.log('');
         console.log('❌ Update cancelled');
@@ -782,9 +783,11 @@ async function updateGeniePackage(checkOnly) {
         console.log(successGradient(`✅ Successfully updated to v${latestVersion}!`));
         console.log('');
         console.log(genieGradient('━'.repeat(60)));
-        console.log('Run ' + successGradient('genie') + ' to start using the new version');
+        console.log(successGradient('🚀 Starting Genie server with new version...'));
         console.log(genieGradient('━'.repeat(60)));
         console.log('');
+        // Auto-start server after successful update
+        await startGenieServer();
     }
     catch (error) {
         console.error('❌ Update failed:', error);
