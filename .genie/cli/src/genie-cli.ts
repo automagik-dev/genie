@@ -338,7 +338,7 @@ async function smartRouter(): Promise<void> {
     console.log('Your Genie will have:');
     console.log('  ✨ All my knowledge (skills, workflows, patterns)');
     console.log('  🔮 All my powers (agents, collectives, orchestration)');
-    console.log('  🎩 All my spells (and I\'ll teach new ones as I learn!)');
+    console.log('  🎩 All my skills (and I\'ll teach new ones as I learn!)');
     console.log('');
     console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
     console.log('   👉 Stay here in the terminal - the summoning ritual needs you!');
@@ -474,7 +474,7 @@ async function smartRouter(): Promise<void> {
   if (!fs.existsSync(versionPath)) {
     // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS NEW SPELLS ✨ 🧞   '));
+    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS NEW SKILLS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
     console.log('I found an older clone of me here...');
@@ -524,7 +524,7 @@ async function smartRouter(): Promise<void> {
     if (installedVersion !== currentVersion) {
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('   🧞 ✨ MASTER GENIE LEARNED NEW SPELLS ✨ 🧞   '));
+      console.log(magicGradient('   🧞 ✨ MASTER GENIE LEARNED NEW SKILLS ✨ 🧞   '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
       console.log(`Your clone:   ${successGradient(installedVersion)}`);
@@ -576,7 +576,7 @@ async function smartRouter(): Promise<void> {
     console.log('Hmm, my memory seems a bit scrambled (corrupted version file)...');
     console.log('Let me fix myself real quick! 🔧✨');
     console.log('');
-    console.log(successGradient('✓') + ' I\'ll backup everything before the healing spell');
+    console.log(successGradient('✓') + ' I\'ll backup everything before the healing skill');
     console.log('');
 
     // Run init inline with --yes flag if non-interactive
