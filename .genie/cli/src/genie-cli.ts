@@ -274,52 +274,52 @@ async function smartRouter(): Promise<void> {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
-  // 🚨 START FORGE FIRST - Required for all Genie operations (init, run, list, etc.)
-  // Forge must be running before any command that needs to:
-  // - Create sessions (genie run)
-  // - List executors (genie init with executor selection)
-  // - Query project/task state (genie list, genie view)
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-  const forgeRunning = await isForgeRunning(baseUrl);
+  // 🚨 START FORGE - Only if .genie already exists (skip for fresh init)
+  // For fresh installations, init will create .genie structure first,
+  // then user can run 'genie' again to start Forge + server
+  if (hasGenieConfig) {
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const forgeRunning = await isForgeRunning(baseUrl);
 
-  if (!forgeRunning) {
-    console.log('');
-    console.log('📦 Starting Forge backend...');
+    if (!forgeRunning) {
+      console.log('');
+      console.log('📦 Starting Forge backend...');
 
-    const logDir = path.join(process.cwd(), '.genie', 'state');
+      const logDir = path.join(genieDir, 'state');
 
-    // Ensure log directory exists before starting Forge
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+      // Ensure log directory exists before starting Forge
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+
+      const startResult = startForgeInBackground({ baseUrl, logDir });
+
+      if (!startResult.ok) {
+        const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
+        console.error('');
+        console.error('❌ Failed to start Forge backend');
+        console.error(`   ${error.message}`);
+        console.error('');
+        console.error('   Genie requires Forge to manage agent sessions.');
+        console.error(`   Check logs at ${logDir}/forge.log`);
+        console.error('');
+        process.exit(1);
+      }
+
+      // Wait for Forge to be ready (silent progress)
+      const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
+
+      if (!forgeReady) {
+        console.error('');
+        console.error('❌ Forge did not start in time (60s)');
+        console.error(`   Check logs at ${logDir}/forge.log`);
+        console.error('');
+        process.exit(1);
+      }
+
+      console.log('✅ Forge ready');
+      console.log('');
     }
-
-    const startResult = startForgeInBackground({ baseUrl, logDir });
-
-    if (!startResult.ok) {
-      const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
-      console.error('');
-      console.error('❌ Failed to start Forge backend');
-      console.error(`   ${error.message}`);
-      console.error('');
-      console.error('   Genie requires Forge to manage agent sessions.');
-      console.error(`   Check logs at ${logDir}/forge.log`);
-      console.error('');
-      process.exit(1);
-    }
-
-    // Wait for Forge to be ready (silent progress)
-    const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
-
-    if (!forgeReady) {
-      console.error('');
-      console.error('❌ Forge did not start in time (60s)');
-      console.error(`   Check logs at ${logDir}/forge.log`);
-      console.error('');
-      process.exit(1);
-    }
-
-    console.log('✅ Forge ready');
-    console.log('');
   }
 
   if (!hasGenieConfig) {
