@@ -68,6 +68,7 @@ export async function runInit(
     let executor: string;
     let model: string | undefined;
     let shouldInitGit = false;
+    let shouldInstallHooks = false;
 
     let templates: string[] = []; // Array for multi-select
 
@@ -118,6 +119,7 @@ export async function runInit(
       executor = wizardConfig.executor;
       model = wizardConfig.model;
       shouldInitGit = wizardConfig.initGit;
+      shouldInstallHooks = wizardConfig.installHooks;
     } else {
       // Automation mode: use flags or defaults
       template = (flags.template || 'code') as TemplateType;
@@ -289,6 +291,9 @@ export async function runInit(
 
     // Configure MCP servers for both Codex and Claude Code
     await configureBothExecutors(cwd);
+
+    // Install git hooks if user opted in during wizard
+    await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
 
     // Show completion summary (install agent will be launched by start.sh via exec)
     const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
@@ -626,6 +631,32 @@ async function collectAgentFiles(dir: string): Promise<string[]> {
   }
 
   return files;
+}
+
+/**
+ * Install git hooks if user opted in during wizard
+ */
+async function installGitHooksIfRequested(packageRoot: string, shouldInstall: boolean): Promise<void> {
+  if (!shouldInstall) {
+    return;
+  }
+
+  console.log('');
+  console.log('🔧 Installing git hooks...');
+
+  const { spawnSync } = await import('child_process');
+  const installScript = path.join(packageRoot, 'scripts', 'install-hooks.cjs');
+
+  const result = spawnSync('node', [installScript], {
+    stdio: 'inherit',
+    cwd: packageRoot
+  });
+
+  if (result.status !== 0) {
+    console.warn('⚠️  Hook installation failed (non-fatal)');
+    console.warn('   You can install later with: node scripts/install-hooks.cjs');
+  }
+  console.log('');
 }
 
 function replaceFirst(source: string, pattern: RegExp, replacement: string | ((match: string) => string)): string {
