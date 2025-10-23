@@ -104,6 +104,16 @@ function main() {
     'forge-task-link.cjs',  // Auto-link Forge tasks to wishes on first commit
   ];
 
+  // Auto-update .genie markdown metadata (timestamps + versions)
+  // Amendment #9: No more !date commands, use commit timestamp automation
+  timeExecution('Genie markdown metadata update', () => {
+    const updateCode = run('update-genie-markdown-metadata.cjs');
+    if (updateCode !== 0) {
+      console.warn('⚠️  Markdown metadata update failed (non-blocking)');
+    }
+    return updateCode;
+  });
+
   // Run worktree access prevention check (bash script)
   console.log('🔍 Checking for Forge worktree violations...');
   const worktreeCheckPath = path.join(gitRoot, '.genie', 'scripts', 'prevent-worktree-access.sh');
