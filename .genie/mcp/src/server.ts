@@ -798,75 +798,14 @@ server.addTool({
 });
 
 // ============================================================================
-// LEGACY PROMPTS (Backwards compatibility - consider deprecating)
+// DEPRECATED PROMPTS - Removed per Amendment: No Backwards Compatibility
 // ============================================================================
-
-// Prompt: wish - Create wish document
-server.addPrompt({
-  name: 'wish',
-  description: 'Create a wish document for planned work',
-  arguments: [
-    {
-      name: 'feature',
-      description: 'What you want to build',
-      required: true
-    }
-  ],
-  load: async (args) => {
-    return `run wish "${args.feature}"`;
-  }
-});
-
-// Prompt: forge - Break wish into execution groups
-server.addPrompt({
-  name: 'forge',
-  description: 'Break approved wish into execution groups',
-  arguments: [
-    {
-      name: 'wish_path',
-      description: 'Path to wish file (e.g., ".genie/wishes/auth-feature/auth-feature-wish.md")',
-      required: true
-    }
-  ],
-  load: async (args) => {
-    return `run forge "@${args.wish_path}"`;
-  }
-});
-
-// Prompt: review - Validate completed work
-server.addPrompt({
-  name: 'review',
-  description: 'Review completed work against standards',
-  arguments: [
-    {
-      name: 'scope',
-      description: 'What to review (e.g., "auth-feature wish", "PR #123")',
-      required: true
-    }
-  ],
-  load: async (args) => {
-    return `run review "${args.scope}"`;
-  }
-});
-
-// Prompt: prompt - Meta-prompting helper
-server.addPrompt({
-  name: 'prompt',
-  description: 'Get help writing effective prompts using Genie patterns',
-  arguments: [
-    {
-      name: 'task',
-      description: 'What you want to accomplish',
-      required: true
-    }
-  ],
-  load: async (args) => {
-    return `run prompt "Help me write a prompt for: ${args.task}
-
-Load: @.genie/spells/prompt.md
-Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"`;
-  }
-});
+// These prompts were removed because Genie does not maintain backwards compatibility.
+// Users should use the new WebSocket-native tools instead:
+//   - create_wish (replaces 'wish' prompt)
+//   - run_forge (replaces 'forge' prompt)
+//   - run_review (replaces 'review' prompt)
+//   - transform_prompt (replaces 'prompt' prompt)
 
 // Start server with configured transport
 console.error('Starting Genie MCP Server (MVP)...');
@@ -874,8 +813,7 @@ console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
 console.error('Tools: 16 total');
 console.error('  - 12 existing (agents, sessions, spells, workflows, workspace)');
-console.error('  - 4 new WebSocket-native (create_wish, run_forge, run_review, transform_prompt)');
-console.error('Prompts: 4 legacy (backwards compatibility)');
+console.error('  - 4 WebSocket-native (create_wish, run_forge, run_review, transform_prompt)');
 console.error('WebSocket: Real-time streaming enabled');
 
 if (TRANSPORT === 'stdio') {
