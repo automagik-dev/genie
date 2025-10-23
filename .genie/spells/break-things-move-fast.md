@@ -26,7 +26,31 @@ description: Replace old behavior entirely, never preserve legacy features
 - Breaking changes are acceptable and expected
 - Cleaner codebase without legacy cruft
 - Faster iteration without compatibility constraints
+- **GENIE ONLY SELF-EVOLVES** - No dead code, no legacy sections, no "preserved for reference"
 
 **Validation:**
 - Before suggesting new flags, run: `grep -r "flag_name" .`
 - If flag doesn't exist and solves backwards compat → it's hallucinated, remove it
+
+## Critical Violation Pattern
+
+**NEVER write "Legacy Content" or "Preserved for Reference" sections.**
+
+**Anti-Pattern (WRONG):**
+```markdown
+## Migration Notice
+This agent now delegates to spell...
+
+## Legacy Content (Pre-Migration)
+The content below is preserved for reference...
+```
+
+**Correct Pattern:**
+```markdown
+# Agent Name
+[New behavior only, delete old content entirely]
+```
+
+**Why:** Genie self-evolves. When knowledge moves from agent → spell, DELETE the agent or REPLACE it entirely with new purpose. Never keep "legacy sections" or "backward compatibility" blocks.
+
+**Evidence:** Learning session 2025-10-23 - Attempted to preserve debug agent content with "Legacy Content (Pre-Migration)" section. Violation. Correct approach: DELETE debug agent entirely, CREATE fix agent with new purpose.

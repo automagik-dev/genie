@@ -47,23 +47,30 @@ function installGitHooks() {
   }
 
   // Install each hook
-  const hooks = ['pre-commit', 'pre-push'];
+  const hooks = [
+    { name: 'pre-commit', extension: '.cjs', runtime: 'node' },
+    { name: 'pre-push', extension: '.cjs', runtime: 'node' },
+    { name: 'prepare-commit-msg', extension: '', runtime: 'python3' }
+  ];
+
   for (const hook of hooks) {
-    const source = path.join(hooksSourceDir, hook + '.cjs');
-    // Keep .cjs extension to avoid ESM/CommonJS issues (package.json has "type": "module")
-    const dest = path.join(gitHooksDir, hook);
+    const source = path.join(hooksSourceDir, hook.name + hook.extension);
+    const dest = path.join(gitHooksDir, hook.name);
 
     if (!fs.existsSync(source)) {
       continue; // Hook template doesn't exist
     }
 
     try {
-      // Copy hook file and keep CommonJS by using a shell wrapper
-      // Git hooks must be executable scripts without extension, so we create
-      // a bash wrapper that explicitly runs node with the .cjs file
-      // This avoids ESM/CommonJS conflicts (package.json has "type": "module")
-      const wrapper = `#!/bin/sh\nexec node "${source}" "$@"\n`;
-      fs.writeFileSync(dest, wrapper, { mode: 0o755 });
+      if (hook.runtime === 'node') {
+        // Node.js hooks: create shell wrapper to avoid ESM/CommonJS conflicts
+        const wrapper = `#!/bin/sh\nexec node "${source}" "$@"\n`;
+        fs.writeFileSync(dest, wrapper, { mode: 0o755 });
+      } else if (hook.runtime === 'python3') {
+        // Python hooks: create shell wrapper
+        const wrapper = `#!/bin/sh\nexec python3 "${source}" "$@"\n`;
+        fs.writeFileSync(dest, wrapper, { mode: 0o755 });
+      }
     } catch (err) {
       // Silently fail - don't break installation if hooks can't be installed
     }
