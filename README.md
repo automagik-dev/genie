@@ -16,6 +16,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/namastexlabs/automagik-genie/releases"><img alt="Latest RC" src="https://img.shields.io/github/v/release/namastexlabs/automagik-genie?include_prereleases&label=latest%20rc&style=flat-square&color=FF6B35" /></a>
+  <a href="https://github.com/namastexlabs/automagik-genie/releases/latest"><img alt="Latest Stable" src="https://img.shields.io/github/v/release/namastexlabs/automagik-genie?label=stable&style=flat-square&color=4CAF50" /></a>
+</p>
+
+<p align="center">
   <a href="#-getting-started">Getting Started</a> •
   <a href="#-what-is-genie">What is Genie</a> •
   <a href="#-mcp-integration">MCP Integration</a> •

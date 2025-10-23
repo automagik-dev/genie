@@ -192,6 +192,19 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
     log('green', '🎉', 'Release candidate created!');
     console.log('');
 
+    // Create GitHub release with auto-generated notes
+    log('blue', '🏷️', 'Creating GitHub release...');
+    try {
+      const changelogSection = extractChangelogSection(newVersion);
+      const releaseBody = changelogSection || generateFallbackReleaseNotes(newVersion);
+
+      exec(`gh release create v${newVersion} --title "v${newVersion}" --notes "${releaseBody}" --prerelease`, true);
+      log('green', '✅', 'GitHub release created with auto-generated notes');
+    } catch (error) {
+      log('yellow', '⚠️', 'Could not create GitHub release automatically');
+      log('yellow', '💡', `Create manually: gh release create v${newVersion} --generate-notes --prerelease`);
+    }
+
     // Trigger publish workflow
     log('blue', '🚀', 'Triggering publish workflow...');
     const workflowResult = exec(`gh workflow run publish.yml --field tag=v${newVersion}`, true);
@@ -213,6 +226,56 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
     console.log('');
     log('blue', '💡', 'Next: Push tag and create GitHub release');
   }
+}
+
+// Extract changelog section for a version
+function extractChangelogSection(version) {
+  try {
+    const changelogPath = path.join(__dirname, '..', 'CHANGELOG.md');
+    if (!fs.existsSync(changelogPath)) return null;
+
+    const changelog = fs.readFileSync(changelogPath, 'utf8');
+    const lines = changelog.split('\n');
+
+    // Find the section for this version
+    let startIdx = -1;
+    let endIdx = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith(`## [${version}]`)) {
+        startIdx = i + 1; // Skip the header line
+        continue;
+      }
+      if (startIdx !== -1 && lines[i].startsWith('## [')) {
+        endIdx = i;
+        break;
+      }
+    }
+
+    if (startIdx === -1) return null;
+    if (endIdx === -1) endIdx = lines.length;
+
+    const section = lines.slice(startIdx, endIdx).join('\n').trim();
+    return section || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Generate fallback release notes
+function generateFallbackReleaseNotes(version) {
+  const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
+  return `## 🚀 Release Candidate v${version}
+
+This is a pre-release version of ${pkg.name}.
+
+**Install:**
+\`\`\`bash
+npm install -g ${pkg.name}@next
+\`\`\`
+
+See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for details.`;
+}
 }
 
 main();

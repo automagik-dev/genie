@@ -155,11 +155,14 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
   log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
   console.log('');
 
-  // Create GitHub release (triggers publish workflow automatically)
+  // Create GitHub release with changelog content
   log('blue', '🏷️', 'Creating GitHub release...');
   try {
-    exec(`gh release create v${stableVersion} --generate-notes --title "v${stableVersion}"`);
-    log('green', '✅', 'GitHub release created');
+    const changelogSection = extractChangelogSection(stableVersion);
+    const releaseBody = changelogSection || generateStableReleaseNotes(stableVersion);
+
+    exec(`gh release create v${stableVersion} --title "v${stableVersion}" --notes "${releaseBody}" --latest`, true);
+    log('green', '✅', 'GitHub release created with changelog content');
     log('green', '✅', 'Publish workflow triggered automatically');
     log('blue', '📦', 'CI will publish: npm install automagik-genie@latest');
     log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
@@ -171,6 +174,55 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
 
   console.log('');
   log('green', '🧞', 'Release complete! Your wish has been granted! ✨');
+}
+
+// Extract changelog section for a version
+function extractChangelogSection(version) {
+  try {
+    const changelogPath = path.join(__dirname, '..', 'CHANGELOG.md');
+    if (!fs.existsSync(changelogPath)) return null;
+
+    const changelog = fs.readFileSync(changelogPath, 'utf8');
+    const lines = changelog.split('\n');
+
+    // Find the section for this version
+    let startIdx = -1;
+    let endIdx = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith(`## [${version}]`)) {
+        startIdx = i + 1; // Skip the header line
+        continue;
+      }
+      if (startIdx !== -1 && lines[i].startsWith('## [')) {
+        endIdx = i;
+        break;
+      }
+    }
+
+    if (startIdx === -1) return null;
+    if (endIdx === -1) endIdx = lines.length;
+
+    const section = lines.slice(startIdx, endIdx).join('\n').trim();
+    return section || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Generate fallback release notes for stable
+function generateStableReleaseNotes(version) {
+  const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
+  return `## 🎉 Stable Release v${version}
+
+This is a stable release of ${pkg.name}.
+
+**Install:**
+\`\`\`bash
+npm install -g ${pkg.name}@latest
+\`\`\`
+
+See [CHANGELOG.md](https://github.com/namastexlabs/automagik-genie/blob/main/CHANGELOG.md) for full details.`;
 }
 
 main();
