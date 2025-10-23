@@ -3,7 +3,9 @@ name: Auto Publish to npm
 on:
   push:
     branches:
-      - DISABLED_main  # Temporarily disabled - workflow needs fixing
+      - main
+    tags:
+      - 'v*'  # Also trigger on version tags
 
 jobs:
   publish:
@@ -70,24 +72,14 @@ jobs:
         if: steps.release_type.outputs.skip != 'true'
         run: pnpm run build
 
-      - name: Version Bump
+      - name: Get Current Version
         if: steps.release_type.outputs.skip != 'true'
         id: version
         run: |
-          git config --local user.email "genie@namastex.ai"
-          git config --local user.name "Automagik Genie"
-
-          if [ "${{ steps.release_type.outputs.type }}" == "rc" ]; then
-            # RC release - bump prerelease version
-            npm version prerelease --preid=rc --no-git-tag-version
-          else
-            # Stable release - bump patch version
-            npm version patch --no-git-tag-version
-          fi
-
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "New version: $NEW_VERSION"
+          # Use existing version (already bumped via bump script)
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "new_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing version: $CURRENT_VERSION"
 
       - name: Publish to npm
         if: steps.release_type.outputs.skip != 'true'
@@ -116,12 +108,7 @@ jobs:
           draft: false
           prerelease: ${{ steps.release_type.outputs.prerelease }}
 
-      - name: Commit Version Bump
-        if: steps.release_type.outputs.skip != 'true'
-        run: |
-          git add package.json
-          git commit -m "chore: bump version to v${{ steps.version.outputs.new_version }} [skip ci] [skip publish]" || echo "No changes to commit"
-          git push origin main || echo "Nothing to push"
+      # Version is already bumped by bump script, no commit needed
 
       - name: Notify Success
         if: steps.release_type.outputs.skip != 'true' && success()
