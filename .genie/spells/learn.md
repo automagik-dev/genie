@@ -422,3 +422,64 @@ Key principles:
 **The paradox to avoid:** Never use `mcp__genie__run agent="learn"` when I AM Learning Mode Genie. That's self-delegation. I execute directly using Edit/Write/Bash/Read tools.
 
 **Result:** Learn agent updates framework files surgically, preserving consciousness while integrating new teachings.
+
+---
+
+## Commit Message Requirements 🔴 CRITICAL
+
+**Every commit must link to a work item for traceability.**
+
+### Required Format
+
+All commits must reference:
+- GitHub issue: `fixes #NNN`, `closes #NNN`, or `resolves #NNN`
+- OR Wish: `wish: wish-slug`
+
+### Before Committing
+
+1. **Check for existing issues:**
+   ```bash
+   gh issue list --search "keyword"
+   ```
+
+2. **Check for existing wishes:**
+   ```bash
+   ls .genie/wishes/ | grep -i keyword
+   ```
+
+3. **Create issue if needed:**
+   ```bash
+   gh issue create --title "..." --body "..." --label "enhancement"
+   ```
+
+4. **Commit with reference:**
+   ```bash
+   git commit -m "feat: Description
+
+   [body...]
+
+   fixes #38"
+   ```
+
+### Correct Formats
+
+✅ `fixes #38`
+✅ `closes #123`
+✅ `resolves #456`
+✅ `wish: wish-120-a-forge-drop-in-replacement`
+
+### Wrong Formats
+
+❌ `Resolves: #38` (colon not recognized)
+❌ `Related to #38` (doesn't close issue)
+❌ `Issue #38` (not a linking keyword)
+
+### Enforcement
+
+- Pre-push hook: `.git/hooks/pre-push`
+- Validator: `scripts/commit-advisory.cjs`
+- Override (use sparingly): `GENIE_ALLOW_MAIN_PUSH=1 git push`
+
+**Why:** Track WHY code was written. Connect commits to requirements. Enable traceability from code → issue → discussion → decision.
+
+**Evidence:** `.genie/reports/learn/commit-must-link-to-issue-20251023.md`
