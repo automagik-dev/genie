@@ -73,7 +73,8 @@ export class AgentRegistry {
         const content = fs.readFileSync(filePath, 'utf-8');
 
         // Parse frontmatter manually (YAML between --- markers)
-        const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
+        // Allow optional leading whitespace/newlines before frontmatter
+        const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
         if (!frontmatterMatch) {
           console.warn(`Agent file ${filePath} missing frontmatter`);
           continue;
