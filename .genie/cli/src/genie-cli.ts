@@ -177,7 +177,7 @@ program
 const args = process.argv.slice(2);
 
 // Skip version check for these commands (they're safe to run with any version)
-const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback'];
+const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback', 'mcp'];
 const shouldCheckVersion = args.length > 0 && !skipVersionCheck.some(cmd => args.includes(cmd));
 
 if (shouldCheckVersion) {
