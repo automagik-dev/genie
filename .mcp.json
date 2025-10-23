@@ -1,14 +1,5 @@
 {
   "mcpServers": {
-    "genie_qa": {
-      "command": "node",
-      "args": [
-        "/home/namastex/workspace/automagik-genie/.genie/mcp/dist/server.js"
-      ],
-      "env": {
-        "MCP_TRANSPORT": "stdio"
-      }
-    },
     "genie": {
       "command": "npx",
       "args": [
@@ -19,9 +10,8 @@
     "forge": {
       "command": "npx",
       "args": [
-        "@automagik/forge-mcp",
-        "-t",
-        "stdio"
+        "automagik-forge",
+        "--mcp"
       ]
     }
   }

@@ -82,10 +82,11 @@ else
     pnpm install -g automagik-genie@next
 fi
 
-# 4. If no arguments, run genie directly (interactive mode)
+# 4. Launch Genie - use exec to replace this shell process
+echo "🧞 Launching Genie..."
 if [ $# -eq 0 ]; then
-    genie
+    exec genie
 else
     # Arguments provided - pass through
-    genie "$@"
+    exec genie "$@"
 fi
