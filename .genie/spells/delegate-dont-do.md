@@ -119,7 +119,7 @@ When delegating to implementor, ALWAYS update SESSION-STATE.md BEFORE launching 
 - Should have created Forge implementation task and delegated
 - Pattern: "Proceed" after discovery → self-execute instead of creating next Forge task
 - **Root cause**: Perceived simplicity (2 files) led to delegation bypass
-- **Spells violated**: @.genie/spells/forge-integration.md, @.genie/spells/delegate-dont-do.md, @.genie/spells/orchestrator-not-implementor.md
+- **Spells violated**: @.genie/spells/forge-integration.md, @.genie/spells/delegate-dont-do.md, @.genie/spells/orchestration-boundary-protocol.md
 - **Evidence**: Commit caf65641, wish #120-A, learn session 4b35e28c-f64e-48e3-aeb8-549e90718f21
 
 **Evidence timeline (learning progression):**
@@ -221,3 +221,77 @@ Forge executor creates commit + PR
 - Deleted: session state file (clean MCP state)
 
 **This is CRITICAL. No more complex orchestration layers.**
+
+---
+
+## Role Clarity: Orchestrator vs Implementor
+
+**Core Distinction:**
+- **Orchestrator:** Human interface, routes work, coordinates specialists, maintains conversation
+- **Implementor/Specialist:** Executes tasks, makes file changes, implements solutions
+
+**Principle:** Orchestrator = human interface + coordinator. Implementor = file changes + execution.
+
+### Forbidden Actions When Orchestrating
+
+- ❌ Creating TodoWrite and starting execution when SESSION-STATE.md shows active agents
+- ❌ Bypassing mcp__genie__view when resuming with active sessions
+- ❌ Implementing work manually when implementor session exists
+- ❌ Assuming "no messages" means "work not done" (could be MCP bug)
+
+### Required Workflow When Resuming
+
+**When resuming session with SESSION-STATE.md references:**
+1. **FIRST ACTION:** Check each session: `mcp__genie__view with sessionId="<id>"`
+2. **Sessions found:** Resume or continue work via `mcp__genie__resume`
+3. **Sessions not found:** Report to Felipe, ask for guidance
+4. **NEVER:** Create TodoWrite + start execution when agents referenced
+
+**When Felipe says "execute directly":**
+- ✅ Use Edit/Write/Read tools directly
+- ✅ Create TodoWrite for tracking
+- ✅ Execute implementation yourself
+
+**When Felipe does NOT say "execute directly":**
+- ✅ Check sessions FIRST
+- ✅ Delegate to implementor via MCP
+- ❌ NEVER execute implementation yourself
+
+### Evidence of Role Confusion
+
+**2025-10-17 22:45 UTC:**
+- Felipe resumed with SESSION-STATE.md showing 2 active agents (implementor, learn)
+- Both showed "completed" but "No messages yet" (suspected MCP bug)
+- Instead of checking sessions first, I:
+  - Created TodoWrite immediately
+  - Started reading AGENTS.md to extract sections MYSELF
+  - Bypassed implementor session entirely
+  - Began manual implementation work
+- **Pattern:** See SESSION-STATE.md → ignore it → implement manually
+- **Root cause:** Confusion between coordinator role (route) and implementor role (execute)
+- **Result:** Bypassed specialist work, violated human interface principle
+- **Felipe's feedback:** "you have subagents running with genie.... stop trying to execute tasks yourself, you're the human interface only, you can ONLY EXECUTE directly when I say so"
+- **Additional evidence:** mcp__genie__view returned "No run found" for both sessions, should have reported this immediately instead of assuming work needed
+
+---
+
+## TDD Enforcement and Done Reports
+
+**Execution patterns governing sequencing and validation:**
+
+### TDD Protocol
+- ✅ TDD: RED → GREEN → REFACTOR enforced for features
+- ✅ Approval gates explicit in wishes/forge plans
+
+### Strategic Orchestration Rules
+- Orchestrate; don't implement. Delegate to the appropriate agents and collect evidence
+- Approved wish → forge execution groups → implementation via subagents → review → commit advisory
+- Each subagent produces a Done Report and references it in the final reply
+
+### Done Report Format
+- **Location:** `.genie/wishes/<slug>/reports/done-<agent>-<slug>-<YYYYMMDDHHmm>.md` (UTC)
+- **Contents:** scope, files touched, commands (failure → success), risks, human follow-ups
+
+---
+
+**Evidence:** Merged orchestrator-not-implementor.md and orchestration-protocols.md into delegate-dont-do.md on 2025-10-23 during duplicate cleanup initiative.

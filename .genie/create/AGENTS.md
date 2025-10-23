@@ -23,7 +23,6 @@ Load universal spells (auto):
 @.genie/spells/delegate-dont-do.md
 @.genie/spells/blocker.md
 @.genie/spells/experiment.md
-@.genie/spells/orchestration-protocols.md
 @.genie/spells/run-in-parallel.md
 @.genie/spells/ask-one-at-a-time.md
 @.genie/spells/break-things-move-fast.md

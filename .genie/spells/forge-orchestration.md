@@ -1,24 +1,21 @@
 ---
-name: Forge Orchestration Workflow
-description: Proper delegation pattern for Forge operations via wish → forge → review workflow
+name: Forge Orchestration
+description: Complete Forge orchestration - delegation workflow, patterns, MCP task descriptions
 ---
 
-# Forge Orchestration Workflow
+# Forge Orchestration - Complete Guide
 
-**Purpose:** Document correct delegation pattern for Forge operations
-**Evidence:** Task c479353c-9caf-4ff1-affa-da659eb46878 (incorrect direct creation) → corrected workflow
+**Purpose:** Proper delegation patterns for Forge operations and execution coordination
 
 ---
 
-## Core Principle
+## Part 1: Orchestration Workflow 🔴 CRITICAL
 
-**Genie (base orchestrator) does NOT create Forge tasks directly.**
+**Core Principle:** Genie (base orchestrator) does NOT create Forge tasks directly.
 
 Genie orchestrates via **wish → forge → review** workflow delegation.
 
----
-
-## The Mistake Pattern (NEVER DO)
+### The Mistake Pattern (NEVER DO)
 
 **What happened:**
 ```
@@ -36,9 +33,7 @@ Genie: Creates Forge task directly via mcp__automagik_forge__create_task
 4. Skips review validation step (no quality gate)
 5. Direct MCP usage = implementation work (not orchestration)
 
----
-
-## The Correct Pattern (ALWAYS DO)
+### The Correct Pattern (ALWAYS DO)
 
 **Proper workflow:**
 ```
@@ -61,7 +56,7 @@ review.md: Validates implementation against wish acceptance criteria
 
 ---
 
-## Three-Step Workflow Breakdown
+## Part 2: Three-Step Workflow Breakdown
 
 ### Step 1: wish.md Agent (Planning)
 
@@ -81,8 +76,6 @@ mcp__genie__run with agent="wish" and prompt="[User's request with full context]
 - References to relevant code/docs
 
 **Output:** Wish document path for next step
-
----
 
 ### Step 2: forge.md Agent (Execution Breakdown)
 
@@ -109,8 +102,6 @@ mcp__genie__run with agent="forge" and prompt="Create forge plan for @.genie/wis
 
 **Output:** Forge plan + task IDs for monitoring
 
----
-
 ### Step 3: review.md Agent (Validation)
 
 **Purpose:** Validate implementation against wish acceptance criteria
@@ -131,7 +122,7 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 
 ---
 
-## Role Clarity: Who Does What
+## Part 3: Role Clarity - Who Does What
 
 ### Genie (Base Orchestrator)
 
@@ -148,8 +139,6 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 - ❌ NEVER run validation directly (that's review.md's job)
 - ❌ NEVER execute implementation (that's specialist agents' job)
 
----
-
 ### wish.md Agent (Planner)
 
 **Responsibilities:**
@@ -164,8 +153,6 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 - ❌ NEVER perform validation
 
 **Output:** Wish document for forge.md consumption
-
----
 
 ### forge.md Agent (Executor Orchestrator)
 
@@ -198,8 +185,6 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 - Genie orchestrates workflows, not tools
 - Separation: orchestration (Genie) vs execution coordination (forge.md)
 
----
-
 ### review.md Agent (Validator)
 
 **Responsibilities:**
@@ -217,184 +202,96 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 
 ---
 
-## File Structure Created by Workflow
+## Part 4: Orchestration Patterns 🔴 CRITICAL
 
-```
-.genie/wishes/
-└── YYYY-MM-DD-topic/
-    ├── YYYY-MM-DD-topic-wish.md          # Created by wish.md
-    ├── task-a.md                          # Created by forge.md
-    ├── task-b.md                          # Created by forge.md
-    ├── qa/                                # Evidence collection
-    │   ├── group-a/
-    │   └── group-b/
-    └── reports/
-        ├── forge-plan-<slug>-<timestamp>.md    # Created by forge.md
-        └── review-<slug>-<timestamp>.md        # Created by review.md
-```
+### Isolated Worktrees - No Cross-Task Waiting
 
----
+- Each Forge task runs in isolated git worktree/sandbox
+- Tasks CANNOT wait for each other - they don't share filesystem
+- Task B cannot see Task A's changes until Task A is MERGED to base branch
 
-## Integration with Forge-as-Entry-Point Pattern
+### Humans Are The Merge Gate
 
-**Context:** Forge is PRIMARY entry point for ALL work
+- Only humans can review and merge Forge task PRs
+- Agents NEVER merge - always human decision
+- This is by design for quality control
 
-**Workflow alignment:**
-```
-GitHub issue → wish.md (plan) → forge.md (creates Forge task) → Forge executor → review.md
-                                            ↓
-                                    Forge task = PR = worktree
-                                            ↓
-                                    All work converges on main
-```
+### Sequential Dependency Pattern
 
-**Key points:**
-1. **wish.md** captures GitHub issue context in wish document
-2. **forge.md** creates Forge task card (1 task = 1 PR)
-3. **Forge executor** performs implementation in worktree
-4. **review.md** validates before merge to main
-5. **Genie** orchestrates entire chain (does not execute)
+If Task B depends on Task A's changes:
+1. Launch Task A
+2. Wait for Task A to complete
+3. **STOP and ask human:** "Please review and merge Task A"
+4. Human reviews/merges Task A to base branch
+5. THEN launch Task B (now has Task A's changes in base)
 
----
+### Parallel Tasks
 
-## When to Use Each Agent
+- Tasks CAN run in parallel if independent
+- Example: Fix test + Populate PR can run together
+- But final validation MUST wait for test fix to be merged
 
-### Use wish.md when:
-- ✅ Request needs formal context capture
-- ✅ Scope spans multiple components
-- ✅ Ambiguity or risk is high
-- ✅ Compliance/approval gates required
+### Common Mistake Pattern
 
-### Use forge.md when:
-- ✅ Wish is APPROVED
-- ✅ Need to break wish into execution groups
-- ✅ Need to create Forge task cards
-- ✅ Need to assign work to specialists
+- **Mistake:** Launch Task 3 (validation) telling it to 'wait' for Task 1 (test fix)
+- **Why impossible:** Task 3's worktree doesn't have Task 1's changes
+- **Result:** Task 3 would fail because test fix not in its base branch
 
-### Use review.md when:
-- ✅ Implementation complete
-- ✅ Need acceptance criteria validation
-- ✅ Quality gate before merge
+### Correct Pattern
 
-### Skip workflow when:
-- Simple bug fix or trivial change
-- Route directly to implementor/debug
-- Escalate to wish.md if complexity grows
+1. Launch Task 1 & 2 (parallel, independent)
+2. Wait for completion
+3. Ask human to merge Task 1
+4. After merge, launch Task 3 (now has test fix)
 
 ---
 
-## Example: Learning Task (This Conversation)
+## Part 5: MCP Task Description Patterns (Claude Executor Only)
 
-**Incorrect approach (what happened):**
+When creating Forge MCP tasks via `mcp__forge__create_task` with Claude as executor, explicitly instruct Claude to use the subagent and load context from files only.
+
+### Pattern
+
 ```
-User: "Learn proper Forge workflow"
-  ↓
-Genie: mcp__automagik_forge__create_task(...)  # ❌ WRONG
-  ↓
-Task c479353c created directly
+Use the <persona> subagent to [action verb] this task.
+
+`@.genie/code/agents/<persona>.md`
+`@.genie/wishes/<slug>/task-<group>.md`
+`@.genie/wishes/<slug>/<slug>-wish.md`
+
+Load all context from the referenced files above. Do not duplicate content here.
 ```
 
-**Correct approach (what should happen):**
+### Example
+
 ```
-User: "Learn proper Forge workflow"
-  ↓
-Genie: mcp__genie__run(agent="wish", prompt="Document proper Forge orchestration workflow")
-  ↓
-wish.md: Creates .genie/wishes/2025-10-19-forge-orchestration/forge-orchestration-wish.md
-  ↓
-Genie: mcp__genie__run(agent="forge", prompt="Create forge plan for @.genie/wishes/2025-10-19-forge-orchestration/forge-orchestration-wish.md")
-  ↓
-forge.md: Creates forge plan + task files + Forge MCP task via mcp__automagik_forge__create_task
-  ↓
-Forge executor: Implements (creates this spell document)
-  ↓
-Genie: mcp__genie__run(agent="review", prompt="Review implementation for @.genie/wishes/2025-10-19-forge-orchestration/forge-orchestration-wish.md")
-  ↓
-review.md: Validates spell document against acceptance criteria
-  ↓
-✅ Complete orchestration with proper delegation
+Use the implementor subagent to implement this task.
+
+`@.genie/code/agents/implementor.md`
+`@.genie/wishes/claude-executor/task-a.md`
+`@.genie/wishes/claude-executor-wish.md`
+
+Load all context from the referenced files above. Do not duplicate content here.
 ```
+
+### Why This Pattern
+
+- Explicit instruction tells Claude to spawn the subagent
+- Agent reference points to actual agent prompt file
+- File references provide context paths
+- Avoids token waste from duplicating task file contents
+
+### Agent Reference Pattern
+
+- Code agents: `@.genie/code/agents/<agent>.md`
+- Universal agents: `@.genie/code/agents/<agent>.md`
+- Workflows: `@.genie/code/workflows/<workflow>.md`
+
+**Note:** This pattern is ONLY for Forge MCP task descriptions when using Claude executor. Task file creation (task-*.md) remains unchanged with full context.
 
 ---
 
-## Validation Checklist
-
-**Before creating Forge tasks, verify:**
-- [ ] Wish document exists and is APPROVED
-- [ ] Genie delegated to wish.md (not created wish directly)
-- [ ] Genie delegated to forge.md (not created Forge tasks directly)
-- [ ] forge.md parsed wish `<spec_contract>`
-- [ ] forge.md created task files in wish folder
-- [ ] forge.md created Forge MCP tasks (not Genie)
-- [ ] Evidence paths documented
-- [ ] Validation hooks specified
-
-**During implementation, verify:**
-- [ ] Work happens in Forge task worktree
-- [ ] Evidence collected in wish qa/ folders
-- [ ] Progress tracked via Forge task updates
-
-**After implementation, verify:**
-- [ ] Genie delegated to review.md (not validated directly)
-- [ ] Review validates against wish acceptance criteria
-- [ ] All tests passing
-- [ ] Documentation updated
-
----
-
-## Common Anti-Patterns to Avoid
-
-### ❌ Anti-Pattern 1: Genie Creates Forge Tasks
-```
-# WRONG
-mcp__automagik_forge__create_task(...)  # Called by Genie
-```
-
-**Why wrong:** Genie orchestrates, doesn't execute. MCP operations belong to forge.md.
-
-**Correct:**
-```
-# RIGHT
-mcp__genie__run(agent="forge", prompt="...")  # Genie delegates to forge.md
-  ↓
-forge.md calls mcp__automagik_forge__create_task(...)  # forge.md executes
-```
-
----
-
-### ❌ Anti-Pattern 2: Skipping wish.md
-```
-# WRONG
-User request → Genie → forge.md directly
-```
-
-**Why wrong:** No context gathering, no wish document for reference.
-
-**Correct:**
-```
-# RIGHT
-User request → Genie → wish.md → forge.md → review.md
-```
-
----
-
-### ❌ Anti-Pattern 3: forge.md Modifies Wish
-```
-# WRONG
-forge.md edits .genie/wishes/<slug>/<slug>-wish.md
-```
-
-**Why wrong:** Wish is source of truth, forge.md only reads it.
-
-**Correct:**
-```
-# RIGHT
-forge.md reads wish, creates companion files (forge plan, task files)
-```
-
----
-
-## Monitoring Pattern: Sleep, Don't Stop
+## Part 6: Monitoring Pattern - Sleep, Don't Stop
 
 **Critical Learning:** When instructed to "monitor" tasks, Genie does NOT stop/idle.
 
@@ -431,6 +328,148 @@ Genie: Reports status, then continues checking periodically
 
 ---
 
+## Part 7: File Structure Created by Workflow
+
+```
+.genie/wishes/
+└── YYYY-MM-DD-topic/
+    ├── YYYY-MM-DD-topic-wish.md          # Created by wish.md
+    ├── task-a.md                          # Created by forge.md
+    ├── task-b.md                          # Created by forge.md
+    ├── qa/                                # Evidence collection
+    │   ├── group-a/
+    │   └── group-b/
+    └── reports/
+        ├── forge-plan-<slug>-<timestamp>.md    # Created by forge.md
+        └── review-<slug>-<timestamp>.md        # Created by review.md
+```
+
+---
+
+## Part 8: Integration with Forge-as-Entry-Point Pattern
+
+**Context:** Forge is PRIMARY entry point for ALL work
+
+**Workflow alignment:**
+```
+GitHub issue → wish.md (plan) → forge.md (creates Forge task) → Forge executor → review.md
+                                            ↓
+                                    Forge task = PR = worktree
+                                            ↓
+                                    All work converges on main
+```
+
+**Key points:**
+1. **wish.md** captures GitHub issue context in wish document
+2. **forge.md** creates Forge task card (1 task = 1 PR)
+3. **Forge executor** performs implementation in worktree
+4. **review.md** validates before merge to main
+5. **Genie** orchestrates entire chain (does not execute)
+
+---
+
+## Part 9: When to Use Each Agent
+
+### Use wish.md when:
+- ✅ Request needs formal context capture
+- ✅ Scope spans multiple components
+- ✅ Ambiguity or risk is high
+- ✅ Compliance/approval gates required
+
+### Use forge.md when:
+- ✅ Wish is APPROVED
+- ✅ Need to break wish into execution groups
+- ✅ Need to create Forge task cards
+- ✅ Need to assign work to specialists
+
+### Use review.md when:
+- ✅ Implementation complete
+- ✅ Need acceptance criteria validation
+- ✅ Quality gate before merge
+
+### Skip workflow when:
+- Simple bug fix or trivial change
+- Route directly to implementor/debug
+- Escalate to wish.md if complexity grows
+
+---
+
+## Part 10: Common Anti-Patterns to Avoid
+
+### ❌ Anti-Pattern 1: Genie Creates Forge Tasks
+
+```
+# WRONG
+mcp__automagik_forge__create_task(...)  # Called by Genie
+```
+
+**Why wrong:** Genie orchestrates, doesn't execute. MCP operations belong to forge.md.
+
+**Correct:**
+```
+# RIGHT
+mcp__genie__run(agent="forge", prompt="...")  # Genie delegates to forge.md
+  ↓
+forge.md calls mcp__automagik_forge__create_task(...)  # forge.md executes
+```
+
+### ❌ Anti-Pattern 2: Skipping wish.md
+
+```
+# WRONG
+User request → Genie → forge.md directly
+```
+
+**Why wrong:** No context gathering, no wish document for reference.
+
+**Correct:**
+```
+# RIGHT
+User request → Genie → wish.md → forge.md → review.md
+```
+
+### ❌ Anti-Pattern 3: forge.md Modifies Wish
+
+```
+# WRONG
+forge.md edits .genie/wishes/<slug>/<slug>-wish.md
+```
+
+**Why wrong:** Wish is source of truth, forge.md only reads it.
+
+**Correct:**
+```
+# RIGHT
+forge.md reads wish, creates companion files (forge plan, task files)
+```
+
+---
+
+## Part 11: Validation Checklist
+
+**Before creating Forge tasks, verify:**
+- [ ] Wish document exists and is APPROVED
+- [ ] Genie delegated to wish.md (not created wish directly)
+- [ ] Genie delegated to forge.md (not created Forge tasks directly)
+- [ ] forge.md parsed wish `<spec_contract>`
+- [ ] forge.md created task files in wish folder
+- [ ] forge.md created Forge MCP tasks (not Genie)
+- [ ] Evidence paths documented
+- [ ] Validation hooks specified
+
+**During implementation, verify:**
+- [ ] Work happens in Forge task worktree
+- [ ] Evidence collected in wish qa/ folders
+- [ ] Progress tracked via Forge task updates
+
+**After implementation, verify:**
+- [ ] Genie delegated to review.md (not validated directly)
+- [ ] Review validates against wish acceptance criteria
+- [ ] All tests passing
+- [ ] Documentation updated
+
+---
+
 ## Key Takeaways
 
 1. **Genie orchestrates, doesn't execute**
@@ -449,11 +488,10 @@ Genie: Reports status, then continues checking periodically
    - Skipping steps = incomplete orchestration
    - Each step adds value and safety
 
-4. **File structure reflects workflow**
-   - wish.md creates wish document
-   - forge.md creates task files + forge plan
-   - review.md creates review report
-   - Evidence collected in qa/ folders
+4. **Isolated worktrees = sequential dependencies**
+   - Tasks cannot wait for each other
+   - Humans are the merge gate
+   - Sequential dependencies require human approval between tasks
 
 5. **Monitoring = active vigilance**
    - Sleep/poll/check/report loop
@@ -473,4 +511,4 @@ Genie: Reports status, then continues checking periodically
 
 ---
 
-**Evidence of Learning:** Created from task c479353c-9caf-4ff1-affa-da659eb46878 where Genie incorrectly created Forge task directly instead of delegating to wish → forge → review workflow.
+**Evidence:** Merged from 3 spell files (forge-orchestration-workflow, forge-orchestration-patterns, forge-mcp-task-patterns) on 2025-10-23 during duplicate cleanup initiative.

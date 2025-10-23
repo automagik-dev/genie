@@ -128,7 +128,7 @@ mcp__genie__run agent="learn" prompt="Capture session learnings: <highlights>"
 
 ## Evidence & References
 
-- @.genie/spells/forge-orchestration-workflow.md
+- @.genie/spells/forge-orchestration.md
 - @.genie/code/workflows/wish.md
 - @.genie/code/workflows/forge.md
 - @.genie/code/workflows/review.md
