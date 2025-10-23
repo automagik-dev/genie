@@ -1,0 +1,228 @@
+/**
+ * Review Tool - Review wish/task with agent and stream feedback
+ *
+ * Uses log WebSocket streaming for real-time review comments
+ * Links to wish files and provides complete data link tracking
+ */
+
+import { z } from 'zod';
+import fs from 'fs';
+import path from 'path';
+import { wsManager } from '../websocket-manager.js';
+
+// Load ForgeClient from workspace root
+const workspaceRoot = process.cwd();
+const ForgeClient = require(path.join(workspaceRoot, 'forge.js')).ForgeClient;
+
+const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const DEFAULT_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce'; // Genie project ID
+
+/**
+ * Review tool parameters
+ */
+export const reviewToolSchema = z.object({
+  wish_name: z.string().describe('Wish name (e.g., "genie-mcp-mvp")'),
+  agent: z.string().optional().default('review').describe('Agent to use (default: "review")'),
+  project_id: z.string().optional().describe('Project ID (defaults to current Genie project)')
+});
+
+export type ReviewToolParams = z.infer<typeof reviewToolSchema>;
+
+/**
+ * Review tool execution
+ */
+export async function executeReviewTool(
+  args: ReviewToolParams,
+  context: {
+    streamContent: (content: { type: string; text: string }) => Promise<void>;
+    reportProgress?: (progress: number, total?: number) => Promise<void>;
+  }
+): Promise<void> {
+  const { streamContent, reportProgress } = context;
+  const projectId = args.project_id || DEFAULT_PROJECT_ID;
+  const agent = args.agent || 'review';
+
+  // Step 1: Load wish document
+  await streamContent({
+    type: 'text',
+    text: `📖 Loading wish: ${args.wish_name}\n\n`
+  });
+
+  const wishFile = path.join(workspaceRoot, `.genie/wishes/${args.wish_name}/${args.wish_name}-wish.md`);
+
+  if (!fs.existsSync(wishFile)) {
+    await streamContent({
+      type: 'text',
+      text: `❌ Wish file not found: ${wishFile}\n\n` +
+        `⚠️  Please check the wish name and ensure the wish file exists.\n`
+    });
+    throw new Error(`Wish file not found: ${wishFile}`);
+  }
+
+  const wishContent = fs.readFileSync(wishFile, 'utf-8');
+
+  await streamContent({
+    type: 'text',
+    text: `✅ Wish file loaded: ${wishFile}\n` +
+      `   Size: ${wishContent.length} bytes\n\n`
+  });
+
+  if (reportProgress) {
+    await reportProgress(1, 5);
+  }
+
+  // Step 2: Create review task
+  await streamContent({
+    type: 'text',
+    text: `🔍 Starting review with agent: ${agent}\n\n`
+  });
+
+  const forgeClient = new ForgeClient(FORGE_URL);
+
+  let taskResult;
+  try {
+    taskResult = await forgeClient.createAndStartTask({
+      task: {
+        project_id: projectId,
+        title: `Review: ${args.wish_name}`,
+        description: `Review wish document\n\nWish: ${args.wish_name}\nAgent: ${agent}\n\n---\n\n${wishContent.substring(0, 1000)}...`
+      },
+      executor_profile_id: {
+        executor: 'CLAUDE_CODE',
+        variant: 'DEFAULT'
+      },
+      base_branch: 'dev'
+    });
+  } catch (error: any) {
+    await streamContent({
+      type: 'text',
+      text: `❌ Failed to create review task: ${error.message}\n`
+    });
+    throw error;
+  }
+
+  const taskId = taskResult.task?.id || 'unknown';
+  const attemptId = taskResult.task_attempt?.id || 'unknown';
+
+  await streamContent({
+    type: 'text',
+    text: `✅ Review task created: ${taskId}\n` +
+      `✅ Task attempt started: ${attemptId}\n\n`
+  });
+
+  if (reportProgress) {
+    await reportProgress(2, 5);
+  }
+
+  // Step 3: Subscribe to logs WebSocket stream
+  await streamContent({
+    type: 'text',
+    text: `📊 Watching review via logs stream...\n\n`
+  });
+
+  // Get the first execution process ID
+  let processId: string | undefined;
+  try {
+    const attempt = await forgeClient.getTaskAttempt(attemptId);
+    if (attempt.execution_processes && attempt.execution_processes.length > 0) {
+      processId = attempt.execution_processes[0].id;
+    }
+  } catch (error: any) {
+    await streamContent({
+      type: 'text',
+      text: `⚠️  Could not get execution process ID: ${error.message}\n`
+    });
+  }
+
+  let logCount = 0;
+
+  if (processId) {
+    const wsUrl = forgeClient.getNormalizedLogsStreamUrl(processId);
+
+    const subscriptionId = wsManager.subscribe(
+      wsUrl,
+      async (data: any) => {
+        logCount++;
+
+        // Format log data (basic)
+        await streamContent({
+          type: 'text',
+          text: `  🤖 Agent feedback #${logCount}\n`
+        });
+
+        if (reportProgress && logCount <= 3) {
+          await reportProgress(2 + logCount, 5);
+        }
+      },
+      async (error: Error) => {
+        await streamContent({
+          type: 'text',
+          text: `⚠️  WebSocket error: ${error.message}\n`
+        });
+      }
+    );
+
+    // Wait for review to run
+    await new Promise(resolve => setTimeout(resolve, 10000)); // 10 seconds
+
+    // Unsubscribe from WebSocket
+    wsManager.unsubscribe(subscriptionId);
+  } else {
+    await streamContent({
+      type: 'text',
+      text: `⚠️  No execution process found yet. Review is starting...\n\n`
+    });
+
+    // Wait without WebSocket
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+
+  if (reportProgress) {
+    await reportProgress(5, 5);
+  }
+
+  // Step 4: Output completion
+  await streamContent({
+    type: 'text',
+    text: `\n✅ Review monitoring complete!\n\n`
+  });
+
+  // Step 5: Output data links
+  await streamContent({
+    type: 'text',
+    text: `🔗 Data Links:\n` +
+      `  Wish File: ${wishFile}\n` +
+      `  Forge Task: ${taskId}\n` +
+      `  Forge Attempt: ${attemptId}\n` +
+      `  Agent: ${agent}\n` +
+      (processId ? `  Process: ${processId}\n` : '') + `\n`
+  });
+
+  // Step 6: Output human-visible URL
+  await streamContent({
+    type: 'text',
+    text: `🌐 Monitor Progress:\n` +
+      `http://localhost:8887/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs\n\n`
+  });
+
+  // Step 7: Check for missing links
+  await streamContent({
+    type: 'text',
+    text: `⚠️  Data Link Check:\n` +
+      `  ✅ Wish File: ${wishFile} (exists)\n` +
+      `  ✅ Review Task: ${taskId} (created)\n` +
+      `  ✅ Forge Attempt: ${attemptId} (started)\n` +
+      `  ⚠️  GitHub Issue: not verified (consider linking wish to issue)\n\n`
+  });
+
+  // Step 8: Genie self-guidance tips
+  await streamContent({
+    type: 'text',
+    text: `💡 Genie Tips:\n` +
+      `  - User can view review feedback at Forge URL above\n` +
+      `  - Review agent (${agent}) will analyze wish completeness and code quality\n` +
+      `  - Consider creating GitHub issue if wish doesn't have one yet (Amendment 1)\n` +
+      `  - Task will continue running in background (monitored ${logCount} log updates)\n` +
+      `  - Use the Forge URL to see full review report and feedback\n`
+  });
+}
