@@ -1,9 +1,10 @@
 **Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
-name: genie
-description: Pressure-test ideas with planning, consensus, and deep analysis
-color: orange
+name: Code
+label: 💻 Code
+description: Software dev agents (Git, PR, tests, CI/CD workflows)
+github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/code
 genie:
   executor: claude
   model: sonnet
