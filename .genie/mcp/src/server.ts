@@ -587,19 +587,51 @@ server.addTool({
   }
 });
 
+// Helper: Normalize spell path (strip leading .genie/, add directory if missing, add .md if missing)
+function normalizeSpellPath(userPath: string): string {
+  // Strip leading .genie/ if present (prevents double prefix)
+  let normalized = userPath.replace(/^\.genie[\\/]/, '');
+
+  // If path contains no directory component and no scope prefix, search all scope directories
+  if (!normalized.includes('/') && !normalized.includes('\\')) {
+    // Try to find the spell in global, code, or create directories
+    const searchDirs = ['spells', 'code/spells', 'create/spells'];
+    for (const dir of searchDirs) {
+      const testPath = path.join(WORKSPACE_ROOT, '.genie', dir, normalized.endsWith('.md') ? normalized : `${normalized}.md`);
+      if (fs.existsSync(testPath)) {
+        normalized = path.join(dir, normalized.endsWith('.md') ? normalized : `${normalized}.md`);
+        break;
+      }
+    }
+
+    // If not found in any directory, default to spells/ (will fail with clear error)
+    if (!normalized.includes('/') && !normalized.includes('\\')) {
+      normalized = path.join('spells', normalized);
+    }
+  }
+
+  // Add .md extension if missing
+  if (!normalized.endsWith('.md')) {
+    normalized += '.md';
+  }
+
+  return normalized;
+}
+
 // Tool: read_spell - Read specific spell content
 server.addTool({
   name: 'read_spell',
-  description: 'Read the full content of a specific spell. Returns the spell content after the frontmatter (---). Use list_spells first to see available spells.',
+  description: 'Read the full content of a specific spell. Returns the spell content after the frontmatter (---). Use list_spells first to see available spells. Supports multiple path formats: "spells/learn.md", ".genie/spells/learn.md", "code/spells/debug.md", or just "learn" (searches all directories).',
   parameters: z.object({
-    spell_path: z.string().describe('Relative path to the spell file from .genie/ directory (e.g., "spells/learn.md" or "code/spells/forge-code-blueprints.md")')
+    spell_path: z.string().describe('Path to spell file. Flexible formats supported: "spells/learn.md" (recommended), ".genie/spells/learn.md" (auto-strips .genie/), "code/spells/debug.md", or just "learn" (auto-searches and adds .md extension)')
   }),
   execute: async (args) => {
-    const fullPath = path.join(WORKSPACE_ROOT, '.genie', args.spell_path);
+    const normalizedPath = normalizeSpellPath(args.spell_path);
+    const fullPath = path.join(WORKSPACE_ROOT, '.genie', normalizedPath);
 
     try {
       const content = readSpellContent(fullPath);
-      return getVersionHeader() + `# Spell: ${args.spell_path}\n\n${content}`;
+      return getVersionHeader() + `# Spell: ${normalizedPath}\n\n${content}`;
     } catch (error: any) {
       return getVersionHeader() + `Error reading spell: ${error.message}`;
     }

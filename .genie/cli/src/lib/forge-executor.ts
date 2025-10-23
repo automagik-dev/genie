@@ -61,9 +61,26 @@ export class ForgeExecutor {
 
       // Get current Forge profiles to merge with
       const currentProfiles = await this.forge.getExecutorProfiles();
-      const current = typeof currentProfiles.content === 'string'
-        ? JSON.parse(currentProfiles.content)
-        : currentProfiles;
+      let current: any = {};
+
+      try {
+        if (typeof currentProfiles === 'string') {
+          current = JSON.parse(currentProfiles);
+        } else if (currentProfiles && typeof currentProfiles.content === 'string') {
+          current = JSON.parse(currentProfiles.content);
+        } else if (currentProfiles && typeof currentProfiles === 'object') {
+          current = currentProfiles.content || currentProfiles;
+        }
+
+        // Validate structure - must have executors object
+        if (!current.executors || typeof current.executors !== 'object') {
+          console.warn('⚠️  Current executor profiles missing "executors" field, starting fresh');
+          current = { executors: {} };
+        }
+      } catch (parseError: any) {
+        console.warn(`⚠️  Failed to parse current executor profiles: ${parseError.message}, starting fresh`);
+        current = { executors: {} };
+      }
 
       // Merge agent profiles with existing profiles
       const merged = this.mergeProfiles(current, agentProfiles);
