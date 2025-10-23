@@ -12,11 +12,7 @@ function createStopHandler(ctx) {
         const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
         const entry = store.sessions[sessionName];
         if (!entry || !entry.sessionId) {
-            return {
-                success: false,
-                name: sessionName,
-                message: `No session found with name '${sessionName}'.`
-            };
+            throw new Error(`Session '${sessionName}' not found. Use 'genie list' to see available sessions.`);
         }
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
         try {

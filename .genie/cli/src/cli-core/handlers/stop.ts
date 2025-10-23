@@ -14,11 +14,7 @@ export function createStopHandler(ctx: HandlerContext): Handler {
     const entry = store.sessions[sessionName];
 
     if (!entry || !entry.sessionId) {
-      return {
-        success: false,
-        name: sessionName,
-        message: `No session found with name '${sessionName}'.`
-      };
+      throw new Error(`Session '${sessionName}' not found. Use 'genie list' to see available sessions.`);
     }
 
     const forgeExecutor = createForgeExecutor();
