@@ -228,6 +228,83 @@ Version files NOT updated → User runs genie → SAME mismatch → LOOP FOREVER
 **Evidence:** Investigation session 2025-10-23 (this debug wish)
 **Applied:** ✅ To be fixed via debug wish with GitHub issue
 
+### Learning 11: WebSocket Tool Silent Failures Require Investigation 🔴 CRITICAL
+**Context:** WebSocket-native MCP tools (`create_wish`, `run_forge`) returned no output, I declared success anyway
+**Violation:** Marked work "complete" without evidence, suggested manual workaround instead of debugging
+**Pattern:** Silent failure → premature exit → false completion → user confusion
+**Protocol When Tools Fail Silently:**
+1. **Don't assume success or failure** - absence of output ≠ success
+2. **Investigate systematically:**
+   - Check MCP server health (`list_sessions`, `list_agents`)
+   - Try simpler operations to isolate failure
+   - Check downstream systems (Forge UI, git status)
+   - Look for evidence of success (new files, tasks, sessions)
+3. **Try alternatives:**
+   - Non-WebSocket tools (`mcp__genie__run`)
+   - Direct Forge MCP tools
+   - Manual creation with proper documentation
+4. **Report or escalate:**
+   - If MCP server broken → report infrastructure issue
+   - If tool design flaw → report to Master Genie
+   - If session-specific → document limitation
+5. **ONLY THEN suggest manual workaround** - after exhausting investigation
+**Never Do:**
+- ❌ Mark work "complete" without evidence
+- ❌ Exit after first failure without investigation
+- ❌ Suggest manual workaround before debugging
+- ❌ Assume "no output" means "success"
+**Evidence:** `/tmp/session-analysis-ultrathink-20251023.md` (task creation phase)
+**Applied:** ✅ Protocol documented above
+
+### Learning 12: MCP Diagnostic Protocol Before Using Tools 🔴 CRITICAL
+**Context:** Jumped straight to specialized tools without verifying MCP health
+**Pattern:** Skip diagnostics → tool fails → no context for debugging → give up
+**Protocol Before Using MCP Tools:**
+1. **Verify MCP server is responsive:**
+   ```
+   mcp__genie__list_agents  # Simple read operation
+   ```
+2. **Check if work already exists:**
+   ```
+   mcp__genie__list_sessions  # See active tasks
+   ```
+3. **Start with simple operations:**
+   - Read operations before write operations
+   - Non-WebSocket before WebSocket
+   - Diagnostic tools before action tools
+4. **If specialized tool fails:**
+   - Try equivalent non-WebSocket tool
+   - Check if operation succeeded despite no output
+   - Report failure with full context (what worked, what didn't)
+**Evidence:** `/tmp/session-analysis-ultrathink-20251023.md` (skipped diagnostics, tools failed)
+**Applied:** ✅ Protocol documented above
+
+### Learning 13: Evidence-Based Todo Completion 🔴 CRITICAL
+**Context:** Marked "Create debug wish" as complete without verifying task exists
+**Violation:** Master Genie protocol requires evidence for completion
+**Protocol for Todo Completion:**
+1. **Before marking "completed":**
+   - [ ] Can I see the result? (file exists, task visible, session listed)
+   - [ ] Can I prove it worked? (git log, Forge UI, MCP list command)
+   - [ ] Would another agent see this work? (persistent, visible, traceable)
+2. **If verification fails:**
+   - Mark as "blocked" with reason
+   - Document what's blocking
+   - Try alternatives or escalate
+   - DO NOT mark "completed"
+3. **If verification impossible:**
+   - Document uncertainty: "Attempted X, no evidence of success or failure"
+   - Create follow-up task to verify
+   - DO NOT assume success
+**New Todo States Needed:**
+- `completed` - Evidence of success exists
+- `blocked` - Cannot proceed, documented blocker
+- `failed` - Attempted, confirmed failure, documented
+- `unknown` - Attempted, no evidence either way, needs verification
+**Core Principle:** **"Unknown" is more honest than "complete" when evidence is missing.**
+**Evidence:** `/tmp/session-analysis-ultrathink-20251023.md` (marked complete without evidence, user noticed)
+**Applied:** ✅ Protocol documented above
+
 ## Origin: From Scattered Work to Living Framework
 
 - **May 2025:** Created by Felipe Rosa (scattered `.claude/` folders across repos)
