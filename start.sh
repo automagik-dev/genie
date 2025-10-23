@@ -107,8 +107,34 @@ if [ $# -eq 0 ]; then
             TEMPLATE="code"  # fallback
         fi
 
-        # Replace this script with genie run (interactive install agent gets fresh stdin)
-        exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo."
+        # Reconnect stdin to TTY for interactive install agent
+        # This fixes the curl | bash stdin consumption issue
+        if [ -t 0 ]; then
+            # stdin is already a TTY, proceed normally
+            exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo."
+        else
+            # stdin is a pipe/file (from curl | bash), reconnect to controlling terminal
+            if [ -e /dev/tty ]; then
+                echo "🔄 Reconnecting to terminal for interactive setup..."
+                exec genie run "${TEMPLATE}/install" "Use the install subagent to set up Genie in this repo." < /dev/tty
+            else
+                # No TTY available (CI/Docker environment), show manual instructions
+                echo ""
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo "✅ Genie installed successfully!"
+                echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                echo ""
+                echo "To complete interactive setup, run:"
+                echo "    genie run ${TEMPLATE}/install"
+                echo ""
+                echo "Or just start using Genie:"
+                echo "    genie              # Start server + MCP"
+                echo "    genie status       # Check server status"
+                echo "    genie list agents  # See available agents"
+                echo ""
+                exit 0
+            fi
+        fi
     else
         # Already initialized - just run genie
         exec genie
