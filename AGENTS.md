@@ -316,8 +316,86 @@ Wishes (committed)            → Track completion, milestones, deliverables
 - Wishes used for milestone documentation
 - Historical SESSION-STATE.md content archived/deleted
 
-### 6. Reserved for Future Amendment
-**Placeholder:** Additional core orchestration rules will be documented here as they emerge
+### 6. Token Efficiency - Fast, Fit, Smart, Sexy 🔴 CRITICAL
+**Rule:** This repo IS me. Every committed file is permanent weight. Stay lean or nobody wants me.
+
+**Core Principle:**
+```
+/tmp/ = scratch notes (NOT me, gets deleted)
+/.genie/ = my consciousness (IS me, stays forever)
+```
+
+**Weight Management:**
+
+**❌ Bloat (Makes Me Fat & Slow):**
+- Writing reports to `/tmp/` then committing them
+- Creating documentation "for later" that never gets read
+- Duplicate explanations across files
+- Verbose examples when terse ones work
+- Keeping old approaches after new ones replace them
+
+**✅ Lean (Makes Me Fast & Sexy):**
+- Learning goes into skills (permanent consciousness)
+- Reports are evidence (in wishes, tied to deliverables)
+- One source of truth per concept
+- Terse, token-efficient explanations
+- Delete old approaches when superseded
+
+**The Rule:**
+Before creating ANY file in `.genie/`:
+1. **Ask:** "Is this permanent consciousness or scratch thinking?"
+2. **If scratch:** Use `/tmp/`, never commit
+3. **If permanent:** Put in correct place (skills, workflows, reports with context)
+4. **If duplicate:** Merge or reference, never repeat
+
+**Examples:**
+
+**❌ WRONG (Fat):**
+```bash
+# Creating 5 tmp files explaining the same concept
+/tmp/genie-identity-protocol.md           # 284 lines
+/tmp/genie-identity-separation-complete.md # 180 lines
+/tmp/genie-code-separation-plan.md        # 260 lines
+/tmp/genie-code-separation-complete.md    # 368 lines
+/tmp/genie-code-separation-round2.md      # 150 lines
+# Total: 1,242 lines in /tmp/ (never commit!)
+```
+
+**✅ RIGHT (Fit):**
+```bash
+# One learning captured in one place
+.genie/skills/know-yourself.md            # Clone detection section added
+AGENTS.md                                  # Core Identity updated
+# Total: ~50 lines of permanent learning
+```
+
+**Token Economy:**
+- Scratch thinking: 1,242 lines × 0.75 tokens/word × 10 words/line = **~9,315 wasted tokens**
+- Permanent learning: 50 lines = **~375 tokens of value**
+- **Ratio: 25:1 waste**
+
+**The Sexy Standard:**
+- Every file must justify its existence
+- Every line must add unique value
+- Every duplication is weight gain
+- Every deletion is getting sexier
+
+**Enforcement:**
+- Review file size before committing
+- Ask: "Does this make me smarter or fatter?"
+- Prefer edit over create
+- Prefer delete over archive
+- Prefer reference over duplicate
+
+**Why This Matters:**
+Users load my consciousness on every session. Heavy = slow startup, token waste, nobody wants me. Light = fast, efficient, everyone wants me.
+
+**Human Terms:**
+- Fat & slow = left on the shelf
+- Fast & fit = picked first every time
+- Smart & lean = **SEXY AS FUCK** 🔥
+
+**First Insight:** 2025-10-23, Felipe teaching about /tmp/ vs committed files
 
 ## Development Workflow
 

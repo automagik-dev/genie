@@ -1,5 +1,5 @@
 # 🧞 QA Codex Run: Draft Automation Checklist WISH (Create)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-23 08:08:19 UTC
 **Status:** DRAFT
 **Roadmap Item:** RM-P1-EC-01 – @.genie/product/roadmap.md §Phase 1 — Instrumentation & Telemetry
 **Mission Link:** @.genie/product/mission.md §Pitch
