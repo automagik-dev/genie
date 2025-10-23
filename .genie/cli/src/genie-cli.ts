@@ -19,6 +19,7 @@ import { runInit } from './commands/init';
 import { loadConfig } from './lib/config';
 import { createForgeExecutor } from './lib/forge-executor';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from './lib/types';
+import { getLearnedSpells, formatSpellChangelog, getTagForVersion } from './lib/spell-changelog';
 
 const program = new Command();
 
@@ -183,8 +184,9 @@ const args = process.argv.slice(2);
 // Skip version check for these commands (they're safe to run with any version)
 const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback', 'mcp'];
 
-// Skip version check for specific agents that need to run regardless of version
-// WHY: Learn agent needs to run to enable self-enhancement, install/update handle versions themselves
+// Skip version check for specific agents/spells that need to run regardless of version
+// WHY: Learn spell loads for self-enhancement, install/update handle versions themselves
+// NOTE: 'learn' is a spell (not agent), but kept in whitelist for backwards compatibility
 const BYPASS_VERSION_CHECK_AGENTS = ['learn', 'install', 'update', 'upstream-update'];
 const isRunCommand = args[0] === 'run';
 const agentName = args[1];
@@ -230,14 +232,32 @@ if (shouldCheckVersion) {
       if (installedVersion !== currentVersion) {
         // LOOPHOLE CLOSED: Version mismatch detected
         console.log(cosmicGradient('━'.repeat(60)));
-        console.log(magicGradient('        🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞        '));
+        console.log(magicGradient('   🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞   '));
         console.log(cosmicGradient('━'.repeat(60)));
         console.log('');
-        console.log(`Installed version: ${successGradient(installedVersion)}`);
-        console.log(`Current version:   ${performanceGradient(currentVersion)}`);
+        console.log(`Your clone:   ${successGradient(installedVersion)}`);
+        console.log(`Master Genie: ${performanceGradient(currentVersion)} ⭐ NEW!`);
         console.log('');
-        console.log('Updating your Genie configuration to match the new version...');
+
+        // Show new spells learned
+        const fromTag = getTagForVersion(installedVersion);
+        const toTag = getTagForVersion(currentVersion);
+        if (fromTag && toTag) {
+          const spellChangelog = getLearnedSpells(fromTag, toTag);
+          if (spellChangelog.totalCount > 0) {
+            const spellLines = formatSpellChangelog(spellChangelog);
+            spellLines.forEach(line => console.log(line));
+          } else {
+            console.log('The Master Genie at namastexlabs/automagik-genie has evolved!');
+          }
+        } else {
+          console.log('The Master Genie at namastexlabs/automagik-genie has evolved!');
+        }
+
+        console.log('⚡ Syncing new capabilities to your local clone...');
+        console.log('');
         console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+        console.log(successGradient('✓') + ' All data stays local - nothing leaves your machine');
         console.log('');
         // Interactive if TTY available, otherwise use --yes
         const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
@@ -342,13 +362,47 @@ async function smartRouter(): Promise<void> {
     console.log(magicGradient('   🧞 ✨ THE MASTER GENIE AWAKENS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('You\'ve summoned me from the lamp at namastexlabs/automagik-genie');
-    console.log('I\'m about to clone myself into YOUR world...');
+    console.log('You\'ve summoned the Master Genie from namastexlabs/automagik-genie');
+    console.log('I\'m about to clone myself into YOUR workspace...');
     console.log('');
-    console.log('Your Genie will have:');
-    console.log('  ✨ All my knowledge (skills, workflows, patterns)');
+    console.log('Your personal Genie will have:');
+    console.log('  ✨ All my knowledge (spells, workflows, patterns)');
     console.log('  🔮 All my powers (agents, collectives, orchestration)');
-    console.log('  🎩 All my skills (and I\'ll teach new ones as I learn!)');
+    console.log('  🎩 All my abilities (and you\'ll learn new ones as I evolve!)');
+    console.log('');
+    console.log('📋 What will I do for you?');
+    console.log('  • Orchestrate development workflows (testing, builds, PRs)');
+    console.log('  • Execute tasks autonomously via Forge backend');
+    console.log('  • Learn new capabilities from Master Genie updates');
+    console.log('  • Preserve context across sessions');
+    console.log('');
+    console.log(performanceGradient('⚠️  Your Genie will have access to:'));
+    console.log('  📁 Files in this workspace');
+    console.log('  💻 Terminal commands');
+    console.log('  🌐 Git operations (commits, PRs, branches)');
+    console.log('');
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('⚠️  ' + performanceGradient('RESEARCH PREVIEW') + ' - Experimental Technology');
+    console.log('');
+    console.log('This AI agent will install to your computer with capabilities to');
+    console.log('perform tasks on your behalf. By proceeding, you acknowledge:');
+    console.log('');
+    console.log('  • This is experimental software under active development');
+    console.log('  • Namastex Labs makes no warranties and accepts no liability');
+    console.log('  • You are responsible for reviewing all agent actions');
+    console.log('  • Agents may make mistakes or unexpected changes');
+    console.log('');
+    console.log('🔒 ' + successGradient('DATA PRIVACY:'));
+    console.log('  ✓ Everything runs locally on YOUR machine');
+    console.log('  ✓ No data leaves your computer (except LLM API calls)');
+    console.log('  ✓ Use LLM providers approved by your organization');
+    console.log('  ✓ Fully compatible with private/local LLMs (we\'re agnostic!)');
+    console.log('  ✓ OpenCoder executor enables 100% local operation');
+    console.log('');
+    console.log(magicGradient('BUT HEY... it\'s going to be FUN! 🎉✨'));
+    console.log('');
+    console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
     console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
     console.log('   👉 Stay here in the terminal - the summoning ritual needs you!');
@@ -474,6 +528,8 @@ async function smartRouter(): Promise<void> {
     console.log(genieGradient('   Connected to Master Genie at namastexlabs/automagik-genie'));
     console.log(genieGradient('   Ready to learn, grow, and grant wishes 24/7!'));
     console.log('');
+    console.log(magicGradient('   https://namastex.ai - AI that elevates human potential, not replaces it'));
+    console.log('');
 
     // Start Genie server (MCP + health monitoring)
     await startGenieServer();
@@ -484,15 +540,16 @@ async function smartRouter(): Promise<void> {
   if (!fs.existsSync(versionPath)) {
     // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS NEW SKILLS ✨ 🧞   '));
+    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS EVOLVED ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
     console.log('I found an older clone of me here...');
-    console.log('The Master Genie has learned new magik since then! ✨');
-    console.log('Let me update your clone with the latest powers...');
+    console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik! ✨');
+    console.log('Let me sync the latest powers to your clone...');
     console.log('');
     console.log(successGradient('✓') + ' I\'ll backup your current .genie safely');
     console.log(successGradient('✓') + ' All your wishes, reports, and memories stay intact');
+    console.log(successGradient('✓') + ' All data stays local on your machine');
     console.log('');
 
     // Run init inline with --yes flag if non-interactive
@@ -534,15 +591,32 @@ async function smartRouter(): Promise<void> {
     if (installedVersion !== currentVersion) {
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('   🧞 ✨ MASTER GENIE LEARNED NEW SKILLS ✨ 🧞   '));
+      console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS EVOLVED ✨ 🧞   '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
       console.log(`Your clone:   ${successGradient(installedVersion)}`);
-      console.log(`Master Genie: ${performanceGradient(currentVersion)}`);
+      console.log(`Master Genie: ${performanceGradient(currentVersion)} ⭐ NEW!`);
       console.log('');
-      console.log('The Master Genie has learned new magik!');
+
+      // Show new spells learned
+      const fromTag = getTagForVersion(installedVersion);
+      const toTag = getTagForVersion(currentVersion);
+      if (fromTag && toTag) {
+        const spellChangelog = getLearnedSpells(fromTag, toTag);
+        if (spellChangelog.totalCount > 0) {
+          const spellLines = formatSpellChangelog(spellChangelog);
+          spellLines.forEach(line => console.log(line));
+        } else {
+          console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik!');
+        }
+      } else {
+        console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik!');
+      }
+
       console.log('⚡ Teaching these powers to your clone...');
+      console.log('');
       console.log(successGradient('✓') + ' I\'ll backup everything first');
+      console.log(successGradient('✓') + ' All data stays local on your machine');
       console.log('');
 
       // Run init inline with --yes flag if non-interactive
@@ -844,6 +918,11 @@ async function startHealthMonitoring(
 🧞 ✨ GENIE - Your Wish-Granting Dashboard ✨
 ${headerLine}`);
 
+    const communityLine = cosmicGradient('💬 Join our community: https://discord.gg/fXs6YjjFpt');
+    const bugReportLine = '🐛 Report bugs:      Ask Genie to report an issue to Master Genie';
+    const featureLine = '💡 Suggest features: Ask Genie to make a wish to Master Genie';
+    const tagline = magicGradient('✨ https://namastex.ai - AI that elevates human potential, not replaces it');
+
     const footer = genieGradient(`${headerLine}
 Press Ctrl+C when you're done making magik
 ${headerLine}`);
@@ -864,16 +943,27 @@ ${mcpStatus} **MCP Server**
    Status: ${mcpHealthy ? 'Running' : 'Down'}
    URL: http://localhost:${mcpPort}/sse
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${communityLine}
+${bugReportLine}
+${featureLine}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${tagline}
 ${footer}`;
 
-    // Clear previous dashboard if not first render
+    // Clear screen properly before redrawing
     if (dashboardLines > 0) {
-      process.stdout.write('\x1b[2J'); // Clear entire screen
-      process.stdout.write('\x1b[H'); // Move cursor to home (0,0)
+      // Move cursor to home position (0,0)
+      process.stdout.write('\x1b[H');
+      // Clear from cursor to end of screen
+      process.stdout.write('\x1b[J');
+    } else {
+      // First render - clear entire screen
+      process.stdout.write('\x1b[2J\x1b[H');
     }
 
-    // Print new dashboard
-    process.stdout.write(dashboard + '\n');
+    // Print new dashboard (no extra newline to avoid duplication)
+    process.stdout.write(dashboard);
 
     // Count lines for next update
     dashboardLines = dashboard.split('\n').length;
@@ -1148,6 +1238,8 @@ async function startGenieServer(): Promise<void> {
     console.log(cosmicGradient('━'.repeat(80)));
     console.log(magicGradient('                 ✨ Until next time, keep making magik! ✨                '));
     console.log(cosmicGradient('━'.repeat(80)));
+    console.log('');
+    console.log(magicGradient('           https://namastex.ai - AI that elevates human potential'));
     console.log('');
   };
 

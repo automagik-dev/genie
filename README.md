@@ -64,6 +64,8 @@ npm install -g automagik-genie@next
 - ✅ Enables `genie` command anywhere
 - ✅ Runs `genie` to initialize your workspace
 
+**⚠️ Important:** Genie is **research preview** software. Read the [DISCLAIMER](DISCLAIMER.md) before installing.
+
 ---
 
 

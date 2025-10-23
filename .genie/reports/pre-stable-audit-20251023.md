@@ -162,7 +162,7 @@ pnpm run build
 **Before:**
 - 10 prompts (plan, wish, forge, review, genie, consensus, debug, thinkdeep, analyze, prompt)
 - 380 lines of prompt code
-- Outdated references (@.genie/skills/, @.genie/product/mission.md)
+- Outdated references (`.genie/skills/`, `.genie/product/mission.md`)
 
 **After:**
 - 4 prompts (wish, forge, review, prompt)
