@@ -1,11 +1,11 @@
 <p align="center">
   <img src=".github/assets/genie-logo.png" alt="Automagik Genie Logo" width="400">
 </p>
-<h2 align="center">The Universal AI Development Companion</h2>
+<h2 align="center">The Self-Improving AI Orchestration Framework</h2>
 
 <p align="center">
-  <strong>🎯 Initialise, update, and orchestrate AI agents across any codebase</strong><br>
-  Ship the Genie toolkit in minutes, keep it patched with smart updates, and command projects through MCP-integrated agents
+  <strong>🎯 Orchestrate persistent AI agents with memory, structure, and self-improvement</strong><br>
+  Install globally, initialize workspaces, maintain agent sessions across days/weeks with full context preservation
 </p>
 
 <p align="center">
@@ -49,13 +49,13 @@ irm https://genie.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"; 
 
 **Manual install (if you have Node.js already):**
 ```bash
-pnpm install -g automagik-genie@next
+npm install -g automagik-genie@next
 ```
 
 **What the installer does:**
 - ✅ Installs Node.js 22 (if needed)
-- ✅ Installs pnpm package manager
-- ✅ Installs Genie globally
+- ✅ Installs pnpm package manager (faster than npm)
+- ✅ Installs Genie globally via pnpm
 - ✅ Enables `genie` command anywhere
 - ✅ Runs `genie` to initialize your workspace
 
@@ -66,9 +66,11 @@ pnpm install -g automagik-genie@next
 
 ## 🚀 What is Automagik Genie?
 
-**Automagik Genie** is your persistent AI development orchestrator. It's the command center that turns conversations with AI into structured, trackable work through the **Wish → Forge → Review** workflow.
+**Automagik Genie** is a self-improving AI orchestration framework. It's the command center that turns conversations with AI into structured, trackable work through the **Wish → Forge → Review** workflow while continuously evolving its own capabilities.
 
 **The Power:** Genie maintains persistent agent sessions that remember context across iterations, orchestrates task execution via Automagik Forge, and integrates with any AI coding tool through MCP. No slash commands, no complexity—just natural conversation that gets things done.
+
+**The Evolution:** As a meta-agent framework, Genie can audit, upgrade, and validate its own prompt stack and workflows. Every improvement is evidence-based (wish → validation → done report) with built-in rollback safety.
 
 It ships a ready-to-run `.genie/` workspace with 30+ specialized agents, integrates seamlessly with Automagik Forge for isolated task execution, and exposes a battle-tested CLI + MCP server for any AI coding platform.
 
@@ -156,7 +158,8 @@ genie update --check    # Check for updates without installing
 After first run you'll have:
 
 - `.genie/agents/` – 30+ specialized agents (genie, implementor, tests, git, learn, etc.)
-- `.genie/code/` – Code-specific workflows and skills
+- `.genie/code/` – Code-specific workflows and spells
+- `.genie/spells/` – Universal spells (shared across all templates)
 - `.genie/product/` – Mission, roadmap, tech stack documentation
 - `.genie/state/` – Session history, Forge connection state
 - `.genie/backups/<timestamp>/` – Automatic snapshots before major changes
@@ -419,7 +422,7 @@ Genie includes a comprehensive **git hook automation system** that maintains doc
 - ✅ **Cross-reference validation** - Catches broken `@file.md` references before commit
 - ✅ **Token efficiency gate** - Blocks commits if token count increases >5% without justification
 - ✅ **Agent graph auto-generation** - Updates AGENTS.md with token counts and dependency tree
-- ✅ **Agent registry auto-generation** - Scans folders and updates agent/agent/skill lists
+- ✅ **Agent registry auto-generation** - Scans folders and updates agent/spell lists
 - ✅ **Universal headers injection** - Adds `Last Updated` timestamps to all .md files
 - ✅ **Forge task linking** - Auto-links Forge task metadata to wish documents
 
@@ -473,8 +476,11 @@ Two sections in **AGENTS.md** are automatically maintained:
 **Code Agents:** 15 total
 - commit, debug, git, implementor, polish, refactor, release, tests, ...
 
-**Code Skills:** 32 total
-- delegation-discipline, evidence-based-thinking, forge-integration, ...
+**Universal Spells:** 32 total
+- delegation-discipline, orchestration-boundary-protocol, forge-integration, ...
+
+**Code Spells:** 14 total
+- evidence-storage, forge-code-blueprints, genie-integration, ...
 ```
 
 **Agent Graph:**
@@ -490,8 +496,8 @@ Two sections in **AGENTS.md** are automatically maintained:
 
 **Hierarchy:**
 - **AGENTS.md** (965 tokens, +22,657 from 36 refs)
-  - **.genie/agents/code/skills/know-yourself.md** (1,359 tokens)
-  - **.genie/agents/code/skills/evidence-based-thinking.md** (750 tokens)
+  - **.genie/spells/know-yourself.md** (1,359 tokens)
+  - **.genie/code/spells/evidence-based-thinking.md** (750 tokens)
   ...
 ```
 
