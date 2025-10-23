@@ -33,6 +33,8 @@ Load create conventions:
 @.genie/create/spells/style-guide-integration.md
 @.genie/create/spells/asset-naming-rules.md
 @.genie/create/spells/publishing-workflow.md
+@.genie/create/spells/diverse-options.md
+@.genie/create/qa.md
 
 Load meta-creation capabilities (CORE):
 @.genie/create/spells/context-hunger.md

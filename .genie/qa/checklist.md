@@ -260,6 +260,83 @@
 
 ---
 
+## Code Collective Validation
+
+### Performance Baselines
+- [ ] **MCP list_agents performance**
+  - **Comando:** Time `mcp__genie__list_agents`
+  - **Target:** <100ms | **Baseline:** 85ms (2025-10-16)
+  - **Status:** ❓ Untested
+
+- [ ] **MCP list_sessions performance**
+  - **Comando:** Time `mcp__genie__list_sessions`
+  - **Target:** <100ms | **Baseline:** TBD
+  - **Status:** ❓ Untested
+
+- [ ] **Full test suite performance**
+  - **Comando:** `pnpm test`
+  - **Target:** <60s | **Baseline:** 45s (2025-10-15)
+  - **Status:** ❓ Untested
+
+- [ ] **Build performance**
+  - **Comando:** `pnpm run build`
+  - **Target:** <120s | **Baseline:** 95s (2025-10-15)
+  - **Status:** ❓ Untested
+
+### Workflow Integration
+- [ ] **Plan → Wish → Forge → Review flow**
+  - **Comando:** Execute full workflow end-to-end
+  - **Evidência:** All stages complete, handoffs clean
+  - **Status:** ❓ Untested
+
+- [ ] **Learning agent updates documentation**
+  - **Comando:** Teach learn agent, verify file updates
+  - **Evidência:** Framework files updated surgically
+  - **Status:** ❓ Untested
+
+- [ ] **Git agent handles commits/PRs/issues**
+  - **Comando:** Invoke git agent with full workflow
+  - **Evidência:** Commits created, PRs opened, issues linked
+  - **Status:** ❓ Untested
+
+- [ ] **Release agent orchestrates publishing**
+  - **Comando:** Invoke release agent for test publish
+  - **Evidência:** Version bumped, changelog updated, npm published
+  - **Status:** ❓ Untested
+
+### Critical Edge Cases
+- [ ] **Empty sessions.json ([] array)**
+  - **Comando:** Delete sessions.json, run list_sessions
+  - **Evidência:** Graceful empty state or initialization
+  - **Status:** ❓ Untested
+
+- [ ] **Corrupted sessions.json (invalid JSON)**
+  - **Comando:** Corrupt file, run list_sessions
+  - **Evidência:** Clear error with recovery guidance
+  - **Status:** ❓ Untested
+
+- [ ] **Missing .genie/state/ directory**
+  - **Comando:** Delete directory, run agent
+  - **Evidência:** Auto-creates or clear setup error
+  - **Status:** ❓ Untested
+
+- [ ] **Concurrent session creation**
+  - **Comando:** Start 3+ agents simultaneously
+  - **Evidência:** No session ID collisions
+  - **Status:** ❓ Untested
+
+- [ ] **Permission handling: background agents**
+  - **Comando:** Run agent with permissionMode: bypassPermissions
+  - **Evidência:** No approval prompts
+  - **Status:** ❓ Untested
+
+- [ ] **Permission handling: foreground agents**
+  - **Comando:** Run agent with permissionMode: default
+  - **Evidência:** Approval gates respected
+  - **Status:** ❓ Untested
+
+---
+
 ## 🆕 New Items
 
 <!-- QA Agent appends discoveries here via learn integration -->
