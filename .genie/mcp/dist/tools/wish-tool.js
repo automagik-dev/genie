@@ -17,9 +17,12 @@ const child_process_1 = require("child_process");
 const websocket_manager_js_1 = require("../websocket-manager.js");
 const git_validation_js_1 = require("../lib/git-validation.js");
 const path_1 = __importDefault(require("path"));
-// Load ForgeClient from workspace root
-const workspaceRoot = process.cwd();
-const ForgeClient = require(path_1.default.join(workspaceRoot, 'forge.js')).ForgeClient;
+// Load ForgeClient from Genie package root (not user's cwd)
+// The MCP server is at: <genie-package>/.genie/mcp/dist/tools/wish-tool.js
+// forge.js is at: <genie-package>/forge.js
+// So we need to go up 3 levels: dist -> mcp -> .genie -> root
+const geniePackageRoot = path_1.default.resolve(__dirname, '../../..');
+const ForgeClient = require(path_1.default.join(geniePackageRoot, 'forge.js')).ForgeClient;
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 const PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce'; // Genie project ID
 /**
