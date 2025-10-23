@@ -6,15 +6,16 @@
 **Related Issues:** #152 (MCP Authentication)
 
 ---
+version: 1.0.0
 
 ## Executive Summary
 
-Transform `npx automagik-genie` into a single-command startup that launches both Forge backend (port 8888) and MCP server (port 8885) with built-in authentication and optional ngrok tunnel for ChatGPT integration.
+Transform `npx automagik-genie` into a single-command startup that launches both Forge backend (port 8887) and MCP server (port 8885) with built-in authentication and optional ngrok tunnel for ChatGPT integration.
 
 **Current State:**
 ```bash
 # User must start services separately
-$ genie forge start         # Start Forge on 8888
+$ genie forge start         # Start Forge on 8887
 $ genie mcp --transport sse # Start MCP on 8885
 # No auth, no tunnel, manual coordination
 ```
@@ -26,7 +27,7 @@ $ npx automagik-genie
 
 🚀 Genie MCP Server started!
 
-📦 Forge:  http://localhost:8888 ✓
+📦 Forge:  http://localhost:8887 ✓
 📡 MCP:    http://localhost:8885/sse ✓
 🌐 Tunnel: https://abc-123-def.ngrok-free.app/sse
 🔑 Auth:   Bearer genie_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -108,7 +109,7 @@ bin/automagik-genie.js
 .genie/cli/dist/genie-cli.ts (modified)
   ↓
   ├─→ forge-manager.ts → startForgeInBackground()
-  │    └─→ npx automagik-forge start (port 8888)
+  │    └─→ npx automagik-forge start (port 8887)
   │
   └─→ mcp-server-manager.ts (NEW)
        ├─→ setupWizard() (first run only)
@@ -409,7 +410,7 @@ npx automagik-genie
 ## Risks & Mitigations
 
 **Risk 1: Port Conflicts**
-- **Impact:** Services fail to start if ports 8888/8885 occupied
+- **Impact:** Services fail to start if ports 8887/8885 occupied
 - **Mitigation:** Check ports, show clear error message with instructions
 
 **Risk 2: ngrok Token Invalid**
