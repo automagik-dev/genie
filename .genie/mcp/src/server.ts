@@ -22,14 +22,9 @@ import fs from 'fs';
 import path from 'path';
 import { execFile, ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
-import { fileURLToPath } from 'url';
 import { transformDisplayPath } from './lib/display-transform.js';
 
 const execFileAsync = promisify(execFile);
-
-// ES module equivalents for __dirname and __filename
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
