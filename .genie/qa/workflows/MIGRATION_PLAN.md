@@ -1,12 +1,12 @@
 
 # QA Workflows Migration Plan
 
-Goal: Keep all existing QA flows; migrate code-specific scenarios to `code/workflows/qa/` while retaining cross-cutting/global flows under `qa/workflows/`.
+Goal: Keep all existing QA flows; migrate code-specific scenarios to `qa/scenarios/` while retaining cross-cutting/global flows under `qa/workflows/`.
 
 ## Inventory
 - Keep (global): `qa/workflows/voice-boot-qa-workflow.md`
   - Reason: validates Voice co-pilot orchestration (not code-specific)
-- New (code-specific): `code/workflows/qa/agent-listing-latency.md`
+- New (code-specific): `qa/scenarios/agent-listing-latency.md`
   - Reason: tests agent listing performance (integrates with MCP)
 
 ## Candidates for future migration

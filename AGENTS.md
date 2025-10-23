@@ -513,7 +513,7 @@ git log -1 --format="%an" -- <file>
 ### QA Components
 
 **Primary Checklist:** `@.genie/qa/checklist.md` (260+ test items, living document, auto-updated via learn)
-**Atomic Scenarios:** `@.genie/code/workflows/qa/` (18 scenarios, bug regression + feature deep-dive)
+**Atomic Scenarios:** `@.genie/qa/scenarios/` (18 scenarios, bug regression + feature deep-dive)
 **Bug Regression:** `@.genie/qa/scenarios-from-bugs.md` (53 tracked bugs, auto-synced from GitHub)
 **QA Agent:** `@.genie/code/agents/qa.md` (automated execution + self-improving, required for minor/major releases)
 **Evidence Repository:** `@.genie/qa/evidence/` (reproducible test outputs, markdown committed, JSON/tmp ignored)
