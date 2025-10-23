@@ -92,10 +92,12 @@ async function runInit(parsed, _config, _paths) {
             console.log('📦 Templates already copied, resuming setup...');
             console.log('');
             // Skip file operations; go straight to executor setup
-            const { executor, model } = await selectExecutorAndModel(flags);
-            await applyExecutorDefaults(targetGenie, executor, model);
+            // In partial init, use default executor (installation already attempted, use non-interactive default)
+            const resumeExecutor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
+            const resumeModel = undefined;
+            await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
             await (0, mcp_config_1.configureBothExecutors)(cwd);
-            await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor, model, templateSource: templateGenie, target: targetGenie }), parsed.options);
+            await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
             // Note: Install agent is launched by start.sh after init completes
             return;
         }
@@ -190,11 +192,11 @@ async function runInit(parsed, _config, _paths) {
             }
         }
         await (0, fs_utils_1.ensureDir)(backupsRoot);
-        // Use wizard selections in interactive mode, or select defaults in automation mode
-        if (!isInteractive && !executor) {
-            const selected = await selectExecutorAndModel(flags);
-            executor = selected.executor;
-            model = selected.model;
+        // Wizard or automation mode should have set executor by now
+        // If still missing (shouldn't happen), use default
+        if (!executor) {
+            executor = Object.keys(executor_registry_1.EXECUTORS)[0] || 'codex';
+            console.log(`⚠️  Warning: executor not set, using default: ${executor}`);
         }
         await writeVersionState(cwd, backupId, false);
         await initializeProviderStatus(cwd);
@@ -327,42 +329,8 @@ async function migrateAgentsDocs(cwd) {
         console.log(`⚠️  Agents docs migration skipped: ${err?.message || String(err)}`);
     }
 }
-async function selectExecutorAndModel(flags) {
-    // Build list from packaged executors (Forge handles binaries internally)
-    const keys = Object.keys(executor_registry_1.EXECUTORS);
-    let defaultKey = keys.includes('codex') ? 'codex' : (keys[0] || 'codex');
-    // Non-interactive default
-    if (!process.stdout.isTTY || flags.yes) {
-        return { executor: defaultKey, model: undefined };
-    }
-    const executor = await promptExecutorArrow(keys, defaultKey);
-    // Prompt model with default based on current config file (if present)
-    const configPath = path_1.default.join(process.cwd(), '.genie', 'config.yaml');
-    let defaultModel = executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
-    try {
-        const raw = await fs_1.promises.readFile(configPath, 'utf8');
-        const data = yaml_1.default.parse(raw) || {};
-        defaultModel = data?.executionModes?.default?.overrides?.exec?.model || defaultModel;
-    }
-    catch { }
-    const model = await promptText(`Default model for ${executor}`, defaultModel);
-    return { executor, model };
-}
-async function promptTemplateChoice() {
-    // Template choice is mandatory - show help and exit
-    // User must run: genie init <template>
-    console.log('');
-    console.log('🧞 Genie Init - Choose Your Template');
-    console.log('');
-    console.log('Available templates:');
-    console.log('  genie init code      - Software development (full-stack, testing, git)');
-    console.log('  genie init create    - Research, writing, planning (self-adaptive AI)');
-    console.log('');
-    console.log('Example:');
-    console.log('  genie init code');
-    console.log('');
-    process.exit(0);
-}
+// Legacy selectExecutorAndModel function removed - wizard handles all prompts now
+// Legacy template choice function removed - wizard handles all prompts now
 async function writeVersionState(cwd, backupId, _legacyBackedUp) {
     const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
     const version = (0, package_1.getPackageVersion)();
@@ -526,78 +494,7 @@ function replaceFirst(source, pattern, replacement) {
     return source.replace(pattern, replacement);
 }
 // Legacy handoff removed in favor of Forge task creation
-async function promptExecutorArrow(options, defaultValue) {
-    return new Promise((resolve) => {
-        if (!process.stdin.isTTY || !process.stdout.isTTY) {
-            resolve(defaultValue);
-            return;
-        }
-        let index = Math.max(0, options.indexOf(defaultValue));
-        const render = () => {
-            process.stdout.write('\x1Bc'); // clear screen
-            console.log('Select default executor (↑/↓, Enter):');
-            options.forEach((opt, i) => {
-                const prefix = i === index ? '›' : ' ';
-                console.log(`${prefix} ${opt}`);
-            });
-            console.log('');
-        };
-        render();
-        const onData = (buf) => {
-            const s = buf.toString();
-            if (s === '\u0003') { // Ctrl+C
-                process.stdin.off('data', onData);
-                if (process.stdin.setRawMode)
-                    process.stdin.setRawMode(false);
-                process.stdin.pause();
-                resolve(defaultValue);
-                return;
-            }
-            if (s === '\r' || s === '\n') {
-                process.stdin.off('data', onData);
-                if (process.stdin.setRawMode)
-                    process.stdin.setRawMode(false);
-                process.stdin.pause();
-                console.log('');
-                resolve(options[index]);
-                return;
-            }
-            if (s.startsWith('\u001b')) {
-                // Arrow keys
-                if (s === '\u001b[A')
-                    index = (index - 1 + options.length) % options.length; // up
-                if (s === '\u001b[B')
-                    index = (index + 1) % options.length; // down
-                render();
-            }
-        };
-        process.stdin.resume();
-        if (process.stdin.setRawMode)
-            process.stdin.setRawMode(true);
-        process.stdin.on('data', onData);
-    });
-}
-async function promptText(question, defaultValue) {
-    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
-    const suffix = defaultValue ? ` (${defaultValue})` : '';
-    const answer = await new Promise((resolve) => rl.question(`${question}${suffix}: `, (ans) => { rl.close(); resolve(ans); }));
-    const trimmed = answer.trim();
-    return trimmed.length ? trimmed : defaultValue;
-}
-async function promptYesNo(question, defaultYes = true) {
-    if (!process.stdout.isTTY)
-        return defaultYes;
-    const rl = require('readline').createInterface({ input: process.stdin, output: process.stdout });
-    const suffix = defaultYes ? ' [Y/n]' : ' [y/N]';
-    const answer = await new Promise((resolve) => rl.question(`${question}${suffix}: `, (ans) => {
-        rl.close();
-        resolve(ans);
-    }));
-    const trimmed = answer.trim().toLowerCase();
-    if (trimmed === '')
-        return defaultYes;
-    return trimmed === 'y' || trimmed === 'yes';
-}
+// Legacy prompt functions removed - wizard handles all prompts now
 // Legacy handoff code removed
 /*
 console.log(`[HANDOFF] executor=${executor}, cwd=${cwd}`);
