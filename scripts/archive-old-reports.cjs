@@ -152,16 +152,22 @@ async function createDailyArchive(date, files) {
   });
 
   if (!DRY_RUN) {
-    // Create tar.gz using tar command (more reliable than node modules)
+    // Create tar.gz using tar command (works on Linux and macOS)
     try {
-      const fileListStr = fileList.join(' ');
-      execSync(
-        `tar -czf "${archivePath}" -C "${REPORTS_DIR}" ${fileListStr}`,
-        { stdio: 'pipe' }
-      );
+      // Quote each file path for safety (handles spaces)
+      const quotedFiles = fileList.map(f => `"${f}"`).join(' ');
+
+      // Use POSIX-compliant tar flags (works on GNU tar and BSD tar)
+      const tarCmd = `tar -czf "${archivePath}" -C "${REPORTS_DIR}" ${quotedFiles}`;
+
+      execSync(tarCmd, {
+        stdio: 'pipe',
+        // Suppress warnings on macOS about extended attributes
+        env: { ...process.env, COPYFILE_DISABLE: '1' }
+      });
     } catch (error) {
       // Fallback: create individual .gz files
-      log('yellow', '⚠️', `tar failed, falling back to individual compression`);
+      log('yellow', '⚠️', `tar failed (${error.message}), falling back to individual compression`);
 
       for (const file of files) {
         const relativePath = path.relative(REPORTS_DIR, file);
