@@ -34,13 +34,14 @@ export type PromptToolParams = z.infer<typeof promptToolSchema>;
 export async function executePromptTool(
   args: PromptToolParams,
   context: any
-): Promise<void> {
+): Promise<string> {
   const { streamContent } = context;
   const agent = args.agent || 'prompt';
+  let fullOutput = `💭 Transforming prompt with agent: ${agent}\n\n`;
 
   await streamContent({
     type: 'text',
-    text: `💭 Transforming prompt with agent: ${agent}\n\n`
+    text: fullOutput
   });
 
   // Note: No git validation needed - this runs synchronously in current workspace
@@ -64,25 +65,30 @@ export async function executePromptTool(
       base_branch: 'dev'
     });
   } catch (error: any) {
+    const errorMsg = `❌ Failed to process prompt: ${error.message}\n`;
+    fullOutput += errorMsg;
     await streamContent({
       type: 'text',
-      text: `❌ Failed to process prompt: ${error.message}\n`
+      text: errorMsg
     });
-    throw error;
+    return fullOutput;
   }
 
   const taskId = taskResult.task?.id || 'unknown';
   const attemptId = taskResult.task_attempt?.id || 'unknown';
 
+  const waitMsg = `⏳ Waiting for response...\n\n`;
+  fullOutput += waitMsg;
   await streamContent({
     type: 'text',
-    text: `⏳ Waiting for response...\n\n`
+    text: waitMsg
   });
 
   // Poll for completion (simple polling, no WebSocket)
   let attempts = 0;
   const maxAttempts = 30; // 30 seconds max
   let completed = false;
+  let answer = '';
 
   while (attempts < maxAttempts && !completed) {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
@@ -99,20 +105,24 @@ export async function executePromptTool(
 
           if (process.status === 'COMPLETED' && process.normalized_logs) {
             // Extract answer from logs
-            const answer = process.normalized_logs
+            answer = process.normalized_logs
               .filter((log: any) => log.type === 'text')
               .map((log: any) => log.content)
               .join('\n\n');
 
+            const successMsg = `✅ Prompt processed successfully\n\n` +
+              `📝 Answer:\n\n${answer || 'No answer available'}\n\n`;
+            fullOutput += successMsg;
             await streamContent({
               type: 'text',
-              text: `✅ Prompt processed successfully\n\n` +
-                `📝 Answer:\n\n${answer || 'No answer available'}\n\n`
+              text: successMsg
             });
           } else if (process.status === 'FAILED') {
+            const failMsg = `❌ Prompt processing failed\n\n`;
+            fullOutput += failMsg;
             await streamContent({
               type: 'text',
-              text: `❌ Prompt processing failed\n\n`
+              text: failMsg
             });
           }
         }
@@ -125,30 +135,39 @@ export async function executePromptTool(
   }
 
   if (!completed) {
+    const timeoutMsg = `⏱️  Timeout: Response took too long (30s limit)\n\n` +
+      `📊 Check progress at Forge URL below\n\n`;
+    fullOutput += timeoutMsg;
     await streamContent({
       type: 'text',
-      text: `⏱️  Timeout: Response took too long (30s limit)\n\n` +
-        `📊 Check progress at Forge URL below\n\n`
+      text: timeoutMsg
     });
   }
 
   // Output data links (minimal for prompt tool)
+  const dataLinksMsg = `🔗 Data Links:\n` +
+    `  Agent: ${agent}\n` +
+    `  Mode: synchronous (no background task)\n` +
+    `  Task ID: ${taskId} (temporary)\n\n`;
+  fullOutput += dataLinksMsg;
   await streamContent({
     type: 'text',
-    text: `🔗 Data Links:\n` +
-      `  Agent: ${agent}\n` +
-      `  Mode: synchronous (no background task)\n` +
-      `  Task ID: ${taskId} (temporary)\n\n`
+    text: dataLinksMsg
   });
 
   // Genie self-guidance tips
+  const tipsMsg = `💡 Genie Tips:\n` +
+    `  - This was a synchronous prompt transformation (no worktree spawned)\n` +
+    `  - For implementation work, use the forge tool instead\n` +
+    `  - Prompt tool is for transforming/enhancing prompts only\n` +
+    `  - No git validation required (runs in current workspace)\n` +
+    `  - Temporary task will be cleaned up automatically\n`;
+  fullOutput += tipsMsg;
   await streamContent({
     type: 'text',
-    text: `💡 Genie Tips:\n` +
-      `  - This was a synchronous prompt transformation (no worktree spawned)\n` +
-      `  - For implementation work, use the forge tool instead\n` +
-      `  - Prompt tool is for transforming/enhancing prompts only\n` +
-      `  - No git validation required (runs in current workspace)\n` +
-      `  - Temporary task will be cleaned up automatically\n`
+    text: tipsMsg
   });
+
+  // Return full accumulated output (Fix Bug #4: Silent failure)
+  return fullOutput;
 }
