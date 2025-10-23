@@ -134,7 +134,24 @@ async function listSessions() {
             lastUsed: entry.lastUsed || entry.created || 'unknown'
         }));
         // Filter: Show running sessions + recent completed (last 10)
-        const running = sessions.filter((s) => s.status === 'running' || s.status === 'starting');
+        // Fix Bug #5: Filter out stale sessions (>24 hours old with no recent activity)
+        const now = Date.now();
+        const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const running = sessions.filter((s) => {
+            const status = s.status === 'running' || s.status === 'starting';
+            if (!status)
+                return false;
+            // Check if session is stale (created >24h ago, no recent activity)
+            if (s.lastUsed !== 'unknown') {
+                const lastUsedTime = new Date(s.lastUsed).getTime();
+                const age = now - lastUsedTime;
+                if (age > STALE_THRESHOLD_MS) {
+                    // Mark as stale but keep for manual cleanup
+                    return false;
+                }
+            }
+            return true;
+        });
         const completed = sessions
             .filter((s) => s.status === 'completed')
             .sort((a, b) => {
@@ -171,7 +188,23 @@ async function listSessions() {
                 created: entry.created || 'unknown',
                 lastUsed: entry.lastUsed || entry.created || 'unknown'
             }));
-            const running = sessions.filter(s => s.status === 'running' || s.status === 'starting');
+            // Apply same stale filter as Forge path (Fix Bug #5)
+            const now = Date.now();
+            const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+            const running = sessions.filter(s => {
+                const status = s.status === 'running' || s.status === 'starting';
+                if (!status)
+                    return false;
+                // Filter out stale sessions
+                if (s.lastUsed !== 'unknown') {
+                    const lastUsedTime = new Date(s.lastUsed).getTime();
+                    const age = now - lastUsedTime;
+                    if (age > STALE_THRESHOLD_MS) {
+                        return false;
+                    }
+                }
+                return true;
+            });
             const completed = sessions
                 .filter(s => s.status === 'completed')
                 .sort((a, b) => {
@@ -328,9 +361,18 @@ server.addTool({
     }),
     execute: async (args) => {
         try {
+            // Agent alias mapping (Fix Bug #1: plan → wish/blueprint)
+            const AGENT_ALIASES = {
+                'plan': 'wish/blueprint',
+                'discover': 'wish/discovery',
+                'requirements': 'wish/requirements',
+                'align': 'wish/alignment'
+            };
+            // Resolve alias if exists
+            const resolvedAgent = AGENT_ALIASES[args.agent] || args.agent;
             // Early validation: Check if agent exists BEFORE trying to run
             const availableAgents = listAgents();
-            const agentExists = availableAgents.some(a => a.id === args.agent || a.displayId === args.agent);
+            const agentExists = availableAgents.some(a => a.id === resolvedAgent || a.displayId === resolvedAgent);
             if (!agentExists) {
                 // Fast fail with helpful error message
                 const suggestions = availableAgents
@@ -343,7 +385,8 @@ server.addTool({
                     `💡 Use list_agents tool to see all available agents.`;
                 return getVersionHeader() + errorMsg;
             }
-            const cliArgs = ['run', args.agent];
+            // Use resolved agent for CLI invocation
+            const cliArgs = ['run', resolvedAgent];
             if (args.name?.length) {
                 cliArgs.push('--name', args.name);
             }
@@ -352,8 +395,9 @@ server.addTool({
             }
             const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
             const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-            const { displayId } = (0, display_transform_js_1.transformDisplayPath)(args.agent);
-            return getVersionHeader() + `Started agent session:\nAgent: ${displayId}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
+            const { displayId } = (0, display_transform_js_1.transformDisplayPath)(resolvedAgent);
+            const aliasNote = AGENT_ALIASES[args.agent] ? ` (alias: ${args.agent} → ${resolvedAgent})` : '';
+            return getVersionHeader() + `Started agent session:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.`;
         }
         catch (error) {
             return getVersionHeader() + formatCliFailure('start agent session', error);

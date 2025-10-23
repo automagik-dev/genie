@@ -341,6 +341,90 @@
 
 <!-- QA Agent appends discoveries here via learn integration -->
 
+### MCP Tool Resilience (Added 2025-10-23)
+- [ ] **Agent alias resolution**
+  - **Comando:** `mcp__genie__run with agent="plan"` (should resolve to blueprint or provide clear mapping)
+  - **Evidência:** Agent starts successfully or clear error with correct agent name
+  - **Status:** ❌ Fail - Bug #1: "plan" agent not found (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** CRITICAL
+
+- [ ] **Forge backend graceful degradation**
+  - **Comando:** `mcp__genie__view with sessionId="<active>"` when Forge unavailable
+  - **Evidência:** Returns cached data or clear offline message (not hard failure)
+  - **Status:** ❌ Fail - Bug #2: Hard failure with 404 (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** CRITICAL
+
+- [ ] **Executor profile validation**
+  - **Comando:** `mcp__genie__run with agent="implementor" and prompt="test"`
+  - **Evidência:** No warnings about profile format errors
+  - **Status:** ❌ Fail - Bug #3: "Invalid executor profiles format: missing field executors" (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** HIGH
+
+- [ ] **transform_prompt feedback**
+  - **Comando:** `mcp__genie__transform_prompt with agent="prompt" and prompt="test"`
+  - **Evidência:** Returns transformed prompt or clear error (never silent)
+  - **Status:** ❌ Fail - Bug #4: Silent execution (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** HIGH
+
+### Session Management Improvements (Added 2025-10-23)
+- [ ] **Stale session cleanup**
+  - **Comando:** Auto-cleanup sessions older than 24-48h or manual cleanup command
+  - **Evidência:** `list_sessions` shows only active/recent sessions
+  - **Status:** ❌ Fail - Bug #5: 7 stale sessions from 2 days ago still showing as "running" (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** HIGH
+
+- [ ] **Session filtering by status**
+  - **Comando:** `mcp__genie__list_sessions with status="running"`
+  - **Evidência:** Only running sessions shown
+  - **Status:** ❓ Not implemented - Improvement #2 (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** MEDIUM
+
+- [ ] **Session filtering by agent**
+  - **Comando:** `mcp__genie__list_sessions with agent="implementor"`
+  - **Evidência:** Only implementor sessions shown
+  - **Status:** ❓ Not implemented - Improvement #2 (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** MEDIUM
+
+### Spell Discovery Enhancements (Added 2025-10-23)
+- [ ] **Spell search/filter**
+  - **Comando:** `mcp__genie__list_spells with query="learn" and scope="global"`
+  - **Evidência:** Filtered spell list (only matching spells)
+  - **Status:** ❓ Not implemented - Improvement #3 (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** MEDIUM
+
+### Error Message Standardization (Added 2025-10-23)
+- [ ] **Consistent error format**
+  - **Comando:** Trigger various errors across all MCP tools
+  - **Evidência:** All errors follow format: ❌ [Category] Message → 💡 Next Step
+  - **Status:** ⚠️ Partial - Bug #6: Inconsistent formatting (see evidence/mcp-qa-comprehensive-test-20251023.md)
+  - **Priority:** MEDIUM
+
+### Performance Baselines Updated (2025-10-23)
+- [ ] **MCP list_agents performance**
+  - **Comando:** Time `mcp__genie__list_agents`
+  - **Target:** <100ms | **Baseline:** 85ms (2025-10-23) ✅
+  - **Status:** ✅ Pass
+
+- [ ] **MCP list_sessions performance**
+  - **Comando:** Time `mcp__genie__list_sessions`
+  - **Target:** <100ms | **Baseline:** 45ms (2025-10-23) ✅
+  - **Status:** ✅ Pass
+
+- [ ] **MCP list_spells performance**
+  - **Comando:** Time `mcp__genie__list_spells`
+  - **Target:** <100ms | **Baseline:** 120ms (2025-10-23) ⚠️ (slightly over, consider pagination)
+  - **Status:** ⚠️ Partial
+
+- [ ] **MCP read_spell performance**
+  - **Comando:** Time `mcp__genie__read_spell with spell_path="learn"`
+  - **Target:** <100ms | **Baseline:** 60ms (2025-10-23) ✅
+  - **Status:** ✅ Pass
+
+- [ ] **MCP get_workspace_info performance**
+  - **Comando:** Time `mcp__genie__get_workspace_info`
+  - **Target:** <100ms | **Baseline:** 95ms (2025-10-23) ✅
+  - **Status:** ✅ Pass
+
 ---
 
 **Status Legend:**
