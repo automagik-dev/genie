@@ -4,11 +4,12 @@
 - ✅ ALWAYS use `npx automagik-genie` for CLI operations
 
 **Version Self-Awareness:**
-- MCP should display version in outputs (future capability): `Genie MCP v{version}`
+- MCP displays version in all outputs: `Genie MCP v{version}` ✅
 - Helps with debugging: "Is my MCP latest?" or "I prefer to stay on X version"
-- Version injection planned for all MCP tool responses
 
-**MCP Tools:**
+**MCP Tools (14 total):**
+
+**Agent Orchestration:**
 ```
 # List available agents
 mcp__genie__list_agents
@@ -28,6 +29,27 @@ mcp__genie__resume with sessionId="<session-id>" and prompt="Follow-up …"
 
 # Stop a session
 mcp__genie__stop with sessionId="<session-id>"
+```
+
+**Knowledge Discovery:**
+```
+# List available spells (reusable knowledge patterns)
+mcp__genie__list_spells with scope="all" | "global" | "code" | "create"
+mcp__genie__read_spell with spell_path="spells/learn.md"
+
+# List available wishes (planned features/work)
+mcp__genie__list_wishes with status="all" | "active" | "archived"
+mcp__genie__read_wish with wish_path="wishes/stable-launch-preparation.md"
+
+# List available workflows (wish, forge, review, install)
+mcp__genie__list_workflows with collective="all" | "code" | "create"
+mcp__genie__read_workflow with workflow_path="code/workflows/wish.md"
+```
+
+**Workspace Context:**
+```
+# Get workspace info (mission, tech stack, roadmap, environment)
+mcp__genie__get_workspace_info
 ```
 
 ## Conversations & Resume
