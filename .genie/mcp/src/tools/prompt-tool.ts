@@ -1,8 +1,11 @@
 /**
- * Prompt Tool - Simple synchronous Q&A with an agent
+ * Prompt Tool - Synchronous prompt transformer using an agent
  *
- * No background tasks, no WebSocket streaming
- * Direct request/response for quick questions and guidance
+ * Uses an executor to transform/enhance/rewrite prompts in real-time.
+ * Runs synchronously (no background task, no worktree).
+ *
+ * This is the modern equivalent of the old "background off" mode.
+ * Creates a temporary Forge task but polls synchronously for completion.
  */
 
 import { z } from 'zod';
@@ -19,8 +22,8 @@ const DEFAULT_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce'; // Genie proj
  * Prompt tool parameters
  */
 export const promptToolSchema = z.object({
-  question: z.string().describe('Question to ask (e.g., "How do I implement dark mode?")'),
-  agent: z.string().optional().default('genie').describe('Agent to use (default: "genie")')
+  prompt: z.string().describe('Prompt to transform/enhance (e.g., "Help me write a better prompt for implementing dark mode")'),
+  agent: z.string().optional().default('prompt').describe('Agent to use for transformation (default: "prompt")')
 });
 
 export type PromptToolParams = z.infer<typeof promptToolSchema>;
@@ -35,12 +38,15 @@ export async function executePromptTool(
   }
 ): Promise<void> {
   const { streamContent } = context;
-  const agent = args.agent || 'genie';
+  const agent = args.agent || 'prompt';
 
   await streamContent({
     type: 'text',
-    text: `💭 Processing prompt with agent: ${agent}\n\n`
+    text: `💭 Transforming prompt with agent: ${agent}\n\n`
   });
+
+  // Note: No git validation needed - this runs synchronously in current workspace
+  // The prompt transformer agent doesn't spawn a worktree, it just processes input/output
 
   // Create temporary task (we'll poll for completion)
   const forgeClient = new ForgeClient(FORGE_URL);
@@ -50,8 +56,8 @@ export async function executePromptTool(
     taskResult = await forgeClient.createAndStartTask({
       task: {
         project_id: DEFAULT_PROJECT_ID,
-        title: `Q&A: ${args.question.substring(0, 50)}...`,
-        description: `Question: ${args.question}\n\nAgent: ${agent}`
+        title: `Prompt Transform: ${args.prompt.substring(0, 50)}...`,
+        description: `Transform this prompt:\n\n${args.prompt}\n\nAgent: ${agent}`
       },
       executor_profile_id: {
         executor: 'CLAUDE_CODE',
@@ -141,9 +147,10 @@ export async function executePromptTool(
   await streamContent({
     type: 'text',
     text: `💡 Genie Tips:\n` +
-      `  - This was a direct Q&A, no Forge task created for monitoring\n` +
+      `  - This was a synchronous prompt transformation (no worktree spawned)\n` +
       `  - For implementation work, use the forge tool instead\n` +
-      `  - Prompt tool is for quick questions and guidance only\n` +
+      `  - Prompt tool is for transforming/enhancing prompts only\n` +
+      `  - No git validation required (runs in current workspace)\n` +
       `  - Temporary task will be cleaned up automatically\n`
   });
 }
