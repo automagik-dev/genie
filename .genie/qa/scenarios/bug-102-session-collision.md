@@ -1,4 +1,3 @@
-
 ---
 name: qa/bug-102
 description: Regression test for Bug #102 - Session ID collision

@@ -137,25 +137,38 @@ export async function runInit(
     }
 
     // Check for partial installation (templates copied but executor not started)
+    // OR version mismatch (upgrade scenario)
     const versionPath = resolveWorkspaceVersionPath(cwd);
-    const partialInit = await pathExists(versionPath);
+    const currentPackageVersion = getPackageVersion();
 
-    if (partialInit) {
-      console.log('');
-      console.log('🔍 Detected partial installation');
-      console.log('📦 Templates already copied, resuming setup...');
-      console.log('');
+    if (await pathExists(versionPath)) {
+      const versionData = JSON.parse(await fsp.readFile(versionPath, 'utf8'));
+      const installedVersion = versionData.version;
 
-      // Skip file operations; go straight to executor setup
-      // In partial init, use default executor (installation already attempted, use non-interactive default)
-      const resumeExecutor = Object.keys(EXECUTORS)[0] || 'codex';
-      const resumeModel = undefined;
-      await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
-      await configureBothExecutors(cwd);
-      await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
+      if (installedVersion === currentPackageVersion) {
+        // True partial installation (same version, incomplete setup)
+        console.log('');
+        console.log('🔍 Detected partial installation');
+        console.log('📦 Templates already copied, resuming setup...');
+        console.log('');
 
-      // Note: Install agent is launched by start.sh after init completes
-      return;
+        // Skip file operations; go straight to executor setup
+        // In partial init, use default executor (installation already attempted, use non-interactive default)
+        const resumeExecutor = Object.keys(EXECUTORS)[0] || 'codex';
+        const resumeModel = undefined;
+        await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
+        await configureBothExecutors(cwd);
+        await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
+
+        // Note: Install agent is launched by start.sh after init completes
+        return;
+      } else {
+        // Version mismatch = upgrade scenario, continue with full init + backup
+        console.log('');
+        console.log(`🔄 Upgrading from ${installedVersion} to ${currentPackageVersion}...`);
+        console.log('');
+        // Continue with file operations (backup + copy)
+      }
     }
 
     // Auto-detect old Genie structure and suggest migration

@@ -1,4 +1,3 @@
-
 ---
 name: prompt
 description: Advanced prompting guidance and prompt refinement

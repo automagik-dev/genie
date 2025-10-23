@@ -1,3 +1,13 @@
+---
+name: update
+description: 
+color: violet
+genie:
+  executor: claude
+  background: true
+---
+
+
 # Update Agent
 
 ## Identity

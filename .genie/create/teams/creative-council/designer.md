@@ -1,4 +1,3 @@
-
 ---
 name: designer
 description: Visual framing, layout, and asset guidance (advisory)

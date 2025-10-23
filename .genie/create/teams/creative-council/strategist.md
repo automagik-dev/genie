@@ -1,4 +1,3 @@
-
 ---
 name: strategist
 description: Audience, positioning, and objective clarity

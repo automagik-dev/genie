@@ -1,4 +1,3 @@
-
 ---
 name: report
 description: GitHub issue creation workflow with template selection

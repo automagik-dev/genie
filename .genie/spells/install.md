@@ -1,4 +1,3 @@
-
 ---
 name: install
 description: Code Collective install workflow — prepare product docs and wire up Code agents

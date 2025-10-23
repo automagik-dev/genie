@@ -1,4 +1,3 @@
-
 ---
 name: git
 description: Core Git operations (branch, commit, push) - lean agent

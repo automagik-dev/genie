@@ -1,4 +1,3 @@
-
 ---
 name: council-editor
 description: Editorial perspective on clarity, structure, correctness

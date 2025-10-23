@@ -1,4 +1,3 @@
-
 ---
 name: commit
 description: Execute commit and push routine (with safety checks)

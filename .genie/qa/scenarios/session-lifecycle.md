@@ -1,4 +1,3 @@
-
 ---
 name: qa/session-lifecycle
 description: Session state management and lifecycle testing

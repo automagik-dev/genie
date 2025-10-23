@@ -1,4 +1,3 @@
-
 ---
 name: qa/mcp-operations
 description: MCP tool operations testing (list, run, view, resume, stop)

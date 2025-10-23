@@ -1,4 +1,3 @@
-
 ---
 name: alignment
 description: Align idea with roadmap, mission, standards

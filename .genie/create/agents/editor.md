@@ -1,4 +1,3 @@
-
 ---
 name: editor
 description: Elevate clarity, correctness, and style; capture before/after deltas

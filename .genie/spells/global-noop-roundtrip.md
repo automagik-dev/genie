@@ -1,4 +1,3 @@
-
 ---
 name: forge-global-noop-roundtrip
 description: No-op Wish → Review roundtrip without domain specifics

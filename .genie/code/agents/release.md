@@ -1,4 +1,3 @@
-
 ---
 name: release
 description: Complete GitHub release orchestration with approval workflow

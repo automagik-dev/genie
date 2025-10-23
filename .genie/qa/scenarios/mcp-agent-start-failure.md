@@ -1,4 +1,3 @@
-
 ---
 name: mcp-agent-start-failure
 description: Validate agent start for large prompts (Bug #93)

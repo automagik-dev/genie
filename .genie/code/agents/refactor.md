@@ -1,4 +1,3 @@
-
 ---
 name: refactor
 description: Design review and staged refactor planning with verification and rollback

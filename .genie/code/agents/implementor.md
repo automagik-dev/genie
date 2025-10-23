@@ -1,4 +1,3 @@
-
 ---
 name: implementor
 description: End-to-end feature implementation with TDD discipline

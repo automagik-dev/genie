@@ -1,4 +1,3 @@
-
 ---
 name: install
 description: Create Collective install workflow — prepare product identity and connect Create agents

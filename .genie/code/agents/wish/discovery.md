@@ -1,4 +1,3 @@
-
 ---
 name: discovery
 description: Deep discovery - understand and resonate with the user's idea

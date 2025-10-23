@@ -1,4 +1,3 @@
-
 ---
 name: requirements
 description: Clarify scope, boundaries, and technical details

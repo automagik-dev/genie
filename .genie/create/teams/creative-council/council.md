@@ -1,4 +1,3 @@
-
 ---
 name: creative-council
 description: Advisory council for Create (analyze and recommend; never execute)

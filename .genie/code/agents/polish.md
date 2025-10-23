@@ -1,4 +1,3 @@
-
 ---
 name: polish
 description: Type-checking, linting, and formatting for code quality
