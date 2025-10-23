@@ -1,12 +1,12 @@
 # QA Workflow — Voice Boot Helper + Tests
 
-Purpose: Single, practical workflow that doubles as a tiny “voice boot helper” and a runnable test script (by a human or MCP-capable runner). Validates that the Voice agent boots correctly, orchestrates via Genie MCP, and never executes directly. See: @.genie/code/agents/voice.md
+Purpose: Single, practical workflow that doubles as a tiny "voice boot helper" and a runnable test script (by a human or MCP-capable runner). Validates that Master Genie's voice interface boots correctly, orchestrates via Genie MCP, and never executes directly. See: @AGENTS.md (Core Identity section)
 
 ---
 
 ## Preconditions
 - Framework built and CLI available (or MCP wired).
-- Voice agent spec present: @.genie/code/agents/voice.md
+- Master Genie voice capabilities documented: @AGENTS.md (Core Identity)
 - No Plan agent in use; Sturdy agents: reasoning, wish, forge, review, learn.
 
 ---
