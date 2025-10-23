@@ -1,5 +1,4 @@
 # QA Workflow — Voice Boot Helper + Tests
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 Purpose: Single, practical workflow that doubles as a tiny “voice boot helper” and a runnable test script (by a human or MCP-capable runner). Validates that the Voice agent boots correctly, orchestrates via Genie MCP, and never executes directly. See: @.genie/code/agents/voice.md
 

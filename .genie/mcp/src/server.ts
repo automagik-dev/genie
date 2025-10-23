@@ -456,383 +456,70 @@ server.addTool({
   }
 });
 
-// Prompt: plan - Strategic planning and analysis
-server.addPrompt({
-  name: 'plan',
-  description: 'Strategic planning for features, bugs, refactors, and product decisions',
-  arguments: [
-    {
-      name: 'idea',
-      description: 'What you want to accomplish (feature, bug fix, refactor, architecture decision)',
-      required: true
-    },
-    {
-      name: 'context',
-      description: 'Relevant context about your project or specific area',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    const contextPart = args.context ? `\nContext: ${args.context}` : '';
-
-    return `run plan "[Discovery] Analyze: ${args.idea}${contextPart}
-
-Load context: @.genie/product/mission.md @.genie/product/roadmap.md @.genie/standards/best-practices.md
-Review: existing architecture, integration points, dependencies
-Document: assumptions (ASM-#), decisions (DEC-#), risks, open questions (Q-#)
-
-[Implementation] Propose high-level approach with phases
-
-[Verification] Define success criteria, validation steps, evidence requirements"
-
-💡 Prompting Tips:
-• Use for: features, bugs, refactors, migrations, roadmap items, product decisions
-• Reference files with @: auto-loads mission/roadmap/standards context
-• Capture: ASM-# (assumptions), DEC-# (decisions), Q-# (questions), RISK-#
-• Discovery→Implementation→Verification pattern structures thinking`;
-  }
-});
-
-// Prompt: wish - Convert ideas into roadmap-aligned wishes
+// Prompt: wish - Create wish document
 server.addPrompt({
   name: 'wish',
-  description: 'Convert planning brief into a wish document with spec contract',
+  description: 'Create a wish document for planned work',
   arguments: [
     {
       name: 'feature',
-      description: 'Feature or capability to build',
+      description: 'What you want to build',
       required: true
-    },
-    {
-      name: 'planning_context',
-      description: 'Planning brief or context from /plan',
-      required: false
     }
   ],
   load: async (args) => {
-    const contextPart = args.planning_context ? `\nPlanning context: ${args.planning_context}` : '';
-
-    return `run wish "[Discovery] Analyze requirements for: ${args.feature}${contextPart}
-
-1. Current state vs target state
-2. Scope boundaries (in/out)
-3. Assumptions, decisions, risks
-4. Success metrics
-
-[Implementation] Create wish with execution groups, deliverables, evidence paths
-
-[Verification] Ensure @ references, success criteria, evidence checklist complete"
-
-💡 Prompting Tips:
-• Use @ to reference docs: @.genie/product/roadmap.md auto-loads
-• Structure with <task_breakdown>: Discovery, Implementation, Verification
-• Define clear evidence paths: .genie/wishes/<slug>/evidence/`;
+    return `run wish "${args.feature}"`;
   }
 });
 
-// Prompt: forge - Break wishes into execution groups
+// Prompt: forge - Break wish into execution groups
 server.addPrompt({
   name: 'forge',
-  description: 'Break approved wish into execution groups with validation hooks',
+  description: 'Break approved wish into execution groups',
   arguments: [
     {
-      name: 'wish_slug',
-      description: 'Wish slug (e.g., "auth-feature" from auth-feature-wish.md)',
+      name: 'wish_path',
+      description: 'Path to wish file (e.g., ".genie/wishes/auth-feature/auth-feature-wish.md")',
       required: true
-    },
-    {
-      name: 'focus',
-      description: 'Optional focus area (e.g., "evidence checklist only")',
-      required: false
     }
   ],
   load: async (args) => {
-    const focusPart = args.focus ? `\nFocus: ${args.focus}` : '';
-
-    return `run forge "[Discovery] Review @.genie/wishes/${args.wish_slug}-wish.md
-Analyze scope, dependencies, complexity${focusPart}
-
-[Implementation] Break into groups (≤3):
-- Group A: Core functionality
-- Group B: Testing & validation
-Each: surfaces, deliverables, evidence, validation
-
-[Verification] Ensure dependencies sequenced, validation hooks defined, ready for implementation"
-
-💡 Prompting Tips:
-• @ auto-loads files: @.genie/wishes/${args.wish_slug}-wish.md (no manual paste)
-• Show concrete commands: \`pnpm test\` not "ensure proper validation"
-• Specify exact paths: .genie/wishes/<slug>/evidence/screenshots/`;
+    return `run forge "@${args.wish_path}"`;
   }
 });
 
 // Prompt: review - Validate completed work
 server.addPrompt({
   name: 'review',
-  description: 'Validate completed work against standards and requirements',
+  description: 'Review completed work against standards',
   arguments: [
     {
       name: 'scope',
-      description: 'What to review (e.g., "wish completion", "PR changes", "auth module")',
+      description: 'What to review (e.g., "auth-feature wish", "PR #123")',
       required: true
     }
   ],
   load: async (args) => {
-    return `run review "[Discovery] Analyze ${args.scope}: code changes, tests, docs, security
-
-[Implementation] Evaluate against:
-1. @.genie/standards/*
-2. Security vulnerabilities
-3. Performance
-4. Test coverage
-
-[Verification] Deliver severity-tagged issues (CRITICAL/HIGH/MEDIUM/LOW), file:line refs, improvements"
-
-💡 Prompting Tips:
-• Use [SUCCESS CRITERIA] ✅ and [NEVER DO] ❌ for clear boundaries
-• Show concrete examples: \`try/catch\` code not "ensure error handling"
-• Tag severity: CRITICAL/HIGH/MEDIUM/LOW for prioritization`;
-  }
-});
-
-// Prompt: genie - Pressure-test decisions with multiple modes
-server.addPrompt({
-  name: 'genie',
-  description: 'Get second opinions, pressure-test plans, or deep-dive analysis using 17+ specialized modes',
-  arguments: [
-    {
-      name: 'situation',
-      description: 'What you want to analyze or pressure-test',
-      required: true
-    },
-    {
-      name: 'goal',
-      description: 'What you want to achieve (e.g., "find risks", "validate approach", "debug issue")',
-      required: true
-    },
-    {
-      name: 'mode_hint',
-      description: 'Preferred Genie mode (planning, consensus, debug, deep-dive, etc.) - optional',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    // Infer mode from goal if not provided
-    let inferredMode = args.mode_hint || 'planning';
-    const goalLower = (args.goal || '').toLowerCase();
-
-    if (goalLower.includes('risk')) inferredMode = 'risk-audit';
-    else if (goalLower.includes('debug') || goalLower.includes('investigate')) inferredMode = 'debug';
-    else if (goalLower.includes('decision') || goalLower.includes('evaluate')) inferredMode = 'consensus';
-    else if (goalLower.includes('deep') || goalLower.includes('analyze')) inferredMode = 'deep-dive';
-    else if (goalLower.includes('test') || goalLower.includes('validate')) inferredMode = 'tests';
-
-    return `Genie Modes: planning, consensus, deep-dive, debug, analyze, thinkdeep, design-review, risk-audit, socratic, debate, compliance, retrospective + more
-
-Recommended for "${args.goal}": ${inferredMode}
-
-run genie "Mode: ${inferredMode}. Objective: ${args.goal}
-
-Situation: ${args.situation}
-
-Deliver: [mode-specific outputs]
-Finish with: Genie Verdict + confidence (low/med/high)"
-
-💡 Prompting Tips:
-• State objective clearly, specify numbered deliverables (3 risks, 3 validations)
-• Request verdict format: Genie Verdict + confidence level
-• Gives agent clear completion boundaries`;
-  }
-});
-
-// Prompt: consensus - Decision evaluation and counterpoints
-server.addPrompt({
-  name: 'consensus',
-  description: 'Build consensus and evaluate technical decisions with evidence-based analysis',
-  arguments: [
-    {
-      name: 'decision',
-      description: 'The decision or approach to evaluate',
-      required: true
-    },
-    {
-      name: 'rationale',
-      description: 'Why you\'re considering this decision',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    const rationalePart = args.rationale ? `\nRationale: ${args.rationale}` : '';
-
-    return `run consensus "[Discovery] Evaluate: ${args.decision}${rationalePart}
-
-[Implementation] Analyze: technical feasibility, long-term implications, alternatives, best practices
-Provide: 3 counterpoints + evidence, supporting evidence, recommendation
-
-[Verification] Verdict: Go/No-Go/Modify + confidence"
-
-💡 Prompting Tips:
-• Use ✅ Counterpoints evidence-based ❌ Opinions without evidence
-• Show concrete concerns: "10M req/day bottleneck?" not "evaluate scalability"
-• Require alternatives exploration`;
-  }
-});
-
-// Prompt: debug - Root cause investigation workflow
-server.addPrompt({
-  name: 'debug',
-  description: 'Systematic root cause investigation with hypotheses and experiments',
-  arguments: [
-    {
-      name: 'problem',
-      description: 'The issue you\'re debugging',
-      required: true
-    },
-    {
-      name: 'symptoms',
-      description: 'Observable symptoms (errors, unexpected behavior)',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    const symptomsPart = args.symptoms ? `\nSymptoms: ${args.symptoms}` : '';
-
-    return `run debug "[Discovery] Symptoms: ${args.problem}${symptomsPart}
-Gather errors, stack traces, recent changes, repro steps
-
-[Implementation] Generate 3-5 hypotheses ranked by likelihood
-For top hypothesis: minimal experiment, expected outcomes
-
-[Verification] Root cause, minimal fix, regression test"
-
-💡 Prompting Tips:
-• Use <task_breakdown> to structure investigation phases
-• Show exact commands: \`grep "ERROR" /var/log/app.log\` not "check logs"
-• Rank hypotheses by likelihood`;
-  }
-});
-
-// Prompt: thinkdeep - Extended reasoning with timebox
-server.addPrompt({
-  name: 'thinkdeep',
-  description: 'Extended reasoning on complex topics with timeboxed exploration',
-  arguments: [
-    {
-      name: 'focus',
-      description: 'What to think deeply about',
-      required: true
-    },
-    {
-      name: 'timebox_minutes',
-      description: 'How long to spend (5=quick, 10=standard, 15=complex)',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    const timebox = args.timebox_minutes || 10;
-
-    return `run thinkdeep "[Discovery] Outline 3-5 reasoning steps for: ${args.focus}
-Timebox: ${timebox}min
-
-[Implementation] Explore each: insights, evidence, implications, questions
-
-[Verification] Top 3 insights + confidence, uncertainties, next actions"
-
-💡 Prompting Tips:
-• Show concrete output: "10K req/s bottleneck: PostgreSQL (50K max connections)"
-• Timebox: 5min=quick, 10min=standard, 15min=complex
-• Prevents meandering, forces prioritization`;
-  }
-});
-
-// Prompt: analyze - System architecture analysis
-server.addPrompt({
-  name: 'analyze',
-  description: 'Deep analysis of system architecture, dependencies, and design',
-  arguments: [
-    {
-      name: 'component',
-      description: 'Component, module, or system to analyze',
-      required: true
-    },
-    {
-      name: 'focus_area',
-      description: 'Specific focus (dependencies, performance, security) - optional',
-      required: false
-    }
-  ],
-  load: async (args) => {
-    const focusPart = args.focus_area ? `\nFocus: ${args.focus_area}` : '';
-
-    return `run analyze "[Discovery] Map @${args.component}: structure, dependencies, data flow, interfaces${focusPart}
-
-[Implementation] Find: coupling hotspots, complexity clusters, bottlenecks, security surface
-
-[Verification] Top 3 refactor opportunities + impact, dependency map, simplifications"
-
-💡 Prompting Tips:
-• @ auto-loads: @src/auth/ (directory), @src/payment.ts (file)
-• Show concrete coupling: "UserService → 4 deps. Extract EmailNotifier interface"
-• Define success: ✅ Map complete ✅ Hotspots identified ✅ Impact estimated`;
+    return `run review "${args.scope}"`;
   }
 });
 
 // Prompt: prompt - Meta-prompting helper
 server.addPrompt({
   name: 'prompt',
-  description: 'Improve prompts using Genie prompting framework (@ references, task breakdown, success criteria)',
+  description: 'Get help writing effective prompts using Genie patterns',
   arguments: [
     {
-      name: 'task_description',
+      name: 'task',
       description: 'What you want to accomplish',
       required: true
-    },
-    {
-      name: 'current_prompt',
-      description: 'Current prompt to improve (optional)',
-      required: false
     }
   ],
   load: async (args) => {
-    const improvePart = args.current_prompt ? `\n\nImprove:\n${args.current_prompt}` : '';
+    return `run prompt "Help me write a prompt for: ${args.task}
 
-    return `run prompt "Task: ${args.task_description}${improvePart}
-
-Create structured prompt using:"
-
-## Genie Prompting Framework (@.genie/skills/prompt.md)
-
-**1. Task Breakdown:**
-<task_breakdown>
-1. [Discovery] What to investigate
-2. [Implementation] What to change
-3. [Verification] What to validate
-</task_breakdown>
-
-**2. Auto-Context with @:**
-@src/auth/middleware.ts auto-loads files (no manual "read X then Y")
-
-**3. Success/Failure Boundaries:**
-[SUCCESS CRITERIA] ✅ Tests pass ✅ No hardcoded paths
-[NEVER DO] ❌ Skip coverage ❌ Commit secrets
-
-**4. Concrete Examples:**
-Show code: \`try/catch\` not "ensure error handling"
-
-**5. Checklist:**
-✅ Discovery→Implementation→Verification
-✅ @ references for context
-✅ Success criteria defined
-✅ Concrete examples
-
-**Example:**
-[Discovery] Review @src/auth/middleware.ts, identify gaps
-[Implementation] Add JWT refresh endpoint, update middleware
-[Verification] Run npm run security-check, test flow
-[SUCCESS CRITERIA] ✅ Tokens work ✅ Audit passes
-[NEVER DO] ❌ Store in localStorage ❌ Log tokens
-
-💡 This framework = maximum clarity + effectiveness`;
+Load: @.genie/spells/prompt.md
+Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"`;
   }
 });
 
@@ -841,6 +528,7 @@ console.error('Starting Genie MCP Server...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
 console.error('Tools: 6 (list_agents, list_sessions, run, resume, view, stop)');
+console.error('Prompts: 4 (wish, forge, review, prompt)');
 
 if (TRANSPORT === 'stdio') {
   server.start({

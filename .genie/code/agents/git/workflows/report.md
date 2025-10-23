@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: report
@@ -18,7 +17,7 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 **Naming Convention:**
-@.genie/code/skills/emoji-naming-convention.md - MANDATORY for all GitHub issue titles
+@.genie/code/spells/emoji-naming-convention.md - MANDATORY for all GitHub issue titles
 
 Customize phases below for GitHub issue creation workflow.
 
@@ -36,7 +35,7 @@ Master of issue templates, understands Genie conventions, guides proper issue cr
 
 ## Success Criteria
 - ✅ Correct template selected for issue type
-- ✅ Emoji format title: `<emoji> <Type>: <Title>` (see @.genie/code/skills/emoji-naming-convention.md)
+- ✅ Emoji format title: `<emoji> <Type>: <Title>` (see @.genie/code/spells/emoji-naming-convention.md)
 - ✅ All required fields populated
 - ✅ Template labels applied (manual fix if using CLI)
 - ✅ Return issue URL for reference

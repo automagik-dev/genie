@@ -1,5 +1,4 @@
 # Planning Brief: Template Agents Loading Strategy
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-09
 **Context:** Debug investigation of `genie init` missing files
 **Related Wish:** `.genie/wishes/core-template-separation/core-template-separation-wish.md`
@@ -12,7 +11,7 @@
 When users run `genie init`, the entire `.genie/agents/` directory is copied to their workspace, including core workflow agents (plan, wish, forge, review, orchestrator, vibe) and all core delivery agents. This violates the architectural vision where:
 
 1. **Core agents** should remain in the NPM package and be loaded automatically by MCP
-2. **No separate custom overrides folder** — project-specific guidance lives inline as "Project Notes" within agents/skills
+2. **No separate custom overrides folder** — project-specific guidance lives inline as "Project Notes" within agents/spells
 3. **Template scaffolding** (standards, product docs, guides) should be copied to workspace
 
 **Current Behavior:**
@@ -23,7 +22,7 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
 **Expected Behavior:**
 - Core agents loaded from NPM package location
 - Workspace contains no `.genie/custom/` folder
-- MCP server resolves: NPM core agents + inline project notes inside agents/skills
+- MCP server resolves: NPM core agents + inline project notes inside agents/spells
 
 ---
 
@@ -37,7 +36,7 @@ When users run `genie init`, the entire `.genie/agents/` directory is copied to 
    - Add `agents` to blacklist (prevents copy)?
    - Create allowlist of folders to copy instead?
 
-3. **Project Notes Guidance:** Provide guidance on adding "Project Notes" sections in agents/skills instead of creating stubs
+3. **Project Notes Guidance:** Provide guidance on adding "Project Notes" sections in agents/spells instead of creating stubs
 
 4. **Migration Path:** How do existing users upgrade?
    - Do they need to manually remove copied agents?
@@ -110,7 +109,7 @@ export function getTemplateRelativeBlacklist(): Set<string> {
 ```
 
 ### Task 2: Document Project Notes Pattern
-Provide a short section in AGENTS.md describing how to add "Project Notes" inside agents/skills for repository-specific guidance (no stubs created).
+Provide a short section in AGENTS.md describing how to add "Project Notes" inside agents/spells for repository-specific guidance (no stubs created).
 
 ### Task 3: Verify MCP Agent Resolution
 **File:** `.genie/mcp/src/server.ts`

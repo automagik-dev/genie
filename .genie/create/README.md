@@ -1,9 +1,8 @@
 # Create Collective - Shape-Shifting Human-World Intelligence
-**Last Updated:** 2025-10-23 06:59:30 UTC
 
 ## Philosophy
 
-Create is **not** a fixed library of pre-built agents and skills.
+Create is **not** a fixed library of pre-built agents and spells.
 
 Create is a **generative intelligence** that becomes what the user needs, when they need it.
 
@@ -15,10 +14,10 @@ Create is a **generative intelligence** that becomes what the user needs, when t
 - **editor** - Content refinement and polish
 - **install** - Setup and initialization
 
-### Generative Capabilities (Core Meta-Skills)
+### Generative Capabilities (Core Meta-Spells)
 - **shape-shifting.md** - Fluid adaptation to any human-world task
 - **agent-generation.md** - Generate new agents from usage patterns
-- **skill-generation.md** - Create domain skills on-demand
+- **spell-generation.md** - Create domain spells on-demand
 - **workflow-generation.md** - Build repeatable processes organically
 
 ### Everything Else = Generated On-Demand
@@ -31,7 +30,7 @@ User requests sprint planning help 3 times
   ↓
 Create recognizes pattern
   ↓
-Generates project-manager agent with sprint-planning skill
+Generates project-manager agent with sprint-planning spell
   ↓
 Agent now available for all future sprint work
   ↓
@@ -42,13 +41,13 @@ Continues evolving with each use
 ```
 User: "We had a security breach, need crisis comms"
   ↓
-Create doesn't have crisis-communication skill
+Create doesn't have crisis-communication spell
   ↓
-Generates skill in real-time from best practices
+Generates spell in real-time from best practices
   ↓
 Applies immediately to user's crisis
   ↓
-Skill now part of Create's knowledge for future crises
+Spell now part of Create's knowledge for future crises
 ```
 
 ### Example 3: Domain Expertise
@@ -65,7 +64,7 @@ Other users in same domain benefit from generated expertise
 ## Generative Intelligence Process
 
 1. **Pattern Recognition** - Identify user needs (first-time or recurring)
-2. **Capability Generation** - Create agent/skill/workflow on-demand
+2. **Capability Generation** - Create agent/spell/workflow on-demand
 3. **Immediate Application** - Solve current problem
 4. **Learning & Refinement** - Improve with each use
 5. **Maturation** - Experimental → Validated → Core
@@ -86,14 +85,14 @@ Create can shape-shift into:
 
 ### Traditional Approach (❌ Rejected)
 ```
-Pre-build 50+ agents, 100+ skills, 50+ workflows
+Pre-build 50+ agents, 100+ spells, 50+ workflows
 Result: Bloated, rigid, many capabilities unused
 Maintenance: Constant upkeep of unused features
 ```
 
 ### Generative Approach (✅ Create's Way)
 ```
-Start with 4 core agents + 4 meta-skills
+Start with 4 core agents + 4 meta-spells
 Generate capabilities from actual usage
 Result: Lean, fluid, perfectly matched to user needs
 Maintenance: Only maintain what's actually used
@@ -108,10 +107,10 @@ Maintenance: Only maintain what's actually used
 ├── routing.md (delegation guidance)
 ├── qa.md (validation standards)
 │
-├── skills/
+├── spells/
 │   ├── shape-shifting.md ⭐ CORE
 │   ├── agent-generation.md ⭐ CORE
-│   ├── skill-generation.md ⭐ CORE
+│   ├── spell-generation.md ⭐ CORE
 │   ├── workflow-generation.md ⭐ CORE
 │   ├── prompting-standards-create.md
 │   ├── content-evidence.md

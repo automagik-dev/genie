@@ -1,5 +1,4 @@
 # Task E: Extract Release Protocol
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** E
 **Target:** `.genie/agents/genie/agents/release/release.md`
 **Lines to extract:** AGENTS.md 1361-1402

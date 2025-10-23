@@ -814,7 +814,6 @@ echo "✓ Quick validation complete!"
 
 **Validation Status:** ⏳ Pending
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 **Validated By:** _______________ (Name)
 

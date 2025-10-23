@@ -4,7 +4,6 @@
 **Wish Reference:** `.genie/wishes/unified-mcp-startup/unified-mcp-startup-wish.md`
 
 ---
-version: 1.0.0
 
 ## 🎯 Vision
 

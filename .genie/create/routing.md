@@ -1,5 +1,4 @@
 # Agent Routing Guidance (Create)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Context:** Loaded by Create orchestrators to guide delegation to Create specialists. Specialists execute; they do not re-load this file.
 
 ## Core Principle

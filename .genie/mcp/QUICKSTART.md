@@ -1,5 +1,4 @@
 # Genie MCP Quick Start (Claude Desktop)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## 1. Build the MCP Server
 
 ```bash

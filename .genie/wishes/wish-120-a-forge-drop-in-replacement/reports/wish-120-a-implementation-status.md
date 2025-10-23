@@ -1,6 +1,5 @@
 # Wish #120-A Implementation Status
 
-**Last Updated:** 2025-10-18
 **Branch:** forge/64ff-implement-wish-1
 **Issue:** #143
 **Parent:** #120

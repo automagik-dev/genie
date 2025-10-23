@@ -248,7 +248,7 @@ gh issue view <issue-number>
 
 If no issue exists:
 1. **Ask user:** "Should I create a GitHub issue for this first?"
-2. **Route to:** Genie skill for issue creation (needs discovery)
+2. **Route to:** Genie spell for issue creation (needs discovery)
 3. **Create issue** with:
    - Title: Clear, actionable summary
    - Labels: `wish`, `enhancement`, or relevant type
@@ -334,17 +334,17 @@ mcp__genie__run with agent="issue-check"
 \`\`\`
 ```
 
-### Skill Documentation Location
+### Spell Documentation Location
 
 **Add to AGENTS.md:**
 ```markdown
 ### Tier 6 (Workflow & State Management):
-- `@.genie/skills/wish-issue-linkage.md` (NEW)
+- `@.genie/spells/wish-issue-linkage.md` (NEW)
 ```
 
-**New file:** `.genie/skills/wish-issue-linkage-rule.md`
+**New file:** `.genie/spells/wish-issue-linkage-rule.md`
 ```markdown
-# Rule #6: Wish-Issue Linkage (Behavioral Skill)
+# Rule #6: Wish-Issue Linkage (Behavioral Spell)
 
 **CRITICAL RULE:** Every wish must link to a GitHub issue. No issue = no wish.
 
@@ -386,8 +386,8 @@ Before creating ANY wish:
    - Real-time sync architecture section
    - Wish-Issue amendment reference
 
-2. **Create new skill file:**
-   - `.genie/skills/wish-issue-linkage-rule.md`
+2. **Create new spell file:**
+   - `.genie/spells/wish-issue-linkage-rule.md`
    - Add to AGENTS.md Tier 6 references
 
 3. **Update wish workflow:**
@@ -424,7 +424,7 @@ Before creating ANY wish:
 **Files Analyzed:**
 - `.genie/SESSION-STATE.md` (472 lines, last updated 2025-10-19)
 - `AGENTS.md` (179 lines, knowledge graph included)
-- `.genie/skills/wish-initiation-rule.md` (158 lines, Rule #2)
+- `.genie/spells/wish-initiation-rule.md` (158 lines, Rule #2)
 - `.genie/code/workflows/wish.md` (218 lines, wish dance orchestrator)
 
 **Forge API Queries:**

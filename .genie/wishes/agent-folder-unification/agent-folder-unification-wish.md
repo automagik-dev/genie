@@ -1,5 +1,4 @@
 # 🧞 Agent Folder Unification WISH
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** DRAFT
 **Roadmap Item:** ARCH-AGENTS-MERGE – @.genie/product/roadmap.md §Architecture
 **Mission Link:** @.genie/product/mission.md §Pitch

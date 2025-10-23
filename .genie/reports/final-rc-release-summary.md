@@ -127,7 +127,7 @@
 
 **What I Learned:**
 1. **No work without GitHub issue** - Single source of truth
-2. **Discovery before issue creation** - Proper routing to skills
+2. **Discovery before issue creation** - Proper routing to spells
 3. **Real-time state awareness** - SESSION-STATE.md must be live
 4. **Amendments framework** - Core workflow rules, numbered and enforced
 5. **AGENTS.md pattern** - Root=full, .genie=alias (documented choice)

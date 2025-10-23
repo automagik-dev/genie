@@ -1,5 +1,4 @@
 # QA - Create Collective
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ## Validation Checklists
 

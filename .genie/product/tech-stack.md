@@ -1,5 +1,4 @@
 # Genie Dev Technical Stack
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 Genie Dev extends the core Genie template with diagnostics and automation focused on self-evolution. The stack stays lightweight so downstream repos can still install it cleanly.
 
 ## Core CLI
@@ -10,7 +9,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 
 ## Agent Assets
 - **Prompts:** Markdown agents under `.genie/agents/` with shared personas in `.genie/agents/core/`
-- **Project Overrides:** Add a short "Project Notes" section inside relevant agent or skill docs (no separate `custom/` directory)
+- **Project Overrides:** Add a short "Project Notes" section inside relevant agent or spell docs (no separate `custom/` directory)
 - **State:** Session and ledger files stored in `.genie/state/` (never edit manually; inspect via MCP genie tools: `mcp__genie__list_sessions`, `mcp__genie__view`)
 
 ## Testing & Validation

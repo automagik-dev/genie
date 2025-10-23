@@ -1,5 +1,4 @@
 # QA Checklist (Canonical)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 Use this checklist to drive repeatable QA. Keep items atomic, executable, and evidence-backed.
 

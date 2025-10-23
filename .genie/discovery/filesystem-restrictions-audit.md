@@ -1,5 +1,4 @@
 # Filesystem Restrictions Audit Report
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Discovery ID:** #120-A.1
 **Parent Wish:** #120-A (Forge Drop-In Replacement)
 **Date:** 2025-10-18

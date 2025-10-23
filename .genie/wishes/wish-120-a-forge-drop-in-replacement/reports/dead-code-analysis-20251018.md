@@ -1,5 +1,4 @@
 # Dead Code Analysis Report - automagik-genie
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Scan Date:** 2025-10-18
 **Repository:** /home/namastex/workspace/automagik-genie
 **Scope:** `.genie/cli/src/**/*.ts` TypeScript codebase

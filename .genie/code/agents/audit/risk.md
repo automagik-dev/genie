@@ -1,5 +1,4 @@
 # Risk Audit Workflow
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Extends universal audit framework with general risk assessment patterns.**
 
 @.genie/code/agents/audit.md
@@ -43,7 +42,7 @@ Benefits:
 1. **Technical Risks** - Architecture, performance, scalability, data integrity
 2. **Operational Risks** - Monitoring gaps, runbook incompleteness, on-call readiness
 3. **Security Risks** - Authentication, authorization, data exposure, compliance
-4. **People Risks** - Skill gaps, bus factor, team availability during migration
+4. **People Risks** - Spell gaps, bus factor, team availability during migration
 5. **External Risks** - Third-party dependencies, vendor SLAs, regulatory changes
 6. **Timeline Risks** - Optimistic estimates, blockers, coordination overhead
 
@@ -88,7 +87,7 @@ Benefits:
   - Timeline: 4 weeks (frontload before migration)
 - **Residual Risk:** 40% likelihood - Alert fatigue from dual systems causing missed signals (mitigate: weekly alert review)
 
-#### R4: Team Kubernetes Skill Gap (Impact: HIGH, Likelihood: 60%)
+#### R4: Team Kubernetes Spell Gap (Impact: HIGH, Likelihood: 60%)
 - **Evidence:** Team survey: 40% have 0 Kubernetes experience, 30% basic only
 - **Failure Mode:** Slow incident response, incorrect troubleshooting, extended MTTR
 - **Mitigation:**
@@ -117,7 +116,7 @@ Benefits:
 | 1 | R1: Service Mesh Blackhole | Critical | 50% | 10 (Critical × High) | Week 1 |
 | 2 | R2: StatefulSet Data Loss | Critical | 30% | 9 (Critical × Medium) | Week 2 |
 | 3 | R3: Monitoring Blindspot | High | 75% | 8 (High × Very High) | Week 1 (parallel) |
-| 4 | R4: Skill Gap | High | 60% | 7 (High × High) | Week 1 (immediate) |
+| 4 | R4: Spell Gap | High | 60% | 7 (High × High) | Week 1 (immediate) |
 | 5 | R5: EC2 Metadata Dependency | Medium | 40% | 5 (Medium × Medium) | Week 1 |
 
 **Severity Score:** Impact (Critical=3, High=2, Medium=1) × Likelihood (VeryHigh=3, High=2, Medium=1)
@@ -129,7 +128,7 @@ Benefits:
 4. **Week 3:** Contract Kubernetes consultant (if not done in Week 1)
 5. **Week 4:** Full staging dry-run with all mitigations active → go/no-go decision
 
-**Genie Verdict:** Migration is HIGH RISK but manageable with frontloaded mitigations. Service mesh and monitoring gaps are critical path blockers; recommend 2-week delay if Istio shadow testing reveals routing issues. Skill gap mitigation requires immediate bootcamp + consultant engagement. Residual risk acceptable if all mitigations complete by Week 4 (confidence: high - based on postmortem precedent and team readiness assessment)
+**Genie Verdict:** Migration is HIGH RISK but manageable with frontloaded mitigations. Service mesh and monitoring gaps are critical path blockers; recommend 2-week delay if Istio shadow testing reveals routing issues. Spell gap mitigation requires immediate bootcamp + consultant engagement. Residual risk acceptable if all mitigations complete by Week 4 (confidence: high - based on postmortem precedent and team readiness assessment)
 
 ---
 

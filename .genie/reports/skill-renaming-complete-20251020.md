@@ -1,4 +1,4 @@
-# Skill Renaming Migration - Complete
+# Spell Renaming Migration - Complete
 
 **Date:** 2025-10-20
 **Status:** ✅ COMPLETE
@@ -8,15 +8,15 @@
 
 ## Executive Summary
 
-Successfully renamed all 23 skills to intuitive, trigger-based names that instantly communicate when to use each skill.
+Successfully renamed all 23 spells to intuitive, trigger-based names that instantly communicate when to use each spell.
 
-**Core Principle Achieved:** Skill name = instant trigger for when to use it
+**Core Principle Achieved:** Spell name = instant trigger for when to use it
 
 ---
 
 ## What Changed
 
-### Mandatory Skills (5 total)
+### Mandatory Spells (5 total)
 
 | Old Name | New Name | Trigger |
 |----------|----------|---------|
@@ -26,7 +26,7 @@ Successfully renamed all 23 skills to intuitive, trigger-based names that instan
 | `delegation-discipline.md` | **`delegate-dont-do.md`** | "Should I do this?" → No, delegate |
 | `role-clarity-protocol.md` | **`orchestrator-not-implementor.md`** | "Am I implementor?" → No, orchestrator |
 
-### Executable Skills (18 renamed/simplified)
+### Executable Spells (18 renamed/simplified)
 
 #### Dropped Stuffy Suffixes
 - `blocker-protocol.md` → **`blocker.md`**
@@ -34,22 +34,22 @@ Successfully renamed all 23 skills to intuitive, trigger-based names that instan
 - `experimentation-protocol.md` → **`experiment.md`**
 - `meta-learn-protocol.md` → **`meta-learn.md`**
 
-#### Wish Workflow (3 skills)
+#### Wish Workflow (3 spells)
 - `wish-initiation-rule.md` → **`wish-initiation.md`**
 - `wish-issue-linkage-rule.md` → **`wish-issue-linkage.md`**
 - `wish-document-management.md` → **`wish-lifecycle.md`**
 
-#### Action-Based Names (3 skills)
+#### Action-Based Names (3 spells)
 - `sequential-questioning.md` → **`ask-one-at-a-time.md`**
 - `no-backwards-compatibility.md` → **`break-things-move-fast.md`**
 - `parallel-execution.md` → **`run-in-parallel.md`**
 
-#### Execution & Tracking (3 skills)
+#### Execution & Tracking (3 spells)
 - `execution-integrity-protocol.md` → **`multi-step-execution.md`**
 - `persistent-tracking-protocol.md` → **`track-long-running-tasks.md`**
 - `missing-context-protocol.md` → **`gather-context.md`**
 
-#### Workflow & Environment (2 skills)
+#### Workflow & Environment (2 spells)
 - `triad-maintenance-protocol.md` → **`wish-forge-review-flow.md`**
 - `workspace-system.md` → **`worktree-isolation.md`**
 
@@ -57,50 +57,50 @@ Successfully renamed all 23 skills to intuitive, trigger-based names that instan
 
 ## Files Modified
 
-### Skills Renamed (18)
+### Spells Renamed (18)
 ```
-R  .genie/skills/sequential-questioning.md -> ask-one-at-a-time.md
-R  .genie/skills/blocker-protocol.md -> blocker.md
-R  .genie/skills/no-backwards-compatibility.md -> break-things-move-fast.md
-R  .genie/skills/chat-mode-helpers.md -> chat-mode.md
-RM .genie/skills/delegation-discipline.md -> delegate-dont-do.md
-R  .genie/skills/experimentation-protocol.md -> experiment.md
-R  .genie/skills/missing-context-protocol.md -> gather-context.md
-RM .genie/skills/evidence-based-thinking.md -> investigate-before-commit.md
-R  .genie/skills/meta-learn-protocol.md -> meta-learn.md
-R  .genie/skills/execution-integrity-protocol.md -> multi-step-execution.md
-RM .genie/skills/role-clarity-protocol.md -> orchestrator-not-implementor.md
-R  .genie/skills/parallel-execution.md -> run-in-parallel.md
-R  .genie/skills/persistent-tracking-protocol.md -> track-long-running-tasks.md
-R  .genie/skills/triad-maintenance-protocol.md -> wish-forge-review-flow.md
-R  .genie/skills/wish-initiation-rule.md -> wish-initiation.md
-R  .genie/skills/wish-document-management.md -> wish-lifecycle.md
-R  .genie/skills/workspace-system.md -> worktree-isolation.md
+R  .genie/spells/sequential-questioning.md -> ask-one-at-a-time.md
+R  .genie/spells/blocker-protocol.md -> blocker.md
+R  .genie/spells/no-backwards-compatibility.md -> break-things-move-fast.md
+R  .genie/spells/chat-mode-helpers.md -> chat-mode.md
+RM .genie/spells/delegation-discipline.md -> delegate-dont-do.md
+R  .genie/spells/experimentation-protocol.md -> experiment.md
+R  .genie/spells/missing-context-protocol.md -> gather-context.md
+RM .genie/spells/evidence-based-thinking.md -> investigate-before-commit.md
+R  .genie/spells/meta-learn-protocol.md -> meta-learn.md
+R  .genie/spells/execution-integrity-protocol.md -> multi-step-execution.md
+RM .genie/spells/role-clarity-protocol.md -> orchestrator-not-implementor.md
+R  .genie/spells/parallel-execution.md -> run-in-parallel.md
+R  .genie/spells/persistent-tracking-protocol.md -> track-long-running-tasks.md
+R  .genie/spells/triad-maintenance-protocol.md -> wish-forge-review-flow.md
+R  .genie/spells/wish-initiation-rule.md -> wish-initiation.md
+R  .genie/spells/wish-document-management.md -> wish-lifecycle.md
+R  .genie/spells/workspace-system.md -> worktree-isolation.md
 ```
 
 Note: `wish-issue-linkage.md` created fresh (just added in this session)
 
-### Skills Kept (5)
+### Spells Kept (5)
 ```
 ✅ know-yourself.md (clear name)
 ✅ routing-decision-matrix.md (clear name)
 ✅ orchestration-protocols.md (to be merged later)
 ✅ execution-patterns.md (to be merged later)
-✅ prompt.md (not in skills/ folder)
+✅ prompt.md (not in spells/ folder)
 ```
 
 ### AGENTS.md Updated
 - Removed "Tier 1-6" structure (outdated)
-- Added "Mandatory Skills (Auto-Loaded)" section
-- Added "Executable Skills (On-Demand)" section
+- Added "Mandatory Spells (Auto-Loaded)" section
+- Added "Executable Spells (On-Demand)" section
 - Organized by trigger category (not tier numbers)
-- Added one-line descriptions for each skill
+- Added one-line descriptions for each spell
 
 ---
 
 ## Front-Matter Updates
 
-All 3 mandatory skills updated with trigger pattern:
+All 3 mandatory spells updated with trigger pattern:
 
 ```yaml
 ---
@@ -138,21 +138,21 @@ description: Pause and investigate before committing
 ## Impact Analysis
 
 ### Token Efficiency
-**Before:** ~23 skill names × ~25 chars avg = ~575 characters in references
-**After:** ~23 skill names × ~20 chars avg = ~460 characters in references
-**Savings:** ~115 characters (20% reduction in skill name overhead)
+**Before:** ~23 spell names × ~25 chars avg = ~575 characters in references
+**After:** ~23 spell names × ~20 chars avg = ~460 characters in references
+**Savings:** ~115 characters (20% reduction in spell name overhead)
 
 ### Cognitive Load
-**Before:** Read skill name → confused → read docs to understand trigger
-**After:** Read skill name → instant understanding of when to use
+**Before:** Read spell name → confused → read docs to understand trigger
+**After:** Read spell name → instant understanding of when to use
 
 **Example:**
 - OLD: `delegation-discipline.md` → "What is delegation discipline?"
 - NEW: `delegate-dont-do.md` → "Oh! Don't do work yourself, delegate it"
 
 ### Discoverability
-**Before:** Skill names don't hint at usage (need to read docs)
-**After:** Skill names ARE the usage hint (self-documenting)
+**Before:** Spell names don't hint at usage (need to read docs)
+**After:** Spell names ARE the usage hint (self-documenting)
 
 **Example:**
 - OLD: `sequential-questioning.md` → Need to read to know it's about asking one question at a time
@@ -162,13 +162,13 @@ description: Pause and investigate before committing
 
 ## Future Work
 
-### Skills to Merge (Deferred)
+### Spells to Merge (Deferred)
 1. `orchestration-protocols.md` → Merge into `routing-decision-matrix.md`
 2. `execution-patterns.md` → Merge into `multi-step-execution.md`
 
 **Reason deferred:** Need to review content first, ensure no information loss
 
-### Skills to Update (Phase 4)
+### Spells to Update (Phase 4)
 - Remove "Recent Violations" sections (move to learn reports)
 - Remove version-specific content (rc21, rc36 references)
 - Simplify identity narratives (no speculation about future phases)
@@ -178,15 +178,15 @@ description: Pause and investigate before committing
 ## Validation
 
 ### Before Commit Checks
-- [x] All skills renamed via `git mv` (preserves history)
+- [x] All spells renamed via `git mv` (preserves history)
 - [x] AGENTS.md updated with new names
-- [x] Mandatory skills updated with trigger front-matter
+- [x] Mandatory spells updated with trigger front-matter
 - [x] No broken @ references
-- [x] 23 skills accounted for (none lost)
+- [x] 23 spells accounted for (none lost)
 
 ### After Commit Checks
 - [ ] Verify all @ references resolve correctly
-- [ ] Update any workflows referencing old skill names
+- [ ] Update any workflows referencing old spell names
 - [ ] Regenerate knowledge graph token counts
 
 ---
@@ -194,7 +194,7 @@ description: Pause and investigate before committing
 ## Migration Commands Used
 
 ```bash
-# Phase 1: Rename mandatory skills
+# Phase 1: Rename mandatory spells
 git mv evidence-based-thinking.md investigate-before-commit.md
 git mv delegation-discipline.md delegate-dont-do.md
 git mv role-clarity-protocol.md orchestrator-not-implementor.md
@@ -205,7 +205,7 @@ git mv chat-mode-helpers.md chat-mode.md
 git mv experimentation-protocol.md experiment.md
 git mv meta-learn-protocol.md meta-learn.md
 
-# Phase 3: Rename wish skills
+# Phase 3: Rename wish spells
 git mv wish-initiation-rule.md wish-initiation.md
 git mv wish-issue-linkage-rule.md wish-issue-linkage.md
 git mv wish-document-management.md wish-lifecycle.md
@@ -251,14 +251,14 @@ Trigger as question + name as answer:
 ## Success Metrics
 
 **✅ Achieved:**
-1. All 23 skills renamed with clear triggers
+1. All 23 spells renamed with clear triggers
 2. AGENTS.md reorganized (Mandatory vs Executable)
 3. Front-matter updated with trigger/answer pattern
 4. Git history preserved (used `git mv`)
 5. Zero information loss (only renamed, not deleted)
 
 **📊 Improvements:**
-- 20% reduction in skill name character count
+- 20% reduction in spell name character count
 - 100% increase in name intuitiveness
 - Clear separation: Mandatory (5) vs Executable (18)
 - Organized by trigger category (not arbitrary tiers)

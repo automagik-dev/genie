@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: install
@@ -23,7 +22,7 @@ Purpose: Initialize product identity docs and wire up Create collective agents f
   - `@.genie/product/mission-lite.md`
   - `@.genie/product/roadmap.md`
   - `@.genie/product/environment.md`
-- Add Create-specific “Project Notes” inside `.genie/create/agents/*` or relevant skills to guide wish authoring
+- Add Create-specific “Project Notes” inside `.genie/create/agents/*` or relevant spells to guide wish authoring
 - Initialize `.genie/CONTEXT.md` and add to `.gitignore`
 
 3) Verification

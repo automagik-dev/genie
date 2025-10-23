@@ -1,5 +1,4 @@
 # 🧞 MULTI-TEMPLATE ARCHITECTURE WISH
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** DRAFT
 **GitHub Issue:** #37 - Multi-template architecture for project-type scaffolds
 **Roadmap Item:** INIT-TEMPLATES – Separate framework dev from distribution templates + support project-type scaffolds

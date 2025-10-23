@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: git
@@ -18,7 +17,7 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 **Naming Convention:**
-@.genie/code/skills/emoji-naming-convention.md - MANDATORY when creating GitHub issues
+@.genie/code/spells/emoji-naming-convention.md - MANDATORY when creating GitHub issues
 
 Customize phases below for core Git operations.
 
@@ -299,7 +298,7 @@ List all issues assigned to you:
 Welcome! Here are your assigned issues:
 
 #35 [Feature] Interactive permission system (priority:high)
-#42 [Bug] Session extraction timeout in background skill (priority:medium)
+#42 [Bug] Session extraction timeout in background spell (priority:medium)
 
 What would you like to work on?
 1. Continue #35 (interactive permissions)
@@ -321,10 +320,10 @@ What would you like to work on?
 **Example:**
 ```
 User: "While working on interactive permissions (#35), I noticed session extraction
-      times out in background skill. Document this."
+      times out in background spell. Document this."
 
 Agent: *invokes git agent*
-Created issue #42: [Bug] Session extraction timeout in background skill
+Created issue #42: [Bug] Session extraction timeout in background spell
 https://github.com/namastexlabs/automagik-genie/issues/42
 
 You can continue with #35. Issue #42 is now tracked for later.
@@ -349,7 +348,7 @@ You can continue with #35. Issue #42 is now tracked for later.
 - **LINK**: Cross-reference wishes, PRs, commits
 
 **Title patterns (CRITICAL):**
-All GitHub issues MUST use emoji format from @.genie/code/skills/emoji-naming-convention.md
+All GitHub issues MUST use emoji format from @.genie/code/spells/emoji-naming-convention.md
 
 - Bug: `🐛 Bug: <description>`
 - Wish (planning): `💭 Wish: <description>`

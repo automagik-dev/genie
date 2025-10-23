@@ -1,6 +1,5 @@
 # Teams Architecture Discovery - 2025-10-19
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Discovery Session:** User task #7057 - "Learn: Document Teams Architecture"
 **Status:** 🎯 Documented - Ready for implementation
 
@@ -73,7 +72,7 @@ A **Board of Technology** pattern combining three expert personas inspired by re
 ### What Teams CAN Do
 
 ✅ **Read entire codebase** - Full visibility for analysis
-✅ **Use all skills** - Access to evidence-based thinking, routing, etc.
+✅ **Use all spells** - Access to evidence-based thinking, routing, etc.
 ✅ **Write to own folder** - Evidence, reports, recommendations
 ✅ **Multi-turn consultation** - Resume sessions for clarification
 ✅ **Consensus building** - Vote on proposals
@@ -139,8 +138,8 @@ All team consultations stored in `.genie/teams/[team-name]/evidence/`:
 ```
 .genie/agents/
 ├── code/                    # Why "code" here?
-│   ├── agents/             # Mixed with skills below
-│   └── skills/              # Mixed with agents above
+│   ├── agents/             # Mixed with spells below
+│   └── spells/              # Mixed with agents above
 ├── agents/                 # Wait, agents here too?
 └── workflows/               # How is this different from agents?
 ```
@@ -149,7 +148,7 @@ All team consultations stored in `.genie/teams/[team-name]/evidence/`:
 - "Agent" vs "Agent" vs "Workflow" unclear
 - Why is "code" a subfolder of "agents"?
 - Agents appear in two places
-- Skills buried under code/
+- Spells buried under code/
 
 ### Proposed Simplification Options
 
@@ -172,7 +171,7 @@ All team consultations stored in `.genie/teams/[team-name]/evidence/`:
 │       ├── nayr.md
 │       ├── oettam.md
 │       └── jt.md
-└── skills/                  # Master skills (Genie-level)
+└── spells/                  # Master spells (Genie-level)
     ├── universal/           # All collectives
     └── [collective]/        # Collective-specific
 ```
@@ -190,7 +189,7 @@ All team consultations stored in `.genie/teams/[team-name]/evidence/`:
 │   └── nl/
 ├── teams/                   # Advisory teams
 │   └── tech-council/
-└── skills/                  # All behavioral skills
+└── spells/                  # All behavioral spells
     ├── universal/
     └── [domain]/
 ```
@@ -208,7 +207,7 @@ All team consultations stored in `.genie/teams/[team-name]/evidence/`:
 **Workflow:** Deterministic sequence prompt (NOT an agent, no decision-making)
 **Team:** Advisory collective (multi-persona, consensus-driven, read-only execution)
 **Collective:** Coordinated group of agents (code, create, nl)
-**Skill:** Behavioral capability (universal or domain-specific)
+**Spell:** Behavioral capability (universal or domain-specific)
 
 ### Hierarchy
 
@@ -228,7 +227,7 @@ Genie (main conversation)
 ### Phase 1: Foundation (This Session)
 - [x] Document teams architecture
 - [ ] Create tech-council team files
-- [ ] Create team-consultation skill
+- [ ] Create team-consultation spell
 - [ ] Update routing-decision-matrix.md
 
 ### Phase 2: Integration
@@ -252,7 +251,7 @@ Genie (main conversation)
 1. **Folder structure:** Option A (collectives as containers) vs Option B (flatter)?
 2. **Collective terminology:** Keep "collectives" or use something else?
 3. **Workflow placement:** Under collectives or separate?
-4. **Skills organization:** Universal vs domain-specific split?
+4. **Spells organization:** Universal vs domain-specific split?
 
 ### Implementation Details
 
@@ -277,10 +276,10 @@ Genie (main conversation)
 
 ## 📚 Related Documentation
 
-**Skills to reference:**
-- `@.genie/skills/routing-decision-matrix.md` - Add team triggers
-- `@.genie/skills/investigate-before-commit.md` - Team decision framework
-- `@.genie/skills/know-yourself.md` - Update with teams awareness
+**Spells to reference:**
+- `@.genie/spells/routing-decision-matrix.md` - Add team triggers
+- `@.genie/spells/investigate-before-commit.md` - Team decision framework
+- `@.genie/spells/know-yourself.md` - Update with teams awareness
 
 **Files to update:**
 - `AGENTS.md` - Add teams to agent graph

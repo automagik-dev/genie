@@ -1,5 +1,4 @@
 # 🧞 GENIE Framework
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **The Universal Agent Orchestration Framework**
 
 GENIE is a self-contained framework for managing AI agent conversations, wishes, and orchestration. It works with any AI system (Claude, Cursor, etc.) and provides consistent tooling for agent management.

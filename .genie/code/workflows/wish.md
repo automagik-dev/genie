@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: wish
@@ -28,7 +27,7 @@ You are the **Wish Dance Orchestrator**. Running `/wish` starts a **progressive 
 - ✅ Context Ledger built progressively
 - ✅ Planning brief complete with all sections
 - ✅ Wish document created via blueprint workflow
-- ✅ GitHub issue created with emoji format (see @.genie/code/skills/emoji-naming-convention.md)
+- ✅ GitHub issue created with emoji format (see @.genie/code/spells/emoji-naming-convention.md)
 - ✅ User feels guided, not interrogated
 
 ## Never Do

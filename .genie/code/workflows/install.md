@@ -1,4 +1,3 @@
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 
 ---
 name: install
@@ -24,7 +23,7 @@ Purpose: Initialize the project’s product docs and connect Code collective age
   - `@.genie/product/tech-stack.md`
   - `@.genie/product/roadmap.md`
   - `@.genie/product/environment.md`
-- Calibrate Code agents by adding a short "Project Notes" section inside relevant `.genie/code/agents/*` or `.genie/skills/*` docs (no `custom/` folder)
+- Calibrate Code agents by adding a short "Project Notes" section inside relevant `.genie/code/agents/*` or `.genie/spells/*` docs (no `custom/` folder)
 - Initialize `.genie/CONTEXT.md` and add `.genie/CONTEXT.md` to `.gitignore`
 - Keep edits under `.genie/` (no app code changes here)
 

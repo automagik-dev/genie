@@ -1,7 +1,6 @@
 # Genie CLI Architecture
 
 **Version:** v2.4.0-rc.28+
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Status:** Production (Forge Integration Active)
 
 ---

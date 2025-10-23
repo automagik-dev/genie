@@ -1,5 +1,4 @@
 # 🧞 Repository State Analysis — Backlog Coordination & Cleanup
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Generated:** 2025-10-15 (UTC)
 **Purpose:** Complete visibility across wishes, issues, PRs, and branches for Felipe's backlog cleanup
 **Method:** Surgical evidence-based analysis (no assumptions after context deletion incident)
@@ -17,7 +16,7 @@
 
 **Key Insights:**
 - Token-efficient output (Wish + PR #46) is COMPLETE and ready for review/merge
-- Natural routing skills (Wish) is COMPLETE (100/100) but not linked to issue
+- Natural routing spells (Wish) is COMPLETE (100/100) but not linked to issue
 - Multi-template architecture has partial overlap with token-efficient PR (agent arch + templates/code + templates/create)
 - Initiative-29 has 8 issues but only 3 linked wishes
 
@@ -35,7 +34,7 @@
 | Wish | Status | Completion | Issue(s) | PR | Branch | Next Action |
 |------|--------|------------|----------|----|----|-------------|
 | **token-efficient-output** | DRAFT | ~99% | #42 | #46 | feat/token-efficient-output | ✅ READY FOR MERGE |
-| **natural-routing-skills** | COMPLETE | 100/100 | None | None | None | Close wish, create issue? |
+| **natural-routing-spells** | COMPLETE | 100/100 | None | None | None | Close wish, create issue? |
 | **multi-template-architecture** | DRAFT | ~40% | #37 | Overlap with #46 | None | Verify overlap, resume after #46 merge |
 | **core-template-separation** | IN PROGRESS | 75% | #41 | None | wish/core-template-separation (stale) | Resume Phase 3 |
 | **provider-runtime-override** | DRAFT | 0% | #40 | None | None | Blocked, low priority |
@@ -50,7 +49,7 @@
 - **Overlap with multi-template:** PR includes agent arch + templates/code + templates/create
 - **Next:** Review PR, merge if validated, close #42, archive wish
 
-**natural-routing-skills:**
+**natural-routing-spells:**
 - **Completion:** 100/100 per wish status (line 6)
 - **Evidence:** Real MCP validation, 5 status log entries showing completion
 - **No issue:** Should we create #47 to track?
@@ -93,7 +92,7 @@
 | #40 | Provider runtime override | provider-runtime-override | 0% (DRAFT) |
 | #38 | Enhanced backup & update | backup-update-system | 0% (DRAFT) |
 | #37 | Multi-template architecture | multi-template-architecture | ~40% (overlap with #46) |
-| (None) | Natural routing skills | natural-routing-skills | 100% (no issue) |
+| (None) | Natural routing spells | natural-routing-spells | 100% (no issue) |
 
 ### Issues WITHOUT Wishes (6 of 12) — ORPHANED
 
@@ -124,7 +123,7 @@
 | Work | Evidence | Issue | Status |
 |------|----------|-------|--------|
 | Token-efficient output | PR #46 ready, Done Reports, 99%+ reduction | #42 | CLOSE after merge |
-| Natural routing skills | 100/100 score, MCP validation, 5 completion log entries | None | CREATE issue + CLOSE wish |
+| Natural routing spells | 100/100 score, MCP validation, 5 completion log entries | None | CREATE issue + CLOSE wish |
 | Agent cognitive architecture | Part of PR #46, 25 agents discovered | None | Covered by #42 |
 | Multi-template system (code/create) | Part of PR #46, both templates deployed | #37 | Partial - verify remaining scope |
 
@@ -179,7 +178,7 @@
    - **Urgency:** Medium (75% done, finish it)
    - **Action:** Complete docs + validation
 
-6. **Create issue for natural-routing-skills** — Track completed work
+6. **Create issue for natural-routing-spells** — Track completed work
    - **Impact:** Low (documentation)
    - **Urgency:** Medium (completed work not tracked)
    - **Action:** Create issue, link to completed wish, close both
@@ -244,8 +243,8 @@
 - Close #41 with evidence
 - Archive wish to .genie/wishes/.archive/
 
-**Create issue for natural-routing-skills:**
-- Title: "[Feature] Natural Language Routing Skills (COMPLETE)"
+**Create issue for natural-routing-spells:**
+- Title: "[Feature] Natural Language Routing Spells (COMPLETE)"
 - Link to wish document
 - Close wish to .genie/wishes/.archive/
 - Close new issue with completion evidence
@@ -307,7 +306,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
 | Wish | Done Reports | QA Artifacts | Evidence Quality |
 |------|--------------|--------------|------------------|
 | token-efficient-output | 3 | 4 | ✅ Excellent |
-| natural-routing-skills | 1 | 4 | ✅ Excellent |
+| natural-routing-spells | 1 | 4 | ✅ Excellent |
 | core-template-separation | 1 | 4 | ✅ Good (Phase 3 pending) |
 | multi-template-architecture | 0 | 0 | ⚠️ Poor (overlap with #46) |
 | provider-runtime-override | 0 | 0 | ⚠️ None (0% progress) |
@@ -355,7 +354,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
    ```bash
    mkdir -p .genie/wishes/.archive/
    mv .genie/wishes/token-efficient-output .genie/wishes/.archive/
-   mv .genie/wishes/natural-routing-skills .genie/wishes/.archive/
+   mv .genie/wishes/natural-routing-spells .genie/wishes/.archive/
    ```
 
 6. **Resume core-template-separation** (Phase 3: 25% remaining)
@@ -363,7 +362,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
    - Close #41
    - Archive wish
 
-7. **Create issue for natural-routing-skills** (track completed work)
+7. **Create issue for natural-routing-spells** (track completed work)
    - Link to archived wish
    - Close immediately with evidence
 
@@ -434,7 +433,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
 ### Wishes (6 total)
 
 1. `.genie/wishes/token-efficient-output/token-efficient-output-wish.md` (DRAFT → should be COMPLETE)
-2. `.genie/wishes/natural-routing-skills/natural-routing-skills-wish.md` (COMPLETE 100/100)
+2. `.genie/wishes/natural-routing-spells/natural-routing-spells-wish.md` (COMPLETE 100/100)
 3. `.genie/wishes/multi-template-architecture/multi-template-architecture-wish.md` (DRAFT, ~40% via PR #46)
 4. `.genie/wishes/core-template-separation/core-template-separation-wish.md` (IN PROGRESS, 75%)
 5. `.genie/wishes/provider-runtime-override/provider-runtime-override-wish.md` (DRAFT, 0%)
@@ -448,7 +447,7 @@ git push origin --delete wish/core-template-separation  # If remote exists
 - #40 (provider-runtime-override) → 0%
 - #38 (backup-update-system) → 0%
 - #37 (multi-template-architecture) → ~40% via PR #46
-- (natural-routing-skills) → No issue created
+- (natural-routing-spells) → No issue created
 
 **Without wishes (6):**
 - #45 (Background MCP permissions)

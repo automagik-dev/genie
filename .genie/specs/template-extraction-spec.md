@@ -1,5 +1,4 @@
 # Template Extraction Specification
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Issue:** Template duplication across Genie framework (wish is our bible - consistency is critical)
 **Scope:** Extract embedded templates from workflow agents, establish @ template loading pattern (centralized under product/templates)
 **Priority:** HIGH - architectural foundation

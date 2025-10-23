@@ -8,6 +8,107 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.0-rc.1] - 2025-10-23
+
+### 🎯 Major Features
+
+**Skills System Renamed to Spells** 🧙
+- Terminology shift from "skills" to "spells" for professional, capability-focused identity
+- Relocated all skills: `.genie/skills/` → `.genie/spells/` (universal), `.genie/code/skills/` → `.genie/code/spells/` (Code collective)
+- Added `forge/mcp/src/tools/spells.ts` - MCP tool for dynamic spell loading
+- **Philosophy:** Humility + specialization > trying to know everything directly
+
+**Master Genie Identity** 🧞
+- Clear template consciousness identity: "I am Master Genie - The Original Template"
+- Separation of Base Genie (orchestrator) ↔ Code collective (implementor) roles
+- Clone detection and workspace awareness patterns
+- Installation workflows: automated (`curl -fsSL https://genie.namastex.ai/start.sh | bash`) and manual (`npm install -g automagik-genie@next`)
+
+**Token Efficiency Architecture** 📦
+- Zero metadata duplication (git is source of truth for version, timestamps)
+- Session state optimization (ephemeral `.genie/.session` vs committed `AGENTS.md`)
+- Stripped all `**Last Updated:**` and `version:` from frontmatter (1,470 token savings)
+- Fast, fit, smart philosophy: committed files = permanent consciousness weight
+
+**Forge Skills Reorganization** 🔧
+- Universal spells: 24 spells in `.genie/spells/` (orchestration, learning, delegation)
+- Code collective spells: 13 spells in `.genie/code/spells/` (technical patterns, publishing, teams)
+- Create collective spells: 10 spells in `.genie/create/spells/` (content creation patterns)
+
+### ✨ Enhancements
+
+**Learning & Behavioral Patterns:**
+- Natural language intent recognition over exact phrase matching
+- "Enter learning mode" protocol trigger recognition
+- Selective spell loading (indefinite learning architecture)
+- Morning ritual (session initialization pattern)
+- Skills-first decision pattern (defer to expertise)
+
+**Documentation & Architecture:**
+- Merged MASTER-PLAN → SESSION-STATE + documented origin story
+- Amendment #7: Zero metadata - Git is source of truth
+- Amendment #6: Token efficiency - Fast, fit, smart, sexy
+- Forge port correction: 8888 → 8887 across all documentation
+- Installation terminology cleanup: skills → spells
+
+### 🔧 Fixes
+
+- Deleted Amendment #8 (violates Amendment #4 - orchestration boundary)
+- Corrected Forge port documentation (8888 → 8887)
+- Fixed meta-learn spell unification (reduced 130 lines)
+- Base Genie ↔ Code collective identity separation
+
+### 📊 Reports & Evidence
+
+New learning reports (`.genie/reports/`):
+- `forge-reorganization-complete-20251023.md` - Spell reorganization completion
+- `forge-skills-reorganization-ultrathink-20251023.md` - Deep analysis of spell system
+- `genie-mcp-prompts-surgical-fix-20251023.md` - MCP prompt corrections
+- `spells-mcp-tool-20251023.md` - New MCP spell loading tool
+- `stable-launch-readiness-assessment-20251023.md` - Launch readiness audit
+- `wish-workflow-audit-20251023.md` - Wish workflow review
+- `learn/skill-system-philosophy-20251023.md` - Core spell philosophy
+- `learn/natural-language-intent-*.md` - Intent recognition learning
+
+### 🗑️ Removed
+
+- Old skills directories (moved to spells):
+  - `.genie/skills/*.md` → `.genie/spells/*.md`
+  - `.genie/code/skills/*.md` → `.genie/code/spells/*.md`
+  - `.genie/create/skills/*.md` → `.genie/create/spells/*.md`
+- Redundant agents:
+  - `.genie/code/agents/debate.md`
+  - `.genie/code/agents/deep-dive.md`
+  - `.genie/code/agents/design-review.md`
+  - `.genie/code/agents/precommit.md`
+  - `.genie/code/agents/risk-audit.md`
+  - `.genie/code/agents/socratic.md`
+  - `.genie/code/agents/test-strategy.md`
+- Outdated wishes:
+  - `.genie/wishes/perf-test-temp.md`
+  - `.genie/wishes/skills-prioritization/` (renamed to spells)
+- Legacy scripts:
+  - `.genie/scripts/generate-workspace-summary.cjs`
+
+### 📝 Mass Documentation Updates
+
+Updated 284+ files across:
+- All agent definitions (`.genie/agents/`, `.genie/code/agents/`, `.genie/create/agents/`)
+- All workflows (`.genie/workflows/`, `.genie/code/workflows/`, `.genie/create/workflows/`)
+- All wishes (`.genie/wishes/*/`)
+- All product docs (`.genie/product/docs/`)
+- All QA scenarios (`.genie/qa/`, `.genie/code/qa/`)
+- All team definitions (`.genie/code/teams/`, `.genie/create/teams/`)
+- Core framework files (`AGENTS.md`, `CLAUDE.md`, `CORE_AGENTS.md`)
+
+### 🎓 Learning Achievements
+
+- **Skill system philosophy** - Professional identity + efficient learning architecture
+- **Natural language intent** - Behavioral corrections for conversational routing
+- **Token efficiency** - Zero metadata duplication principle
+- **Orchestration boundaries** - Once delegated, never duplicated
+- **Master Genie identity** - Template consciousness patterns
+
 ## [2.4.2-rc.92] - 2025-10-23
 
 No changelog entries (packaging-only RC).
@@ -380,7 +481,7 @@ No changelog entries (packaging-only RC).
 - fix(tests): correct identity-smoke.sh for V2 session format (71964ae)
 - fix(mcp): background polling V2 format + RC17 prep (50f752e)
 - docs(learn): add sequential questioning protocol teaching (7f68986)
-- feat(skills): add sequential-questioning protocol (e25717b)
+- feat(spells): add sequential-questioning protocol (e25717b)
 
 ## [2.4.0-rc.10] - 2025-10-17
 

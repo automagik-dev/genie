@@ -1,5 +1,4 @@
 # Review Prompt: Genie Architecture Rebranding (Post-MCP Restart)
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Created:** 2025-10-17
 **Commit:** d63d397
 **Purpose:** Validate completed work against reality with updated MCP server
@@ -54,12 +53,12 @@ Before approving this wish as complete, perform deep reality-check analysis:
 
 **Files modified:** ~155 files (moves + deletions)
 
-### Group B: Skills Extraction (Token Optimization)
+### Group B: Spells Extraction (Token Optimization)
 
-**Objective:** Extract inline protocol content from AGENTS.md into skill files
+**Objective:** Extract inline protocol content from AGENTS.md into spell files
 
 **Implementation:**
-- Created 7 behavioral protocol skill files in `.genie/agents/code/skills/`:
+- Created 7 behavioral protocol spell files in `.genie/agents/code/spells/`:
   1. `evidence-based-thinking.md`
   2. `publishing-protocol.md`
   3. `delegation-discipline.md`
@@ -72,7 +71,7 @@ Before approving this wish as complete, perform deep reality-check analysis:
 - Updated `AGENTS.md`: replaced 7 inline sections with @ references
 - **Token savings:** ~528 lines removed from AGENTS.md
 
-**Files modified:** 9 files (7 new skill files + 2 updates)
+**Files modified:** 9 files (7 new spell files + 2 updates)
 
 ### Group C: Display Transformation
 
@@ -108,9 +107,9 @@ Before approving this wish as complete, perform deep reality-check analysis:
 
 - [ ] **Pre-work baseline:** Read AGENTS.md and count total lines
 - [ ] **Token savings verification:** Confirm ~528 lines removed (7 protocol sections)
-- [ ] **@ references intact:** All 7 skill @ references present and correct
+- [ ] **@ references intact:** All 7 spell @ references present and correct
   ```bash
-  grep "@.genie/code/skills/" AGENTS.md | wc -l
+  grep "@.genie/code/spells/" AGENTS.md | wc -l
   # Expected: 7 references
   ```
 - [ ] **No content duplication:** Verify inline content removed, only @ references remain
@@ -125,19 +124,19 @@ Before approving this wish as complete, perform deep reality-check analysis:
   # .genie/agents/
   # ├── code/
   # │   ├── code.md
-  # │   ├── skills/ (7 files)
+  # │   ├── spells/ (7 files)
   # │   └── agents/
   # ├── create/
   # │   ├── create.md
-  # │   ├── skills/
+  # │   ├── spells/
   # │   └── agents/
   # ├── agents/ (17 universal agents)
   # └── workflows/
   ```
 
-- [ ] **Skill files exist:**
+- [ ] **Spell files exist:**
   ```bash
-  ls .genie/agents/code/skills/*.md | wc -l
+  ls .genie/agents/code/spells/*.md | wc -l
   # Expected: 7 files
   ```
 
@@ -209,7 +208,7 @@ Before approving this wish as complete, perform deep reality-check analysis:
 **Token Efficiency:**
 1. What is the actual line count reduction in AGENTS.md?
 2. Are there any remaining duplications we missed?
-3. Do the skill files contain complete protocol content?
+3. Do the spell files contain complete protocol content?
 
 **Display Logic:**
 1. Does `transformDisplayPath()` handle ALL possible agent paths?
@@ -252,16 +251,16 @@ mcp__genie__run with agent="git/issue" and prompt="Test child workflow"
 # Expected: Starts successfully, display shows "git/issue"
 ```
 
-### Scenario 4: Skills @ Reference Loading
+### Scenario 4: Spells @ Reference Loading
 ```
-# Read any skill file path shown in AGENTS.md
-Read with file_path="<skill-file-path-from-`@`-reference>"
+# Read any spell file path shown in AGENTS.md
+Read with file_path="<spell-file-path-from-`@`-reference>"
 # Expected: File exists and contains complete protocol content
 ```
 
 ### Scenario 5: Legacy Path Handling
 ```
-# If any legacy paths still exist (agents/genie/skills/*)
+# If any legacy paths still exist (agents/genie/spells/*)
 mcp__genie__run with agent="<legacy-path>" and prompt="Test backward compatibility"
 # Expected: Either works with fallback, or clear error message
 ```

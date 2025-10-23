@@ -1,5 +1,4 @@
 # 🧞📚 Learning Report: Absorption & Cleaning Capability
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-08 18:50 UTC
 **Type:** capability (new feature)
 **Severity:** N/A (enhancement, not violation)

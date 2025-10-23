@@ -5,14 +5,13 @@
 **Commits:** 4c1d78e9, e386caf2, 0c20cbea
 
 ---
-version: 1.0.0
 
 ## 🎯 Core Teaching
 
 **User's directive:**
 > "I'm your human interface. Understand human language naturally."
 >
-> "Anything that resembles 'I want you to load the meta-learning skill' should trigger it."
+> "Anything that resembles 'I want you to load the meta-learning spell' should trigger it."
 
 **Problem identified:**
 Base Genie was being too rigid with trigger recognition, waiting for exact phrase matches instead of understanding natural language intent.
@@ -30,7 +29,7 @@ Base Genie was being too rigid with trigger recognition, waiting for exact phras
 
 ### Commit 1: meta-learn.md Natural Language Intent (4c1d78e9)
 
-**File:** `.genie/skills/meta-learn.md`
+**File:** `.genie/spells/meta-learn.md`
 
 **Changes:**
 1. Added critical warning at top of Recognition Patterns section
@@ -75,7 +74,7 @@ Base Genie is the human interface. Recognition means understanding what the user
    - Softened language to be more natural and less rigid
    - "IQ 50" → "everyone" (more inclusive language)
 
-2. `.genie/create/skills/context-hunger.md`
+2. `.genie/create/spells/context-hunger.md`
    - Changed "The 50/50 Rule" → "Balanced Partnership"
    - Softened "Guide + Be Guided = 50/50" to natural flow language
    - Updated anti-patterns to remove 100% references
@@ -117,20 +116,20 @@ The first learning was still too rigid (exact phrase matching). The second learn
 **NEW (Natural):**
 - Understand ANY natural language expressing intent
 - Treat phrase lists as illustrative examples
-- Recognize "I want you to load the meta-learning skill" as same intent as "Enter learning mode"
+- Recognize "I want you to load the meta-learning spell" as same intent as "Enter learning mode"
 
 ### User Experience
 
 **OLD:**
 ```
-User: I want you to load the meta-learning skill
+User: I want you to load the meta-learning spell
 Genie: [No recognition, continues normal conversation]
 User: [Frustrated, has to use exact phrase]
 ```
 
 **NEW:**
 ```
-User: I want you to load the meta-learning skill
+User: I want you to load the meta-learning spell
 Genie: Learning mode active. Meta-learn protocol loaded. Ready for teaching.
 User: [Natural flow, no friction]
 ```
@@ -161,8 +160,8 @@ User: [Natural flow, no friction]
 - ✅ "Let's learn"
 - ✅ "I want to teach you"
 - ✅ "Time to learn"
-- ✅ "Load the learning skill"
-- ✅ "I want you to load the meta-learning skill"
+- ✅ "Load the learning spell"
+- ✅ "I want you to load the meta-learning spell"
 - ✅ "Learning time"
 - ✅ "Let me show you something"
 - ✅ ANY expression indicating learning/teaching intent
@@ -179,9 +178,9 @@ User: [Natural flow, no friction]
 
 **This principle applies to ALL Genie interactions:**
 
-### Skill Invocation
-- Don't wait for exact skill names
-- Understand intent: "I need help with X" → Route to appropriate skill
+### Spell Invocation
+- Don't wait for exact spell names
+- Understand intent: "I need help with X" → Route to appropriate spell
 
 ### Agent Delegation
 - Don't wait for exact agent names
@@ -196,7 +195,7 @@ User: [Natural flow, no friction]
 - Understand intent: User wants to accomplish X → Help accomplish X
 
 **Review needed:**
-Audit other skills for rigid phrase matching. Apply natural language intent recognition everywhere.
+Audit other spells for rigid phrase matching. Apply natural language intent recognition everywhere.
 
 ---
 
@@ -204,7 +203,7 @@ Audit other skills for rigid phrase matching. Apply natural language intent reco
 
 **Total commits:** 3
 **Total files updated:** 6
-- Core skills: 1 (meta-learn.md)
+- Core spells: 1 (meta-learn.md)
 - Create collective: 2 (install.md, context-hunger.md)
 - Evidence reports: 3 (this session)
 
@@ -255,7 +254,7 @@ Natural language understanding should apply everywhere, not just learning mode.
 - [ ] Watch for any remaining rigid phrase matching
 
 **Long-term:**
-- [ ] Audit ALL skills for rigid phrase matching
+- [ ] Audit ALL spells for rigid phrase matching
 - [ ] Apply natural language intent recognition globally
 - [ ] Review agent delegation for natural language routing
 - [ ] Establish natural language as default across framework
@@ -282,7 +281,7 @@ From rigid phrase-matching system → Natural language understanding interface
 
 **Applied immediately to:**
 - Learning mode triggers
-- Skill recognition patterns
+- Spell recognition patterns
 - Create collective interactions
 - All future protocol triggers
 

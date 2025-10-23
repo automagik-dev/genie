@@ -1,5 +1,4 @@
 # Application-Level Enforcement
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Key innovation:** `mcp__genie__list_agents` returns DIFFERENT results based on caller context.
 
 **Scoping mechanism:**
@@ -45,7 +44,7 @@
 }
 ```
 - **Cannot see:** Workflows (git/issue, git/pr) - those are agent-internal
-- **Cannot see:** Thinking skills (genie/skills/*) - those are genie-internal
+- **Cannot see:** Thinking spells (genie/spells/*) - those are genie-internal
 - **Can only start:** Top-level agents
 
 **Implementation requirements:**

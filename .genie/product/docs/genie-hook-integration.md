@@ -1,5 +1,4 @@
 # Genie Workflow Integration in Git Hooks
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **The Architecture:** How Genie agent outputs become git hook decisions
 
 ---

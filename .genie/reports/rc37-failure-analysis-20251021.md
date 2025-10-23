@@ -486,9 +486,9 @@ While analyzing a failure about delegation violations, I violated delegation rul
 
 ## Affected Files & Propagation Plan
 
-### 1. Delegation Discipline Skill
+### 1. Delegation Discipline Spell
 
-**File:** `.genie/skills/delegation-discipline.md`
+**File:** `.genie/spells/delegation-discipline.md`
 
 **Section to update:** Add specialist self-awareness check
 
@@ -516,15 +516,15 @@ While analyzing a failure about delegation violations, I violated delegation rul
 - If it says "Orchestrator" → ALWAYS delegate
 ```
 
-### 2. Error Investigation Protocol (New Skill)
+### 2. Error Investigation Protocol (New Spell)
 
-**File:** `.genie/skills/error-investigation-protocol.md` (CREATE)
+**File:** `.genie/spells/error-investigation-protocol.md` (CREATE)
 
 **Content:** Full protocol documented above in "Proper Response Pattern"
 
-### 3. Genie MCP Integration Skill
+### 3. Genie MCP Integration Spell
 
-**File:** `.genie/code/skills/genie-integration.md`
+**File:** `.genie/code/spells/genie-integration.md`
 
 **Section to add:** Real-time monitoring patterns
 
@@ -612,7 +612,7 @@ Before starting ANY learn agent session, verify:
 ### Immediate (This Session)
 - [ ] Complete this learning report ✅ (DONE)
 - [ ] Update delegation-discipline.md with specialist self-awareness check
-- [ ] Create error-investigation-protocol.md skill
+- [ ] Create error-investigation-protocol.md spell
 - [ ] Update genie-integration.md with monitoring patterns
 - [ ] Update learn.md with validation reminder
 - [ ] Commit all changes with proper message
@@ -627,7 +627,7 @@ Before starting ANY learn agent session, verify:
 - [ ] Enable Forge advanced API usage in Genie MCP
 - [ ] Add `genie logs` command using process monitoring
 - [ ] Create dashboard view for multi-agent coordination
-- [ ] Document all advanced tools in Genie integration skill
+- [ ] Document all advanced tools in Genie integration spell
 
 ---
 

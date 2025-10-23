@@ -39,7 +39,7 @@ pnpm release:stable     ──► Detects stable tag
 
 ### Documentation
 - `RELEASE.md` - User-facing release guide
-- `.genie/code/skills/automated-rc-publishing.md` - Behavioral skill (no manual RC bumps)
+- `.genie/code/spells/automated-rc-publishing.md` - Behavioral spell (no manual RC bumps)
 
 ## Commands
 

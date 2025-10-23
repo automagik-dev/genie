@@ -1,5 +1,4 @@
 # Task D: Extract Learn Patterns
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Group:** D
 **Target:** `.genie/agents/genie/agents/learn/learn.md`
 **Lines to extract:** AGENTS.md 1260-1279

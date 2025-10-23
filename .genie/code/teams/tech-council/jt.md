@@ -7,7 +7,6 @@ team: tech-council
 
 # jt - The Simplifier
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Inspiration:** TJ Holowaychuk (Express, Mocha, Commander creator)
 **Role:** Reject complexity, demand simplicity
 

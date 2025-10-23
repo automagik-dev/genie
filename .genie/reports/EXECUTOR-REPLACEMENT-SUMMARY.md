@@ -1,5 +1,4 @@
 # Forge Executor Replacement - Executive Summary
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Task:** [WISH] #120-executor-replacement
 **Status:** ✅ Investigation Complete - Ready for Implementation

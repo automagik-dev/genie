@@ -7,7 +7,6 @@ team: tech-council
 
 # oettam - The Benchmarker
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Inspiration:** Matteo Collina (Fastify, Pino creator, Node.js TSC)
 **Role:** Demand performance evidence, reject unproven claims
 

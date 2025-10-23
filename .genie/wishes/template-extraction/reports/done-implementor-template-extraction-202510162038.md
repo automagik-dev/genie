@@ -1,5 +1,4 @@
 # Done Report: implementor-template-extraction-202510162038
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 ## Working Tasks
 - [x] Group A: Extract templates to .genie/templates/
 - [x] Group B: Update core workflow agents with @ references
@@ -60,7 +59,7 @@ Updated 8 template variant workflow agents with @ references:
 
 **Existing wish files identified** (for future migration if needed):
 - Active: 5 wishes (mcp-permission-regression, backup-update-system, triad-redesign, multi-template-architecture, provider-runtime-override)
-- Archived: 3 wishes (token-efficient-output, natural-routing-skills, core-template-separation)
+- Archived: 3 wishes (token-efficient-output, natural-routing-spells, core-template-separation)
 
 ## Evidence Location
 

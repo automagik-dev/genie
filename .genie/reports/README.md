@@ -1,5 +1,4 @@
 # Forge Executor Investigation Reports
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Task:** [WISH] #120-executor-replacement
 **Date:** 2025-10-18
 **Status:** ✅ Investigation Complete - Ready for Implementation Approval

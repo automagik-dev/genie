@@ -10,7 +10,6 @@ validation_commands:
 -->
 
 # 🗂️ Genie System State
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** System state snapshot (read-only reference)
 
 ---
@@ -24,7 +23,7 @@ validation_commands:
 **⚠️ AUTONOMOUS WORK IN PROGRESS - DO NOT INTERFERE**
 - 🧠 Phase 4 Agent (12e5da14) - genie-arch-rebrand - ACTIVE
 - 🧠 Phase 5 Agent (25fe6e5a) - multi-template-architecture - WAITING
-- See SESSION-STATE.md for real-time progress
+- Check `.genie/.session` for live Forge task status (gitignored, auto-generated)
 - Base Genie orchestrating, bringing questions to Felipe when needed
 
 **Completed Work (Phases 1-3):**
@@ -85,7 +84,7 @@ validation_commands:
 
 **Archived Wishes (2025-10):**
 - token-efficient-output (100/100)
-- natural-routing-skills (100/100)
+- natural-routing-spells (100/100)
 - core-template-separation (100/100)
 - triad-redesign (100/100)
 - provider-runtime-override (100/100)

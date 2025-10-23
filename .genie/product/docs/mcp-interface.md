@@ -1,5 +1,4 @@
 # MCP Quick Reference
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Entry Point:**
 - ❌ NEVER use `./genie` (doesn't exist since v2.4.0)
 - ✅ ALWAYS use `npx automagik-genie` for CLI operations

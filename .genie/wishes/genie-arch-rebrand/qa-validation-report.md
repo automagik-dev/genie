@@ -1,5 +1,4 @@
 # Genie Architecture Rebrand - QA Validation Report
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Task:** [WISH] #108-genie-arch-rebrand
 **Groups Tested:** A, C, D
@@ -285,5 +284,5 @@ pnpm run build
 
 **Next Steps:**
 - ✅ Groups A & C validated and complete
-- ⏸️ Group B (Skills Extraction) - Already complete (skills exist, @ refs in place)
+- ⏸️ Group B (Spells Extraction) - Already complete (spells exist, @ refs in place)
 - ✅ Group D (QA Validation) - This document completes Group D

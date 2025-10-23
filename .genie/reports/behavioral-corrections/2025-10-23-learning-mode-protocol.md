@@ -18,7 +18,7 @@ Did not recognize "enter learning mode" as protocol trigger per meta-learn.md:21
 ✅ Protocol already documented (no file updates needed)
 
 ## Evidence
-- Protocol exists: `.genie/skills/meta-learn.md:49-53`
+- Protocol exists: `.genie/spells/meta-learn.md:49-53`
 - Natural language intent recognition: Lines 21-26
 - This is behavioral adherence issue, not missing documentation
 

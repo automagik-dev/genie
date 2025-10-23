@@ -6,7 +6,6 @@
 **Related Issues:** #152 (MCP Authentication)
 
 ---
-version: 1.0.0
 
 ## Executive Summary
 

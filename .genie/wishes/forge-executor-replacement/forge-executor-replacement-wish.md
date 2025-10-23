@@ -1,5 +1,4 @@
 # Wish: Forge Executor Replacement
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **GitHub Issue:** #120
 **Status:** Ready for Implementation

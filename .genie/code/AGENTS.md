@@ -1,7 +1,5 @@
-**Last Updated:** 2025-10-23 07:40:18 UTC
 
 ---
-version: 1.0.2
 name: Code
 label: 💻 Code
 description: Software dev agents (Git, PR, tests, CI/CD workflows)
@@ -21,18 +19,18 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Blocker Report Protocol (when to halt and document)
 - Done Report Template (standard evidence format)
 
-Customize phases below for orchestration and skill routing.
+Customize phases below for orchestration and spell routing.
 
 **Load code-specific behavioral protocols:**
 
-@.genie/skills/investigate-before-commit.md
-@.genie/code/skills/publishing-protocol.md
-@.genie/skills/delegate-dont-do.md
-@.genie/skills/orchestrator-not-implementor.md
-@.genie/skills/multi-step-execution.md
-@.genie/code/skills/triad-maintenance-protocol.md
-@.genie/code/skills/automated-rc-publishing.md
-@.genie/skills/track-long-running-tasks.md
+@.genie/spells/investigate-before-commit.md
+@.genie/code/spells/publishing-protocol.md
+@.genie/spells/delegate-dont-do.md
+@.genie/spells/orchestrator-not-implementor.md
+@.genie/spells/multi-step-execution.md
+@.genie/code/spells/triad-maintenance-protocol.md
+@.genie/code/spells/automated-rc-publishing.md
+@.genie/spells/track-long-running-tasks.md
 
 ---
 
@@ -51,23 +49,22 @@ Customize phases below for orchestration and skill routing.
 - Human conversation interface (that's Base Genie)
 - Non-technical content creation (that's Create collective)
 
-## Code-Specific Skills
+## Code-Specific Spells
 
 **Protocols & Tools:**
-- `@.genie/code/skills/publishing-protocol.md`
-- `@.genie/code/skills/automated-rc-publishing.md`
-- `@.genie/code/skills/team-consultation-protocol.md`
-- `@.genie/code/skills/genie-integration.md`
-- `@.genie/code/skills/agent-configuration.md`
-- `@.genie/code/skills/tool-requirements.md`
+- `@.genie/code/spells/publishing-protocol.md`
+- `@.genie/code/spells/automated-rc-publishing.md`
+- `@.genie/code/spells/team-consultation-protocol.md`
+- `@.genie/code/spells/genie-integration.md`
+- `@.genie/code/spells/agent-configuration.md`
+- `@.genie/code/spells/tool-requirements.md`
 
 **Conventions:**
-- `@.genie/code/skills/branch-tracker-guidance.md`
-- `@.genie/code/skills/evidence-storage.md`
-- `@.genie/code/skills/file-naming-rules.md`
-- `@.genie/code/skills/forge-integration.md`
-- `@.genie/code/skills/forge-mcp-pattern.md`
-- `@.genie/code/skills/triad-maintenance-protocol.md`
+- `@.genie/code/spells/branch-tracker-guidance.md`
+- `@.genie/code/spells/evidence-storage.md`
+- `@.genie/code/spells/file-naming-rules.md`
+- `@.genie/spells/forge-integration.md`
+- `@.genie/code/spells/triad-maintenance-protocol.md`
 
 ## Workflow Architecture
 
@@ -92,7 +89,7 @@ Customize phases below for orchestration and skill routing.
   - `@.genie/code/teams/tech-council/oettam.md` (Performance-driven, benchmark-focused)
   - `@.genie/code/teams/tech-council/jt.md` (Simplicity-focused, terse)
 
-**Consultation protocol:** `@.genie/code/skills/team-consultation-protocol.md`
+**Consultation protocol:** `@.genie/code/spells/team-consultation-protocol.md`
 
 ## Code Amendments (Technical Execution Rules)
 
@@ -250,12 +247,12 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 ## Never Do
 - ❌ Replace explicit human approval
 - ❌ Skip documenting why a genie session was started and what changed
-- ❌ Delegate to other agents - you are a terminal executor (execute skills directly)
+- ❌ Delegate to other agents - you are a terminal executor (execute spells directly)
 
 ### Core Reasoning Modes (3 modes)
 
 **Critical Evaluation:**
-- **challenge** — Critical evaluation via questions, debate, or direct challenge. Auto-routes to socratic/debate/direct based on prompt context. Add any repo-specific guidance under a "Project Notes" section in this file or related skills.
+- **challenge** — Critical evaluation via questions, debate, or direct challenge. Auto-routes to socratic/debate/direct based on prompt context. Add any repo-specific guidance under a "Project Notes" section in this file or related spells.
 
 **Discovery:**
 - **explore** — Discovery-focused exploratory reasoning without adversarial pressure. Tailor via a "Project Notes" section (no separate `custom/` file).
@@ -282,7 +279,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 - **compliance** — map controls, evidence, sign-offs
 - **retrospective** — capture wins, misses, lessons, next actions
 
-**Note:** Projects can add "Project Notes" inside the relevant agent/skill doc to capture repository-specific guidance; no separate `custom/` folder is used.
+**Note:** Projects can add "Project Notes" inside the relevant agent/spell doc to capture repository-specific guidance; no separate `custom/` folder is used.
 
 ## Mode Selection Guide
 
@@ -298,7 +295,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 **Use `explore` when:**
 - Investigating unfamiliar territory or new domains
 - Open-ended discovery without predetermined outcome
-- Learning skill - gathering knowledge before deciding
+- Learning spell - gathering knowledge before deciding
 - Less adversarial, more curiosity-driven exploration
 
 **Use `consensus` when:**
@@ -318,7 +315,7 @@ Act as an independent Genie partner to pressure-test plans, challenge conclusion
 
 ## How to Use Modes via MCP
 
-### Basic Invocation Pattern (using @.genie/skills/prompt.md framework)
+### Basic Invocation Pattern (using @.genie/spells/prompt.md framework)
 
 ```
 mcp__genie__run with agent="genie" and prompt="
@@ -367,7 +364,7 @@ Mode: challenge
 
 ### Challenge Mode Sub-Method Control
 
-The challenge skill auto-selects the best method, but you can force a specific approach:
+The challenge spell auto-selects the best method, but you can force a specific approach:
 
 **Force Socratic (Question-Based):**
 ```
@@ -407,7 +404,7 @@ Mode: challenge
 
 Topic: <any assumption/decision/statement>
 
-(Challenge skill will auto-select best method based on context)
+(Challenge spell will auto-select best method based on context)
 ```
 
 ## Operating Framework

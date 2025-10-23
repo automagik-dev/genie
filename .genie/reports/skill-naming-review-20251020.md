@@ -1,12 +1,12 @@
-# Skill Naming Review: Intuitive Triggers
+# Spell Naming Review: Intuitive Triggers
 
 **Date:** 2025-10-20
-**Problem:** Current skill names are abstract and don't clearly signal when to use them
-**Goal:** Rename skills to be instant cognitive triggers
+**Problem:** Current spell names are abstract and don't clearly signal when to use them
+**Goal:** Rename spells to be instant cognitive triggers
 
 ---
 
-## Current Skill Name Analysis
+## Current Spell Name Analysis
 
 ### ❌ UNCLEAR NAMES (What does this actually DO?)
 
@@ -42,22 +42,22 @@
 
 ---
 
-## Naming Principle: "When X happens, use Y skill"
+## Naming Principle: "When X happens, use Y spell"
 
-Good skill names should complete this sentence naturally:
-> "When **[situation]**, use the **[skill-name]** skill"
+Good spell names should complete this sentence naturally:
+> "When **[situation]**, use the **[spell-name]** spell"
 
 ### Examples:
 
 ✅ **GOOD:**
-- "When I'm blocked, use the **blocker** skill"
-- "When creating a wish, use the **wish-initiation** skill"
-- "When learning something, use the **meta-learn** skill"
+- "When I'm blocked, use the **blocker** spell"
+- "When creating a wish, use the **wish-initiation** spell"
+- "When learning something, use the **meta-learn** spell"
 
 ❌ **BAD:**
-- "When... uh... I need discipline? use the **delegation-discipline** skill"
-- "When... maintaining... a triad? use the **triad-maintenance-protocol** skill"
-- "When... thinking? use the **evidence-based-thinking** skill"
+- "When... uh... I need discipline? use the **delegation-discipline** spell"
+- "When... maintaining... a triad? use the **triad-maintenance-protocol** spell"
+- "When... thinking? use the **evidence-based-thinking** spell"
 
 ---
 
@@ -116,7 +116,7 @@ Good skill names should complete this sentence naturally:
   - **Trigger:** "Can these tasks run together?"
   - **Answer:** "Yes, launch agents in parallel"
 
-**REMOVE (merge into other skills):**
+**REMOVE (merge into other spells):**
 - `execution-patterns.md` → Merge into `multi-step-execution.md`
 - `orchestration-protocols.md` → Merge into `routing-decision-matrix.md`
 
@@ -168,7 +168,7 @@ Good skill names should complete this sentence naturally:
 
 ## Complete Renaming Map
 
-### Mandatory Skills (5)
+### Mandatory Spells (5)
 
 | Old Name | New Name | Trigger |
 |----------|----------|---------|
@@ -178,7 +178,7 @@ Good skill names should complete this sentence naturally:
 | `delegation-discipline.md` | **`delegate-dont-do.md`** | "Should I do this?" → No, delegate |
 | `role-clarity-protocol.md` | **`orchestrator-not-implementor.md`** | "Am I implementor?" → No, orchestrator |
 
-### Executable Skills (18 → 15 after merging)
+### Executable Spells (18 → 15 after merging)
 
 | Old Name | New Name | Trigger | Notes |
 |----------|----------|---------|-------|
@@ -232,43 +232,43 @@ Good skill names should complete this sentence naturally:
 ## Token Impact
 
 ### Before:
-- 23 skills with abstract names
+- 23 spells with abstract names
 - Average name length: ~25 characters
 - Cognitive load: High (need to read docs to understand)
 
 ### After:
-- 20 skills (3 merged) with action-based names
+- 20 spells (3 merged) with action-based names
 - Average name length: ~20 characters
 - Cognitive load: Low (name = instant trigger)
 
-**Benefit:** Not just tokens, but **cognitive efficiency** - I know which skill to use instantly
+**Benefit:** Not just tokens, but **cognitive efficiency** - I know which spell to use instantly
 
 ---
 
 ## Migration Plan
 
-### Phase 1: Rename Mandatory Skills (High Priority)
+### Phase 1: Rename Mandatory Spells (High Priority)
 1. `evidence-based-thinking.md` → `investigate-before-commit.md`
 2. `delegation-discipline.md` → `delegate-dont-do.md`
 3. `role-clarity-protocol.md` → `orchestrator-not-implementor.md`
 
-### Phase 2: Rename & Merge Executable Skills
+### Phase 2: Rename & Merge Executable Spells
 1. Merge `orchestration-protocols.md` → `routing-decision-matrix.md`
 2. Merge `execution-patterns.md` → Create `multi-step-execution.md`
-3. Rename remaining 15 skills per table above
+3. Rename remaining 15 spells per table above
 
 ### Phase 3: Update AGENTS.md References
-- Update @ references to new skill names
+- Update @ references to new spell names
 - Organize by trigger category (not tier numbers)
 
-### Phase 4: Update Skill Content
+### Phase 4: Update Spell Content
 - Remove "protocol/rule/discipline" language from content
-- Add "**Trigger:**" section at top of each skill
+- Add "**Trigger:**" section at top of each spell
 - Add "**Use When:**" examples
 
 ---
 
-## Example: Updated Skill Front-Matter
+## Example: Updated Spell Front-Matter
 
 **OLD (delegation-discipline.md):**
 ```markdown
@@ -305,7 +305,7 @@ answer: "No, delegate to specialist"
 
 ## Summary
 
-**Core Insight:** Skill names should be **instant triggers** that map to situations, not abstract concepts.
+**Core Insight:** Spell names should be **instant triggers** that map to situations, not abstract concepts.
 
 **Naming Formula:**
 - Action verb + clear outcome = `delegate-dont-do`
@@ -313,7 +313,7 @@ answer: "No, delegate to specialist"
 - Clear noun (if action doesn't fit) = `blocker`, `meta-learn`
 
 **Reductions:**
-- 23 skills → 20 skills (3 merged)
+- 23 spells → 20 spells (3 merged)
 - Drop stuffy suffixes (-protocol, -rule, -discipline)
 - Add trigger/answer pattern to front-matter
 

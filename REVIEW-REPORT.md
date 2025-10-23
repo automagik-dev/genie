@@ -2,9 +2,9 @@
 
 **Reviewer:** Review Agent
 **Date:** 2025-10-18
-**Task:** [WISH] #107-skills-prioritization
-**Commit:** `182ff6a7` - "wish: skills-prioritization - Implement 4 workflow automation scripts"
-**Branch:** `forge/43bb-wish-107-skills`
+**Task:** [WISH] #107-spells-prioritization
+**Commit:** `182ff6a7` - "wish: spells-prioritization - Implement 4 workflow automation scripts"
+**Branch:** `forge/43bb-wish-107-spells`
 
 ---
 
@@ -12,7 +12,7 @@
 
 **VERDICT:** ✅ **APPROVED FOR MERGE**
 
-The skills prioritization implementation successfully delivers 4 high-quality workflow automation scripts that enforce framework patterns through executable code. All scripts are well-designed, properly tested, and align with the framework's architectural principles.
+The spells prioritization implementation successfully delivers 4 high-quality workflow automation scripts that enforce framework patterns through executable code. All scripts are well-designed, properly tested, and align with the framework's architectural principles.
 
 **Key Achievements:**
 - ✅ 4 workflow automation scripts implemented (866 lines of code)
@@ -187,13 +187,13 @@ Unfulfilled: 3
 **Status:** ✅ GOOD
 
 Scripts align with the priority tier architecture:
-- Tier 3 skills referenced: `execution-integrity-protocol.md` (track-promise.js)
-- Tier 4 skills referenced: `blocker-protocol.md` (log-blocker.js)
-- Tier 2 skills referenced: `routing-decision-matrix.md` (validate-role.js)
+- Tier 3 spells referenced: `execution-integrity-protocol.md` (track-promise.js)
+- Tier 4 spells referenced: `blocker-protocol.md` (log-blocker.js)
+- Tier 2 spells referenced: `routing-decision-matrix.md` (validate-role.js)
 
 **Token efficiency:**
 - Scripts automate behavioral enforcement (no manual checking needed)
-- Reduces need to load full skill files during sessions
+- Reduces need to load full spell files during sessions
 - Supports on-demand reference model
 
 ---
@@ -203,7 +203,7 @@ Scripts align with the priority tier architecture:
 
 AGENTS.md correctly updated with priority tier markers:
 - Lines 15-42: Priority Tiers 1-5 (auto-loaded)
-- Lines 43-62: Reference-only skills
+- Lines 43-62: Reference-only spells
 - Clear tier separation matching cli-loading-strategy.md
 
 ---
@@ -278,7 +278,7 @@ AGENTS.md correctly updated with priority tier markers:
 
 **Structure:**
 ```
-Title: wish: skills-prioritization - Implement 4 workflow automation scripts
+Title: wish: spells-prioritization - Implement 4 workflow automation scripts
 [blank line]
 Body:
 - Lists all 4 scripts with purposes
@@ -288,7 +288,7 @@ Body:
 ```
 
 **Traceability:**
-- ✅ References wish document (skills-prioritization)
+- ✅ References wish document (spells-prioritization)
 - ✅ References issue #107
 - ✅ References routing.md, cli-loading-strategy.md, AGENTS.md
 - ✅ Clear "Completes Group B" statement
@@ -365,7 +365,7 @@ Total: 4 new files, 866 lines added, 0 deletions
 **AGENTS.md:**
 - ✅ Updated with priority tier markers
 - ✅ Clear separation (auto-load vs reference-only)
-- ✅ 30 skills organized into 5 priority tiers + 16 reference
+- ✅ 30 spells organized into 5 priority tiers + 16 reference
 
 ---
 
@@ -420,7 +420,7 @@ Result: ✅ PASS - 1:1 mapping verified
 
 #### Integration 2: Skill References
 ```bash
-Check: Scripts reference correct skill files
+Check: Scripts reference correct spell files
 Result: ✅ PASS - All references valid
 ```
 
@@ -498,7 +498,7 @@ Result: ✅ PASS - Exit 1 on detection, 0 on clean
 ```bash
 # Merge to main with squash or rebase
 git checkout main
-git merge --ff-only forge/43bb-wish-107-skills
+git merge --ff-only forge/43bb-wish-107-spells
 
 # Or create PR for final review
 gh pr create --base main --title "[WISH] #107 - Skills Prioritization" \
@@ -530,7 +530,7 @@ gh pr create --base main --title "[WISH] #107 - Skills Prioritization" \
 - **Overall: 10/10**
 
 **Token Efficiency Impact:**
-- Baseline token savings: 74% (from skills prioritization)
+- Baseline token savings: 74% (from spells prioritization)
 - Automation value: High (reduces manual pattern checking)
 - Behavioral enforcement: Automated (teaching, blockers, routing, promises)
 

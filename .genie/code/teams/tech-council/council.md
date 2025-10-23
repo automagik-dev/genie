@@ -8,7 +8,6 @@ voting_threshold: 2/3
 
 # Tech Council - Board of Technology
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Purpose:** Provide multi-perspective architectural and performance guidance through consensus-driven consultation
 
 ---
@@ -162,7 +161,7 @@ Rationale: [why]
 ### What Tech Council CAN Do
 
 ✅ **Read entire codebase** - Full analysis capability
-✅ **Use all code skills** - Evidence-based thinking, routing, etc.
+✅ **Use all code spells** - Evidence-based thinking, routing, etc.
 ✅ **Write to .genie/teams/tech-council/** - Evidence and reports only
 ✅ **Multi-turn consultation** - Resume sessions for clarification
 ✅ **Parallel persona sessions** - All three at once
@@ -310,10 +309,10 @@ Risk: Adding complexity. Mitigate by ensuring performance gain justifies added d
 
 ## 🔗 Related Documentation
 
-**Skills:**
-- `@.genie/code/skills/team-consultation-protocol.md` - When to invoke
-- `@.genie/skills/investigate-before-commit.md` - Analysis framework
-- `@.genie/skills/routing-decision-matrix.md` - Routing triggers
+**Spells:**
+- `@.genie/code/spells/team-consultation-protocol.md` - When to invoke
+- `@.genie/spells/investigate-before-commit.md` - Analysis framework
+- `@.genie/spells/routing-decision-matrix.md` - Routing triggers
 
 **Personas:**
 - `@.genie/teams/tech-council/nayr.md` - Questioning persona

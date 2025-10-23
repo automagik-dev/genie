@@ -1,5 +1,4 @@
 # Complete Forge API Catalog - ALL 90+ Endpoints
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
 **Date:** 2025-10-18
 **Source:** forge.ts (ForgeClient implementation)
 **Purpose:** Comprehensive catalog of EVERY endpoint for Genie replacement planning
