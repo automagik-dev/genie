@@ -48,8 +48,18 @@ class ForgeExecutor {
             executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
             base_branch: baseBranch
         };
-        const attempt = await this.forge.createAndStartTask(requestBody);
-        return attempt.id;
+        const response = await this.forge.createAndStartTask(requestBody);
+        // Response contains: { id: taskId, project_id: projectId, attempts: [{ id: attemptId, ... }] }
+        const taskId = response.id;
+        const attemptId = response.attempts?.[0]?.id || response.id; // Fallback to taskId if attempts array missing
+        // Build Forge URL
+        const forgeUrl = `${this.config.forgeBaseUrl}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+        return {
+            attemptId,
+            taskId,
+            projectId,
+            forgeUrl
+        };
     }
     async resumeSession(sessionId, followUpPrompt) {
         await this.forge.followUpTaskAttempt(sessionId, followUpPrompt);
