@@ -170,12 +170,44 @@ function main() {
     log('yellow', '⚠️', 'CHANGELOG update failed; continuing without changelog move');
   }
 
+  // Archive old reports on minor bumps (keeps repo lean)
+  let archivedFiles = [];
+  if (BUMP_TYPE === 'minor') {
+    try {
+      log('blue', '📦', 'Archiving old reports (>3 days)...');
+      require('child_process').execSync(
+        `node ${path.join(__dirname, 'archive-old-reports.cjs')}`,
+        { stdio: 'inherit' }
+      );
+      log('green', '✅', 'Old reports archived');
+
+      // Stage deleted report files
+      const gitStatus = exec('git status --porcelain .genie/reports/', true);
+      if (gitStatus) {
+        archivedFiles = gitStatus.split('\n')
+          .filter(line => line.trim().startsWith('D '))
+          .map(line => line.trim().substring(2).trim());
+
+        if (archivedFiles.length > 0) {
+          exec('git add .genie/reports/');
+          log('green', '✅', `Staged ${archivedFiles.length} archived files for deletion`);
+        }
+      }
+    } catch (e) {
+      log('yellow', '⚠️', 'Report archiving failed; continuing without archiving');
+    }
+  }
+
   // Git operations
   exec('git add package.json CHANGELOG.md .genie/state/version.json');
 
-  const commitMessage = `chore: pre-release v${newVersion}
+  let commitMessage = `chore: pre-release v${newVersion}`;
 
-Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
+  if (archivedFiles.length > 0) {
+    commitMessage += `\n\nArchived ${archivedFiles.length} old reports to ~/.genie-archives/`;
+  }
+
+  commitMessage += `\n\nCo-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
 
   exec(`git commit --no-verify -m "${commitMessage}"`);
   log('green', '✅', 'Created commit');
