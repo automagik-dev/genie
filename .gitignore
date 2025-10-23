@@ -149,6 +149,7 @@ secrets.json
 .genie/backups/
 .genie/CONTEXT.md
 .genie/cli/.genie/
+.genie/.genie/
 .agent-os/cache/
 
 # Build artifacts
