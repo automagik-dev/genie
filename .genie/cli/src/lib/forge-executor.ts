@@ -17,6 +17,13 @@ export interface CreateSessionParams {
   model?: string;
 }
 
+export interface CreateSessionResult {
+  attemptId: string;
+  taskId: string;
+  projectId: string;
+  forgeUrl: string;
+}
+
 export interface ForgeSessionSummary {
   id: string;
   agent: string;
@@ -43,7 +50,7 @@ export class ForgeExecutor {
     return;
   }
 
-  async createSession(params: CreateSessionParams): Promise<string> {
+  async createSession(params: CreateSessionParams): Promise<CreateSessionResult> {
     const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
 
     const projectId = await this.getOrCreateGenieProject();
@@ -79,8 +86,21 @@ export class ForgeExecutor {
       base_branch: baseBranch
     };
 
-    const attempt = await this.forge.createAndStartTask(requestBody);
-    return attempt.id;
+    const response = await this.forge.createAndStartTask(requestBody);
+
+    // Response contains: { id: taskId, project_id: projectId, attempts: [{ id: attemptId, ... }] }
+    const taskId = response.id;
+    const attemptId = response.attempts?.[0]?.id || response.id; // Fallback to taskId if attempts array missing
+
+    // Build Forge URL
+    const forgeUrl = `${this.config.forgeBaseUrl}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+
+    return {
+      attemptId,
+      taskId,
+      projectId,
+      forgeUrl
+    };
   }
 
   async resumeSession(sessionId: string, followUpPrompt: string): Promise<void> {

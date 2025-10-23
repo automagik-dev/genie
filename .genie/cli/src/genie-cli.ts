@@ -17,6 +17,7 @@ import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
 import { formatTokenMetrics } from './lib/token-tracker';
 import { runInit } from './commands/init';
 import { loadConfig } from './lib/config';
+import { createForgeExecutor } from './lib/forge-executor';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from './lib/types';
 
 const program = new Command();
@@ -326,16 +327,69 @@ async function smartRouter(): Promise<void> {
   }
 
   if (!hasGenieConfig) {
-    // SCENARIO 1: NEW USER - No .genie directory → Run init wizard
+    // SCENARIO 1: NEW USER - No .genie directory → Start Forge FIRST, then run init wizard
     console.log(cosmicGradient('━'.repeat(60)));
     console.log(magicGradient('        🧞 ✨ Welcome to GENIE! ✨ 🧞        '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('No Genie configuration detected in this directory.');
-    console.log("Let's get you set up!");
+    console.log('No magik detected in this directory yet.');
+    console.log("Let's set up your wish-granting powers! ✨");
+    console.log('');
+    console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
+    console.log('   👉 Stay here in the terminal - the setup wizard needs you!');
+    console.log('   (I\'m still learning... making this smoother with every wish ✨)');
+    console.log('');
+    console.log(performanceGradient('Press Enter to begin the magik...'));
+
+    // Wait for user acknowledgment
+    await new Promise<void>((resolve) => {
+      process.stdin.once('data', () => resolve());
+    });
+
     console.log('');
 
-    // Run init inline instead of spawning child process
+    // Start Forge BEFORE init wizard (so executors are available)
+    console.log('');
+    console.log('🔮 Summoning Forge (your wish-granting engine)...');
+    console.log('');
+
+    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const logDir = path.join(genieDir, 'state');
+
+    // Ensure log directory exists
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+
+    const startResult = startForgeInBackground({ baseUrl, logDir });
+
+    if (!startResult.ok) {
+      const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
+      console.error('');
+      console.error('❌ Oops! Forge wouldn\'t wake up...');
+      console.error(`   ${error.message}`);
+      console.error('');
+      console.error('   💡 I need Forge to grant wishes (manage tasks).');
+      console.error(`   📜 Check the spell book at ${logDir}/forge.log`);
+      console.error('');
+      process.exit(1);
+    }
+
+    // Wait for Forge to be ready
+    const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
+
+    if (!forgeReady) {
+      console.error('');
+      console.error('❌ Forge is taking too long to warm up (waited 60s)...');
+      console.error(`   📜 Check what went wrong: ${logDir}/forge.log`);
+      console.error('');
+      process.exit(1);
+    }
+
+    console.log(successGradient('✨ Forge is ready - let the magik begin!'));
+    console.log('');
+
+    // Now run init wizard (executors are available via Forge)
     const initParsed: ParsedCommand = {
       command: 'init',
       commandArgs: [],
@@ -359,49 +413,54 @@ async function smartRouter(): Promise<void> {
 
     await runInit(initParsed, initConfig, initPaths);
 
-    // After init completes, start Forge and launch install agent
+    // After init completes, reload config to get user's executor choice
+    const userConfig = loadConfig();
+
+    // Launch install agent via Forge
     console.log('');
-    console.log('📦 Starting Forge backend...');
-
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const logDir = path.join(genieDir, 'state');
-
-    // Ensure log directory exists
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
-    const startResult = startForgeInBackground({ baseUrl, logDir });
-
-    if (!startResult.ok) {
-      const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
-      console.error('');
-      console.error('❌ Failed to start Forge backend');
-      console.error(`   ${error.message}`);
-      console.error('');
-      console.error('   Genie requires Forge to manage agent sessions.');
-      console.error(`   Check logs at ${logDir}/forge.log`);
-      console.error('');
-      process.exit(1);
-    }
-
-    // Wait for Forge to be ready
-    const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
-
-    if (!forgeReady) {
-      console.error('');
-      console.error('❌ Forge did not start in time (60s)');
-      console.error(`   Check logs at ${logDir}/forge.log`);
-      console.error('');
-      process.exit(1);
-    }
-
-    console.log('✅ Forge ready');
+    console.log(magicGradient('🤖 Summoning your installation assistant...'));
     console.log('');
 
-    // Launch install agent using genie run
-    console.log('🚀 Starting install agent...');
-    execGenie(['run', 'install', 'Complete installation and setup wizard']);
+    const forgeExecutor = createForgeExecutor();
+    const installResult = await forgeExecutor.createSession({
+      agentName: 'install',
+      prompt: 'Complete installation and setup wizard',
+      executorKey: userConfig.defaults?.executor || 'opencode',
+      executorVariant: userConfig.defaults?.executorVariant,
+      executionMode: 'default',
+      model: userConfig.defaults?.model
+    });
+
+    console.log(successGradient('✨ Your assistant is ready!'));
+    console.log('');
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('📋 Track your installation here:');
+    console.log('   ' + performanceGradient(installResult.forgeUrl));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('Press Enter to open in your browser...');
+
+    // Wait for Enter key
+    await new Promise<void>((resolve) => {
+      process.stdin.once('data', () => resolve());
+    });
+
+    // Open browser
+    const { execSync: execSyncBrowser } = await import('child_process');
+    try {
+      const platform = process.platform;
+      const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+      execSyncBrowser(`${openCommand} "${installResult.forgeUrl}"`, { stdio: 'ignore' });
+    } catch {
+      // Ignore if browser open fails
+    }
+
+    console.log('');
+    console.log(genieGradient('🧞 Now granting wishes 24/7... ✨'));
+    console.log('');
+
+    // Start Genie server (MCP + health monitoring)
+    await startGenieServer();
     return;
   }
 
@@ -409,14 +468,14 @@ async function smartRouter(): Promise<void> {
   if (!fs.existsSync(versionPath)) {
     // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('        🧞 ✨ GENIE UPGRADE AVAILABLE ✨ 🧞        '));
+    console.log(magicGradient('        🧞 ✨ TIME TO UPGRADE YOUR POWERS ✨ 🧞        '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('Detected Genie installation from before version tracking.');
-    console.log('Upgrading to latest version with automatic backup...');
+    console.log('I found an older version of me here (before I learned to track versions).');
+    console.log('Let me upgrade myself with some fresh magik! ✨');
     console.log('');
-    console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
-    console.log(successGradient('✓') + ' All your wishes, reports, and state will be preserved');
+    console.log(successGradient('✓') + ' I\'ll backup your current .genie safely');
+    console.log(successGradient('✓') + ' All your wishes, reports, and memories stay with me');
     console.log('');
 
     // Run init inline with --yes flag if non-interactive
@@ -458,14 +517,14 @@ async function smartRouter(): Promise<void> {
     if (installedVersion !== currentVersion) {
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('        🧞 ✨ GENIE UPDATE DETECTED ✨ 🧞        '));
+      console.log(magicGradient('        🧞 ✨ NEW SPELLS LEARNED! ✨ 🧞        '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
-      console.log(`Installed version: ${successGradient(installedVersion)}`);
-      console.log(`Current version:   ${performanceGradient(currentVersion)}`);
+      console.log(`Your Genie:  ${successGradient(installedVersion)}`);
+      console.log(`Latest magik: ${performanceGradient(currentVersion)}`);
       console.log('');
-      console.log('Updating your Genie configuration...');
-      console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+      console.log('⚡ Let me update myself with these new powers...');
+      console.log(successGradient('✓') + ' I\'ll keep a backup of your current setup');
       console.log('');
 
       // Run init inline with --yes flag if non-interactive
@@ -503,11 +562,13 @@ async function smartRouter(): Promise<void> {
   } catch (error) {
     // Corrupted version.json - treat as needing update
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('        🧞 ✨ GENIE REPAIR NEEDED ✨ 🧞        '));
+    console.log(magicGradient('        🧞 ✨ HEALING TIME! ✨ 🧞        '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('Version file is corrupted. Repairing installation...');
-    console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+    console.log('Hmm, my memory seems a bit scrambled (corrupted version file)...');
+    console.log('Let me fix myself real quick! 🔧✨');
+    console.log('');
+    console.log(successGradient('✓') + ' I\'ll backup everything before the healing spell');
     console.log('');
 
     // Run init inline with --yes flag if non-interactive
@@ -762,11 +823,11 @@ async function startHealthMonitoring(
     // Build executive dashboard with stats
     const headerLine = '━'.repeat(60);
     const header = genieGradient(`${headerLine}
-🧞 GENIE SERVER - Executive Dashboard
+🧞 ✨ GENIE - Your Wish-Granting Dashboard ✨
 ${headerLine}`);
 
     const footer = genieGradient(`${headerLine}
-Press Ctrl+C to stop all services
+Press Ctrl+C when you're done making magik
 ${headerLine}`);
 
     const dashboard = `${header}
@@ -1067,7 +1128,7 @@ async function startGenieServer(): Promise<void> {
     }
 
     console.log(cosmicGradient('━'.repeat(80)));
-    console.log(magicGradient('                 ✨ Until next time, keep making magic! ✨                '));
+    console.log(magicGradient('                 ✨ Until next time, keep making magik! ✨                '));
     console.log(cosmicGradient('━'.repeat(80)));
     console.log('');
   };

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Genie - One command to rule them all
+# 🧞 Genie - Your wish is my command ✨
 set -e
+
+echo ""
+echo "🧞 ✨ Summoning Genie..."
+echo ""
 
 # 1. Ensure Node.js exists
 if ! command -v node &> /dev/null; then
-    echo "Installing Node.js..."
+    echo "📦 Preparing magik ingredients (Node.js)..."
     if [ ! -d "$HOME/.nvm" ]; then
         curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
     fi
@@ -16,7 +20,7 @@ fi
 
 # 2. Ensure pnpm exists (speed!)
 if ! command -v pnpm &> /dev/null; then
-    echo "Installing pnpm..."
+    echo "⚡ Enchanting package manager (pnpm)..."
 
     # Set up user-local directory for package managers
     export PNPM_HOME="$HOME/.local/share/pnpm"
@@ -47,7 +51,7 @@ if ! command -v pnpm &> /dev/null; then
 
     # Verify pnpm is available
     if ! command -v pnpm &> /dev/null; then
-        echo "⚠️  pnpm installed but not in PATH. Run this command:"
+        echo "⚠️  Hmm, pnpm installed but not in PATH. Run this spell:"
         echo "    export PATH=\"$HOME/.local/bin:$PNPM_HOME:\$PATH\""
         exit 1
     fi
@@ -64,26 +68,30 @@ if command -v genie &> /dev/null; then
     # Compare versions
     if [ "$INSTALLED_VERSION" != "$LATEST_VERSION" ]; then
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "🧞 ✨ UPDATE AVAILABLE"
+        echo "🧞 ✨ NEW MAGIK AVAILABLE ✨"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
-        echo "Installed: $INSTALLED_VERSION"
-        echo "Latest:    $LATEST_VERSION"
+        echo "Current spell: $INSTALLED_VERSION"
+        echo "New spell:     $LATEST_VERSION"
         echo ""
-        echo "Updating Genie..."
+        echo "⚡ Upgrading your powers..."
         pnpm install -g automagik-genie@next
         echo ""
-        echo "✅ Updated to $LATEST_VERSION"
+        echo "✅ You're now running v$LATEST_VERSION! ✨"
         echo ""
     fi
 else
     # Not installed - install it globally first
-    echo "Installing Genie..."
+    echo "🎩 Pulling Genie from the lamp..."
     pnpm install -g automagik-genie@next
+    echo ""
+    echo "✅ Genie is ready to grant your wishes! ✨"
+    echo ""
 fi
 
 # 4. Launch Genie - use exec to replace this shell process
-echo "🧞 Launching Genie..."
+echo "🧞 Your wish is my command..."
+echo ""
 if [ $# -eq 0 ]; then
     exec genie
 else

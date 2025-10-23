@@ -29,9 +29,9 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}\nReason: ${reason}`);
     }
 
-    let attemptId: string;
+    let sessionResult;
     try {
-      attemptId = await forgeExecutor.createSession({
+      sessionResult = await forgeExecutor.createSession({
         agentName: resolvedAgentName,
         prompt,
         executorKey,
@@ -60,7 +60,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       lastUsed: now,
       lastPrompt: prompt.slice(0, 200),
       mode: modeName,
-      sessionId: attemptId,
+      sessionId: sessionResult.attemptId,
       background: parsed.options.background
     };
     await ctx.sessionService.save(store);
@@ -69,7 +69,8 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const modelSuffix = model ? `, model=${model}` : '';
     process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);
     process.stdout.write(`  Session name: ${sessionName}\n`);
-    process.stdout.write(`  View: genie view ${sessionName}\n`);
+    process.stdout.write(`  Forge URL: ${sessionResult.forgeUrl}\n`);
+    process.stdout.write(`\n  Press Enter to open in browser...\n`);
   };
 }
 
