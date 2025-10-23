@@ -9,6 +9,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { wsManager } from '../websocket-manager.js';
+import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
 
 // Load ForgeClient from workspace root
 const workspaceRoot = process.cwd();
@@ -41,6 +42,27 @@ export async function executeReviewTool(
   const { streamContent, reportProgress } = context;
   const projectId = args.project_id || DEFAULT_PROJECT_ID;
   const agent = args.agent || 'review';
+
+  // Step 0: Validate git state (CRITICAL: Agents in separate worktrees need clean state)
+  await streamContent({
+    type: 'text',
+    text: `🔍 Checking git working tree state...\n`
+  });
+
+  const gitCheck = checkGitState();
+
+  if (!gitCheck.isClean) {
+    await streamContent({
+      type: 'text',
+      text: `\n${formatGitStateError(gitCheck)}`
+    });
+    throw new Error('Git working tree is not clean - cannot start agent');
+  }
+
+  await streamContent({
+    type: 'text',
+    text: `✅ Git working tree is clean and pushed\n\n`
+  });
 
   // Step 1: Load wish document
   await streamContent({
