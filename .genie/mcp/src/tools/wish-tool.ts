@@ -51,10 +51,7 @@ export type WishToolParams = z.infer<typeof wishToolSchema>;
  */
 export async function executeWishTool(
   args: WishToolParams,
-  context: {
-    streamContent: (content: { type: string; text: string }) => Promise<void>;
-    reportProgress?: (progress: number, total?: number) => Promise<void>;
-  }
+  context: any
 ): Promise<void> {
   const { streamContent, reportProgress } = context;
 

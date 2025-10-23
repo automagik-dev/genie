@@ -33,10 +33,7 @@ export type ForgeToolParams = z.infer<typeof forgeToolSchema>;
  */
 export async function executeForgeTool(
   args: ForgeToolParams,
-  context: {
-    streamContent: (content: { type: string; text: string }) => Promise<void>;
-    reportProgress?: (progress: number, total?: number) => Promise<void>;
-  }
+  context: any
 ): Promise<void> {
   const { streamContent, reportProgress } = context;
   const projectId = args.project_id || DEFAULT_PROJECT_ID;
