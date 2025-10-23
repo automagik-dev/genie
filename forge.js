@@ -813,7 +813,7 @@ class ForgeClient {
     // WEBSOCKET STREAMING - Real-time Log & Diff Streaming
     // ============================================================================
     /**
-     * WS /api/projects/{project_id}/tasks/stream/ws
+     * WS /api/tasks/stream/ws?project_id={project_id}
      * WebSocket stream of tasks in real-time
      * Receive updates when tasks are created, updated, etc
      * @param projectId - Project UUID
@@ -821,7 +821,7 @@ class ForgeClient {
      */
     getTasksStreamUrl(projectId) {
         const protocol = this.baseUrl.startsWith('https') ? 'wss' : 'ws';
-        return `${protocol}://${new URL(this.baseUrl).host}/api/projects/${projectId}/tasks/stream/ws`;
+        return `${protocol}://${new URL(this.baseUrl).host}/api/tasks/stream/ws?project_id=${projectId}`;
     }
     /**
      * WS /api/execution-processes/stream/ws?task_attempt_id={id}
