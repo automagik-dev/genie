@@ -1,11 +1,7 @@
 @AGENTS.md
-# ⚠️ Master Plan (Architectural Evolution & Current Goals)
-# Load master plan for architectural evolution, today's goals, and validation checklist
-# This file is your memory across sessions - read on EVERY restart
-@.genie/MASTER-PLAN.md
 
 # ⚠️ Session State (Permanent Agent Coordination)
-# Load active agent sessions and collective coordination state
+# Load active agent sessions, current goals, and validation checklist
 # Check before launching agents, update when starting/stopping sessions
 @.genie/SESSION-STATE.md
 
@@ -23,8 +19,9 @@ This file loads all Genie agent knowledge and project state via @ references abo
 **Architecture:**
 - **AGENTS.md**: Complete Genie agent knowledge base (universal patterns, behavioral rules, workflows)
 - **CLAUDE.md**: Meta-loader (this file) - auto-loads knowledge on every session
-- **MASTER-PLAN.md**: Architectural evolution tracking, today's goals, validation checklist
-- **SESSION-STATE.md**: Active agent coordination, session tracking
+- **SESSION-STATE.md**: Active agent coordination, current goals, validation checklist
 - **USERCONTEXT.md**: Per-user preferences and session continuity
 
-All agent instructions, patterns, and behavioral rules are now in AGENTS.md for single source of truth.
+All agent instructions, patterns, and behavioral rules are in AGENTS.md for single source of truth.
+
+**Historical:** MASTER-PLAN.md archived to `.genie/reports/architectural-evolution-may-oct-2025.md` (served its purpose, reached RC92)

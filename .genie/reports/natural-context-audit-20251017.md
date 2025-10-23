@@ -4,6 +4,7 @@
 **Session:** 2d19c1e2-66bf-4aed-b9ce-17c78b3e4bb3 (orchestrator, analyze mode)
 
 ---
+version: 1.0.0
 
 ## Executive Summary
 
@@ -34,7 +35,7 @@
 
 **Project:** !`basename $(pwd)`
 **Version:** !`node -p "require('./package.json').version"`
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-23 07:27:03 UTC
 
 @.genie/agents/README.md   # Load agent architecture
          # Load routing patterns
@@ -344,7 +345,7 @@ This mode uses the universal prompting framework (see above):
 3. ✅ implementor.md:112 → @.genie/code/agents/implementor.md
 
 **High-Impact Additions (15 patterns):**
-1. 🟡  → `@AGENTS.md`, @.genie/MASTER-PLAN.md
+1. 🟡  → `@AGENTS.md`, @.genie/reports/architectural-evolution-may-oct-2025.md
 2. 🟡 .genie/README.md → `@.genie/agents/README.md`,
 3. 🟡 .genie/agents/README.md → `@AGENTS.md` (note: prompt.md removed in refactoring)
 4. 🟡 5 workflow agents → @AGENTS.md (plan, wish, forge, review, qa)
@@ -440,7 +441,7 @@ CLAUDE.md
 
 2. ** → Load framework** (10 min)
    - Add @AGENTS.md after title
-   - Add @.genie/MASTER-PLAN.md for architectural context
+   - Add @.genie/reports/architectural-evolution-may-oct-2025.md for architectural context
    - Add version + timestamp via !
 
 3. **.genie/agents/README.md → Agent hub** (10 min)
