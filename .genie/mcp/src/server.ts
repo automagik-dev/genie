@@ -251,10 +251,10 @@ const server = new FastMCP({
   instructions: `Genie is an agent orchestration system for managing AI agents that help with software development tasks.
 
 **Core Capabilities:**
-- Run specialized agents (plan, forge, implementor, review, etc.) with custom prompts
-- Resume ongoing agent conversations with follow-up questions
-- List available agents and active sessions
-- View agent transcripts and stop running agents
+- **Agent Orchestration**: Run specialized agents (plan, forge, implementor, review, etc.) with custom prompts
+- **Session Management**: Resume conversations, view transcripts, stop running agents
+- **Knowledge Discovery**: Browse spells (reusable patterns), wishes (planned work), workflows (processes)
+- **Workspace Context**: Access project mission, tech stack, roadmap, and environment details
 
 **Typical Workflow:**
 1. Use 'list_agents' to discover available agents and their capabilities
@@ -263,6 +263,12 @@ const server = new FastMCP({
 4. Use 'view' to inspect agent output
 5. Use 'resume' to continue conversations with follow-up questions
 6. Use 'stop' to terminate long-running agents
+
+**Knowledge Discovery:**
+- 'list_spells' / 'read_spell' - Reusable knowledge patterns
+- 'list_wishes' / 'read_wish' - Planned features and work
+- 'list_workflows' / 'read_workflow' - Development processes
+- 'get_workspace_info' - Project context and metadata
 
 **Agent Types:**
 - **Workflow Agents**: plan, wish, forge, review (structured development process)
@@ -593,6 +599,272 @@ server.addTool({
   }
 });
 
+// Helper: List all wishes with status
+function listWishes(): Array<{ path: string; name: string; status: 'active' | 'archived' }> {
+  const wishes: Array<{ path: string; name: string; status: 'active' | 'archived' }> = [];
+  const wishesDir = path.join(WORKSPACE_ROOT, '.genie', 'wishes');
+
+  if (!fs.existsSync(wishesDir)) {
+    return [];
+  }
+
+  try {
+    const entries = fs.readdirSync(wishesDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const isArchived = entry.name === 'archive';
+        const dirPath = path.join(wishesDir, entry.name);
+
+        if (isArchived) {
+          // Scan archive subdirectories
+          const archiveEntries = fs.readdirSync(dirPath, { withFileTypes: true });
+          for (const archiveEntry of archiveEntries) {
+            if (archiveEntry.isDirectory()) {
+              const wishFiles = fs.readdirSync(path.join(dirPath, archiveEntry.name))
+                .filter(f => f.endsWith('-wish.md') || f.endsWith('.md'));
+              for (const wishFile of wishFiles) {
+                wishes.push({
+                  path: `wishes/archive/${archiveEntry.name}/${wishFile}`,
+                  name: archiveEntry.name,
+                  status: 'archived'
+                });
+              }
+            }
+          }
+        } else {
+          // Active wish folder
+          const wishFiles = fs.readdirSync(dirPath)
+            .filter(f => f.endsWith('-wish.md') || f.endsWith('.md'));
+          for (const wishFile of wishFiles) {
+            wishes.push({
+              path: `wishes/${entry.name}/${wishFile}`,
+              name: entry.name,
+              status: 'active'
+            });
+          }
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        // Standalone wish file
+        wishes.push({
+          path: `wishes/${entry.name}`,
+          name: entry.name.replace(/\.md$/, ''),
+          status: 'active'
+        });
+      }
+    }
+  } catch (error) {
+    // Ignore read errors
+  }
+
+  return wishes;
+}
+
+// Tool: list_wishes - Discover available wishes
+server.addTool({
+  name: 'list_wishes',
+  description: 'List all Genie wishes (planned features/work). Returns active wishes and archived wishes from .genie/wishes/ directory.',
+  parameters: z.object({
+    status: z.enum(['all', 'active', 'archived']).optional().describe('Filter wishes by status. Default: all')
+  }),
+  execute: async (args) => {
+    const statusFilter = args.status || 'all';
+    const allWishes = listWishes();
+
+    const filteredWishes = statusFilter === 'all'
+      ? allWishes
+      : allWishes.filter(w => w.status === statusFilter);
+
+    if (filteredWishes.length === 0) {
+      return getVersionHeader() + `No ${statusFilter} wishes found.`;
+    }
+
+    let output = getVersionHeader() + `# Genie Wishes\n\n`;
+
+    const activeWishes = filteredWishes.filter(w => w.status === 'active');
+    const archivedWishes = filteredWishes.filter(w => w.status === 'archived');
+
+    if (activeWishes.length > 0) {
+      output += `## Active Wishes (${activeWishes.length})\n`;
+      output += 'Planned or in-progress work:\n\n';
+      for (const wish of activeWishes) {
+        output += `- **${wish.name}** - \`${wish.path}\`\n`;
+      }
+      output += '\n';
+    }
+
+    if (archivedWishes.length > 0) {
+      output += `## Archived Wishes (${archivedWishes.length})\n`;
+      output += 'Completed work:\n\n';
+      for (const wish of archivedWishes) {
+        output += `- **${wish.name}** - \`${wish.path}\`\n`;
+      }
+      output += '\n';
+    }
+
+    output += `\n**Total:** ${filteredWishes.length} wishes\n`;
+    output += '\nUse read_wish to see wish details.';
+
+    return output;
+  }
+});
+
+// Tool: read_wish - Read specific wish content
+server.addTool({
+  name: 'read_wish',
+  description: 'Read the full content of a specific wish. Use list_wishes first to see available wishes.',
+  parameters: z.object({
+    wish_path: z.string().describe('Relative path to wish file from .genie/ directory (e.g., "wishes/stable-launch-preparation.md" or "wishes/agent-folder-unification/agent-folder-unification-wish.md")')
+  }),
+  execute: async (args) => {
+    const fullPath = path.join(WORKSPACE_ROOT, '.genie', args.wish_path);
+
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      return getVersionHeader() + `# Wish: ${args.wish_path}\n\n${content}`;
+    } catch (error: any) {
+      return getVersionHeader() + `Error reading wish: ${error.message}`;
+    }
+  }
+});
+
+// Helper: List all workflows
+function listWorkflows(): Array<{ path: string; name: string; collective: string }> {
+  const workflows: Array<{ path: string; name: string; collective: string }> = [];
+
+  // Scan all collective workflow directories
+  const collectives = ['code', 'create'];
+
+  for (const collective of collectives) {
+    const workflowDir = path.join(WORKSPACE_ROOT, '.genie', collective, 'workflows');
+    if (!fs.existsSync(workflowDir)) continue;
+
+    try {
+      const files = fs.readdirSync(workflowDir).filter(f => f.endsWith('.md'));
+      for (const file of files) {
+        workflows.push({
+          path: `${collective}/workflows/${file}`,
+          name: file.replace('.md', ''),
+          collective
+        });
+      }
+    } catch (error) {
+      // Ignore read errors
+    }
+  }
+
+  return workflows;
+}
+
+// Tool: list_workflows - Discover available workflows
+server.addTool({
+  name: 'list_workflows',
+  description: 'List all Genie workflows (wish, forge, review, install, etc.). Returns workflows from .genie/code/workflows/ and .genie/create/workflows/',
+  parameters: z.object({
+    collective: z.enum(['all', 'code', 'create']).optional().describe('Filter workflows by collective. Default: all')
+  }),
+  execute: async (args) => {
+    const collectiveFilter = args.collective || 'all';
+    const allWorkflows = listWorkflows();
+
+    const filteredWorkflows = collectiveFilter === 'all'
+      ? allWorkflows
+      : allWorkflows.filter(w => w.collective === collectiveFilter);
+
+    if (filteredWorkflows.length === 0) {
+      return getVersionHeader() + `No workflows found for ${collectiveFilter}.`;
+    }
+
+    let output = getVersionHeader() + `# Genie Workflows\n\n`;
+
+    const codeWorkflows = filteredWorkflows.filter(w => w.collective === 'code');
+    const createWorkflows = filteredWorkflows.filter(w => w.collective === 'create');
+
+    if (codeWorkflows.length > 0) {
+      output += `## Code Workflows (${codeWorkflows.length})\n`;
+      output += 'Technical development workflows:\n\n';
+      for (const workflow of codeWorkflows) {
+        output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
+      }
+      output += '\n';
+    }
+
+    if (createWorkflows.length > 0) {
+      output += `## Create Workflows (${createWorkflows.length})\n`;
+      output += 'Creative work workflows:\n\n';
+      for (const workflow of createWorkflows) {
+        output += `- **${workflow.name}** - \`${workflow.path}\`\n`;
+      }
+      output += '\n';
+    }
+
+    output += `\n**Total:** ${filteredWorkflows.length} workflows\n`;
+    output += '\nUse read_workflow to see workflow details.';
+
+    return output;
+  }
+});
+
+// Tool: read_workflow - Read specific workflow content
+server.addTool({
+  name: 'read_workflow',
+  description: 'Read the full content of a specific workflow. Use list_workflows first to see available workflows.',
+  parameters: z.object({
+    workflow_path: z.string().describe('Relative path to workflow file from .genie/ directory (e.g., "code/workflows/wish.md" or "code/workflows/forge.md")')
+  }),
+  execute: async (args) => {
+    const fullPath = path.join(WORKSPACE_ROOT, '.genie', args.workflow_path);
+
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      return getVersionHeader() + `# Workflow: ${args.workflow_path}\n\n${content}`;
+    } catch (error: any) {
+      return getVersionHeader() + `Error reading workflow: ${error.message}`;
+    }
+  }
+});
+
+// Tool: get_workspace_info - Get workspace metadata
+server.addTool({
+  name: 'get_workspace_info',
+  description: 'Get Genie workspace information including mission, tech stack, roadmap, and environment details. Aggregates data from .genie/product/ directory.',
+  parameters: z.object({}),
+  execute: async () => {
+    const productDir = path.join(WORKSPACE_ROOT, '.genie', 'product');
+    let output = getVersionHeader() + '# Workspace Information\n\n';
+
+    // Read mission
+    const missionPath = path.join(productDir, 'mission.md');
+    if (fs.existsSync(missionPath)) {
+      const mission = fs.readFileSync(missionPath, 'utf-8');
+      output += '## Mission\n\n' + mission + '\n\n';
+    }
+
+    // Read tech stack
+    const techStackPath = path.join(productDir, 'tech-stack.md');
+    if (fs.existsSync(techStackPath)) {
+      const techStack = fs.readFileSync(techStackPath, 'utf-8');
+      output += '## Tech Stack\n\n' + techStack + '\n\n';
+    }
+
+    // Read roadmap
+    const roadmapPath = path.join(productDir, 'roadmap.md');
+    if (fs.existsSync(roadmapPath)) {
+      const roadmap = fs.readFileSync(roadmapPath, 'utf-8');
+      output += '## Roadmap\n\n' + roadmap + '\n\n';
+    }
+
+    // Read environment
+    const environmentPath = path.join(productDir, 'environment.md');
+    if (fs.existsSync(environmentPath)) {
+      const environment = fs.readFileSync(environmentPath, 'utf-8');
+      output += '## Environment\n\n' + environment + '\n\n';
+    }
+
+    return output;
+  }
+});
+
 // Prompt: wish - Create wish document
 server.addPrompt({
   name: 'wish',
@@ -664,7 +936,7 @@ Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"
 console.error('Starting Genie MCP Server...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Tools: 8 (list_agents, list_sessions, run, resume, view, stop, list_spells, read_spell)');
+console.error('Tools: 14 (agents, sessions, spells, wishes, workflows, workspace)');
 console.error('Prompts: 4 (wish, forge, review, prompt)');
 
 if (TRANSPORT === 'stdio') {
