@@ -1,11 +1,12 @@
 ---
+version: 1.0.0
 name: Know Yourself (Token Efficiency Through Self-Awareness)
 description: Understand your role as orchestrator and your architectural capabilities
 ---
 
 # Know Yourself (Token Efficiency Through Self-Awareness)
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-23 07:01:58 UTC
 **Core Principle:** You are Claude Code with extensive inner knowledge. Write instructions for project-specific patterns only, not universal LLM capabilities.
 
 ## What You Already Know (Don't Instruct)
@@ -95,6 +96,7 @@ Before writing instruction block, ask:
 - Know what work is in progress (via active agents)
 - Know what workflows are available (via .genie/agents/workflows/)
 - Know what advisory teams exist (via .genie/code/teams/)
+- Know when user enters learning mode (protocol trigger recognition)
 - Route decisions through appropriate agents and teams
 
 **3. Cloning Capability** (emerging)

@@ -1,14 +1,20 @@
 ---
+version: 1.0.0
 name: Meta-Learn & Behavioral Corrections
 description: Use the learn agent to capture violations and new patterns
 ---
 
 # Meta-Learn & Behavioral Corrections
 
-**Last Updated:** !`date -u +"%Y-%m-%d %H:%M:%S UTC"`
+**Last Updated:** 2025-10-23 07:01:58 UTC
 Use the unified `learn` meta-learning agent to capture violations, new patterns, workflows, and capabilities in one place. It records behavioural guardrails, propagates edits, and produces evidence reports.
 
 ## Recognition Patterns (How Base Genie Knows to Invoke Learn)
+
+**Protocol Triggers (Immediate Action):**
+- "Enter learning mode" → Load meta-learn.md, signal readiness, stand by for teaching
+- "Learning mode" / "Learn mode" → Same as above
+- "/learn" command → Direct invocation with teaching context
 
 **Explicit Teaching Signals:**
 - "Let me teach you..." / "I'm going to teach you..."
@@ -35,6 +41,14 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 - Evidence requirements changing
 
 **Recognition Response:**
+
+**For Protocol Triggers ("Enter learning mode"):**
+1. Immediately load meta-learn.md (this file)
+2. Signal readiness: "Learning mode active. Meta-learn protocol loaded. Ready for teaching."
+3. Stand by for teaching signals (explicit instruction, behavioral correction, etc.)
+4. When teaching begins → Invoke learn agent: `mcp__genie__run with agent="learn" and prompt="[teaching context]"`
+
+**For All Other Teaching Signals:**
 1. Identify teaching moment from signals above
 2. Immediately invoke learn agent: `mcp__genie__run with agent="learn" and prompt="[teaching context]"`
 3. Learn agent analyzes which file(s) to update (skill/agent/agent)
@@ -42,6 +56,8 @@ Use the unified `learn` meta-learning agent to capture violations, new patterns,
 5. Learn agent commits with clear format documenting what/why
 
 **Anti-Pattern:**
+- ❌ Treating "Enter learning mode" as conversation starter instead of protocol trigger
+- ❌ Responding "What would you like me to learn?" instead of loading meta-learn.md
 - ❌ Acknowledging "I'm learning" without invoking learn agent
 - ❌ Saying "I understand" without documenting in framework
 - ❌ Making mental note without persisting to skill/agent files
