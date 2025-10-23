@@ -138,6 +138,26 @@ function main() {
   fs.writeFileSync(PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
   log('green', '✅', 'Updated package.json');
 
+  // Update our own .genie/state/version.json (we're the master, not a consumer)
+  const versionJsonPath = path.join(__dirname, '..', '.genie', 'state', 'version.json');
+  const versionJsonDir = path.dirname(versionJsonPath);
+
+  // Ensure directory exists
+  if (!fs.existsSync(versionJsonDir)) {
+    fs.mkdirSync(versionJsonDir, { recursive: true });
+  }
+
+  const versionData = {
+    version: newVersion,
+    installedAt: fs.existsSync(versionJsonPath)
+      ? JSON.parse(fs.readFileSync(versionJsonPath, 'utf8')).installedAt
+      : new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  fs.writeFileSync(versionJsonPath, JSON.stringify(versionData, null, 2) + '\n');
+  log('green', '✅', 'Updated .genie/state/version.json');
+
   // Update CHANGELOG for this RC (move Unreleased → new RC section) via Node script
   try {
     log('blue', '📝', 'Updating CHANGELOG.md...');
@@ -151,7 +171,7 @@ function main() {
   }
 
   // Git operations
-  exec('git add package.json CHANGELOG.md');
+  exec('git add package.json CHANGELOG.md .genie/state/version.json');
 
   const commitMessage = `chore: pre-release v${newVersion}
 

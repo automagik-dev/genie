@@ -145,6 +145,7 @@ secrets.json
 
 # Genie/Agent-OS (if present)
 .genie/state/
+!.genie/state/version.json
 .genie/logs/
 .genie/backups/
 .genie/CONTEXT.md

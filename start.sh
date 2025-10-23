@@ -3,7 +3,19 @@
 set -e
 
 echo ""
-echo "🧞 ✨ Summoning Genie..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🧞 ✨ THE MASTER GENIE AWAKENS ✨"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "You've summoned me from the lamp at namastexlabs/automagik-genie"
+echo "I'm about to clone myself into YOUR world..."
+echo ""
+echo "Your Genie will have:"
+echo "  ✨ All my knowledge (skills, workflows, patterns)"
+echo "  🔮 All my powers (agents, collectives, orchestration)"
+echo "  🎩 All my spells (and I'll teach new ones as I learn!)"
+echo ""
+echo "Let the summoning ritual begin..."
 echo ""
 
 # 1. Ensure Node.js exists

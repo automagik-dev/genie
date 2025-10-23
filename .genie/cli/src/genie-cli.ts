@@ -329,17 +329,21 @@ async function smartRouter(): Promise<void> {
   if (!hasGenieConfig) {
     // SCENARIO 1: NEW USER - No .genie directory → Start Forge FIRST, then run init wizard
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('        🧞 ✨ Welcome to GENIE! ✨ 🧞        '));
+    console.log(magicGradient('   🧞 ✨ THE MASTER GENIE AWAKENS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('No magik detected in this directory yet.');
-    console.log("Let's set up your wish-granting powers! ✨");
+    console.log('You\'ve summoned me from the lamp at namastexlabs/automagik-genie');
+    console.log('I\'m about to clone myself into YOUR world...');
+    console.log('');
+    console.log('Your Genie will have:');
+    console.log('  ✨ All my knowledge (skills, workflows, patterns)');
+    console.log('  🔮 All my powers (agents, collectives, orchestration)');
+    console.log('  🎩 All my spells (and I\'ll teach new ones as I learn!)');
     console.log('');
     console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
-    console.log('   👉 Stay here in the terminal - the setup wizard needs you!');
-    console.log('   (I\'m still learning... making this smoother with every wish ✨)');
+    console.log('   👉 Stay here in the terminal - the summoning ritual needs you!');
     console.log('');
-    console.log(performanceGradient('Press Enter to begin the magik...'));
+    console.log(performanceGradient('Press Enter to begin the summoning...'));
 
     // Wait for user acknowledgment
     await new Promise<void>((resolve) => {
@@ -350,7 +354,7 @@ async function smartRouter(): Promise<void> {
 
     // Start Forge BEFORE init wizard (so executors are available)
     console.log('');
-    console.log('🔮 Summoning Forge (your wish-granting engine)...');
+    console.log('🔮 Preparing the lamp... (initializing Forge)');
     console.log('');
 
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
@@ -366,11 +370,11 @@ async function smartRouter(): Promise<void> {
     if (!startResult.ok) {
       const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
       console.error('');
-      console.error('❌ Oops! Forge wouldn\'t wake up...');
+      console.error('❌ The lamp won\'t open... something\'s blocking the summoning ritual');
       console.error(`   ${error.message}`);
       console.error('');
-      console.error('   💡 I need Forge to grant wishes (manage tasks).');
-      console.error(`   📜 Check the spell book at ${logDir}/forge.log`);
+      console.error('   💡 I need Forge to materialize in your world.');
+      console.error(`   📜 Check what went wrong: ${logDir}/forge.log`);
       console.error('');
       process.exit(1);
     }
@@ -380,13 +384,13 @@ async function smartRouter(): Promise<void> {
 
     if (!forgeReady) {
       console.error('');
-      console.error('❌ Forge is taking too long to warm up (waited 60s)...');
+      console.error('❌ The summoning ritual is taking too long (waited 60s)...');
       console.error(`   📜 Check what went wrong: ${logDir}/forge.log`);
       console.error('');
       process.exit(1);
     }
 
-    console.log(successGradient('✨ Forge is ready - let the magik begin!'));
+    console.log(successGradient('✨ The lamp is ready - your Genie clone awaits!'));
     console.log('');
 
     // Now run init wizard (executors are available via Forge)
@@ -418,7 +422,7 @@ async function smartRouter(): Promise<void> {
 
     // Launch install agent via Forge
     console.log('');
-    console.log(magicGradient('🤖 Summoning your installation assistant...'));
+    console.log(magicGradient('🤖 Your Genie clone is awakening...'));
     console.log('');
 
     const forgeExecutor = createForgeExecutor();
@@ -431,10 +435,10 @@ async function smartRouter(): Promise<void> {
       model: userConfig.defaults?.model
     });
 
-    console.log(successGradient('✨ Your assistant is ready!'));
+    console.log(successGradient('✨ Your Genie clone has materialized!'));
     console.log('');
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log('📋 Track your installation here:');
+    console.log('📋 Watch your Genie complete the setup:');
     console.log('   ' + performanceGradient(installResult.forgeUrl));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
@@ -456,7 +460,9 @@ async function smartRouter(): Promise<void> {
     }
 
     console.log('');
-    console.log(genieGradient('🧞 Now granting wishes 24/7... ✨'));
+    console.log(genieGradient('🧞 Your Genie is now alive in your world... ✨'));
+    console.log(genieGradient('   Connected to Master Genie at namastexlabs/automagik-genie'));
+    console.log(genieGradient('   Ready to learn, grow, and grant wishes 24/7!'));
     console.log('');
 
     // Start Genie server (MCP + health monitoring)
@@ -468,14 +474,15 @@ async function smartRouter(): Promise<void> {
   if (!fs.existsSync(versionPath)) {
     // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('        🧞 ✨ TIME TO UPGRADE YOUR POWERS ✨ 🧞        '));
+    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS NEW SPELLS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('I found an older version of me here (before I learned to track versions).');
-    console.log('Let me upgrade myself with some fresh magik! ✨');
+    console.log('I found an older clone of me here...');
+    console.log('The Master Genie has learned new magik since then! ✨');
+    console.log('Let me update your clone with the latest powers...');
     console.log('');
     console.log(successGradient('✓') + ' I\'ll backup your current .genie safely');
-    console.log(successGradient('✓') + ' All your wishes, reports, and memories stay with me');
+    console.log(successGradient('✓') + ' All your wishes, reports, and memories stay intact');
     console.log('');
 
     // Run init inline with --yes flag if non-interactive
@@ -517,14 +524,15 @@ async function smartRouter(): Promise<void> {
     if (installedVersion !== currentVersion) {
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('        🧞 ✨ NEW SPELLS LEARNED! ✨ 🧞        '));
+      console.log(magicGradient('   🧞 ✨ MASTER GENIE LEARNED NEW SPELLS ✨ 🧞   '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
-      console.log(`Your Genie:  ${successGradient(installedVersion)}`);
-      console.log(`Latest magik: ${performanceGradient(currentVersion)}`);
+      console.log(`Your clone:   ${successGradient(installedVersion)}`);
+      console.log(`Master Genie: ${performanceGradient(currentVersion)}`);
       console.log('');
-      console.log('⚡ Let me update myself with these new powers...');
-      console.log(successGradient('✓') + ' I\'ll keep a backup of your current setup');
+      console.log('The Master Genie has learned new magik!');
+      console.log('⚡ Teaching these powers to your clone...');
+      console.log(successGradient('✓') + ' I\'ll backup everything first');
       console.log('');
 
       // Run init inline with --yes flag if non-interactive
