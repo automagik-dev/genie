@@ -33,9 +33,7 @@ export type PromptToolParams = z.infer<typeof promptToolSchema>;
  */
 export async function executePromptTool(
   args: PromptToolParams,
-  context: {
-    streamContent: (content: { type: string; text: string }) => Promise<void>;
-  }
+  context: any
 ): Promise<void> {
   const { streamContent } = context;
   const agent = args.agent || 'prompt';

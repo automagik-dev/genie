@@ -34,10 +34,7 @@ export type ReviewToolParams = z.infer<typeof reviewToolSchema>;
  */
 export async function executeReviewTool(
   args: ReviewToolParams,
-  context: {
-    streamContent: (content: { type: string; text: string }) => Promise<void>;
-    reportProgress?: (progress: number, total?: number) => Promise<void>;
-  }
+  context: any
 ): Promise<void> {
   const { streamContent, reportProgress } = context;
   const projectId = args.project_id || DEFAULT_PROJECT_ID;
