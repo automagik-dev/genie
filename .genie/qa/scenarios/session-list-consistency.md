@@ -1,4 +1,3 @@
-
 ---
 name: session-list-consistency
 description: Ensure sessions in STATE.md match list+store (Bug #91)

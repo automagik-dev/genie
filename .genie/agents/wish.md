@@ -1,4 +1,3 @@
-
 ---
 name: wish
 description: Core Wish orchestrator (delegates to domain-specific wish agents)

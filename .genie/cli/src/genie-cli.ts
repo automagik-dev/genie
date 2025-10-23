@@ -765,8 +765,22 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   console.log(genieGradient('━'.repeat(60)));
   console.log('');
 
-  // Get current version
-  const currentVersion = packageJson.version;
+  // Get current version from workspace (not global package)
+  // Check .framework-version first (new system), fallback to legacy version.json
+  const frameworkVersionPath = path.join(process.cwd(), '.genie', '.framework-version');
+  const legacyVersionPath = path.join(process.cwd(), '.genie', 'state', 'version.json');
+  let currentVersion: string;
+
+  if (fs.existsSync(frameworkVersionPath)) {
+    const versionData = JSON.parse(fs.readFileSync(frameworkVersionPath, 'utf8'));
+    currentVersion = versionData.installed_version;
+  } else if (fs.existsSync(legacyVersionPath)) {
+    const versionData = JSON.parse(fs.readFileSync(legacyVersionPath, 'utf8'));
+    currentVersion = versionData.version;
+  } else {
+    // Fallback for fresh installs (no workspace version yet)
+    currentVersion = packageJson.version;
+  }
   console.log(`Current version:     ${currentVersion}`);
 
   // Fetch latest version from npm @next tag

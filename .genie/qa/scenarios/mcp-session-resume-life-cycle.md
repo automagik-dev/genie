@@ -1,4 +1,3 @@
-
 ---
 name: mcp-session-resume-life-cycle
 description: Validate long-running session resume lifecycle (Bug #66)

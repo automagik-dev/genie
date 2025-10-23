@@ -1,4 +1,3 @@
-
 ---
 name: forge
 description: Break wishes into execution groups with task files and validation hooks

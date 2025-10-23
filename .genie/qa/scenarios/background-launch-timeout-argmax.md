@@ -1,4 +1,3 @@
-
 ---
 name: background-launch-timeout-argmax
 description: Validate background launch (no timeout) and large prompt handling (ARG_MAX) (Bug #104)

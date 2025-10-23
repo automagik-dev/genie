@@ -1,4 +1,3 @@
-
 ---
 name: forge-global-health-check
 description: Sanity check Forge orchestration and MCP access (domain-agnostic)

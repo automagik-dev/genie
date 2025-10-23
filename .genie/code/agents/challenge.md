@@ -1,4 +1,3 @@
-
 ---
 name: challenge
 description: Critical evaluation via questions, debate, or direct challenge

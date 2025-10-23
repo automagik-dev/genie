@@ -1,4 +1,3 @@
-
 ---
 name: session-running-stuck
 description: Verify running sessions transition to completed/abandoned (Bug #92)

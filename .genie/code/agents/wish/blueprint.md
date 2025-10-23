@@ -1,4 +1,3 @@
-
 ---
 name: blueprint
 description: Create wish document blueprint from planning brief

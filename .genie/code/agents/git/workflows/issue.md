@@ -1,4 +1,3 @@
-
 ---
 name: issue
 description: GitHub issue lifecycle management (list, update, assign, close, link)

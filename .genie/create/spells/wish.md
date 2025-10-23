@@ -1,4 +1,3 @@
-
 ---
 name: wish
 description: Create Wish Orchestrator – discovery to blueprint for creative work

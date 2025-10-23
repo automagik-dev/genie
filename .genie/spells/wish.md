@@ -1,4 +1,3 @@
-
 ---
 name: wish
 description: Multi-step wish dance - discovery to blueprint

@@ -1,4 +1,3 @@
-
 ---
 name: wish
 description: Convert research ideas into roadmap-aligned wishes with quality contracts

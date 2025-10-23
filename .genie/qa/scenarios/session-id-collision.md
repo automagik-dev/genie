@@ -1,4 +1,3 @@
-
 ---
 name: session-id-collision
 description: Ensure unique, immutable session IDs (Bug #102)

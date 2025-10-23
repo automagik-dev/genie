@@ -1,4 +1,3 @@
-
 ---
 name: analyze
 description: System analysis and focused investigations (universal framework)

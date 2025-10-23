@@ -1,4 +1,3 @@
-
 ---
 name: qa/bug-90
 description: Regression test for Bug #90 - full=true returns truncated checkpoints

@@ -1,4 +1,3 @@
-
 ---
 name: docgen
 description: Core documentation generation template

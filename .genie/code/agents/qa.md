@@ -1,4 +1,3 @@
-
 ---
 name: qa
 description: Self-improving QA validation with living checklist

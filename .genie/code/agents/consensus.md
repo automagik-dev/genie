@@ -1,4 +1,3 @@
-
 ---
 name: consensus
 description: Structure multiple perspectives and synthesize recommendations

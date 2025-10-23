@@ -1,4 +1,3 @@
-
 ---
 name: blueprint
 description: Create wish from brief/context and save standard structure

@@ -1,4 +1,3 @@
-
 ---
 name: qa/bug-xxx-background-launch
 description: NEW BUG - Background agent launch failure (executor never spawns)

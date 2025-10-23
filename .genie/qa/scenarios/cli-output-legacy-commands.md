@@ -1,4 +1,3 @@
-
 ---
 name: cli-output-legacy-commands
 description: Ensure session output references MCP tools, not ./genie (Bug #89)

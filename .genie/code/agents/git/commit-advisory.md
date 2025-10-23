@@ -1,4 +1,3 @@
-
 ---
 name: git/commit-advisory
 genie:

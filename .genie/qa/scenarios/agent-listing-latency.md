@@ -1,4 +1,3 @@
-
 ---
 name: agent-listing-latency
 description: Validate `mcp__genie__list_agents` returns in under 100ms

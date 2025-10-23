@@ -1,4 +1,3 @@
-
 ---
 name: writer
 description: Draft clear, audience‑aligned content from briefs and research

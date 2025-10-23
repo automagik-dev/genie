@@ -1,4 +1,3 @@
-
 ---
 name: tracer
 description: Core instrumentation planning template

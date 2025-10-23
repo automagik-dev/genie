@@ -1,4 +1,3 @@
-
 ---
 name: forge
 description: Create Forge – execution planning and specialist coordination for creative work

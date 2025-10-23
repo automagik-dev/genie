@@ -1,4 +1,3 @@
-
 ---
 name: session-state-updater
 type: workflow

@@ -1,4 +1,3 @@
-
 ---
 name: qa/cli-commands
 description: CLI command interface testing via npx automagik-genie
