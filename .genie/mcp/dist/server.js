@@ -411,6 +411,128 @@ server.addTool({
         }
     }
 });
+// Helper: List all spell files in a directory recursively
+function listSpellsInDir(dir, basePath = '') {
+    const spells = [];
+    try {
+        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path_1.default.join(dir, entry.name);
+            const relativePath = basePath ? path_1.default.join(basePath, entry.name) : entry.name;
+            if (entry.isDirectory()) {
+                // Recurse into subdirectories
+                spells.push(...listSpellsInDir(fullPath, relativePath));
+            }
+            else if (entry.isFile() && entry.name.endsWith('.md')) {
+                // Extract spell name from frontmatter if possible
+                try {
+                    const content = fs_1.default.readFileSync(fullPath, 'utf-8');
+                    const frontmatterMatch = content.match(/^---\s*\nname:\s*(.+)\s*\n/);
+                    const spellName = frontmatterMatch ? frontmatterMatch[1].trim() : entry.name.replace('.md', '');
+                    spells.push({ path: relativePath, name: spellName });
+                }
+                catch {
+                    spells.push({ path: relativePath, name: entry.name.replace('.md', '') });
+                }
+            }
+        }
+    }
+    catch (error) {
+        // Directory doesn't exist or can't be read
+    }
+    return spells;
+}
+// Helper: Read spell content and extract everything after frontmatter
+function readSpellContent(spellPath) {
+    try {
+        const content = fs_1.default.readFileSync(spellPath, 'utf-8');
+        // Find the end of frontmatter (second ---)
+        const frontmatterEnd = content.indexOf('---', 3);
+        if (frontmatterEnd === -1) {
+            // No frontmatter, return entire content
+            return content;
+        }
+        // Return everything after the closing ---
+        return content.substring(frontmatterEnd + 3).trim();
+    }
+    catch (error) {
+        throw new Error(`Failed to read spell: ${error.message}`);
+    }
+}
+// Tool: list_spells - Discover available spells
+server.addTool({
+    name: 'list_spells',
+    description: 'List all available Genie spells (reusable knowledge patterns). Returns spells from .genie/spells/ (global), .genie/code/spells/ (code-specific), and .genie/create/spells/ (create-specific).',
+    parameters: zod_1.z.object({
+        scope: zod_1.z.enum(['all', 'global', 'code', 'create']).optional().describe('Filter spells by scope. Default: all')
+    }),
+    execute: async (args) => {
+        const scope = args.scope || 'all';
+        const result = {};
+        // Global spells
+        if (scope === 'all' || scope === 'global') {
+            const globalSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'spells');
+            result.global = listSpellsInDir(globalSpellsDir);
+        }
+        // Code spells
+        if (scope === 'all' || scope === 'code') {
+            const codeSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'code', 'spells');
+            result.code = listSpellsInDir(codeSpellsDir);
+        }
+        // Create spells
+        if (scope === 'all' || scope === 'create') {
+            const createSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'create', 'spells');
+            result.create = listSpellsInDir(createSpellsDir);
+        }
+        // Format output
+        let output = getVersionHeader() + '# Genie Spells\n\n';
+        if (result.global) {
+            output += `## Global Spells (.genie/spells/) - ${result.global.length} spells\n`;
+            output += 'Universal patterns applicable to all collectives:\n\n';
+            for (const spell of result.global) {
+                output += `- **${spell.name}** - \`${spell.path}\`\n`;
+            }
+            output += '\n';
+        }
+        if (result.code) {
+            output += `## Code Spells (.genie/code/spells/) - ${result.code.length} spells\n`;
+            output += 'Code-specific patterns for technical execution:\n\n';
+            for (const spell of result.code) {
+                output += `- **${spell.name}** - \`${spell.path}\`\n`;
+            }
+            output += '\n';
+        }
+        if (result.create) {
+            output += `## Create Spells (.genie/create/spells/) - ${result.create.length} spells\n`;
+            output += 'Create-specific patterns for creative work:\n\n';
+            for (const spell of result.create) {
+                output += `- **${spell.name}** - \`${spell.path}\`\n`;
+            }
+            output += '\n';
+        }
+        const totalCount = (result.global?.length || 0) + (result.code?.length || 0) + (result.create?.length || 0);
+        output += `\n**Total:** ${totalCount} spells\n`;
+        return output;
+    }
+});
+// Tool: read_spell - Read specific spell content
+server.addTool({
+    name: 'read_spell',
+    description: 'Read the full content of a specific spell. Returns the spell content after the frontmatter (---). Use list_spells first to see available spells.',
+    parameters: zod_1.z.object({
+        spell_path: zod_1.z.string().describe('Relative path to the spell file from .genie/ directory (e.g., "spells/learn.md" or "code/spells/forge-code-blueprints.md")')
+    }),
+    execute: async (args) => {
+        const fullPath = path_1.default.join(WORKSPACE_ROOT, '.genie', args.spell_path);
+        try {
+            const content = readSpellContent(fullPath);
+            return getVersionHeader() + `# Spell: ${args.spell_path}\n\n${content}`;
+        }
+        catch (error) {
+            return getVersionHeader() + `Error reading spell: ${error.message}`;
+        }
+    }
+});
 // Prompt: wish - Create wish document
 server.addPrompt({
     name: 'wish',
@@ -478,7 +600,7 @@ Show: concrete example using @ references, <task_breakdown>, [SUCCESS CRITERIA]"
 console.error('Starting Genie MCP Server...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
-console.error('Tools: 6 (list_agents, list_sessions, run, resume, view, stop)');
+console.error('Tools: 8 (list_agents, list_sessions, run, resume, view, stop, list_spells, read_spell)');
 console.error('Prompts: 4 (wish, forge, review, prompt)');
 if (TRANSPORT === 'stdio') {
     server.start({
