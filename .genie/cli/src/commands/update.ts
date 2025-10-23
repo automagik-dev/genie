@@ -164,6 +164,36 @@ export async function runUpdate(
       }
     }
 
+    // Ask about hook installation (advanced feature)
+    let shouldInstallHooks = false;
+    if (process.stdout.isTTY && !flags.force) {
+      const { default: prompts } = await import('prompts');
+      const hookResponse = await prompts({
+        type: 'select',
+        name: 'installHooks',
+        message: '🔧 Install git hooks? (Advanced - validates commits/pushes, runs tests)',
+        choices: [
+          {
+            title: 'No (default - recommended for most users)',
+            value: false
+          },
+          {
+            title: 'Yes (advanced - modifies .git/hooks/)',
+            value: true
+          }
+        ],
+        initial: 0,
+        hint: '⚠️  Only install if you understand what git hooks do'
+      });
+
+      if (hookResponse.installHooks === undefined) {
+        console.log('Update cancelled.');
+        return;
+      }
+
+      shouldInstallHooks = hookResponse.installHooks;
+    }
+
     // Generate upgrade diff
     await emitView(
       buildInfoView('Preparing upgrade', ['📦 Fetching framework diff...']),
@@ -210,6 +240,9 @@ export async function runUpdate(
         ),
         parsed.options
       );
+
+      // Install git hooks if user opted in
+      await installGitHooksIfRequested(shouldInstallHooks);
     } else {
       // Conflicts detected - needs Update Agent
       await emitView(
@@ -261,4 +294,32 @@ function parseFlags(args: string[]): UpdateFlags {
   }
 
   return flags;
+}
+
+/**
+ * Install git hooks if user opted in during update
+ */
+async function installGitHooksIfRequested(shouldInstall: boolean): Promise<void> {
+  if (!shouldInstall) {
+    return;
+  }
+
+  console.log('');
+  console.log('🔧 Installing git hooks...');
+
+  const { spawnSync } = await import('child_process');
+  const { getPackageRoot } = await import('../lib/paths');
+  const packageRoot = getPackageRoot();
+  const installScript = path.join(packageRoot, 'scripts', 'install-hooks.cjs');
+
+  const result = spawnSync('node', [installScript], {
+    stdio: 'inherit',
+    cwd: packageRoot
+  });
+
+  if (result.status !== 0) {
+    console.warn('⚠️  Hook installation failed (non-fatal)');
+    console.warn('   You can install later with: node scripts/install-hooks.cjs');
+  }
+  console.log('');
 }

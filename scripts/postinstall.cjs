@@ -120,8 +120,9 @@ function applyPerformancePatches() {
 // Apply performance patches first
 applyPerformancePatches();
 
-// Install git hooks (silent)
-installGitHooks();
+// Git hooks are NOT installed automatically (Amendment #8: Hooks are advanced feature)
+// Users must opt-in via: genie init (with prompt) or genie install-hooks (manual)
+// installGitHooks(); // DISABLED - now optional
 
 console.log('');
 console.log(`${GREEN}╔═══════════════════════════════════════════════════════════╗${RESET}`);
