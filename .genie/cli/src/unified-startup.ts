@@ -47,7 +47,7 @@ export async function startGenie(): Promise<void> {
     console.error('🧞 Starting Genie...\n');
 
     const mcpConfig = config.mcp;
-    const authToken = mcpConfig.auth.token;
+    const oauth2Config = mcpConfig.auth.oauth2;
 
     // Step 2: Start Forge in background
     console.error('📦 Starting Forge backend...');
@@ -109,7 +109,7 @@ export async function startGenie(): Promise<void> {
       forgeUrl: DEFAULT_FORGE_URL,
       mcpUrl: DEFAULT_MCP_URL,
       tunnelUrl: tunnelUrl || undefined,
-      authToken: authToken,
+      oauth2: oauth2Config,
       configPath: getConfigPath()
     };
 

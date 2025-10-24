@@ -3,10 +3,10 @@
  * First-Run Setup Wizard for Genie MCP Server
  *
  * Guides users through initial configuration including:
+ * - OAuth2.1 client credentials generation
  * - Tunnel enablement
  * - ngrok token setup
- * - Auth token generation
- * - ChatGPT configuration
+ * - Claude Desktop and ChatGPT configuration
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -35,18 +35,19 @@ async function runSetupWizard() {
     });
     try {
         console.log('\n🧞 Genie MCP Server - First Run Setup\n');
+        console.log('Generating OAuth2.1 credentials for secure authentication...\n');
         // Step 1: Ask about tunnel
         const tunnelResponse = await createQuestion(rl, '? Do you want to enable remote access via tunnel? (Y/n): ');
         const enableTunnel = tunnelResponse.toLowerCase() !== 'n' && tunnelResponse !== '';
         let ngrokToken = null;
         // Step 2: Ask for ngrok token if tunnel enabled
         if (enableTunnel) {
-            console.log(`\nℹ️  Free ngrok account gives you a tunneled URL for ChatGPT integration.`);
+            console.log(`\nℹ️  Free ngrok account gives you a tunneled URL for Claude Desktop and ChatGPT.`);
             console.log(`   Get your free token at: ${(0, tunnel_manager_1.getNgrokSignupUrl)()}\n`);
             const token = await createQuestion(rl, '? Enter your ngrok authtoken (or press Enter to skip): ');
             if (token && (0, tunnel_manager_1.isValidNgrokToken)(token)) {
                 ngrokToken = token;
-                console.log('✓ Token saved');
+                console.log('✓ ngrok token saved');
             }
             else if (token) {
                 console.log('⚠️  Invalid token format, tunnel will be skipped');
@@ -55,19 +56,25 @@ async function runSetupWizard() {
                 console.log('⚠️  Tunnel disabled (no token provided)');
             }
         }
-        // Step 3: Create config with token
-        const config = (0, config_manager_1.createDefaultConfig)(ngrokToken || undefined);
+        // Step 3: Create config with OAuth2 credentials (async)
+        console.log('\n⏳ Generating RSA key pair for JWT signing...');
+        const config = await (0, config_manager_1.createDefaultConfig)(ngrokToken || undefined);
         (0, config_manager_1.saveConfig)(config);
-        // Step 4: Show summary
-        console.log('\n✓ Configuration saved to ~/.genie/config.yaml');
-        console.log(`✓ MCP Auth token: ${config.mcp.auth.token}`);
+        // Step 4: Show summary with OAuth2 credentials
+        console.log('\n✅ Configuration complete!\n');
+        console.log('📁 Config saved to: ~/.genie/config.yaml');
+        console.log('\n🔐 OAuth2 Client Credentials:');
+        console.log(`   Client ID:     ${config.mcp.auth.oauth2.clientId}`);
+        console.log(`   Client Secret: ${config.mcp.auth.oauth2.clientSecret}`);
+        console.log('\n⚠️  Keep these credentials secure! They provide full access to your MCP server.\n');
         if (ngrokToken) {
-            console.log('✓ Tunnel enabled (ngrok)');
+            console.log('✅ Tunnel enabled (ngrok)');
         }
         else {
-            console.log('ℹ️  Tunnel disabled (edit config to enable later)');
+            console.log('ℹ️  Tunnel disabled (edit ~/.genie/config.yaml to enable later)');
         }
-        console.log('\n');
+        console.log('\n💡 Next: Run `npx automagik-genie` to start the server');
+        console.log('   You\'ll receive connection details for Claude Desktop and ChatGPT.\n');
         return config;
     }
     finally {

@@ -44,18 +44,15 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 ```json
 {
   "mcpServers": {
-    "genie": {
-      "command": "node",
-      "args": ["/absolute/path/to/automagik-genie/.genie/mcp/dist/server.js"],
-      "env": {
-        "MCP_TRANSPORT": "stdio"
-      }
+    "automagik-genie": {
+      "command": "npx",
+      "args": ["automagik-genie", "mcp"]
     }
   }
 }
 ```
 
-**Note**: Replace `/absolute/path/to/automagik-genie/` with your actual project path.
+**Note**: This starts MCP in stdio mode. Requires Forge to be running separately (`npx automagik-genie` in another terminal).
 
 After configuration:
 1. Restart Claude Desktop

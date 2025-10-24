@@ -2,16 +2,16 @@
  * Unified Startup Display Formatter
  *
  * Formats the output shown to users when Genie starts with Forge + MCP
- * Displays connection info, auth tokens, tunnel URLs, and ChatGPT config
+ * Displays connection info, OAuth2 credentials, tunnel URLs, and client setup instructions
  */
 
-import { GenieConfig } from './config-manager';
+import { OAuth2Config } from './config-manager';
 
 export interface StartupInfo {
   forgeUrl: string;
   mcpUrl: string;
   tunnelUrl?: string;
-  authToken: string;
+  oauth2: OAuth2Config;
   configPath: string;
 }
 
@@ -44,14 +44,39 @@ export function displayServiceStatus(info: StartupInfo): string {
 }
 
 /**
- * Format authentication info
+ * Format OAuth2 authentication info
  */
-export function displayAuthInfo(token: string): string {
-  let output = '🔑 Authentication\n\n';
-  output += `  Bearer Token: ${token}\n`;
-  output += `  Add to requests:\n`;
-  output += `    Authorization: Bearer ${token}\n`;
+export function displayOAuth2Info(oauth2: OAuth2Config, tokenEndpoint: string): string {
+  let output = '🔐 OAuth2 Authentication\n\n';
+  output += `  Client ID:     ${oauth2.clientId}\n`;
+  output += `  Client Secret: ${oauth2.clientSecret}\n`;
+  output += `  Token Endpoint: ${tokenEndpoint}\n`;
   output += `\n`;
+  output += `  💡 To get an access token:\n`;
+  output += `     curl -X POST ${tokenEndpoint} \\\n`;
+  output += `       -H "Content-Type: application/x-www-form-urlencoded" \\\n`;
+  output += `       -d "grant_type=client_credentials&client_id=${oauth2.clientId}&client_secret=${oauth2.clientSecret}"\n`;
+  output += `\n`;
+
+  return output;
+}
+
+/**
+ * Format Claude Desktop configuration
+ */
+export function displayClaudeConfig(info: StartupInfo): string {
+  const serverUrl = info.tunnelUrl || info.mcpUrl.replace('/sse', '');
+
+  let output = '💻 Claude Desktop Setup\n\n';
+  output += `  1. Open Claude Desktop Settings → Connectors\n`;
+  output += `  2. Click "Add custom connector"\n`;
+  output += `  3. Enter these details:\n\n`;
+  output += `     Name: Genie\n`;
+  output += `     Remote MCP server URL: ${serverUrl}/sse\n`;
+  output += `     OAuth Client ID: ${info.oauth2.clientId}\n`;
+  output += `     OAuth Client Secret: ${info.oauth2.clientSecret}\n`;
+  output += `\n`;
+  output += `  4. Click "Add" and test the connection\n\n`;
 
   return output;
 }
@@ -60,27 +85,17 @@ export function displayAuthInfo(token: string): string {
  * Format ChatGPT configuration
  */
 export function displayChatGPTConfig(info: StartupInfo): string {
-  const url = info.tunnelUrl || info.mcpUrl;
+  const serverUrl = info.tunnelUrl || info.mcpUrl.replace('/sse', '');
 
-  const config = {
-    mcpServers: {
-      genie: {
-        url: url.endsWith('/sse') ? url : `${url}/sse`,
-        headers: {
-          Authorization: `Bearer ${info.authToken}`
-        }
-      }
-    }
-  };
-
-  let output = '💬 ChatGPT Configuration\n\n';
-  output += `  Copy this to ChatGPT's config:\n\n`;
-  output += '  ```json\n';
-  output += JSON.stringify(config, null, 2)
-    .split('\n')
-    .map(line => `  ${line}`)
-    .join('\n');
-  output += '\n  ```\n\n';
+  let output = '💬 ChatGPT Setup\n\n';
+  output += `  1. Go to ChatGPT Settings → Integrations\n`;
+  output += `  2. Add new MCP server with OAuth2:\n\n`;
+  output += `     Server URL: ${serverUrl}/sse\n`;
+  output += `     Auth Type: OAuth 2.0 Client Credentials\n`;
+  output += `     Token URL: ${serverUrl}/oauth/token\n`;
+  output += `     Client ID: ${info.oauth2.clientId}\n`;
+  output += `     Client Secret: ${info.oauth2.clientSecret}\n`;
+  output += `\n`;
 
   return output;
 }
@@ -88,15 +103,16 @@ export function displayChatGPTConfig(info: StartupInfo): string {
 /**
  * Format complete startup information
  */
-export function displayStartupInfo(info: StartupInfo, showChatGPT: boolean = true): string {
+export function displayStartupInfo(info: StartupInfo): string {
+  const serverUrl = info.tunnelUrl || info.mcpUrl.replace('/sse', '');
+  const tokenEndpoint = `${serverUrl}/oauth/token`;
+
   let output = displayStartupBanner();
   output += displayServiceStatus(info);
-  output += displayAuthInfo(info.authToken);
-
-  if (showChatGPT) {
-    output += displayChatGPTConfig(info);
-  }
-
+  output += displayOAuth2Info(info.oauth2, tokenEndpoint);
+  output += displayClaudeConfig(info);
+  output += displayChatGPTConfig(info);
+  output += '═══════════════════════════════════════════════════════════════\n\n';
   output += 'Press Ctrl+C to stop\n';
 
   return output;
