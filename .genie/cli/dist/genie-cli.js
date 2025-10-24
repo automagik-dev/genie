@@ -873,46 +873,33 @@ async function startGenieServer() {
     console.log(magicGradient('   Autonomous Agent Orchestration   '));
     console.log(genieGradient('━'.repeat(60)));
     console.log('');
-    // Check for port conflicts BEFORE trying to start
-    const conflictCheckStart = Date.now();
-    const portConflict = await checkPortConflict(forgePort);
-    timings.portConflictCheck = Date.now() - conflictCheckStart;
-    if (portConflict) {
-        console.log(`⚠️  Port ${forgePort} is already in use by:`);
-        console.log(`   PID: ${portConflict.pid}`);
-        console.log(`   Command: ${portConflict.command}`);
-        console.log('');
-        // Prompt user to take over
-        const readline = require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        const answer = await new Promise((resolve) => {
-            readline.question('Kill this process and start Genie server? [y/N]: ', resolve);
-        });
-        readline.close();
-        if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
-            console.log(`🔪 Killing process ${portConflict.pid}...`);
-            try {
-                process.kill(parseInt(portConflict.pid), 'SIGTERM');
-                await new Promise(r => setTimeout(r, 2000)); // Wait for cleanup
-                console.log('✅ Process terminated');
-            }
-            catch (err) {
-                console.error(`❌ Failed to kill process: ${err}`);
-                process.exit(1);
-            }
-        }
-        else {
-            console.log('❌ Cancelled. Cannot start on occupied port.');
-            process.exit(1);
-        }
-    }
-    // Check if Forge is already running (health check)
+    // FIRST: Check if Forge is already running (health check)
     const healthCheckStart = Date.now();
     const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
     timings.initialHealthCheck = Date.now() - healthCheckStart;
-    if (!forgeRunning) {
+    if (forgeRunning) {
+        // Forge already running and healthy - just show status and continue
+        console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
+        timings.forgeReady = 0; // Already running
+    }
+    else {
+        // Forge not running - check for port conflicts before starting
+        const conflictCheckStart = Date.now();
+        const portConflict = await checkPortConflict(forgePort);
+        timings.portConflictCheck = Date.now() - conflictCheckStart;
+        if (portConflict) {
+            // Port occupied by something else
+            console.error('');
+            console.error(`❌ Port ${forgePort} is occupied by another process:`);
+            console.error(`   PID: ${portConflict.pid}`);
+            console.error(`   Command: ${portConflict.command}`);
+            console.error('');
+            console.error('Please kill that process or use a different port:');
+            console.error(`   export FORGE_BASE_URL=http://localhost:8888`);
+            console.error('');
+            process.exit(1);
+        }
+        // Port is free - start Forge
         const forgeSpawnStart = Date.now();
         process.stderr.write('📦 Starting Forge backend');
         const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
@@ -923,7 +910,7 @@ async function startGenieServer() {
             console.error(`   Check logs at ${logDir}/forge.log`);
             process.exit(1);
         }
-        // Wait for Forge to be ready (parallel with MCP startup below)
+        // Wait for Forge to be ready
         const forgeReadyStart = Date.now();
         const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, true);
         timings.forgeReady = Date.now() - forgeReadyStart;
@@ -932,74 +919,6 @@ async function startGenieServer() {
             process.exit(1);
         }
         console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
-    }
-    else {
-        // Forge already running - offer dashboard or kill option
-        console.log(successGradient(`📦 Forge:  ${baseUrl} ✓ (already running)`));
-        console.log('');
-        console.log('💡 Options:');
-        console.log('   [Enter] Start Genie server (continue)');
-        console.log('   d       Launch dashboard');
-        console.log('   k       Kill Forge and restart server');
-        console.log('');
-        const readline = require('readline').createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        const choice = await new Promise((resolve) => {
-            readline.question('Your choice: ', resolve);
-        });
-        readline.close();
-        if (choice.toLowerCase() === 'd') {
-            // Launch dashboard
-            console.log('');
-            console.log(genieGradient('📊 Launching dashboard...'));
-            console.log('');
-            execGenie(['dashboard', '--live']);
-            process.exit(0);
-        }
-        else if (choice.toLowerCase() === 'k') {
-            // Kill Forge with confirmation
-            console.log('');
-            console.log(performanceGradient('⚠️  WARNING: This will stop all running tasks!'));
-            console.log('');
-            // Check for running tasks
-            const runningTasks = await (0, forge_manager_1.getRunningTasks)(baseUrl);
-            if (runningTasks.length > 0) {
-                console.log(`${runningTasks.length} task(s) currently running:`);
-                runningTasks.forEach((task, i) => {
-                    console.log(`   ${i + 1}. ${task.projectName} → ${task.taskTitle}`);
-                });
-                console.log('');
-            }
-            const readline2 = require('readline').createInterface({
-                input: process.stdin,
-                output: process.stdout
-            });
-            const confirm = await new Promise((resolve) => {
-                readline2.question('Kill Forge and restart server? [y/N]: ', resolve);
-            });
-            readline2.close();
-            if (confirm.toLowerCase() === 'y' || confirm.toLowerCase() === 'yes') {
-                console.log('');
-                console.log('🔪 Killing Forge...');
-                const stopped = await (0, forge_manager_1.stopForge)(logDir);
-                if (stopped) {
-                    console.log('✅ Forge stopped');
-                }
-                // Wait for port to be released
-                await new Promise(r => setTimeout(r, 2000));
-                console.log('');
-                console.log('📦 Restarting Forge...');
-                // Continue to normal startup below
-            }
-            else {
-                console.log('');
-                console.log('❌ Cancelled');
-                process.exit(0);
-            }
-        }
-        timings.forgeReady = 0; // Already running (or just killed and restarting)
     }
     // Phase 2: Start MCP server with SSE transport
     const mcpPort = process.env.MCP_PORT || '8885';
@@ -1192,12 +1111,27 @@ async function startGenieServer() {
                 console.log(`   ${performanceGradient('⚡')} Total startup:   ${performanceGradient(`${totalTime}ms (${(totalTime / 1000).toFixed(1)}s)`)}`);
                 console.log(performanceGradient('━'.repeat(60)));
                 console.log('');
-                console.log(genieGradient('━'.repeat(60)));
-                console.log(genieGradient('🧞 Starting Genie dashboard...'));
-                console.log(genieGradient('━'.repeat(60)));
+                console.log(successGradient('━'.repeat(60)));
+                console.log(successGradient('✨ Genie is ready and running! ✨'));
+                console.log(successGradient('━'.repeat(60)));
                 console.log('');
-                // Launch the engagement dashboard instead of health monitoring
-                execGenie(['dashboard', '--live']);
+                console.log('💡 What you can do:');
+                console.log('   • Create tasks and track progress in the dashboard');
+                console.log('   • Press ' + performanceGradient('k') + ' in dashboard to kill Forge (with confirmation)');
+                console.log('   • Use ' + performanceGradient('Ctrl+C') + ' here to shutdown Genie gracefully');
+                console.log('');
+                console.log(genieGradient('Press Enter to open dashboard...'));
+                // Wait for Enter before launching dashboard
+                (async () => {
+                    await new Promise((resolve) => {
+                        process.stdin.once('data', () => resolve());
+                    });
+                    console.log('');
+                    console.log(genieGradient('📊 Launching dashboard...'));
+                    console.log('');
+                    // Launch the engagement dashboard
+                    execGenie(['dashboard', '--live']);
+                })();
             }
         }, 1000);
         mcpChild.on('exit', (code) => {

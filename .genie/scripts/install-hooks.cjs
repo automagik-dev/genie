@@ -2,6 +2,12 @@
 /**
  * Install git hooks - Advanced feature, opt-in only
  *
+ * Usage: node install-hooks.cjs <project-dir> <package-root>
+ *
+ * Arguments:
+ *   project-dir   - User's project directory (where .git is located)
+ *   package-root  - Genie package installation directory (where hooks templates are)
+ *
  * Warning: This modifies your .git/hooks/ directory.
  * Only install if you understand what git hooks do.
  *
@@ -27,12 +33,17 @@ function installGitHooks() {
   console.log(`${BLUE}🧞 Genie Git Hooks Installer${RESET}`);
   console.log('');
 
-  const gitDir = path.join(__dirname, '..', '.git');
-  const hooksSourceDir = path.join(__dirname, '..', '.genie', 'scripts', 'hooks');
+  // Get directories from command-line arguments
+  const projectDir = process.argv[2] || process.cwd();
+  const packageRoot = process.argv[3] || __dirname;
+
+  const gitDir = path.join(projectDir, '.git');
+  const hooksSourceDir = path.join(packageRoot, '.genie', 'scripts', 'hooks');
 
   // Check if we're in a git repository
   if (!fs.existsSync(gitDir)) {
     console.error(`${RED}✗ Error: Not a git repository${RESET}`);
+    console.log(`  Project dir: ${projectDir}`);
     console.log('  Run this command from the root of your Genie project.');
     process.exit(1);
   }
@@ -67,6 +78,7 @@ function installGitHooks() {
   if (!fs.existsSync(hooksSourceDir)) {
     console.error(`${RED}✗ Error: Hook templates not found${RESET}`);
     console.log(`  Expected: ${hooksSourceDir}`);
+    console.log(`  Package root: ${packageRoot}`);
     process.exit(1);
   }
 
@@ -127,8 +139,17 @@ function installGitHooks() {
       const relativePath = path.relative(gitHooksDir, source);
 
       // Remove existing hook (file or symlink)
-      if (fs.existsSync(dest) || fs.lstatSync(dest).isSymbolicLink()) {
+      if (fs.existsSync(dest)) {
         fs.unlinkSync(dest);
+      } else {
+        try {
+          // Try to remove if it's a broken symlink
+          if (fs.lstatSync(dest).isSymbolicLink()) {
+            fs.unlinkSync(dest);
+          }
+        } catch {
+          // Ignore - file doesn't exist
+        }
       }
 
       // Create relative symlink
