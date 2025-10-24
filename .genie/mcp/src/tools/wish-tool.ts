@@ -167,7 +167,7 @@ export async function executeWishTool(
 
     await streamContent({
       type: 'text',
-      text: `✅ Task status: agent (visible in Wishh widget only)\n\n`
+      text: `✅ Task status: agent (visible in wish widget only)\n\n`
     });
   } catch (error: any) {
     // Non-fatal: log warning but continue
