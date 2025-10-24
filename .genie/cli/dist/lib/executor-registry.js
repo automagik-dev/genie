@@ -4,14 +4,14 @@ exports.DEFAULT_EXECUTOR_KEY = exports.EXECUTORS = void 0;
 // Full executor mapping - matches Forge profile names
 // See init.ts mapExecutorToForgeProfile for canonical mapping
 const EXECUTOR_LABELS = {
-    opencode: 'OpenCode (Forge)',
-    codex: 'Codex (Forge)',
-    claude: 'Claude Code (Forge)',
-    gemini: 'Gemini (Forge)',
-    cursor: 'Cursor (Forge)',
-    qwen_code: 'Qwen Code (Forge)',
-    amp: 'Amp (Forge)',
-    copilot: 'GitHub Copilot (Forge)'
+    opencode: 'OpenCode',
+    codex: 'ChatGPT',
+    claude: 'Claude',
+    gemini: 'Gemini',
+    cursor: 'Cursor',
+    qwen_code: 'Qwen Code',
+    amp: 'Amp',
+    copilot: 'GitHub Copilot'
 };
 // Build EXECUTORS dynamically from labels
 exports.EXECUTORS = Object.keys(EXECUTOR_LABELS).reduce((acc, key) => {
