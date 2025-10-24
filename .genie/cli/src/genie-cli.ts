@@ -50,6 +50,19 @@ program
     execGenie(['status']);
   });
 
+// Dashboard command
+program
+  .command('dashboard')
+  .description('Show live engagement statistics dashboard')
+  .option('--watch', 'Live mode with real-time updates')
+  .action((options: { watch?: boolean }) => {
+    const args = ['dashboard'];
+    if (options.watch) {
+      args.push('--watch');
+    }
+    execGenie(args);
+  });
+
 // MCP command (stdio only - for Claude Desktop integration)
 program
   .command('mcp')
@@ -894,106 +907,6 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
 }
 
 /**
- * Display live health monitoring dashboard with executive stats
- * Returns the interval ID for cleanup
- */
-async function startHealthMonitoring(
-  baseUrl: string,
-  mcpPort: string,
-  mcpChild: ReturnType<typeof spawn>,
-  serverStartTime: number,
-  startupTimings: Record<string, number>
-): Promise<NodeJS.Timeout> {
-  const UPDATE_INTERVAL = 5000; // 5 seconds
-  let dashboardLines = 0;
-
-  const updateDashboard = async () => {
-    // Calculate uptime
-    const uptime = Date.now() - serverStartTime;
-    const uptimeStr = formatUptime(uptime);
-
-    // Current time
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString();
-    const dateStr = now.toLocaleDateString();
-
-    // Check Forge health
-    const forgeHealthy = await isForgeRunning(baseUrl);
-    const forgeStatus = forgeHealthy ? '🟢' : '🔴';
-
-    // Check MCP health
-    const mcpHealthy = mcpChild && !mcpChild.killed;
-    const mcpStatus = mcpHealthy ? '🟢' : '🔴';
-
-    // Collect Forge statistics (only if healthy)
-    const forgeStats = forgeHealthy ? await collectForgeStats(baseUrl) : null;
-    const statsDisplay = formatStatsForDashboard(forgeStats);
-
-    // Build executive dashboard with stats
-    const headerLine = '━'.repeat(60);
-    const header = genieGradient(`${headerLine}
-🧞 ✨ GENIE - Your Wish-Granting Dashboard ✨
-${headerLine}`);
-
-    const communityLine = cosmicGradient('💬 Join our community: https://discord.gg/fXs6YjjFpt');
-    const bugReportLine = '🐛 Report bugs:      Ask Genie to report an issue to Master Genie';
-    const featureLine = '💡 Suggest features: Ask Genie to make a wish to Master Genie';
-    const tagline = magicGradient('✨ https://namastex.ai - AI that elevates human potential, not replaces it');
-
-    const footer = genieGradient(`${headerLine}
-Press Ctrl+C when you're done making magik
-${headerLine}`);
-
-    const dashboard = `${header}
-
-📊 **Quick Stats**
-   Real-time: ${timeStr} (${dateStr})
-   Uptime: ${uptimeStr}
-   Startup: ${startupTimings.total || 0}ms (${((startupTimings.total || 0) / 1000).toFixed(1)}s)
-
-${forgeStatus} **Forge Backend**
-   Status: ${forgeHealthy ? 'Running' : 'Down'}
-   URL: ${baseUrl}
-${statsDisplay}
-
-${mcpStatus} **MCP Server**
-   Status: ${mcpHealthy ? 'Running' : 'Down'}
-   URL: http://localhost:${mcpPort}/sse
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${communityLine}
-${bugReportLine}
-${featureLine}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${tagline}
-${footer}`;
-
-    // Clear screen properly before redrawing
-    if (dashboardLines > 0) {
-      // Move cursor to home position (0,0)
-      process.stdout.write('\x1b[H');
-      // Clear from cursor to end of screen
-      process.stdout.write('\x1b[J');
-    } else {
-      // First render - clear entire screen
-      process.stdout.write('\x1b[2J\x1b[H');
-    }
-
-    // Print new dashboard (no extra newline to avoid duplication)
-    process.stdout.write(dashboard);
-
-    // Count lines for next update
-    dashboardLines = dashboard.split('\n').length;
-  };
-
-  // Initial render
-  await updateDashboard();
-
-  // Update every 5 seconds and return the interval ID
-  return setInterval(updateDashboard, UPDATE_INTERVAL);
-}
-
-/**
  * Start Genie server (Forge + MCP with SSE transport on port 8885)
  * This is the main entry point for npx automagik-genie
  */
@@ -1088,8 +1001,78 @@ async function startGenieServer(): Promise<void> {
 
     console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
   } else {
+    // Forge already running - offer dashboard or kill option
     console.log(successGradient(`📦 Forge:  ${baseUrl} ✓ (already running)`));
-    timings.forgeReady = 0; // Already running
+    console.log('');
+    console.log('💡 Options:');
+    console.log('   [Enter] Start Genie server (continue)');
+    console.log('   d       Launch dashboard');
+    console.log('   k       Kill Forge and restart server');
+    console.log('');
+
+    const readline = require('readline').createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    const choice = await new Promise<string>((resolve) => {
+      readline.question('Your choice: ', resolve);
+    });
+    readline.close();
+
+    if (choice.toLowerCase() === 'd') {
+      // Launch dashboard
+      console.log('');
+      console.log(genieGradient('📊 Launching dashboard...'));
+      console.log('');
+      execGenie(['dashboard', '--live']);
+      process.exit(0);
+    } else if (choice.toLowerCase() === 'k') {
+      // Kill Forge with confirmation
+      console.log('');
+      console.log(performanceGradient('⚠️  WARNING: This will stop all running tasks!'));
+      console.log('');
+
+      // Check for running tasks
+      const runningTasks = await getRunningTasks(baseUrl);
+      if (runningTasks.length > 0) {
+        console.log(`${runningTasks.length} task(s) currently running:`);
+        runningTasks.forEach((task, i) => {
+          console.log(`   ${i + 1}. ${task.projectName} → ${task.taskTitle}`);
+        });
+        console.log('');
+      }
+
+      const readline2 = require('readline').createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      const confirm = await new Promise<string>((resolve) => {
+        readline2.question('Kill Forge and restart server? [y/N]: ', resolve);
+      });
+      readline2.close();
+
+      if (confirm.toLowerCase() === 'y' || confirm.toLowerCase() === 'yes') {
+        console.log('');
+        console.log('🔪 Killing Forge...');
+        const stopped = await stopForge(logDir);
+        if (stopped) {
+          console.log('✅ Forge stopped');
+        }
+        // Wait for port to be released
+        await new Promise(r => setTimeout(r, 2000));
+        console.log('');
+        console.log('📦 Restarting Forge...');
+        // Continue to normal startup below
+      } else {
+        console.log('');
+        console.log('❌ Cancelled');
+        process.exit(0);
+      }
+    }
+
+    timings.forgeReady = 0; // Already running (or just killed and restarting)
   }
 
   // Phase 2: Start MCP server with SSE transport
@@ -1312,9 +1295,12 @@ async function startGenieServer(): Promise<void> {
 
         console.log('');
         console.log(genieGradient('━'.repeat(60)));
-        console.log(genieGradient('🩺 Starting health monitoring...'));
+        console.log(genieGradient('🧞 Starting Genie dashboard...'));
         console.log(genieGradient('━'.repeat(60)));
-        startHealthMonitoring(baseUrl, mcpPort, mcpChild, startTime, timings);
+        console.log('');
+
+        // Launch the engagement dashboard instead of health monitoring
+        execGenie(['dashboard', '--live']);
       }
     }, 1000);
 

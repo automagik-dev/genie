@@ -15,6 +15,7 @@ const help_2 = require("./commands/help");
 const init_1 = require("./commands/init");
 const rollback_1 = require("./commands/rollback");
 const status_1 = require("./commands/status");
+const dashboard_1 = require("./commands/dashboard");
 const cleanup_1 = require("./commands/cleanup");
 const statusline_1 = require("./commands/statusline");
 const update_1 = require("./commands/update");
@@ -104,6 +105,9 @@ async function main() {
                 break;
             case 'status':
                 await (0, status_1.runStatus)(parsed, config, paths);
+                break;
+            case 'dashboard':
+                await (0, dashboard_1.runDashboard)(parsed, config, paths);
                 break;
             case 'cleanup':
                 await (0, cleanup_1.runCleanup)(parsed, config, paths);
