@@ -12,7 +12,9 @@ import path from 'path';
 import { execSync } from 'child_process';
 
 // Load ForgeClient from package root
-const geniePackageRoot = process.cwd();
+// Resolve relative to this module's location (.genie/cli/src/lib/)
+// Package root is 4 levels up: ../../../..
+const geniePackageRoot = path.join(__dirname, '../../../..');
 const ForgeClient = require(path.join(geniePackageRoot, 'forge.js')).ForgeClient;
 
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
