@@ -208,3 +208,4 @@ docs/ag-ui/*.html
 .genie/qa/evidence/*.tmp
 .genie/mcp/dist/lib/qa.js
 .genie/backups/
+.genie/.monitor
