@@ -40,10 +40,10 @@
 **Linux / macOS:**
 ```bash
 # Download and run installer
-curl -fsSL https://genie.namastex.ai/start.sh -o /tmp/genie-install.sh && bash /tmp/genie-install.sh
+bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
 
 # Or use the shorthand alias
-curl -fsSL https://genie.namastex.ai/start -o /tmp/genie-install.sh && bash /tmp/genie-install.sh
+bash -c "$(curl -fsSL https://genie.namastex.ai/start)"
 ```
 
 **Windows (PowerShell):**
@@ -261,7 +261,7 @@ Genie ships with a FastMCP server so any MCP-compatible AI tool can orchestrate 
 
 ### Typical Workflow
 
-1. **Setup:** Install Genie with `curl -fsSL https://genie.namastex.ai/start | bash`
+1. **Setup:** Install Genie with `bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"`
 2. **Connect:** Add MCP config to your AI tool (Claude Code, Cursor, etc.)
 3. **Just talk:** "I want to build an auth system with social login"
 4. **Genie orchestrates:**
