@@ -1,6 +1,6 @@
 {
   "name": "automagik-genie",
-  "version": "2.5.0-rc.49",
+  "version": "2.5.0-rc.50",
   "description": "Self-evolving AI agent orchestration framework with Model Context Protocol support",
   "main": ".genie/cli/dist/genie.js",
   "bin": {
