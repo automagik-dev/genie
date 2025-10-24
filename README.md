@@ -39,11 +39,8 @@
 
 **Linux / macOS:**
 ```bash
-# Download and run installer
+# Download and run installer (✅ Fast CDN - no rate limits)
 bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
-
-# Or use the shorthand alias
-bash -c "$(curl -fsSL https://genie.namastex.ai/start)"
 ```
 
 **Windows (PowerShell):**
@@ -58,8 +55,11 @@ npm install -g automagik-genie@next
 ```
 
 **What the installer does:**
+- ✅ Detects your OS and architecture automatically
 - ✅ Installs Node.js 22 (if needed)
 - ✅ Installs pnpm package manager (faster than npm)
+- ✅ **Selects AI executor** (ChatGPT, Claude, OpenCode, Gemini, Cursor, etc.)
+- ✅ **Installs & authenticates** your chosen executor
 - ✅ Installs Genie globally via pnpm
 - ✅ Enables `genie` command anywhere
 - ✅ Runs `genie` to initialize your workspace
