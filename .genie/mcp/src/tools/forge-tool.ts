@@ -134,7 +134,7 @@ export async function executeForgeTool(
       },
       executor_profile_id: {
         executor: 'CLAUDE_CODE',
-        variant: 'forge'
+        variant: 'neuron-forge'
       },
       base_branch: 'dev'
     });

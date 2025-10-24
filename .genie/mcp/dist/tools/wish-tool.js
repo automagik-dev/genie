@@ -152,7 +152,7 @@ async function executeWishTool(args, context) {
             },
             executor_profile_id: {
                 executor: 'CLAUDE_CODE',
-                variant: 'wish'
+                variant: 'neuron-wish'
             },
             base_branch: 'dev'
         });
