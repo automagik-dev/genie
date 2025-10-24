@@ -380,7 +380,12 @@ AGENTS.md                                  # Core Identity updated
 ```
 
 **Token Economy:**
-- Scratch thinking: 1,242 lines × 0.75 tokens/word × 10 words/line = **~9,315 wasted tokens**
+```bash
+# NEVER manually calculate - use count-tokens helper
+genie helper count-tokens <file>.md
+# Uses tiktoken (cl100k_base) - same encoding Claude uses
+```
+- Scratch thinking: 1,242 lines = **~9,315 wasted tokens**
 - Permanent learning: 50 lines = **~375 tokens of value**
 - **Ratio: 25:1 waste**
 
@@ -464,6 +469,60 @@ git log -1 --format="%an" -- <file>
 ```
 
 **First Insight:** 2025-10-23, Felipe validating token efficiency strategy
+
+### 8. Token Counting Protocol - Official Helper Only 🔴 CRITICAL
+**Rule:** NOBODY in this codebase calculates tokens manually. Always use the official token counting helper.
+
+**The Helper:**
+```bash
+# Count tokens in a file
+genie helper count-tokens <file>.md
+
+# Compare before/after (for savings calculation)
+genie helper count-tokens --before=old.md --after=new.md
+
+# Pipe stdin
+echo "text" | genie helper count-tokens
+```
+
+**Uses tiktoken (cl100k_base encoding)** - Same encoding Claude uses, ensures accurate counts.
+
+**Why This Matters:**
+- **Accurate:** Uses same tokenizer as Claude (no approximations)
+- **Consistent:** Everyone uses same method across all agents
+- **Auditable:** JSON output, reproducible, evidence-backed
+- **No guessing:** Word count approximations are wrong (2-3x error margin)
+
+**Examples:**
+```bash
+$ genie helper count-tokens AGENTS.md
+{
+  "tokens": 5686,
+  "lines": 618,
+  "bytes": 23021,
+  "encoding": "cl100k_base",
+  "method": "tiktoken"
+}
+
+$ genie helper count-tokens --before=AGENTS.md --after=CORE_AGENTS.md
+{
+  "diff": {
+    "tokens": -5381,
+    "saved": true,
+    "message": "Saved 5381 tokens (94.6% reduction)"
+  }
+}
+```
+
+**Enforcement:**
+- garbage-collector: Uses helper for token waste reporting
+- garbage-cleaner: Required for all PR token savings
+- file-creation-protocol: Mandatory for context impact measurement
+- All agents: Reference helper, never manual calculation
+
+**Helper Location:** `.genie/scripts/helpers/count-tokens.js` (use: `genie helper count-tokens`)
+
+**First Insight:** 2025-10-24, Token counting standardization across framework
 
 ## Development Workflow
 

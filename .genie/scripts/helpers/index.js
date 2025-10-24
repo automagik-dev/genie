@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+
+/**
+ * Genie Helper CLI Router
+ *
+ * Provides easy access to all Genie helper utilities.
+ *
+ * Usage:
+ *   genie helper <command> [args]
+ *   node .genie/scripts/helpers/index.js <command> [args]
+ *
+ * Available commands:
+ *   count-tokens <file>                - Count tokens in file
+ *   count-tokens --before=f1 --after=f2 - Compare token counts
+ *   validate-frontmatter <dir>         - Validate YAML frontmatter
+ *   detect-markers <dir>               - Find TODO/FIXME markers
+ *   list                              - List all available helpers
+ *   help [command]                    - Show help for a command
+ */
+
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+const HELPERS_DIR = __dirname;
+
+// Available helpers and their descriptions
+const HELPERS = {
+  'count-tokens': {
+    script: 'count-tokens.js',
+    description: 'Count tokens in files using tiktoken (cl100k_base)',
+    usage: [
+      'genie helper count-tokens <file>',
+      'genie helper count-tokens --before=old.md --after=new.md',
+      'echo "text" | genie helper count-tokens'
+    ],
+    examples: [
+      '$ genie helper count-tokens AGENTS.md',
+      '$ genie helper count-tokens --before=v1.md --after=v2.md'
+    ]
+  },
+  'validate-frontmatter': {
+    script: 'validate-frontmatter.js',
+    description: 'Validate YAML frontmatter in markdown files',
+    usage: [
+      'genie helper validate-frontmatter <directory>'
+    ],
+    examples: [
+      '$ genie helper validate-frontmatter .genie',
+      '$ genie helper validate-frontmatter .genie/spells'
+    ]
+  },
+  'detect-markers': {
+    script: 'detect-markers.js',
+    description: 'Detect TODO/FIXME markers and merge conflicts',
+    usage: [
+      'genie helper detect-markers <directory>'
+    ],
+    examples: [
+      '$ genie helper detect-markers .genie',
+      '$ genie helper detect-markers .'
+    ]
+  }
+};
+
+function showList() {
+  console.log('');
+  console.log('Available Genie Helpers:');
+  console.log('━'.repeat(60));
+  console.log('');
+
+  Object.entries(HELPERS).forEach(([name, info]) => {
+    console.log(`  ${name.padEnd(25)} ${info.description}`);
+  });
+
+  console.log('');
+  console.log('Usage:');
+  console.log('  genie helper <command> [args]');
+  console.log('  genie helper help [command]   Show help for specific command');
+  console.log('');
+}
+
+function showHelp(command) {
+  if (!command) {
+    showList();
+    return;
+  }
+
+  const helper = HELPERS[command];
+  if (!helper) {
+    console.error(`Unknown helper: ${command}`);
+    console.error('');
+    showList();
+    process.exit(1);
+  }
+
+  console.log('');
+  console.log(`${command} - ${helper.description}`);
+  console.log('━'.repeat(60));
+  console.log('');
+  console.log('Usage:');
+  helper.usage.forEach(usage => {
+    console.log(`  ${usage}`);
+  });
+
+  if (helper.examples && helper.examples.length > 0) {
+    console.log('');
+    console.log('Examples:');
+    helper.examples.forEach(example => {
+      console.log(`  ${example}`);
+    });
+  }
+
+  console.log('');
+}
+
+function runHelper(command, args) {
+  const helper = HELPERS[command];
+
+  if (!helper) {
+    console.error(`Unknown helper: ${command}`);
+    console.error('');
+    console.error('Run "genie helper list" to see available helpers');
+    process.exit(1);
+  }
+
+  const scriptPath = path.join(HELPERS_DIR, helper.script);
+
+  if (!fs.existsSync(scriptPath)) {
+    console.error(`Helper script not found: ${scriptPath}`);
+    process.exit(1);
+  }
+
+  // Spawn the helper script
+  const child = spawn('node', [scriptPath, ...args], {
+    stdio: 'inherit',
+    env: process.env
+  });
+
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
+
+  child.on('error', (err) => {
+    console.error(`Failed to run helper: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+// Main CLI router
+function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0 || args[0] === 'list') {
+    showList();
+    return;
+  }
+
+  const command = args[0];
+
+  if (command === 'help' || command === '--help' || command === '-h') {
+    showHelp(args[1]);
+    return;
+  }
+
+  // Run the helper with remaining args
+  const helperArgs = args.slice(1);
+  runHelper(command, helperArgs);
+}
+
+main();

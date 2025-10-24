@@ -81,7 +81,7 @@ Additional detection rules for garbage-collector agent. Categorized by value/pri
 **Pattern:** Single markdown file > 1000 lines or > 8000 tokens
 **Detect:**
 - Line count > 1000
-- Estimated tokens > 8000 (rough: lines × 8 words/line × 0.75 tokens/word)
+- Token count > 8000 (use: `genie helper count-tokens <file>`)
 
 **Why:** Huge files = hard to navigate, slow to load, hard to maintain
 
@@ -259,7 +259,7 @@ Additional detection rules for garbage-collector agent. Categorized by value/pri
 
 **For Broken Links (Rule 9):**
 ```javascript
-.genie/agents/helpers/validate-links.js
+.genie/scripts/helpers/validate-links.js
 - Parse markdown links
 - Resolve relative paths
 - Check file existence
@@ -268,7 +268,7 @@ Additional detection rules for garbage-collector agent. Categorized by value/pri
 
 **For Orphaned Files (Rule 10):**
 ```javascript
-.genie/agents/helpers/find-orphans.js
+.genie/scripts/helpers/find-orphans.js
 - Build reference graph
 - Find unreferenced nodes
 - Exclude root files
@@ -276,9 +276,9 @@ Additional detection rules for garbage-collector agent. Categorized by value/pri
 
 **For Large Files (Rule 15):**
 ```javascript
-.genie/agents/helpers/check-file-size.js
+.genie/scripts/helpers/check-file-size.js
 - Count lines
-- Estimate tokens
+- Use count-tokens helper for accurate token count
 - Flag oversized files
 ```
 

@@ -97,7 +97,9 @@ Me: [Works for 2 hours]
 
 ```
 User: "What's the token count for AGENTS.md?"
-Me: "Let me check... [quick calculation] About 37.8KB"
+Me: "Let me check..."
+[runs: genie helper count-tokens AGENTS.md]
+Me: "5,686 tokens (23KB, 618 lines) using tiktoken cl100k_base encoding"
 ← No wish needed: simple informational task
 ```
 
