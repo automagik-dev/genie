@@ -49,8 +49,8 @@ export function registerHealthTools(server: any, client: ForgeClient) {
     },
     execute: async (_args: any, { log }: any) => {
       log.info('Listing executor profiles...');
+      // Use normalized fetch via client, which prefers /api/info
       const profiles = await client.getExecutorProfiles();
-
       return `Available Executor Profiles:\n${JSON.stringify(profiles, null, 2)}`;
     }
   });
