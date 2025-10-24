@@ -1,5 +1,6 @@
 # Forge Breakdown: Unified MCP Startup
 
+**GitHub Issue:** #247
 **Task ID:** 62c00eed-0653-4fc1-b178-0f7ea3494f45
 **Wish:** `.genie/wishes/unified-mcp-startup/unified-mcp-startup-wish.md`
 **Status:** Ready for execution
