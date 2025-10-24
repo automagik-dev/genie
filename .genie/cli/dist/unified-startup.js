@@ -41,7 +41,7 @@ async function startGenie() {
         })();
         console.error('🧞 Starting Genie...\n');
         const mcpConfig = config.mcp;
-        const authToken = mcpConfig.auth.token;
+        const oauth2Config = mcpConfig.auth.oauth2;
         // Step 2: Start Forge in background
         console.error('📦 Starting Forge backend...');
         const forgeResult = (0, forge_manager_1.startForgeInBackground)({ logDir });
@@ -95,7 +95,7 @@ async function startGenie() {
             forgeUrl: DEFAULT_FORGE_URL,
             mcpUrl: DEFAULT_MCP_URL,
             tunnelUrl: tunnelUrl || undefined,
-            authToken: authToken,
+            oauth2: oauth2Config,
             configPath: (0, config_manager_1.getConfigPath)()
         };
         console.log((0, startup_display_1.displayStartupInfo)(startupInfo));

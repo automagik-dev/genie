@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 const path = require('path');
 
-// MCP server entry point - now goes through genie-cli to auto-start Forge
+// MCP stdio-only entry point (for Claude Desktop via mcp_settings.json)
+// DOES NOT start Forge - requires Forge to be running already
+// Launches MCP in stdio mode for Desktop communication
 process.argv = process.argv.slice(0, 2).concat(['mcp']);
 
 const entry = path.join(__dirname, '..', '.genie', 'cli', 'dist', 'genie-cli.js');

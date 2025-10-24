@@ -88,10 +88,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.2",
+    "@types/express": "^5.0.4",
     "automagik-forge": "^0.4.3",
     "commander": "^12.1.0",
-    "fastmcp": "^3.18.0",
+    "express": "^5.1.0",
     "gradient-string": "^2.0.2",
+    "jose": "^6.1.0",
     "prompts": "^2.4.2",
     "ws": "^8.18.3",
     "yaml": "^2.8.1",

@@ -1,30 +1,63 @@
 /**
  * Authentication Middleware for Genie MCP Server
  *
- * Validates Bearer token authentication on all HTTP requests
- * Allows /health endpoint without authentication (for monitoring)
- * Returns 401 Unauthorized for missing or invalid tokens
+ * OAuth2.1 JWT token validation (RFC 6749, RFC 9728)
+ * - Validates JWT access tokens with RS256 signatures
+ * - Checks issuer, audience, and expiration
+ * - Returns 401 Unauthorized with WWW-Authenticate header per RFC 6750
+ *
+ * Public endpoints (no auth required):
+ * - /health - Health check
+ * - /.well-known/oauth-protected-resource - Resource metadata
+ * - /oauth/token - Token endpoint
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
 
+// OAuth2 configuration (matches cli/src/lib/config-manager.ts)
+export interface OAuth2Config {
+  clientId: string;
+  clientSecret: string;
+  signingKey: string;
+  publicKey: string;
+  tokenExpiry: number;
+  issuer: string;
+}
+
+// Import verification function at runtime (dynamic to avoid TypeScript cross-project issues)
+let verifyAccessToken: (token: string, publicKey: string, issuer: string, audience: string) => Promise<any>;
+
+// Initialize the verification function lazily
+function getVerifyAccessToken() {
+  if (!verifyAccessToken) {
+    const oauth2Utils = require('../../../cli/dist/lib/oauth2-utils.js');
+    verifyAccessToken = oauth2Utils.verifyAccessToken;
+  }
+  return verifyAccessToken;
+}
+
 interface AuthMiddlewareOptions {
-  storedToken: string;
+  oauth2Config: OAuth2Config;
+  serverUrl: string; // Server URL for JWT audience validation (e.g., 'http://localhost:8885')
   publicPaths?: string[];
 }
 
 /**
- * Create authentication middleware
- * Validates Bearer token on all requests except public paths
+ * Create OAuth2 authentication middleware
+ * Validates JWT Bearer tokens on all requests except public paths
  */
 export function createAuthMiddleware(options: AuthMiddlewareOptions) {
-  const { storedToken, publicPaths = ['/health'] } = options;
+  const {
+    oauth2Config,
+    serverUrl,
+    publicPaths = ['/health', '/.well-known/oauth-protected-resource', '/oauth/token']
+  } = options;
 
-  return function authMiddleware(
+  return async function authMiddleware(
     req: IncomingMessage,
     res: ServerResponse,
     next?: () => void
-  ): void {
+  ): Promise<void> {
     // Check if path is public (no auth required)
     const pathname = req.url?.split('?')[0] || '';
     if (publicPaths.includes(pathname)) {
@@ -37,76 +70,72 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
 
     // Check if Authorization header exists
     if (!authHeader) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Missing Authorization header"`
+      });
       res.end(JSON.stringify({ error: 'Unauthorized: Missing Authorization header' }));
       return;
     }
 
     // Check if it's a Bearer token
     if (!authHeader.startsWith('Bearer ')) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Invalid Authorization scheme (must be Bearer)"`
+      });
       res.end(JSON.stringify({ error: 'Unauthorized: Invalid Authorization scheme' }));
       return;
     }
 
-    // Extract token
-    const token = authHeader.slice(7);
+    // Extract JWT token
+    const token = authHeader.slice(7); // Remove 'Bearer ' prefix
 
-    // Validate token using constant-time comparison
-    let isValid = false;
+    // Verify JWT token
     try {
-      if (token.length === storedToken.length) {
-        // Use crypto module for constant-time comparison
-        const crypto = require('crypto');
-        isValid = crypto.timingSafeEqual(
-          Buffer.from(token),
-          Buffer.from(storedToken)
-        );
+      const verify = getVerifyAccessToken();
+      const payload = await verify(
+        token,
+        oauth2Config.publicKey,
+        oauth2Config.issuer,
+        `${serverUrl}/mcp` // Expected audience
+      );
+
+      if (!payload) {
+        // Token verification failed
+        res.writeHead(401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Token validation failed"`
+        });
+        res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
+        return;
       }
-    } catch {
-      // timingSafeEqual throws if lengths don't match
-      isValid = false;
-    }
 
-    if (!isValid) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
-      return;
+      // Token is valid, proceed
+      if (next) next();
+    } catch (error) {
+      // Token verification threw an error
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Token verification error"`
+      });
+      res.end(JSON.stringify({ error: 'Unauthorized: Token verification error' }));
     }
-
-    // Token is valid, proceed
-    if (next) next();
   };
 }
 
 /**
- * Attach auth middleware to Express-like router/app
- */
-export function attachAuthMiddleware(
-  app: any,
-  options: AuthMiddlewareOptions
-): void {
-  const middleware = createAuthMiddleware(options);
-
-  // For Express-like apps
-  if (app.use && typeof app.use === 'function') {
-    app.use((req: IncomingMessage, res: ServerResponse, next: () => void) => {
-      middleware(req, res, next);
-    });
-  }
-}
-
-/**
- * Create a simple HTTP request handler that validates auth
+ * Validate HTTP request authentication
  * Returns true if auth is valid, false otherwise
  * Automatically sends 401 response if auth fails
  */
-export function validateHttpAuth(
+export async function validateHttpAuth(
   req: IncomingMessage,
   res: ServerResponse,
-  storedToken: string,
-  publicPaths: string[] = ['/health']
-): boolean {
+  oauth2Config: OAuth2Config,
+  serverUrl: string,
+  publicPaths: string[] = ['/health', '/.well-known/oauth-protected-resource', '/oauth/token']
+): Promise<boolean> {
   const pathname = req.url?.split('?')[0] || '';
 
   // Public paths bypass auth
@@ -114,36 +143,46 @@ export function validateHttpAuth(
     return true;
   }
 
-  // Extract and validate token
+  // Extract Authorization header
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.writeHead(401, {
+      'Content-Type': 'application/json',
+      'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Missing or invalid Authorization header"`
+    });
     res.end(JSON.stringify({ error: 'Unauthorized: Missing or invalid Authorization header' }));
     return false;
   }
 
   const token = authHeader.slice(7);
 
-  // Constant-time comparison
-  let isValid = false;
+  // Verify JWT token
   try {
-    if (token.length === storedToken.length) {
-      const crypto = require('crypto');
-      isValid = crypto.timingSafeEqual(
-        Buffer.from(token),
-        Buffer.from(storedToken)
-      );
-    }
-  } catch {
-    isValid = false;
-  }
+    const verify = getVerifyAccessToken();
+    const payload = await verify(
+      token,
+      oauth2Config.publicKey,
+      oauth2Config.issuer,
+      `${serverUrl}/mcp`
+    );
 
-  if (!isValid) {
-    res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
+    if (!payload) {
+      res.writeHead(401, {
+        'Content-Type': 'application/json',
+        'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Token validation failed"`
+      });
+      res.end(JSON.stringify({ error: 'Unauthorized: Invalid token' }));
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    res.writeHead(401, {
+      'Content-Type': 'application/json',
+      'WWW-Authenticate': `Bearer realm="Genie MCP Server", error="invalid_token", error_description="Token verification error"`
+    });
+    res.end(JSON.stringify({ error: 'Unauthorized: Token verification error' }));
     return false;
   }
-
-  return true;
 }
