@@ -53,7 +53,9 @@ async function runInit(parsed, _config, _paths) {
                     description: 'Content creation agents (writing, research, planning)'
                 });
             }
-            const executors = Object.keys(executor_registry_1.EXECUTORS).map(key => ({
+            const executors = Object.keys(executor_registry_1.EXECUTORS)
+                .filter(key => key !== 'amp') // Exclude amp from user selection
+                .map(key => ({
                 label: executor_registry_1.EXECUTORS[key].label,
                 value: key
             }));

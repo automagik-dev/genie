@@ -8,6 +8,8 @@ const prompts_1 = __importDefault(require("prompts"));
 const gradient_string_1 = __importDefault(require("gradient-string"));
 async function runInitWizard(options) {
     console.log('\n' + gradient_string_1.default.cristal('🧞 ✨ GENIE INIT ✨ 🧞') + '\n');
+    // Check if subscription executor was set by start.sh (via ENV var)
+    const subscriptionExecutor = process.env.GENIE_SUBSCRIPTION_EXECUTOR;
     const questions = [];
     // Git initialization
     if (!options.hasGit) {
@@ -38,15 +40,21 @@ async function runInitWizard(options) {
         instructions: false // Hide default instructions
     });
     // Executor selection
+    // If subscription was already chosen in start.sh, pre-select it
+    const defaultExecutorIndex = subscriptionExecutor
+        ? options.executors.findIndex(e => e.value === subscriptionExecutor)
+        : 0;
     questions.push({
         type: 'select',
         name: 'executor',
-        message: 'Select executor (can be changed later in config):',
+        message: subscriptionExecutor
+            ? `Select default executor (${subscriptionExecutor} was installed during setup):`
+            : 'Select default executor (can be changed later in config):',
         choices: options.executors.map(e => ({
             title: e.label,
             value: e.value
         })),
-        initial: 0
+        initial: defaultExecutorIndex >= 0 ? defaultExecutorIndex : 0
     });
     // Model input
     questions.push({
