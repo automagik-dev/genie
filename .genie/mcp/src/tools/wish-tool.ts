@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { execSync } from 'child_process';
 import { wsManager } from '../websocket-manager.js';
 import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
+import { shortenUrl, getApiKeyFromEnv } from '../lib/url-shortener.js';
 import path from 'path';
 
 // Load ForgeClient from Genie package root (not user's cwd)
@@ -211,11 +212,16 @@ export async function executeWishTool(
       `  Forge Attempt: ${attemptId}\n\n`
   });
 
-  // Step 5: Output human-visible URL
+  // Step 5: Output human-visible URL (shortened if service available)
+  const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+  const { shortUrl } = await shortenUrl(fullUrl, {
+    apiKey: getApiKeyFromEnv()
+  });
+
   await streamContent({
     type: 'text',
     text: `🌐 Monitor Progress:\n` +
-      `http://localhost:8887/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs\n\n`
+      `${shortUrl || fullUrl}\n\n`
   });
 
   // Step 6: Check for missing links

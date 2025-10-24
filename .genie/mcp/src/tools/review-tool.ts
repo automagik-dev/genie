@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { wsManager } from '../websocket-manager.js';
 import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
+import { shortenUrl, getApiKeyFromEnv } from '../lib/url-shortener.js';
 
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/review-tool.js
@@ -223,11 +224,16 @@ export async function executeReviewTool(
       (processId ? `  Process: ${processId}\n` : '') + `\n`
   });
 
-  // Step 6: Output human-visible URL
+  // Step 6: Output human-visible URL (shortened if service available)
+  const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
+  const { shortUrl } = await shortenUrl(fullUrl, {
+    apiKey: getApiKeyFromEnv()
+  });
+
   await streamContent({
     type: 'text',
     text: `🌐 Monitor Progress:\n` +
-      `http://localhost:8887/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs\n\n`
+      `${shortUrl || fullUrl}\n\n`
   });
 
   // Step 7: Check for missing links

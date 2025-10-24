@@ -16,6 +16,7 @@ const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const websocket_manager_js_1 = require("../websocket-manager.js");
 const git_validation_js_1 = require("../lib/git-validation.js");
+const url_shortener_js_1 = require("../lib/url-shortener.js");
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/review-tool.js
 // forge.js is at: <genie-package>/forge.js
@@ -188,11 +189,15 @@ async function executeReviewTool(args, context) {
             `  Agent: ${agent}\n` +
             (processId ? `  Process: ${processId}\n` : '') + `\n`
     });
-    // Step 6: Output human-visible URL
+    // Step 6: Output human-visible URL (shortened if service available)
+    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
+    const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(fullUrl, {
+        apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
+    });
     await streamContent({
         type: 'text',
         text: `🌐 Monitor Progress:\n` +
-            `http://localhost:8887/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs\n\n`
+            `${shortUrl || fullUrl}\n\n`
     });
     // Step 7: Check for missing links
     await streamContent({
