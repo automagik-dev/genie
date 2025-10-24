@@ -17,6 +17,7 @@ const child_process_1 = require("child_process");
 const websocket_manager_js_1 = require("../websocket-manager.js");
 const git_validation_js_1 = require("../lib/git-validation.js");
 const url_shortener_js_1 = require("../lib/url-shortener.js");
+const session_manager_js_1 = require("../lib/session-manager.js");
 const path_1 = __importDefault(require("path"));
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/wish-tool.js
@@ -95,12 +96,53 @@ async function executeWishTool(args, context) {
     if (reportProgress) {
         await reportProgress(1, 5); // Step 1 of 5
     }
-    // Step 2: Create Forge task
+    const forgeClient = new ForgeClient(FORGE_URL);
+    // Step 1.5: Check for existing session (Phase 2: Session reuse)
+    const existingSession = session_manager_js_1.sessionManager.getSession('wish', PROJECT_ID);
+    if (existingSession) {
+        // Reuse existing session via follow-up
+        await streamContent({
+            type: 'text',
+            text: `🔄 Reusing existing wish session...\n` +
+                `   Task: ${existingSession.taskId}\n` +
+                `   Attempt: ${existingSession.attemptId}\n\n`
+        });
+        try {
+            await forgeClient.followUpTaskAttempt(existingSession.attemptId, `Follow-up wish request:\nGitHub Issue: #${args.github_issue}\nFeature: ${args.feature}`);
+            await streamContent({
+                type: 'text',
+                text: `✅ Follow-up sent to existing session\n\n`
+            });
+            // Update session last used timestamp (already done by sessionManager.getSession)
+            // Return existing session URL
+            const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(existingSession.url, {
+                apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
+            });
+            await streamContent({
+                type: 'text',
+                text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
+                    `💡 Genie Tips:\n` +
+                    `  - This is THE wish session (reused from previous call)\n` +
+                    `  - All wish work happens in this single task\n` +
+                    `  - Session maintained for conversation continuity\n`
+            });
+            return;
+        }
+        catch (error) {
+            // Follow-up failed, clear session and create new one
+            await streamContent({
+                type: 'text',
+                text: `⚠️  Follow-up failed: ${error.message}\n` +
+                    `   Creating new session...\n\n`
+            });
+            session_manager_js_1.sessionManager.clearSession('wish', PROJECT_ID);
+        }
+    }
+    // Step 2: Create Forge task (new session)
     await streamContent({
         type: 'text',
-        text: `📝 Creating Forge task...\n`
+        text: `📝 Creating new Forge task...\n`
     });
-    const forgeClient = new ForgeClient(FORGE_URL);
     let taskResult;
     try {
         taskResult = await forgeClient.createAndStartTask({
@@ -157,6 +199,18 @@ async function executeWishTool(args, context) {
                 `   Task may appear in main Kanban instead of widget.\n\n`
         });
     }
+    // Step 2.6: Store new session for reuse (Phase 2)
+    const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+    session_manager_js_1.sessionManager.setSession('wish', PROJECT_ID, {
+        taskId,
+        attemptId,
+        url: fullUrl,
+        created: new Date().toISOString()
+    });
+    await streamContent({
+        type: 'text',
+        text: `💾 Session stored for reuse\n\n`
+    });
     // Step 3: Subscribe to tasks WebSocket stream
     await streamContent({
         type: 'text',
@@ -203,7 +257,6 @@ async function executeWishTool(args, context) {
             `  Forge Attempt: ${attemptId}\n\n`
     });
     // Step 5: Output human-visible URL (shortened if service available)
-    const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
     const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(fullUrl, {
         apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
     });
