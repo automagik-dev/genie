@@ -1,9 +1,9 @@
 # Wish: Unified MCP Startup with Authentication & Tunnel
 
-**Status:** Discovery
+**Status:** Ready for Implementation
 **Created:** 2025-10-20
 **Priority:** HIGH (Release Blocker - ChatGPT homologation)
-**Related Issues:** #152 (MCP Authentication)
+**Related Issues:** #152 (Discovery - completed), #247 (Implementation), #53 (ChatGPT integration request)
 
 ---
 
