@@ -70,7 +70,20 @@ export class ForgeClient {
   }
 
   async getExecutorProfiles() {
-    return this.wrap(() => this.client.getExecutorProfiles(), 'Get executor profiles');
+    // Prefer /api/info which already contains executor profiles under a stable shape
+    // This avoids strict schema issues from /api/profiles (e.g., missing top-level `executors`).
+    return this.wrap(async () => {
+      const info: any = await this.client.getSystemInfo();
+      // Normalize to the same shape expected by callers of this method
+      // Priority order:
+      // 1) info.executor_profiles (recommended)
+      // 2) info.profiles
+      // 3) Fallback to direct /api/profiles
+      const profiles = info?.executor_profiles || info?.profiles;
+      if (profiles) return profiles;
+      // Fallback for older servers
+      return await this.client.getExecutorProfiles();
+    }, 'Get executor profiles');
   }
 
   // ============================================================================
