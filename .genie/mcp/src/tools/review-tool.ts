@@ -101,7 +101,7 @@ export async function executeReviewTool(
   const forgeClient = new ForgeClient(FORGE_URL);
 
   // Step 1.5: Check for existing session (Phase 2: Session reuse)
-  const existingSession = sessionManager.getSession('review', projectId);
+  const existingSession = await sessionManager.getSession('review', projectId);
 
   if (existingSession) {
     // Reuse existing session via follow-up
@@ -113,7 +113,7 @@ export async function executeReviewTool(
     });
 
     try {
-      await forgeClient.followUpTaskAttempt(
+      await sessionManager.delegateToMaster(
         existingSession.attemptId,
         `Follow-up review request:\nWish: ${args.wish_name}\nAgent: ${agent}\n\n---\n\n${wishContent.substring(0, 1000)}...`
       );
@@ -132,20 +132,19 @@ export async function executeReviewTool(
         type: 'text',
         text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
           `💡 Genie Tips:\n` +
-          `  - This is THE review session (reused from previous call)\n` +
+          `  - This is THE review master (reused from previous call)\n` +
           `  - All review work happens in this single task\n` +
           `  - Session maintained for conversation continuity\n`
       });
 
       return;
     } catch (error: any) {
-      // Follow-up failed, clear session and create new one
+      // Follow-up failed, create new master
       await streamContent({
         type: 'text',
         text: `⚠️  Follow-up failed: ${error.message}\n` +
-          `   Creating new session...\n\n`
+          `   Creating new master...\n\n`
       });
-      sessionManager.clearSession('review', projectId);
     }
   }
 
@@ -214,19 +213,8 @@ export async function executeReviewTool(
     });
   }
 
-  // Step 2.6: Store new session for reuse (Phase 2)
+  // Session will be automatically discovered on next call (Forge-backed)
   const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
-  sessionManager.setSession('review', projectId, {
-    taskId,
-    attemptId,
-    url: fullUrl,
-    created: new Date().toISOString()
-  });
-
-  await streamContent({
-    type: 'text',
-    text: `💾 Session stored for reuse\n\n`
-  });
 
   // Step 3: Subscribe to logs WebSocket stream
   await streamContent({

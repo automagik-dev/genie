@@ -66,11 +66,13 @@ program
 // Run command
 program
     .command('run <agent> <prompt>')
-    .description('Run an agent with a prompt')
+    .description('Run an agent with a prompt (JSON output by default)')
     .option('-b, --background', 'Run in background mode')
     .option('-x, --executor <executor>', 'Override executor for this run')
     .option('-m, --model <model>', 'Override model for the selected executor')
     .option('-n, --name <name>', 'Friendly session name for easy identification')
+    .option('--raw', 'Output raw text only (no JSON)')
+    .option('--quiet', 'Suppress startup messages')
     .action((agent, prompt, options) => {
     const args = ['run', agent, prompt];
     if (options.background) {
@@ -85,7 +87,20 @@ program
     if (options.name) {
         args.push('--name', options.name);
     }
+    if (options.raw) {
+        args.push('--raw');
+    }
+    if (options.quiet) {
+        args.push('--quiet');
+    }
     execGenie(args);
+});
+// Talk command
+program
+    .command('talk <agent>')
+    .description('Start interactive browser session with agent (Forge UI)')
+    .action((agent) => {
+    execGenie(['talk', agent]);
 });
 // Resume command
 program

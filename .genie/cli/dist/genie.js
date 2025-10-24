@@ -109,6 +109,10 @@ async function main() {
             case 'dashboard':
                 await (0, dashboard_1.runDashboard)(parsed, config, paths);
                 break;
+            case 'talk':
+                const { runTalk } = await import('./commands/talk.js');
+                await runTalk(parsed, config, paths);
+                break;
             case 'cleanup':
                 await (0, cleanup_1.runCleanup)(parsed, config, paths);
                 break;

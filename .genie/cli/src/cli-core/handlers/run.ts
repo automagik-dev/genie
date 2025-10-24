@@ -4,6 +4,7 @@ import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver'
 import { generateSessionName } from '../../session-store';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
+import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -19,6 +20,16 @@ export function createRunHandler(ctx: HandlerContext): Handler {
 
     const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
 
+    // Detect headless mode (--raw or --quiet)
+    const isHeadless = parsed.options.raw || parsed.options.quiet;
+    const isRawOutput = parsed.options.raw;
+    const isQuiet = parsed.options.quiet;
+
+    // Ensure Forge is running (silent if quiet mode)
+    if (isHeadless) {
+      await ensureForgeRunning(isQuiet);
+    }
+
     const forgeExecutor = createForgeExecutor();
     try {
       await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
@@ -29,6 +40,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       throw new Error(`Forge backend unavailable while starting a session. ${FORGE_RECOVERY_HINT}\nReason: ${reason}`);
     }
 
+    const startTime = Date.now();
     let sessionResult;
     try {
       sessionResult = await forgeExecutor.createSession({
@@ -65,6 +77,39 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     };
     await ctx.sessionService.save(store);
 
+    // Headless mode: wait for completion and output JSON/raw
+    if (isHeadless) {
+      const result = await waitForTaskCompletion(sessionResult.attemptId, forgeExecutor);
+      const duration = Date.now() - startTime;
+
+      const runResult: RunResult = {
+        agent: resolvedAgentName,
+        status: result.status,
+        output: result.output,
+        error: result.error,
+        duration_ms: duration,
+        executor: [executorKey, executorVariant].filter(Boolean).join('/'),
+        model: model,
+        task_id: sessionResult.taskId || 'unknown',
+        attempt_id: sessionResult.attemptId,
+        forge_url: sessionResult.forgeUrl,
+        timestamp: now
+      };
+
+      // Output result
+      if (isRawOutput) {
+        // Raw text output only
+        process.stdout.write(result.output + '\n');
+      } else {
+        // JSON output (default for headless)
+        process.stdout.write(JSON.stringify(runResult, null, 2) + '\n');
+      }
+
+      // Exit with appropriate code
+      process.exit(result.status === 'completed' ? 0 : 1);
+    }
+
+    // Interactive mode: show info and wait for browser open
     const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
     const modelSuffix = model ? `, model=${model}` : '';
     process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);

@@ -98,7 +98,7 @@ async function executeWishTool(args, context) {
     }
     const forgeClient = new ForgeClient(FORGE_URL);
     // Step 1.5: Check for existing session (Phase 2: Session reuse)
-    const existingSession = session_manager_js_1.sessionManager.getSession('wish', PROJECT_ID);
+    const existingSession = await session_manager_js_1.sessionManager.getSession('wish', PROJECT_ID);
     if (existingSession) {
         // Reuse existing session via follow-up
         await streamContent({
@@ -129,13 +129,12 @@ async function executeWishTool(args, context) {
             return;
         }
         catch (error) {
-            // Follow-up failed, clear session and create new one
+            // Follow-up failed, create new master
             await streamContent({
                 type: 'text',
                 text: `⚠️  Follow-up failed: ${error.message}\n` +
-                    `   Creating new session...\n\n`
+                    `   Creating new master...\n\n`
             });
-            session_manager_js_1.sessionManager.clearSession('wish', PROJECT_ID);
         }
     }
     // Step 2: Create Forge task (new session)
@@ -167,6 +166,7 @@ async function executeWishTool(args, context) {
     }
     const taskId = taskResult.task?.id || 'unknown';
     const attemptId = taskResult.task_attempt?.id || 'unknown';
+    const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
     const wishName = args.feature.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     const wishFile = `.genie/wishes/${wishName}/${wishName}-wish.md`;
     await streamContent({
@@ -199,18 +199,6 @@ async function executeWishTool(args, context) {
                 `   Task may appear in main Kanban instead of widget.\n\n`
         });
     }
-    // Step 2.6: Store new session for reuse (Phase 2)
-    const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
-    session_manager_js_1.sessionManager.setSession('wish', PROJECT_ID, {
-        taskId,
-        attemptId,
-        url: fullUrl,
-        created: new Date().toISOString()
-    });
-    await streamContent({
-        type: 'text',
-        text: `💾 Session stored for reuse\n\n`
-    });
     // Step 3: Subscribe to tasks WebSocket stream
     await streamContent({
         type: 'text',

@@ -85,7 +85,7 @@ async function executeReviewTool(args, context) {
     }
     const forgeClient = new ForgeClient(FORGE_URL);
     // Step 1.5: Check for existing session (Phase 2: Session reuse)
-    const existingSession = session_manager_js_1.sessionManager.getSession('review', projectId);
+    const existingSession = await session_manager_js_1.sessionManager.getSession('review', projectId);
     if (existingSession) {
         // Reuse existing session via follow-up
         await streamContent({
@@ -95,7 +95,7 @@ async function executeReviewTool(args, context) {
                 `   Attempt: ${existingSession.attemptId}\n\n`
         });
         try {
-            await forgeClient.followUpTaskAttempt(existingSession.attemptId, `Follow-up review request:\nWish: ${args.wish_name}\nAgent: ${agent}\n\n---\n\n${wishContent.substring(0, 1000)}...`);
+            await session_manager_js_1.sessionManager.delegateToMaster(existingSession.attemptId, `Follow-up review request:\nWish: ${args.wish_name}\nAgent: ${agent}\n\n---\n\n${wishContent.substring(0, 1000)}...`);
             await streamContent({
                 type: 'text',
                 text: `✅ Follow-up sent to existing session\n\n`
@@ -108,20 +108,19 @@ async function executeReviewTool(args, context) {
                 type: 'text',
                 text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
                     `💡 Genie Tips:\n` +
-                    `  - This is THE review session (reused from previous call)\n` +
+                    `  - This is THE review master (reused from previous call)\n` +
                     `  - All review work happens in this single task\n` +
                     `  - Session maintained for conversation continuity\n`
             });
             return;
         }
         catch (error) {
-            // Follow-up failed, clear session and create new one
+            // Follow-up failed, create new master
             await streamContent({
                 type: 'text',
                 text: `⚠️  Follow-up failed: ${error.message}\n` +
-                    `   Creating new session...\n\n`
+                    `   Creating new master...\n\n`
             });
-            session_manager_js_1.sessionManager.clearSession('review', projectId);
         }
     }
     // Step 2: Create review task (new session)
@@ -183,18 +182,8 @@ async function executeReviewTool(args, context) {
                 `   Task may appear in main Kanban instead of widget.\n\n`
         });
     }
-    // Step 2.6: Store new session for reuse (Phase 2)
+    // Session will be automatically discovered on next call (Forge-backed)
     const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
-    session_manager_js_1.sessionManager.setSession('review', projectId, {
-        taskId,
-        attemptId,
-        url: fullUrl,
-        created: new Date().toISOString()
-    });
-    await streamContent({
-        type: 'text',
-        text: `💾 Session stored for reuse\n\n`
-    });
     // Step 3: Subscribe to logs WebSocket stream
     await streamContent({
         type: 'text',

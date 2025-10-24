@@ -61,7 +61,7 @@ async function executeForgeTool(args, context) {
     }
     const forgeClient = new ForgeClient(FORGE_URL);
     // Step 0.5: Check for existing session (Phase 2: Session reuse)
-    const existingSession = session_manager_js_1.sessionManager.getSession('forge', projectId);
+    const existingSession = await session_manager_js_1.sessionManager.getSession('forge', projectId);
     if (existingSession) {
         // Reuse existing session via follow-up
         await streamContent({
@@ -71,7 +71,7 @@ async function executeForgeTool(args, context) {
                 `   Attempt: ${existingSession.attemptId}\n\n`
         });
         try {
-            await forgeClient.followUpTaskAttempt(existingSession.attemptId, `Follow-up forge request:\nAgent: ${args.agent}\nPrompt: ${args.prompt}`);
+            await session_manager_js_1.sessionManager.delegateToMaster(existingSession.attemptId, `Follow-up forge request:\nAgent: ${args.agent}\nPrompt: ${args.prompt}`);
             await streamContent({
                 type: 'text',
                 text: `✅ Follow-up sent to existing session\n\n`
@@ -84,23 +84,22 @@ async function executeForgeTool(args, context) {
                 type: 'text',
                 text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
                     `💡 Genie Tips:\n` +
-                    `  - This is THE forge session (reused from previous call)\n` +
+                    `  - This is THE forge master (reused from previous call)\n` +
                     `  - All forge work happens in this single task\n` +
                     `  - Session maintained for conversation continuity\n`
             });
             return;
         }
         catch (error) {
-            // Follow-up failed, clear session and create new one
+            // Follow-up failed, create new master
             await streamContent({
                 type: 'text',
                 text: `⚠️  Follow-up failed: ${error.message}\n` +
-                    `   Creating new session...\n\n`
+                    `   Creating new master...\n\n`
             });
-            session_manager_js_1.sessionManager.clearSession('forge', projectId);
         }
     }
-    // Step 1: Create Forge task (new session)
+    // Step 1: Create Forge task (new master orchestrator)
     await streamContent({
         type: 'text',
         text: `🚀 Starting Forge task with agent: ${args.agent}\n\n`
@@ -159,18 +158,8 @@ async function executeForgeTool(args, context) {
                 `   Task may appear in main Kanban instead of widget.\n\n`
         });
     }
-    // Step 1.5: Store new session for reuse (Phase 2)
+    // Session will be automatically discovered on next call (Forge-backed)
     const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
-    session_manager_js_1.sessionManager.setSession('forge', projectId, {
-        taskId,
-        attemptId,
-        url: fullUrl,
-        created: new Date().toISOString()
-    });
-    await streamContent({
-        type: 'text',
-        text: `💾 Session stored for reuse\n\n`
-    });
     // Step 2: Subscribe to diff WebSocket stream
     await streamContent({
         type: 'text',

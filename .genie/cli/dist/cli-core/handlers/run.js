@@ -5,6 +5,7 @@ const agent_resolver_1 = require("../../lib/agent-resolver");
 const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
+const headless_helpers_1 = require("../../lib/headless-helpers");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -16,6 +17,14 @@ function createRunHandler(ctx) {
         const agentSpec = (0, agent_resolver_1.loadAgentSpec)(resolvedAgentName);
         const agentGenie = agentSpec.meta?.genie || {};
         const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
+        // Detect headless mode (--raw or --quiet)
+        const isHeadless = parsed.options.raw || parsed.options.quiet;
+        const isRawOutput = parsed.options.raw;
+        const isQuiet = parsed.options.quiet;
+        // Ensure Forge is running (silent if quiet mode)
+        if (isHeadless) {
+            await (0, headless_helpers_1.ensureForgeRunning)(isQuiet);
+        }
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
         try {
             await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
@@ -26,6 +35,7 @@ function createRunHandler(ctx) {
             console.error(`[DEBUG] syncProfiles error:`, error);
             throw new Error(`Forge backend unavailable while starting a session. ${forge_helpers_1.FORGE_RECOVERY_HINT}\nReason: ${reason}`);
         }
+        const startTime = Date.now();
         let sessionResult;
         try {
             sessionResult = await forgeExecutor.createSession({
@@ -60,6 +70,36 @@ function createRunHandler(ctx) {
             background: parsed.options.background
         };
         await ctx.sessionService.save(store);
+        // Headless mode: wait for completion and output JSON/raw
+        if (isHeadless) {
+            const result = await (0, headless_helpers_1.waitForTaskCompletion)(sessionResult.attemptId, forgeExecutor);
+            const duration = Date.now() - startTime;
+            const runResult = {
+                agent: resolvedAgentName,
+                status: result.status,
+                output: result.output,
+                error: result.error,
+                duration_ms: duration,
+                executor: [executorKey, executorVariant].filter(Boolean).join('/'),
+                model: model,
+                task_id: sessionResult.taskId || 'unknown',
+                attempt_id: sessionResult.attemptId,
+                forge_url: sessionResult.forgeUrl,
+                timestamp: now
+            };
+            // Output result
+            if (isRawOutput) {
+                // Raw text output only
+                process.stdout.write(result.output + '\n');
+            }
+            else {
+                // JSON output (default for headless)
+                process.stdout.write(JSON.stringify(runResult, null, 2) + '\n');
+            }
+            // Exit with appropriate code
+            process.exit(result.status === 'completed' ? 0 : 1);
+        }
+        // Interactive mode: show info and wait for browser open
         const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
         const modelSuffix = model ? `, model=${model}` : '';
         process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);

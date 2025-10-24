@@ -71,7 +71,7 @@ export async function executeForgeTool(
   const forgeClient = new ForgeClient(FORGE_URL);
 
   // Step 0.5: Check for existing session (Phase 2: Session reuse)
-  const existingSession = sessionManager.getSession('forge', projectId);
+  const existingSession = await sessionManager.getSession('forge', projectId);
 
   if (existingSession) {
     // Reuse existing session via follow-up
@@ -83,7 +83,7 @@ export async function executeForgeTool(
     });
 
     try {
-      await forgeClient.followUpTaskAttempt(
+      await sessionManager.delegateToMaster(
         existingSession.attemptId,
         `Follow-up forge request:\nAgent: ${args.agent}\nPrompt: ${args.prompt}`
       );
@@ -102,24 +102,23 @@ export async function executeForgeTool(
         type: 'text',
         text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
           `💡 Genie Tips:\n` +
-          `  - This is THE forge session (reused from previous call)\n` +
+          `  - This is THE forge master (reused from previous call)\n` +
           `  - All forge work happens in this single task\n` +
           `  - Session maintained for conversation continuity\n`
       });
 
       return;
     } catch (error: any) {
-      // Follow-up failed, clear session and create new one
+      // Follow-up failed, create new master
       await streamContent({
         type: 'text',
         text: `⚠️  Follow-up failed: ${error.message}\n` +
-          `   Creating new session...\n\n`
+          `   Creating new master...\n\n`
       });
-      sessionManager.clearSession('forge', projectId);
     }
   }
 
-  // Step 1: Create Forge task (new session)
+  // Step 1: Create Forge task (new master orchestrator)
   await streamContent({
     type: 'text',
     text: `🚀 Starting Forge task with agent: ${args.agent}\n\n`
@@ -184,19 +183,8 @@ export async function executeForgeTool(
     });
   }
 
-  // Step 1.5: Store new session for reuse (Phase 2)
+  // Session will be automatically discovered on next call (Forge-backed)
   const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
-  sessionManager.setSession('forge', projectId, {
-    taskId,
-    attemptId,
-    url: fullUrl,
-    created: new Date().toISOString()
-  });
-
-  await streamContent({
-    type: 'text',
-    text: `💾 Session stored for reuse\n\n`
-  });
 
   // Step 2: Subscribe to diff WebSocket stream
   await streamContent({
