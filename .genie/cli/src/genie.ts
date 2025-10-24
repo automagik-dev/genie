@@ -130,6 +130,10 @@ async function main(): Promise<void> {
       case 'dashboard':
         await runDashboard(parsed, config, paths);
         break;
+      case 'talk':
+        const { runTalk } = await import('./commands/talk');
+        await runTalk(parsed, config, paths);
+        break;
       case 'cleanup':
         await runCleanup(parsed, config, paths);
         break;

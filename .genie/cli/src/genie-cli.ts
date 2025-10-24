@@ -98,6 +98,14 @@ program
     execGenie(args);
   });
 
+// Talk command
+program
+  .command('talk <agent>')
+  .description('Start interactive browser session with agent (Forge UI)')
+  .action((agent: string) => {
+    execGenie(['talk', agent]);
+  });
+
 // Resume command
 program
   .command('resume <sessionId> <prompt>')
@@ -189,6 +197,39 @@ program
   .option('--check', 'Check for updates without installing')
   .action(async (options: { check?: boolean }) => {
     await updateGeniePackage(options.check || false);
+  });
+
+// ==================== HELPER UTILITIES ====================
+
+// Helper command (access to utility scripts)
+program
+  .command('helper [command] [args...]')
+  .description('Run Genie helper utilities (count-tokens, validate-frontmatter, etc.)')
+  .allowUnknownOption()
+  .action((command: string | undefined, args: string[]) => {
+    const helperRouter = path.join(process.cwd(), '.genie', 'scripts', 'helpers', 'index.js');
+
+    // Check if helper router exists
+    if (!fs.existsSync(helperRouter)) {
+      console.error('Error: Helper utilities not found. Run genie init to set up your workspace.');
+      process.exit(1);
+    }
+
+    const helperArgs = command ? [command, ...(args || [])] : [];
+
+    const child = spawn('node', [helperRouter, ...helperArgs], {
+      stdio: 'inherit',
+      env: process.env
+    });
+
+    child.on('exit', (code) => {
+      process.exit(code || 0);
+    });
+
+    child.on('error', (err) => {
+      console.error(`Failed to run helper: ${err.message}`);
+      process.exit(1);
+    });
   });
 
 // Version check for ALL commands (prevents outdated users from bypassing init)
