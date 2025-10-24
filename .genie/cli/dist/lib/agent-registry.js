@@ -75,7 +75,9 @@ class AgentRegistry {
                     filePath,
                     fullContent: markdownBody // Store only markdown body (no YAML frontmatter)
                 };
-                this.agents.set(frontmatter.name.toLowerCase(), metadata);
+                // Use namespaced key: collective/name (prevents collisions)
+                const namespacedKey = `${collective}/${frontmatter.name.toLowerCase()}`;
+                this.agents.set(namespacedKey, metadata);
             }
             catch (error) {
                 console.warn(`Failed to parse agent file ${filePath}: ${error.message}`);
@@ -84,9 +86,24 @@ class AgentRegistry {
     }
     /**
      * Get agent metadata by name
+     * @param name - Agent name (e.g., "install")
+     * @param collective - Optional collective filter (e.g., "code", "create")
      */
-    getAgent(name) {
-        return this.agents.get(name.toLowerCase());
+    getAgent(name, collective) {
+        const lowerName = name.toLowerCase();
+        // If collective specified, use namespaced lookup
+        if (collective) {
+            return this.agents.get(`${collective}/${lowerName}`);
+        }
+        // Otherwise, search across all collectives (backward compatibility)
+        // Try namespaced keys first
+        for (const [key, agent] of this.agents.entries()) {
+            if (key.endsWith(`/${lowerName}`)) {
+                return agent;
+            }
+        }
+        // Fallback: try non-namespaced key (legacy support)
+        return this.agents.get(lowerName);
     }
     /**
      * Get all registered agents
@@ -178,11 +195,31 @@ class AgentRegistry {
     /**
      * Generate Forge profiles for all agents across all executors
      * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
+     * Prepends collective AGENTS.md context to each agent (code agents get .genie/code/AGENTS.md)
      * @param forgeClient - Optional ForgeClient to fetch executors dynamically
      */
     async generateForgeProfiles(forgeClient) {
         const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
         const profiles = { executors: {} };
+        // Load collective AGENTS.md files (prepended to all agents in that collective)
+        const collectiveContexts = new Map();
+        for (const collective of ['code', 'create']) {
+            const collectivePath = path_1.default.join(this.workspaceRoot, `.genie/${collective}/AGENTS.md`);
+            if (fs_1.default.existsSync(collectivePath)) {
+                try {
+                    const content = fs_1.default.readFileSync(collectivePath, 'utf-8');
+                    // Extract markdown body (skip frontmatter - same logic as scanDirectory)
+                    const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
+                    const markdownBody = frontmatterMatch
+                        ? content.substring(frontmatterMatch[0].length)
+                        : content;
+                    collectiveContexts.set(collective, markdownBody);
+                }
+                catch (error) {
+                    console.warn(`⚠️  Failed to load ${collective} collective AGENTS.md: ${error.message}`);
+                }
+            }
+        }
         // Get current profiles to extract DEFAULT variants (for inheriting required fields)
         let defaultVariants = {};
         if (forgeClient) {
@@ -211,13 +248,19 @@ class AgentRegistry {
             for (const agent of this.agents.values()) {
                 if (!agent.fullContent)
                     continue;
-                const variantName = agent.name.toUpperCase();
+                // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
+                const variantName = `${agent.collective.toUpperCase()}_${agent.name.toUpperCase()}`;
+                // Prepend collective AGENTS.md context to agent content
+                const collectiveContext = collectiveContexts.get(agent.collective) || '';
+                const fullPrompt = collectiveContext
+                    ? `${collectiveContext}\n\n---\n\n${agent.fullContent}`
+                    : agent.fullContent;
                 profiles.executors[executor][variantName] = {
                     [executor]: {
                         // Inherit all fields from DEFAULT variant
                         ...baseConfig,
-                        // Override append_prompt with agent content
-                        append_prompt: agent.fullContent,
+                        // Override append_prompt with collective context + agent content
+                        append_prompt: fullPrompt,
                         // Preserve any executor-specific settings from agent metadata
                         ...(agent.genie?.background !== undefined && { background: agent.genie.background })
                     }

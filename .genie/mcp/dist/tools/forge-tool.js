@@ -14,6 +14,7 @@ exports.executeForgeTool = executeForgeTool;
 const zod_1 = require("zod");
 const websocket_manager_js_1 = require("../websocket-manager.js");
 const git_validation_js_1 = require("../lib/git-validation.js");
+const url_shortener_js_1 = require("../lib/url-shortener.js");
 const path_1 = __importDefault(require("path"));
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/forge-tool.js
@@ -160,11 +161,15 @@ async function executeForgeTool(args, context) {
             `  Agent: ${args.agent}\n` +
             `  Project: ${projectId}\n\n`
     });
-    // Step 5: Output human-visible URL
+    // Step 5: Output human-visible URL (shortened if service available)
+    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+    const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(fullUrl, {
+        apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
+    });
     await streamContent({
         type: 'text',
         text: `🌐 Monitor Progress:\n` +
-            `http://localhost:8887/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs\n\n`
+            `${shortUrl || fullUrl}\n\n`
     });
     // Step 6: Genie self-guidance tips
     await streamContent({
