@@ -104,6 +104,7 @@ jobs:
         id: release
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           node scripts/unified-release.cjs \
             --bump rc \
@@ -118,6 +119,7 @@ jobs:
         id: merge_rc
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           # Clean conflicting RC tags
           CURRENT=$(node -p "require('./package.json').version")
@@ -142,6 +144,8 @@ jobs:
       - name: 📌 Tag Push (Publish Existing)
         if: steps.detect.outputs.action == 'tag-push'
         id: tag_push
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           TAG="${{ github.ref }}"
           VERSION=${TAG#refs/tags/v}
@@ -160,6 +164,7 @@ jobs:
         id: manual
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           ACTION="${{ github.event.inputs.action }}"
 
