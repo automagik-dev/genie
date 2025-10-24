@@ -652,16 +652,16 @@ async function installGitHooksIfRequested(packageRoot: string, shouldInstall: bo
   console.log('🔧 Installing git hooks...');
 
   const { spawnSync } = await import('child_process');
-  const installScript = path.join(packageRoot, 'scripts', 'install-hooks.cjs');
+  const installScript = path.join(packageRoot, '.genie', 'scripts', 'install-hooks.cjs');
+  const projectDir = process.cwd();
 
-  const result = spawnSync('node', [installScript], {
-    stdio: 'inherit',
-    cwd: packageRoot
+  const result = spawnSync('node', [installScript, projectDir, packageRoot], {
+    stdio: 'inherit'
   });
 
   if (result.status !== 0) {
     console.warn('⚠️  Hook installation failed (non-fatal)');
-    console.warn('   You can install later with: node scripts/install-hooks.cjs');
+    console.warn(`   You can install later with: node ${installScript} ${projectDir} ${packageRoot}`);
   }
   console.log('');
 }
