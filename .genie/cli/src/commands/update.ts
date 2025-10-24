@@ -308,7 +308,7 @@ async function installGitHooksIfRequested(shouldInstall: boolean): Promise<void>
   console.log('🔧 Installing git hooks...');
 
   const { spawnSync } = await import('child_process');
-  const { getPackageRoot } = await import('../lib/paths');
+  const { getPackageRoot } = await import('../lib/paths.js');
   const packageRoot = getPackageRoot();
   const installScript = path.join(packageRoot, 'scripts', 'install-hooks.cjs');
 
