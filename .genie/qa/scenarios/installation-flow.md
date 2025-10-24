@@ -5,7 +5,7 @@
 **Issue:** #201
 **Files Changed:**
 - `.genie/cli/src/commands/init.ts` - Actually start install agent, show Forge status
-- `start.sh` - Auto-continue instead of exiting
+- `start.sh` - Comprehensive dependency installation (git, gh, Node.js, pnpm, Homebrew)
 
 ---
 
@@ -24,13 +24,18 @@ bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
 ```
 
 **Expected Behavior:**
-1. ✅ Script installs Node.js (if missing)
-2. ✅ Script installs pnpm (if missing)
-3. ✅ Checks for Genie updates, installs/updates if needed
-4. ✅ Runs `genie init` (interactive wizard)
-5. ✅ User selects template (Code/Create)
-6. ✅ User selects executor and model
-7. ✅ Init completes with summary:
+1. ✅ Detects operating system (macOS, Linux distro, Windows/WSL)
+2. ✅ Installs Homebrew (macOS only, if missing)
+3. ✅ Installs git (if missing)
+4. ✅ Installs GitHub CLI (gh) (if missing)
+5. ✅ Prompts for GitHub authentication (if not authenticated)
+6. ✅ Installs Node.js (if missing)
+7. ✅ Installs pnpm (if missing)
+8. ✅ Checks for Genie updates, installs/updates if needed
+9. ✅ Runs `genie init` (interactive wizard)
+10. ✅ User selects template (Code/Create)
+11. ✅ User selects executor and model
+12. ✅ Init completes with summary:
    ```
    ℹ️ Genie initialization complete
    - ✅ Installed Genie template at /path/.genie
@@ -38,12 +43,12 @@ bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
    - 💾 Backup ID: 2025-10-22T...
    - 📚 Template source: ...
    ```
-8. ✅ **NEW:** Shows Forge startup message:
+13. ✅ **NEW:** Shows Forge startup message:
    ```
    🚀 Starting Forge server and Install agent...
    ```
-9. ✅ **NEW:** Install agent automatically starts (Forge-backed)
-10. ✅ **NEW:** User sees Forge task output:
+14. ✅ **NEW:** Install agent automatically starts (Forge-backed)
+15. ✅ **NEW:** User sees Forge task output:
     ```
     ▸ Creating Forge task for code/agents/install...
     ▸ Task attempt created: <uuid>
@@ -54,8 +59,8 @@ bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
       Continue conversation:
         npx automagik-genie resume <uuid> "..."
     ```
-11. ✅ User remains in install agent interactive session
-12. ✅ Script does NOT exit back to shell
+16. ✅ User remains in install agent interactive session
+17. ✅ Script does NOT exit back to shell
 
 **Failure Modes:**
 - ❌ Script exits after init without starting install agent
