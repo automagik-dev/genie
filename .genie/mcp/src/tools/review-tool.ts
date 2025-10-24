@@ -164,7 +164,7 @@ export async function executeReviewTool(
       },
       executor_profile_id: {
         executor: 'CLAUDE_CODE',
-        variant: 'review'
+        variant: 'neuron-review'
       },
       base_branch: 'dev'
     });

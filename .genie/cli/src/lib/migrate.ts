@@ -111,22 +111,22 @@ export function detectInstallType(): 'clean' | 'old_genie' | 'already_new' {
     return 'clean';
   }
 
-  // Check for new structure (workflows/ and agents/ subdirectories)
+  // Check for old nested structure (workflows/ and agents/ subdirectories)
   const workflowsDir = path.join(agentsDir, 'workflows');
-  const neuronsDir = path.join(agentsDir, 'agents');
+  const legacyAgentsDir = path.join(agentsDir, 'agents');
 
-  if (fs.existsSync(workflowsDir) && fs.existsSync(neuronsDir)) {
-    // Has new structure - check if agents come from npm or are in repo
+  if (fs.existsSync(workflowsDir) && fs.existsSync(legacyAgentsDir)) {
+    // Has old nested structure - check if agents come from npm or are in repo
     const workflowAgents = fs.existsSync(workflowsDir)
       ? fs.readdirSync(workflowsDir).filter(f => f.endsWith('.md')).length
       : 0;
-    const neuronAgents = fs.existsSync(neuronsDir)
-      ? fs.readdirSync(neuronsDir).filter(f => f.endsWith('.md')).length
+    const agentCount = fs.existsSync(legacyAgentsDir)
+      ? fs.readdirSync(legacyAgentsDir).filter(f => f.endsWith('.md')).length
       : 0;
 
     // If agents exist in repo, old structure (should come from npm)
     // BUT: Only flag as old_genie if NO version file exists (modern installs always have version)
-    if (workflowAgents > 0 || neuronAgents > 0) {
+    if (workflowAgents > 0 || agentCount > 0) {
       return 'old_genie';
     }
 

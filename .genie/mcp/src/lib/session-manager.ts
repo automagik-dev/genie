@@ -30,10 +30,10 @@ export class SessionManager {
       // Query Forge for tasks
       const tasks = await this.forgeClient.listTasks(projectId);
 
-      // Find master orchestrator (status='agent', executor contains workflow, no parent)
+      // Find master orchestrator (status='agent', executor contains neuron-{workflow}, no parent)
       const master = tasks.find((t: any) =>
         t.status === 'agent' &&
-        t.executor?.includes(`:${workflow}`) &&
+        t.executor?.includes(`:neuron-${workflow}`) &&
         !t.parent_task_attempt
       );
 
@@ -83,7 +83,7 @@ export class SessionManager {
         project_id: projectId,
         title,
         prompt,
-        executor: `CLAUDE_CODE:${workflow}`,
+        executor: `CLAUDE_CODE:neuron-${workflow}`,
         status: 'agent', // Hidden from main Kanban
         parent_task_attempt: null // Masters have no parent
       });
