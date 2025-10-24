@@ -49,7 +49,7 @@ for (let i = 0; i < args.length; i += 2) {
   opts[args[i].replace(/^--/, '')] = args[i + 1] || true;
 }
 
-function main() {
+async function main() {
   log('cyan', '🚀', 'Unified Release Flow');
 
   const pkg = JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
