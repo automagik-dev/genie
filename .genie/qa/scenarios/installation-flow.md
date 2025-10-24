@@ -20,7 +20,7 @@ mkdir -p "$QA_DIR" && cd "$QA_DIR"
 
 **Execute:**
 ```bash
-bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
+bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"
 ```
 
 **Expected Behavior:**
@@ -102,7 +102,7 @@ npx automagik-genie@2.4.2-rc.60 init code
 
 **Execute:**
 ```bash
-bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
+bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"
 ```
 
 **Expected Behavior:**

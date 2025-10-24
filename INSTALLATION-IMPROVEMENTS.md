@@ -147,13 +147,13 @@ docker run -it ubuntu:latest bash
 apt-get update && apt-get install -y curl
 
 # Run Genie installer
-bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
+bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"
 ```
 
 ### Test on macOS
 ```bash
 # Fresh macOS (no Homebrew)
-bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
+bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"
 ```
 
 ## 📋 Installation Flow
@@ -212,12 +212,12 @@ Missing dependency: gh not found
 
 ### Linux/macOS
 ```bash
-bash -c "$(curl -fsSL https://genie.namastex.ai/start.sh)"
+bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"
 ```
 
 ### Windows (PowerShell)
 ```powershell
-irm https://genie.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"; & "$env:TEMP\genie-install.ps1"
+irm https://install.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"; & "$env:TEMP\genie-install.ps1"
 ```
 
 ## 🔒 Security & Privacy
