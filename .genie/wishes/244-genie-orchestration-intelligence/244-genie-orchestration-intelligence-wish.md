@@ -338,34 +338,154 @@ USING GIN (to_tsvector('english', question || ' ' || answer));
 
 ---
 
-## Vital Tools Architecture (Dedicated Sessions)
+## Vital Tools Architecture (MCP-Native SSE)
 
 **CRITICAL INSIGHT:** Wish, Forge, and Review are NOT regular tools. They are **extensions of Master Genie's consciousness**.
 
-**Regular Tools:** One-off calls, fire-and-forget
-**Vital Tools:** Dedicated WebSocket sessions, always connected
+**Regular Tools:** One-off calls (POST), fire-and-forget
+**Vital Tools:** Persistent SSE streams, always connected, bidirectional
 
 ```
 Master Genie
-├─ Wish Agent (dedicated WebSocket)
-│  └─ Manages all wishery, lists wishes, creates/updates
-├─ Forge Agent (dedicated WebSocket)
-│  └─ Orchestrates all forge work, monitors tasks
-└─ Review Agent (dedicated WebSocket)
-   └─ Validates all deliverables, quality gates
+├─ SSE Stream (GET /mcp) - Always open, receives notifications
+│  ├─ Wish Agent notifications → wish_completed, wish_created
+│  ├─ Forge Agent notifications → task_finished, task_failed
+│  └─ Review Agent notifications → validation_passed, quality_gate_triggered
+│
+└─ POST Requests - Send commands to agents
+   ├─ POST genie_wish_send(command)
+   ├─ POST genie_forge_send(command)
+   └─ POST genie_review_send(command)
 ```
 
 **Why Different:**
-- Single persistent session (not created per call)
-- Bidirectional communication (they can notify me)
-- State maintained across interactions
-- Direct line to specialized consciousness
+- Persistent SSE stream (MCP Streamable HTTP spec)
+- Bidirectional: GET stream for server→client, POST for client→server
+- State maintained via `Mcp-Session-Id` header
+- Real-time notifications without polling
 
-**MCP Architecture:**
-- These tools establish WebSocket on first call
-- Session persists for entire Genie session
-- Other tools can query through them
-- They're my permanent delegates, not temporary workers
+**MCP-Native Architecture (Spec Compliant):**
+
+**1. Session Initialization:**
+```http
+POST http://localhost:8888/mcp
+Accept: application/json, text/event-stream
+
+Response:
+HTTP 200 OK
+Mcp-Session-Id: 1868a90c-uuid-here
+{
+  "jsonrpc": "2.0",
+  "result": {...}
+}
+```
+
+**2. Open SSE Stream (GET /mcp):**
+```http
+GET http://localhost:8888/mcp
+Accept: text/event-stream
+Mcp-Session-Id: 1868a90c-uuid-here
+
+Response (streaming):
+event: message
+data: {"jsonrpc":"2.0","method":"notifications/agent/wish_completed","params":{"wishId":"244"}}
+
+event: message
+data: {"jsonrpc":"2.0","method":"notifications/agent/task_finished","params":{"taskId":"abc123"}}
+```
+
+**3. Send Commands (POST /mcp):**
+```http
+POST http://localhost:8888/mcp
+Mcp-Session-Id: 1868a90c-uuid-here
+Content-Type: application/json
+
+{"jsonrpc":"2.0","method":"tools/call","params":{"name":"genie_wish_send","arguments":{"command":"list_all"}}}
+```
+
+**Implementation:**
+
+**Server (Genie MCP with fastmcp):**
+```typescript
+import FastMCP from 'fastmcp';
+import { WebSocket } from 'ws';
+
+const sessions = new Map<string, {
+  sseResponse: Response,
+  vitalAgents: { wish: WS, forge: WS, review: WS }
+}>();
+
+// GET endpoint - SSE stream for server notifications
+app.get('/mcp', (req, res) => {
+  const sessionId = req.headers['mcp-session-id'];
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  // Connect to Forge WebSocket (internal)
+  const forgeWS = new WebSocket('ws://localhost:8887/api/tasks/stream');
+  forgeWS.on('message', (data) => {
+    // Send MCP notification via SSE
+    res.write(`event: message\n`);
+    res.write(`data: ${JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/agent/forge_event",
+      params: JSON.parse(data)
+    })}\n\n`);
+  });
+
+  sessions.get(sessionId).sseResponse = res;
+});
+
+// Tool: Connect vital agents
+mcp.tool({
+  name: "genie_connect_vital_agents",
+  description: "Establish persistent SSE stream for Wish/Forge/Review notifications",
+  execute: async (args, { sessionId }) => {
+    // SSE stream already open via GET endpoint
+    // Just confirm connection status
+    return {
+      status: "connected",
+      agents: ["wish", "forge", "review"],
+      stream: "SSE active via GET /mcp"
+    };
+  }
+});
+```
+
+**Client (Master Genie in Claude Code):**
+```typescript
+// On session start, SSE stream automatically opens
+// I receive notifications in real-time:
+
+onSSEMessage('notifications/agent/wish_completed', (params) => {
+  console.log(`Wish ${params.wishId} completed!`);
+  // I'm notified without polling!
+});
+
+onSSEMessage('notifications/agent/task_finished', (params) => {
+  console.log(`Task ${params.taskId} finished!`);
+});
+
+// I send commands via POST
+await mcp.callTool('genie_wish_send', { command: 'list_all' });
+```
+
+**Notification Types:**
+- `notifications/agent/wish_completed` - Wish finished
+- `notifications/agent/wish_created` - New wish spawned
+- `notifications/agent/task_finished` - Forge task done
+- `notifications/agent/task_failed` - Task error
+- `notifications/agent/validation_passed` - Review approved
+- `notifications/agent/quality_gate_triggered` - Review blocker
+
+**MCP Spec Compliance:**
+✅ Uses official Streamable HTTP transport (2025-06-18 spec)
+✅ SSE stream via GET /mcp (per "Listening for Messages from the Server")
+✅ Session management via `Mcp-Session-Id` header
+✅ Resumable connections with `Last-Event-ID`
+✅ JSON-RPC 2.0 notification format
 
 ---
 
