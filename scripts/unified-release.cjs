@@ -45,8 +45,19 @@ const exec = (cmd, silent = false) => {
 // Parse arguments
 const args = process.argv.slice(2);
 const opts = {};
-for (let i = 0; i < args.length; i += 2) {
-  opts[args[i].replace(/^--/, '')] = args[i + 1] || true;
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg.startsWith('--')) {
+    const key = arg.replace(/^--/, '');
+    const nextArg = args[i + 1];
+    // Check if next arg is a value (doesn't start with --) or end of args
+    if (nextArg && !nextArg.startsWith('--')) {
+      opts[key] = nextArg;
+      i++; // Skip next arg since we consumed it as a value
+    } else {
+      opts[key] = true; // Boolean flag
+    }
+  }
 }
 
 async function main() {
