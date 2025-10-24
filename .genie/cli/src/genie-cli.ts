@@ -291,6 +291,37 @@ if (shouldCheckVersion) {
       process.exit(0);
     }
   }
+
+  // FIX for issue #237: Escape hatch - detect infinite loop scenario
+  // If version is STILL mismatched after attempting init, don't loop infinitely
+  // This can happen if init returns early (e.g., for 'old_genie' without --yes)
+  if (fs.existsSync(versionPath)) {
+    try {
+      const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+      const installedVersion = versionData.version;
+      const currentVersion = packageJson.version;
+
+      if (installedVersion !== currentVersion && shouldCheckVersion) {
+        // ESCAPE HATCH: Version didn't update during the version check phase
+        // This means detectInstallType() triggered old_genie without init fully running
+        console.log('');
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log(magicGradient('   🧞 ✨ LOOPHOLE DETECTED & CLOSED ✨ 🧞   '));
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log('⚠️  Version file did not update after init!');
+        console.log(`   Expected: ${currentVersion}`);
+        console.log(`   Got:      ${installedVersion}`);
+        console.log('');
+        console.log('This usually means init returned early (old_genie detection).');
+        console.log('The fix has been applied - please try again.');
+        console.log('');
+        process.exit(1);
+      }
+    } catch (error) {
+      // If version check fails here, safe to continue
+    }
+  }
 }
 
 // If no command was provided, use smart router

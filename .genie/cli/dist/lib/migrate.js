@@ -47,11 +47,47 @@ const CORE_AGENT_IDS = [
 ];
 /**
  * Detects if this is a clean install or needs migration
+ *
+ * CRITICAL FIX for issue #237 (infinite update loop):
+ * Check version files FIRST - if modern version exists, never report as "old_genie"
+ * The presence of .genie/agents/workflows/ and .genie/agents/agents/ with .md files
+ * is NOT a reliable indicator of old installations, as the new structure (v2.1.0+)
+ * also copies these directories from templates.
  */
 function detectInstallType() {
     const genieDir = '.genie';
     if (!fs_1.default.existsSync(genieDir)) {
         return 'clean';
+    }
+    // FIX: Check for modern version files FIRST
+    // If version.json exists and has a modern version (v2.1.0+), this is NOT old_genie
+    const versionPath = path_1.default.join(genieDir, 'state', 'version.json');
+    const frameworkVersionPath = path_1.default.join(genieDir, '.framework-version');
+    if (fs_1.default.existsSync(versionPath)) {
+        try {
+            const versionData = JSON.parse(fs_1.default.readFileSync(versionPath, 'utf8'));
+            const version = versionData.version;
+            // If version.json exists with a version string, this is modern structure
+            if (version && typeof version === 'string') {
+                return 'already_new';
+            }
+        }
+        catch (e) {
+            // Corrupted version file - treat as needs upgrade
+        }
+    }
+    if (fs_1.default.existsSync(frameworkVersionPath)) {
+        try {
+            const versionData = JSON.parse(fs_1.default.readFileSync(frameworkVersionPath, 'utf8'));
+            const version = versionData.installed_version;
+            // If .framework-version exists with a version, this is modern
+            if (version && typeof version === 'string') {
+                return 'already_new';
+            }
+        }
+        catch (e) {
+            // Corrupted version file - treat as needs upgrade
+        }
     }
     const agentsDir = path_1.default.join(genieDir, 'agents');
     if (!fs_1.default.existsSync(agentsDir)) {
@@ -69,6 +105,7 @@ function detectInstallType() {
             ? fs_1.default.readdirSync(neuronsDir).filter(f => f.endsWith('.md')).length
             : 0;
         // If agents exist in repo, old structure (should come from npm)
+        // BUT: Only flag as old_genie if NO version file exists (modern installs always have version)
         if (workflowAgents > 0 || neuronAgents > 0) {
             return 'old_genie';
         }

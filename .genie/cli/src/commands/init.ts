@@ -188,6 +188,11 @@ export async function runInit(
       console.log('Run `genie init --yes` to force reinitialize (creates backup).');
       console.log('');
 
+      // FIX for issue #237: Write version file even when returning early
+      // This prevents infinite loop where version stays old, triggering init again
+      const backupId = toIsoId();
+      await writeVersionState(cwd, backupId, false);
+
       await emitView(
         buildInfoView(
           'Old Installation Detected',
