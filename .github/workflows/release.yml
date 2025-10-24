@@ -59,12 +59,25 @@ jobs:
           elif [ "$EVENT" = "push" ] && [[ "$REF" == refs/tags/* ]]; then
             ACTION="tag-push"
           elif [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
-            # Check if commit message contains "chore: pre-release"
+            # Check if commit contains code changes
             COMMIT_MSG=$(git log -1 --pretty=%B)
-            if echo "$COMMIT_MSG" | grep -q "pre-release\|bump"; then
-              ACTION="auto-bump-rc"
-            else
+
+            # Skip automated pre-release commits (prevents infinite loop)
+            if echo "$COMMIT_MSG" | grep -Eq "^chore: pre-release|^chore:.*bump"; then
+              echo "Skipping automated pre-release commit"
               ACTION="skip"
+            # Trigger RC for code-changing commits
+            elif echo "$COMMIT_MSG" | grep -Eq "^(feat|fix|test|build):"; then
+              echo "Code-changing commit detected: triggering RC bump"
+              ACTION="auto-bump-rc"
+            # Skip documentation and non-code commits
+            elif echo "$COMMIT_MSG" | grep -Eq "^(docs|chore|style|refactor|perf|ci):"; then
+              echo "Non-code commit detected: skipping release"
+              ACTION="skip"
+            # Default: trigger RC for commits without conventional prefix (PR merges, etc)
+            else
+              echo "Non-conventional commit: triggering RC bump"
+              ACTION="auto-bump-rc"
             fi
           elif [ "$EVENT" = "pull_request" ]; then
             # Merge dev → main
