@@ -38,22 +38,33 @@ All agent instructions, patterns, and behavioral rules are in AGENTS.md for sing
     - Exits, leaving Forge running in background
   - Use case: Interactive work with agents via Forge UI
 
-**In Progress:**
-- 🚧 **`genie run <agent> <prompt>`** - Headless JSON execution (PLANNED)
-  - Current: Starts task → Shows URL → Opens browser (interactive mode)
-  - Target: Starts Forge → Executes → Waits for completion → Prints JSON → Exits
-  - Flags planned:
-    - Default: JSON output with full metadata (status, duration, executor, task IDs, forge_url)
-    - `--raw`: Plain text output only (for simple scripts)
-    - `--quiet`: Suppress startup messages
-  - Architecture changes needed:
-    - Silent Forge startup helper
-    - Task completion polling (wait for Forge task to finish)
-    - Output extraction from executor logs
-    - Structured JSON response format
+**Implemented (Needs Testing):**
+- 🟡 **`genie run <agent> <prompt>`** - Headless JSON execution
+  - Location: `.genie/cli/src/cli-core/handlers/run.ts` (modified)
+  - Helpers: `.genie/cli/src/lib/headless-helpers.ts` (new)
+  - Types: `.genie/cli/src/lib/types.ts` (added `raw`, `quiet` to CLIOptions)
+  - Behavior:
+    - Detects `--raw` or `--quiet` flags → switches to headless mode
+    - Ensures Forge running (silent if `--quiet`)
+    - Creates session, waits for completion (polling every 1s, 5min timeout)
+    - Outputs JSON (default) or raw text (`--raw`)
+    - Sets exit code 0 (success) or 1 (failure)
+  - Flags:
+    - Default: JSON output with metadata (status, duration, executor, model, task_id, attempt_id, forge_url, timestamp)
+    - `--raw`: Plain text output only
+    - `--quiet`: Suppress Forge startup messages
+  - **Known Issues (BLOCKER for production use):**
+    1. 🔴 **extractFinalOutput() too naive** - Just returns last line of logs
+       - Problem: Forge logs contain tool calls, status markers, debugging output
+       - Last line might be `"[INFO] Session ended"` not agent response
+       - Need to inspect actual Forge log format and parse correctly
+    2. 🟡 **process.exit() kills immediately** - Should set `process.exitCode` and return
+    3. 🟡 **Forge startup inconsistency** - Interactive mode doesn't call `ensureForgeRunning()`
 
 **Architecture Notes:**
 - Forge backend dependency: Both modes require Forge running (`localhost:8887`)
-- Forge lifecycle: Auto-starts if down (2s typical), stays running between commands
-- Current `genie run` opens browser (interactive) - new mode will be headless by default
+- Forge executor logs: `listExecutionProcesses(attemptId)` returns array with `.output` field (format unknown)
+- Two log streams available: raw (stdout/stderr) and normalized (parsed) via WebSocket
+- Polling pattern: Check `getTaskAttempt(id).status` every 1s until `completed|success|failed|error`
+- Exit code pattern: Use `process.exitCode = N` not `process.exit(N)` (matches genie.ts main handler)
 - Serverless feasibility: LOW (Forge manages local git worktrees, executor processes, requires filesystem access)
