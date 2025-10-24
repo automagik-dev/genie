@@ -105,6 +105,7 @@ jobs:
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node scripts/unified-release.cjs \
             --bump rc \
@@ -120,6 +121,7 @@ jobs:
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Clean conflicting RC tags
           CURRENT=$(node -p "require('./package.json').version")
@@ -146,6 +148,7 @@ jobs:
         id: tag_push
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref }}"
           VERSION=${TAG#refs/tags/v}
@@ -165,6 +168,7 @@ jobs:
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ACTION="${{ github.event.inputs.action }}"
 
