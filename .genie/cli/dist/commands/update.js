@@ -104,6 +104,33 @@ async function runUpdate(parsed, _config, _paths) {
                 return;
             }
         }
+        // Ask about hook installation (advanced feature)
+        let shouldInstallHooks = false;
+        if (process.stdout.isTTY && !flags.force) {
+            const { default: prompts } = await import('prompts');
+            const hookResponse = await prompts({
+                type: 'select',
+                name: 'installHooks',
+                message: '🔧 Install git hooks? (Advanced - validates commits/pushes, runs tests)',
+                choices: [
+                    {
+                        title: 'No (default - recommended for most users)',
+                        value: false
+                    },
+                    {
+                        title: 'Yes (advanced - modifies .git/hooks/)',
+                        value: true
+                    }
+                ],
+                initial: 0,
+                hint: '⚠️  Only install if you understand what git hooks do'
+            });
+            if (hookResponse.installHooks === undefined) {
+                console.log('Update cancelled.');
+                return;
+            }
+            shouldInstallHooks = hookResponse.installHooks;
+        }
         // Generate upgrade diff
         await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Preparing upgrade', ['📦 Fetching framework diff...']), parsed.options);
         const upgradeContext = {
@@ -129,6 +156,8 @@ async function runUpdate(parsed, _config, _paths) {
                 `User files preserved: ${result.filesPreserved}`,
                 `💾 Backup ID: ${result.backupId}`
             ]), parsed.options);
+            // Install git hooks if user opted in
+            await installGitHooksIfRequested(shouldInstallHooks);
         }
         else {
             // Conflicts detected - needs Update Agent
@@ -169,4 +198,27 @@ function parseFlags(args) {
         }
     }
     return flags;
+}
+/**
+ * Install git hooks if user opted in during update
+ */
+async function installGitHooksIfRequested(shouldInstall) {
+    if (!shouldInstall) {
+        return;
+    }
+    console.log('');
+    console.log('🔧 Installing git hooks...');
+    const { spawnSync } = await import('child_process');
+    const { getPackageRoot } = await import('../lib/paths.js');
+    const packageRoot = getPackageRoot();
+    const installScript = path_1.default.join(packageRoot, 'scripts', 'install-hooks.cjs');
+    const result = spawnSync('node', [installScript], {
+        stdio: 'inherit',
+        cwd: packageRoot
+    });
+    if (result.status !== 0) {
+        console.warn('⚠️  Hook installation failed (non-fatal)');
+        console.warn('   You can install later with: node scripts/install-hooks.cjs');
+    }
+    console.log('');
 }
