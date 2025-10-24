@@ -21,7 +21,9 @@ const gradient_string_1 = __importDefault(require("gradient-string"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
 // Load ForgeClient from package root
-const geniePackageRoot = process.cwd();
+// Resolve relative to this module's location (.genie/cli/src/lib/)
+// Package root is 4 levels up: ../../../..
+const geniePackageRoot = path_1.default.join(__dirname, '../../../..');
 const ForgeClient = require(path_1.default.join(geniePackageRoot, 'forge.js')).ForgeClient;
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 const GENIE_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce';
