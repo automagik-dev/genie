@@ -1,0 +1,165 @@
+name: 🚀 Unified Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Release action'
+        required: true
+        type: choice
+        options:
+          - 'bump-rc'
+          - 'promote-to-stable'
+          - 'manual-tag'
+        default: 'bump-rc'
+      tag:
+        description: 'Version tag for manual-tag (e.g., v1.2.3)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      released: ${{ steps.release.outputs.released }}
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔧 Setup Release Environment
+        uses: ./.github/actions/setup-release
+
+      - name: 🔍 Determine Release Type
+        id: detect
+        run: |
+          EVENT="${{ github.event_name }}"
+          REF="${{ github.ref }}"
+
+          # Determine action based on trigger
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            ACTION="${{ github.event.inputs.action }}"
+          elif [ "$EVENT" = "push" ] && [[ "$REF" == refs/tags/* ]]; then
+            ACTION="tag-push"
+          elif [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
+            # Check if commit message contains "chore: pre-release"
+            COMMIT_MSG=$(git log -1 --pretty=%B)
+            if echo "$COMMIT_MSG" | grep -q "pre-release\|bump"; then
+              ACTION="auto-bump-rc"
+            else
+              ACTION="skip"
+            fi
+          elif [ "$EVENT" = "pull_request" ]; then
+            # Merge dev → main
+            HEAD="${{ github.event.pull_request.head.ref }}"
+            if [ "$HEAD" = "dev" ] && ${{ github.event.pull_request.merged }}; then
+              ACTION="merge-rc"
+            else
+              ACTION="skip"
+            fi
+          else
+            ACTION="skip"
+          fi
+
+          echo "action=$ACTION" >> $GITHUB_OUTPUT
+          echo "Release action: $ACTION"
+
+      - name: ⏭️ Skip if Not Needed
+        if: steps.detect.outputs.action == 'skip'
+        run: echo "No release needed for this event"
+
+      - name: 📌 Bump RC (Auto)
+        if: steps.detect.outputs.action == 'auto-bump-rc'
+        id: release
+        run: |
+          node scripts/unified-release.cjs \
+            --bump rc \
+            --publish \
+            --github-release
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "released=true" >> $GITHUB_OUTPUT
+
+      - name: 📌 Bump RC (Merge dev→main)
+        if: steps.detect.outputs.action == 'merge-rc'
+        id: merge_rc
+        run: |
+          # Clean conflicting RC tags
+          CURRENT=$(node -p "require('./package.json').version")
+          if [[ $CURRENT =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
+            BASE="${BASH_REMATCH[1]}"
+            RC_NUM="${BASH_REMATCH[2]}"
+            NEXT_RC=$((RC_NUM + 1))
+            NEXT_TAG="v${BASE}-rc.${NEXT_RC}"
+            git tag -d "$NEXT_TAG" 2>/dev/null || true
+            git push origin ":refs/tags/$NEXT_TAG" 2>/dev/null || true
+          fi
+
+          node scripts/unified-release.cjs \
+            --bump rc \
+            --publish \
+            --github-release
+
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "released=true" >> $GITHUB_OUTPUT
+
+      - name: 📌 Tag Push (Publish Existing)
+        if: steps.detect.outputs.action == 'tag-push'
+        id: tag_push
+        run: |
+          TAG="${{ github.ref }}"
+          VERSION=${TAG#refs/tags/v}
+
+          node scripts/unified-release.cjs \
+            --tag "v$VERSION" \
+            --publish \
+            --github-release \
+            --skip-tests
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "released=true" >> $GITHUB_OUTPUT
+
+      - name: 🎯 Manual Dispatch
+        if: steps.detect.outputs.action == 'bump-rc' || steps.detect.outputs.action == 'promote-to-stable' || steps.detect.outputs.action == 'manual-tag'
+        id: manual
+        run: |
+          ACTION="${{ github.event.inputs.action }}"
+
+          if [ "$ACTION" = "bump-rc" ]; then
+            node scripts/unified-release.cjs --bump rc --publish --github-release
+          elif [ "$ACTION" = "promote-to-stable" ]; then
+            node scripts/unified-release.cjs --promote --publish --github-release
+          elif [ "$ACTION" = "manual-tag" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            node scripts/unified-release.cjs --tag "$TAG" --publish --github-release --skip-tests
+          fi
+
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "released=true" >> $GITHUB_OUTPUT
+
+      - name: ✅ Release Summary
+        if: success() && steps.release.outputs.released == 'true' || steps.merge_rc.outputs.released == 'true' || steps.tag_push.outputs.released == 'true' || steps.manual.outputs.released == 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "🎉 Released v$VERSION"
+          echo "📦 npm install automagik-genie@$(echo $VERSION | grep -q 'rc' && echo 'next' || echo 'latest')"
+          echo "🔗 https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
