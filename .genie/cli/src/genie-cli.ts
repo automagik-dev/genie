@@ -17,6 +17,7 @@ import { collectForgeStats, formatStatsForDashboard } from './lib/forge-stats';
 import { formatTokenMetrics } from './lib/token-tracker';
 import { runInit } from './commands/init';
 import { loadConfig } from './lib/config';
+import { loadOrCreateConfig as loadOrCreateMCPConfig } from './lib/config-manager';
 import { createForgeExecutor } from './lib/forge-executor';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from './lib/types';
 import { getLearnedSpells, formatSpellChangelog, getTagForVersion } from './lib/spell-changelog';
@@ -1107,7 +1108,11 @@ async function startGenieServer(): Promise<void> {
     console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
   }
 
-  // Phase 2: Start MCP server with SSE transport
+  // Phase 2: Ensure MCP OAuth2 config exists before starting MCP server
+  // This auto-generates OAuth2 credentials if ~/.genie/config.yaml is missing
+  await loadOrCreateMCPConfig();
+
+  // Phase 3: Start MCP server with SSE transport
   const mcpPort = process.env.MCP_PORT || '8885';
   console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
   console.log('');

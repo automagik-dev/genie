@@ -21,6 +21,7 @@ const forge_stats_1 = require("./lib/forge-stats");
 const token_tracker_1 = require("./lib/token-tracker");
 const init_1 = require("./commands/init");
 const config_1 = require("./lib/config");
+const config_manager_1 = require("./lib/config-manager");
 const spell_changelog_1 = require("./lib/spell-changelog");
 const program = new commander_1.Command();
 // Universe Genie-themed gradients 🧞✨🌌
@@ -996,7 +997,10 @@ async function startGenieServer() {
         }
         console.log(successGradient(`📦 Forge:  ${baseUrl} ✓`));
     }
-    // Phase 2: Start MCP server with SSE transport
+    // Phase 2: Ensure MCP OAuth2 config exists before starting MCP server
+    // This auto-generates OAuth2 credentials if ~/.genie/config.yaml is missing
+    await (0, config_manager_1.loadOrCreateConfig)();
+    // Phase 3: Start MCP server with SSE transport
     const mcpPort = process.env.MCP_PORT || '8885';
     console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
     console.log('');
