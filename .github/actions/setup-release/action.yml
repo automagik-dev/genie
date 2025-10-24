@@ -18,6 +18,12 @@ runs:
       run: pnpm install --frozen-lockfile
       shell: bash
 
+    - name: Setup Git hooks
+      run: |
+        chmod +x .git/hooks/pre-commit 2>/dev/null || true
+        chmod +x .git/hooks/pre-push 2>/dev/null || true
+      shell: bash
+
     - name: Configure Git
       run: |
         git config --global user.name "github-actions[bot]"
