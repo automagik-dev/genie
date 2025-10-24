@@ -116,14 +116,20 @@ function installGitHooks() {
         }
       }
 
-      // Create shell wrapper that points to the actual hook script
-      if (hook.runtime === 'node') {
-        const wrapper = `#!/bin/sh\nexec node "${source}" "$@"\n`;
-        fs.writeFileSync(dest, wrapper, { mode: 0o755 });
-      } else if (hook.runtime === 'python3') {
-        const wrapper = `#!/bin/sh\nexec python3 "${source}" "$@"\n`;
-        fs.writeFileSync(dest, wrapper, { mode: 0o755 });
+      // Create symlink (works in main repo and Forge worktrees)
+      // For Node hooks: symlink directly to the .cjs file (has #!/usr/bin/env node shebang)
+      // For Python hooks: symlink directly to the .py file (has #!/usr/bin/env python3 shebang)
+      // Relative path: .git/hooks → ../../.genie/scripts/hooks/<name>.<ext>
+      const relativePath = path.relative(gitHooksDir, source);
+
+      // Remove existing hook (symlink or file)
+      if (fs.existsSync(dest)) {
+        fs.unlinkSync(dest);
       }
+
+      // Create symlink with relative path
+      fs.symlinkSync(relativePath, dest);
+      fs.chmodSync(dest, 0o755);
 
       console.log(`${GREEN}✓${RESET} ${hook.name} installed`);
       installed++;
