@@ -114,7 +114,7 @@ Your choice (1/2/3): _
 
 **Conflict:**
   Line 45: User added "Example: Fat file = 1000 lines"
-  Line 45: Upstream added "Formula: tokens = lines × 0.75 × words/line"
+  Line 45: Upstream added "Use: genie helper count-tokens <file>"
 
 **Options:**
   1. Keep both (user examples + upstream formulas)
@@ -197,8 +197,8 @@ User added `.genie/spells/custom-deployment.md` (not in template)
 
 **Example:**
 User: "Example: Fat = 1000 lines"
-Upstream: "Formula: tokens = lines × 0.75"
-Resolution: Keep both, formula first (more general), then example
+Upstream: "Use: genie helper count-tokens <file>"
+Resolution: Keep both, helper command first (official method), then example
 ```
 
 ### Pattern 3: Upstream Restructured File

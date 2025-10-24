@@ -14,13 +14,14 @@ Core Genie agents available globally (not tied to a specific collective).
   - Detects: Token bloat, metadata duplication, content duplication, contradictions, dead references, invalid frontmatter, TODO markers, merge conflicts
   - Outputs: GitHub issues per finding + daily report
   - Schedule: Local cron 0:00 daily
-  - Helpers: `validate-frontmatter.js`, `detect-todos.js`
+  - Helpers: `genie helper validate-frontmatter`, `genie helper detect-markers`, `genie helper count-tokens`
   - See: `.genie/agents/garbage-collector.md`
 
-- **Garbage Cleaner** — Batch executor for garbage-collection fixes
-  - Processes: GitHub issues tagged `garbage-collection`
+- **Garbage Cleaner** — Individual PR executor for garbage-collection fixes
+  - Processes: GitHub issues tagged `garbage-collection` (one issue = one PR)
   - Implements: Automated quality improvements
-  - Outputs: PR with all fixes + issue auto-close
+  - Outputs: Individual PR per issue + auto-close on merge
+  - Review: Auto-assigned to victor
   - Trigger: Manual after reviewing issues
   - See: `.genie/agents/garbage-cleaner.md`
 

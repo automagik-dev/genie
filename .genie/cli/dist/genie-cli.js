@@ -173,6 +173,32 @@ program
     .action(async (options) => {
     await updateGeniePackage(options.check || false);
 });
+// ==================== HELPER UTILITIES ====================
+// Helper command (access to utility scripts)
+program
+    .command('helper [command] [args...]')
+    .description('Run Genie helper utilities (count-tokens, validate-frontmatter, etc.)')
+    .allowUnknownOption()
+    .action((command, args) => {
+    const helperRouter = path_1.default.join(process.cwd(), '.genie', 'scripts', 'helpers', 'index.js');
+    // Check if helper router exists
+    if (!fs_1.default.existsSync(helperRouter)) {
+        console.error('Error: Helper utilities not found. Run genie init to set up your workspace.');
+        process.exit(1);
+    }
+    const helperArgs = command ? [command, ...(args || [])] : [];
+    const child = (0, child_process_1.spawn)('node', [helperRouter, ...helperArgs], {
+        stdio: 'inherit',
+        env: process.env
+    });
+    child.on('exit', (code) => {
+        process.exit(code || 0);
+    });
+    child.on('error', (err) => {
+        console.error(`Failed to run helper: ${err.message}`);
+        process.exit(1);
+    });
+});
 // Version check for ALL commands (prevents outdated users from bypassing init)
 const args = process.argv.slice(2);
 // Skip version check for these commands (they're safe to run with any version)

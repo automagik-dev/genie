@@ -109,9 +109,18 @@ wc -l .genie/**/*.md | tail -1  # New total
 # Difference = your impact
 ```
 
-**Token estimate:** ~0.75 tokens/word × ~10 words/line × lines added
+**Token count (REQUIRED):**
+```bash
+# NEVER manually calculate tokens - use the helper
+genie helper count-tokens <new-file>.md
 
-**Quality gate:** If adding >500 lines, justify why this much context is needed
+# Compare against current total
+genie helper count-tokens --before=old-version.md --after=new-file.md
+```
+
+**Uses tiktoken (cl100k_base)** - Same encoding Claude uses for accurate counts.
+
+**Quality gate:** If adding >500 lines or >4000 tokens, justify why this much context is needed
 
 ## Real-World Violation
 
@@ -194,12 +203,17 @@ git log --oneline --stat -- .genie/ | grep -E 'files? changed'
 # Find largest files
 find .genie/ -name "*.md" -exec wc -l {} \; | sort -rn | head -20
 
-# Calculate total token estimate
-wc -l .genie/**/*.md | tail -1
-# Total lines × 0.75 tokens/word × 10 words/line ≈ total tokens
+# Calculate total token count (NEVER manually estimate)
+genie helper count-tokens <file>.md
+
+# Or check entire codebase token usage
+node .genie/scripts/token-efficiency/count-tokens.cjs
+# Generates: .genie/state/token-usage.json
 ```
 
 **Amendment #6 (Token Efficiency):** Stay lean or nobody wants me
+
+**Token Counting Rule:** ALWAYS use `genie helper count-tokens` - NEVER manually calculate tokens
 
 ## Evidence
 

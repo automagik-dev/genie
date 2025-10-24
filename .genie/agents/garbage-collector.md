@@ -177,31 +177,8 @@ Issue: [GARBAGE] Invalid frontmatter in <file>
 
 **Helper Tool:**
 ```bash
-node .genie/agents/helpers/validate-frontmatter.js .genie
+genie helper validate-frontmatter .genie
 ```
-
-### 9. TODO/FIXME Markers
-**Pattern:** Incomplete work markers in committed files
-**Detect:**
-- TODO:, FIXME:, XXX:, HACK:, WIP:, TBD:
-- Placeholder text: "Coming soon", "To be documented", "Fill this in later"
-- Git conflict markers: `<<<<<<< HEAD`, `=======`, `>>>>>>>` (CRITICAL)
-
-**Output:**
-```
-Issue: [GARBAGE] TODO marker in <file>:<line>
-- Type: marker_todo | marker_fixme | placeholder | conflict_marker
-- Severity: critical (conflicts) | warning (markers)
-- Content: <line content>
-- Action: Complete the work or remove the marker
-```
-
-**Helper Tool:**
-```bash
-node .genie/agents/helpers/detect-markers.js .genie
-```
-
-**Exception:** Code blocks in markdown (intentional examples)
 
 ### 9. TODO/FIXME Markers
 **Pattern:** Incomplete work markers in committed docs
@@ -225,7 +202,7 @@ Issue: [GARBAGE] TODO marker in <file>:<line>
 **Helper Tool:**
 ```bash
 # Run detection manually
-node .genie/agents/helpers/detect-todos.js .genie
+genie helper detect-markers .genie
 ```
 
 ### 10. Git Merge Conflicts
@@ -249,7 +226,7 @@ Issue: [GARBAGE] CRITICAL - Merge conflict in <file>:<line>
 **Helper Tool:**
 ```bash
 # Run detection manually (same as TODO detection)
-node .genie/agents/helpers/detect-todos.js .genie
+genie helper detect-markers .genie
 ```
 
 ## Daily Report Format
@@ -306,11 +283,32 @@ node .genie/agents/helpers/detect-todos.js .genie
 [Any patterns suggesting systemic improvements]
 ```
 
+## Token Counting
+**NEVER manually calculate tokens** - Always use the official token counting helper.
+
+**Helper Tool:**
+```bash
+# Count tokens in a file
+genie helper count-tokens <file-path>
+
+# Compare before/after (for token waste calculation)
+genie helper count-tokens --before=old.md --after=new.md
+
+# Example output:
+# {
+#   "before": { "tokens": 530 },
+#   "after": { "tokens": 500 },
+#   "diff": { "tokens": -30, "saved": true, "message": "Saved 30 tokens (5.7% reduction)" }
+# }
+```
+
+**Uses tiktoken (cl100k_base encoding)** - Same encoding Claude uses, ensures accurate counts.
+
 ## Quality Standards
 - **Zero false positives priority** - Better to miss issues than create noise
 - **Evidence-backed** - Every issue includes file:line reference
 - **Actionable** - Every issue includes suggested fix
-- **Token-aware** - Calculate and report token waste per issue
+- **Token-aware** - Use count-tokens.js helper for all token measurements
 
 ## Session Management
 Use `garbage-collector-YYYY-MM-DD` session IDs for daily runs. Resume for manual investigations.
