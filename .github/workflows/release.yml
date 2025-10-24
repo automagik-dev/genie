@@ -82,7 +82,8 @@ jobs:
           elif [ "$EVENT" = "pull_request" ]; then
             # Merge dev → main
             HEAD="${{ github.event.pull_request.head.ref }}"
-            if [ "$HEAD" = "dev" ] && ${{ github.event.pull_request.merged }}; then
+            MERGED="${{ github.event.pull_request.merged }}"
+            if [ "$HEAD" = "dev" ] && [ "$MERGED" = "true" ]; then
               ACTION="merge-rc"
             else
               ACTION="skip"
