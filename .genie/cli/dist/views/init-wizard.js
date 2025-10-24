@@ -58,6 +58,26 @@ async function runInitWizard(options) {
         },
         initial: ''
     });
+    // Git hooks installation (advanced feature)
+    questions.push({
+        type: 'select',
+        name: 'installHooks',
+        message: '🔧 Install git hooks? (Advanced - validates commits/pushes, runs tests)',
+        choices: [
+            {
+                title: 'No (default - recommended for most users)',
+                value: false,
+                description: 'You can install later with: node scripts/install-hooks.cjs'
+            },
+            {
+                title: 'Yes (advanced - modifies .git/hooks/)',
+                value: true,
+                description: 'Hooks validate worktree access, cross-refs, run tests on push'
+            }
+        ],
+        initial: 0,
+        hint: '⚠️  Only install if you understand what git hooks do'
+    });
     const response = await (0, prompts_1.default)(questions, {
         onCancel: () => {
             console.log('\n❌ Cancelled');
@@ -69,6 +89,7 @@ async function runInitWizard(options) {
         templates: response.templates || [], // Array of selected templates
         executor: response.executor,
         model: response.model || defaultModel,
-        initGit: response.initGit ?? options.hasGit
+        initGit: response.initGit ?? options.hasGit,
+        installHooks: response.installHooks ?? false
     };
 }

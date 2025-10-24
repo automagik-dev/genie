@@ -28,6 +28,7 @@ async function runInit(parsed, _config, _paths) {
         let executor;
         let model;
         let shouldInitGit = false;
+        let shouldInstallHooks = false;
         let templates = []; // Array for multi-select
         if (isInteractive) {
             // Use dynamic import to load ESM Ink components
@@ -67,6 +68,7 @@ async function runInit(parsed, _config, _paths) {
             executor = wizardConfig.executor;
             model = wizardConfig.model;
             shouldInitGit = wizardConfig.initGit;
+            shouldInstallHooks = wizardConfig.installHooks;
         }
         else {
             // Automation mode: use flags or defaults
@@ -216,6 +218,8 @@ async function runInit(parsed, _config, _paths) {
         await applyExecutorDefaults(targetGenie, executor, model);
         // Configure MCP servers for both Codex and Claude Code
         await (0, mcp_config_1.configureBothExecutors)(cwd);
+        // Install git hooks if user opted in during wizard
+        await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
         // Show completion summary (install agent will be launched by start.sh via exec)
         const summary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
         await (0, view_helpers_1.emitView)(buildInitSummaryView(summary), parsed.options);
@@ -522,6 +526,27 @@ async function collectAgentFiles(dir) {
         files.push(fullPath);
     }
     return files;
+}
+/**
+ * Install git hooks if user opted in during wizard
+ */
+async function installGitHooksIfRequested(packageRoot, shouldInstall) {
+    if (!shouldInstall) {
+        return;
+    }
+    console.log('');
+    console.log('🔧 Installing git hooks...');
+    const { spawnSync } = await import('child_process');
+    const installScript = path_1.default.join(packageRoot, 'scripts', 'install-hooks.cjs');
+    const result = spawnSync('node', [installScript], {
+        stdio: 'inherit',
+        cwd: packageRoot
+    });
+    if (result.status !== 0) {
+        console.warn('⚠️  Hook installation failed (non-fatal)');
+        console.warn('   You can install later with: node scripts/install-hooks.cjs');
+    }
+    console.log('');
 }
 function replaceFirst(source, pattern, replacement) {
     if (typeof replacement === 'function') {
