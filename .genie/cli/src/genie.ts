@@ -28,6 +28,7 @@ import { runHelp } from './commands/help';
 import { runInit } from './commands/init';
 import { runRollback } from './commands/rollback';
 import { runStatus } from './commands/status';
+import { runDashboard } from './commands/dashboard';
 import { runCleanup } from './commands/cleanup';
 import { runStatusline } from './commands/statusline';
 import { runUpdate } from './commands/update';
@@ -125,6 +126,9 @@ async function main(): Promise<void> {
         break;
       case 'status':
         await runStatus(parsed, config, paths);
+        break;
+      case 'dashboard':
+        await runDashboard(parsed, config, paths);
         break;
       case 'cleanup':
         await runCleanup(parsed, config, paths);
