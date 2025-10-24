@@ -127,7 +127,7 @@ export async function executeWishTool(
       },
       executor_profile_id: {
         executor: 'CLAUDE_CODE',
-        variant: 'DEFAULT'
+        variant: 'wish'
       },
       base_branch: 'dev'
     });
@@ -152,6 +152,30 @@ export async function executeWishTool(
 
   if (reportProgress) {
     await reportProgress(2, 5); // Step 2 of 5
+  }
+
+  // Step 2.5: Update task status to 'agent' (hide from main Kanban, show in widget)
+  await streamContent({
+    type: 'text',
+    text: `📊 Updating task status...\n`
+  });
+
+  try {
+    await forgeClient.updateTask(PROJECT_ID, taskId, {
+      status: 'agent'
+    });
+
+    await streamContent({
+      type: 'text',
+      text: `✅ Task status: agent (visible in Wishh widget only)\n\n`
+    });
+  } catch (error: any) {
+    // Non-fatal: log warning but continue
+    await streamContent({
+      type: 'text',
+      text: `⚠️  Could not update task status: ${error.message}\n` +
+        `   Task may appear in main Kanban instead of widget.\n\n`
+    });
   }
 
   // Step 3: Subscribe to tasks WebSocket stream
