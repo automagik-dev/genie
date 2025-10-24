@@ -15,11 +15,9 @@ runs:
         cache: 'pnpm'
 
     - name: Install dependencies
-      run: pnpm install --frozen-lockfile
-      shell: bash
-
-    - name: Setup Git hooks
       run: |
+        pnpm install --frozen-lockfile
+        # Make git hooks executable immediately after install
         chmod +x .git/hooks/pre-commit 2>/dev/null || true
         chmod +x .git/hooks/pre-push 2>/dev/null || true
       shell: bash
