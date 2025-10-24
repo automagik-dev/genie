@@ -45,13 +45,20 @@ Before editing ANY implementation file, Base Genie must check:
    - Check `mcp__automagik_forge__list_task_attempts`
    - If YES → STOP, let Forge handle it
 
-2. **Am I the right agent for this work?**
+2. **Have I checked the agent's worktree for commits?**
+   - List worktrees: `ls /var/tmp/automagik-forge/worktrees/`
+   - Navigate: `cd /var/tmp/automagik-forge/worktrees/<task-id-prefix>*`
+   - Check commits: `git log --oneline -5`
+   - Check status: `git status`
+   - **If commits exist → Agent is working! DO NOT DUPLICATE**
+
+3. **Am I the right agent for this work?**
    - Implementation → Forge executor
    - Orchestration → Base Genie
    - Learning → Meta-learn protocol (this!)
    - Git operations → Git agent
 
-3. **Is this exploration or execution?**
+4. **Is this exploration or execution?**
    - Exploration (reading, analyzing) → OK for Genie
    - Execution (editing, implementing) → Delegate
 
@@ -88,6 +95,54 @@ Before editing ANY implementation file, Base Genie must check:
 - ❌ Start implementing after creating task
 - ❌ Edit files in main workspace
 - ❌ Duplicate Forge's work
+- ❌ Assume agent failed when can't view progress
+
+---
+
+## Checking Worktree Before Assuming Failure
+
+**Critical Discovery Method:**
+
+When Forge MCP monitoring fails (can't view session, backend unreachable), CHECK THE WORKTREE FIRST before assuming agent failed.
+
+**Commands to verify agent progress:**
+```bash
+# List all worktrees
+ls /var/tmp/automagik-forge/worktrees/
+
+# Navigate to specific worktree (use task ID prefix)
+cd /var/tmp/automagik-forge/worktrees/b51d*  # Example: task b51db539
+
+# Check if agent has been committing
+git log --oneline -3
+
+# Check working directory status
+git status
+
+# Check recent file activity
+ls -lt | head -10
+```
+
+**What This Reveals:**
+- ✅ If commits exist → Agent is working successfully!
+- ✅ If recent changes → Agent progressing
+- ❌ If no commits AND task old → Might be stalled
+- ❌ If worktree doesn't exist → Task not started
+
+**Real-World Example (Bug #168):**
+
+While Base Genie was implementing duplicate work, fix agent had ALREADY completed:
+```bash
+cd /var/tmp/automagik-forge/worktrees/b51d*
+git log --oneline -3
+# Output: b8913b23 fix: Use workspace package version for update detection
+```
+
+**The agent succeeded. Monitoring failed. Base Genie violated boundary.**
+
+**Lesson:** Infrastructure issues ≠ Agent failures. Always check worktree before assuming failure.
+
+**Related:** `@.genie/spells/troubleshoot-infrastructure.md` (5-step diagnostic protocol)
 
 ---
 
