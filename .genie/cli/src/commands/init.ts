@@ -101,10 +101,12 @@ export async function runInit(
         );
       }
 
-      const executors = Object.keys(EXECUTORS).map(key => ({
-        label: EXECUTORS[key].label,
-        value: key
-      }));
+      const executors = Object.keys(EXECUTORS)
+        .filter(key => key !== 'amp') // Exclude amp from user selection
+        .map(key => ({
+          label: EXECUTORS[key].label,
+          value: key
+        }));
 
       const hasGit = await pathExists(path.join(cwd, '.git'));
 
