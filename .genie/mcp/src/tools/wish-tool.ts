@@ -11,6 +11,7 @@ import { execSync } from 'child_process';
 import { wsManager } from '../websocket-manager.js';
 import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
 import { shortenUrl, getApiKeyFromEnv } from '../lib/url-shortener.js';
+import { sessionManager } from '../lib/session-manager.js';
 import path from 'path';
 
 // Load ForgeClient from Genie package root (not user's cwd)
@@ -109,13 +110,64 @@ export async function executeWishTool(
     await reportProgress(1, 5); // Step 1 of 5
   }
 
-  // Step 2: Create Forge task
+  const forgeClient = new ForgeClient(FORGE_URL);
+
+  // Step 1.5: Check for existing session (Phase 2: Session reuse)
+  const existingSession = sessionManager.getSession('wish', PROJECT_ID);
+
+  if (existingSession) {
+    // Reuse existing session via follow-up
+    await streamContent({
+      type: 'text',
+      text: `🔄 Reusing existing wish session...\n` +
+        `   Task: ${existingSession.taskId}\n` +
+        `   Attempt: ${existingSession.attemptId}\n\n`
+    });
+
+    try {
+      await forgeClient.followUpTaskAttempt(
+        existingSession.attemptId,
+        `Follow-up wish request:\nGitHub Issue: #${args.github_issue}\nFeature: ${args.feature}`
+      );
+
+      await streamContent({
+        type: 'text',
+        text: `✅ Follow-up sent to existing session\n\n`
+      });
+
+      // Update session last used timestamp (already done by sessionManager.getSession)
+
+      // Return existing session URL
+      const { shortUrl } = await shortenUrl(existingSession.url, {
+        apiKey: getApiKeyFromEnv()
+      });
+
+      await streamContent({
+        type: 'text',
+        text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
+          `💡 Genie Tips:\n` +
+          `  - This is THE wish session (reused from previous call)\n` +
+          `  - All wish work happens in this single task\n` +
+          `  - Session maintained for conversation continuity\n`
+      });
+
+      return;
+    } catch (error: any) {
+      // Follow-up failed, clear session and create new one
+      await streamContent({
+        type: 'text',
+        text: `⚠️  Follow-up failed: ${error.message}\n` +
+          `   Creating new session...\n\n`
+      });
+      sessionManager.clearSession('wish', PROJECT_ID);
+    }
+  }
+
+  // Step 2: Create Forge task (new session)
   await streamContent({
     type: 'text',
-    text: `📝 Creating Forge task...\n`
+    text: `📝 Creating new Forge task...\n`
   });
-
-  const forgeClient = new ForgeClient(FORGE_URL);
 
   let taskResult;
   try {
@@ -178,6 +230,20 @@ export async function executeWishTool(
     });
   }
 
+  // Step 2.6: Store new session for reuse (Phase 2)
+  const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+  sessionManager.setSession('wish', PROJECT_ID, {
+    taskId,
+    attemptId,
+    url: fullUrl,
+    created: new Date().toISOString()
+  });
+
+  await streamContent({
+    type: 'text',
+    text: `💾 Session stored for reuse\n\n`
+  });
+
   // Step 3: Subscribe to tasks WebSocket stream
   await streamContent({
     type: 'text',
@@ -237,7 +303,6 @@ export async function executeWishTool(
   });
 
   // Step 5: Output human-visible URL (shortened if service available)
-  const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
   const { shortUrl } = await shortenUrl(fullUrl, {
     apiKey: getApiKeyFromEnv()
   });

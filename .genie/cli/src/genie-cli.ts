@@ -902,13 +902,13 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
     output: process.stdout
   });
 
-  const answer = await new Promise<string>((resolve) => {
-    readline.question(`Update to v${latestVersion} and start server? [Y/n]: `, resolve);
+  const updateAnswer = await new Promise<string>((resolve) => {
+    readline.question(`Update to v${latestVersion}? [Y/n]: `, resolve);
   });
-  readline.close();
 
   // Default to Yes if user just presses Enter (empty string)
-  if (answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no') {
+  if (updateAnswer.toLowerCase() === 'n' || updateAnswer.toLowerCase() === 'no') {
+    readline.close();
     console.log('');
     console.log('❌ Update cancelled');
     console.log('');
@@ -927,15 +927,36 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
     console.log('');
     console.log(successGradient(`✅ Successfully updated to v${latestVersion}!`));
     console.log('');
+
+    // Prompt for starting server (separate question)
+    const startAnswer = await new Promise<string>((resolve) => {
+      readline.question('Start Genie? [Y/n]: ', resolve);
+    });
+    readline.close();
+
+    // Default to Yes if user just presses Enter (empty string)
+    if (startAnswer.toLowerCase() === 'n' || startAnswer.toLowerCase() === 'no') {
+      console.log('');
+      console.log(genieGradient('━'.repeat(60)));
+      console.log(successGradient('✅ Update complete!'));
+      console.log(genieGradient('━'.repeat(60)));
+      console.log('');
+      console.log('Run ' + performanceGradient('genie') + ' to start the server when ready.');
+      console.log('');
+      process.exit(0);
+    }
+
+    // Start server
+    console.log('');
     console.log(genieGradient('━'.repeat(60)));
     console.log(successGradient('🚀 Starting Genie server with new version...'));
     console.log(genieGradient('━'.repeat(60)));
     console.log('');
 
-    // Auto-start server after successful update
     await startGenieServer();
   } catch (error) {
     console.error('❌ Update failed:', error);
+    readline.close();
     process.exit(1);
   }
 }

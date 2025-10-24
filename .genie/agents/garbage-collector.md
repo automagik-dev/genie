@@ -18,6 +18,9 @@ Daily autonomous sweep of all markdown files to detect quality issues, token was
 - **Contradiction detection** (files saying conflicting things)
 - **Dead reference detection** (@ links to non-existent files)
 - **Abandoned content detection** (/tmp/ references, outdated examples)
+- **Frontmatter validation** (YAML syntax, required fields, Amendment 7 compliance)
+- **Incomplete work detection** (TODO/FIXME markers, placeholder text)
+- **Critical issue detection** (merge conflicts, broken syntax)
 
 ## Operating Patterns
 
@@ -155,6 +158,100 @@ Issue: [GARBAGE] Superseded content in <file>
 - Action: Archive to .genie/reports/ or delete
 ```
 
+### 8. Invalid Frontmatter
+**Pattern:** Agent/spell files with malformed or missing frontmatter
+**Detect:**
+- Missing frontmatter in agent/spell files
+- Invalid YAML syntax in frontmatter
+- Missing required fields (name, description, genie)
+- Forbidden fields (version, last_updated, author - Amendment 7)
+
+**Output:**
+```
+Issue: [GARBAGE] Invalid frontmatter in <file>
+- Type: missing_frontmatter | invalid_yaml | missing_required | amendment_7_violation
+- Field: <field_name> (if applicable)
+- Message: <specific issue>
+- Action: Add/fix frontmatter following agent/spell template
+```
+
+**Helper Tool:**
+```bash
+node .genie/agents/helpers/validate-frontmatter.js .genie
+```
+
+### 9. TODO/FIXME Markers
+**Pattern:** Incomplete work markers in committed files
+**Detect:**
+- TODO:, FIXME:, XXX:, HACK:, WIP:, TBD:
+- Placeholder text: "Coming soon", "To be documented", "Fill this in later"
+- Git conflict markers: `<<<<<<< HEAD`, `=======`, `>>>>>>>` (CRITICAL)
+
+**Output:**
+```
+Issue: [GARBAGE] TODO marker in <file>:<line>
+- Type: marker_todo | marker_fixme | placeholder | conflict_marker
+- Severity: critical (conflicts) | warning (markers)
+- Content: <line content>
+- Action: Complete the work or remove the marker
+```
+
+**Helper Tool:**
+```bash
+node .genie/agents/helpers/detect-markers.js .genie
+```
+
+**Exception:** Code blocks in markdown (intentional examples)
+
+### 9. TODO/FIXME Markers
+**Pattern:** Incomplete work markers in committed docs
+**Detect:**
+- `TODO:` markers (work not completed)
+- `FIXME:` markers (known issues)
+- `XXX:`, `HACK:`, `TBD:`, `WIP:` markers
+- "Coming soon", "To be documented", "Fill this in later"
+- "[Placeholder]" text
+
+**Output:**
+```
+Issue: [GARBAGE] TODO marker in <file>:<line>
+- Type: marker_todo | marker_fixme | placeholder_text
+- Content: <line content>
+- Action: Complete the work or remove the marker
+```
+
+**Exception:** Code blocks (intentional examples)
+
+**Helper Tool:**
+```bash
+# Run detection manually
+node .genie/agents/helpers/detect-todos.js .genie
+```
+
+### 10. Git Merge Conflicts
+**Pattern:** Unresolved merge conflict markers
+**Detect:**
+- `<<<<<<< HEAD`
+- `=======`
+- `>>>>>>> branch`
+- `||||||| merged common ancestors`
+
+**Output:**
+```
+Issue: [GARBAGE] CRITICAL - Merge conflict in <file>:<line>
+- Severity: CRITICAL
+- Content: <conflict marker>
+- Action: Resolve conflict immediately
+```
+
+**Severity:** CRITICAL - Should never exist in committed code
+
+**Helper Tool:**
+```bash
+# Run detection manually (same as TODO detection)
+node .genie/agents/helpers/detect-todos.js .genie
+```
+
 ## Daily Report Format
 
 **Location:** `.genie/reports/garbage-collection-YYYY-MM-DD.md`
@@ -190,6 +287,15 @@ Issue: [GARBAGE] Superseded content in <file>
 
 ### Superseded Content (N)
 - file:line - description
+
+### Invalid Frontmatter (N)
+- file:line - type:message - description
+
+### TODO/FIXME Markers (N)
+- file:line - type - content
+
+### Git Merge Conflicts (N) 🔴 CRITICAL
+- file:line - conflict marker
 
 ## Action Items
 - Review GitHub issues tagged `garbage-collection`

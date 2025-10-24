@@ -17,6 +17,7 @@ const path_1 = __importDefault(require("path"));
 const websocket_manager_js_1 = require("../websocket-manager.js");
 const git_validation_js_1 = require("../lib/git-validation.js");
 const url_shortener_js_1 = require("../lib/url-shortener.js");
+const session_manager_js_1 = require("../lib/session-manager.js");
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/review-tool.js
 // forge.js is at: <genie-package>/forge.js
@@ -82,12 +83,52 @@ async function executeReviewTool(args, context) {
     if (reportProgress) {
         await reportProgress(1, 5);
     }
-    // Step 2: Create review task
+    const forgeClient = new ForgeClient(FORGE_URL);
+    // Step 1.5: Check for existing session (Phase 2: Session reuse)
+    const existingSession = session_manager_js_1.sessionManager.getSession('review', projectId);
+    if (existingSession) {
+        // Reuse existing session via follow-up
+        await streamContent({
+            type: 'text',
+            text: `🔄 Reusing existing review session...\n` +
+                `   Task: ${existingSession.taskId}\n` +
+                `   Attempt: ${existingSession.attemptId}\n\n`
+        });
+        try {
+            await forgeClient.followUpTaskAttempt(existingSession.attemptId, `Follow-up review request:\nWish: ${args.wish_name}\nAgent: ${agent}\n\n---\n\n${wishContent.substring(0, 1000)}...`);
+            await streamContent({
+                type: 'text',
+                text: `✅ Follow-up sent to existing session\n\n`
+            });
+            // Return existing session URL
+            const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(existingSession.url, {
+                apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
+            });
+            await streamContent({
+                type: 'text',
+                text: `🌐 Monitor Progress:\n${shortUrl || existingSession.url}\n\n` +
+                    `💡 Genie Tips:\n` +
+                    `  - This is THE review session (reused from previous call)\n` +
+                    `  - All review work happens in this single task\n` +
+                    `  - Session maintained for conversation continuity\n`
+            });
+            return;
+        }
+        catch (error) {
+            // Follow-up failed, clear session and create new one
+            await streamContent({
+                type: 'text',
+                text: `⚠️  Follow-up failed: ${error.message}\n` +
+                    `   Creating new session...\n\n`
+            });
+            session_manager_js_1.sessionManager.clearSession('review', projectId);
+        }
+    }
+    // Step 2: Create review task (new session)
     await streamContent({
         type: 'text',
         text: `🔍 Starting review with agent: ${agent}\n\n`
     });
-    const forgeClient = new ForgeClient(FORGE_URL);
     let taskResult;
     try {
         taskResult = await forgeClient.createAndStartTask({
@@ -142,6 +183,18 @@ async function executeReviewTool(args, context) {
                 `   Task may appear in main Kanban instead of widget.\n\n`
         });
     }
+    // Step 2.6: Store new session for reuse (Phase 2)
+    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
+    session_manager_js_1.sessionManager.setSession('review', projectId, {
+        taskId,
+        attemptId,
+        url: fullUrl,
+        created: new Date().toISOString()
+    });
+    await streamContent({
+        type: 'text',
+        text: `💾 Session stored for reuse\n\n`
+    });
     // Step 3: Subscribe to logs WebSocket stream
     await streamContent({
         type: 'text',
@@ -212,7 +265,6 @@ async function executeReviewTool(args, context) {
             (processId ? `  Process: ${processId}\n` : '') + `\n`
     });
     // Step 6: Output human-visible URL (shortened if service available)
-    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=logs`;
     const { shortUrl } = await (0, url_shortener_js_1.shortenUrl)(fullUrl, {
         apiKey: (0, url_shortener_js_1.getApiKeyFromEnv)()
     });

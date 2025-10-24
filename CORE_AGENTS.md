@@ -11,9 +11,10 @@ Core Genie agents available globally (not tied to a specific collective).
 ## Quality Maintenance Agents
 
 - **Garbage Collector** — Autonomous documentation quality assurance (daily sweep)
-  - Detects: Token bloat, metadata duplication, content duplication, contradictions, dead references
+  - Detects: Token bloat, metadata duplication, content duplication, contradictions, dead references, invalid frontmatter, TODO markers, merge conflicts
   - Outputs: GitHub issues per finding + daily report
   - Schedule: Local cron 0:00 daily
+  - Helpers: `validate-frontmatter.js`, `detect-todos.js`
   - See: `.genie/agents/garbage-collector.md`
 
 - **Garbage Cleaner** — Batch executor for garbage-collection fixes
