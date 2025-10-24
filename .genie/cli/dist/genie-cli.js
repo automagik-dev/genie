@@ -21,7 +21,6 @@ const forge_stats_1 = require("./lib/forge-stats");
 const token_tracker_1 = require("./lib/token-tracker");
 const init_1 = require("./commands/init");
 const config_1 = require("./lib/config");
-const forge_executor_1 = require("./lib/forge-executor");
 const spell_changelog_1 = require("./lib/spell-changelog");
 const program = new commander_1.Command();
 // Universe Genie-themed gradients 🧞✨🌌
@@ -479,25 +478,28 @@ async function smartRouter() {
         await (0, init_1.runInit)(initParsed, initConfig, initPaths);
         // After init completes, reload config to get user's executor choice
         const userConfig = (0, config_1.loadConfig)();
-        // Launch install agent via Forge
+        // Launch install flow (Explore → Master Genie orchestration)
         console.log('');
-        console.log(magicGradient('🤖 Your Genie clone is awakening...'));
+        console.log(magicGradient('✨ STARTING INSTALLATION...'));
         console.log('');
-        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
-        const installResult = await forgeExecutor.createSession({
-            agentName: 'install',
-            prompt: 'Complete installation and setup wizard',
-            executorKey: userConfig.defaults?.executor || 'opencode',
-            executorVariant: userConfig.defaults?.executorVariant,
-            executionMode: 'default',
+        const { runInstallFlow } = await import('./lib/install-helpers.js');
+        const shortUrl = await runInstallFlow({
+            templates: ['code'], // Default to code template (can expand later)
+            executor: userConfig.defaults?.executor || 'opencode',
             model: userConfig.defaults?.model
         });
-        console.log(successGradient('✨ Your Genie clone has materialized!'));
+        console.log('');
+        console.log(successGradient('✨ Installation started!'));
         console.log('');
         console.log(cosmicGradient('━'.repeat(60)));
-        console.log('📋 Watch your Genie complete the setup:');
-        console.log('   ' + performanceGradient(installResult.forgeUrl));
+        console.log('🔗 Continue setup in Forge:');
+        console.log('   ' + performanceGradient(shortUrl));
         console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log('Master Genie will:');
+        console.log('  1. Review project context from discovery');
+        console.log('  2. Interview you for missing details');
+        console.log('  3. Set up your workspace');
         console.log('');
         console.log('Press Enter to open in your browser...');
         // Wait for Enter key
@@ -509,7 +511,7 @@ async function smartRouter() {
         try {
             const platform = process.platform;
             const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
-            execSyncBrowser(`${openCommand} "${installResult.forgeUrl}"`, { stdio: 'ignore' });
+            execSyncBrowser(`${openCommand} "${shortUrl}"`, { stdio: 'ignore' });
         }
         catch {
             // Ignore if browser open fails
