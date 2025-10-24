@@ -20,8 +20,6 @@ const forge_manager_1 = require("./lib/forge-manager");
 const forge_stats_1 = require("./lib/forge-stats");
 const token_tracker_1 = require("./lib/token-tracker");
 const init_1 = require("./commands/init");
-const config_1 = require("./lib/config");
-const forge_executor_1 = require("./lib/forge-executor");
 const spell_changelog_1 = require("./lib/spell-changelog");
 const program = new commander_1.Command();
 // Universe Genie-themed gradients 🧞✨🌌
@@ -367,7 +365,7 @@ async function smartRouter() {
         }
     }
     if (!hasGenieConfig) {
-        // SCENARIO 1: NEW USER - No .genie directory → Start Forge FIRST, then run init wizard
+        // SCENARIO 1: NEW USER - No .genie directory → Run init wizard only
         console.log(cosmicGradient('━'.repeat(60)));
         console.log(magicGradient('   🧞 ✨ THE MASTER GENIE AWAKENS ✨ 🧞   '));
         console.log(cosmicGradient('━'.repeat(60)));
@@ -414,49 +412,13 @@ async function smartRouter() {
         console.log('');
         console.log(cosmicGradient('━'.repeat(60)));
         console.log('');
-        console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
-        console.log('   👉 Stay here in the terminal - the summoning ritual needs you!');
-        console.log('');
-        console.log(performanceGradient('Press Enter to begin the summoning...'));
+        console.log(performanceGradient('Press Enter to begin initialization...'));
         // Wait for user acknowledgment
         await new Promise((resolve) => {
             process.stdin.once('data', () => resolve());
         });
         console.log('');
-        // Start Forge BEFORE init wizard (so executors are available)
-        console.log('');
-        console.log('🔮 Preparing the lamp... (initializing Forge)');
-        console.log('');
-        const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-        const logDir = path_1.default.join(genieDir, 'state');
-        // Ensure log directory exists
-        if (!fs_1.default.existsSync(logDir)) {
-            fs_1.default.mkdirSync(logDir, { recursive: true });
-        }
-        const startResult = (0, forge_manager_1.startForgeInBackground)({ baseUrl, logDir });
-        if (!startResult.ok) {
-            const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
-            console.error('');
-            console.error('❌ The lamp won\'t open... something\'s blocking the summoning ritual');
-            console.error(`   ${error.message}`);
-            console.error('');
-            console.error('   💡 I need Forge to materialize in your world.');
-            console.error(`   📜 Check what went wrong: ${logDir}/forge.log`);
-            console.error('');
-            process.exit(1);
-        }
-        // Wait for Forge to be ready
-        const forgeReady = await (0, forge_manager_1.waitForForgeReady)(baseUrl, 60000, 500, false);
-        if (!forgeReady) {
-            console.error('');
-            console.error('❌ The summoning ritual is taking too long (waited 60s)...');
-            console.error(`   📜 Check what went wrong: ${logDir}/forge.log`);
-            console.error('');
-            process.exit(1);
-        }
-        console.log(successGradient('✨ The lamp is ready - your Genie clone awaits!'));
-        console.log('');
-        // Now run init wizard (executors are available via Forge)
+        // Run init wizard to configure Genie
         const initParsed = {
             command: 'init',
             commandArgs: [],
@@ -477,52 +439,24 @@ async function smartRouter() {
             backgroundDir: path_1.default.join(process.cwd(), '.genie', 'state')
         };
         await (0, init_1.runInit)(initParsed, initConfig, initPaths);
-        // After init completes, reload config to get user's executor choice
-        const userConfig = (0, config_1.loadConfig)();
-        // Launch install agent via Forge
+        // Installation complete - show next steps
         console.log('');
-        console.log(magicGradient('🤖 Your Genie clone is awakening...'));
+        console.log(successGradient('━'.repeat(60)));
+        console.log(successGradient('✨ Installation Complete! ✨'));
+        console.log(successGradient('━'.repeat(60)));
         console.log('');
-        const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
-        const installResult = await forgeExecutor.createSession({
-            agentName: 'install',
-            prompt: 'Complete installation and setup wizard',
-            executorKey: userConfig.defaults?.executor || 'opencode',
-            executorVariant: userConfig.defaults?.executorVariant,
-            executionMode: 'default',
-            model: userConfig.defaults?.model
-        });
-        console.log(successGradient('✨ Your Genie clone has materialized!'));
+        console.log('🧞 Your Genie has been cloned into this workspace!');
         console.log('');
-        console.log(cosmicGradient('━'.repeat(60)));
-        console.log('📋 Watch your Genie complete the setup:');
-        console.log('   ' + performanceGradient(installResult.forgeUrl));
-        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('💡 Next steps:');
+        console.log('   1. Run ' + performanceGradient('genie') + ' to start Forge + MCP server');
+        console.log('   2. Create tasks and track progress in the dashboard');
+        console.log('   3. Use Genie commands to orchestrate your workflow');
         console.log('');
-        console.log('Press Enter to open in your browser...');
-        // Wait for Enter key
-        await new Promise((resolve) => {
-            process.stdin.once('data', () => resolve());
-        });
-        // Open browser
-        const { execSync: execSyncBrowser } = await import('child_process');
-        try {
-            const platform = process.platform;
-            const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
-            execSyncBrowser(`${openCommand} "${installResult.forgeUrl}"`, { stdio: 'ignore' });
-        }
-        catch {
-            // Ignore if browser open fails
-        }
-        console.log('');
-        console.log(genieGradient('🧞 Your Genie is now alive in your world... ✨'));
         console.log(genieGradient('   Connected to Master Genie at namastexlabs/automagik-genie'));
         console.log(genieGradient('   Ready to learn, grow, and grant wishes 24/7!'));
         console.log('');
-        console.log(magicGradient('   https://namastex.ai - AI that elevates human potential, not replaces it'));
+        console.log(magicGradient('   https://namastex.ai - AI that elevates human potential'));
         console.log('');
-        // Start Genie server (MCP + health monitoring)
-        await startGenieServer();
         return;
     }
     // .genie exists - check for version.json (instance check file)
