@@ -103,7 +103,7 @@ jobs:
         if: steps.detect.outputs.action == 'auto-bump-rc'
         id: release
         env:
-          GENIE_SKIP_IDENTITY_SMOKE: "1"
+          GENIE_SKIP_ADVISORY_SMOKE: "1"
         run: |
           node scripts/unified-release.cjs \
             --bump rc \
@@ -117,7 +117,7 @@ jobs:
         if: steps.detect.outputs.action == 'merge-rc'
         id: merge_rc
         env:
-          GENIE_SKIP_IDENTITY_SMOKE: "1"
+          GENIE_SKIP_ADVISORY_SMOKE: "1"
         run: |
           # Clean conflicting RC tags
           CURRENT=$(node -p "require('./package.json').version")
@@ -159,7 +159,7 @@ jobs:
         if: steps.detect.outputs.action == 'bump-rc' || steps.detect.outputs.action == 'promote-to-stable' || steps.detect.outputs.action == 'manual-tag'
         id: manual
         env:
-          GENIE_SKIP_IDENTITY_SMOKE: "1"
+          GENIE_SKIP_ADVISORY_SMOKE: "1"
         run: |
           ACTION="${{ github.event.inputs.action }}"
 
