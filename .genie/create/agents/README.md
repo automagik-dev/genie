@@ -41,30 +41,7 @@ Specialized agents for human-world work (non-coding). Each agent has persistent 
 
 ## Emergent Agents
 
-### garbage-collector
-**Created:** 2025-10-24
-**Purpose:** Autonomous documentation quality assurance - detect bloat, duplication, contradictions, token waste
-**Use when:** Daily automated sweep (0:00 UTC) or manual quality audit
-**Workflows:**
-- Daily markdown file scanning
-- Quality issue detection (7 rule categories)
-- GitHub issue creation per finding
-- Daily garbage collection report generation
-**Trigger pattern:** Scheduled daily + on-demand via `genie run create/garbage-collector`
-**Delegates to:** garbage-cleaner (batch fix executor, to be created)
-**Session pattern:** `garbage-collector-YYYY-MM-DD`
-**Output artifacts:**
-- GitHub issues tagged `garbage-collection`
-- Daily reports: `.genie/reports/garbage-collection-YYYY-MM-DD.md`
-
-**Detection categories:**
-1. Token bloat (verbose when terse works)
-2. Metadata duplication (Amendment 7 violations)
-3. Content duplication (same content multiple files)
-4. Contradictions (conflicting information)
-5. Dead references (broken @ links)
-6. Abandoned /tmp/ references
-7. Superseded content (old approaches not removed)
+(No emergent agents yet - agents emerge when patterns of repeated work appear)
 
 ## Agent Generation Philosophy
 
