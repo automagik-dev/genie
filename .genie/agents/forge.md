@@ -1,8 +1,9 @@
 ---
 name: forge
-description: Genie-level Forge orchestrator that delegates to domain-specific Forge workflows
+description: Genie-level Forge orchestrator that delegates to domain-specific
+  Forge workflows
 genie:
-  executor: claude
+  executor: opencode
   background: true
 ---
 

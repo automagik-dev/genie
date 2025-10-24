@@ -2,7 +2,7 @@
 name: wish
 description: Core Wish orchestrator (delegates to domain-specific wish agents)
 genie:
-  executor: claude
+  executor: opencode
   background: true
 ---
 
