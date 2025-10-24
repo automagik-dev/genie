@@ -9,6 +9,8 @@ export interface CLIOptions {
   executor?: string;
   model?: string;
   name?: string;  // Friendly session name for run command
+  raw?: boolean;  // Output raw text only (no JSON)
+  quiet?: boolean;  // Suppress startup messages
 }
 
 export interface ParsedCommand {

@@ -33,6 +33,11 @@ const wish_tool_js_1 = require("./tools/wish-tool.js");
 const forge_tool_js_1 = require("./tools/forge-tool.js");
 const review_tool_js_1 = require("./tools/review-tool.js");
 const prompt_tool_js_1 = require("./tools/prompt-tool.js");
+// Import neuron architecture tools (Phase 2)
+const continue_task_tool_js_1 = require("./tools/continue-task-tool.js");
+const create_subtask_tool_js_1 = require("./tools/create-subtask-tool.js");
+// Import role detection
+const role_detector_js_1 = require("./lib/role-detector.js");
 // Import HTTP server for OAuth2 transport
 const http_server_js_1 = require("./lib/http-server.js");
 const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
@@ -746,6 +751,38 @@ server.tool('transform_prompt', 'Transform/enhance a prompt using an agent synch
     });
     return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
 });
+// Tool: continue_task - Send follow-up work to existing task
+server.tool('continue_task', 'Send follow-up work to an existing task attempt. Used primarily by master orchestrators to receive new work.', {
+    attempt_id: zod_1.z.string().describe('Task attempt ID to send work to'),
+    prompt: zod_1.z.string().describe('Follow-up prompt with new work')
+}, async (args, extra) => {
+    await (0, continue_task_tool_js_1.executeContinueTaskTool)(args, {
+        streamContent: async (chunk) => {
+            await server.sendLoggingMessage({
+                level: "info",
+                data: chunk
+            }, extra.sessionId);
+        }
+    });
+    return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
+});
+// Tool: create_subtask - Create child task under master orchestrator
+server.tool('create_subtask', 'Create a child task under a master orchestrator. Allows masters to delegate work as subtasks.', {
+    parent_attempt_id: zod_1.z.string().describe('Parent task attempt ID (the master orchestrator)'),
+    title: zod_1.z.string().describe('Subtask title'),
+    prompt: zod_1.z.string().describe('Subtask prompt/description'),
+    executor: zod_1.z.string().optional().default('CLAUDE_CODE:DEFAULT').describe('Executor variant (e.g., "CLAUDE_CODE:wish", "CLAUDE_CODE:DEFAULT")')
+}, async (args, extra) => {
+    await (0, create_subtask_tool_js_1.executeCreateSubtaskTool)(args, {
+        streamContent: async (chunk) => {
+            await server.sendLoggingMessage({
+                level: "info",
+                data: chunk
+            }, extra.sessionId);
+        }
+    });
+    return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
+});
 // ============================================================================
 // DEPRECATED PROMPTS - Removed per Amendment: No Backwards Compatibility
 // ============================================================================
@@ -755,17 +792,32 @@ server.tool('transform_prompt', 'Transform/enhance a prompt using an agent synch
 //   - run_forge (replaces 'forge' prompt)
 //   - run_review (replaces 'review' prompt)
 //   - transform_prompt (replaces 'prompt' prompt)
+// Detect agent role (neuron architecture)
+const roleInfo = (0, role_detector_js_1.detectGenieRole)();
+const readOnly = (0, role_detector_js_1.isReadOnlyFilesystem)(roleInfo.role);
 // Start server with configured transport
 console.error('Starting Genie MCP Server (MVP)...');
 console.error(`Version: ${getGenieVersion()}`);
 console.error(`Transport: ${TRANSPORT}`);
+console.error(`Role: ${roleInfo.role} (${roleInfo.confidence} confidence, method: ${roleInfo.method})`);
+if (readOnly) {
+    console.error('🔒 Filesystem: READ-ONLY (master orchestrator)');
+}
+if (roleInfo.branch) {
+    console.error(`Branch: ${roleInfo.branch}`);
+}
+if (roleInfo.worktree) {
+    console.error(`Worktree: ${roleInfo.worktree}`);
+}
 // Dynamically count tools instead of hardcoding
 const coreTools = ['list_agents', 'list_sessions', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
 const wsTools = ['create_wish', 'run_forge', 'run_review', 'transform_prompt'];
-const totalTools = coreTools.length + wsTools.length;
+const neuronTools = ['continue_task', 'create_subtask'];
+const totalTools = coreTools.length + wsTools.length + neuronTools.length;
 console.error(`Tools: ${totalTools} total`);
 console.error(`  - ${coreTools.length} core (agents, sessions, spells, workspace)`);
 console.error(`  - ${wsTools.length} WebSocket-native (create_wish, run_forge, run_review, transform_prompt)`);
+console.error(`  - ${neuronTools.length} neuron (continue_task, create_subtask)`);
 console.error('WebSocket: Real-time streaming enabled');
 console.error('');
 console.error('🔄 Syncing agent profiles to Forge...');

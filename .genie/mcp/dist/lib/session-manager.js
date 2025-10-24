@@ -1,83 +1,107 @@
 "use strict";
 /**
- * Session Manager - In-memory session storage for workflow reuse
+ * Session Manager - Query Forge for master orchestrators
  *
- * Phase 2: Prevents orphaned tasks by reusing existing sessions
- * Architecture: In-memory Map (simple, fast, lost on restart)
- *
- * Future enhancement: Add persistence via JSON or database if needed
+ * Phase 2: Prevents orphaned tasks by reusing master orchestrators
+ * Architecture: Query Forge database for existing masters (persists across restarts)
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.sessionManager = exports.SessionManager = void 0;
+const path_1 = __importDefault(require("path"));
+// Load ForgeClient
+const geniePackageRoot = path_1.default.resolve(__dirname, '../../../..');
+const ForgeClient = require(path_1.default.join(geniePackageRoot, 'forge.js')).ForgeClient;
+const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 class SessionManager {
     constructor() {
-        this.sessions = new Map();
+        this.forgeClient = new ForgeClient(FORGE_URL);
     }
     /**
-     * Get existing session for workflow + project
-     * Returns null if no session exists
+     * Get existing master orchestrator for workflow + project
+     * Queries Forge database for active master
      */
-    getSession(workflow, projectId) {
-        const key = this.makeKey(projectId, workflow);
-        const session = this.sessions.get(key);
-        if (session) {
-            // Update lastUsed timestamp
-            session.lastUsed = new Date().toISOString();
+    async getSession(workflow, projectId) {
+        try {
+            // Query Forge for tasks
+            const tasks = await this.forgeClient.listTasks(projectId);
+            // Find master orchestrator (status='agent', executor contains workflow, no parent)
+            const master = tasks.find((t) => t.status === 'agent' &&
+                t.executor?.includes(`:${workflow}`) &&
+                !t.parent_task_attempt);
+            if (master && master.latest_attempt) {
+                return {
+                    taskId: master.id,
+                    attemptId: master.latest_attempt.id,
+                    url: `${FORGE_URL}/projects/${projectId}/tasks/${master.id}/attempts/${master.latest_attempt.id}?view=diffs`,
+                    projectId,
+                    created: master.created_at,
+                    lastUsed: master.updated_at
+                };
+            }
+            return null;
         }
-        return session || null;
+        catch (error) {
+            console.error(`Failed to query Forge for ${workflow} master:`, error);
+            return null;
+        }
     }
     /**
-     * Store new session for workflow + project
-     * Overwrites existing session if present
+     * Delegate work to existing master via follow-up
+     * Sends prompt to master's latest attempt
      */
-    setSession(workflow, projectId, info) {
-        const key = this.makeKey(projectId, workflow);
-        const session = {
-            ...info,
-            projectId,
-            lastUsed: new Date().toISOString()
-        };
-        this.sessions.set(key, session);
+    async delegateToMaster(attemptId, prompt) {
+        try {
+            await this.forgeClient.followUpTaskAttempt(attemptId, prompt);
+        }
+        catch (error) {
+            console.error(`Failed to delegate to master attempt ${attemptId}:`, error);
+            throw error;
+        }
     }
     /**
-     * Check if session exists for workflow + project
+     * Create new master orchestrator
+     * Returns session info for the new master
      */
-    hasSession(workflow, projectId) {
-        const key = this.makeKey(projectId, workflow);
-        return this.sessions.has(key);
+    async createMaster(workflow, projectId, title, prompt) {
+        try {
+            const result = await this.forgeClient.createAndStartTask({
+                project_id: projectId,
+                title,
+                prompt,
+                executor: `CLAUDE_CODE:${workflow}`,
+                status: 'agent', // Hidden from main Kanban
+                parent_task_attempt: null // Masters have no parent
+            });
+            const { task_id: taskId, attempt_id: attemptId } = result;
+            return {
+                taskId,
+                attemptId,
+                url: `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`,
+                projectId,
+                created: new Date().toISOString(),
+                lastUsed: new Date().toISOString()
+            };
+        }
+        catch (error) {
+            console.error(`Failed to create ${workflow} master:`, error);
+            throw error;
+        }
     }
     /**
-     * Clear session for workflow + project
-     * Used when session completes or encounters error
+     * Get or create master orchestrator
+     * Reuses existing master if found, creates new one if not
      */
-    clearSession(workflow, projectId) {
-        const key = this.makeKey(projectId, workflow);
-        this.sessions.delete(key);
-    }
-    /**
-     * Clear all sessions (for testing or reset)
-     */
-    clearAll() {
-        this.sessions.clear();
-    }
-    /**
-     * Get all active sessions (for debugging)
-     */
-    getAllSessions() {
-        return new Map(this.sessions);
-    }
-    /**
-     * Get session count (for monitoring)
-     */
-    getSessionCount() {
-        return this.sessions.size;
-    }
-    /**
-     * Make session key from project ID and workflow type
-     * Format: {projectId}:{workflow}
-     */
-    makeKey(projectId, workflow) {
-        return `${projectId}:${workflow}`;
+    async getOrCreateMaster(workflow, projectId, title, prompt) {
+        // Try to find existing master
+        const existing = await this.getSession(workflow, projectId);
+        if (existing) {
+            return existing;
+        }
+        // No master found, create new one
+        return await this.createMaster(workflow, projectId, title, prompt);
     }
 }
 exports.SessionManager = SessionManager;

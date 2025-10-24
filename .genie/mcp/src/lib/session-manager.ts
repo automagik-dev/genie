@@ -1,96 +1,129 @@
 /**
- * Session Manager - In-memory session storage for workflow reuse
+ * Session Manager - Query Forge for master orchestrators
  *
- * Phase 2: Prevents orphaned tasks by reusing existing sessions
- * Architecture: In-memory Map (simple, fast, lost on restart)
- *
- * Future enhancement: Add persistence via JSON or database if needed
+ * Phase 2: Prevents orphaned tasks by reusing master orchestrators
+ * Architecture: Query Forge database for existing masters (persists across restarts)
  */
 
-import { WorkflowType, SessionInfo, SessionKey } from './session-types.js';
+import { WorkflowType, SessionInfo } from './session-types.js';
+import path from 'path';
+
+// Load ForgeClient
+const geniePackageRoot = path.resolve(__dirname, '../../../..');
+const ForgeClient = require(path.join(geniePackageRoot, 'forge.js')).ForgeClient;
+
+const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 
 export class SessionManager {
-  private sessions: Map<SessionKey, SessionInfo>;
+  private forgeClient: any;
 
   constructor() {
-    this.sessions = new Map();
+    this.forgeClient = new ForgeClient(FORGE_URL);
   }
 
   /**
-   * Get existing session for workflow + project
-   * Returns null if no session exists
+   * Get existing master orchestrator for workflow + project
+   * Queries Forge database for active master
    */
-  getSession(workflow: WorkflowType, projectId: string): SessionInfo | null {
-    const key = this.makeKey(projectId, workflow);
-    const session = this.sessions.get(key);
+  async getSession(workflow: WorkflowType, projectId: string): Promise<SessionInfo | null> {
+    try {
+      // Query Forge for tasks
+      const tasks = await this.forgeClient.listTasks(projectId);
 
-    if (session) {
-      // Update lastUsed timestamp
-      session.lastUsed = new Date().toISOString();
+      // Find master orchestrator (status='agent', executor contains workflow, no parent)
+      const master = tasks.find((t: any) =>
+        t.status === 'agent' &&
+        t.executor?.includes(`:${workflow}`) &&
+        !t.parent_task_attempt
+      );
+
+      if (master && master.latest_attempt) {
+        return {
+          taskId: master.id,
+          attemptId: master.latest_attempt.id,
+          url: `${FORGE_URL}/projects/${projectId}/tasks/${master.id}/attempts/${master.latest_attempt.id}?view=diffs`,
+          projectId,
+          created: master.created_at,
+          lastUsed: master.updated_at
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.error(`Failed to query Forge for ${workflow} master:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Delegate work to existing master via follow-up
+   * Sends prompt to master's latest attempt
+   */
+  async delegateToMaster(attemptId: string, prompt: string): Promise<void> {
+    try {
+      await this.forgeClient.followUpTaskAttempt(attemptId, prompt);
+    } catch (error) {
+      console.error(`Failed to delegate to master attempt ${attemptId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create new master orchestrator
+   * Returns session info for the new master
+   */
+  async createMaster(
+    workflow: WorkflowType,
+    projectId: string,
+    title: string,
+    prompt: string
+  ): Promise<SessionInfo> {
+    try {
+      const result = await this.forgeClient.createAndStartTask({
+        project_id: projectId,
+        title,
+        prompt,
+        executor: `CLAUDE_CODE:${workflow}`,
+        status: 'agent', // Hidden from main Kanban
+        parent_task_attempt: null // Masters have no parent
+      });
+
+      const { task_id: taskId, attempt_id: attemptId } = result;
+
+      return {
+        taskId,
+        attemptId,
+        url: `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`,
+        projectId,
+        created: new Date().toISOString(),
+        lastUsed: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error(`Failed to create ${workflow} master:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get or create master orchestrator
+   * Reuses existing master if found, creates new one if not
+   */
+  async getOrCreateMaster(
+    workflow: WorkflowType,
+    projectId: string,
+    title: string,
+    prompt: string
+  ): Promise<SessionInfo> {
+    // Try to find existing master
+    const existing = await this.getSession(workflow, projectId);
+    if (existing) {
+      return existing;
     }
 
-    return session || null;
+    // No master found, create new one
+    return await this.createMaster(workflow, projectId, title, prompt);
   }
 
-  /**
-   * Store new session for workflow + project
-   * Overwrites existing session if present
-   */
-  setSession(workflow: WorkflowType, projectId: string, info: Omit<SessionInfo, 'projectId'>): void {
-    const key = this.makeKey(projectId, workflow);
-    const session: SessionInfo = {
-      ...info,
-      projectId,
-      lastUsed: new Date().toISOString()
-    };
-    this.sessions.set(key, session);
-  }
-
-  /**
-   * Check if session exists for workflow + project
-   */
-  hasSession(workflow: WorkflowType, projectId: string): boolean {
-    const key = this.makeKey(projectId, workflow);
-    return this.sessions.has(key);
-  }
-
-  /**
-   * Clear session for workflow + project
-   * Used when session completes or encounters error
-   */
-  clearSession(workflow: WorkflowType, projectId: string): void {
-    const key = this.makeKey(projectId, workflow);
-    this.sessions.delete(key);
-  }
-
-  /**
-   * Clear all sessions (for testing or reset)
-   */
-  clearAll(): void {
-    this.sessions.clear();
-  }
-
-  /**
-   * Get all active sessions (for debugging)
-   */
-  getAllSessions(): Map<SessionKey, SessionInfo> {
-    return new Map(this.sessions);
-  }
-
-  /**
-   * Get session count (for monitoring)
-   */
-  getSessionCount(): number {
-    return this.sessions.size;
-  }
-
-  /**
-   * Make session key from project ID and workflow type
-   * Format: {projectId}:{workflow}
-   */
-  private makeKey(projectId: string, workflow: WorkflowType): SessionKey {
-    return `${projectId}:${workflow}`;
-  }
 }
 
 /**
