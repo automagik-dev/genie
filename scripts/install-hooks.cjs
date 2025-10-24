@@ -116,20 +116,35 @@ function installGitHooks() {
         }
       }
 
-      // Create symlink (works in main repo and Forge worktrees)
-      // For Node hooks: symlink directly to the .cjs file (has #!/usr/bin/env node shebang)
-      // For Python hooks: symlink directly to the .py file (has #!/usr/bin/env python3 shebang)
+      // Create relative symlink (portable across all systems)
+      // Symlinks work in:
+      // - Linux ✅
+      // - macOS ✅
+      // - Windows 10+ with Git for Windows (symlink support) ✅
+      // - GitHub Actions ✅
+      // - WSL ✅
       // Relative path: .git/hooks → ../../.genie/scripts/hooks/<name>.<ext>
       const relativePath = path.relative(gitHooksDir, source);
 
-      // Remove existing hook (symlink or file)
-      if (fs.existsSync(dest)) {
+      // Remove existing hook (file or symlink)
+      if (fs.existsSync(dest) || fs.lstatSync(dest).isSymbolicLink()) {
         fs.unlinkSync(dest);
       }
 
-      // Create symlink with relative path
-      fs.symlinkSync(relativePath, dest);
-      fs.chmodSync(dest, 0o755);
+      // Create relative symlink
+      try {
+        fs.symlinkSync(relativePath, dest);
+        fs.chmodSync(dest, 0o755);
+      } catch (err) {
+        // Fallback for Windows without symlink support: use wrapper script
+        if (err.code === 'EACCES' || err.code === 'EPERM') {
+          console.warn(`${YELLOW}⚠  Symlinks not supported, using wrapper script${RESET}`);
+          const wrapper = `#!/bin/sh\nexec node "$(dirname "$0")/${relativePath}" "$@"\n`;
+          fs.writeFileSync(dest, wrapper, { mode: 0o755 });
+        } else {
+          throw err;
+        }
+      }
 
       console.log(`${GREEN}✓${RESET} ${hook.name} installed`);
       installed++;
