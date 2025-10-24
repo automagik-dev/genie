@@ -549,10 +549,9 @@ function readSpellContent(spellPath: string): string {
 }
 
 // Tool: list_spells - Discover available spells
-server.tool('list_spells', 'List all available Genie spells (reusable knowledge patterns). Returns spells from .genie/spells/ (global), .genie/code/spells/ (code-specific), and .genie/create/spells/ (create-specific).', {
-  scope: z.enum(['all', 'global', 'code', 'create']).optional().describe('Filter spells by scope. Default: all')
-}, async (args) => {
-  const scope = args.scope || 'all';
+server.tool('list_spells', 'List all available Genie spells (reusable knowledge patterns). Returns spells from .genie/spells/ (global), .genie/code/spells/ (code-specific), and .genie/create/spells/ (create-specific).', async () => {
+  // Note: Scope parameter removed - always returns all spells for simplicity (avoids MCP schema validation issues)
+  const scope = 'all';
   const result: any = {};
 
   // Global spells
