@@ -20,6 +20,8 @@
     ".genie/agents/**/*.md",
     ".genie/code/**/*",
     ".genie/create/**/*",
+    ".genie/spells/**/*",
+    ".genie/neurons/**/*",
     ".genie/product/**/*.md",
     ".genie/standards/**/*.md",
     ".genie/guides/**/*.md",
