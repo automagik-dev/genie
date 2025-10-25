@@ -75,29 +75,15 @@ export function detectInstallType(): 'clean' | 'old_genie' | 'already_new' {
     return 'clean';
   }
 
-  // FIX: Check for modern version files FIRST
+  // FIX: Check for modern version file FIRST
   // If version.json exists and has a modern version (v2.1.0+), this is NOT old_genie
   const versionPath = path.join(genieDir, 'state', 'version.json');
-  const frameworkVersionPath = path.join(genieDir, '.framework-version');
 
   if (fs.existsSync(versionPath)) {
     try {
       const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
       const version = versionData.version;
       // If version.json exists with a version string, this is modern structure
-      if (version && typeof version === 'string') {
-        return 'already_new';
-      }
-    } catch (e) {
-      // Corrupted version file - treat as needs upgrade
-    }
-  }
-
-  if (fs.existsSync(frameworkVersionPath)) {
-    try {
-      const versionData = JSON.parse(fs.readFileSync(frameworkVersionPath, 'utf8'));
-      const version = versionData.installed_version;
-      // If .framework-version exists with a version, this is modern
       if (version && typeof version === 'string') {
         return 'already_new';
       }

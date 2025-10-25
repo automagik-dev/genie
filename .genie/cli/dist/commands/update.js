@@ -1,77 +1,31 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runUpdate = runUpdate;
-const path_1 = __importDefault(require("path"));
-const fs_1 = require("fs");
+const child_process_1 = require("child_process");
+const util_1 = require("util");
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
-const fs_utils_1 = require("../lib/fs-utils");
+const package_1 = require("../lib/package");
 const upgrade_1 = require("../lib/upgrade");
+const forge_manager_1 = require("../lib/forge-manager");
+const execAsync = (0, util_1.promisify)(child_process_1.exec);
+/**
+ * Update command - updates the global npm package
+ *
+ * NO workspace changes, NO backups - just updates the global package.
+ * Workspace upgrade happens automatically when you run `genie` or `genie init` after update.
+ */
 async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
-        const cwd = process.cwd();
-        // Check if .genie exists
-        const genieDir = path_1.default.join(cwd, '.genie');
-        if (!await (0, fs_utils_1.pathExists)(genieDir)) {
-            await (0, view_helpers_1.emitView)((0, common_1.buildErrorView)('Not initialized', 'No .genie directory found. Run `genie init` first.'), parsed.options, { stream: process.stderr });
-            process.exitCode = 1;
-            return;
-        }
-        // Check for .framework-version
-        const versionPath = path_1.default.join(genieDir, '.framework-version');
-        let installedVersion;
-        let installedCommit;
-        if (await (0, fs_utils_1.pathExists)(versionPath)) {
-            const versionData = JSON.parse(await fs_1.promises.readFile(versionPath, 'utf8'));
-            installedVersion = versionData.installed_version;
-            installedCommit = versionData.installed_commit;
-        }
-        else {
-            // Legacy installation without .framework-version
-            // Check if version.json exists (old version tracking file)
-            const legacyVersionPath = path_1.default.join(genieDir, 'state', 'version.json');
-            let legacyVersion = null;
-            if (await (0, fs_utils_1.pathExists)(legacyVersionPath)) {
-                try {
-                    const legacyData = JSON.parse(await fs_1.promises.readFile(legacyVersionPath, 'utf8'));
-                    legacyVersion = legacyData.version;
-                }
-                catch {
-                    // Ignore parse errors
-                }
-            }
-            // Use legacy version if available, otherwise assume old version
-            // Using 2.4.0-rc.1 as baseline for legacy installations (before .framework-version was added)
-            installedVersion = legacyVersion || '2.4.0-rc.1';
-            installedCommit = 'unknown';
-            await (0, view_helpers_1.emitView)((0, common_1.buildWarningView)('Legacy installation detected', [
-                'No .framework-version file found.',
-                `Detected version: ${installedVersion}`,
-                'Creating .framework-version for future updates...'
-            ]), parsed.options);
-            // Create .framework-version file for future updates
-            const frameworkVersion = {
-                installed_version: installedVersion,
-                installed_commit: installedCommit,
-                installed_date: new Date().toISOString(),
-                package_name: 'automagik-genie',
-                customized_files: [],
-                deleted_files: [],
-                last_upgrade_date: null,
-                previous_version: null,
-                upgrade_history: []
-            };
-            await fs_1.promises.writeFile(versionPath, JSON.stringify(frameworkVersion, null, 2), 'utf8');
-        }
+        const currentVersion = (0, package_1.getPackageVersion)();
         // Check for updates
-        const updateCheck = await (0, upgrade_1.checkForUpdates)(installedVersion, installedCommit);
+        console.log('📦 Checking for updates...');
+        console.log('');
+        const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown');
         if (!updateCheck.available) {
             await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Already up to date', [
-                `Current version: ${installedVersion}`,
+                `Current version: ${currentVersion}`,
                 `Latest version: ${updateCheck.latestVersion}`,
                 '✅ No updates available'
             ]), parsed.options);
@@ -79,24 +33,20 @@ async function runUpdate(parsed, _config, _paths) {
         }
         // Show update info
         await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Update available', [
-            `Current: ${installedVersion}`,
+            `Current: ${currentVersion}`,
             `Available: ${updateCheck.latestVersion}`,
             '',
             'Changes:',
             ...updateCheck.changes.map(c => `  ${c}`)
         ]), parsed.options);
-        // Preview mode - just show what would change
-        if (flags.preview) {
-            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Preview mode', ['Run `genie update` without --preview to apply changes']), parsed.options);
-            return;
-        }
+        console.log('');
         // Prompt for confirmation (unless --force)
         if (!flags.force) {
             const { default: prompts } = await import('prompts');
             const response = await prompts({
                 type: 'confirm',
                 name: 'proceed',
-                message: 'Would you like to upgrade now?',
+                message: 'Update global Genie package?',
                 initial: true
             });
             if (!response.proceed) {
@@ -104,77 +54,85 @@ async function runUpdate(parsed, _config, _paths) {
                 return;
             }
         }
-        // Ask about hook installation (advanced feature)
-        let shouldInstallHooks = false;
-        if (process.stdout.isTTY && !flags.force) {
-            const { default: prompts } = await import('prompts');
-            const hookResponse = await prompts({
-                type: 'select',
-                name: 'installHooks',
-                message: '🔧 Install git hooks? (Advanced - validates commits/pushes, runs tests)',
-                choices: [
-                    {
-                        title: 'No (default - recommended for most users)',
-                        value: false
-                    },
-                    {
-                        title: 'Yes (advanced - modifies .git/hooks/)',
-                        value: true
-                    }
-                ],
-                initial: 0,
-                hint: '⚠️  Only install if you understand what git hooks do'
-            });
-            if (hookResponse.installHooks === undefined) {
-                console.log('Update cancelled.');
-                return;
-            }
-            shouldInstallHooks = hookResponse.installHooks;
+        console.log('');
+        console.log('📦 Updating global package...');
+        console.log('');
+        // Detect package manager (prefer pnpm, fallback to npm)
+        let packageManager = 'npm';
+        try {
+            await execAsync('pnpm --version');
+            packageManager = 'pnpm';
         }
-        // Generate upgrade diff
-        await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Preparing upgrade', ['📦 Fetching framework diff...']), parsed.options);
-        const upgradeContext = {
-            oldVersion: installedVersion,
-            newVersion: updateCheck.latestVersion,
-            oldCommit: installedCommit,
-            newCommit: updateCheck.latestCommit,
-            workspacePath: cwd
-        };
-        const diff = await (0, upgrade_1.generateFrameworkDiff)(upgradeContext);
-        if (!diff.hasChanges) {
-            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('No framework changes', ['All files are up to date']), parsed.options);
-            return;
+        catch {
+            // pnpm not available, use npm
         }
-        // Test merge
-        await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Testing merge', ['🧪 Checking for conflicts...']), parsed.options);
-        const result = await (0, upgrade_1.applyUpgrade)(diff, upgradeContext);
-        if (result.success) {
-            // Clean merge succeeded
-            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Upgrade complete', [
-                `✅ Successfully upgraded to ${updateCheck.latestVersion}`,
-                `Files updated: ${result.filesUpdated}`,
-                `User files preserved: ${result.filesPreserved}`,
-                `💾 Backup ID: ${result.backupId}`
+        // Update global package
+        const updateCommand = `${packageManager} install -g automagik-genie@next`;
+        console.log(`   Running: ${updateCommand}`);
+        console.log('');
+        try {
+            const { stdout, stderr } = await execAsync(updateCommand);
+            if (stdout)
+                console.log(stdout);
+            if (stderr && !stderr.includes('npm WARN'))
+                console.error(stderr);
+        }
+        catch (error) {
+            throw new Error(`Failed to update package: ${error.message}\n\n` +
+                `Please try manually: ${updateCommand}`);
+        }
+        console.log('');
+        console.log(`✅ I've evolved to ${updateCheck.latestVersion}!`);
+        console.log('');
+        // Check if Forge is already running
+        const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+        const forgeRunning = await (0, forge_manager_1.isForgeRunning)(baseUrl);
+        if (forgeRunning) {
+            // Forge is running - your clone needs to learn the new powers
+            await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Master Genie Updated', [
+                '✨ I (the Master) have learned new powers!',
+                '',
+                '💡 Your clone is still running the old me...',
+                '   Run `genie` again to teach your clone these new powers',
+                '   (I\'ll sync all my latest knowledge to your workspace)',
+                '',
+                '🔮 Your clone will inherit everything I just learned!'
             ]), parsed.options);
-            // Install git hooks if user opted in
-            await installGitHooksIfRequested(shouldInstallHooks);
         }
         else {
-            // Conflicts detected - needs Update Agent
-            await (0, view_helpers_1.emitView)((0, common_1.buildWarningView)('Conflicts detected', [
-                `⚠️  ${result.conflicts.length} file(s) have conflicts:`,
-                ...result.conflicts.map(c => `   - ${c.file}`),
-                '',
-                `💾 Backup ID: ${result.backupId}`,
-                '',
-                '🤖 Update Agent required for conflict resolution.',
-                'This feature is coming soon.',
-                '',
-                'For now, please:',
-                '1. Review conflicts manually',
-                '2. Or wait for Update Agent integration'
-            ]), parsed.options);
-            process.exitCode = 1;
+            // Forge not running - offer to summon the clone now
+            console.log('💡 Next time you summon me, I\'ll teach your clone everything new!');
+            console.log('');
+            // Prompt to start genie now (unless --force which skips all prompts)
+            if (!flags.force) {
+                const { default: prompts } = await import('prompts');
+                const response = await prompts({
+                    type: 'confirm',
+                    name: 'startNow',
+                    message: 'Summon your Genie clone now to learn these powers?',
+                    initial: true
+                });
+                if (response.startNow) {
+                    console.log('');
+                    console.log('🔮 Preparing to summon your clone...');
+                    console.log('');
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Ready to Summon', [
+                        'Run `genie` to summon your clone',
+                        '(I\'ll automatically teach it everything I just learned!)'
+                    ]), parsed.options);
+                }
+                else {
+                    await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Master Genie Updated', [
+                        '✨ I\'m ready when you are!',
+                        '   Run `genie` anytime to teach your clone these new powers'
+                    ]), parsed.options);
+                }
+            }
+            else {
+                await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Master Genie Updated', [
+                    '✨ Run `genie` to teach your clone these new powers!'
+                ]), parsed.options);
+            }
         }
     }
     catch (error) {
@@ -187,38 +145,9 @@ function parseFlags(args) {
     const flags = {};
     for (let i = 0; i < args.length; i++) {
         const token = args[i];
-        if (token === '--preview' || token === '-p') {
-            flags.preview = true;
-        }
-        else if (token === '--rollback') {
-            flags.rollback = true;
-        }
-        else if (token === '--force' || token === '-f') {
+        if (token === '--force' || token === '-f') {
             flags.force = true;
         }
     }
     return flags;
-}
-/**
- * Install git hooks if user opted in during update
- */
-async function installGitHooksIfRequested(shouldInstall) {
-    if (!shouldInstall) {
-        return;
-    }
-    console.log('');
-    console.log('🔧 Installing git hooks...');
-    const { spawnSync } = await import('child_process');
-    const { getPackageRoot } = await import('../lib/paths.js');
-    const packageRoot = getPackageRoot();
-    const installScript = path_1.default.join(packageRoot, 'scripts', 'install-hooks.cjs');
-    const result = spawnSync('node', [installScript], {
-        stdio: 'inherit',
-        cwd: packageRoot
-    });
-    if (result.status !== 0) {
-        console.warn('⚠️  Hook installation failed (non-fatal)');
-        console.warn('   You can install later with: node scripts/install-hooks.cjs');
-    }
-    console.log('');
 }

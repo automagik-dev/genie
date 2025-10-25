@@ -15,6 +15,7 @@ exports.snapshotDirectory = snapshotDirectory;
 exports.readJsonFile = readJsonFile;
 exports.writeJsonFile = writeJsonFile;
 exports.collectFiles = collectFiles;
+exports.backupGenieDirectory = backupGenieDirectory;
 const fs_1 = __importDefault(require("fs"));
 const fs_2 = require("fs");
 const path_1 = __importDefault(require("path"));
@@ -117,4 +118,32 @@ async function collectFiles(root, options = {}) {
     }
     await walk(root);
     return results.sort();
+}
+/**
+ * Unified backup function for .genie directory
+ *
+ * Creates timestamped backup of entire .genie directory + root documentation
+ * Stores at: .genie/backups/<backupId>/
+ *
+ * @param workspacePath - Root of workspace (where .genie lives)
+ * @param reason - Why backup is being created (for logging/tracking)
+ * @returns backupId for reference
+ */
+async function backupGenieDirectory(workspacePath, reason) {
+    const backupId = toIsoId();
+    const genieDir = path_1.default.join(workspacePath, '.genie');
+    const backupRoot = path_1.default.join(genieDir, 'backups', backupId);
+    // Create backup directory
+    await ensureDir(backupRoot);
+    // Backup entire .genie directory (atomic snapshot)
+    await snapshotDirectory(genieDir, path_1.default.join(backupRoot, 'genie'));
+    // Backup root documentation files if present
+    const rootDocs = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md'];
+    for (const doc of rootDocs) {
+        const docPath = path_1.default.join(workspacePath, doc);
+        if (await pathExists(docPath)) {
+            await fs_2.promises.copyFile(docPath, path_1.default.join(backupRoot, doc));
+        }
+    }
+    return backupId;
 }

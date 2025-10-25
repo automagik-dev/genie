@@ -13,7 +13,8 @@ import {
   toIsoId,
   copyDirectory,
   writeJsonFile,
-  snapshotDirectory
+  snapshotDirectory,
+  backupGenieDirectory
 } from '../lib/fs-utils';
 import { getPackageVersion } from '../lib/package';
 import { promises as fsp } from 'fs';
@@ -70,14 +71,13 @@ export async function runRollback(
       return;
     }
 
-    const preBackupId = await backupCurrentState(targetGenie);
+    // Backup current state before restoring (using unified backup)
+    const preBackupId = await backupGenieDirectory(cwd, 'pre_rollback');
+
     await restoreFromBackup(targetGenie, backupDir);
 
-    // Restore root documentation files if they exist in backup
-    const docsBackupDir = path.join(backupsRoot, targetId, 'docs');
-    if (await pathExists(docsBackupDir)) {
-      await restoreRootDocs(cwd, docsBackupDir);
-    }
+    // Restore root documentation files if they exist in backup (now at backup root, not in docs/)
+    await restoreRootDocs(cwd, path.join(backupsRoot, targetId));
 
     await mergeBackupHistories(targetGenie, backupsRoot, preBackupId);
     await touchVersionFile(cwd, 'rollback');
@@ -137,31 +137,7 @@ function selectBackupId(ids: string[], flags: RollbackFlags): string | undefined
   return undefined;
 }
 
-async function backupCurrentState(targetGenie: string): Promise<string> {
-  const backupId = `${toIsoId()}-pre-rollback`;
-  const backupDir = path.join(targetGenie, 'backups', backupId);
-  const cwd = process.cwd();
-
-  await ensureDir(backupDir);
-
-  // Backup current .genie directory
-  await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
-
-  // Backup current root framework documentation files
-  const rootDocsDir = path.join(backupDir, 'docs');
-  await ensureDir(rootDocsDir);
-
-  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
-  for (const file of rootDocsFiles) {
-    const srcPath = path.join(cwd, file);
-    const destPath = path.join(rootDocsDir, file);
-    if (await pathExists(srcPath)) {
-      await fsp.copyFile(srcPath, destPath);
-    }
-  }
-
-  return backupId;
-}
+// Removed - now uses unified backupGenieDirectory() function
 
 async function restoreFromBackup(targetGenie: string, backupGenieDir: string): Promise<void> {
   const stagingDir = path.join(path.dirname(targetGenie), `.genie-restore-${toIsoId()}`);
@@ -201,10 +177,11 @@ async function mergeBackupHistories(targetGenie: string, backupsRoot: string, pr
   await fsp.writeFile(path.join(recordDir, 'note.txt'), 'Created automatically before rollback.');
 }
 
-async function restoreRootDocs(cwd: string, docsBackupDir: string): Promise<void> {
-  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
+async function restoreRootDocs(cwd: string, backupRoot: string): Promise<void> {
+  // Root docs are now stored directly in backup root (not in docs/ subfolder)
+  const rootDocsFiles = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md'];
   for (const file of rootDocsFiles) {
-    const srcPath = path.join(docsBackupDir, file);
+    const srcPath = path.join(backupRoot, file);
     const destPath = path.join(cwd, file);
     if (await pathExists(srcPath)) {
       await fsp.copyFile(srcPath, destPath);
