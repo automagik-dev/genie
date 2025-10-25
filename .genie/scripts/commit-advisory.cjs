@@ -296,37 +296,81 @@ class CommitAdvisory {
 
   /**
    * Check if commit is exempt from traceability requirements
-   * Includes: automated commits, chores, and non-functional enhancements
+   *
+   * COMMIT TYPE DETECTION (Conventional Commits + Genie-specific)
+   * ================================================================
+   * EXEMPT TYPES (no wish/issue required):
+   *   - docs:      Documentation-only changes
+   *   - style:     Formatting, whitespace, semicolons (no logic change)
+   *   - refactor:  Code restructuring without behavior change
+   *   - perf:      Performance improvements (speed, memory)
+   *   - chore:     Maintenance, dependencies, tooling, configs
+   *   - build:     Build system, CI/CD, tooling
+   *   - test:      Adding/updating tests only
+   *
+   * FEATURE TYPES (require wish or GitHub issue):
+   *   - feat:      New features (requires wish or issue)
+   *   - fix:       Bug fixes (MUST have GitHub issue)
+   *   - [no type]: Untyped commits (treated as feature work)
+   *
+   * WHY: Non-functional commits (docs/style/refactor/chore) don't need
+   * work item traceability - they're maintenance, not user stories.
+   * This aligns with Conventional Commits specification.
+   * ================================================================
    */
   isAutomatedCommit(commit) {
     const full = `${commit.subject} ${commit.body}`;
 
-    // Patterns for automated commits and exempt commit types
-    const patterns = [
-      // Auto-generated commits
-      /\(auto-generated\)/i,
-      /\[skip ci\]/i,
-      /\[auto\]/i,
-      /agent graph/i,
-      /\(automagik-forge\s+[a-f0-9-]+\)/i,  // Forge task references
+    // Pattern categories for clarity and maintainability
+    const patterns = {
+      // Auto-generated commits (scripts, CI, bots)
+      automated: [
+        /\(auto-generated\)/i,
+        /\[skip ci\]/i,
+        /\[auto\]/i,
+        /agent graph/i,
+        /\(automagik-forge\s+[a-f0-9-]+\)/i,  // Forge task IDs
+      ],
 
-      // Exempt commit types (don't require issues)
-      /^chore:/i,           // All maintenance tasks
-      /^perf:/i,            // Performance improvements (speed)
-      /^refactor:/i,        // Code quality (reduce LOC, cleanup)
-      /^style:/i,           // Formatting/style changes
-      /^docs:/i,            // Documentation updates
+      // Conventional Commits types (exempt from traceability)
+      conventionalExempt: [
+        /^docs:/i,           // Documentation updates
+        /^docs\(/i,          // docs(scope): format
+        /^style:/i,          // Formatting/style changes
+        /^style\(/i,
+        /^refactor:/i,       // Code quality improvements
+        /^refactor\(/i,
+        /^perf:/i,           // Performance optimizations
+        /^perf\(/i,
+        /^chore:/i,          // Maintenance tasks
+        /^chore\(/i,
+        /^build:/i,          // Build system, tooling
+        /^build\(/i,
+        /^test:/i,           // Test-only changes
+        /^test\(/i,
+        /^ci:/i,             // CI/CD configuration
+        /^ci\(/i,
+      ],
 
-      // Infrastructure/tooling fixes (hooks, scripts, CI/CD)
-      /pre-push hook/i,
-      /pre-commit hook/i,
-      /\.genie\/scripts/i,
-      /git hook/i,
-      /hook warning/i,
-      /commit advisory/i
+      // Infrastructure maintenance (hooks, scripts, configs)
+      infrastructure: [
+        /pre-push hook/i,
+        /pre-commit hook/i,
+        /\.genie\/scripts/i,
+        /git hook/i,
+        /hook warning/i,
+        /commit advisory/i,
+      ],
+    };
+
+    // Flatten all patterns and check
+    const allPatterns = [
+      ...patterns.automated,
+      ...patterns.conventionalExempt,
+      ...patterns.infrastructure,
     ];
 
-    return patterns.some(pattern => pattern.test(full));
+    return allPatterns.some(pattern => pattern.test(full));
   }
 
   /**
