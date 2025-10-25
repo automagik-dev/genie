@@ -109,3 +109,39 @@ export async function collectFiles(root: string, options: { filter?: (relPath: s
   await walk(root);
   return results.sort();
 }
+
+/**
+ * Unified backup function for .genie directory
+ *
+ * Creates timestamped backup of entire .genie directory + root documentation
+ * Stores at: .genie/backups/<backupId>/
+ *
+ * @param workspacePath - Root of workspace (where .genie lives)
+ * @param reason - Why backup is being created (for logging/tracking)
+ * @returns backupId for reference
+ */
+export async function backupGenieDirectory(
+  workspacePath: string,
+  reason: 'old_genie' | 'pre_rollback'
+): Promise<string> {
+  const backupId = toIsoId();
+  const genieDir = path.join(workspacePath, '.genie');
+  const backupRoot = path.join(genieDir, 'backups', backupId);
+
+  // Create backup directory
+  await ensureDir(backupRoot);
+
+  // Backup entire .genie directory (atomic snapshot)
+  await snapshotDirectory(genieDir, path.join(backupRoot, 'genie'));
+
+  // Backup root documentation files if present
+  const rootDocs = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md'];
+  for (const doc of rootDocs) {
+    const docPath = path.join(workspacePath, doc);
+    if (await pathExists(docPath)) {
+      await fsp.copyFile(docPath, path.join(backupRoot, doc));
+    }
+  }
+
+  return backupId;
+}

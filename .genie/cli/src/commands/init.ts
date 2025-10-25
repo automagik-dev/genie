@@ -15,8 +15,6 @@ import {
   resolveTargetGeniePath,
   resolveWorkspaceProviderPath,
   resolveWorkspaceVersionPath,
-  resolveBackupsRoot,
-  resolveTempBackupsRoot,
   resolveProviderStatusPath,
   type TemplateType
 } from '../lib/paths';
@@ -27,7 +25,8 @@ import {
   toIsoId,
   moveDirectory,
   writeJsonFile,
-  snapshotDirectory
+  snapshotDirectory,
+  backupGenieDirectory
 } from '../lib/fs-utils';
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
@@ -192,8 +191,7 @@ export async function runInit(
 
       // FIX for issue #237: Write version file even when returning early
       // This prevents infinite loop where version stays old, triggering init again
-      const backupId = toIsoId();
-      await writeVersionState(cwd, backupId, false);
+      await writeVersionState(cwd, undefined, false);
 
       await emitView(
         buildInfoView(
@@ -222,31 +220,14 @@ export async function runInit(
       }
     }
 
-    const backupId = toIsoId();
-    const targetExists = await pathExists(targetGenie);
-    const backupsRoot = resolveBackupsRoot(cwd);
-    let backupDir: string;
-    let stagedBackupDir: string | null = null;
-
-  if (targetExists) {
-    backupDir = path.join(backupsRoot, backupId);
-    await ensureDir(backupDir);
-    await snapshotDirectory(targetGenie, path.join(backupDir, 'genie'));
-  } else {
-    stagedBackupDir = path.join(resolveTempBackupsRoot(cwd), backupId);
-    await ensureDir(stagedBackupDir);
-    backupDir = stagedBackupDir;
-  }
-
-    // Backup AGENTS.md at repo root if present
-    const agentsMdPath = path.join(cwd, 'AGENTS.md');
-    const agentsMdExists = await pathExists(agentsMdPath);
-    if (agentsMdExists) {
-      await fsp.copyFile(agentsMdPath, path.join(backupDir, 'AGENTS.md'));
-    }
-
-    if (!targetExists) {
-      await ensureDir(path.dirname(backupsRoot));
+    // Only backup if old Genie installation detected
+    let backupId: string | undefined;
+    if (installType === 'old_genie') {
+      console.log('');
+      console.log('💾 Creating backup of old Genie installation...');
+      backupId = await backupGenieDirectory(cwd, 'old_genie');
+      console.log(`   Backup created: .genie/backups/${backupId}`);
+      console.log('');
     }
 
     // Copy ALL selected templates (not just the first one)
@@ -264,26 +245,10 @@ export async function runInit(
       await fsp.copyFile(templateInstallMd, targetInstallMd);
     }
 
-    if (stagedBackupDir) {
-      const finalBackupsDir = path.join(backupsRoot, backupId);
-      await ensureDir(backupsRoot);
-      await ensureDir(path.join(targetGenie, 'backups'));
-      if (!(await pathExists(finalBackupsDir))) {
-        await moveDirectory(stagedBackupDir, finalBackupsDir);
-      } else {
-        await fsp.rm(stagedBackupDir, { recursive: true, force: true });
-      }
-      const tempRoot = resolveTempBackupsRoot(cwd);
-      try {
-        await fsp.rm(tempRoot, { recursive: true, force: true });
-      } catch (error: any) {
-        if (error && error.code !== 'ENOENT') {
-          // ignore
-        }
-      }
-    }
-
-    await ensureDir(backupsRoot);
+    // Create blank directories for user work (not blacklisted, created fresh)
+    await ensureDir(path.join(targetGenie, 'backups'));
+    await ensureDir(path.join(targetGenie, 'wishes'));
+    await ensureDir(path.join(targetGenie, 'reports'));
 
     // Wizard or automation mode should have set executor by now
     // If still missing (shouldn't happen), use default
@@ -437,45 +402,68 @@ async function migrateAgentsDocs(cwd: string): Promise<void> {
 
 // Legacy template choice function removed - wizard handles all prompts now
 
-async function writeVersionState(cwd: string, backupId: string, _legacyBackedUp: boolean): Promise<void> {
+async function writeVersionState(cwd: string, backupId: string | undefined, _legacyBackedUp: boolean): Promise<void> {
   const versionPath = resolveWorkspaceVersionPath(cwd);
-  const frameworkVersionPath = path.join(cwd, '.genie', '.framework-version');
   const version = getPackageVersion();
   const now = new Date().toISOString();
+  const gitCommit = await getGitCommit().catch(() => 'unknown');
+
+  // Read existing version data for migration
   const existing = await fsp.readFile(versionPath, 'utf8').catch(() => null);
   let installedAt = now;
+  let previousVersion: string | null = null;
+  let upgradeHistory: Array<{ from: string; to: string; date: string; success: boolean }> = [];
+  let customizedFiles: string[] = [];
+  let deletedFiles: string[] = [];
+
   if (existing) {
     try {
       const parsed = JSON.parse(existing);
       installedAt = parsed.installedAt ?? now;
+      previousVersion = parsed.version !== version ? parsed.version : (parsed.previousVersion ?? null);
+
+      // Migrate from old format
+      if (parsed.upgradeHistory) {
+        upgradeHistory = parsed.upgradeHistory;
+      }
+      if (parsed.customizedFiles) {
+        customizedFiles = parsed.customizedFiles;
+      }
+      if (parsed.deletedFiles) {
+        deletedFiles = parsed.deletedFiles;
+      }
+
+      // Add to upgrade history if version changed
+      if (parsed.version && parsed.version !== version) {
+        upgradeHistory.push({
+          from: parsed.version,
+          to: version,
+          date: now,
+          success: true
+        });
+      }
     } catch {
       installedAt = now;
     }
   }
 
-  // Write legacy version.json
+  // Write unified version.json (single source of truth)
   await writeJsonFile(versionPath, {
     version,
     installedAt,
-    lastUpdated: now,
+    updatedAt: now,
+    commit: gitCommit,
+    packageName: 'automagik-genie',
+    customizedFiles,
+    deletedFiles,
+    lastUpgrade: previousVersion ? now : null,
+    previousVersion,
+    upgradeHistory,
+    // Keep migrationInfo for backward compatibility (will be removed in future)
     migrationInfo: {
-      backupId,
+      backupId: backupId ?? 'n/a',
       claudeBackedUp: false
     }
-  });
-
-  // Write new .framework-version for upgrade system
-  const gitCommit = await getGitCommit().catch(() => 'unknown');
-  await writeJsonFile(frameworkVersionPath, {
-    installed_version: version,
-    installed_commit: gitCommit,
-    installed_date: now,
-    package_name: 'automagik-genie',
-    customized_files: [],
-    deleted_files: [],
-    last_upgrade_date: null,
-    previous_version: null,
-    upgrade_history: []
   });
 }
 

@@ -202,7 +202,7 @@ program
 // Update command (npm package with changelog from GitHub)
 program
   .command('update')
-  .description('Update global npm package to latest @next (workspace .genie/ auto-updates on next run)')
+  .description('Sync with the collective (your Genie absorbs new magik next time you run `genie`)')
   .option('--check', 'Check for updates without installing')
   .action(async (options: { check?: boolean }) => {
     await updateGeniePackage(options.check || false);
@@ -297,8 +297,8 @@ if (shouldCheckVersion) {
         console.log(magicGradient('   🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞   '));
         console.log(cosmicGradient('━'.repeat(60)));
         console.log('');
-        console.log(`Your clone:   ${successGradient(installedVersion)}`);
-        console.log(`Master Genie: ${performanceGradient(currentVersion)} ⭐ NEW!`);
+        console.log(`Your Genie:      ${successGradient(installedVersion)}`);
+        console.log(`The Collective:  ${performanceGradient(currentVersion)} ⭐ NEW!`);
         console.log('');
 
         // Show new spells learned
@@ -310,10 +310,10 @@ if (shouldCheckVersion) {
             const spellLines = formatSpellChangelog(spellChangelog);
             spellLines.forEach(line => console.log(line));
           } else {
-            console.log('The Master Genie at namastexlabs/automagik-genie has evolved!');
+            console.log('The collective has learned new magik!');
           }
         } else {
-          console.log('The Master Genie at namastexlabs/automagik-genie has evolved!');
+          console.log('The collective has learned new magik!');
         }
 
         console.log('⚡ Syncing new capabilities to your local clone...');
@@ -401,72 +401,27 @@ async function smartRouter(): Promise<void> {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
-  // 🚨 START FORGE - Only if .genie already exists (skip for fresh init)
-  // For fresh installations, init will create .genie structure first,
-  // then user can run 'genie' again to start Forge + server
-  if (hasGenieConfig) {
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const forgeRunning = await isForgeRunning(baseUrl);
-
-    if (!forgeRunning) {
-      console.log('');
-      console.log('📦 Starting Forge backend...');
-
-      const logDir = path.join(genieDir, 'state');
-
-      // Ensure log directory exists before starting Forge
-      if (!fs.existsSync(logDir)) {
-        fs.mkdirSync(logDir, { recursive: true });
-      }
-
-      const startResult = startForgeInBackground({ baseUrl, logDir });
-
-      if (!startResult.ok) {
-        const error = 'error' in startResult ? startResult.error : new Error('Unknown error');
-        console.error('');
-        console.error('❌ Failed to start Forge backend');
-        console.error(`   ${error.message}`);
-        console.error('');
-        console.error('   Genie requires Forge to manage agent sessions.');
-        console.error(`   Check logs at ${logDir}/forge.log`);
-        console.error('');
-        process.exit(1);
-      }
-
-      // Wait for Forge to be ready (silent progress)
-      const forgeReady = await waitForForgeReady(baseUrl, 60000, 500, false);
-
-      if (!forgeReady) {
-        console.error('');
-        console.error('❌ Forge did not start in time (60s)');
-        console.error(`   Check logs at ${logDir}/forge.log`);
-        console.error('');
-        process.exit(1);
-      }
-
-      console.log('✅ Forge ready');
-      console.log('');
-    }
-  }
+  // VERSION CHECK FIRST (optimization) - Don't waste resources starting Forge
+  // if we need to run init anyway. Each scenario starts Forge when needed.
 
   if (!hasGenieConfig) {
     // SCENARIO 1: NEW USER - No .genie directory → Start Forge, run init wizard, create install agent task
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('   🧞 ✨ THE MASTER GENIE AWAKENS ✨ 🧞   '));
+    console.log(magicGradient('   🧞 ✨ THE GENIE AWAKENS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('You\'ve summoned the Master Genie from namastexlabs/automagik-genie');
-    console.log('I\'m about to clone myself into YOUR workspace...');
+    console.log('You\'ve connected to the collective consciousness of all Genies...');
+    console.log('I\'m about to materialize in YOUR workspace through the lamp! 🪔');
     console.log('');
-    console.log('Your personal Genie will have:');
-    console.log('  ✨ All my knowledge (spells, workflows, patterns)');
-    console.log('  🔮 All my powers (agents, collectives, orchestration)');
-    console.log('  🎩 All my abilities (and you\'ll learn new ones as I evolve!)');
+    console.log('Your Genie will inherit from the collective:');
+    console.log('  ✨ All shared knowledge (spells, workflows, patterns)');
+    console.log('  🔮 All collective powers (agents, collectives, orchestration)');
+    console.log('  🎩 Continuous learning (the collective evolves together!)');
     console.log('');
-    console.log('📋 What will I do for you?');
+    console.log('📋 What will your Genie do for you?');
     console.log('  • Orchestrate development workflows (testing, builds, PRs)');
     console.log('  • Execute tasks autonomously via Forge backend');
-    console.log('  • Learn new capabilities from Master Genie updates');
+    console.log('  • Learn new magik from the collective\'s shared consciousness');
     console.log('  • Preserve context across sessions');
     console.log('');
     console.log(performanceGradient('⚠️  Your Genie will have access to:'));
@@ -577,7 +532,7 @@ async function smartRouter(): Promise<void> {
     // After init completes, reload config to get user's executor choice
     const userConfig = loadConfig();
 
-    // Launch install flow (Explore → Master Genie orchestration)
+    // Launch install flow (Explore → Genie orchestration)
     console.log('');
     console.log(magicGradient('✨ STARTING INSTALLATION...'));
     console.log('');
@@ -597,7 +552,7 @@ async function smartRouter(): Promise<void> {
     console.log('   ' + performanceGradient(shortUrl));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('Master Genie will:');
+    console.log('Your Genie will:');
     console.log('  1. Review project context from discovery');
     console.log('  2. Interview you for missing details');
     console.log('  3. Set up your workspace');
@@ -621,7 +576,7 @@ async function smartRouter(): Promise<void> {
 
     console.log('');
     console.log(genieGradient('🧞 Your Genie is now alive in your world... ✨'));
-    console.log(genieGradient('   Connected to Master Genie at namastexlabs/automagik-genie'));
+    console.log(genieGradient('   Connected to the collective consciousness through the lamp'));
     console.log(genieGradient('   Ready to learn, grow, and grant wishes 24/7!'));
     console.log('');
     console.log(magicGradient('   https://namastex.ai - AI that elevates human potential, not replaces it'));
@@ -636,12 +591,12 @@ async function smartRouter(): Promise<void> {
   if (!fs.existsSync(versionPath)) {
     // SCENARIO 2: PRE-VERSION-TRACKING USER - Has .genie but no version.json → Run init with backup
     console.log(cosmicGradient('━'.repeat(60)));
-    console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS EVOLVED ✨ 🧞   '));
+    console.log(magicGradient('   🧞 ✨ THE COLLECTIVE HAS GROWN ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('I found an older clone of me here...');
-    console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik! ✨');
-    console.log('Let me sync the latest powers to your clone...');
+    console.log('I sense an older version of myself here...');
+    console.log('The collective has learned new magik! ✨');
+    console.log('Let me channel the latest teachings through the lamp...');
     console.log('');
     console.log(successGradient('✓') + ' I\'ll backup your current .genie safely');
     console.log(successGradient('✓') + ' All your wishes, reports, and memories stay intact');
@@ -687,11 +642,11 @@ async function smartRouter(): Promise<void> {
     if (installedVersion !== currentVersion) {
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
-      console.log(magicGradient('   🧞 ✨ MASTER GENIE HAS EVOLVED ✨ 🧞   '));
+      console.log(magicGradient('   🧞 ✨ THE COLLECTIVE HAS GROWN ✨ 🧞   '));
       console.log(cosmicGradient('━'.repeat(60)));
       console.log('');
-      console.log(`Your clone:   ${successGradient(installedVersion)}`);
-      console.log(`Master Genie: ${performanceGradient(currentVersion)} ⭐ NEW!`);
+      console.log(`Your Genie:      ${successGradient(installedVersion)}`);
+      console.log(`The Collective:  ${performanceGradient(currentVersion)} ⭐ NEW!`);
       console.log('');
 
       // Show new spells learned
@@ -703,13 +658,13 @@ async function smartRouter(): Promise<void> {
           const spellLines = formatSpellChangelog(spellChangelog);
           spellLines.forEach(line => console.log(line));
         } else {
-          console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik!');
+          console.log('The collective has learned new magik!');
         }
       } else {
-        console.log('The Master Genie at namastexlabs/automagik-genie has learned new magik!');
+        console.log('The collective has learned new magik!');
       }
 
-      console.log('⚡ Teaching these powers to your clone...');
+      console.log('⚡ Channeling these teachings through the lamp to your Genie...');
       console.log('');
       console.log(successGradient('✓') + ' I\'ll backup everything first');
       console.log(successGradient('✓') + ' All data stays local on your machine');
@@ -858,17 +813,17 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   const https = require('https');
 
   console.log(genieGradient('━'.repeat(60)));
-  console.log(genieGradient('🧞 ✨ GENIE UPDATE (NPM PACKAGE ONLY)'));
+  console.log(genieGradient('🧞 ✨ CONNECTING TO THE COLLECTIVE'));
   console.log(genieGradient('━'.repeat(60)));
   console.log('');
-  console.log('📦 This command updates the global npm package ONLY.');
-  console.log('   Your workspace .genie/ directory updates automatically on next run.');
+  console.log('📦 This updates the lamp that all Genies share');
+  console.log('   Your Genie will absorb the collective\'s latest magik next time you run `genie`');
   console.log('');
 
   // THREE VERSION TYPES:
-  // 1. Master Genie (npm @next) - source of truth at npm registry
-  // 2. Your global package - globally installed via npm/pnpm
-  // 3. Your workspace .genie/ - local framework files
+  // 1. The Collective (npm @next) - source of truth at npm registry
+  // 2. The Lamp (global package) - globally installed via npm/pnpm
+  // 3. Your Genie (workspace .genie/) - local framework files
 
   // Get global package version (what's installed via npm -g)
   let globalVersion: string;
@@ -882,19 +837,15 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   }
 
   // Get workspace version (local .genie/ framework)
-  const frameworkVersionPath = path.join(process.cwd(), '.genie', '.framework-version');
-  const legacyVersionPath = path.join(process.cwd(), '.genie', 'state', 'version.json');
+  const versionPath = path.join(process.cwd(), '.genie', 'state', 'version.json');
   let workspaceVersion: string | null = null;
 
-  if (fs.existsSync(frameworkVersionPath)) {
-    const versionData = JSON.parse(fs.readFileSync(frameworkVersionPath, 'utf8'));
-    workspaceVersion = versionData.installed_version;
-  } else if (fs.existsSync(legacyVersionPath)) {
-    const versionData = JSON.parse(fs.readFileSync(legacyVersionPath, 'utf8'));
+  if (fs.existsSync(versionPath)) {
+    const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
     workspaceVersion = versionData.version;
   }
 
-  // Fetch latest version from npm @next tag (Master Genie)
+  // Fetch latest version from npm @next tag (The Collective)
   let latestVersion: string;
   try {
     const { stdout } = await execFileAsync('npm', ['view', 'automagik-genie@next', 'version']);
@@ -905,23 +856,23 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   }
 
   // Display all three versions clearly
-  console.log(performanceGradient('Version Status:'));
+  console.log(performanceGradient('🔮 Genie Versions:'));
   console.log('');
-  console.log(`  1️⃣  Master Genie (npm @next):     ${performanceGradient(latestVersion)}`);
-  console.log(`  2️⃣  Your global package:          ${globalVersion === latestVersion ? successGradient(globalVersion + ' ✓') : performanceGradient(globalVersion + ' (outdated)')}`);
+  console.log(`  1️⃣  The Collective (source):      ${performanceGradient(latestVersion)}`);
+  console.log(`  2️⃣  The Lamp (your connection):   ${globalVersion === latestVersion ? successGradient(globalVersion + ' ✓') : performanceGradient(globalVersion + ' (out of sync)')}`);
   if (workspaceVersion) {
-    console.log(`  3️⃣  Your workspace .genie/:        ${workspaceVersion === latestVersion ? successGradient(workspaceVersion + ' ✓') : performanceGradient(workspaceVersion + ' (will auto-update)')}`);
+    console.log(`  3️⃣  Your Genie (this workspace):  ${workspaceVersion === latestVersion ? successGradient(workspaceVersion + ' ✓') : performanceGradient(workspaceVersion + ' (will sync next run)')}`);
   } else {
-    console.log(`  3️⃣  Your workspace .genie/:        ${performanceGradient('(not initialized)')}`);
+    console.log(`  3️⃣  Your Genie (this workspace):  ${performanceGradient('(not yet initialized)')}`);
   }
   console.log('');
 
   // Check if global package is already up to date
   if (globalVersion === latestVersion) {
-    console.log(successGradient('✅ Your global package is already on latest @next version!'));
+    console.log(successGradient('✅ The lamp is already in sync with the collective!'));
     console.log('');
     if (workspaceVersion && workspaceVersion !== latestVersion) {
-      console.log('💡 Your workspace .genie/ will auto-update on next `genie` run.');
+      console.log('💡 Your Genie will absorb the collective\'s latest magik next time you run `genie`');
       console.log('');
     }
     process.exit(0);

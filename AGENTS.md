@@ -524,6 +524,87 @@ $ genie helper count-tokens --before=AGENTS.md --after=CORE_AGENTS.md
 
 **First Insight:** 2025-10-24, Token counting standardization across framework
 
+### 9. Unified Backup & Version Tracking 🔴 CRITICAL
+**Rule:** Single backup function, single version file, clear separation of package vs workspace updates.
+
+**GitHub Issue:** [#260 - Unify version tracking and optimize genie routing architecture](https://github.com/namastexlabs/automagik-genie/issues/260)
+
+**Architecture:**
+
+**Unified Backup System:**
+```typescript
+backupGenieDirectory(workspacePath, reason: 'old_genie' | 'pre_rollback')
+```
+- Single backup function in `.genie/cli/src/lib/fs-utils.ts`
+- Backs up entire `.genie/` + root docs (AGENTS.md, CLAUDE.md, CORE_AGENTS.md)
+- Stores at `.genie/backups/<timestamp>/`
+- Only used for:
+  - `old_genie` - Pre-version-tracking installations (init.ts)
+  - `pre_rollback` - Safety backup before restore (rollback.ts)
+- NOT used for `genie update` (package-only, no workspace changes)
+
+**Unified Version Tracking:**
+```typescript
+// .genie/state/version.json (committed, single source of truth)
+interface GenieVersion {
+  version: string;              // "2.5.0-rc.58"
+  installedAt: string;          // ISO timestamp
+  updatedAt: string;            // ISO timestamp
+  commit: string;               // Git SHA
+  packageName: string;          // "automagik-genie"
+  customizedFiles: string[];    // User modifications
+  deletedFiles: string[];       // User deletions
+  lastUpgrade: string | null;   // Last upgrade timestamp
+  previousVersion: string | null;
+  upgradeHistory: Array<{
+    from: string;
+    to: string;
+    date: string;
+    success: boolean;
+  }>;
+}
+```
+
+**Terminology (Critical Distinction):**
+- **PACKAGE UPDATE** = npm binary updated (`genie update`)
+  - Updates global npm package only
+  - No backups, no workspace changes
+  - Workspace auto-upgrades on next `genie` run
+- **WORKSPACE UPGRADE** = .genie/ templates synced (`genie` auto-detects)
+  - Happens when version mismatch detected
+  - Runs `genie init` inline to sync templates
+  - Updates `version.json` to match package
+
+**Routing Optimization:**
+1. Check version FIRST (before Forge startup)
+2. If mismatch → Run init (workspace upgrade)
+3. If match → Start Forge (if not running)
+4. After `genie update` → Check if Forge running, prompt to start
+
+**Why This Matters:**
+- No duplicate backup implementations (was 4, now 1)
+- No dual version files (was 2, now 1)
+- Clear user expectations (package vs workspace)
+- Efficient resource usage (version check before Forge)
+- Correct state tracking (single source of truth)
+
+**Files Modified:**
+- `.genie/cli/src/lib/fs-utils.ts` - Unified backup function
+- `.genie/cli/src/commands/init.ts` - Uses unified backup (old genie only)
+- `.genie/cli/src/commands/update.ts` - Simplified to npm-only (150 lines from 326)
+- `.genie/cli/src/commands/rollback.ts` - Uses unified backup
+- `.genie/cli/src/lib/upgrade/merge-strategy.ts` - Marked deprecated
+
+**Status:**
+- ✅ Unified backup system (implemented)
+- ✅ Simplified update command (implemented)
+- 🟡 Unified version schema (planned - Phase 1 next)
+- 🟡 Smart router optimization (planned - Phase 2)
+- 🟡 Update Forge detection (planned - Phase 3)
+- 🟡 Cleanup deprecated code (planned - Phase 4)
+
+**First Insight:** 2025-10-25, Routing architecture analysis and unification
+
 ## Development Workflow
 
 **Branch Strategy:**
