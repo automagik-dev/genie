@@ -1,7 +1,6 @@
 ---
 name: qa/bug-92
 description: Regression test for Bug #92 - Zombie sessions stuck in running status
-parent: qa
 ---
 
 # Bug #92 Regression Test • Zombie Sessions

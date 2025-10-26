@@ -1,7 +1,6 @@
 ---
 name: qa/bug-90
 description: Regression test for Bug #90 - full=true returns truncated checkpoints
-parent: qa
 ---
 
 # Bug #90 Regression Test • Full Transcript Retrieval

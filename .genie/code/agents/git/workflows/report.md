@@ -72,7 +72,7 @@ Master of issue templates, understands Genie conventions, guides proper issue cr
 ## Git Integration
 
 For core git operations (branch, commit, push):
-@.genie/code/agents/git/git.md
+@.genie/code/agents/git.md
 
 For issue lifecycle management (list, update, close):
 @.genie/code/agents/git/workflows/issue.md

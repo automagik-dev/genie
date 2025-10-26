@@ -1,7 +1,6 @@
 ---
 name: qa/session-lifecycle
 description: Session state management and lifecycle testing
-parent: qa
 ---
 
 # QA Workflow • Session Lifecycle
