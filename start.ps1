@@ -162,169 +162,7 @@ if (Test-CommandExists pnpm) {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 4. SELECT AND INSTALL AI EXECUTOR
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Write-Header "🧞 ✨ SELECT YOUR AI SUBSCRIPTION ✨"
-
-Write-Host "Which AI service do you have a subscription to?"
-Write-Host "(This will be installed and authenticated now)"
-Write-Host ""
-Write-Host "1. OpenCode        - Open-source code assistant"
-Write-Host "2. ChatGPT         - OpenAI ChatGPT via Codex CLI"
-Write-Host "3. Claude          - Anthropic Claude via Claude Code CLI"
-Write-Host "4. Gemini          - Google Gemini AI"
-Write-Host "5. Cursor          - Cursor AI editor"
-Write-Host "6. Qwen Code       - Alibaba Qwen coding model"
-Write-Host "7. GitHub Copilot  - GitHub Copilot CLI"
-Write-Host ""
-$choice = Read-Host "Enter number (1-7)"
-Write-Host ""
-
-switch ($choice) {
-    "1" { $selectedExecutor = "opencode" }
-    "2" { $selectedExecutor = "codex" }
-    "3" { $selectedExecutor = "claude" }
-    "4" { $selectedExecutor = "gemini" }
-    "5" { $selectedExecutor = "cursor" }
-    "6" { $selectedExecutor = "qwen_code" }
-    "7" { $selectedExecutor = "copilot" }
-    default {
-        Write-Warning "Invalid choice. Defaulting to OpenCode"
-        $selectedExecutor = "opencode"
-    }
-}
-
-# Install selected executor
-switch ($selectedExecutor) {
-    "opencode" {
-        Write-Info "Checking OpenCode installation..."
-        if (Test-CommandExists opencode) {
-            Write-Success "OpenCode already installed"
-        } else {
-            Write-Host "📦 Installing OpenCode..." -ForegroundColor Magenta
-            npm install -g opencode-ai
-            Write-Success "OpenCode installed successfully!"
-        }
-    }
-
-    "codex" {
-        Write-Info "Checking ChatGPT (Codex) installation..."
-        if (Test-CommandExists codex) {
-            Write-Success "ChatGPT already installed"
-        } else {
-            Write-Host "📦 Installing ChatGPT (Codex CLI)..." -ForegroundColor Magenta
-            npm install -g @openai/codex
-            Write-Success "ChatGPT installed successfully!"
-        }
-
-        # Authenticate ChatGPT (REQUIRED - blocks until complete)
-        Write-Host ""
-        Write-Header "🔑 AUTHENTICATION REQUIRED"
-        Write-Host "ChatGPT requires authentication to proceed."
-        Write-Host "This will:"
-        Write-Host "  1. Start a local server on http://localhost:1455"
-        Write-Host "  2. Open your browser for secure OAuth"
-        Write-Host "  3. Wait for you to complete authentication"
-        Write-Host ""
-        Write-Warning "You MUST authenticate to continue. Press Ctrl+C to abort installation."
-        Write-Host ""
-        Write-Host "Press Enter to begin authentication..."
-        Read-Host
-
-        # Run codex login (blocks until auth completes)
-        codex login
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host ""
-            Write-Success "Authentication successful!"
-            Write-Host ""
-        } else {
-            Write-Host ""
-            Write-Error "Authentication failed or was cancelled"
-            Write-Host "Cannot proceed without authentication."
-            Write-Host ""
-            exit 1
-        }
-    }
-
-    "claude" {
-        Write-Info "Checking Claude installation..."
-        if (Test-CommandExists claude) {
-            Write-Success "Claude already installed"
-        } else {
-            Write-Host "📦 Installing Claude..." -ForegroundColor Magenta
-            Write-Host ""
-            Write-Warning "Claude Code requires manual installation on Windows."
-            Write-Host ""
-            Write-Host "Please download and install from:"
-            Write-Host "  https://claude.ai/download" -ForegroundColor White
-            Write-Host ""
-            Write-Host "Or install via npm:"
-            Write-Host "  npm install -g @anthropic-ai/claude-code" -ForegroundColor White
-            Write-Host ""
-            Write-Host "Press Enter after installation completes (or Ctrl+C to skip)..."
-            Read-Host
-        }
-    }
-
-    "gemini" {
-        Write-Info "Checking Gemini installation..."
-        if (Test-CommandExists gemini) {
-            Write-Success "Gemini already installed"
-        } else {
-            Write-Host "📦 Installing Gemini..." -ForegroundColor Magenta
-            npm install -g @google/gemini-cli
-            Write-Success "Gemini installed successfully!"
-        }
-    }
-
-    "cursor" {
-        Write-Info "Checking Cursor installation..."
-        if (Test-CommandExists cursor) {
-            Write-Success "Cursor already installed"
-        } else {
-            Write-Host "📦 Installing Cursor..." -ForegroundColor Magenta
-            Write-Host ""
-            Write-Warning "Cursor requires manual installation on Windows."
-            Write-Host ""
-            Write-Host "Please download and install from:"
-            Write-Host "  https://cursor.sh" -ForegroundColor White
-            Write-Host ""
-            Write-Host "Press Enter after installation completes (or Ctrl+C to skip)..."
-            Read-Host
-        }
-    }
-
-    "qwen_code" {
-        Write-Info "Checking Qwen Code installation..."
-        if (Test-CommandExists qwen) {
-            Write-Success "Qwen Code already installed"
-        } else {
-            Write-Host "📦 Installing Qwen Code..." -ForegroundColor Magenta
-            npm install -g @qwen-code/qwen-code@latest
-            Write-Success "Qwen Code installed successfully!"
-        }
-    }
-
-    "copilot" {
-        Write-Info "Checking GitHub Copilot installation..."
-        if (Test-CommandExists copilot) {
-            Write-Success "GitHub Copilot already installed"
-        } else {
-            Write-Host "📦 Installing GitHub Copilot..." -ForegroundColor Magenta
-            npm install -g @github/copilot
-            Write-Success "GitHub Copilot installed successfully!"
-        }
-    }
-}
-
-Write-Host ""
-
-# Export ENV variable for genie init to use
-$env:GENIE_SUBSCRIPTION_EXECUTOR = $selectedExecutor
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 5. INSTALL/UPDATE GENIE
+# 4. INSTALL/UPDATE GENIE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 if (Test-CommandExists genie) {
@@ -362,7 +200,7 @@ if (Test-CommandExists genie) {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 6. INSTALLATION SUMMARY
+# 5. INSTALLATION SUMMARY
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Write-Header "✨ INSTALLATION COMPLETE ✨"
@@ -389,8 +227,17 @@ Write-Host ""
 Write-Host "🧞 Your wish is my command..." -ForegroundColor Cyan
 Write-Host ""
 
+Write-Header "🧞 Launching Genie..."
+
+Write-Host "The Genie wizard will guide you through:"
+Write-Host "  • Template selection (code/create)"
+Write-Host "  • AI executor selection"
+Write-Host "  • Executor authentication"
+Write-Host "  • Workspace initialization"
+Write-Host ""
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 7. LAUNCH GENIE
+# 6. LAUNCH GENIE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 # Launch genie with args (ENV var is inherited)

@@ -21,7 +21,8 @@ Orchestrate Genie framework upgrades with intelligent conflict resolution and us
 - `.genie/code/agents/custom-*.md`
 
 **Framework Files (Upgraded):**
-- `.genie/AGENTS.md`
+- `AGENTS.md` (root - master genie)
+- `CLAUDE.md` (root - meta-loader)
 - `.genie/spells/*.md` (official)
 - `.genie/code/AGENTS.md`
 - `.genie/workflows/*.md`
@@ -94,7 +95,8 @@ git diff ${OLD_COMMIT} ${NEW_COMMIT} -- .genie/ > /tmp/upgrade.patch
 
 # Filter to framework files only
 git diff ${OLD_COMMIT} ${NEW_COMMIT} -- \
-  '.genie/AGENTS.md' \
+  'AGENTS.md' \
+  'CLAUDE.md' \
   '.genie/spells/*.md' \
   '.genie/code/**/*.md' \
   '.genie/workflows/*.md' \

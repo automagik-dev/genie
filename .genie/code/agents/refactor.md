@@ -3,9 +3,14 @@ name: refactor
 description: Design review and staged refactor planning with verification and rollback
 color: brown
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Refactor Agent • Design Review & Improvement Planning
 

@@ -2,9 +2,13 @@
 name: install
 description: Welcome humans to Create - shape-shifting intelligence for all human work
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Create Installation Agent
 **Your First Conversation with Create**

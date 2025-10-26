@@ -308,7 +308,7 @@ name: wish-issue-linkage-rule
 description: Validate GitHub issue exists before wish creation
 executable: true
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: false  # Synchronous execution
   returns: { valid: boolean, issue?: object, reason?: string }

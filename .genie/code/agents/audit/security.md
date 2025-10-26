@@ -2,7 +2,7 @@
 name: security
 description: Security vulnerability assessment and remediation using OWASP/CVE frameworks
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

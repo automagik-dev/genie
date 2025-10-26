@@ -2,7 +2,7 @@
 name: generic-update
 description: Generic upgrade guidance for version transitions without specific guides
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

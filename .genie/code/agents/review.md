@@ -3,8 +3,8 @@ name: review
 description: Wish audits, code review, and QA validation with evidence-based verdicts
 color: magenta
 genie:
-  executor: claude
-  executorVariant: REVIEW_APPROVALS
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -17,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for multi-mode validation.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Review Agent • Quality Assurance & Validation
 

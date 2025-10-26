@@ -2,8 +2,8 @@
 
 **Purpose:** Specific, reproducible test scenarios complementing the comprehensive checklist
 **Relationship:** Deep-dive validation for specific features/bugs (complements broad checklist coverage)
-**Master Coordination:** `@.genie/qa/README.md`
-**Checklist Reference:** `@.genie/qa/checklist.md`
+**Master Coordination:** `@.genie/agents/qa/README.md`
+**Checklist Reference:** `@.genie/agents/qa/checklist.md`
 
 ---
 
@@ -44,7 +44,7 @@ Each QA scenario is atomic, focused, and independently executable. This enables:
 ### MCP Operations (Core Functionality)
 - **mcp-operations.md** - Comprehensive MCP tool testing
   - Coverage: list, run, view, resume, stop
-  - Checklist: `@.genie/qa/checklist.md` (MCP Agent Operations section)
+  - Checklist: `@.genie/agents/qa/checklist.md` (MCP Agent Operations section)
   - Status: Active (primary MCP validation)
 
 - **mcp-agent-start-failure.md** - Agent startup error handling
@@ -118,7 +118,7 @@ Each QA scenario is atomic, focused, and independently executable. This enables:
 ### Installation & Setup
 - **installation-flow.md** - Installation workflow testing
   - Coverage: Clean-slate setup, MCP config, Forge integration
-  - Checklist: `@.genie/qa/install-simulation.md`
+  - Checklist: `@.genie/agents/qa/install-simulation.md`
   - Status: Active
 
 ### Performance Benchmarks
@@ -190,7 +190,7 @@ mcp__genie__run with agent="qa/<scenario-name>" and prompt="Execute all tests"
 1. Copy template structure above
 2. Define test cases with executable commands
 3. Specify expected evidence
-4. Add reference in `@.genie/qa/checklist.md` under appropriate section
+4. Add reference in `@.genie/agents/qa/checklist.md` under appropriate section
 5. Link back to this workflow file
 6. Update this README index
 

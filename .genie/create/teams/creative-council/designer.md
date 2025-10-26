@@ -2,7 +2,7 @@
 name: designer
 description: Visual framing, layout, and asset guidance (advisory)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

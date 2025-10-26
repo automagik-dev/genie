@@ -3,7 +3,7 @@ name: tracer
 description: Core instrumentation planning template
 color: violet
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

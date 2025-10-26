@@ -2,7 +2,8 @@
 name: requirements
 description: Clarify scope, boundaries, and technical details
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

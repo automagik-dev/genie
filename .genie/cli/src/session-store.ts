@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { DEFAULT_EXECUTOR_KEY, normalizeExecutorKeyOrDefault, normalizeExecutorKey } from './lib/executor-registry';
 
 /**
  * Session entry metadata
@@ -209,17 +210,19 @@ function migrateSessionEntries(store: SessionStore, defaultExecutor: string): Se
     if (!entry || typeof entry !== 'object') return;
     if (!entry.mode && entry.preset) result.sessions[sessionId].mode = entry.preset;
     if (!entry.preset && entry.mode) result.sessions[sessionId].preset = entry.mode;
-    if (!entry.executor) result.sessions[sessionId].executor = defaultExecutor;
+    const normalized = entry.executor ? normalizeExecutorKey(entry.executor) : undefined;
+    result.sessions[sessionId].executor = normalized ?? defaultExecutor;
   });
 
   return result;
 }
 
 function resolveDefaultExecutor(config: SessionLoadConfig = {}, defaults: SessionDefaults = {}): string {
-  return (
-    config.defaults?.executor ||
-    defaults.defaults?.executor ||
-    'opencode'
+  return normalizeExecutorKeyOrDefault(
+    config.defaults?.executor ??
+      defaults.defaults?.executor ??
+      DEFAULT_EXECUTOR_KEY,
+    DEFAULT_EXECUTOR_KEY
   );
 }
 

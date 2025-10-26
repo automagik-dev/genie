@@ -2,7 +2,8 @@
 name: alignment
 description: Align idea with roadmap, mission, standards
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

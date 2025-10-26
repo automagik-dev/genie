@@ -60,6 +60,73 @@ const HELPERS = {
       '$ genie helper detect-markers .genie',
       '$ genie helper detect-markers .'
     ]
+  },
+  'analyze-commit': {
+    script: 'analyze-commit.js',
+    description: 'Analyze commit messages (conventional commits, traceability)',
+    usage: [
+      'genie helper analyze-commit [commit-hash]',
+      'genie helper analyze-commit --staged'
+    ],
+    examples: [
+      '$ genie helper analyze-commit HEAD',
+      '$ genie helper analyze-commit abc123',
+      '$ genie helper analyze-commit --staged'
+    ]
+  },
+  'check-secrets': {
+    script: 'check-secrets.js',
+    description: 'Detect secrets and credentials in files',
+    usage: [
+      'genie helper check-secrets [files...]',
+      'genie helper check-secrets --staged'
+    ],
+    examples: [
+      '$ genie helper check-secrets',
+      '$ genie helper check-secrets --staged',
+      '$ genie helper check-secrets file1.ts file2.ts'
+    ]
+  },
+  'detect-todos': {
+    script: 'detect-todos.js',
+    description: 'Detect TODO/FIXME/WIP markers in markdown files',
+    usage: [
+      'genie helper detect-todos [directory]'
+    ],
+    examples: [
+      '$ genie helper detect-todos .genie',
+      '$ genie helper detect-todos'
+    ]
+  },
+  'detect-unlabeled-blocks': {
+    script: 'detect-unlabeled-blocks.js',
+    description: 'Detect unlabeled code blocks in markdown files',
+    usage: [
+      'genie helper detect-unlabeled-blocks [directory]'
+    ],
+    examples: [
+      '$ genie helper detect-unlabeled-blocks .genie'
+    ]
+  },
+  'find-empty-sections': {
+    script: 'find-empty-sections.js',
+    description: 'Find empty sections in markdown files',
+    usage: [
+      'genie helper find-empty-sections [directory]'
+    ],
+    examples: [
+      '$ genie helper find-empty-sections .genie'
+    ]
+  },
+  'validate-links': {
+    script: 'validate-links.js',
+    description: 'Validate @ references and links in markdown files',
+    usage: [
+      'genie helper validate-links [directory]'
+    ],
+    examples: [
+      '$ genie helper validate-links .genie'
+    ]
   }
 };
 

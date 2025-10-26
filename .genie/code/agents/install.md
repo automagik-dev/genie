@@ -2,7 +2,8 @@
 name: install
 description: Install Genie template and CLI setup for new projects
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -15,6 +16,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for Genie installation.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Install Agent
 

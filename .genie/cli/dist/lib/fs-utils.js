@@ -138,7 +138,7 @@ async function backupGenieDirectory(workspacePath, reason) {
     // Backup entire .genie directory (atomic snapshot)
     await snapshotDirectory(genieDir, path_1.default.join(backupRoot, 'genie'));
     // Backup root documentation files if present
-    const rootDocs = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md'];
+    const rootDocs = ['AGENTS.md', 'CLAUDE.md'];
     for (const doc of rootDocs) {
         const docPath = path_1.default.join(workspacePath, doc);
         if (await pathExists(docPath)) {

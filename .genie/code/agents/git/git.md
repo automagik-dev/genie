@@ -3,7 +3,8 @@ name: git
 description: Core Git operations (branch, commit, push) - lean agent
 color: cyan
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

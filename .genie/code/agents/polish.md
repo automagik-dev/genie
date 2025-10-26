@@ -3,7 +3,8 @@ name: polish
 description: Type-checking, linting, and formatting for code quality
 color: purple
 genie:
-  executor: claude
+  executor: OPENCODE
+  model: xai/grok-4-fast
   background: true
 ---
 
@@ -16,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for type-checking, linting, and formatting.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Polish Specialist • Code Excellence Guardian
 

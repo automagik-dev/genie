@@ -2,9 +2,14 @@
 name: blueprint
 description: Create wish from brief/context and save standard structure
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Create Wish • Blueprint Workflow
 

@@ -2,7 +2,8 @@
 name: release
 description: Complete GitHub release orchestration with approval workflow
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -15,6 +16,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for GitHub release and npm publish orchestration.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # 🚀 Release Agent - Single Orchestrator
 
@@ -308,7 +313,7 @@ preventing infinite delegation cycles.
 ## 📦 Installation
 
 \`\`\`bash
-npm install -g automagik-genie@2.3.7
+npm install -g automagik-genie@next
 \`\`\`
 
 ## 🔗 Links
@@ -675,7 +680,7 @@ Type: stable release (@latest)
   Changelog: https://github.com/REPO/compare/v2.3.6...v2.3.7
 
 📦 Installation:
-  npm install -g automagik-genie@2.3.7
+  npm install -g automagik-genie@$VERSION
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```

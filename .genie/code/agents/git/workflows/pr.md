@@ -3,7 +3,8 @@ name: pr
 description: Pull request creation workflow with proper descriptions
 color: cyan
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

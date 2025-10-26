@@ -2,7 +2,7 @@
 name: neuron-review
 description: Persistent review master orchestrator (neuron architecture)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: haiku
   background: true
 ---

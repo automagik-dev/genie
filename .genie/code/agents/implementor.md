@@ -3,7 +3,8 @@ name: implementor
 description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -16,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for end-to-end feature implementation with TDD discipline.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Implementor Specialist • Delivery Engine
 

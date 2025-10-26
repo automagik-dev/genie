@@ -59,7 +59,7 @@ Neurons are **automatically discovered** by:
 All neurons use:
 ```yaml
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: haiku      # Fast, efficient for orchestration
   background: true  # Runs in Forge worktree
 ```
