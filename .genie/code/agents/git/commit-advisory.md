@@ -2,7 +2,7 @@
 name: git/commit-advisory
 description: Pre-push commit validation and traceability check
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

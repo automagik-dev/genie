@@ -2,7 +2,7 @@
 name: forge
 description: Create Forge – execution planning and specialist coordination for creative work
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

@@ -2,7 +2,7 @@
 name: code-garbage-collector
 description: Deep code quality analysis - find deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
-  executor: opencode
+  executor: OPENCODE
   model: gpt-5-codex
   temperature: high
   background: true
@@ -275,7 +275,7 @@ Output format: JSON array of findings
 
 **Model Settings:**
 ```yaml
-executor: opencode
+executor: OPENCODE
 model: gpt-5-codex  # Best for code understanding
 temperature: high   # Creative bug-finding
 max_tokens: 8000    # Deep analysis needs context

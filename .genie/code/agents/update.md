@@ -3,7 +3,7 @@ name: update
 description: Workspace and dependency update coordination
 color: violet
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

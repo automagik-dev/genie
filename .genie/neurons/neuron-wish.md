@@ -2,7 +2,7 @@
 name: neuron-wish
 description: Persistent wish master orchestrator (neuron architecture)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: haiku
   background: true
 ---
