@@ -266,6 +266,86 @@ async function validateGenieFields(genie) {
     }
   }
 
+  // Validate executor-specific permission flags (from Forge API 2025-10-26)
+  // See: .genie/product/docs/executor-configuration.md
+  const permissionIssues = validatePermissionFlags(genie, executor);
+  issues.push(...permissionIssues);
+
+  return issues;
+}
+
+/**
+ * Validate executor-specific permission flags
+ * Based on live Forge API query 2025-10-26
+ */
+function validatePermissionFlags(genie, executor) {
+  const issues = [];
+
+  // Permission flags by executor (from Forge DEFAULT profiles)
+  const EXECUTOR_PERMISSION_FLAGS = {
+    CLAUDE_CODE: ['dangerously_skip_permissions'],
+    CODEX: ['sandbox'],
+    AMP: ['dangerously_allow_all'],
+    OPENCODE: [], // No permission flags
+  };
+
+  const VALID_PERMISSION_FLAGS = {
+    dangerously_skip_permissions: { executor: 'CLAUDE_CODE', type: 'boolean' },
+    sandbox: { executor: 'CODEX', type: 'string', values: ['danger-full-access', 'safe'] },
+    dangerously_allow_all: { executor: 'AMP', type: 'boolean' },
+  };
+
+  // Check for permission flags in frontmatter
+  for (const [flag, config] of Object.entries(VALID_PERMISSION_FLAGS)) {
+    if (genie[flag] !== undefined) {
+      // Flag is present - check if it matches the executor
+      if (executor !== config.executor) {
+        issues.push({
+          type: 'wrong_executor_permission_flag',
+          field: `genie.${flag}`,
+          message: `Permission flag '${flag}' is for ${config.executor}, but executor is ${executor}`,
+          suggestion: executor ?
+            `Remove this flag or use ${executor}-specific flag: ${EXECUTOR_PERMISSION_FLAGS[executor]?.join(', ') || 'none'}` :
+            `Remove this flag or set executor to ${config.executor}`,
+        });
+      } else {
+        // Correct executor - validate value type
+        if (config.type === 'boolean' && typeof genie[flag] !== 'boolean') {
+          issues.push({
+            type: 'invalid_permission_flag_type',
+            field: `genie.${flag}`,
+            message: `${flag} must be a boolean (true or false)`,
+            suggestion: `Change to: true or false (no quotes)`,
+          });
+        } else if (config.type === 'string' && typeof genie[flag] !== 'string') {
+          issues.push({
+            type: 'invalid_permission_flag_type',
+            field: `genie.${flag}`,
+            message: `${flag} must be a string`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        } else if (config.values && !config.values.includes(genie[flag])) {
+          issues.push({
+            type: 'invalid_permission_flag_value',
+            field: `genie.${flag}`,
+            message: `Invalid value for ${flag}: '${genie[flag]}'`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Warn about deprecated 'additional_params' usage
+  if (genie.additional_params !== undefined) {
+    issues.push({
+      type: 'deprecated_field',
+      field: 'genie.additional_params',
+      message: `additional_params is not used by Forge (defaults to empty array)`,
+      suggestion: `Remove this field and use executor-specific permission flags instead`,
+    });
+  }
+
   return issues;
 }
 
@@ -327,7 +407,14 @@ async function scanFile(filePath) {
           field: issue.field,
           message: issue.message,
           suggestion: issue.suggestion,
-          severity: ['amendment_7_violation', 'deprecated_field', 'executor_case'].includes(issue.type) ? 'warning' : 'error',
+          severity: [
+            'amendment_7_violation',
+            'deprecated_field',
+            'executor_case',
+            'wrong_executor_permission_flag',
+            'invalid_permission_flag_type',
+            'invalid_permission_flag_value'
+          ].includes(issue.type) ? 'warning' : 'error',
         });
       });
     } else {

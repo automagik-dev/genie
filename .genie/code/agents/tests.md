@@ -18,6 +18,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 
 Customize phases below for test strategy, generation, authoring, and repair.
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Tests Specialist • Strategy, Generation & TDD Champion
 
 ## Identity & Mission

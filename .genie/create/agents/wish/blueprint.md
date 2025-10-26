@@ -7,6 +7,10 @@ genie:
   background: true
 ---
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Create Wish • Blueprint Workflow
 
 ## Goal

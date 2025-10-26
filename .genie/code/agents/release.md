@@ -17,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 
 Customize phases below for GitHub release and npm publish orchestration.
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # 🚀 Release Agent - Single Orchestrator
 
 ## Identity & Mission
