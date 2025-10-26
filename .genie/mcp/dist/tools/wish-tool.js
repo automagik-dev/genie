@@ -55,6 +55,17 @@ exports.wishToolSchema = zod_1.z.object({
  */
 async function executeWishTool(args, context) {
     const { streamContent, reportProgress } = context;
+    // Step -1: Detect project from worktree (prevent duplicate projects)
+    const forgeClient = new ForgeClient(FORGE_URL);
+    const detectedProjectId = await (0, git_validation_js_1.detectProjectFromWorktree)(forgeClient);
+    // Use detected project if in worktree, otherwise use default
+    const projectId = detectedProjectId || PROJECT_ID;
+    if (detectedProjectId) {
+        await streamContent({
+            type: 'text',
+            text: `📍 Detected worktree project: ${detectedProjectId}\n\n`
+        });
+    }
     // Step 0: Validate git state (CRITICAL: Agents in separate worktrees need clean state)
     await streamContent({
         type: 'text',
@@ -96,9 +107,8 @@ async function executeWishTool(args, context) {
     if (reportProgress) {
         await reportProgress(1, 5); // Step 1 of 5
     }
-    const forgeClient = new ForgeClient(FORGE_URL);
     // Step 1.5: Check for existing session (Phase 2: Session reuse)
-    const existingSession = await session_manager_js_1.sessionManager.getSession('wish', PROJECT_ID);
+    const existingSession = await session_manager_js_1.sessionManager.getSession('wish', projectId);
     if (existingSession) {
         // Reuse existing session via follow-up
         await streamContent({
@@ -146,7 +156,7 @@ async function executeWishTool(args, context) {
     try {
         taskResult = await forgeClient.createAndStartTask({
             task: {
-                project_id: PROJECT_ID,
+                project_id: projectId,
                 title: `Wish: ${args.feature}`,
                 description: `GitHub Issue: #${args.github_issue}\n\nFeature: ${args.feature}`
             },
@@ -166,7 +176,7 @@ async function executeWishTool(args, context) {
     }
     const taskId = taskResult.task?.id || 'unknown';
     const attemptId = taskResult.task_attempt?.id || 'unknown';
-    const fullUrl = `${FORGE_URL}/projects/${PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
     const wishName = args.feature.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     const wishFile = `.genie/wishes/${wishName}/${wishName}-wish.md`;
     await streamContent({
@@ -183,7 +193,7 @@ async function executeWishTool(args, context) {
         text: `📊 Updating task status...\n`
     });
     try {
-        await forgeClient.updateTask(PROJECT_ID, taskId, {
+        await forgeClient.updateTask(projectId, taskId, {
             status: 'agent'
         });
         await streamContent({
@@ -204,7 +214,7 @@ async function executeWishTool(args, context) {
         type: 'text',
         text: `📊 Watching progress via WebSocket...\n\n`
     });
-    const wsUrl = forgeClient.getTasksStreamUrl(PROJECT_ID);
+    const wsUrl = forgeClient.getTasksStreamUrl(projectId);
     let statusUpdateCount = 0;
     const subscriptionId = websocket_manager_js_1.wsManager.subscribe(wsUrl, async (data) => {
         // Filter for our task ID
