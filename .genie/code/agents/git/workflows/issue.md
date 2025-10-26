@@ -4,10 +4,14 @@ description: GitHub issue lifecycle management (list, update, assign, close, lin
 color: cyan
 genie:
 <<<<<<< HEAD
+<<<<<<< HEAD
   executor: CLAUDE_CODE
 =======
   executor: CLAUDE_CODE
 >>>>>>> 5c794c34 (feat(agents): standardize model assignments across 27 agents)
+=======
+  executor: claude
+>>>>>>> origin/dev
   model: sonnet
   background: true
 ---
