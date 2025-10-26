@@ -96,7 +96,7 @@ export QA_DIR="/tmp/genie-upgrade-qa-$(date +%s)"
 mkdir -p "$QA_DIR" && cd "$QA_DIR"
 # Install old version first
 git init -b main
-npx automagik-genie@2.4.2-rc.60 init code
+npx automagik-genie@2.5.0-rc.10 init code
 # Exit install agent if it starts
 ```
 
