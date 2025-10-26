@@ -415,189 +415,7 @@ install_pnpm() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 8. SELECT AND INSTALL AI EXECUTOR
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-select_and_install_executor() {
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🧞 ✨ SELECT YOUR AI SUBSCRIPTION ✨"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "Which AI service do you have a subscription to?"
-    echo "(This will be installed and authenticated now)"
-    echo ""
-    echo "1. OpenCode        - Open-source code assistant"
-    echo "2. ChatGPT         - OpenAI ChatGPT via Codex CLI"
-    echo "3. Claude          - Anthropic Claude via Claude Code CLI"
-    echo "4. Gemini          - Google Gemini AI"
-    echo "5. Cursor          - Cursor AI editor"
-    echo "6. Qwen Code       - Alibaba Qwen coding model"
-    echo "7. GitHub Copilot  - GitHub Copilot CLI"
-    echo ""
-    echo -n "Enter number (1-7): "
-    read -r choice
-    echo ""
-
-    case "$choice" in
-        1) GENIE_SUBSCRIPTION_EXECUTOR="opencode" ;;
-        2) GENIE_SUBSCRIPTION_EXECUTOR="codex" ;;
-        3) GENIE_SUBSCRIPTION_EXECUTOR="claude" ;;
-        4) GENIE_SUBSCRIPTION_EXECUTOR="gemini" ;;
-        5) GENIE_SUBSCRIPTION_EXECUTOR="cursor" ;;
-        6) GENIE_SUBSCRIPTION_EXECUTOR="qwen_code" ;;
-        7) GENIE_SUBSCRIPTION_EXECUTOR="copilot" ;;
-        *)
-            echo -e "${YELLOW}⚠️  Invalid choice. Defaulting to OpenCode${NC}"
-            GENIE_SUBSCRIPTION_EXECUTOR="opencode"
-            ;;
-    esac
-
-    install_executor "$GENIE_SUBSCRIPTION_EXECUTOR"
-
-    # Export for genie init to use as pre-selected default
-    export GENIE_SUBSCRIPTION_EXECUTOR
-}
-
-install_executor() {
-    local executor="$1"
-
-    case "$executor" in
-        opencode)
-            echo -e "${CYAN}🔍 Checking OpenCode installation...${NC}"
-            if command_exists opencode; then
-                echo -e "${GREEN}✅ OpenCode already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing OpenCode...${NC}"
-                if [ "$OS_TYPE" = "macos" ]; then
-                    brew install opencode
-                else
-                    npm install -g opencode-ai
-                fi
-                echo -e "${GREEN}✅ OpenCode installed successfully!${NC}"
-            fi
-            ;;
-
-        codex)
-            echo -e "${CYAN}🔍 Checking ChatGPT (Codex) installation...${NC}"
-            if command_exists codex; then
-                echo -e "${GREEN}✅ ChatGPT already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing ChatGPT (Codex CLI)...${NC}"
-                if [ "$OS_TYPE" = "macos" ]; then
-                    brew install codex
-                else
-                    npm install -g @openai/codex
-                fi
-                echo -e "${GREEN}✅ ChatGPT installed successfully!${NC}"
-            fi
-
-            # Authenticate ChatGPT (REQUIRED - blocks until complete)
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo -e "${CYAN}🔑 AUTHENTICATION REQUIRED${NC}"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo ""
-            echo "ChatGPT requires authentication to proceed."
-            echo "This will:"
-            echo "  1. Start a local server on http://localhost:1455"
-            echo "  2. Open your browser for secure OAuth"
-            echo "  3. Wait for you to complete authentication"
-            echo ""
-            echo -e "${YELLOW}⚠️  You MUST authenticate to continue. Press Ctrl+C to abort installation.${NC}"
-            echo ""
-            echo "Press Enter to begin authentication..."
-            read -r
-
-            # Run codex login (blocks until auth completes)
-            if codex login; then
-                echo ""
-                echo -e "${GREEN}✅ Authentication successful!${NC}"
-                echo ""
-            else
-                echo ""
-                echo -e "${RED}❌ Authentication failed or was cancelled${NC}"
-                echo "Cannot proceed without authentication."
-                echo ""
-                exit 1
-            fi
-            ;;
-
-        claude)
-            echo -e "${CYAN}🔍 Checking Claude installation...${NC}"
-            if command_exists claude; then
-                echo -e "${GREEN}✅ Claude already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing Claude...${NC}"
-                if [ "$OS_TYPE" = "macos" ]; then
-                    brew install --cask claude-code
-                else
-                    npm install -g @anthropic-ai/claude-code
-                fi
-                echo -e "${GREEN}✅ Claude installed successfully!${NC}"
-            fi
-            ;;
-
-        gemini)
-            echo -e "${CYAN}🔍 Checking Gemini installation...${NC}"
-            if command_exists gemini; then
-                echo -e "${GREEN}✅ Gemini already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing Gemini...${NC}"
-                if [ "$OS_TYPE" = "macos" ]; then
-                    brew install gemini-cli
-                else
-                    npm install -g @google/gemini-cli
-                fi
-                echo -e "${GREEN}✅ Gemini installed successfully!${NC}"
-            fi
-            ;;
-
-        cursor)
-            echo -e "${CYAN}🔍 Checking Cursor installation...${NC}"
-            if command_exists cursor; then
-                echo -e "${GREEN}✅ Cursor already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing Cursor...${NC}"
-                curl https://cursor.com/install -fsSL -o /tmp/cursor-install.sh
-                bash /tmp/cursor-install.sh
-                rm /tmp/cursor-install.sh
-                echo -e "${GREEN}✅ Cursor installed successfully!${NC}"
-            fi
-            ;;
-
-        qwen_code)
-            echo -e "${CYAN}🔍 Checking Qwen Code installation...${NC}"
-            if command_exists qwen; then
-                echo -e "${GREEN}✅ Qwen Code already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing Qwen Code...${NC}"
-                if [ "$OS_TYPE" = "macos" ]; then
-                    brew install qwen-code
-                else
-                    npm install -g @qwen-code/qwen-code@latest
-                fi
-                echo -e "${GREEN}✅ Qwen Code installed successfully!${NC}"
-            fi
-            ;;
-
-        copilot)
-            echo -e "${CYAN}🔍 Checking GitHub Copilot installation...${NC}"
-            if command_exists copilot; then
-                echo -e "${GREEN}✅ GitHub Copilot already installed${NC}"
-            else
-                echo -e "${MAGENTA}📦 Installing GitHub Copilot...${NC}"
-                npm install -g @github/copilot
-                echo -e "${GREEN}✅ GitHub Copilot installed successfully!${NC}"
-            fi
-            ;;
-    esac
-
-    echo ""
-}
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 9. INSTALL/UPDATE GENIE
+# 8. INSTALL/UPDATE GENIE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 install_genie() {
@@ -638,7 +456,7 @@ install_genie() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 10. INSTALLATION SUMMARY
+# 9. INSTALLATION SUMMARY
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 show_summary() {
@@ -689,11 +507,21 @@ install_github_cli
 authenticate_github
 install_nodejs
 install_pnpm
-select_and_install_executor
 install_genie
 
 # Show final summary
 show_summary
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${CYAN}🧞 Launching Genie...${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "The Genie wizard will guide you through:"
+echo "  • Template selection (code/create)"
+echo "  • AI executor selection"
+echo "  • Executor authentication"
+echo "  • Workspace initialization"
+echo ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # LAUNCH GENIE

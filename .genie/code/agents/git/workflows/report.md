@@ -3,7 +3,8 @@ name: report
 description: GitHub issue creation workflow with template selection
 color: cyan
 genie:
-  executor: claude
+  executor: OPENCODE
+  model: xai/grok-4-fast
   background: true
 ---
 

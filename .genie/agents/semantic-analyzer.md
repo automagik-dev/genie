@@ -2,7 +2,7 @@
 name: semantic-analyzer
 description: Master orchestrator for semantic analysis tasks (duplicate detection, orphan files, near-duplicates)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

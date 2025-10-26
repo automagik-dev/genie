@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
-import { EXECUTORS } from '../lib/executor-registry';
+import { EXECUTORS, DEFAULT_EXECUTOR_KEY, USER_EXECUTOR_ORDER, normalizeExecutorKeyOrDefault } from '../lib/executor-registry';
 import { discoverCollectives } from '../lib/collective-discovery.js';
 import {
   getPackageRoot,
@@ -31,6 +31,8 @@ import {
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
 import { configureBothExecutors } from '../lib/mcp-config';
+import { configureExecutor, type ExecutorId } from '../lib/executor-auth';
+import prompts from 'prompts';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
 interface InitFlags {
@@ -100,12 +102,16 @@ export async function runInit(
         );
       }
 
-      const executors = Object.keys(EXECUTORS)
-        .filter(key => key !== 'amp') // Exclude amp from user selection
-        .map(key => ({
-          label: EXECUTORS[key].label,
-          value: key
-        }));
+      const primaryExecutors = USER_EXECUTOR_ORDER.filter(key => key in EXECUTORS);
+      const additionalExecutors = Object.keys(EXECUTORS).filter(
+        key => key !== 'AMP' && !primaryExecutors.includes(key)
+      );
+      const orderedExecutors = [...primaryExecutors, ...additionalExecutors];
+
+      const executors = orderedExecutors.map(key => ({
+        label: EXECUTORS[key].label,
+        value: key
+      }));
 
       const hasGit = await pathExists(path.join(cwd, '.git'));
 
@@ -121,11 +127,16 @@ export async function runInit(
       model = wizardConfig.model;
       shouldInitGit = wizardConfig.initGit;
       shouldInstallHooks = wizardConfig.installHooks;
+
+      // Configure executor authentication (one-by-one, after wizard)
+      if (wizardConfig.configureAuth) {
+        await configureExecutorAuthentication(executor);
+      }
     } else {
       // Automation mode: use flags or defaults
       template = (flags.template || 'code') as TemplateType;
       templates = [template];
-      executor = Object.keys(EXECUTORS)[0] || 'codex';
+      executor = DEFAULT_EXECUTOR_KEY;
       model = undefined;
     }
 
@@ -157,7 +168,7 @@ export async function runInit(
 
         // Skip file operations; go straight to executor setup
         // In partial init, use default executor (installation already attempted, use non-interactive default)
-        const resumeExecutor = Object.keys(EXECUTORS)[0] || 'codex';
+        const resumeExecutor = DEFAULT_EXECUTOR_KEY;
         const resumeModel = undefined;
         await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
         await configureBothExecutors(cwd);
@@ -253,7 +264,7 @@ export async function runInit(
     // Wizard or automation mode should have set executor by now
     // If still missing (shouldn't happen), use default
     if (!executor) {
-      executor = Object.keys(EXECUTORS)[0] || 'codex';
+      executor = DEFAULT_EXECUTOR_KEY;
       console.log(`⚠️  Warning: executor not set, using default: ${executor}`);
     }
 
@@ -808,3 +819,93 @@ async function runWithScriptOrExit(
   }
 }
 */
+
+/**
+ * Configure executor authentication with status-aware dropdown
+ */
+async function configureExecutorAuthentication(primaryExecutor: string): Promise<void> {
+  console.log('\n🔐 Executor Authentication Setup\n');
+
+  const { checkExecutorAuth } = await import('../lib/executor-auth.js');
+  const authExecutors: ExecutorId[] = ['OPENCODE', 'CLAUDE_CODE', 'CODEX', 'GEMINI', 'CURSOR', 'COPILOT', 'QWEN_CODE'];
+  const executorLabels: Record<string, string> = {
+    OPENCODE: 'OpenCode',
+    CLAUDE_CODE: 'Claude Code',
+    CODEX: 'Codex',
+    GEMINI: 'Gemini CLI',
+    CURSOR: 'Cursor',
+    COPILOT: 'GitHub Copilot',
+    QWEN_CODE: 'Qwen Code'
+  };
+
+  // Check if primary executor needs auth
+  if (!authExecutors.includes(primaryExecutor as ExecutorId)) {
+    console.log(`✓ ${primaryExecutor} doesn't require authentication setup\n`);
+    return;
+  }
+
+  // Configure primary executor if not already authenticated
+  const isPrimaryAuth = await checkExecutorAuth(primaryExecutor as ExecutorId);
+  if (!isPrimaryAuth) {
+    try {
+      await configureExecutor(primaryExecutor as ExecutorId);
+      console.log(`✓ ${executorLabels[primaryExecutor]} configured\n`);
+    } catch (error) {
+      console.warn(`⚠️  Failed to configure ${primaryExecutor}: ${(error as Error).message}`);
+      console.log('You can configure it later when you run: genie run <agent>\n');
+    }
+  } else {
+    console.log(`✓ ${executorLabels[primaryExecutor]} already configured\n`);
+  }
+
+  // Offer to configure additional providers with status dropdown
+  while (true) {
+    // Get current auth status for all executors
+    const authStatuses = await Promise.all(
+      authExecutors.map(async (exec) => ({
+        executor: exec,
+        authenticated: await checkExecutorAuth(exec)
+      }))
+    );
+
+    // Build choices with status indicators
+    const choices = [
+      { title: '✗ No, I\'m done', value: null }
+    ].concat(
+      authExecutors.map(exec => {
+        const status = authStatuses.find(s => s.executor === exec);
+        const icon = status?.authenticated ? '✓' : '✗';
+        const label = executorLabels[exec];
+        const suffix = status?.authenticated ? ' (already configured)' : '';
+
+        return {
+          title: `${icon} ${label}${suffix}`,
+          value: exec,
+          disabled: status?.authenticated // Can't select already-configured
+        };
+      })
+    );
+
+    const response = await prompts({
+      type: 'select',
+      name: 'selectedExecutor',
+      message: 'Would you like to configure another provider?',
+      choices,
+      initial: 0
+    }, {
+      onCancel: () => ({ selectedExecutor: null })
+    });
+
+    if (!response.selectedExecutor) {
+      console.log('Done configuring providers\n');
+      break;
+    }
+
+    try {
+      await configureExecutor(response.selectedExecutor);
+      console.log(`✓ ${executorLabels[response.selectedExecutor]} configured\n`);
+    } catch (error) {
+      console.warn(`⚠️  Failed to configure ${response.selectedExecutor}: ${(error as Error).message}\n`);
+    }
+  }
+}

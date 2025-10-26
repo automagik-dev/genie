@@ -2,7 +2,7 @@
 name: update
 description: Guide users through Genie framework version transitions
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

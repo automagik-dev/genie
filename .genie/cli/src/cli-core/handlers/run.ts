@@ -5,6 +5,8 @@ import { generateSessionName } from '../../session-store';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
+import { normalizeExecutorKey, normalizeExecutorKeyOrDefault } from '../../lib/executor-registry';
+import { checkExecutorAuth, promptExecutorLogin, type ExecutorId } from '../../lib/executor-auth';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -24,6 +26,18 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const isHeadless = parsed.options.raw || parsed.options.quiet;
     const isRawOutput = parsed.options.raw;
     const isQuiet = parsed.options.quiet;
+
+    // Check if executor is authenticated (skip in headless mode)
+    if (!isHeadless && isExecutorAuthRequired(executorKey)) {
+      const isAuthenticated = await checkExecutorAuth(executorKey as ExecutorId);
+      if (!isAuthenticated) {
+        try {
+          await promptExecutorLogin(executorKey as ExecutorId);
+        } catch (error) {
+          throw new Error(`Authentication required for ${executorKey}. Please configure it and try again.`);
+        }
+      }
+    }
 
     // Ensure Forge is running (silent if quiet mode)
     if (isHeadless) {
@@ -124,7 +138,7 @@ function resolveExecutionSelection(
   parsed: ParsedCommand,
   agentGenie: Record<string, any>
 ): { executorKey: string; executorVariant: string; model?: string; modeName: string } {
-  let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
+  let executor = normalizeExecutorKeyOrDefault(config.defaults?.executor);
   let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
   let model: string | undefined =
     typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
@@ -138,7 +152,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-    executor = agentGenie.executor.trim().toLowerCase();
+    executor = normalizeExecutorKey(agentGenie.executor) ?? executor;
   }
 
   const agentVariant =
@@ -152,7 +166,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-    executor = parsed.options.executor.trim().toLowerCase();
+    executor = normalizeExecutorKey(parsed.options.executor) ?? executor;
   }
 
   if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
@@ -165,7 +179,7 @@ function resolveExecutionSelection(
 
   if (!variant.length) variant = 'DEFAULT';
 
-  return { executorKey: executor, executorVariant: variant, model, modeName };
+  return { executorKey: normalizeExecutorKeyOrDefault(executor), executorVariant: variant, model, modeName };
 }
 
 function findVariantForModel(
@@ -193,4 +207,12 @@ function findVariantForModel(
     }
   }
   return null;
+}
+
+/**
+ * Check if executor requires authentication
+ */
+function isExecutorAuthRequired(executorKey: string): boolean {
+  const authRequiredExecutors = ['OPENCODE', 'CLAUDE_CODE', 'CODEX', 'GEMINI'];
+  return authRequiredExecutors.includes(executorKey.toUpperCase());
 }

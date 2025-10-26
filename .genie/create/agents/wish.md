@@ -2,9 +2,14 @@
 name: wish
 description: Convert research ideas into roadmap-aligned wishes with quality contracts
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # /wish – Genie Research & Content Wish Architect
 

@@ -17,6 +17,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('yaml');
+const { execSync } = require('child_process');
 
 // Configuration
 const REQUIRED_FIELDS = {
@@ -26,6 +27,16 @@ const REQUIRED_FIELDS = {
 
 const FORBIDDEN_FIELDS = ['version', 'last_updated', 'author'];
 
+// Valid Claude models
+const VALID_CLAUDE_MODELS = ['haiku', 'sonnet', 'opus-4'];
+
+// NOTE: Executor names are NOT validated against a hardcoded list
+// They are fetched dynamically from Forge via AgentRegistry.getSupportedExecutors()
+// Validation here only checks format (uppercase). Runtime validation happens in Forge.
+
+// Cache for opencode models (fetched once)
+let OPENCODE_MODELS_CACHE = null;
+
 // Results tracking
 const results = {
   totalFiles: 0,
@@ -34,6 +45,31 @@ const results = {
   issues: [],
   skipped: [],
 };
+
+/**
+ * Fetch valid OpenCode models from `opencode models` command
+ */
+async function getOpenCodeModels() {
+  if (OPENCODE_MODELS_CACHE !== null) {
+    return OPENCODE_MODELS_CACHE;
+  }
+
+  try {
+    const output = execSync('opencode models', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'] // Suppress stderr
+    });
+    OPENCODE_MODELS_CACHE = output
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+    return OPENCODE_MODELS_CACHE;
+  } catch (err) {
+    console.warn('⚠️  Could not fetch opencode models (is opencode installed?). Skipping OpenCode model validation.');
+    OPENCODE_MODELS_CACHE = []; // Empty cache = skip validation
+    return OPENCODE_MODELS_CACHE;
+  }
+}
 
 /**
  * Check if file should be scanned
@@ -114,7 +150,7 @@ function detectFileType(filePath) {
 /**
  * Validate frontmatter fields
  */
-function validateFields(frontmatter, fileType, filePath) {
+async function validateFields(frontmatter, fileType, filePath) {
   const issues = [];
 
   // Check required fields
@@ -149,6 +185,10 @@ function validateFields(frontmatter, fileType, filePath) {
         field: 'genie',
         message: 'genie field must be an object',
       });
+    } else {
+      // Validate genie.executor and genie.model
+      const genieIssues = await validateGenieFields(frontmatter.genie);
+      issues.push(...genieIssues);
     }
   }
 
@@ -168,9 +208,187 @@ function validateFields(frontmatter, fileType, filePath) {
 }
 
 /**
+ * Validate genie.executor and genie.model fields
+ */
+async function validateGenieFields(genie) {
+  const issues = [];
+  const executor = genie.executor;
+  const model = genie.model;
+  const variant = genie.executorVariant || genie.variant || genie.executor_variant || genie.executorProfile;
+
+  // Validate executor format (should be uppercase)
+  // NOTE: We don't validate against a hardcoded list - executors are dynamic in Forge
+  // AgentRegistry.getSupportedExecutors() fetches the current list from Forge
+  if (executor) {
+    if (executor !== executor.toUpperCase()) {
+      issues.push({
+        type: 'executor_case',
+        field: 'genie.executor',
+        message: `Executor should be uppercase (Forge format): ${executor}`,
+        suggestion: `Change to: ${executor.toUpperCase()}`,
+      });
+    }
+  }
+
+  // Warn about executorVariant (deprecated field)
+  if (variant) {
+    issues.push({
+      type: 'deprecated_field',
+      field: 'genie.executorVariant',
+      message: `executorVariant is deprecated (conflicts with Forge profile-per-agent pattern)`,
+      suggestion: `Remove this field - Forge creates one profile per agent automatically`,
+    });
+  }
+
+  // Validate model based on executor
+  if (executor && model) {
+    if (executor === 'CLAUDE_CODE') {
+      // Claude models: haiku, sonnet, opus-4
+      if (!VALID_CLAUDE_MODELS.includes(model)) {
+        issues.push({
+          type: 'invalid_claude_model',
+          field: 'genie.model',
+          message: `Invalid Claude model: ${model}`,
+          suggestion: `Valid Claude models: ${VALID_CLAUDE_MODELS.join(', ')}`,
+        });
+      }
+    } else if (executor === 'OPENCODE') {
+      // OpenCode models: must be in `opencode models` output
+      const validModels = await getOpenCodeModels();
+      if (validModels.length > 0 && !validModels.includes(model)) {
+        issues.push({
+          type: 'invalid_opencode_model',
+          field: 'genie.model',
+          message: `OpenCode model not found: ${model}`,
+          suggestion: `Run 'opencode models' to see valid models`,
+        });
+      }
+    }
+  }
+
+  // Validate executor-specific permission flags (from Forge API 2025-10-26)
+  // See: .genie/product/docs/executor-configuration.md
+  const permissionIssues = validatePermissionFlags(genie, executor);
+  issues.push(...permissionIssues);
+
+  return issues;
+}
+
+/**
+ * Validate executor-specific permission flags
+ * Based on live Forge API query 2025-10-26
+ */
+function validatePermissionFlags(genie, executor) {
+  const issues = [];
+
+  // Permission flags by executor (from Forge DEFAULT profiles)
+  const EXECUTOR_PERMISSION_FLAGS = {
+    CLAUDE_CODE: ['dangerously_skip_permissions'],
+    CODEX: ['sandbox'],
+    AMP: ['dangerously_allow_all'],
+    OPENCODE: [], // No permission flags
+  };
+
+  const VALID_PERMISSION_FLAGS = {
+    dangerously_skip_permissions: { executor: 'CLAUDE_CODE', type: 'boolean' },
+    sandbox: { executor: 'CODEX', type: 'string', values: ['danger-full-access', 'read-only', 'safe'] },
+    dangerously_allow_all: { executor: 'AMP', type: 'boolean' },
+  };
+
+  const VALID_ADDITIONAL_FIELDS = {
+    model_reasoning_effort: { executors: ['CODEX'], type: 'string', values: ['low', 'medium', 'high'] },
+  };
+
+  // Check for permission flags in frontmatter
+  for (const [flag, config] of Object.entries(VALID_PERMISSION_FLAGS)) {
+    if (genie[flag] !== undefined) {
+      // Flag is present - check if it matches the executor
+      if (executor !== config.executor) {
+        issues.push({
+          type: 'wrong_executor_permission_flag',
+          field: `genie.${flag}`,
+          message: `Permission flag '${flag}' is for ${config.executor}, but executor is ${executor}`,
+          suggestion: executor ?
+            `Remove this flag or use ${executor}-specific flag: ${EXECUTOR_PERMISSION_FLAGS[executor]?.join(', ') || 'none'}` :
+            `Remove this flag or set executor to ${config.executor}`,
+        });
+      } else {
+        // Correct executor - validate value type
+        if (config.type === 'boolean' && typeof genie[flag] !== 'boolean') {
+          issues.push({
+            type: 'invalid_permission_flag_type',
+            field: `genie.${flag}`,
+            message: `${flag} must be a boolean (true or false)`,
+            suggestion: `Change to: true or false (no quotes)`,
+          });
+        } else if (config.type === 'string' && typeof genie[flag] !== 'string') {
+          issues.push({
+            type: 'invalid_permission_flag_type',
+            field: `genie.${flag}`,
+            message: `${flag} must be a string`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        } else if (config.values && !config.values.includes(genie[flag])) {
+          issues.push({
+            type: 'invalid_permission_flag_value',
+            field: `genie.${flag}`,
+            message: `Invalid value for ${flag}: '${genie[flag]}'`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Validate additional executor-specific fields
+  for (const [field, config] of Object.entries(VALID_ADDITIONAL_FIELDS)) {
+    if (genie[field] !== undefined) {
+      // Check if field is valid for this executor
+      if (executor && !config.executors.includes(executor)) {
+        issues.push({
+          type: 'wrong_executor_field',
+          field: `genie.${field}`,
+          message: `Field '${field}' is only valid for ${config.executors.join(', ')}, but executor is ${executor}`,
+          suggestion: `Remove this field or use one of: ${config.executors.join(', ')}`,
+        });
+      } else {
+        // Validate value type and values
+        if (config.type === 'string' && typeof genie[field] !== 'string') {
+          issues.push({
+            type: 'invalid_field_type',
+            field: `genie.${field}`,
+            message: `${field} must be a string`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        } else if (config.values && !config.values.includes(genie[field])) {
+          issues.push({
+            type: 'invalid_field_value',
+            field: `genie.${field}`,
+            message: `Invalid value for ${field}: '${genie[field]}'`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Warn about deprecated 'additional_params' usage
+  if (genie.additional_params !== undefined) {
+    issues.push({
+      type: 'deprecated_field',
+      field: 'genie.additional_params',
+      message: `additional_params is not used by Forge (defaults to empty array)`,
+      suggestion: `Remove this field and use executor-specific permission flags instead`,
+    });
+  }
+
+  return issues;
+}
+
+/**
  * Scan single markdown file
  */
-function scanFile(filePath) {
+async function scanFile(filePath) {
   results.totalFiles++;
 
   if (!shouldScan(filePath)) {
@@ -214,7 +432,7 @@ function scanFile(filePath) {
 
     // Validate fields
     const fileType = detectFileType(filePath);
-    const fieldIssues = validateFields(extracted.frontmatter, fileType, filePath);
+    const fieldIssues = await validateFields(extracted.frontmatter, fileType, filePath);
 
     if (fieldIssues.length > 0) {
       fieldIssues.forEach(issue => {
@@ -225,7 +443,17 @@ function scanFile(filePath) {
           field: issue.field,
           message: issue.message,
           suggestion: issue.suggestion,
-          severity: issue.type === 'amendment_7_violation' ? 'warning' : 'error',
+          severity: [
+            'amendment_7_violation',
+            'deprecated_field',
+            'executor_case',
+            'wrong_executor_permission_flag',
+            'invalid_permission_flag_type',
+            'invalid_permission_flag_value',
+            'wrong_executor_field',
+            'invalid_field_type',
+            'invalid_field_value'
+          ].includes(issue.type) ? 'warning' : 'error',
         });
       });
     } else {
@@ -245,16 +473,16 @@ function scanFile(filePath) {
 /**
  * Recursively scan directory
  */
-function scanDirectory(dir) {
+async function scanDirectory(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      scanDirectory(fullPath);
+      await scanDirectory(fullPath);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      scanFile(fullPath);
+      await scanFile(fullPath);
     }
   }
 }
@@ -323,7 +551,7 @@ function generateReport() {
 /**
  * Main
  */
-function main() {
+async function main() {
   const targetPath = process.argv[2] || '.genie';
 
   if (!fs.existsSync(targetPath)) {
@@ -335,9 +563,9 @@ function main() {
 
   const stat = fs.statSync(targetPath);
   if (stat.isDirectory()) {
-    scanDirectory(targetPath);
+    await scanDirectory(targetPath);
   } else if (targetPath.endsWith('.md')) {
-    scanFile(targetPath);
+    await scanFile(targetPath);
   } else {
     console.error('Error: Target must be a directory or .md file');
     process.exit(1);

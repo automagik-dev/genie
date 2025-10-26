@@ -3,7 +3,7 @@ name: audit
 description: Risk and impact assessment framework (universal)
 color: maroon
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

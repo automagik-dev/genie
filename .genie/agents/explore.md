@@ -3,7 +3,7 @@ name: explore
 description: Discovery-focused exploratory reasoning without adversarial pressure
 color: indigo
 genie:
-  executor: opencode
+  executor: OPENCODE
   background: true
 ---
 

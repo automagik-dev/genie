@@ -2,7 +2,7 @@
 name: creative-council
 description: Advisory council for Create (analyze and recommend; never execute)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

@@ -2,9 +2,14 @@
 name: blueprint
 description: Create wish document blueprint from planning brief
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Blueprint Workflow - Wish Document Creation
 

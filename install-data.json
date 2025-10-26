@@ -1,0 +1,151 @@
+{
+  "welcome": {
+    "title": "🧞 ✨ THE MASTER GENIE AWAKENS ✨",
+    "introduction": [
+      "You've summoned the Master Genie from namastexlabs/automagik-genie",
+      "I'm about to clone myself into YOUR workspace...",
+      "",
+      "Your personal Genie will have:",
+      "  ✨ All my knowledge (spells, workflows, patterns)",
+      "  🔮 All my powers (agents, collectives, orchestration)",
+      "  🎩 All my abilities (and you'll learn new ones as I evolve!)",
+      "",
+      "📋 What will I do for you?",
+      "  • Automate development workflows (testing, builds, PRs)",
+      "  • Execute tasks while you focus on strategy",
+      "  • Learn from every interaction",
+      "  • Sync with Master Genie for new capabilities"
+    ],
+    "privacy": [
+      "🔒 DATA PRIVACY:",
+      "  ✓ Everything runs locally on YOUR machine",
+      "  ✓ No data leaves your computer (except LLM API calls)",
+      "  ✓ Use LLM providers approved by your organization",
+      "  ✓ Fully compatible with private/local LLMs (we're agnostic!)",
+      "  ✓ OpenCoder executor enables 100% local operation"
+    ],
+    "disclaimer": [
+      "⚠️  RESEARCH PREVIEW - Experimental Technology",
+      "",
+      "This AI agent will install with capabilities to perform tasks on",
+      "your behalf. By proceeding, you acknowledge that Namastex Labs",
+      "makes no warranties and accepts no liability for agent actions.",
+      "",
+      "BUT HEY... it's going to be FUN! 🎉✨"
+    ],
+    "closing": "Let the summoning ritual begin..."
+  },
+  "dependencies": {
+    "git": {
+      "label": "Git",
+      "description": "Version control system",
+      "required": true,
+      "url": "https://git-scm.com/downloads"
+    },
+    "github_cli": {
+      "label": "GitHub CLI",
+      "description": "GitHub command-line tool for PR/issue management",
+      "required": false,
+      "url": "https://cli.github.com/manual/installation"
+    },
+    "nodejs": {
+      "label": "Node.js",
+      "description": "JavaScript runtime (v18+)",
+      "required": true,
+      "url": "https://nodejs.org/en/download/",
+      "min_version": "18.0.0"
+    },
+    "pnpm": {
+      "label": "pnpm",
+      "description": "Fast, disk space efficient package manager",
+      "required": true,
+      "url": "https://pnpm.io/installation"
+    }
+  },
+  "executors": [
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "description": "Open-source code assistant",
+      "package": "opencode-ai",
+      "command": "opencode",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "opencode auth login",
+      "platforms": ["macos", "linux", "windows"]
+    },
+    {
+      "id": "codex",
+      "name": "ChatGPT",
+      "description": "OpenAI ChatGPT via Codex CLI",
+      "package": "@namastex/codex-cli",
+      "command": "codex",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "codex login",
+      "auth_blocking": true,
+      "platforms": ["macos", "linux", "windows"]
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "description": "Anthropic Claude via Claude Code CLI",
+      "package": "@anthropic-ai/claude-code",
+      "command": "claude",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "claude setup-token",
+      "platforms": ["macos", "linux", "windows"]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "description": "Google Gemini AI",
+      "package": "@google/gemini-cli",
+      "command": "gemini",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "gemini /auth (interactive)",
+      "platforms": ["macos", "linux", "windows"]
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "description": "Cursor AI editor",
+      "package": "cursor-agent",
+      "command": "cursor-agent",
+      "install_method": "script",
+      "install_script_url": "https://cursor.com/install",
+      "auth_required": true,
+      "auth_method": "cursor-agent login",
+      "platforms": ["macos", "linux"]
+    },
+    {
+      "id": "qwen_code",
+      "name": "Qwen Code",
+      "description": "Alibaba Qwen coding model",
+      "package": "@qwen-code/qwen-code",
+      "command": "qwen",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "qwen (configure via CLI)",
+      "platforms": ["macos", "linux", "windows"]
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "description": "GitHub Copilot CLI",
+      "package": "@github/copilot",
+      "command": "copilot",
+      "install_method": "npm",
+      "auth_required": true,
+      "auth_method": "gh auth login",
+      "platforms": ["macos", "linux", "windows"]
+    }
+  ],
+  "meta": {
+    "version": "1.0.0",
+    "last_updated": "2025-10-26",
+    "description": "Shared installation data for Genie start scripts"
+  }
+}

@@ -3,9 +3,14 @@ name: fix
 description: Apply fixes using debug spell and other code agents/spells as needed
 color: green
 genie:
-  executor: claude
+  executor: OPENCODE
+  model: xai/grok-4-fast
   background: true
 ---
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Fix Agent • Solution Implementor
 

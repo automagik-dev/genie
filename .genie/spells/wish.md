@@ -2,7 +2,7 @@
 name: wish
 description: Multi-step wish dance - discovery to blueprint
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

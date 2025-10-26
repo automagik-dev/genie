@@ -2,7 +2,7 @@
 name: find-duplicates
 description: Detect near-duplicate content across markdown files using semantic similarity
 genie:
-  executor: opencode
+  executor: OPENCODE
   background: false
 ---
 

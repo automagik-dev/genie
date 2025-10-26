@@ -2,7 +2,7 @@
 name: wish
 description: Create Wish Orchestrator – discovery to blueprint for creative work
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

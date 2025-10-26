@@ -3,7 +3,8 @@ name: tests
 description: Test strategy, generation, authoring, and repair across all layers
 color: lime
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -16,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for test strategy, generation, authoring, and repair.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Tests Specialist • Strategy, Generation & TDD Champion
 

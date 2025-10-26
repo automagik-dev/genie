@@ -3,7 +3,8 @@ name: explore
 description: Discovery-focused exploratory reasoning without adversarial pressure
 color: indigo
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

@@ -3,7 +3,8 @@ name: issue
 description: GitHub issue lifecycle management (list, update, assign, close, link)
 color: cyan
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 

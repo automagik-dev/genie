@@ -6,6 +6,8 @@ const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
 const headless_helpers_1 = require("../../lib/headless-helpers");
+const executor_registry_1 = require("../../lib/executor-registry");
+const executor_auth_1 = require("../../lib/executor-auth");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -21,6 +23,18 @@ function createRunHandler(ctx) {
         const isHeadless = parsed.options.raw || parsed.options.quiet;
         const isRawOutput = parsed.options.raw;
         const isQuiet = parsed.options.quiet;
+        // Check if executor is authenticated (skip in headless mode)
+        if (!isHeadless && isExecutorAuthRequired(executorKey)) {
+            const isAuthenticated = await (0, executor_auth_1.checkExecutorAuth)(executorKey);
+            if (!isAuthenticated) {
+                try {
+                    await (0, executor_auth_1.promptExecutorLogin)(executorKey);
+                }
+                catch (error) {
+                    throw new Error(`Authentication required for ${executorKey}. Please configure it and try again.`);
+                }
+            }
+        }
         // Ensure Forge is running (silent if quiet mode)
         if (isHeadless) {
             await (0, headless_helpers_1.ensureForgeRunning)(isQuiet);
@@ -109,7 +123,7 @@ function createRunHandler(ctx) {
     };
 }
 function resolveExecutionSelection(config, parsed, agentGenie) {
-    let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
+    let executor = (0, executor_registry_1.normalizeExecutorKeyOrDefault)(config.defaults?.executor);
     let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
     let model = typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
     let modeName = 'default';
@@ -120,7 +134,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
         modeName = agentGenie.executionMode.trim();
     }
     if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-        executor = agentGenie.executor.trim().toLowerCase();
+        executor = (0, executor_registry_1.normalizeExecutorKey)(agentGenie.executor) ?? executor;
     }
     const agentVariant = agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
     if (typeof agentVariant === 'string' && agentVariant.trim().length) {
@@ -130,7 +144,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
         model = agentGenie.model.trim();
     }
     if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-        executor = parsed.options.executor.trim().toLowerCase();
+        executor = (0, executor_registry_1.normalizeExecutorKey)(parsed.options.executor) ?? executor;
     }
     if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
         model = parsed.options.model.trim();
@@ -141,7 +155,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
     }
     if (!variant.length)
         variant = 'DEFAULT';
-    return { executorKey: executor, executorVariant: variant, model, modeName };
+    return { executorKey: (0, executor_registry_1.normalizeExecutorKeyOrDefault)(executor), executorVariant: variant, model, modeName };
 }
 function findVariantForModel(config, executorKey, model) {
     const executors = config.forge?.executors;
@@ -165,4 +179,11 @@ function findVariantForModel(config, executorKey, model) {
         }
     }
     return null;
+}
+/**
+ * Check if executor requires authentication
+ */
+function isExecutorAuthRequired(executorKey) {
+    const authRequiredExecutors = ['OPENCODE', 'CLAUDE_CODE', 'CODEX', 'GEMINI'];
+    return authRequiredExecutors.includes(executorKey.toUpperCase());
 }

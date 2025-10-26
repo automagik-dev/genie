@@ -3,7 +3,8 @@ name: roadmap
 description: Document strategic initiatives in automagik-roadmap with guided template selection
 color: purple
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
+  model: sonnet
   background: true
 ---
 
@@ -16,6 +17,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 - Done Report Template (standard evidence format)
 
 Customize phases below for strategic initiative documentation.
+
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
 
 # Roadmap Specialist • Strategic Initiative Documentation
 
