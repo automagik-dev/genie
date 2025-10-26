@@ -579,35 +579,80 @@ server.tool('read_spell', 'Read the full content of a specific spell. Returns th
     }
 });
 // Workflows have been merged into spells - no separate workflow tools needed
-// Tool: get_workspace_info - Get workspace metadata
-server.tool('get_workspace_info', 'Get Genie workspace information including mission, tech stack, roadmap, and environment details. Aggregates data from .genie/product/ directory.', async () => {
-    const productDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'product');
-    let output = getVersionHeader() + '# Workspace Information\n\n';
-    // Read mission
-    const missionPath = path_1.default.join(productDir, 'mission.md');
-    if (fs_1.default.existsSync(missionPath)) {
-        const mission = fs_1.default.readFileSync(missionPath, 'utf-8');
-        output += '## Mission\n\n' + mission + '\n\n';
+// Tool: get_workspace_info - Get workspace metadata (lean self-awareness data)
+server.tool('get_workspace_info', 'Get essential workspace info for agent self-awareness: project name, tech stack, current branch, and available commands. Lightweight context for agents to understand their environment.', async () => {
+    try {
+        // Extract essential data only (no bloat)
+        const workspaceInfo = {};
+        // 1. Project name (from package.json or directory name)
+        const packageJsonPath = path_1.default.join(WORKSPACE_ROOT, 'package.json');
+        if (fs_1.default.existsSync(packageJsonPath)) {
+            const pkg = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf-8'));
+            workspaceInfo.project = pkg.name || path_1.default.basename(WORKSPACE_ROOT);
+        }
+        else {
+            workspaceInfo.project = path_1.default.basename(WORKSPACE_ROOT);
+        }
+        // 2. Tech stack (runtime, language, package manager)
+        workspaceInfo.techStack = {};
+        if (fs_1.default.existsSync(packageJsonPath)) {
+            const pkg = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf-8'));
+            workspaceInfo.techStack.runtime = 'Node.js';
+            workspaceInfo.techStack.packageManager = fs_1.default.existsSync(path_1.default.join(WORKSPACE_ROOT, 'pnpm-lock.yaml')) ? 'pnpm' :
+                fs_1.default.existsSync(path_1.default.join(WORKSPACE_ROOT, 'yarn.lock')) ? 'yarn' : 'npm';
+            // Detect language from dependencies
+            if (pkg.devDependencies?.typescript || pkg.dependencies?.typescript) {
+                workspaceInfo.techStack.language = 'TypeScript';
+            }
+            else {
+                workspaceInfo.techStack.language = 'JavaScript';
+            }
+        }
+        // 3. Current branch (from git)
+        try {
+            const { execSync } = require('child_process');
+            const branch = execSync('git branch --show-current', { cwd: WORKSPACE_ROOT, encoding: 'utf-8' }).trim();
+            workspaceInfo.currentBranch = branch || 'unknown';
+        }
+        catch {
+            workspaceInfo.currentBranch = 'unknown';
+        }
+        // 4. Available commands (from package.json scripts)
+        workspaceInfo.commands = {};
+        if (fs_1.default.existsSync(packageJsonPath)) {
+            const pkg = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf-8'));
+            if (pkg.scripts) {
+                // Only include common/useful commands (build, test, lint)
+                const relevantScripts = ['build', 'test', 'lint', 'dev', 'start'];
+                for (const script of relevantScripts) {
+                    if (pkg.scripts[script]) {
+                        workspaceInfo.commands[script] = `${workspaceInfo.techStack.packageManager} run ${script}`;
+                    }
+                }
+                // Also include genie-specific commands
+                Object.keys(pkg.scripts).forEach(script => {
+                    if (script.includes('genie') || script.includes('test:')) {
+                        workspaceInfo.commands[script] = `${workspaceInfo.techStack.packageManager} run ${script}`;
+                    }
+                });
+            }
+        }
+        // Format lean output
+        let output = getVersionHeader();
+        output += `**Project:** ${workspaceInfo.project}\n`;
+        output += `**Branch:** ${workspaceInfo.currentBranch}\n`;
+        output += `**Tech Stack:** ${workspaceInfo.techStack.language} + ${workspaceInfo.techStack.runtime} (${workspaceInfo.techStack.packageManager})\n\n`;
+        if (Object.keys(workspaceInfo.commands).length > 0) {
+            output += `**Available Commands:**\n`;
+            Object.entries(workspaceInfo.commands).forEach(([name, cmd]) => {
+                output += `- ${name}: \`${cmd}\`\n`;
+            });
+        }
+        return { content: [{ type: 'text', text: output }] };
     }
-    // Read tech stack
-    const techStackPath = path_1.default.join(productDir, 'tech-stack.md');
-    if (fs_1.default.existsSync(techStackPath)) {
-        const techStack = fs_1.default.readFileSync(techStackPath, 'utf-8');
-        output += '## Tech Stack\n\n' + techStack + '\n\n';
+    catch (error) {
+        return { content: [{ type: 'text', text: getVersionHeader() + `Error gathering workspace info: ${error.message}` }] };
     }
-    // Read roadmap
-    const roadmapPath = path_1.default.join(productDir, 'roadmap.md');
-    if (fs_1.default.existsSync(roadmapPath)) {
-        const roadmap = fs_1.default.readFileSync(roadmapPath, 'utf-8');
-        output += '## Roadmap\n\n' + roadmap + '\n\n';
-    }
-    // Read environment
-    const environmentPath = path_1.default.join(productDir, 'environment.md');
-    if (fs_1.default.existsSync(environmentPath)) {
-        const environment = fs_1.default.readFileSync(environmentPath, 'utf-8');
-        output += '## Environment\n\n' + environment + '\n\n';
-    }
-    return { content: [{ type: 'text', text: output }] };
 });
 // ============================================================================
 // WEBSOCKET-NATIVE TOOLS (MVP Phase 6) - Real-time streaming + git validation
