@@ -863,49 +863,6 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   console.log('   Your Genie will absorb the collective\'s latest magik next time you run `genie`');
   console.log('');
 
-  // MASTER GENIE DETECTION: Check if we're in the template repo
-  const workspacePackageJson = path.join(process.cwd(), 'package.json');
-  let isMasterGenie = false;
-
-  if (fs.existsSync(workspacePackageJson)) {
-    try {
-      const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
-      if (workspacePkg.name === 'automagik-genie') {
-        isMasterGenie = true;
-      }
-    } catch {
-      // Not master genie if can't read package.json
-    }
-  }
-
-  // If master genie, install local build globally instead of fetching from npm
-  if (isMasterGenie) {
-    console.log(successGradient('━'.repeat(60)));
-    console.log(successGradient('   🧞 ✨ MASTER GENIE UPDATE ✨ 🧞   '));
-    console.log(successGradient('━'.repeat(60)));
-    console.log('');
-    console.log('Installing your local build globally...');
-    console.log('');
-
-    try {
-      await execFileAsync('pnpm', ['install', '-g', '.'], {
-        stdio: 'inherit'
-      });
-      console.log('');
-      console.log(successGradient('✅ Successfully installed local build globally!'));
-      console.log('');
-      console.log('Your lamp now matches your local version: ' + successGradient(packageJson.version));
-      console.log('');
-      process.exit(0);
-    } catch (error) {
-      console.error('❌ Installation failed:', error);
-      console.error('');
-      console.error('Try manually: pnpm install -g .');
-      console.error('');
-      process.exit(1);
-    }
-  }
-
   // THREE VERSION TYPES:
   // 1. Master Genie - source of truth at npm registry (@next tag)
   // 2. Your Genie - local workspace .genie/ framework files
