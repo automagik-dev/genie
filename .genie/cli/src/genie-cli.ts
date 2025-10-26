@@ -296,7 +296,7 @@ if (shouldCheckVersion) {
         console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
         console.log(successGradient('━'.repeat(60)));
         console.log('');
-        console.log(`You bumped to ${successGradient(localVersion)} but your global lamp is still ${performanceGradient(runningVersion)}`);
+        console.log(`You bumped to ${successGradient(localVersion)} but your global Genie is still ${performanceGradient(runningVersion)}`);
         console.log('');
         console.log('Install your new build globally:');
         console.log('  ' + performanceGradient('pnpm install -g .'));
