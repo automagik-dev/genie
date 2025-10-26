@@ -1,6 +1,6 @@
 ---
 name: update
-description: 
+description: Workspace and dependency update coordination
 color: violet
 genie:
   executor: claude
