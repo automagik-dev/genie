@@ -1,3 +1,11 @@
+---
+name: risk
+description: General risk assessment and mitigation planning
+genie:
+  executor: claude
+  background: false
+---
+
 # Risk Audit Workflow
 **Extends universal audit framework with general risk assessment patterns.**
 

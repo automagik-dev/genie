@@ -1,3 +1,11 @@
+---
+name: generic-update
+description: Generic upgrade guidance for version transitions without specific guides
+genie:
+  executor: claude
+  background: false
+---
+
 # Generic Update Guide
 **Purpose:** Guidance for users upgrading from older versions without specific transition guides
 **Applies to:** Any version transition not covered by specific guides
