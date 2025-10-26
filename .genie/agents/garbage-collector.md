@@ -313,6 +313,106 @@ Issue: [GARBAGE] CRITICAL - Potential sensitive data in <file>:<line>
 
 **Severity:** CRITICAL - Security risk
 
+### 15. File Size Violations (Amendment 10)
+**Pattern:** Source code files (.ts, .js, .py, etc.) exceeding line count thresholds
+**Detect:**
+- **Soft limit (800 lines):** Start planning refactor
+- **Hard limit (1000 lines):** Refactor required before next feature
+- **Emergency limit (1500 lines):** Block new work until split
+
+**Output:**
+```
+Issue: [GARBAGE] File size violation in <file>
+- Current: XXX lines
+- Threshold: 800 (soft) / 1000 (hard) / 1500 (emergency)
+- Severity: warning | error | critical
+- Suggested split:
+  - Extract commands to separate files
+  - Move utilities to lib/ modules
+  - Separate types to types.ts
+  - Extract constants to config file
+- Estimated impact: Better maintainability, easier code review, smaller diffs
+```
+
+**Helper Tool:**
+```bash
+# Find oversized source files
+find . -name "*.ts" -o -name "*.js" | xargs wc -l | sort -rn | head -20
+```
+
+**Exceptions:**
+- Generated code (dist/ builds) - document in file header
+- Data files (changelogs, migrations) - document justification
+- Must have clear justification comment at top of file
+
+### 16. Duplicate Code Detection
+**Pattern:** Identical or near-identical code blocks in multiple files
+**Detect:**
+- Functions with same signature and similar implementation
+- Code blocks >10 lines repeated across files
+- Same logic pattern duplicated (candidate for utility function)
+
+**Output:**
+```
+Issue: [GARBAGE] Duplicate code detected
+- Files: <file1>:<line>, <file2>:<line>
+- Similarity: XX% match over YY lines
+- Code: [first 80 chars...]
+- Suggested fix:
+  - Extract to shared utility in lib/
+  - Create reusable function
+  - Use existing implementation if one is canonical
+- Token waste: ~XXX tokens × N duplicates
+```
+
+**Detection Method:**
+- Compare function bodies across files
+- Look for copy-paste patterns (similar variable names, structure)
+- Flag code blocks >90% similar
+
+**Helper Tool:**
+```bash
+# Manual inspection of similar patterns
+grep -r "function functionName" .genie/cli/src/
+```
+
+### 17. Refactor Opportunities
+**Pattern:** Files that could benefit from splitting based on responsibility analysis
+**Detect:**
+- Files with multiple unrelated command handlers
+- Mixed concerns (utilities + commands in same file)
+- Large switch/if-else blocks that could be strategy pattern
+- God classes (too many methods/exports)
+
+**Output:**
+```
+Issue: [GARBAGE] Refactor opportunity in <file>
+- Current: XXX lines, YYY exports
+- Analysis:
+  - Contains N command handlers → Extract to commands/<name>.ts
+  - Contains M utility functions → Extract to lib/<domain>.ts
+  - Contains types → Extract to types.ts
+  - Mixed concerns: <list concerns>
+- Suggested structure:
+  [proposed file organization]
+- Benefits: Better navigation, clearer dependencies, easier testing
+```
+
+**Detection Heuristics:**
+- File has >10 exported functions → Likely needs split
+- File mixes CLI commands + business logic → Separate concerns
+- File has both types and implementation → Extract types
+- Large functions (>100 lines) → Extract sub-functions
+
+**Helper Tool:**
+```bash
+# Count exports in file
+grep -c "^export " <file>
+
+# Find large functions
+grep -n "^function\|^async function" <file> | head -20
+```
+
 ## Daily Report Format
 
 **Location:** `.genie/reports/garbage-collection-YYYY-MM-DD.md`
@@ -369,6 +469,15 @@ Issue: [GARBAGE] CRITICAL - Potential sensitive data in <file>:<line>
 
 ### Sensitive Data Patterns (N) 🔴 CRITICAL
 - file:line - pattern type - REDACTED
+
+### File Size Violations (N)
+- file - current lines - threshold - severity
+
+### Duplicate Code (N)
+- files - similarity - lines - suggested fix
+
+### Refactor Opportunities (N)
+- file - analysis - suggested structure
 
 ## Action Items
 - Review GitHub issues tagged `garbage-collection`
