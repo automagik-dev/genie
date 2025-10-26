@@ -143,7 +143,7 @@ Expected key entries:
 Example: `.genie/state/version.json` (values will differ):
 ```json
 {
-  "version": "2.4.0-rc.36",
+  "version": "2.5.1-rc.12",
   "installedAt": "2025-10-20T16:40:55.123Z",
   "lastUpdated": "2025-10-20T16:40:55.123Z",
   "migrationInfo": { "backupId": "2025-10-20T16-40-...Z", "claudeBackedUp": false }
