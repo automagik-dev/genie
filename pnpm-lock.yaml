@@ -15,8 +15,8 @@ importers:
         specifier: ^5.0.4
         version: 5.0.4
       automagik-forge:
-        specifier: ^0.4.3
-        version: 0.4.3
+        specifier: ^0.4.5
+        version: 0.4.5
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -120,8 +120,8 @@ packages:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
     engines: {node: '>=8'}
 
-  automagik-forge@0.4.3:
-    resolution: {integrity: sha512-ah4ct3B727jCN8AVgKXiX2xEyv0xjm0iVWCy54MZAV5qdiHqI9hzf0SmPSsFsxobILkF9Wc18Lf9zwLzOvywnw==}
+  automagik-forge@0.4.5:
+    resolution: {integrity: sha512-KBQBUuOzJCGzxxLzDAYlGMBRrkDJrV/VDKKzVxOYS3t/wCo8SE1rLFFqF+fD7frZ8I9C6HqA0yPouCsRwEP9Zw==}
     hasBin: true
 
   base64-js@1.5.1:
@@ -635,7 +635,7 @@ snapshots:
     dependencies:
       color-convert: 2.0.1
 
-  automagik-forge@0.4.3: {}
+  automagik-forge@0.4.5: {}
 
   base64-js@1.5.1: {}
 
