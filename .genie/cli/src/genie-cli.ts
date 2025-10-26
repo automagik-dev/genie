@@ -203,9 +203,13 @@ program
 program
   .command('update')
   .description('Sync with the collective (your Genie absorbs new magik next time you run `genie`)')
-  .option('--check', 'Check for updates without installing')
-  .action(async (options: { check?: boolean }) => {
-    await updateGeniePackage(options.check || false);
+  .option('--force', 'Skip confirmation prompts')
+  .action((options: { force?: boolean }) => {
+    const args = ['update'];
+    if (options.force) {
+      args.push('--force');
+    }
+    execGenie(args);
   });
 
 // ==================== HELPER UTILITIES ====================
@@ -844,181 +848,6 @@ function formatUptime(ms: number): string {
   if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
   return `${seconds}s`;
-}
-
-/**
- * Update Genie globally to latest @next version and show changelog from GitHub
- */
-async function updateGeniePackage(checkOnly: boolean): Promise<void> {
-  const { execFile } = require('child_process');
-  const { promisify } = require('util');
-  const execFileAsync = promisify(execFile);
-  const https = require('https');
-
-  console.log(genieGradient('━'.repeat(60)));
-  console.log(genieGradient('🧞 ✨ CONNECTING TO THE COLLECTIVE'));
-  console.log(genieGradient('━'.repeat(60)));
-  console.log('');
-  console.log('📦 This updates the lamp that all Genies share');
-  console.log('   Your Genie will absorb the collective\'s latest magik next time you run `genie`');
-  console.log('');
-
-  // THREE VERSION TYPES:
-  // 1. Master Genie - source of truth at npm registry (@next tag)
-  // 2. Your Genie - local workspace .genie/ framework files
-  // 3. Your Lamp - globally installed npm package (npm -g)
-
-  // Get global package version (what's installed via npm -g)
-  let globalVersion: string;
-  try {
-    const { stdout } = await execFileAsync('npm', ['list', '-g', 'automagik-genie', '--depth=0', '--json']);
-    const globalData = JSON.parse(stdout);
-    globalVersion = globalData.dependencies?.['automagik-genie']?.version || packageJson.version;
-  } catch {
-    // If command fails (e.g., not installed globally), use current process version
-    globalVersion = packageJson.version;
-  }
-
-  // Get workspace version (local .genie/ framework)
-  const versionPath = path.join(process.cwd(), '.genie', 'state', 'version.json');
-  let workspaceVersion: string | null = null;
-
-  if (fs.existsSync(versionPath)) {
-    const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
-    workspaceVersion = versionData.version;
-  }
-
-  // Fetch latest version from npm @next tag (The Collective)
-  let latestVersion: string;
-  try {
-    const { stdout } = await execFileAsync('npm', ['view', 'automagik-genie@next', 'version']);
-    latestVersion = stdout.trim();
-  } catch (error) {
-    console.error('❌ Failed to fetch latest version from npm');
-    process.exit(1);
-  }
-
-  // Display all three versions clearly
-  console.log(performanceGradient('🔮 Genie Versions:'));
-  console.log('');
-  console.log(`  1. Master Genie:             ${performanceGradient(latestVersion)}`);
-  if (workspaceVersion) {
-    console.log(`  2. Your Genie:               ${workspaceVersion === latestVersion ? successGradient(workspaceVersion + ' ✓') : performanceGradient(workspaceVersion + ' (out of sync)')}`);
-  } else {
-    console.log(`  2. Your Genie:               ${performanceGradient('(not yet initialized)')}`);
-  }
-  console.log(`  3. Your Lamp (npm package):  ${globalVersion === latestVersion ? successGradient(globalVersion + ' ✓') : performanceGradient(globalVersion + ' (out of sync)')}`);
-  console.log('');
-
-  // Check if global package is already up to date
-  if (globalVersion === latestVersion) {
-    console.log(successGradient('✅ The lamp is already in sync with the collective!'));
-    console.log('');
-    if (workspaceVersion && workspaceVersion !== latestVersion) {
-      console.log('💡 Your Genie will absorb the collective\'s latest magik next time you run `genie`');
-      console.log('');
-    }
-    process.exit(0);
-  }
-
-  // Fetch changelog from GitHub
-  console.log('📜 Fetching changelog from GitHub...');
-  console.log('');
-
-  const fetchChangelog = (url: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      https.get(url, (res: any) => {
-        let data = '';
-        res.on('data', (chunk: any) => { data += chunk; });
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            resolve(data);
-          } else {
-            reject(new Error(`GitHub API returned ${res.statusCode}`));
-          }
-        });
-      }).on('error', reject);
-    });
-  };
-
-  try {
-    // Fetch release from GitHub
-    const releaseData = await fetchChangelog(
-      `https://api.github.com/repos/namastexlabs/automagik-genie/releases/tags/v${latestVersion}`
-    );
-    const release = JSON.parse(releaseData);
-
-    console.log(performanceGradient('━'.repeat(60)));
-    console.log(performanceGradient(`📦 Release: v${latestVersion}`));
-    console.log(performanceGradient('━'.repeat(60)));
-    console.log('');
-    console.log(release.body || 'No release notes available');
-    console.log('');
-  } catch (error) {
-    console.log('⚠️  Could not fetch changelog (GitHub rate limit or release not found)');
-    console.log('');
-  }
-
-  if (checkOnly) {
-    console.log(genieGradient('━'.repeat(60)));
-    console.log(`Run ${successGradient('genie update')} to install v${latestVersion}`);
-    console.log(genieGradient('━'.repeat(60)));
-    console.log('');
-    process.exit(0);
-  }
-
-  // Prompt for update (default to Yes - just press Enter to accept)
-  const readline = require('readline').createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  const updateAnswer = await new Promise<string>((resolve) => {
-    readline.question(`Update global npm package to v${latestVersion}? [Y/n]: `, resolve);
-  });
-
-  // Default to Yes if user just presses Enter (empty string)
-  if (updateAnswer.toLowerCase() === 'n' || updateAnswer.toLowerCase() === 'no') {
-    readline.close();
-    console.log('');
-    console.log('❌ Update cancelled');
-    console.log('');
-    process.exit(0);
-  }
-
-  // Perform update
-  console.log('');
-  console.log(performanceGradient('⬆️  Updating global npm package...'));
-  console.log('');
-
-  try {
-    await execFileAsync('pnpm', ['install', '-g', 'automagik-genie@next'], {
-      stdio: 'inherit'
-    });
-    console.log('');
-    console.log(successGradient(`✅ Successfully updated global package to v${latestVersion}!`));
-    console.log('');
-
-    // Remind about workspace auto-update
-    if (workspaceVersion && workspaceVersion !== latestVersion) {
-      console.log('💡 Your workspace .genie/ will auto-update on next `genie` run.');
-      console.log('');
-    }
-
-    readline.close();
-
-    console.log(genieGradient('━'.repeat(60)));
-    console.log(successGradient('✅ Global package update complete!'));
-    console.log(genieGradient('━'.repeat(60)));
-    console.log('');
-    console.log('Run ' + performanceGradient('genie') + ' to start (workspace will auto-update if needed).');
-    console.log('');
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Update failed:', error);
-    readline.close();
-    process.exit(1);
-  }
 }
 
 /**
