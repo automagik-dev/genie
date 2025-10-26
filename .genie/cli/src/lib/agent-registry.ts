@@ -48,47 +48,49 @@ export class AgentRegistry {
   }
 
   /**
-   * Scan a directory for agent markdown files
+   * Scan a directory for agent markdown files (recursive)
    */
   private async scanDirectory(dir: string, collective: 'code' | 'create'): Promise<void> {
     if (!fs.existsSync(dir)) {
       return;
     }
 
-    const files = fs.readdirSync(dir);
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-    for (const file of files) {
-      if (!file.endsWith('.md')) {
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+
+      // Recurse into subdirectories
+      if (entry.isDirectory()) {
+        await this.scanDirectory(fullPath, collective);
+        continue;
+      }
+
+      // Process only markdown files
+      if (!entry.isFile() || !entry.name.endsWith('.md')) {
         continue;
       }
 
       // Skip README.md files (documentation, not agent definitions)
-      if (file === 'README.md') {
-        continue;
-      }
-
-      const filePath = path.join(dir, file);
-      const stats = fs.statSync(filePath);
-
-      if (!stats.isFile()) {
+      if (entry.name === 'README.md') {
         continue;
       }
 
       try {
-        const content = fs.readFileSync(filePath, 'utf-8');
+        const content = fs.readFileSync(fullPath, 'utf-8');
 
         // Parse frontmatter manually (YAML between --- markers)
         // Allow optional leading whitespace/newlines before frontmatter
         const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
         if (!frontmatterMatch) {
-          console.warn(`Agent file ${filePath} missing frontmatter`);
+          console.warn(`Agent file ${fullPath} missing frontmatter`);
           continue;
         }
 
         const frontmatter = parseYAML(frontmatterMatch[1]);
 
         if (!frontmatter.name) {
-          console.warn(`Agent file ${filePath} missing 'name' in frontmatter`);
+          console.warn(`Agent file ${fullPath} missing 'name' in frontmatter`);
           continue;
         }
 
@@ -102,7 +104,7 @@ export class AgentRegistry {
           emoji: frontmatter.emoji, // If explicitly set in frontmatter
           genie: frontmatter.genie,
           collective,
-          filePath,
+          filePath: fullPath,
           fullContent: markdownBody // Store only markdown body (no YAML frontmatter)
         };
 
@@ -110,7 +112,7 @@ export class AgentRegistry {
         const namespacedKey = `${collective}/${frontmatter.name.toLowerCase()}`;
         this.agents.set(namespacedKey, metadata);
       } catch (error: any) {
-        console.warn(`Failed to parse agent file ${filePath}: ${error.message}`);
+        console.warn(`Failed to parse agent file ${fullPath}: ${error.message}`);
       }
     }
   }
@@ -245,35 +247,13 @@ export class AgentRegistry {
   /**
    * Generate Forge profiles for all agents across all executors
    * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
-   * Prepends collective AGENTS.md context to each agent (code agents get .genie/code/AGENTS.md)
+   * Note: Collective AGENTS.md context is NOT prepended (available via CLAUDE.md instead)
+   * This reduces payload size by ~60% (from 9.5MB to ~3MB)
    * @param forgeClient - Optional ForgeClient to fetch executors dynamically
    */
   async generateForgeProfiles(forgeClient?: any): Promise<any> {
     const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
     const profiles: any = { executors: {} };
-
-    // Load collective AGENTS.md files (prepended to all agents in that collective)
-    const collectiveContexts = new Map<'code' | 'create', string>();
-
-    for (const collective of ['code', 'create'] as const) {
-      const collectivePath = path.join(this.workspaceRoot, `.genie/${collective}/AGENTS.md`);
-
-      if (fs.existsSync(collectivePath)) {
-        try {
-          const content = fs.readFileSync(collectivePath, 'utf-8');
-
-          // Extract markdown body (skip frontmatter - same logic as scanDirectory)
-          const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
-          const markdownBody = frontmatterMatch
-            ? content.substring(frontmatterMatch[0].length)
-            : content;
-
-          collectiveContexts.set(collective, markdownBody);
-        } catch (error: any) {
-          console.warn(`⚠️  Failed to load ${collective} collective AGENTS.md: ${error.message}`);
-        }
-      }
-    }
 
     // Get current profiles to extract DEFAULT variants (for inheriting required fields)
     let defaultVariants: Record<string, any> = {};
@@ -309,18 +289,12 @@ export class AgentRegistry {
         // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
         const variantName = `${agent.collective.toUpperCase()}_${agent.name.toUpperCase()}`;
 
-        // Prepend collective AGENTS.md context to agent content
-        const collectiveContext = collectiveContexts.get(agent.collective) || '';
-        const fullPrompt = collectiveContext
-          ? `${collectiveContext}\n\n---\n\n${agent.fullContent}`
-          : agent.fullContent;
-
         profiles.executors[executor][variantName] = {
           [executor]: {
             // Inherit all fields from DEFAULT variant
             ...baseConfig,
-            // Override append_prompt with collective context + agent content
-            append_prompt: fullPrompt,
+            // Use agent content directly (no collective context prepended)
+            append_prompt: agent.fullContent,
             // Preserve any executor-specific settings from agent metadata
             ...(agent.genie?.background !== undefined && { background: agent.genie.background })
           }

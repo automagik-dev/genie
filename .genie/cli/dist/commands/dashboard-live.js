@@ -21,7 +21,7 @@ const forge_manager_1 = require("../lib/forge-manager");
 const forge_stats_1 = require("../lib/forge-stats");
 async function runDashboardLive(parsed, _config, _paths) {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const live = parsed.commandArgs.includes('--live');
+    const live = parsed.options.live;
     const tracker = new stats_tracker_1.StatsTracker(process.cwd());
     const dashboardStartTime = Date.now(); // Track when dashboard started
     // Check if Forge is running

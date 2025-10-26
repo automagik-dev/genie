@@ -33,38 +33,40 @@ class AgentRegistry {
         await this.scanDirectory(path_1.default.join(this.workspaceRoot, '.genie/create/agents'), 'create');
     }
     /**
-     * Scan a directory for agent markdown files
+     * Scan a directory for agent markdown files (recursive)
      */
     async scanDirectory(dir, collective) {
         if (!fs_1.default.existsSync(dir)) {
             return;
         }
-        const files = fs_1.default.readdirSync(dir);
-        for (const file of files) {
-            if (!file.endsWith('.md')) {
+        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path_1.default.join(dir, entry.name);
+            // Recurse into subdirectories
+            if (entry.isDirectory()) {
+                await this.scanDirectory(fullPath, collective);
+                continue;
+            }
+            // Process only markdown files
+            if (!entry.isFile() || !entry.name.endsWith('.md')) {
                 continue;
             }
             // Skip README.md files (documentation, not agent definitions)
-            if (file === 'README.md') {
-                continue;
-            }
-            const filePath = path_1.default.join(dir, file);
-            const stats = fs_1.default.statSync(filePath);
-            if (!stats.isFile()) {
+            if (entry.name === 'README.md') {
                 continue;
             }
             try {
-                const content = fs_1.default.readFileSync(filePath, 'utf-8');
+                const content = fs_1.default.readFileSync(fullPath, 'utf-8');
                 // Parse frontmatter manually (YAML between --- markers)
                 // Allow optional leading whitespace/newlines before frontmatter
                 const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
                 if (!frontmatterMatch) {
-                    console.warn(`Agent file ${filePath} missing frontmatter`);
+                    console.warn(`Agent file ${fullPath} missing frontmatter`);
                     continue;
                 }
                 const frontmatter = (0, yaml_1.parse)(frontmatterMatch[1]);
                 if (!frontmatter.name) {
-                    console.warn(`Agent file ${filePath} missing 'name' in frontmatter`);
+                    console.warn(`Agent file ${fullPath} missing 'name' in frontmatter`);
                     continue;
                 }
                 // Extract markdown body (everything after frontmatter)
@@ -76,7 +78,7 @@ class AgentRegistry {
                     emoji: frontmatter.emoji, // If explicitly set in frontmatter
                     genie: frontmatter.genie,
                     collective,
-                    filePath,
+                    filePath: fullPath,
                     fullContent: markdownBody // Store only markdown body (no YAML frontmatter)
                 };
                 // Use namespaced key: collective/name (prevents collisions)
@@ -84,7 +86,7 @@ class AgentRegistry {
                 this.agents.set(namespacedKey, metadata);
             }
             catch (error) {
-                console.warn(`Failed to parse agent file ${filePath}: ${error.message}`);
+                console.warn(`Failed to parse agent file ${fullPath}: ${error.message}`);
             }
         }
     }
@@ -199,31 +201,13 @@ class AgentRegistry {
     /**
      * Generate Forge profiles for all agents across all executors
      * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
-     * Prepends collective AGENTS.md context to each agent (code agents get .genie/code/AGENTS.md)
+     * Note: Collective AGENTS.md context is NOT prepended (available via CLAUDE.md instead)
+     * This reduces payload size by ~60% (from 9.5MB to ~3MB)
      * @param forgeClient - Optional ForgeClient to fetch executors dynamically
      */
     async generateForgeProfiles(forgeClient) {
         const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
         const profiles = { executors: {} };
-        // Load collective AGENTS.md files (prepended to all agents in that collective)
-        const collectiveContexts = new Map();
-        for (const collective of ['code', 'create']) {
-            const collectivePath = path_1.default.join(this.workspaceRoot, `.genie/${collective}/AGENTS.md`);
-            if (fs_1.default.existsSync(collectivePath)) {
-                try {
-                    const content = fs_1.default.readFileSync(collectivePath, 'utf-8');
-                    // Extract markdown body (skip frontmatter - same logic as scanDirectory)
-                    const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
-                    const markdownBody = frontmatterMatch
-                        ? content.substring(frontmatterMatch[0].length)
-                        : content;
-                    collectiveContexts.set(collective, markdownBody);
-                }
-                catch (error) {
-                    console.warn(`⚠️  Failed to load ${collective} collective AGENTS.md: ${error.message}`);
-                }
-            }
-        }
         // Get current profiles to extract DEFAULT variants (for inheriting required fields)
         let defaultVariants = {};
         if (forgeClient) {
@@ -254,17 +238,12 @@ class AgentRegistry {
                     continue;
                 // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
                 const variantName = `${agent.collective.toUpperCase()}_${agent.name.toUpperCase()}`;
-                // Prepend collective AGENTS.md context to agent content
-                const collectiveContext = collectiveContexts.get(agent.collective) || '';
-                const fullPrompt = collectiveContext
-                    ? `${collectiveContext}\n\n---\n\n${agent.fullContent}`
-                    : agent.fullContent;
                 profiles.executors[executor][variantName] = {
                     [executor]: {
                         // Inherit all fields from DEFAULT variant
                         ...baseConfig,
-                        // Override append_prompt with collective context + agent content
-                        append_prompt: fullPrompt,
+                        // Use agent content directly (no collective context prepended)
+                        append_prompt: agent.fullContent,
                         // Preserve any executor-specific settings from agent metadata
                         ...(agent.genie?.background !== undefined && { background: agent.genie.background })
                     }
