@@ -52,10 +52,19 @@ export async function runUpdate(
 
     // If master genie, install local build globally instead of fetching from npm
     if (isMasterGenie) {
-      // Check if global package already matches local version
+      // Detect package manager (prefer pnpm, fallback to npm)
+      let packageManager = 'npm';
+      try {
+        await execAsync('pnpm --version');
+        packageManager = 'pnpm';
+      } catch {
+        // pnpm not available, use npm
+      }
+
+      // Check if global package already matches local version (using detected package manager)
       let globalVersion: string;
       try {
-        const { stdout } = await execAsync('npm list -g automagik-genie --depth=0 --json');
+        const { stdout } = await execAsync(`${packageManager} list -g automagik-genie --depth=0 --json`);
         const globalData = JSON.parse(stdout);
         globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
       } catch {
@@ -82,11 +91,11 @@ export async function runUpdate(
       console.log('');
       console.log(`Updating lamp: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(currentVersion)}`);
       console.log('');
-      console.log('Installing your local build globally...');
+      console.log(`Installing your local build globally (using ${packageManager})...`);
       console.log('');
 
       try {
-        await execAsync('pnpm install -g .', { cwd: process.cwd() });
+        await execAsync(`${packageManager} install -g .`, { cwd: process.cwd() });
         console.log('');
         console.log(successGradient('✅ Successfully installed local build globally!'));
         console.log('');
@@ -96,7 +105,7 @@ export async function runUpdate(
       } catch (error: any) {
         throw new Error(
           `Failed to install local build: ${error.message}\n\n` +
-          `Please try manually: pnpm install -g .`
+          `Please try manually: ${packageManager} install -g .`
         );
       }
     }
