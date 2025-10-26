@@ -251,6 +251,9 @@ const args = process.argv.slice(2);
 // Skip version check for these commands (they're safe to run with any version)
 const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback', 'mcp'];
 
+// Non-blocking version check for these commands (show warning but continue)
+const nonBlockingCommands = ['list', 'status', 'dashboard', 'view', 'helper'];
+
 // Skip version check for specific agents/spells that need to run regardless of version
 // WHY: Learn spell loads for self-enhancement, install/update handle versions themselves
 const BYPASS_VERSION_CHECK_AGENTS = ['learn', 'install', 'update', 'upstream-update'];
@@ -261,6 +264,8 @@ const shouldBypassForAgent = isRunCommand && BYPASS_VERSION_CHECK_AGENTS.include
 const shouldCheckVersion = args.length > 0 &&
   !skipVersionCheck.some(cmd => args.includes(cmd)) &&
   !shouldBypassForAgent;
+
+const isNonBlockingCommand = nonBlockingCommands.includes(args[0]);
 
 if (shouldCheckVersion) {
   // Check if version.json exists and matches current version
@@ -291,20 +296,29 @@ if (shouldCheckVersion) {
       const runningVersion = packageJson.version;
 
       if (localVersion !== runningVersion) {
-        console.log('');
-        console.log(successGradient('━'.repeat(60)));
-        console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
-        console.log(successGradient('━'.repeat(60)));
-        console.log('');
-        console.log(`You bumped to ${successGradient(localVersion)} but your global Genie is still ${performanceGradient(runningVersion)}`);
-        console.log('');
-        console.log('Install your new build globally:');
-        console.log('  ' + performanceGradient('pnpm install -g .'));
-        console.log('');
-        console.log('Or use:');
-        console.log('  ' + performanceGradient('genie update') + '  (detects master genie and installs local build)');
-        console.log('');
-        process.exit(0);
+        // Non-blocking commands: show warning but continue
+        if (isNonBlockingCommand) {
+          console.log('');
+          console.log(performanceGradient('⚠️  Update available: ') + `${performanceGradient(runningVersion)} → ${successGradient(localVersion)}`);
+          console.log('   Run ' + performanceGradient('genie update') + ' to install your new build');
+          console.log('');
+        } else {
+          // Blocking commands: require update before proceeding
+          console.log('');
+          console.log(successGradient('━'.repeat(60)));
+          console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
+          console.log(successGradient('━'.repeat(60)));
+          console.log('');
+          console.log(`You bumped to ${successGradient(localVersion)} but your global Genie is still ${performanceGradient(runningVersion)}`);
+          console.log('');
+          console.log('Install your new build globally:');
+          console.log('  ' + performanceGradient('pnpm install -g .'));
+          console.log('');
+          console.log('Or use:');
+          console.log('  ' + performanceGradient('genie update') + '  (detects master genie and installs local build)');
+          console.log('');
+          process.exit(0);
+        }
       }
     } catch {
       // Ignore version check errors for master genie
@@ -339,39 +353,47 @@ if (shouldCheckVersion) {
       const currentVersion = packageJson.version;
 
       if (installedVersion !== currentVersion) {
-        // LOOPHOLE CLOSED: Version mismatch detected
-        console.log(cosmicGradient('━'.repeat(60)));
-        console.log(magicGradient('   🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞   '));
-        console.log(cosmicGradient('━'.repeat(60)));
-        console.log('');
-        console.log(`Your Genie:      ${successGradient(installedVersion)}`);
-        console.log(`The Collective:  ${performanceGradient(currentVersion)} ⭐ NEW!`);
-        console.log('');
+        // Non-blocking commands: show warning but continue
+        if (isNonBlockingCommand) {
+          console.log('');
+          console.log(performanceGradient('⚠️  Update available: ') + `${performanceGradient(installedVersion)} → ${successGradient(currentVersion)}`);
+          console.log('   Run ' + performanceGradient('genie') + ' (without commands) to upgrade');
+          console.log('');
+        } else {
+          // Blocking commands: Version mismatch detected - run init
+          console.log(cosmicGradient('━'.repeat(60)));
+          console.log(magicGradient('   🧞 ✨ VERSION UPDATE REQUIRED ✨ 🧞   '));
+          console.log(cosmicGradient('━'.repeat(60)));
+          console.log('');
+          console.log(`Your Genie:      ${successGradient(installedVersion)}`);
+          console.log(`The Collective:  ${performanceGradient(currentVersion)} ⭐ NEW!`);
+          console.log('');
 
-        // Show new spells learned
-        const fromTag = getTagForVersion(installedVersion);
-        const toTag = getTagForVersion(currentVersion);
-        if (fromTag && toTag) {
-          const spellChangelog = getLearnedSpells(fromTag, toTag);
-          if (spellChangelog.totalCount > 0) {
-            const spellLines = formatSpellChangelog(spellChangelog);
-            spellLines.forEach(line => console.log(line));
+          // Show new spells learned
+          const fromTag = getTagForVersion(installedVersion);
+          const toTag = getTagForVersion(currentVersion);
+          if (fromTag && toTag) {
+            const spellChangelog = getLearnedSpells(fromTag, toTag);
+            if (spellChangelog.totalCount > 0) {
+              const spellLines = formatSpellChangelog(spellChangelog);
+              spellLines.forEach(line => console.log(line));
+            } else {
+              console.log('The collective has learned new magik!');
+            }
           } else {
             console.log('The collective has learned new magik!');
           }
-        } else {
-          console.log('The collective has learned new magik!');
-        }
 
-        console.log('⚡ Syncing new capabilities to your local clone...');
-        console.log('');
-        console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
-        console.log(successGradient('✓') + ' All data stays local - nothing leaves your machine');
-        console.log('');
-        // Interactive if TTY available, otherwise use --yes
-        const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
-        execGenie(initArgs);
-        process.exit(0);
+          console.log('⚡ Syncing new capabilities to your local clone...');
+          console.log('');
+          console.log(successGradient('✓') + ' Your existing .genie will be backed up automatically');
+          console.log(successGradient('✓') + ' All data stays local - nothing leaves your machine');
+          console.log('');
+          // Interactive if TTY available, otherwise use --yes
+          const initArgs = process.stdout.isTTY ? ['init'] : ['init', '--yes'];
+          execGenie(initArgs);
+          process.exit(0);
+        }
       }
     } catch (error) {
       // Corrupted version.json - force init
@@ -398,8 +420,8 @@ if (shouldCheckVersion) {
       const installedVersion = versionData.version;
       const currentVersion = packageJson.version;
 
-      if (installedVersion !== currentVersion && shouldCheckVersion) {
-        // ESCAPE HATCH: Version didn't update during the version check phase
+      if (installedVersion !== currentVersion && shouldCheckVersion && !isNonBlockingCommand) {
+        // ESCAPE HATCH: Version didn't update during the version check phase (only for blocking commands)
         // This means detectInstallType() triggered old_genie without init fully running
         console.log('');
         console.log(cosmicGradient('━'.repeat(60)));
