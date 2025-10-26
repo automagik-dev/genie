@@ -6,10 +6,52 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.runInitWizard = runInitWizard;
 const prompts_1 = __importDefault(require("prompts"));
 const gradient_string_1 = __importDefault(require("gradient-string"));
+// Views compile in isolation (rootDir = .), so duplicate the canonical executor map here.
+const EXECUTOR_LABELS = {
+    GEMINI: 'Google Gemini',
+    CODEX: 'ChatGPT',
+    CLAUDE_CODE: 'Claude',
+    CURSOR: 'Cursor',
+    COPILOT: 'GitHub Copilot',
+    OPENCODE: 'OpenCode',
+    QWEN_CODE: 'Qwen Code',
+    AMP: 'Amp'
+};
+const FRIENDLY_NAME_MAP = {
+    claude: 'CLAUDE_CODE',
+    chatgpt: 'CODEX'
+};
+function normalizeExecutorKey(input) {
+    if (input == null)
+        return undefined;
+    const trimmed = input.trim();
+    if (!trimmed.length)
+        return undefined;
+    const upper = trimmed.toUpperCase();
+    if (upper in EXECUTOR_LABELS) {
+        return upper;
+    }
+    const sanitized = trimmed.toLowerCase().replace(/\s+/g, '').replace(/-/g, '_');
+    const sanitizedUpper = sanitized.toUpperCase();
+    if (sanitizedUpper in EXECUTOR_LABELS) {
+        return sanitizedUpper;
+    }
+    if (sanitized in FRIENDLY_NAME_MAP) {
+        return FRIENDLY_NAME_MAP[sanitized];
+    }
+    const lower = trimmed.toLowerCase();
+    if (lower in FRIENDLY_NAME_MAP) {
+        return FRIENDLY_NAME_MAP[lower];
+    }
+    return upper;
+}
+function getExecutorLabel(executorKey) {
+    return EXECUTOR_LABELS[executorKey] ?? executorKey;
+}
 async function runInitWizard(options) {
     console.log('\n' + gradient_string_1.default.cristal('🧞 ✨ GENIE INIT ✨ 🧞') + '\n');
     // Check if subscription executor was set by start.sh (via ENV var)
-    const subscriptionExecutor = process.env.GENIE_SUBSCRIPTION_EXECUTOR;
+    const subscriptionExecutor = normalizeExecutorKey(process.env.GENIE_SUBSCRIPTION_EXECUTOR);
     const questions = [];
     // Git initialization
     if (!options.hasGit) {
@@ -61,8 +103,10 @@ async function runInitWizard(options) {
         type: 'text',
         name: 'model',
         message: (prev, values) => {
-            const defaultModel = values.executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
-            return `Default model for ${values.executor} (press Enter for: ${defaultModel}):`;
+            const executorKey = normalizeExecutorKey(values.executor) ?? values.executor;
+            const defaultModel = executorKey === 'CLAUDE_CODE' ? 'sonnet' : 'gpt-5-codex';
+            const label = getExecutorLabel(executorKey);
+            return `Default model for ${label} (press Enter for: ${defaultModel}):`;
         },
         initial: ''
     });
@@ -92,12 +136,14 @@ async function runInitWizard(options) {
             process.exit(0);
         }
     });
-    const defaultModel = response.executor === 'claude' ? 'sonnet' : 'gpt-5-codex';
+    const normalizedExecutor = normalizeExecutorKey(response.executor) ?? response.executor;
+    const defaultModel = normalizedExecutor === 'CLAUDE_CODE' ? 'sonnet' : 'gpt-5-codex';
     return {
         templates: response.templates || [], // Array of selected templates
-        executor: response.executor,
+        executor: normalizedExecutor,
         model: response.model || defaultModel,
         initGit: response.initGit ?? options.hasGit,
-        installHooks: response.installHooks ?? false
+        installHooks: response.installHooks ?? false,
+        configureAuth: true // Signal to init.ts to configure auth
     };
 }

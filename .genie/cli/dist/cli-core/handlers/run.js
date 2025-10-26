@@ -7,6 +7,7 @@ const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
 const headless_helpers_1 = require("../../lib/headless-helpers");
 const executor_registry_1 = require("../../lib/executor-registry");
+const executor_auth_1 = require("../../lib/executor-auth");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -22,6 +23,18 @@ function createRunHandler(ctx) {
         const isHeadless = parsed.options.raw || parsed.options.quiet;
         const isRawOutput = parsed.options.raw;
         const isQuiet = parsed.options.quiet;
+        // Check if executor is authenticated (skip in headless mode)
+        if (!isHeadless && isExecutorAuthRequired(executorKey)) {
+            const isAuthenticated = await (0, executor_auth_1.checkExecutorAuth)(executorKey);
+            if (!isAuthenticated) {
+                try {
+                    await (0, executor_auth_1.promptExecutorLogin)(executorKey);
+                }
+                catch (error) {
+                    throw new Error(`Authentication required for ${executorKey}. Please configure it and try again.`);
+                }
+            }
+        }
         // Ensure Forge is running (silent if quiet mode)
         if (isHeadless) {
             await (0, headless_helpers_1.ensureForgeRunning)(isQuiet);
@@ -166,4 +179,11 @@ function findVariantForModel(config, executorKey, model) {
         }
     }
     return null;
+}
+/**
+ * Check if executor requires authentication
+ */
+function isExecutorAuthRequired(executorKey) {
+    const authRequiredExecutors = ['OPENCODE', 'CLAUDE_CODE', 'CODEX', 'GEMINI'];
+    return authRequiredExecutors.includes(executorKey.toUpperCase());
 }

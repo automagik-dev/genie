@@ -56,6 +56,7 @@ interface WizardConfig {
   model?: string;
   initGit: boolean;
   installHooks: boolean;
+  configureAuth: boolean; // Should we configure executor auth after wizard?
 }
 
 interface WizardOptions {
@@ -170,6 +171,7 @@ export async function runInitWizard(options: WizardOptions): Promise<WizardConfi
     executor: normalizedExecutor,
     model: response.model || defaultModel,
     initGit: response.initGit ?? options.hasGit,
-    installHooks: response.installHooks ?? false
+    installHooks: response.installHooks ?? false,
+    configureAuth: true // Signal to init.ts to configure auth
   };
 }
