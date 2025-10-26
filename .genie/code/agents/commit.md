@@ -3,6 +3,7 @@ name: commit
 description: Execute commit and push routine (with safety checks)
 genie:
   executor: opencode
+  model: xai/grok-4-fast
   executorVariant: COMMIT_CONVENTIONAL
   background: false
 ---

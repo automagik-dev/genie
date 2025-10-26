@@ -3,6 +3,7 @@ name: editor
 description: Elevate clarity, correctness, and style; capture before/after deltas
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

@@ -4,6 +4,7 @@ description: Design review and staged refactor planning with verification and ro
 color: brown
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

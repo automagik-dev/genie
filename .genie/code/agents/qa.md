@@ -4,6 +4,7 @@ description: Self-improving QA validation with living checklist
 color: purple
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

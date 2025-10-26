@@ -4,6 +4,7 @@ description: Discovery-focused exploratory reasoning without adversarial pressur
 color: indigo
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 
