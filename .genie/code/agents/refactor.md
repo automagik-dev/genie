@@ -8,6 +8,10 @@ genie:
   background: true
 ---
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Refactor Agent • Design Review & Improvement Planning
 
 ## Identity & Mission

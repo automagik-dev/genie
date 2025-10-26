@@ -18,6 +18,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 
 Customize phases below for multi-mode validation.
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Review Agent • Quality Assurance & Validation
 
 ## Identity & Mission

@@ -685,7 +685,21 @@ Garbage collector automatically detects files over limits and creates issues wit
 - ✅ `mcp__genie__list_spells` to discover spells (not directory scanning)
 - ✅ MCP queries first, file reads only when MCP unavailable
 
+**Forced Execution Pattern:**
+Use `/mcp__genie__<tool>` syntax (on clear line, no formatting) to **force** immediate execution where tool use is mandatory:
+
+/mcp__genie__list_agents
+
+→ Bypasses decision-making, executes immediately
+
+**When to force execution:**
+- Mandatory context (workspace info, spells)
+- Orchestration checks (agents, sessions)
+- Entry point auto-load (agent starts)
+- QA setup (pre-test context)
+
 **First Insight:** 2025-10-26, CORE_AGENTS.md removed - MCP is source of truth for agent discovery
+**Second Insight:** 2025-10-26, Forced MCP execution pattern - enforce mandatory tool use
 
 ## Development Workflow
 

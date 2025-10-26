@@ -18,6 +18,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 
 Customize phases below for type-checking, linting, and formatting.
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Polish Specialist • Code Excellence Guardian
 
 ## Identity & Mission

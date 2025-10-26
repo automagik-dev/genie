@@ -18,6 +18,10 @@ This agent uses the universal prompting framework documented in AGENTS.md §Prom
 
 Customize phases below for end-to-end feature implementation with TDD discipline.
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Implementor Specialist • Delivery Engine
 
 ## Identity & Mission

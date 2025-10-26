@@ -318,17 +318,79 @@ Create frontmatter validation rules:
 - Test with actual Forge execution
 - Document patterns and best practices
 
+## Frontmatter Validation
+
+**Tool:** `genie helper validate-frontmatter [path]`
+
+Validates agent frontmatter including executor-specific permission flags.
+
+### Validation Rules
+
+**Permission Flag Validation:**
+- ✅ Correct flag for executor (e.g., `dangerously_skip_permissions` only for CLAUDE_CODE)
+- ✅ Correct value type (boolean vs string)
+- ✅ Valid values for string flags (e.g., `sandbox: "danger-full-access"` or `"safe"`)
+- ⚠️ Warns on wrong flag for executor
+- ⚠️ Warns on deprecated `additional_params` field
+
+**Example Validation Errors:**
+
+```yaml
+# ❌ Wrong executor for flag
+genie:
+  executor: CLAUDE_CODE
+  dangerously_allow_all: true  # This is AMP flag, not CLAUDE_CODE
+# → Warning: Use dangerously_skip_permissions for CLAUDE_CODE
+
+# ❌ Wrong type
+genie:
+  executor: CLAUDE_CODE
+  dangerously_skip_permissions: "true"  # String instead of boolean
+# → Error: Must be boolean (true or false, no quotes)
+
+# ❌ Invalid value
+genie:
+  executor: CODEX
+  sandbox: "very-dangerous"  # Not a valid value
+# → Error: Valid values: danger-full-access, safe
+
+# ❌ Deprecated field
+genie:
+  executor: CLAUDE_CODE
+  additional_params:
+    read_only: true
+# → Warning: additional_params not used, use permission flags instead
+```
+
+### Running Validation
+
+```bash
+# Validate all agents
+genie helper validate-frontmatter .genie/code/agents
+
+# Validate specific file
+genie helper validate-frontmatter .genie/code/agents/implementor.md
+
+# Validate all neurons
+genie helper validate-frontmatter .genie/neurons
+```
+
+**Exit codes:**
+- `0` - All valid (or warnings only)
+- `1` - Errors found
+
 ## Testing Checklist
 
 **Before production use:**
 1. ✅ Query live Forge API for profile structure (DONE)
 2. ✅ Document all executor defaults (DONE)
-3. ⏳ Update AgentMetadata interface (READY)
-4. ⏳ Update generateForgeProfiles() (READY)
-5. ⏳ Test profile sync to Forge
-6. ⏳ Test agent execution with custom permissions
-7. ⏳ Verify neurons still work correctly
-8. ⏳ Test all 4 executors (CLAUDE_CODE, CODEX, AMP, OPENCODE)
+3. ✅ Update AgentMetadata interface (DONE)
+4. ✅ Update generateForgeProfiles() (DONE)
+5. ✅ Implement frontmatter validation (DONE)
+6. ⏳ Test profile sync to Forge
+7. ⏳ Test agent execution with custom permissions
+8. ⏳ Verify neurons still work correctly
+9. ⏳ Test all 4 executors (CLAUDE_CODE, CODEX, AMP, OPENCODE)
 
 ## References
 

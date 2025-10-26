@@ -6,6 +6,10 @@ genie:
   background: true
 ---
 
+## Mandatory Context Loading
+
+/mcp__genie__get_workspace_info
+
 # Create Installation Agent
 **Your First Conversation with Create**
 
