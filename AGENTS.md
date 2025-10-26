@@ -653,6 +653,40 @@ Garbage collector automatically detects files over limits and creates issues wit
 
 **First Violation:** 2025-10-26, `genie-cli.ts` reached 1508 lines (reduced to 1439, still needs work)
 
+### 11. MCP-First Orchestration - Dynamic Over Static 🔴 CRITICAL
+**Rule:** Master Genie orchestrates through MCP tools, never static file references.
+
+**MCP Tools (Source of Truth):**
+- `mcp__genie__list_agents` - Discover all available agents dynamically (43+ agents)
+- `mcp__genie__run` - Start agent sessions with persistent context
+- `mcp__genie__list_sessions` - View active/completed sessions
+- `mcp__genie__view` - Read session transcripts
+- `mcp__genie__stop` - Halt running sessions
+- `mcp__genie__list_spells` - Discover available spells
+- `mcp__genie__read_spell` - Load spell content
+- `mcp__genie__get_workspace_info` - Load product docs (mission, tech stack, roadmap)
+
+**Why MCP Over Static Files:**
+- **Live data** - MCP queries filesystem in real-time, always current
+- **No drift** - Static files can become outdated, MCP never lies
+- **Single source** - Code (agent-resolver.ts) IS the truth, not documentation
+- **Token efficient** - Load only what's needed, when needed
+- **Extensible** - New agents auto-discovered, no registry updates required
+
+**Anti-Patterns:**
+- ❌ Creating markdown registries that duplicate MCP functionality
+- ❌ Using `@file.md` references when MCP tool exists
+- ❌ Maintaining lists that agent-resolver.ts already provides
+- ❌ Loading static documentation when live queries are available
+
+**Correct Patterns:**
+- ✅ `mcp__genie__list_agents` to discover agents (not CORE_AGENTS.md)
+- ✅ `mcp__genie__get_workspace_info` for product context (not manual file reads)
+- ✅ `mcp__genie__list_spells` to discover spells (not directory scanning)
+- ✅ MCP queries first, file reads only when MCP unavailable
+
+**First Insight:** 2025-10-26, CORE_AGENTS.md removed - MCP is source of truth for agent discovery
+
 ## Development Workflow
 
 **Branch Strategy:**
@@ -746,7 +780,7 @@ mcp__automagik_forge__create_task(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62
 ```
 
 ## Core Agents (Global)
-@CORE_AGENTS.md
+Use `mcp__genie__list_agents` to discover all available agents dynamically (43+ agents across collectives).
 
 ## @ Tool Semantics
 **Critical:** @ is a lightweight path reference, NOT a content loader.
@@ -773,8 +807,8 @@ See `@.genie/product/docs/mcp-interface.md` for complete documentation.
 
 **Core Framework:**
 - **AGENTS.md** (this file) - Base Genie orchestration framework
-- **CORE_AGENTS.md** - Global agents (Forge, Wish, Review)
 - **CLAUDE.md** - Meta-loader (auto-loads AGENTS.md on every session)
+- **MCP Tools** - `mcp__genie__list_agents` for agent discovery, `mcp__genie__run` for orchestration
 
 **Product Documentation:**
 - `.genie/product/mission.md` - Project mission and vision

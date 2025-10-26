@@ -27,7 +27,6 @@ export async function generateFrameworkDiff(
   // Generate diff for framework files only
   const frameworkGlobs = [
     'AGENTS.md',
-    'CORE_AGENTS.md',
     'CLAUDE.md',
     '.genie/spells/*.md',
     '.genie/code/AGENTS.md',

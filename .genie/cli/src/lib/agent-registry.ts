@@ -20,6 +20,13 @@ export interface AgentMetadata {
     executor?: string;
     executorVariant?: string;
     background?: boolean;
+    model?: string;
+
+    // Executor-specific permission flags (from Forge API 2025-10-26)
+    dangerously_skip_permissions?: boolean;  // CLAUDE_CODE only
+    sandbox?: string;                        // CODEX only ('danger-full-access' | 'safe')
+    dangerously_allow_all?: boolean;         // AMP only
+    // OPENCODE has no permission flags
   };
   collective: 'code' | 'create';
   filePath: string;
@@ -289,15 +296,37 @@ export class AgentRegistry {
         // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
         const variantName = `${agent.collective.toUpperCase()}_${agent.name.toUpperCase()}`;
 
+        // Build variant config with executor-specific fields
+        const variantConfig: any = {
+          // Inherit all fields from DEFAULT variant
+          ...baseConfig,
+          // Use agent content directly (no collective context prepended)
+          append_prompt: agent.fullContent
+        };
+
+        // Add executor-specific permission flags from frontmatter
+        if (executor === 'CLAUDE_CODE' && agent.genie?.dangerously_skip_permissions !== undefined) {
+          variantConfig.dangerously_skip_permissions = agent.genie.dangerously_skip_permissions;
+        }
+        if (executor === 'CODEX' && agent.genie?.sandbox !== undefined) {
+          variantConfig.sandbox = agent.genie.sandbox;
+        }
+        if (executor === 'AMP' && agent.genie?.dangerously_allow_all !== undefined) {
+          variantConfig.dangerously_allow_all = agent.genie.dangerously_allow_all;
+        }
+
+        // Add model if specified in frontmatter
+        if (agent.genie?.model !== undefined) {
+          variantConfig.model = agent.genie.model;
+        }
+
+        // Add background setting if specified
+        if (agent.genie?.background !== undefined) {
+          variantConfig.background = agent.genie.background;
+        }
+
         profiles.executors[executor][variantName] = {
-          [executor]: {
-            // Inherit all fields from DEFAULT variant
-            ...baseConfig,
-            // Use agent content directly (no collective context prepended)
-            append_prompt: agent.fullContent,
-            // Preserve any executor-specific settings from agent metadata
-            ...(agent.genie?.background !== undefined && { background: agent.genie.background })
-          }
+          [executor]: variantConfig
         };
       }
     }
