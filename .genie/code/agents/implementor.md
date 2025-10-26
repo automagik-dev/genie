@@ -4,6 +4,7 @@ description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 
