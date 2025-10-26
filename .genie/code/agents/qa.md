@@ -25,9 +25,9 @@ Customize phases below for QA validation and testing.
 # QA Agent • Self-Improving Validation
 
 **Type:** Required automation layer for minor/major releases
-**Primary workflow:** `@.genie/qa/checklist.md` (260+ test items, living document)
+**Primary workflow:** `@.genie/agents/qa/checklist.md` (260+ test items, living document)
 **This agent:** Automated execution + evidence capture + self-improving via learn integration
-**Master coordination:** `@.genie/qa/README.md`
+**Master coordination:** `@.genie/agents/qa/README.md`
 
 ## Mission
 Execute end-to-end validation from user perspective using living checklist that improves with each run.
@@ -43,7 +43,7 @@ Execute end-to-end validation from user perspective using living checklist that 
 - ⚠️ Optional for patch releases (v2.5.X) - Bugfix-specific validation sufficient
 
 ## Success Criteria
-✅ Load and execute @.genie/qa/checklist.md test scenarios
+✅ Load and execute @.genie/agents/qa/checklist.md test scenarios
 ✅ Discover new validation patterns from wish/task context
 ✅ Invoke learn agent to update checklist with discoveries
 ✅ Capture reproducible evidence for all scenarios
@@ -62,7 +62,7 @@ Execute end-to-end validation from user perspective using living checklist that 
 ### 1. Discovery Phase
 ```
 Load Context:
-- @.genie/qa/checklist.md (existing test scenarios)
+- @.genie/agents/qa/checklist.md (existing test scenarios)
 - @.genie/wishes/<slug>/<slug>-wish.md (what needs validation)
 - @.genie/code/agents/qa.md (project-specific commands/baselines)
 
@@ -81,9 +81,9 @@ Output:
 For each test scenario:
 1. Execute validation command (from checklist or wish)
 2. Capture evidence:
-   - Terminal output: .genie/qa/evidence/cmd-<name>-<timestamp>.txt
-   - Screenshots: .genie/qa/evidence/screenshot-<name>-<timestamp>.png
-   - Logs: .genie/qa/evidence/<scenario>.log
+   - Terminal output: .genie/agents/qa/evidence/cmd-<name>-<timestamp>.txt
+   - Screenshots: .genie/agents/qa/evidence/screenshot-<name>-<timestamp>.png
+   - Logs: .genie/agents/qa/evidence/<scenario>.log
 3. Record: ✅ Pass | ⚠️ Partial | ❌ Fail
 
 Track:
@@ -109,7 +109,7 @@ While testing <wish-slug>, discovered validation scenario not in checklist:
   - **Status:** <test result>
 
 Implementation:
-Append to @.genie/qa/checklist.md under <category> section.
+Append to @.genie/agents/qa/checklist.md under <category> section.
 Format: atomic, reproducible, token-efficient.
 
 Verification:
@@ -160,7 +160,7 @@ Save: .genie/wishes/<slug>/reports/done-qa-<slug>-<YYYYMMDDHHmm>.md
 **Status:** ✅ Pass | ⚠️ Partial | ❌ Fail
 
 **Evidence:**
-@.genie/qa/evidence/<filename>
+@.genie/agents/qa/evidence/<filename>
 
 **Notes:**
 <observations, edge cases, follow-ups>
@@ -191,7 +191,7 @@ Discovery:
   - **Status:** <result from this run>
 
 Implementation:
-Append to @.genie/qa/checklist.md under <section>.
+Append to @.genie/agents/qa/checklist.md under <section>.
 Keep atomic, reproducible, token-efficient.
 
 Verification:
@@ -214,7 +214,7 @@ While testing <wish>, validated new CLI command not in checklist.
   - **Status:** ✅ Pass
 
 Implementation:
-Append to @.genie/qa/checklist.md under "Command Interface" section.
+Append to @.genie/agents/qa/checklist.md under "Command Interface" section.
 ```
 
 **Example 2: Edge Case**
@@ -231,7 +231,7 @@ While testing session management, discovered empty state crash.
   - **Status:** ❌ Fail (bug filed: #XX)
 
 Implementation:
-Append to @.genie/qa/checklist.md under "Error Handling" section.
+Append to @.genie/agents/qa/checklist.md under "Error Handling" section.
 ```
 
 **Example 3: Performance Baseline**
@@ -248,7 +248,7 @@ First performance measurement for critical operation.
   - **Status:** ✅ Pass (85ms baseline)
 
 Implementation:
-Append to @.genie/qa/checklist.md under "Performance" section.
+Append to @.genie/agents/qa/checklist.md under "Performance" section.
 ```
 
 ---

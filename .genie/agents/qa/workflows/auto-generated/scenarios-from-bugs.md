@@ -1,45 +1,52 @@
 # QA Scenarios from GitHub Issues
-**Auto-Generated:** 2025-10-18 05:31:38 UTC
+**Auto-Generated:** 2025-10-26 18:22:40 UTC
 **Source:** GitHub Issues with label `type:bug`
-**Script:** `.genie/scripts/sync-qa-from-issues.py`
+**Script:** `.genie/agents/qa/workflows/auto-generated/generator.cjs`
 
 ---
 
 ## Summary
 
-**Total Bugs:** 53
-- 🔴 Open: 7
-- ✅ Fixed: 46
+**Total Bugs:** 62
+- 🔴 Open: 2
+- ✅ Fixed: 60
 
 ---
 
 ## Open Bugs
 
-## Bug #66: [Bug] MCP session disappears after resume - "No run found"
+## Bug #197: [Bug] Windows installer fails with corepack permission error and signature verification
 **Status:** 🔴 Open
-**Labels:** type:bug, area:mcp, priority:critical
-**Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/66
+**Labels:** type:bug, priority:high, area:cli, status:needs-triage
+**Created:** 2025-10-22
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/197
 
 ### Reproduction Steps
-1. Start long-running agent session: `mcp__genie__run with agent="orchestrator"`
-2. Note session ID (e.g., `4d4c76a7-e58a-487a-b66f-7ff408dafb37`)
-3. Wait ~45 minutes (session runs in background)
-4. Resume same session: `mcp__genie__resume with sessionId="4d4c76a7-e58a-487a-b66f-7ff408dafb37"`
-5. Observe error: "No run found for session 4d4c76a7-e58a-487a-b66f-7ff408dafb37"
+1. Open PowerShell on Windows
+2. Run: `irm https://genie.namastex.ai/start.ps1 | iex`
+3. Script detects Node.js v22.12.0 successfully
+4. Attempts to install pnpm via corepack
+5. Fails with permission and signature errors
 
 ### Expected Behavior
-- `mcp__genie__view` shows session state
-- `mcp__genie__resume` continues session with full context preserved
-- Session remains queryable and resumable indefinitely
-- Session lifecycle: start → (optional pause) → resume → complete
+The installer should:
+- Successfully install pnpm using corepack
+- Complete the Genie installation
+- Provide clear error messages if elevated permissions are needed
 
 ### Actual Behavior
-- Session appears in `mcp__genie__list_sessions` with status: running
-- `mcp__genie__view` returns "No run found"
-- `mcp__genie__resume` returns "No run found"
-- Session context lost entirely after timeout
-- State sync broken between list/view/resume operations
+Two errors occur:
+
+```
+Internal Error: EPERM: operation not permitted, open 'C:\Program Files\nodejs\pnpm'
+Error: EPERM: operation not permitted, open 'C:\Program Files\nodejs\pnpm'
+```
+
+Followed by:
+
+```
+Internal Error: Cannot find matching keyid: {"signatures":[{"sig":"MEYCIQDaCyrA0+XHQEdLvtGVFTO/6UJ660TdTWY/8jRjQmbAxwIhAN4ZYTO43PC8PGBCXVEMrhXDO6xpSKpCZIk867dqUvM8","keyid":"SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"}],...}
+```
 
 ### Validation
 - [ ] Bug verified fixed
@@ -49,114 +56,179 @@
 
 ---
 
-## Bug #89: [Bug] CLI session output references non-existent ./genie command
+## Bug #198: Interactive git init prompt skips automatically without waiting for user input
 **Status:** 🔴 Open
+**Labels:** type:bug, priority:medium, area:cli, status:needs-triage
+**Created:** 2025-10-22
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/198
+
+### Reproduction Steps
+1. Run the installation command in a directory without git:
+   ```bash
+   curl -fsSL https://genie.namastex.ai/start | bash
+   ```
+2. Wait for the prompt:
+   ```
+   ? ⚠️  No git repository detected. Forge requires git for work tracking. › - Use arrow-keys. Return to submit.
+   ❯   Initialize git now (recommended)
+       Skip (may cause issues)
+   ```
+3. Observe that the prompt appears but immediately skips without waiting for user input
+
+### Expected Behavior
+The installer should:
+- Display the interactive prompt
+- Wait for user input (arrow keys + Enter)
+- Process the user's choice before continuing
+
+### Actual Behavior
+The prompt appears momentarily but automatically proceeds without user interaction, effectively auto-selecting an option (likely the default or skip).
+
+### Validation
+- [ ] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+---
+
+## Fixed Bugs
+
+## Bug #231: 🐛 Agent registry skips all agents due to frontmatter regex
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:cli
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/231
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #229: ⚠️ MCP stop: Inconsistent error handling for nonexistent sessions
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/229
+
+### Expected Behavior
+All tools should return clear errors for nonexistent sessions:
+```
+Session 'nonexistent-session-id' not found.
+Use 'mcp__genie__list_sessions()' to see available sessions.
+```
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #228: 🔴 MCP read_spell: Path resolution adds double .genie/ prefix
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/228
+
+### Expected Behavior
+```typescript
+// Should work with any of these formats:
+read_spell(spell_path=".genie/spells/learn.md")  // Strip leading .genie/
+read_spell(spell_path="spells/learn.md")          // Current workaround
+read_spell(spell_path="know-yourself.md")         // Search all spell directories
+read_spell(spell_path="learn")                    // Fuzzy match with .md extension
+```
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #218: [Bug] Amendment #8 violates Amendment #4 (Automation Through Removal)
+**Status:** ✅ Fixed
+**Labels:** type:bug, priority:medium, status:needs-triage
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/218
+
+### Reproduction Steps
+1. Read AGENTS.md Amendment #8
+2. Notice it explains automated metadata updates
+3. Compare to Amendment #4: "Best documentation for automatic features = no documentation"
+
+### Expected Behavior
+Amendment #8 should not exist. The automation should just work in background via pre-commit hooks.
+
+### Actual Behavior
+Amendment #8 documents the automation mechanism, creating cognitive load that Amendment #4 explicitly eliminates.
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #212: Fix: start.sh fails to handoff to genie CLI when run via curl pipe
+**Status:** ✅ Fixed
 **Labels:** type:bug, priority:high, area:cli
-**Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/89
-
-### Reproduction Steps
-1. Start any Genie agent session via `mcp__genie__run`
-2. Check session output for resume/view/list instructions
-3. Try executing `./genie resume <session-id>`
-4. Result: "command not found" error
-
-### Expected Behavior
-Session output should reference correct MCP tools:
-- `mcp__genie__resume with sessionId="<session-id>"`
-- `mcp__genie__view with sessionId="<session-id>"`
-- `mcp__genie__list_sessions`
-- Or `npx automagik-genie` for CLI operations
-
-### Actual Behavior
-Output shows legacy commands:
-- `./genie resume <session-id>`
-- `./genie view <session-id>`
-- `./genie list`
-- `./genie stop <session-id>`
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/212
 
 ### Validation
-- [ ] Bug verified fixed
+- [x] Bug verified fixed
 - [ ] Test scenario executed
 - [ ] Regression test added
 - [ ] Documentation updated
 
 ---
 
-## Bug #91: [Bug] Sessions referenced in documentation missing from sessions.json and MCP list
-**Status:** 🔴 Open
+## Bug #211: Fix: TypeScript views tsconfig creates duplicate .genie/.genie/ directory
+**Status:** ✅ Fixed
+**Labels:** type:bug, priority:medium, area:build
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/211
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #206: Bug: Genie MCP command triggers version check instead of starting MCP server
+**Status:** ✅ Fixed
+**Labels:** type:bug, priority:high, area:cli
+**Created:** 2025-10-23
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/206
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #104: [Bug] MCP Background Launch Timeout + Long Prompt ARG_MAX Failure (RC9+)
+**Status:** ✅ Fixed
 **Labels:** type:bug, area:mcp, priority:high
 **Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/91
-
-### Reproduction Steps
-1. Review `.genie/SESSION-STATE.md` for active/completed sessions
-2. Query `.genie/state/agents/sessions.json`
-3. Call `mcp__genie__list_sessions`
-4. Observe: Many sessions from STATE.md missing from both files
-
-### Expected Behavior
-All sessions tracked in STATE.md should be queryable via:
-- `mcp__genie__list_sessions`
-- `.genie/state/agents/sessions.json`
-- Log files in `.genie/state/agents/logs/`
-
-### Actual Behavior
-Sessions disappear after completion, preventing later inspection or resumption.
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/104
 
 ### Validation
-- [ ] Bug verified fixed
-- [ ] Test scenario executed
-- [ ] Regression test added
-- [ ] Documentation updated
-
----
-
-## Bug #92: [Bug] Sessions stuck in 'running' status despite completion or abandonment
-**Status:** 🔴 Open
-**Labels:** type:bug, area:mcp, priority:medium
-**Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/92
-
-### Reproduction Steps
-1. Call `mcp__genie__list_sessions`
-2. Find sessions with status="running" and old timestamps
-3. Check if session actually completed or abandoned
-4. Observe: Status never updated to completed/abandoned
-
-### Expected Behavior
-Sessions should transition from "running" to "completed" or "abandoned" when work finishes.
-
-### Actual Behavior
-Sessions remain stuck in "running" status indefinitely, even after completion.
-
-### Validation
-- [ ] Bug verified fixed
-- [ ] Test scenario executed
-- [ ] Regression test added
-- [ ] Documentation updated
-
----
-
-## Bug #93: [Bug] MCP agent start failures with 'Command failed' error
-**Status:** 🔴 Open
-**Labels:** type:bug, area:mcp, priority:high
-**Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/93
-
-### Reproduction Steps
-1. Invoke mcp__genie__run with agent="learn" (or agent="git")
-2. Provide comprehensive prompt with Discovery → Implementation → Verification structure (~500-700 lines)
-3. Observe "Command failed" error instead of session start
-
-### Expected Behavior
-Agent session starts successfully, returns session ID for tracking.
-
-### Actual Behavior
-Command fails immediately with error output showing debug flags and command construction.
-
-### Validation
-- [ ] Bug verified fixed
+- [x] Bug verified fixed
 - [ ] Test scenario executed
 - [ ] Regression test added
 - [ ] Documentation updated
@@ -164,7 +236,7 @@ Command fails immediately with error output showing debug flags and command cons
 ---
 
 ## Bug #102: [Bug] MCP session ID collision - same session ID used by multiple agents
-**Status:** 🔴 Open
+**Status:** ✅ Fixed
 **Labels:** type:bug, area:mcp, priority:high
 **Created:** 2025-10-17
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/102
@@ -186,30 +258,12 @@ Command fails immediately with error output showing debug flags and command cons
 - Creates confusion in session tracking and management
 
 ### Validation
-- [ ] Bug verified fixed
+- [x] Bug verified fixed
 - [ ] Test scenario executed
 - [ ] Regression test added
 - [ ] Documentation updated
 
 ---
-
-## Bug #104: [Bug] MCP Background Launch Timeout + Long Prompt ARG_MAX Failure (RC9+)
-**Status:** 🔴 Open
-**Labels:** type:bug, area:mcp, priority:high
-**Created:** 2025-10-17
-**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/104
-
-### Validation
-- [ ] Bug verified fixed
-- [ ] Test scenario executed
-- [ ] Regression test added
-- [ ] Documentation updated
-
----
-
----
-
-## Fixed Bugs
 
 ## Bug #101: [Bug] MCP agent start failures with "Command failed" error
 **Status:** ✅ Fixed
@@ -326,17 +380,17 @@ Session ID appears twice with different agent types and statuses, causing confus
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/97
 
 ### Reproduction Steps
-1. Start a learn agent session
+1. Start a learn neuron session
 2. Call `mcp__genie__list_sessions`
 3. Observe the same session ID in two separate entries with different agent types and statuses
 
 ### Expected Behavior
-Each unique agent session should have a unique session ID. Session IDs should never collide across different agents or statuses.
+Each unique neuron session should have a unique session ID. Session IDs should never collide across different agents or statuses.
 
 ### Actual Behavior
 Session ID `4946bad6-98f4-4822-b90b-6abc09d21fc7` appears twice:
-- Entry #1: agents/git (status: running)
-- Entry #2: agents/learn (status: completed)
+- Entry #1: neurons/git (status: running)
+- Entry #2: neurons/learn (status: completed)
 
 ### Validation
 - [x] Bug verified fixed
@@ -429,8 +483,88 @@ Each session should have a unique ID, even across different agent types.
 
 ### Actual Behavior
 Same session ID (`4946bad6-98f4-4822-b90b-6abc09d21fc7`) appears for:
-- Entry #1: agents/git (status: running)
-- Entry #2: agents/learn (status: completed)
+- Entry #1: neurons/git (status: running)
+- Entry #2: neurons/learn (status: completed)
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #93: [Bug] MCP agent start failures with 'Command failed' error
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, priority:high
+**Created:** 2025-10-17
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/93
+
+### Reproduction Steps
+1. Invoke mcp__genie__run with agent="learn" (or agent="git")
+2. Provide comprehensive prompt with Discovery → Implementation → Verification structure (~500-700 lines)
+3. Observe "Command failed" error instead of session start
+
+### Expected Behavior
+Agent session starts successfully, returns session ID for tracking.
+
+### Actual Behavior
+Command fails immediately with error output showing debug flags and command construction.
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #92: [Bug] Sessions stuck in 'running' status despite completion or abandonment
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, priority:medium
+**Created:** 2025-10-17
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/92
+
+### Reproduction Steps
+1. Call `mcp__genie__list_sessions`
+2. Find sessions with status="running" and old timestamps
+3. Check if session actually completed or abandoned
+4. Observe: Status never updated to completed/abandoned
+
+### Expected Behavior
+Sessions should transition from "running" to "completed" or "abandoned" when work finishes.
+
+### Actual Behavior
+Sessions remain stuck in "running" status indefinitely, even after completion.
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #91: [Bug] Sessions referenced in documentation missing from sessions.json and MCP list
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, priority:high
+**Created:** 2025-10-17
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/91
+
+### Reproduction Steps
+1. Review `.genie/SESSION-STATE.md` for active/completed sessions
+2. Query `.genie/state/agents/sessions.json`
+3. Call `mcp__genie__list_sessions`
+4. Observe: Many sessions from STATE.md missing from both files
+
+### Expected Behavior
+All sessions tracked in STATE.md should be queryable via:
+- `mcp__genie__list_sessions`
+- `.genie/state/agents/sessions.json`
+- Log files in `.genie/state/agents/logs/`
+
+### Actual Behavior
+Sessions disappear after completion, preventing later inspection or resumption.
 
 ### Validation
 - [x] Bug verified fixed
@@ -457,6 +591,40 @@ Same session ID (`4946bad6-98f4-4822-b90b-6abc09d21fc7`) appears for:
 
 ### Actual Behavior
 MCP returns truncated "Key Checkpoints" summary regardless of `full=true` parameter.
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #89: [Bug] CLI session output references non-existent ./genie command
+**Status:** ✅ Fixed
+**Labels:** type:bug, priority:high, area:cli
+**Created:** 2025-10-17
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/89
+
+### Reproduction Steps
+1. Start any Genie agent session via `mcp__genie__run`
+2. Check session output for resume/view/list instructions
+3. Try executing `./genie resume <session-id>`
+4. Result: "command not found" error
+
+### Expected Behavior
+Session output should reference correct MCP tools:
+- `mcp__genie__resume with sessionId="<session-id>"`
+- `mcp__genie__view with sessionId="<session-id>"`
+- `mcp__genie__list_sessions`
+- Or `npx automagik-genie` for CLI operations
+
+### Actual Behavior
+Output shows legacy commands:
+- `./genie resume <session-id>`
+- `./genie view <session-id>`
+- `./genie list`
+- `./genie stop <session-id>`
 
 ### Validation
 - [x] Bug verified fixed
@@ -993,7 +1161,7 @@ No description provided
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/69
 
 ### Reproduction Steps
-1. Start a agent session with `mcp__genie__run` (e.g., prompt agent)
+1. Start a neuron session with `mcp__genie__run` (e.g., prompt neuron)
 2. Work for 30-45 minutes
 3. Attempt to resume session with `mcp__genie__resume sessionId="<id>"`
 4. Observe error: "No run found" or empty response
@@ -1052,7 +1220,7 @@ Session appears in mcp__genie__list_sessions but mcp__genie__view returns "No ru
 **GitHub:** https://github.com/namastexlabs/automagik-genie/issues/67
 
 ### Reproduction Steps
-1. Start a agent session with `mcp__genie__run` (e.g., prompt agent)
+1. Start a neuron session with `mcp__genie__run` (e.g., prompt neuron)
 2. Work for 30-45 minutes
 3. Attempt to resume session with `mcp__genie__resume sessionId="<id>"`
 4. Observe error: "No run found" or empty response
@@ -1068,6 +1236,40 @@ Session appears in mcp__genie__list_sessions but mcp__genie__view returns "No ru
 - `mcp__genie__resume` returns "No run found"
 - Session entry persists in list but is effectively orphaned
 - Forced to create new session, losing conversation context
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #66: [Bug] MCP session disappears after resume - "No run found"
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, priority:critical
+**Created:** 2025-10-17
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/66
+
+### Reproduction Steps
+1. Start long-running agent session: `mcp__genie__run with agent="orchestrator"`
+2. Note session ID (e.g., `4d4c76a7-e58a-487a-b66f-7ff408dafb37`)
+3. Wait ~45 minutes (session runs in background)
+4. Resume same session: `mcp__genie__resume with sessionId="4d4c76a7-e58a-487a-b66f-7ff408dafb37"`
+5. Observe error: "No run found for session 4d4c76a7-e58a-487a-b66f-7ff408dafb37"
+
+### Expected Behavior
+- `mcp__genie__view` shows session state
+- `mcp__genie__resume` continues session with full context preserved
+- Session remains queryable and resumable indefinitely
+- Session lifecycle: start → (optional pause) → resume → complete
+
+### Actual Behavior
+- Session appears in `mcp__genie__list_sessions` with status: running
+- `mcp__genie__view` returns "No run found"
+- `mcp__genie__resume` returns "No run found"
+- Session context lost entirely after timeout
+- State sync broken between list/view/resume operations
 
 ### Validation
 - [x] Bug verified fixed
@@ -1503,13 +1705,13 @@ With `permissionMode: default`, ALL file operations (Write, Edit, Read) should p
 This file is auto-generated from GitHub issues. To update:
 
 ```bash
-python .genie/scripts/sync-qa-from-issues.py
+node .genie/agents/qa/workflows/auto-generated/generator.cjs
 ```
 
 To run manually with dry-run:
 
 ```bash
-python .genie/scripts/sync-qa-from-issues.py --dry-run
+node .genie/agents/qa/workflows/auto-generated/generator.cjs --dry-run
 ```
 
 To automate via GitHub Actions (future):
