@@ -8,6 +8,14 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.1-rc.4] - 2025-10-26
+
+No changelog entries (packaging-only RC).
+
+## [2.5.1-rc.3] - 2025-10-26
+
+No changelog entries (packaging-only RC).
+
 ## [2.5.1-rc.2] - 2025-10-26
 
 No changelog entries (packaging-only RC).
