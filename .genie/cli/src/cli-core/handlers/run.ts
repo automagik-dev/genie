@@ -124,7 +124,8 @@ function resolveExecutionSelection(
   parsed: ParsedCommand,
   agentGenie: Record<string, any>
 ): { executorKey: string; executorVariant: string; model?: string; modeName: string } {
-  let executor = (config.defaults?.executor || 'opencode').trim().toLowerCase();
+  // Frontmatter now uses Forge format (uppercase) - no lowercasing needed
+  let executor = (config.defaults?.executor || 'OPENCODE').trim().toUpperCase();
   let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
   let model: string | undefined =
     typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
@@ -138,7 +139,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-    executor = agentGenie.executor.trim().toLowerCase();
+    executor = agentGenie.executor.trim().toUpperCase();
   }
 
   const agentVariant =
@@ -152,7 +153,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-    executor = parsed.options.executor.trim().toLowerCase();
+    executor = parsed.options.executor.trim().toUpperCase();
   }
 
   if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {

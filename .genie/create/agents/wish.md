@@ -2,7 +2,7 @@
 name: wish
 description: Convert research ideas into roadmap-aligned wishes with quality contracts
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

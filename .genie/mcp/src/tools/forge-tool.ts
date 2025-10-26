@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { wsManager } from '../websocket-manager.js';
-import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
+import { checkGitState, formatGitStateError, detectProjectFromWorktree } from '../lib/git-validation.js';
 import { shortenUrl, getApiKeyFromEnv } from '../lib/url-shortener.js';
 import { sessionManager } from '../lib/session-manager.js';
 import path from 'path';
@@ -41,7 +41,20 @@ export async function executeForgeTool(
   context: any
 ): Promise<void> {
   const { streamContent, reportProgress } = context;
-  const projectId = args.project_id || DEFAULT_PROJECT_ID;
+
+  // Step -1: Detect project from worktree (prevent duplicate projects)
+  const forgeClient = new ForgeClient(FORGE_URL);
+  const detectedProjectId = await detectProjectFromWorktree(forgeClient);
+
+  // Use detected project if in worktree, otherwise use provided or default
+  const projectId = detectedProjectId || args.project_id || DEFAULT_PROJECT_ID;
+
+  if (detectedProjectId) {
+    await streamContent({
+      type: 'text',
+      text: `📍 Detected worktree project: ${detectedProjectId}\n\n`
+    });
+  }
 
   // Step 0: Validate git state (CRITICAL: Agents in separate worktrees need clean state)
   await streamContent({
@@ -67,8 +80,6 @@ export async function executeForgeTool(
   if (reportProgress) {
     await reportProgress(1, 5);
   }
-
-  const forgeClient = new ForgeClient(FORGE_URL);
 
   // Step 0.5: Check for existing session (Phase 2: Session reuse)
   const existingSession = await sessionManager.getSession('forge', projectId);

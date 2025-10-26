@@ -2,7 +2,7 @@
 name: garbage-collector
 description: Autonomous documentation quality assurance - detect bloat, duplication, contradictions, and token waste in all .md files
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

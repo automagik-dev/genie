@@ -3,7 +3,7 @@ name: challenge
 description: Critical evaluation via questions, debate, or direct challenge
 color: orange
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

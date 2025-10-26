@@ -44,7 +44,7 @@ Conclusion: Need marketing-writer agent
 name: [agent-name]
 description: [One-line specialty]
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 
