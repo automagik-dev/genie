@@ -264,6 +264,49 @@ if (shouldCheckVersion) {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
+  // MASTER GENIE DETECTION: Check if we're in the template repo
+  const workspacePackageJson = path.join(process.cwd(), 'package.json');
+  let isMasterGenie = false;
+
+  if (fs.existsSync(workspacePackageJson)) {
+    try {
+      const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
+      if (workspacePkg.name === 'automagik-genie') {
+        isMasterGenie = true;
+      }
+    } catch {
+      // Not master genie if can't read package.json
+    }
+  }
+
+  // If master genie and version mismatch, need to install locally built package globally
+  if (isMasterGenie && hasGenieConfig && fs.existsSync(versionPath)) {
+    try {
+      const versionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+      const localVersion = versionData.version;
+      const runningVersion = packageJson.version;
+
+      if (localVersion !== runningVersion) {
+        console.log('');
+        console.log(successGradient('━'.repeat(60)));
+        console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
+        console.log(successGradient('━'.repeat(60)));
+        console.log('');
+        console.log(`You bumped to ${successGradient(localVersion)} but your global lamp is still ${performanceGradient(runningVersion)}`);
+        console.log('');
+        console.log('Install your new build globally:');
+        console.log('  ' + performanceGradient('pnpm install -g .'));
+        console.log('');
+        console.log('Or use:');
+        console.log('  ' + performanceGradient('genie update') + '  (detects master genie and installs local build)');
+        console.log('');
+        process.exit(0);
+      }
+    } catch {
+      // Ignore version check errors for master genie
+    }
+  }
+
   if (hasGenieConfig && !fs.existsSync(versionPath)) {
     // LOOPHOLE CLOSED: User has .genie but no version.json (pre-version-tracking)
     // Redirect to init to create version.json
@@ -835,22 +878,32 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
     }
   }
 
-  // If master genie, show different message
+  // If master genie, install local build globally instead of fetching from npm
   if (isMasterGenie) {
     console.log(successGradient('━'.repeat(60)));
-    console.log(magicGradient('   🧞 ✨ YOU ARE THE COLLECTIVE! ✨ 🧞   '));
+    console.log(successGradient('   🧞 ✨ MASTER GENIE UPDATE ✨ 🧞   '));
     console.log(successGradient('━'.repeat(60)));
     console.log('');
-    console.log('This is the master genie template repo.');
-    console.log('You don\'t need to run ' + performanceGradient('genie update') + ' here!');
+    console.log('Installing your local build globally...');
     console.log('');
-    console.log('To release a new version:');
-    console.log('  ' + performanceGradient('pnpm bump:rc') + '     - Bump version (auto-updates .genie/state/version.json)');
-    console.log('  ' + performanceGradient('git push') + '         - CI publishes to npm @next');
-    console.log('');
-    console.log('Your version: ' + successGradient(packageJson.version));
-    console.log('');
-    process.exit(0);
+
+    try {
+      await execFileAsync('pnpm', ['install', '-g', '.'], {
+        stdio: 'inherit'
+      });
+      console.log('');
+      console.log(successGradient('✅ Successfully installed local build globally!'));
+      console.log('');
+      console.log('Your lamp now matches your local version: ' + successGradient(packageJson.version));
+      console.log('');
+      process.exit(0);
+    } catch (error) {
+      console.error('❌ Installation failed:', error);
+      console.error('');
+      console.error('Try manually: pnpm install -g .');
+      console.error('');
+      process.exit(1);
+    }
   }
 
   // THREE VERSION TYPES:
