@@ -85,6 +85,16 @@ export class ForgeExecutor {
       // Merge agent profiles with existing profiles
       const merged = this.mergeProfiles(current, agentProfiles);
 
+      // Check payload size before sending
+      const payloadSize = JSON.stringify(merged).length;
+      const maxPayloadSize = 10 * 1024 * 1024; // 10MB (conservative estimate)
+
+      if (payloadSize > maxPayloadSize) {
+        console.warn(`⚠️  Agent profile payload too large (${(payloadSize / 1024 / 1024).toFixed(2)}MB), skipping sync`);
+        console.warn(`   Reduce agent count or sync manually via Forge UI`);
+        return;
+      }
+
       // Update Forge with merged profiles (pass object, not string)
       await this.forge.updateExecutorProfiles(merged);
 
@@ -92,7 +102,14 @@ export class ForgeExecutor {
       const executorCount = Object.keys(merged.executors || {}).length;
       console.log(`✅ Synced ${registry.count()} agents to Forge across ${executorCount} executors`);
     } catch (error: any) {
-      console.warn(`⚠️  Failed to sync agent profiles to Forge: ${error.message}`);
+      // Provide helpful error messages for common failures
+      if (error.message?.includes('413') || error.message?.includes('Payload Too Large')) {
+        console.warn(`⚠️  Failed to sync agent profiles: Payload too large for Forge server`);
+        console.warn(`   Solution: Reduce number of agents or increase Forge body limit`);
+        console.warn(`   Agents will still work, but won't appear in Forge executor profiles`);
+      } else {
+        console.warn(`⚠️  Failed to sync agent profiles to Forge: ${error.message}`);
+      }
     }
   }
 

@@ -44,6 +44,10 @@ class AgentRegistry {
             if (!file.endsWith('.md')) {
                 continue;
             }
+            // Skip README.md files (documentation, not agent definitions)
+            if (file === 'README.md') {
+                continue;
+            }
             const filePath = path_1.default.join(dir, file);
             const stats = fs_1.default.statSync(filePath);
             if (!stats.isFile()) {
