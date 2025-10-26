@@ -7,10 +7,10 @@ Thank you for your interest in contributing to Automagik Genie! We're building t
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/<YOUR_USERNAME>/automagik-genie`
 3. Install dependencies: `pnpm install`
-4. Create a branch: `git checkout -b feat/your-feature-name`
+4. Create a feature branch from `dev`: `git checkout -b feat/your-feature-name dev`
 5. Make your changes
 6. Test: `pnpm run test:genie`
-7. Push and create a Pull Request
+7. Push and create a Pull Request to `dev` branch
 
 ## 📋 What We're Looking For
 
@@ -63,16 +63,37 @@ npx automagik-genie run analyze "test"
 
 **See also:** `@.genie/agents/forge.md` for Forge agent usage and workflows.
 
-### 2. Development Workflow
+### 2. Branching Strategy
 
-1. Create a descriptive branch (`feat/cli-diff-preview`)
+We use a **3-layer branching system**:
+
+1. **`feat/fix/chore` branches** - Where work happens
+   - Created from `dev`: `git checkout -b feat/my-feature dev`
+   - Merge back to `dev` via Pull Request
+
+2. **`dev` branch** - Integration branch
+   - All feature work merges here
+   - Continuous integration and testing
+   - Stricter commit hooks than feature branches
+
+3. **`main` branch** - Production releases
+   - Stable releases merged from `dev`
+   - Strictest validation hooks
+   - Tagged with version numbers
+
+**Always branch from `dev`, never from `main`.**
+
+### 3. Development Workflow
+
+1. Create a descriptive branch from `dev` (`git checkout -b feat/cli-diff-preview dev`)
 2. Implement changes under `.genie/cli/src/`
 3. Rebuild the dist bundle: `pnpm run build:genie`
 4. Run tests: `pnpm run test:genie`
 5. Stage changed source *and* the generated `.genie/cli/dist/**/*`
 6. Commit using Conventional Commits and include the Genie co-author line
+7. Push and create PR to `dev` (not `main`)
 
-### 3. Testing
+### 4. Testing
 
 ```bash
 # Run all CLI + smoke tests
@@ -85,7 +106,7 @@ node .genie/cli/dist/genie.js init --help
 pnpm run test:genie -- --coverage
 ```
 
-### 4. Code Style
+### 5. Code Style
 
 ```bash
 # Format TypeScript (if you have prettier installed globally)

@@ -12,15 +12,15 @@ Daily autonomous sweep of all markdown files to detect quality issues, token was
 **This is a core Genie agent** - maintains Genie's own consciousness quality, not part of Create/Code collectives.
 
 ## Specialty
-- **Token efficiency enforcement** (Amendment 6)
+- **Token efficiency enforcement** (Amendment 6, overly long files)
 - **Zero metadata violations** (Amendment 7)
 - **Duplication detection** (same content in multiple files)
 - **Contradiction detection** (files saying conflicting things)
-- **Dead reference detection** (@ links to non-existent files)
-- **Abandoned content detection** (/tmp/ references, outdated examples)
+- **Dead reference detection** (@ links, broken markdown links)
+- **Content quality** (unlabeled code blocks, empty sections, superseded content)
 - **Frontmatter validation** (YAML syntax, required fields, Amendment 7 compliance)
 - **Incomplete work detection** (TODO/FIXME markers, placeholder text)
-- **Critical issue detection** (merge conflicts, broken syntax)
+- **Critical issue detection** (merge conflicts, sensitive data patterns)
 
 ## Operating Patterns
 
@@ -128,22 +128,7 @@ Issue: [GARBAGE] Dead reference in <file>:<line>
 - Action: Remove reference or restore file
 ```
 
-### 6. Abandoned /tmp/ References
-**Pattern:** Committed files referencing /tmp/ (which should never be committed)
-**Detect:**
-- `/tmp/` paths in documentation
-- Examples using temporary files
-- Uncommitted reference leakage
-
-**Output:**
-```
-Issue: [GARBAGE] /tmp/ reference in committed file
-- File: <file>:<line>
-- Reference: /tmp/<path>
-- Action: Remove or replace with proper example
-```
-
-### 7. Superseded Content
+### 6. Superseded Content
 **Pattern:** Old approaches remaining after new ones replace them
 **Detect:**
 - "Old way:" sections without deletion
@@ -158,7 +143,7 @@ Issue: [GARBAGE] Superseded content in <file>
 - Action: Archive to .genie/reports/ or delete
 ```
 
-### 8. Invalid Frontmatter
+### 7. Invalid Frontmatter
 **Pattern:** Agent/spell files with malformed or missing frontmatter
 **Detect:**
 - Missing frontmatter in agent/spell files
@@ -180,7 +165,7 @@ Issue: [GARBAGE] Invalid frontmatter in <file>
 genie helper validate-frontmatter .genie
 ```
 
-### 9. TODO/FIXME Markers
+### 8. TODO/FIXME Markers
 **Pattern:** Incomplete work markers in committed docs
 **Detect:**
 - `TODO:` markers (work not completed)
@@ -205,7 +190,7 @@ Issue: [GARBAGE] TODO marker in <file>:<line>
 genie helper detect-markers .genie
 ```
 
-### 10. Git Merge Conflicts
+### 9. Git Merge Conflicts
 **Pattern:** Unresolved merge conflict markers
 **Detect:**
 - `<<<<<<< HEAD`
@@ -228,6 +213,105 @@ Issue: [GARBAGE] CRITICAL - Merge conflict in <file>:<line>
 # Run detection manually (same as TODO detection)
 genie helper detect-markers .genie
 ```
+
+### 10. Overly Long Files
+**Pattern:** Individual files exceeding reasonable token budgets
+**Detect:**
+- Files >2000 lines (likely needs splitting)
+- Files >15,000 tokens (massive context load)
+- Single-file documentation that should be split
+
+**Output:**
+```
+Issue: [GARBAGE] Oversized file <file>
+- Size: XXX lines, YYY tokens
+- Threshold: 2000 lines / 15,000 tokens
+- Action: Consider splitting into logical sections
+- Token waste: Single-load penalty ~YYY tokens
+```
+
+**Helper Tool:**
+```bash
+genie helper count-tokens <file>
+```
+
+### 11. Broken Markdown Links
+**Pattern:** Standard markdown links pointing to non-existent files
+**Detect:**
+- `[text](path.md)` where path doesn't exist (relative or absolute)
+- `[text](#anchor)` where anchor doesn't exist in target
+- Exclude external URLs (http/https)
+
+**Output:**
+```
+Issue: [GARBAGE] Broken markdown link in <file>:<line>
+- Link: [<text>](<path>)
+- Status: File not found / Anchor not found
+- Action: Fix path or remove link
+```
+
+**Helper Tool:**
+```bash
+genie helper validate-links <file>
+```
+
+### 12. Unlabeled Code Blocks
+**Pattern:** Fenced code blocks missing syntax highlighting hints
+**Detect:**
+- ` ```\n` (no language specified)
+- Impacts readability, tooling, syntax highlighting
+
+**Output:**
+```
+Issue: [GARBAGE] Unlabeled code block in <file>:<line>
+- Found: ``` (no language)
+- Should be: ```bash, ```typescript, ```markdown, etc.
+- Action: Add language identifier
+```
+
+**Helper Tool:**
+```bash
+genie helper detect-unlabeled-blocks <file>
+```
+
+### 13. Empty Sections
+**Pattern:** Headings with no content following
+**Detect:**
+- `## Heading\n\n##` (heading followed immediately by another heading)
+- Placeholder sections never filled in
+
+**Output:**
+```
+Issue: [GARBAGE] Empty section in <file>:<line>
+- Heading: <heading text>
+- Content: None (next element is heading or EOF)
+- Action: Add content or remove heading
+```
+
+**Helper Tool:**
+```bash
+genie helper find-empty-sections <file>
+```
+
+### 14. Sensitive Data Patterns (Security)
+**Pattern:** Accidentally committed secrets/credentials
+**Detect:**
+- API key patterns (`sk-`, `pk-`, `AKIA`)
+- JWT tokens (long base64 strings)
+- Private keys (`-----BEGIN`)
+- Email addresses in non-author context
+- Internal URLs/IPs
+
+**Output:**
+```
+Issue: [GARBAGE] CRITICAL - Potential sensitive data in <file>:<line>
+- Severity: CRITICAL
+- Pattern: <pattern type>
+- Content: <redacted>
+- Action: Remove immediately, rotate if real credential
+```
+
+**Severity:** CRITICAL - Security risk
 
 ## Daily Report Format
 
@@ -259,9 +343,6 @@ genie helper detect-markers .genie
 ### Dead References (N)
 - file:line - description
 
-### Abandoned /tmp/ (N)
-- file:line - description
-
 ### Superseded Content (N)
 - file:line - description
 
@@ -273,6 +354,21 @@ genie helper detect-markers .genie
 
 ### Git Merge Conflicts (N) 🔴 CRITICAL
 - file:line - conflict marker
+
+### Overly Long Files (N)
+- file - size tokens/lines - threshold exceeded
+
+### Broken Markdown Links (N)
+- file:line - link target - status
+
+### Unlabeled Code Blocks (N)
+- file:line - missing language identifier
+
+### Empty Sections (N)
+- file:line - heading with no content
+
+### Sensitive Data Patterns (N) 🔴 CRITICAL
+- file:line - pattern type - REDACTED
 
 ## Action Items
 - Review GitHub issues tagged `garbage-collection`
@@ -288,12 +384,16 @@ genie helper detect-markers .genie
 
 **Helper Tool:**
 ```bash
-# Count tokens in a file
+# Count tokens in a file (outputs just the number)
 genie helper count-tokens <file-path>
+# Example output: 530
 
-# Compare before/after (for token waste calculation)
+# Get detailed JSON (if needed for reports)
+genie helper count-tokens <file-path> --json
+# Example output: { "tokens": 530, "lines": 42, "bytes": 2048, ... }
+
+# Compare before/after (always outputs JSON with diff)
 genie helper count-tokens --before=old.md --after=new.md
-
 # Example output:
 # {
 #   "before": { "tokens": 530 },
@@ -303,6 +403,8 @@ genie helper count-tokens --before=old.md --after=new.md
 ```
 
 **Uses tiktoken (cl100k_base encoding)** - Same encoding Claude uses, ensures accurate counts.
+
+**Default output:** Plain number for easy scripting and agent decision-making.
 
 ## Quality Standards
 - **Zero false positives priority** - Better to miss issues than create noise
