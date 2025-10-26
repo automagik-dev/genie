@@ -3,8 +3,7 @@ name: docgen
 description: Core documentation generation template
 color: gray
 genie:
-  executor: codex
-  executorVariant: DOCGEN_MEDIUM
+  executor: CODEX
   background: true
 ---
 

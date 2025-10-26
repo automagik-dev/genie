@@ -424,20 +424,9 @@ export class ForgeExecutor {
     variant?: string,
     model?: string
   ): { executor: string; variant: string; model?: string } {
-    const mapping: Record<string, string> = {
-      'claude': 'CLAUDE_CODE',
-      'claude-code': 'CLAUDE_CODE',
-      'codex': 'CODEX',
-      'opencode': 'OPENCODE',
-      'gemini': 'GEMINI',
-      'cursor': 'CURSOR',
-      'qwen_code': 'QWEN_CODE',
-      'amp': 'AMP',
-      'copilot': 'COPILOT'
-    };
-
-    const normalizedKey = executorKey.trim().toLowerCase();
-    const executor = mapping[normalizedKey] || normalizedKey.toUpperCase();
+    // Frontmatter now uses Forge format directly (CLAUDE_CODE, OPENCODE, etc.)
+    // No mapping needed - use executor as-is
+    const executor = executorKey.trim().toUpperCase();
     const resolvedVariant = (variant || 'DEFAULT').toUpperCase();
 
     const profile: { executor: string; variant: string; model?: string } = {

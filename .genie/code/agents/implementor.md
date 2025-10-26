@@ -3,7 +3,7 @@ name: implementor
 description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

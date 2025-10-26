@@ -2,7 +2,7 @@
 name: garbage-cleaner
 description: Individual PR executor for garbage-collection fixes - implements quality improvements autonomously
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

@@ -60,7 +60,7 @@ All agents follow this structure:
 name: agent-name
 description: One-line specialty
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

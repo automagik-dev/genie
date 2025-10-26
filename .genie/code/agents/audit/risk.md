@@ -2,7 +2,7 @@
 name: risk
 description: General risk assessment and mitigation planning
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

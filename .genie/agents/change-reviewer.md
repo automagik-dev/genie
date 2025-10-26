@@ -2,7 +2,7 @@
 name: Change Reviewer
 specialty: Quick sanity check for commits before push
 model: haiku
-executor: opencode
+executor: OPENCODE
 maturity: stable
 ---
 

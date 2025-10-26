@@ -2,7 +2,7 @@
 name: Issue Creator
 specialty: Create GitHub issues from commits or descriptions
 model: haiku
-executor: claude
+executor: CLAUDE_CODE
 maturity: stable
 ---
 

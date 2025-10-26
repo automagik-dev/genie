@@ -3,7 +3,7 @@ name: analyze
 description: System analysis and focused investigations (universal framework)
 color: navy
 genie:
-  executor: opencode
+  executor: OPENCODE
   background: true
 ---
 
