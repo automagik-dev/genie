@@ -62,6 +62,11 @@ export class AgentRegistry {
         continue;
       }
 
+      // Skip README.md files (documentation, not agent definitions)
+      if (file === 'README.md') {
+        continue;
+      }
+
       const filePath = path.join(dir, file);
       const stats = fs.statSync(filePath);
 
