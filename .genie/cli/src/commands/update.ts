@@ -66,7 +66,12 @@ export async function runUpdate(
       try {
         const { stdout } = await execAsync(`${packageManager} list -g automagik-genie --depth=0 --json`);
         const globalData = JSON.parse(stdout);
-        globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
+        // pnpm returns an array, npm returns an object
+        if (Array.isArray(globalData)) {
+          globalVersion = globalData[0]?.dependencies?.['automagik-genie']?.version || '';
+        } else {
+          globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
+        }
       } catch {
         globalVersion = '';
       }
@@ -77,7 +82,7 @@ export async function runUpdate(
         console.log(successGradient('   🧞 ✨ MASTER GENIE - ALREADY UP TO DATE ✨ 🧞   '));
         console.log(successGradient('━'.repeat(60)));
         console.log('');
-        console.log('Your lamp already matches your local version: ' + successGradient(currentVersion));
+        console.log('Your global Genie already matches your local version: ' + successGradient(currentVersion));
         console.log('');
         console.log('✨ Nothing to update!');
         console.log('');
@@ -89,7 +94,7 @@ export async function runUpdate(
       console.log(successGradient('   🧞 ✨ MASTER GENIE UPDATE ✨ 🧞   '));
       console.log(successGradient('━'.repeat(60)));
       console.log('');
-      console.log(`Updating lamp: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(currentVersion)}`);
+      console.log(`Updating global Genie: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(currentVersion)}`);
       console.log('');
       console.log(`Installing your local build globally (using ${packageManager})...`);
       console.log('');
@@ -99,7 +104,7 @@ export async function runUpdate(
         console.log('');
         console.log(successGradient('✅ Successfully installed local build globally!'));
         console.log('');
-        console.log('Your lamp now matches your local version: ' + successGradient(currentVersion));
+        console.log('Your global Genie now matches your local version: ' + successGradient(currentVersion));
         console.log('');
         return;
       } catch (error: any) {
