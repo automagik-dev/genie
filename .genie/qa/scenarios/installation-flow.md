@@ -94,9 +94,9 @@ npx automagik-genie@next
 ```bash
 export QA_DIR="/tmp/genie-upgrade-qa-$(date +%s)"
 mkdir -p "$QA_DIR" && cd "$QA_DIR"
-# Install old version first
+# Install current version first
 git init -b main
-npx automagik-genie@2.5.0-rc.10 init code
+npx automagik-genie@next init code
 # Exit install agent if it starts
 ```
 
