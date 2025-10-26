@@ -30,8 +30,9 @@ const FORBIDDEN_FIELDS = ['version', 'last_updated', 'author'];
 // Valid Claude models
 const VALID_CLAUDE_MODELS = ['haiku', 'sonnet', 'opus-4'];
 
-// Valid executors (uppercase Forge format)
-const VALID_EXECUTORS = ['CLAUDE_CODE', 'OPENCODE', 'CODEX', 'GEMINI', 'CURSOR'];
+// NOTE: Executor names are NOT validated against a hardcoded list
+// They are fetched dynamically from Forge via AgentRegistry.getSupportedExecutors()
+// Validation here only checks format (uppercase). Runtime validation happens in Forge.
 
 // Cache for opencode models (fetched once)
 let OPENCODE_MODELS_CACHE = null;
@@ -215,17 +216,10 @@ async function validateGenieFields(genie) {
   const model = genie.model;
   const variant = genie.executorVariant || genie.variant || genie.executor_variant || genie.executorProfile;
 
-  // Validate executor (should be uppercase Forge format)
+  // Validate executor format (should be uppercase)
+  // NOTE: We don't validate against a hardcoded list - executors are dynamic in Forge
+  // AgentRegistry.getSupportedExecutors() fetches the current list from Forge
   if (executor) {
-    if (!VALID_EXECUTORS.includes(executor.toUpperCase())) {
-      issues.push({
-        type: 'invalid_executor',
-        field: 'genie.executor',
-        message: `Unknown executor: ${executor}`,
-        suggestion: `Valid executors: ${VALID_EXECUTORS.join(', ')}`,
-      });
-    }
-
     if (executor !== executor.toUpperCase()) {
       issues.push({
         type: 'executor_case',
