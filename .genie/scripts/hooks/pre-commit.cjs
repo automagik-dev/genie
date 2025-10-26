@@ -104,6 +104,17 @@ function main() {
     'forge-task-link.cjs',  // Auto-link Forge tasks to wishes on first commit
   ];
 
+  // Security validation (blocking)
+  console.log('🔐 Checking for secrets in staged files...');
+  const checkSecretsPath = path.join(gitRoot, '.genie', 'scripts', 'helpers', 'check-secrets.js');
+  const secretsCheckCode = timeExecution('Secret detection', () => {
+    const secretsCheck = spawnSync('node', [checkSecretsPath, '--staged'], { stdio: 'inherit' });
+    return secretsCheck.status || 0;
+  });
+  if (secretsCheckCode !== 0) {
+    exitCode = 1;
+  }
+
   // Amendment #7: Git is source of truth - no auto-metadata generation
   // Disabled: update-genie-markdown-metadata.cjs (timestamps/versions duplicate git data)
 
@@ -161,6 +172,21 @@ function main() {
   // Future: Async learning/analysis of commit patterns, wish alignment, etc.
   // const workflow = runGenie('neurons/git/commit-advisory', 'Pre-commit validation');
   // if (workflow.message) console.log(`- Note: ${workflow.message}`);
+
+  // Commit message suggestion (non-blocking, advisory only)
+  // Generates conventional commit message from staged diff
+  // Disabled for now - enable when genie run is stable in hooks
+  // try {
+  //   const suggestion = execSync('genie run commit-suggester --raw --quiet', { encoding: 'utf8', cwd: gitRoot }).trim();
+  //   if (suggestion) {
+  //     const suggestedMsgPath = path.join(gitRoot, '.git', 'SUGGESTED_COMMIT');
+  //     require('fs').writeFileSync(suggestedMsgPath, suggestion);
+  //     console.log('💡 Commit message suggestion saved to .git/SUGGESTED_COMMIT');
+  //     console.log('   Use: git commit -F .git/SUGGESTED_COMMIT');
+  //   }
+  // } catch (e) {
+  //   // Silently skip if genie run fails (non-blocking)
+  // }
 
   // Token-efficient summary
   const totalDuration = Date.now() - totalStart;

@@ -167,6 +167,22 @@ function main() {
   if (clCode !== 0) {
     console.warn('⚠️  CHANGELOG update failed (non-blocking)');
   }
+
+  // Step 4: change-reviewer agent (non-blocking, advisory only)
+  // Quick sanity check: security issues, large changes, missing tests
+  // Disabled for now - enable when genie run is stable in hooks
+  // try {
+  //   console.log('🔍 Running quick change review...');
+  //   const reviewResult = execSync('genie run change-reviewer --quiet', {
+  //     encoding: 'utf8',
+  //     cwd: getWorktreeRoot(),
+  //     stdio: 'inherit'
+  //   });
+  //   // Advisory only - never blocks (always exit 0)
+  // } catch (e) {
+  //   // Silently skip if genie run fails (non-blocking)
+  // }
+
   console.log('✅ Pre-push hooks passed');
 }
 

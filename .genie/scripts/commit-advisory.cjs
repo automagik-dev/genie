@@ -374,9 +374,30 @@ class CommitAdvisory {
   }
 
   /**
-   * Validate commits
+   * Get branch validation tier
+   *
+   * HIERARCHICAL VALIDATION STRATEGY:
+   * - Feature branches: Relaxed (warnings only, fast iteration)
+   * - Dev branch: Stricter (require issues for feat/fix)
+   * - Main branch: Extreme (require everything + version bump)
    */
-  validateCommits(isReleaseBranch = false) {
+  getBranchTier(branch) {
+    if (branch.startsWith('feat/') || branch.startsWith('bug/') || branch.startsWith('fix/')) {
+      return 'feature'; // Relaxed (warnings only)
+    }
+    if (branch === 'dev' || branch === 'develop') {
+      return 'dev'; // Stricter
+    }
+    if (branch === 'main' || branch === 'master') {
+      return 'main'; // Strictest
+    }
+    return 'feature'; // Default: relaxed for unknown branches
+  }
+
+  /**
+   * Validate commits (branch-aware)
+   */
+  validateCommits(branch, isReleaseBranch = false) {
     if (this.commits.length === 0) {
       this.passes.push('No new commits to validate');
       return;
@@ -396,7 +417,10 @@ class CommitAdvisory {
       return;
     }
 
-    // Rule 2: Commit Traceability (BLOCKING)
+    // Get validation tier based on branch
+    const tier = this.getBranchTier(branch);
+
+    // Rule 2: Commit Traceability (TIERED ENFORCEMENT)
     let exemptCount = 0;
     for (const commit of this.commits) {
       // Skip automated/forge commits from traceability check
@@ -407,7 +431,7 @@ class CommitAdvisory {
 
       const refs = references.get(commit.hash);
       if (!refs.hasWishRef && !refs.hasIssueRef) {
-        this.errors.push({
+        const violation = {
           commit: commit.hash.substring(0, 8),
           subject: commit.subject.substring(0, 60),
           reason: 'Not linked to wish or GitHub issue',
@@ -424,7 +448,23 @@ class CommitAdvisory {
               description: 'Replace NNN with actual GitHub issue number'
             }
           ]
-        });
+        };
+
+        // TIERED ENFORCEMENT:
+        if (tier === 'feature') {
+          // Feature branches: Warning only (fast iteration)
+          this.warnings.push(
+            `[${violation.commit}] ${violation.reason}\n` +
+            `     Commit: ${violation.subject}\n` +
+            `     Suggestion: Link to issue before merging to dev`
+          );
+        } else if (tier === 'dev') {
+          // Dev branch: Block on missing issues (stricter)
+          this.errors.push(violation);
+        } else if (tier === 'main') {
+          // Main branch: Strict blocking (extreme validation)
+          this.errors.push(violation);
+        }
       }
     }
 
@@ -628,7 +668,7 @@ class CommitAdvisory {
 
     this.loadWishes();
     this.validateBranch();
-    this.validateCommits(isReleaseBranch);
+    this.validateCommits(branch, isReleaseBranch);
 
     const report = this.generateReport(branch, this.commits.length);
     console.log(report);

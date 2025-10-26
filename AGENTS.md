@@ -265,9 +265,17 @@ Before editing ANY implementation file, Base Genie must check:
 - Emergency hotfix (and no Forge available)
 - Applying meta-learning (creating/updating .genie/spells/)
 
+**Common Violation: Assuming Implementation Steps**
+- ❌ "Update version in package.json" (automated by GitHub Actions)
+- ❌ "Run npm publish" (automated by CI/CD)
+- ❌ Listing manual steps when automation exists
+- ✅ "Investigate release workflow first" then delegate/trigger automation
+
 **Protocol:** `@.genie/spells/orchestration-boundary-protocol.md`
 
-**First Documented Violation:** Bug #168, task b51db539, 2025-10-21
+**Documented Violations:**
+- Bug #168, task b51db539, 2025-10-21 (duplicate implementation)
+- 2025-10-26 (claimed release implementation steps without investigating automation)
 
 ### 5. Session State Optimization - Live State, Not Documentation 🔴 CRITICAL
 **Rule:** Session state is ephemeral runtime data, not permanent documentation
