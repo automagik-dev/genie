@@ -377,11 +377,17 @@ class CommitAdvisory {
    * Get branch validation tier
    *
    * HIERARCHICAL VALIDATION STRATEGY:
-   * - Feature branches: Relaxed (warnings only, fast iteration)
+   * - Worktree branches (forge/*): Relaxed (warnings only, fast iteration in isolated worktrees)
+   * - Feature branches (feat/*, bug/*, fix/*): Relaxed (warnings only, work in progress)
    * - Dev branch: Stricter (require issues for feat/fix)
    * - Main branch: Extreme (require everything + version bump)
    */
   getBranchTier(branch) {
+    // Forge worktrees: isolated environment, relaxed validation
+    if (branch.startsWith('forge/')) {
+      return 'feature'; // Relaxed (warnings only)
+    }
+    // Manual feature branches: work in progress
     if (branch.startsWith('feat/') || branch.startsWith('bug/') || branch.startsWith('fix/')) {
       return 'feature'; // Relaxed (warnings only)
     }
