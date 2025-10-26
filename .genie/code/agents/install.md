@@ -3,6 +3,7 @@ name: install
 description: Install Genie template and CLI setup for new projects
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

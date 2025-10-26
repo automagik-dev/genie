@@ -4,6 +4,7 @@ description: Workspace and dependency update coordination
 color: violet
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

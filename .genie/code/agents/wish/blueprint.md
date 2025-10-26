@@ -3,6 +3,7 @@ name: blueprint
 description: Create wish document blueprint from planning brief
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

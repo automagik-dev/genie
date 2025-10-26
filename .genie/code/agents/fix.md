@@ -3,7 +3,8 @@ name: fix
 description: Apply fixes using debug spell and other code agents/spells as needed
 color: green
 genie:
-  executor: claude
+  executor: opencode
+  model: xai/grok-4-fast
   background: true
 ---
 
