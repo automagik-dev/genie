@@ -101,7 +101,9 @@ rm -rf /tmp/genie-upgrade-*
 ## File Classification
 
 **Framework Files (Upgraded):**
-- `.genie/AGENTS.md`
+- `AGENTS.md` (root - master genie)
+- `CORE_AGENTS.md` (root - core agents)
+- `CLAUDE.md` (root - meta-loader)
 - `.genie/spells/*.md` (official spells)
 - `.genie/code/AGENTS.md`
 - `.genie/code/agents/*.md` (official agents)
