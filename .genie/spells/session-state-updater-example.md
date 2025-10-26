@@ -137,7 +137,7 @@ We have:
 name: <agent-name>
 type: agent
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
 ---
 
 # <Agent Name> Agent

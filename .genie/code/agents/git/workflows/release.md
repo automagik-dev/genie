@@ -4,7 +4,7 @@ type: workflow
 parent: git
 description: Automated release workflow for release branches (feat/release-*)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

@@ -2,7 +2,7 @@
 name: Commit Suggester
 specialty: Generate conventional commit messages from git diffs
 model: haiku
-executor: opencode
+executor: OPENCODE
 maturity: stable
 ---
 

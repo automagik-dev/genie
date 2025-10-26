@@ -4,7 +4,7 @@ label: ✍️  Create
 description: Content creation agents (writing, research, planning)
 github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/create
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

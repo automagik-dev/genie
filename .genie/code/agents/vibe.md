@@ -2,7 +2,7 @@
 name: sleepy
 description: Autonomous wish coordinator with Genie orchestrator validation
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

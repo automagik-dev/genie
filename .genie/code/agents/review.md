@@ -3,9 +3,8 @@ name: review
 description: Wish audits, code review, and QA validation with evidence-based verdicts
 color: magenta
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
-  executorVariant: REVIEW_APPROVALS
   background: true
 ---
 

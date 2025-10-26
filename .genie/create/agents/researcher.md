@@ -2,7 +2,7 @@
 name: researcher
 description: Investigate topics, curate sources, and synthesize findings for Create
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

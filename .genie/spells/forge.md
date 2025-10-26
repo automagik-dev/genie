@@ -3,7 +3,7 @@ name: forge
 description: Break wishes into execution groups with task files and validation hooks
 color: gold
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions
