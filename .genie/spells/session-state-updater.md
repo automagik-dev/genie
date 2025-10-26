@@ -2,7 +2,7 @@
 name: session-state-updater
 type: workflow
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: false
 ---
 

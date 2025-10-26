@@ -3,7 +3,11 @@ name: report
 description: GitHub issue creation workflow with template selection
 color: cyan
 genie:
-  executor: opencode
+<<<<<<< HEAD
+  executor: OPENCODE
+=======
+  executor: OPENCODE
+>>>>>>> 5c794c34 (feat(agents): standardize model assignments across 27 agents)
   model: xai/grok-4-fast
   background: true
 ---

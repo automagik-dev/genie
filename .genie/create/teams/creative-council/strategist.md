@@ -2,7 +2,7 @@
 name: strategist
 description: Audience, positioning, and objective clarity
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

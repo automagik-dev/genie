@@ -2,7 +2,7 @@
 name: neuron-forge
 description: Persistent forge master orchestrator (neuron architecture)
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: haiku
   background: true
 ---

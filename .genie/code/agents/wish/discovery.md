@@ -2,7 +2,7 @@
 name: discovery
 description: Deep discovery - understand and resonate with the user's idea
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

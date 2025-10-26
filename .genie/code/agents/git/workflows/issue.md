@@ -3,7 +3,11 @@ name: issue
 description: GitHub issue lifecycle management (list, update, assign, close, link)
 color: cyan
 genie:
-  executor: claude
+<<<<<<< HEAD
+  executor: CLAUDE_CODE
+=======
+  executor: CLAUDE_CODE
+>>>>>>> 5c794c34 (feat(agents): standardize model assignments across 27 agents)
   model: sonnet
   background: true
 ---

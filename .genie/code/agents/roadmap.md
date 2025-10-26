@@ -3,7 +3,7 @@ name: roadmap
 description: Document strategic initiatives in automagik-roadmap with guided template selection
 color: purple
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

@@ -2,7 +2,7 @@
 name: blueprint
 description: Create wish from brief/context and save standard structure
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

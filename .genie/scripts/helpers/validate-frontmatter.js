@@ -30,8 +30,8 @@ const FORBIDDEN_FIELDS = ['version', 'last_updated', 'author'];
 // Valid Claude models
 const VALID_CLAUDE_MODELS = ['haiku', 'sonnet', 'opus-4'];
 
-// Valid executors (lowercase, as used in frontmatter)
-const VALID_EXECUTORS = ['claude', 'opencode', 'codex', 'gemini', 'cursor'];
+// Valid executors (uppercase Forge format)
+const VALID_EXECUTORS = ['CLAUDE_CODE', 'OPENCODE', 'CODEX', 'GEMINI', 'CURSOR'];
 
 // Cache for opencode models (fetched once)
 let OPENCODE_MODELS_CACHE = null;
@@ -215,9 +215,9 @@ async function validateGenieFields(genie) {
   const model = genie.model;
   const variant = genie.executorVariant || genie.variant || genie.executor_variant || genie.executorProfile;
 
-  // Validate executor (should be lowercase)
+  // Validate executor (should be uppercase Forge format)
   if (executor) {
-    if (!VALID_EXECUTORS.includes(executor.toLowerCase())) {
+    if (!VALID_EXECUTORS.includes(executor.toUpperCase())) {
       issues.push({
         type: 'invalid_executor',
         field: 'genie.executor',
@@ -226,29 +226,29 @@ async function validateGenieFields(genie) {
       });
     }
 
-    if (executor !== executor.toLowerCase()) {
+    if (executor !== executor.toUpperCase()) {
       issues.push({
         type: 'executor_case',
         field: 'genie.executor',
-        message: `Executor should be lowercase: ${executor}`,
-        suggestion: `Change to: ${executor.toLowerCase()}`,
+        message: `Executor should be uppercase (Forge format): ${executor}`,
+        suggestion: `Change to: ${executor.toUpperCase()}`,
       });
     }
   }
 
-  // Validate executorVariant (should be uppercase)
-  if (variant && variant !== variant.toUpperCase()) {
+  // Warn about executorVariant (deprecated field)
+  if (variant) {
     issues.push({
-      type: 'variant_case',
+      type: 'deprecated_field',
       field: 'genie.executorVariant',
-      message: `Variant should be uppercase: ${variant}`,
-      suggestion: `Change to: ${variant.toUpperCase()}`,
+      message: `executorVariant is deprecated (conflicts with Forge profile-per-agent pattern)`,
+      suggestion: `Remove this field - Forge creates one profile per agent automatically`,
     });
   }
 
   // Validate model based on executor
   if (executor && model) {
-    if (executor === 'claude') {
+    if (executor === 'CLAUDE_CODE') {
       // Claude models: haiku, sonnet, opus-4
       if (!VALID_CLAUDE_MODELS.includes(model)) {
         issues.push({
@@ -258,7 +258,7 @@ async function validateGenieFields(genie) {
           suggestion: `Valid Claude models: ${VALID_CLAUDE_MODELS.join(', ')}`,
         });
       }
-    } else if (executor === 'opencode') {
+    } else if (executor === 'OPENCODE') {
       // OpenCode models: must be in `opencode models` output
       const validModels = await getOpenCodeModels();
       if (validModels.length > 0 && !validModels.includes(model)) {
@@ -333,7 +333,7 @@ async function scanFile(filePath) {
           field: issue.field,
           message: issue.message,
           suggestion: issue.suggestion,
-          severity: ['amendment_7_violation', 'variant_case', 'executor_case'].includes(issue.type) ? 'warning' : 'error',
+          severity: ['amendment_7_violation', 'deprecated_field', 'executor_case'].includes(issue.type) ? 'warning' : 'error',
         });
       });
     } else {
