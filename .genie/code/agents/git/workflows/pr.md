@@ -66,7 +66,7 @@ Master of `gh pr create`, understands Git workflow, links PRs to wishes and issu
 ## Prerequisites
 
 **Git operations:**
-@.genie/code/agents/git/git.md
+@.genie/code/agents/git.md
 
 **Issue tracking:**
 @.genie/code/agents/git/workflows/issue.md

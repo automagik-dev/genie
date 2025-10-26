@@ -60,7 +60,7 @@ function autoSyncWithRemote(branch) {
   // Auto-sync with remote to prevent rejection due to automated commits (like RC version bumps)
   if (process.env.GENIE_SKIP_AUTO_SYNC) {
     console.log('⏭️  Auto-sync skipped (GENIE_SKIP_AUTO_SYNC set)');
-    return;
+    return false; // No rebase happened
   }
 
   console.log('🔄 Auto-syncing with remote...');
@@ -85,7 +85,7 @@ function autoSyncWithRemote(branch) {
 
     if (localCommit === remoteCommit) {
       console.log('✅ Already in sync with remote');
-      return;
+      return false; // No rebase needed
     }
 
     // Check if we're behind
@@ -109,12 +109,15 @@ function autoSyncWithRemote(branch) {
       }
 
       console.log('✅ Successfully rebased on remote changes');
+      return true; // Rebase happened, need to retry push
     } else {
       console.log('✅ Local is ahead of remote');
+      return false; // No rebase needed
     }
   } catch (e) {
     console.warn(`⚠️  Auto-sync failed: ${e.message}`);
     console.warn('   Continuing with push (may be rejected if remote changed)');
+    return false; // Error, let original push handle it
   }
 }
 
@@ -128,7 +131,7 @@ function main() {
   console.log(`📍 Detected branch: ${currentBranch}`);
 
   // Step 0: Auto-sync with remote (prevents rejection from automated commits)
-  autoSyncWithRemote(currentBranch);
+  const didRebase = autoSyncWithRemote(currentBranch);
 
   // Step 1: tests (skip if GENIE_SKIP_TESTS is set)
   if (process.env.GENIE_SKIP_TESTS) {
@@ -184,6 +187,27 @@ function main() {
   // }
 
   console.log('✅ Pre-push hooks passed');
+
+  // If we rebased, automatically retry the push
+  if (didRebase && !process.env.GENIE_AUTO_PUSH_RETRY) {
+    console.log('🔄 Auto-retrying push after rebase...');
+
+    // Set env var to prevent infinite recursion
+    process.env.GENIE_AUTO_PUSH_RETRY = '1';
+
+    try {
+      // Retry the push (this will trigger hooks again, but didRebase will be false)
+      execSync(`git push origin ${currentBranch}`, {
+        stdio: 'inherit'
+      });
+
+      console.log('\x1b[32m✅ Push succeeded after auto-rebase\x1b[0m');
+      process.exit(0); // Success, tell original command to abort
+    } catch (e) {
+      console.error('❌ Auto-retry push failed');
+      process.exit(1);
+    }
+  }
 }
 
 main();

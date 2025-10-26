@@ -71,7 +71,7 @@ Master of contextual editing decisions, understands when to edit body vs add com
 @.genie/code/agents/git/workflows/report.md
 
 **Git operations:**
-@.genie/code/agents/git/git.md
+@.genie/code/agents/git.md
 
 ## Contextual Decision-Making: Edit vs Comment
 

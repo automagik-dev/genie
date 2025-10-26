@@ -1,7 +1,6 @@
 ---
 name: qa/installation-flow
 description: Autonomous end-to-end installation validation workflow
-parent: qa
 autonomous: true
 ---
 
@@ -429,4 +428,4 @@ mcp__genie__run with agent="qa/installation-flow" and prompt="Execute autonomous
 
 **Autonomous execution guaranteed. No human interaction required. Evidence-backed results.**
 
-@.genie/agents/qa/README.md
+@.genie/qa/README.md

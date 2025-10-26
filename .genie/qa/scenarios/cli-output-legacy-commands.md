@@ -1,7 +1,6 @@
 ---
 name: qa/cli-output-legacy
 description: Autonomous validation that CLI output references MCP tools, not legacy ./genie commands
-parent: qa
 autonomous: true
 ---
 
@@ -377,4 +376,4 @@ mcp__genie__run with agent="qa/cli-output-legacy" and prompt="Execute autonomous
 
 **Autonomous execution guaranteed. No human interaction required. Evidence-backed results.**
 
-@.genie/agents/qa/README.md
+@.genie/qa/README.md

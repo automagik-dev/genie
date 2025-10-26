@@ -1,7 +1,6 @@
 ---
 name: qa/background-launch-argmax
 description: Autonomous validation of background launch and ARG_MAX handling
-parent: qa
 autonomous: true
 ---
 
@@ -377,4 +376,4 @@ mcp__genie__run with agent="qa/background-launch-argmax" and prompt="Execute aut
 
 **Autonomous execution guaranteed. No human interaction required. Evidence-backed results.**
 
-@.genie/agents/qa/README.md
+@.genie/qa/README.md
