@@ -3,7 +3,8 @@ name: polish
 description: Type-checking, linting, and formatting for code quality
 color: purple
 genie:
-  executor: claude
+  executor: opencode
+  model: xai/grok-4-fast
   background: true
 ---
 

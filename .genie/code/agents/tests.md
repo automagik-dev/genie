@@ -4,6 +4,7 @@ description: Test strategy, generation, authoring, and repair across all layers
 color: lime
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 

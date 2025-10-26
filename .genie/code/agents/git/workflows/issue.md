@@ -4,6 +4,7 @@ description: GitHub issue lifecycle management (list, update, assign, close, lin
 color: cyan
 genie:
   executor: claude
+  model: sonnet
   background: true
 ---
 
