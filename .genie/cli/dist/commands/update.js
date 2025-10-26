@@ -65,6 +65,13 @@ async function runUpdate(parsed, _config, _paths) {
                 else {
                     globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
                 }
+                // Handle file: protocol (when installed from local directory)
+                // pnpm stores version as "file:../path/to/package" instead of actual version
+                if (globalVersion.startsWith('file:')) {
+                    // For local file installations, both global and local point to same source
+                    // so versions always match (they're literally the same files)
+                    globalVersion = currentVersion;
+                }
             }
             catch {
                 globalVersion = '';
