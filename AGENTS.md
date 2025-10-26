@@ -745,7 +745,7 @@ Use `/mcp__<server>__<prompt> [arguments]` syntax (on clear line, no formatting)
 
 **Owner:** Master Genie (QA is core identity, not separate concern)
 **Principle:** No release without guarantee it's better than the previous one
-**Documentation:** `@.genie/qa/README.md` (master coordination)
+**Documentation:** `@.genie/agents/qa/README.md` (master coordination)
 
 ### Quality Guarantee Levels
 
@@ -762,11 +762,11 @@ Use `/mcp__<server>__<prompt> [arguments]` syntax (on clear line, no formatting)
 
 ### QA Components
 
-**Primary Checklist:** `@.genie/qa/checklist.md` (260+ test items, living document, auto-updated via learn)
-**Atomic Scenarios:** `@.genie/qa/scenarios/` (18 scenarios, bug regression + feature deep-dive)
-**Bug Regression:** `@.genie/qa/scenarios-from-bugs.md` (53 tracked bugs, auto-synced from GitHub)
-**QA Agent:** `@.genie/code/agents/qa.md` (automated execution + self-improving, required for minor/major releases)
-**Evidence Repository:** `@.genie/qa/evidence/` (reproducible test outputs, markdown committed, JSON/tmp ignored)
+**Primary Checklist:** `@.genie/agents/qa/checklist.md` (260+ test items, living document, auto-updated via learn)
+**Atomic Scenarios:** `@.genie/agents/qa/workflows/manual/scenarios/` (18 scenarios, bug regression + feature deep-dive)
+**Bug Regression:** `@.genie/agents/qa/workflows/auto-generated/scenarios-from-bugs.md` (53 tracked bugs, auto-synced from GitHub)
+**QA Agent:** `@.genie/agents/qa/qa.md` (orchestrator, coordinates workflows via MCP)
+**Evidence Repository:** `@.genie/agents/qa/evidence/` (reproducible test outputs, markdown committed, JSON/tmp ignored)
 
 ### Pre-Release Workflow
 

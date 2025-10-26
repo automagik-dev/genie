@@ -95,21 +95,21 @@
 ## QA Components
 
 ### Primary Checklist
-**File:** `@.genie/qa/checklist.md`
+**File:** `@.genie/agents/qa/checklist.md`
 **Purpose:** Living operational checklist (260+ test items)
 **Categories:** MCP operations, Layout/UI, Command Interface, Agent System, Session Lifecycle, Error Handling, Performance
 **Maintenance:** Auto-updated by QA Agent via learn integration
 **Status:** PRIMARY SOURCE OF TRUTH
 
 ### Atomic Test Scenarios
-**Directory:** `@.genie/qa/scenarios/`
+**Directory:** `@.genie/agents/qa/scenarios/`
 **Purpose:** Specific, reproducible test scenarios
 **Types:** Bug regression tests, feature scenarios, edge cases
 **Count:** 18 scenarios (growing)
 **Relationship:** Complementary to checklist (deep-dive validation)
 
 ### Bug Regression Suite
-**File:** `@.genie/qa/scenarios-from-bugs.md`
+**File:** `@.genie/agents/qa/scenarios-from-bugs.md`
 **Purpose:** Auto-generated from GitHub issues
 **Scope:** 53 tracked bugs (7 open, 46 fixed)
 **Sync:** Via `.genie/scripts/sync-qa-from-issues.cjs`
@@ -123,7 +123,7 @@
 **Output:** Done Report with evidence + learning summary
 
 ### Evidence Repository
-**Directory:** `@.genie/qa/evidence/`
+**Directory:** `@.genie/agents/qa/evidence/`
 **Purpose:** Reproducible test outputs
 **Types:** CLI outputs (*.txt), logs (*.log), reports (*.md)
 **Gitignore:** JSON/tmp files ignored, markdown committed
@@ -299,7 +299,7 @@ Every QA run makes the system smarter:
 mcp__genie__run with agent="qa" and prompt="Execute full QA for v2.X.0 release"
 
 # Option 2: Manual (use checklist directly)
-# Load: @.genie/qa/checklist.md
+# Load: @.genie/agents/qa/checklist.md
 # Execute each test item
 # Capture evidence
 # Update status
@@ -308,7 +308,7 @@ mcp__genie__run with agent="qa" and prompt="Execute full QA for v2.X.0 release"
 **Run bug-specific validation:**
 ```bash
 # Find atomic workflow
-# Example: @.genie/qa/scenarios/bug-102-session-collision.md
+# Example: @.genie/agents/qa/scenarios/bug-102-session-collision.md
 # Execute test steps
 # Capture evidence
 # Update regression suite
