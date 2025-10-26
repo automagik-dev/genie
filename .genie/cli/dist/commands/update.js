@@ -1,14 +1,23 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runUpdate = runUpdate;
 const child_process_1 = require("child_process");
 const util_1 = require("util");
+const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
+const gradient_string_1 = __importDefault(require("gradient-string"));
 const view_helpers_1 = require("../lib/view-helpers");
 const common_1 = require("../views/common");
 const package_1 = require("../lib/package");
 const upgrade_1 = require("../lib/upgrade");
 const forge_manager_1 = require("../lib/forge-manager");
 const execAsync = (0, util_1.promisify)(child_process_1.exec);
+// Genie-themed gradients
+const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff', '#0099ff']);
+const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00', '#ff6347']);
 /**
  * Update command - updates the global npm package
  *
@@ -19,6 +28,68 @@ async function runUpdate(parsed, _config, _paths) {
     try {
         const flags = parseFlags(parsed.commandArgs);
         const currentVersion = (0, package_1.getPackageVersion)();
+        // MASTER GENIE DETECTION: Check if we're in the template repo
+        const workspacePackageJson = path_1.default.join(process.cwd(), 'package.json');
+        let isMasterGenie = false;
+        if (fs_1.default.existsSync(workspacePackageJson)) {
+            try {
+                const workspacePkg = JSON.parse(fs_1.default.readFileSync(workspacePackageJson, 'utf8'));
+                if (workspacePkg.name === 'automagik-genie') {
+                    isMasterGenie = true;
+                }
+            }
+            catch {
+                // Not master genie if can't read package.json
+            }
+        }
+        // If master genie, install local build globally instead of fetching from npm
+        if (isMasterGenie) {
+            // Check if global package already matches local version
+            let globalVersion;
+            try {
+                const { stdout } = await execAsync('npm list -g automagik-genie --depth=0 --json');
+                const globalData = JSON.parse(stdout);
+                globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
+            }
+            catch {
+                globalVersion = '';
+            }
+            // If already up-to-date, show success and exit
+            if (globalVersion === currentVersion) {
+                console.log(successGradient('━'.repeat(60)));
+                console.log(successGradient('   🧞 ✨ MASTER GENIE - ALREADY UP TO DATE ✨ 🧞   '));
+                console.log(successGradient('━'.repeat(60)));
+                console.log('');
+                console.log('Your lamp already matches your local version: ' + successGradient(currentVersion));
+                console.log('');
+                console.log('✨ Nothing to update!');
+                console.log('');
+                return;
+            }
+            // Version mismatch - install local build
+            console.log(successGradient('━'.repeat(60)));
+            console.log(successGradient('   🧞 ✨ MASTER GENIE UPDATE ✨ 🧞   '));
+            console.log(successGradient('━'.repeat(60)));
+            console.log('');
+            console.log(`Updating lamp: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(currentVersion)}`);
+            console.log('');
+            console.log('Installing your local build globally...');
+            console.log('');
+            try {
+                await execAsync('pnpm install -g .', { cwd: process.cwd() });
+                console.log('');
+                console.log(successGradient('✅ Successfully installed local build globally!'));
+                console.log('');
+                console.log('Your lamp now matches your local version: ' + successGradient(currentVersion));
+                console.log('');
+                return;
+            }
+            catch (error) {
+                throw new Error(`Failed to install local build: ${error.message}\n\n` +
+                    `Please try manually: pnpm install -g .`);
+            }
+        }
+        // NOT master genie - proceed with npm update flow
         // Check for updates
         console.log('📦 Checking for updates...');
         console.log('');
