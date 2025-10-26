@@ -6,6 +6,7 @@ import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
 import { normalizeExecutorKey, normalizeExecutorKeyOrDefault } from '../../lib/executor-registry';
+import { checkExecutorAuth, promptExecutorLogin, type ExecutorId } from '../../lib/executor-auth';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -25,6 +26,18 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const isHeadless = parsed.options.raw || parsed.options.quiet;
     const isRawOutput = parsed.options.raw;
     const isQuiet = parsed.options.quiet;
+
+    // Check if executor is authenticated (skip in headless mode)
+    if (!isHeadless && isExecutorAuthRequired(executorKey)) {
+      const isAuthenticated = await checkExecutorAuth(executorKey as ExecutorId);
+      if (!isAuthenticated) {
+        try {
+          await promptExecutorLogin(executorKey as ExecutorId);
+        } catch (error) {
+          throw new Error(`Authentication required for ${executorKey}. Please configure it and try again.`);
+        }
+      }
+    }
 
     // Ensure Forge is running (silent if quiet mode)
     if (isHeadless) {
@@ -194,4 +207,12 @@ function findVariantForModel(
     }
   }
   return null;
+}
+
+/**
+ * Check if executor requires authentication
+ */
+function isExecutorAuthRequired(executorKey: string): boolean {
+  const authRequiredExecutors = ['OPENCODE', 'CLAUDE_CODE', 'CODEX', 'GEMINI'];
+  return authRequiredExecutors.includes(executorKey.toUpperCase());
 }

@@ -8,6 +8,7 @@ exports.generateSessionName = generateSessionName;
 exports.loadSessions = loadSessions;
 exports.saveSessions = saveSessions;
 const fs_1 = __importDefault(require("fs"));
+const executor_registry_1 = require("./lib/executor-registry");
 /**
  * Generate a friendly session name from agent name and timestamp.
  * Format: "{agent}-{YYMMDDHHmm}"
@@ -147,15 +148,15 @@ function migrateSessionEntries(store, defaultExecutor) {
             result.sessions[sessionId].mode = entry.preset;
         if (!entry.preset && entry.mode)
             result.sessions[sessionId].preset = entry.mode;
-        if (!entry.executor)
-            result.sessions[sessionId].executor = defaultExecutor;
+        const normalized = entry.executor ? (0, executor_registry_1.normalizeExecutorKey)(entry.executor) : undefined;
+        result.sessions[sessionId].executor = normalized ?? defaultExecutor;
     });
     return result;
 }
 function resolveDefaultExecutor(config = {}, defaults = {}) {
-    return (config.defaults?.executor ||
-        defaults.defaults?.executor ||
-        'opencode');
+    return (0, executor_registry_1.normalizeExecutorKeyOrDefault)(config.defaults?.executor ??
+        defaults.defaults?.executor ??
+        executor_registry_1.DEFAULT_EXECUTOR_KEY, executor_registry_1.DEFAULT_EXECUTOR_KEY);
 }
 exports._internals = {
     readJson,
