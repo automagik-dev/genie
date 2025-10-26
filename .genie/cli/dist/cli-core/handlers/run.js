@@ -6,6 +6,7 @@ const session_store_1 = require("../../session-store");
 const forge_executor_1 = require("../../lib/forge-executor");
 const forge_helpers_1 = require("../../lib/forge-helpers");
 const headless_helpers_1 = require("../../lib/headless-helpers");
+const executor_registry_1 = require("../../lib/executor-registry");
 function createRunHandler(ctx) {
     return async (parsed) => {
         const [agentName, ...promptParts] = parsed.commandArgs;
@@ -109,8 +110,7 @@ function createRunHandler(ctx) {
     };
 }
 function resolveExecutionSelection(config, parsed, agentGenie) {
-    // Frontmatter now uses Forge format (uppercase) - no lowercasing needed
-    let executor = (config.defaults?.executor || 'OPENCODE').trim().toUpperCase();
+    let executor = (0, executor_registry_1.normalizeExecutorKeyOrDefault)(config.defaults?.executor);
     let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
     let model = typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
     let modeName = 'default';
@@ -121,7 +121,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
         modeName = agentGenie.executionMode.trim();
     }
     if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-        executor = agentGenie.executor.trim().toUpperCase();
+        executor = (0, executor_registry_1.normalizeExecutorKey)(agentGenie.executor) ?? executor;
     }
     const agentVariant = agentGenie.executorProfile || agentGenie.executor_variant || agentGenie.executorVariant || agentGenie.variant;
     if (typeof agentVariant === 'string' && agentVariant.trim().length) {
@@ -131,7 +131,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
         model = agentGenie.model.trim();
     }
     if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-        executor = parsed.options.executor.trim().toUpperCase();
+        executor = (0, executor_registry_1.normalizeExecutorKey)(parsed.options.executor) ?? executor;
     }
     if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
         model = parsed.options.model.trim();
@@ -142,7 +142,7 @@ function resolveExecutionSelection(config, parsed, agentGenie) {
     }
     if (!variant.length)
         variant = 'DEFAULT';
-    return { executorKey: executor, executorVariant: variant, model, modeName };
+    return { executorKey: (0, executor_registry_1.normalizeExecutorKeyOrDefault)(executor), executorVariant: variant, model, modeName };
 }
 function findVariantForModel(config, executorKey, model) {
     const executors = config.forge?.executors;

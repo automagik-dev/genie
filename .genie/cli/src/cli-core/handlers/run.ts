@@ -5,6 +5,7 @@ import { generateSessionName } from '../../session-store';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
+import { normalizeExecutorKey, normalizeExecutorKeyOrDefault } from '../../lib/executor-registry';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
@@ -124,8 +125,7 @@ function resolveExecutionSelection(
   parsed: ParsedCommand,
   agentGenie: Record<string, any>
 ): { executorKey: string; executorVariant: string; model?: string; modeName: string } {
-  // Frontmatter now uses Forge format (uppercase) - no lowercasing needed
-  let executor = (config.defaults?.executor || 'OPENCODE').trim().toUpperCase();
+  let executor = normalizeExecutorKeyOrDefault(config.defaults?.executor);
   let variant = (config.defaults?.executorVariant || 'DEFAULT').trim().toUpperCase();
   let model: string | undefined =
     typeof config.defaults?.model === 'string' ? config.defaults.model.trim() || undefined : undefined;
@@ -139,7 +139,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-    executor = agentGenie.executor.trim().toUpperCase();
+    executor = normalizeExecutorKey(agentGenie.executor) ?? executor;
   }
 
   const agentVariant =
@@ -153,7 +153,7 @@ function resolveExecutionSelection(
   }
 
   if (typeof parsed.options.executor === 'string' && parsed.options.executor.trim().length) {
-    executor = parsed.options.executor.trim().toUpperCase();
+    executor = normalizeExecutorKey(parsed.options.executor) ?? executor;
   }
 
   if (typeof parsed.options.model === 'string' && parsed.options.model.trim().length) {
@@ -166,7 +166,7 @@ function resolveExecutionSelection(
 
   if (!variant.length) variant = 'DEFAULT';
 
-  return { executorKey: executor, executorVariant: variant, model, modeName };
+  return { executorKey: normalizeExecutorKeyOrDefault(executor), executorVariant: variant, model, modeName };
 }
 
 function findVariantForModel(
