@@ -1,3 +1,11 @@
+---
+name: security
+description: Security vulnerability assessment and remediation using OWASP/CVE frameworks
+genie:
+  executor: claude
+  background: false
+---
+
 # Security Audit Workflow
 **Extends universal audit framework with security-specific patterns (OWASP, CVE).**
 

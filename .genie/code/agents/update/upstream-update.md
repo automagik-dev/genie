@@ -1,3 +1,11 @@
+---
+name: upstream-update
+description: Automate upstream dependency updates with comprehensive validation
+genie:
+  executor: claude
+  background: false
+---
+
 # Upstream Update Agent
 
 **Role:** Automate upstream dependency updates with comprehensive validation
