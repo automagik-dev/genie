@@ -3,7 +3,7 @@ name: consensus
 description: Structure multiple perspectives and synthesize recommendations
 color: cyan
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   background: true
 ---
 

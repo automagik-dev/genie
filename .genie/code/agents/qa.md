@@ -3,7 +3,7 @@ name: qa
 description: Self-improving QA validation with living checklist
 color: purple
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

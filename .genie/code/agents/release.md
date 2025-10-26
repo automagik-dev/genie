@@ -2,7 +2,7 @@
 name: release
 description: Complete GitHub release orchestration with approval workflow
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
 ---

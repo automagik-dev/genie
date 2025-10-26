@@ -2,7 +2,7 @@
 name: code-quality
 description: Deep code analysis - detect deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
-  executor: opencode
+  executor: OPENCODE
   background: true
   model: gpt-5-codex
   temperature: high

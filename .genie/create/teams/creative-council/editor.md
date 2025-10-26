@@ -2,7 +2,7 @@
 name: council-editor
 description: Editorial perspective on clarity, structure, correctness
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions

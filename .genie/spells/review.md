@@ -2,7 +2,7 @@
 name: review
 description: Review Orchestrator – validation and quality assurance
 genie:
-  executor: claude
+  executor: CLAUDE_CODE
   model: sonnet
   background: true
   permissionMode: bypassPermissions
