@@ -1,10 +1,16 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ForgeExecutor = void 0;
 exports.createForgeExecutor = createForgeExecutor;
 // @ts-ignore - forge.js is compiled JS without type declarations
 const forge_js_1 = require("../../../../forge.js");
 const child_process_1 = require("child_process");
+const crypto_1 = require("crypto");
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 class ForgeExecutor {
     constructor(config) {
         this.config = config;
@@ -12,7 +18,8 @@ class ForgeExecutor {
     }
     async syncProfiles(profiles, workspaceRoot) {
         try {
-            // If profiles provided, use them directly
+            const startTime = Date.now();
+            // If profiles provided, use them directly (bypass change detection)
             if (profiles) {
                 await this.forge.updateExecutorProfiles(profiles);
                 return;
@@ -20,9 +27,28 @@ class ForgeExecutor {
             // Otherwise, sync from agent registry (pass workspace root for correct scanning)
             const { getAgentRegistry } = await import('./agent-registry.js');
             const registry = await getAgentRegistry(workspaceRoot || process.cwd());
+            const agentCount = registry.count();
+            const workspace = workspaceRoot || process.cwd();
+            // Load sync cache
+            const cacheFile = path_1.default.join(workspace, '.genie/state/agent-sync-cache.json');
+            let cache = this.loadSyncCache(cacheFile);
+            // Compute hashes for all current agents
+            const currentHashes = {};
+            for (const agent of registry.getAllAgents()) {
+                const key = `${agent.collective}/${agent.name.toLowerCase()}`;
+                const hash = this.hashContent(agent.fullContent || '');
+                currentHashes[key] = hash;
+            }
+            // Check if anything changed
+            const hasChanges = this.detectChanges(cache.agentHashes, currentHashes);
+            if (!hasChanges) {
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+                console.log(`✅ Agent profiles up to date (${agentCount} agents, ${elapsed}s)`);
+                return;
+            }
             // Generate profiles for all agents × all executors (fetch executors from Forge dynamically)
             const agentProfiles = await registry.generateForgeProfiles(this.forge);
-            // Get current Forge profiles to merge with
+            // Get current Forge profiles to preserve DEFAULT variants
             const currentProfiles = await this.forge.getExecutorProfiles();
             let current = {};
             try {
@@ -37,40 +63,146 @@ class ForgeExecutor {
                 }
                 // Validate structure - must have executors object
                 if (!current.executors || typeof current.executors !== 'object') {
-                    console.warn('⚠️  Current executor profiles missing "executors" field, starting fresh');
                     current = { executors: {} };
                 }
             }
             catch (parseError) {
-                console.warn(`⚠️  Failed to parse current executor profiles: ${parseError.message}, starting fresh`);
                 current = { executors: {} };
             }
-            // Merge agent profiles with existing profiles
-            const merged = this.mergeProfiles(current, agentProfiles);
+            // Build clean profiles (preserves DEFAULT, replaces all agent variants)
+            const merged = this.buildCleanProfiles(current, agentProfiles);
+            // Check payload size before sending
+            const payloadSize = JSON.stringify(merged).length;
+            const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
+            const maxPayloadSize = 10 * 1024 * 1024; // 10MB
+            if (payloadSize > maxPayloadSize) {
+                console.warn(`⚠️  Agent profile payload too large (${payloadMB}MB), skipping sync`);
+                console.warn(`   Reduce agent count or increase Forge body limit`);
+                return;
+            }
             // Update Forge with merged profiles (pass object, not string)
             await this.forge.updateExecutorProfiles(merged);
-            // Count executors from merged profiles (dynamic, not hardcoded)
-            const executorCount = Object.keys(merged.executors || {}).length;
-            console.log(`✅ Synced ${registry.count()} agents to Forge across ${executorCount} executors`);
+            // Save updated cache
+            cache.agentHashes = currentHashes;
+            cache.lastSync = new Date().toISOString();
+            cache.executors = Object.keys(merged.executors || {});
+            this.saveSyncCache(cacheFile, cache);
+            // Calculate statistics
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            const agentsPerSec = (agentCount / parseFloat(elapsed)).toFixed(0);
+            const executorCount = cache.executors.length;
+            // Calculate change stats
+            const added = Object.keys(currentHashes).filter(k => !cache.agentHashes[k]).length;
+            const removed = Object.keys(cache.agentHashes).filter(k => !currentHashes[k]).length;
+            const updated = Object.keys(currentHashes).filter(k => cache.agentHashes[k] && cache.agentHashes[k] !== currentHashes[k]).length;
+            // One-line summary output
+            const changes = [];
+            if (added > 0)
+                changes.push(`${added} added`);
+            if (updated > 0)
+                changes.push(`${updated} updated`);
+            if (removed > 0)
+                changes.push(`${removed} deleted`);
+            const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
+            console.log(`✅ Synced ${agentCount} agents${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s, ${payloadMB}MB]`);
         }
         catch (error) {
-            console.warn(`⚠️  Failed to sync agent profiles to Forge: ${error.message}`);
+            // Provide helpful error messages for common failures
+            if (error.message?.includes('413') || error.message?.includes('Payload Too Large')) {
+                console.warn(`⚠️  Failed to sync agent profiles: Payload too large for Forge server`);
+                console.warn(`   Solution: Reduce number of agents or increase Forge body limit`);
+                console.warn(`   Agents will still work, but won't appear in Forge executor profiles`);
+            }
+            else {
+                console.warn(`⚠️  Failed to sync agent profiles to Forge: ${error.message}`);
+            }
         }
     }
     /**
-     * Merge agent profiles with existing Forge profiles
-     * Preserves non-agent variants (DEFAULT, APPROVALS, etc.)
+     * Load sync cache from file
      */
-    mergeProfiles(current, agents) {
-        const merged = { executors: {} };
-        // Start with current profiles
-        for (const [executor, variants] of Object.entries(current.executors || {})) {
-            merged.executors[executor] = { ...variants };
+    loadSyncCache(cacheFile) {
+        try {
+            if (fs_1.default.existsSync(cacheFile)) {
+                const content = fs_1.default.readFileSync(cacheFile, 'utf-8');
+                return JSON.parse(content);
+            }
         }
-        // Add/overwrite agent variants
-        for (const [executor, variants] of Object.entries(agents.executors || {})) {
-            merged.executors[executor] = merged.executors[executor] || {};
-            Object.assign(merged.executors[executor], variants);
+        catch (error) {
+            // Cache corrupt or missing, start fresh
+        }
+        return {
+            version: 1,
+            lastSync: '',
+            agentHashes: {},
+            executors: []
+        };
+    }
+    /**
+     * Save sync cache to file
+     */
+    saveSyncCache(cacheFile, cache) {
+        try {
+            const dir = path_1.default.dirname(cacheFile);
+            if (!fs_1.default.existsSync(dir)) {
+                fs_1.default.mkdirSync(dir, { recursive: true });
+            }
+            fs_1.default.writeFileSync(cacheFile, JSON.stringify(cache, null, 2), 'utf-8');
+        }
+        catch (error) {
+            // Non-fatal, cache will be rebuilt next time
+        }
+    }
+    /**
+     * Hash content for change detection
+     */
+    hashContent(content) {
+        return (0, crypto_1.createHash)('sha256').update(content).digest('hex');
+    }
+    /**
+     * Detect if any agent content changed
+     */
+    detectChanges(oldHashes, newHashes) {
+        const oldKeys = Object.keys(oldHashes);
+        const newKeys = Object.keys(newHashes);
+        // Check for additions or deletions
+        if (oldKeys.length !== newKeys.length) {
+            return true;
+        }
+        // Check for content changes
+        for (const key of newKeys) {
+            if (oldHashes[key] !== newHashes[key]) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /**
+     * Build clean profiles - preserves DEFAULT variants, replaces all agent variants
+     * This implements proper deletion (removed agents won't persist)
+     */
+    buildCleanProfiles(current, agents) {
+        const merged = { executors: {} };
+        // Get all executors from both current and new profiles
+        const allExecutors = new Set([
+            ...Object.keys(current.executors || {}),
+            ...Object.keys(agents.executors || {})
+        ]);
+        for (const executor of allExecutors) {
+            merged.executors[executor] = {};
+            // Preserve DEFAULT and non-agent variants from current profiles
+            const currentVariants = current.executors?.[executor] || {};
+            for (const [variantName, variantConfig] of Object.entries(currentVariants)) {
+                // Keep DEFAULT, APPROVALS, and other system variants (not CODE_* or CREATE_*)
+                if (variantName === 'DEFAULT' ||
+                    variantName === 'APPROVALS' ||
+                    (!variantName.startsWith('CODE_') && !variantName.startsWith('CREATE_'))) {
+                    merged.executors[executor][variantName] = variantConfig;
+                }
+            }
+            // Add all agent variants from new profiles (replaces old agent variants)
+            const agentVariants = agents.executors?.[executor] || {};
+            Object.assign(merged.executors[executor], agentVariants);
         }
         return merged;
     }

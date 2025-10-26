@@ -40,7 +40,7 @@ export async function runDashboardLive(
   _paths: Required<ConfigPaths>
 ): Promise<void> {
   const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-  const live = parsed.commandArgs.includes('--live');
+  const live = parsed.options.live;
 
   const tracker = new StatsTracker(process.cwd());
   const dashboardStartTime = Date.now(); // Track when dashboard started
