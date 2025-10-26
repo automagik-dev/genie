@@ -7,11 +7,15 @@
  * This is the ONLY way to count tokens in the Genie framework.
  *
  * Usage:
- *   node count-tokens.js <file-path>               # Count tokens in file
- *   echo "some text" | node count-tokens.js        # Count tokens in stdin
- *   node count-tokens.js --before=file --after=file  # Compare before/after
+ *   node count-tokens.js <file-path>               # Output: just token count number
+ *   node count-tokens.js <file-path> --json        # Output: JSON with metadata
+ *   echo "some text" | node count-tokens.js        # Output: just token count
+ *   node count-tokens.js --before=file --after=file  # Compare (always JSON)
  *
- * Output:
+ * Output (default):
+ *   Plain number: 1234
+ *
+ * Output (--json):
  *   JSON: { tokens: N, lines: N, bytes: N, encoding: "cl100k_base" }
  */
 
@@ -117,6 +121,8 @@ function compareFiles(beforePath, afterPath) {
  */
 function main() {
   const args = process.argv.slice(2);
+  const jsonMode = args.includes('--json');
+  const fileArgs = args.filter(a => !a.startsWith('--'));
 
   // Check for comparison mode (--before=file --after=file)
   const beforeArg = args.find(a => a.startsWith('--before='));
@@ -131,15 +137,21 @@ function main() {
   }
 
   // Single file mode
-  if (args.length > 0) {
-    const filePath = args[0];
+  if (fileArgs.length > 0) {
+    const filePath = fileArgs[0];
     if (!fs.existsSync(filePath)) {
-      console.error(JSON.stringify({ error: `File not found: ${filePath}` }));
+      console.error(jsonMode
+        ? JSON.stringify({ error: `File not found: ${filePath}` })
+        : `Error: File not found: ${filePath}`);
       process.exit(1);
     }
     const result = countFile(filePath);
-    console.log(JSON.stringify(result, null, 2));
-    process.exit(result.error ? 1 : 0);
+    if (result.error) {
+      console.error(jsonMode ? JSON.stringify(result) : `Error: ${result.error}`);
+      process.exit(1);
+    }
+    console.log(jsonMode ? JSON.stringify(result, null, 2) : result.tokens.toString());
+    process.exit(0);
   }
 
   // Stdin mode
@@ -150,13 +162,17 @@ function main() {
     process.stdin.on('end', () => {
       const { tokens, encoding, method } = countTokens(input);
       const { lines, bytes } = getStats(input);
-      console.log(JSON.stringify({
-        tokens,
-        lines,
-        bytes,
-        encoding,
-        method,
-      }, null, 2));
+      if (jsonMode) {
+        console.log(JSON.stringify({
+          tokens,
+          lines,
+          bytes,
+          encoding,
+          method,
+        }, null, 2));
+      } else {
+        console.log(tokens.toString());
+      }
     });
     return;
   }
@@ -164,14 +180,17 @@ function main() {
   // No input, show usage
   console.error(`
 Usage:
-  node count-tokens.js <file-path>                    # Count tokens in file
-  echo "text" | node count-tokens.js                   # Count tokens in stdin
-  node count-tokens.js --before=old.md --after=new.md # Compare files
+  node count-tokens.js <file-path>                    # Output: just token count (number)
+  node count-tokens.js <file-path> --json             # Output: JSON with metadata
+  echo "text" | node count-tokens.js                   # Output: just token count
+  node count-tokens.js --before=old.md --after=new.md # Compare files (always JSON)
 
-Output: JSON with token count, lines, bytes, encoding
+Output (default): Plain number (e.g., "1234")
+Output (--json):  JSON with token count, lines, bytes, encoding
 
 Examples:
-  node count-tokens.js README.md
+  node count-tokens.js README.md                      # 1234
+  node count-tokens.js README.md --json               # { "tokens": 1234, ... }
   node count-tokens.js --before=before.md --after=after.md
   cat myfile.md | node count-tokens.js
 `);
