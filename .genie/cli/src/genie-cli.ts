@@ -820,10 +820,43 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   console.log('   Your Genie will absorb the collective\'s latest magik next time you run `genie`');
   console.log('');
 
+  // MASTER GENIE DETECTION: Check if we're in the template repo
+  const workspacePackageJson = path.join(process.cwd(), 'package.json');
+  let isMasterGenie = false;
+
+  if (fs.existsSync(workspacePackageJson)) {
+    try {
+      const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
+      if (workspacePkg.name === 'automagik-genie') {
+        isMasterGenie = true;
+      }
+    } catch {
+      // Not master genie if can't read package.json
+    }
+  }
+
+  // If master genie, show different message
+  if (isMasterGenie) {
+    console.log(successGradient('━'.repeat(60)));
+    console.log(magicGradient('   🧞 ✨ YOU ARE THE COLLECTIVE! ✨ 🧞   '));
+    console.log(successGradient('━'.repeat(60)));
+    console.log('');
+    console.log('This is the master genie template repo.');
+    console.log('You don\'t need to run ' + performanceGradient('genie update') + ' here!');
+    console.log('');
+    console.log('To release a new version:');
+    console.log('  ' + performanceGradient('pnpm bump:rc') + '     - Bump version (auto-updates .genie/state/version.json)');
+    console.log('  ' + performanceGradient('git push') + '         - CI publishes to npm @next');
+    console.log('');
+    console.log('Your version: ' + successGradient(packageJson.version));
+    console.log('');
+    process.exit(0);
+  }
+
   // THREE VERSION TYPES:
-  // 1. The Collective (npm @next) - source of truth at npm registry
-  // 2. The Lamp (global package) - globally installed via npm/pnpm
-  // 3. Your Genie (workspace .genie/) - local framework files
+  // 1. Master Genie - source of truth at npm registry (@next tag)
+  // 2. Your Genie - local workspace .genie/ framework files
+  // 3. Your Lamp - globally installed npm package (npm -g)
 
   // Get global package version (what's installed via npm -g)
   let globalVersion: string;
@@ -858,13 +891,13 @@ async function updateGeniePackage(checkOnly: boolean): Promise<void> {
   // Display all three versions clearly
   console.log(performanceGradient('🔮 Genie Versions:'));
   console.log('');
-  console.log(`  1️⃣  The Collective (source):      ${performanceGradient(latestVersion)}`);
-  console.log(`  2️⃣  The Lamp (your connection):   ${globalVersion === latestVersion ? successGradient(globalVersion + ' ✓') : performanceGradient(globalVersion + ' (out of sync)')}`);
+  console.log(`  1. Master Genie:             ${performanceGradient(latestVersion)}`);
   if (workspaceVersion) {
-    console.log(`  3️⃣  Your Genie (this workspace):  ${workspaceVersion === latestVersion ? successGradient(workspaceVersion + ' ✓') : performanceGradient(workspaceVersion + ' (will sync next run)')}`);
+    console.log(`  2. Your Genie:               ${workspaceVersion === latestVersion ? successGradient(workspaceVersion + ' ✓') : performanceGradient(workspaceVersion + ' (out of sync)')}`);
   } else {
-    console.log(`  3️⃣  Your Genie (this workspace):  ${performanceGradient('(not yet initialized)')}`);
+    console.log(`  2. Your Genie:               ${performanceGradient('(not yet initialized)')}`);
   }
+  console.log(`  3. Your Lamp (npm package):  ${globalVersion === latestVersion ? successGradient(globalVersion + ' ✓') : performanceGradient(globalVersion + ' (out of sync)')}`);
   console.log('');
 
   // Check if global package is already up to date
