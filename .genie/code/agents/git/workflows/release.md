@@ -170,7 +170,7 @@ infrastructure improvements, and enhanced automation for release workflows.
 ### 📦 Installation
 
 \`\`\`bash
-npm install -g automagik-genie@2.4.0-rc.23
+npm install -g automagik-genie@next
 # or
 genie update
 \`\`\`
@@ -494,7 +494,7 @@ Type: RC release (@next tag)
   Changelog: https://github.com/namastexlabs/automagik-genie/compare/v2.4.0-rc.22...v2.4.0-rc.23
 
 📦 Install:
-  npm install -g automagik-genie@2.4.0-rc.23
+  npm install -g automagik-genie@next
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```

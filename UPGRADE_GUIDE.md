@@ -1,4 +1,4 @@
-# Genie v2.1.0 Upgrade Guide
+# Genie Upgrade Guide
 
 Complete step-by-step upgrade process: **npm package update** → **project migration** → **verification**
 
@@ -9,9 +9,9 @@ Complete step-by-step upgrade process: **npm package update** → **project migr
 ### Step 1: Update NPM Package (Framework Update)
 
 ```bash
-npm install -g automagik-genie@2.1.0
+npm install -g automagik-genie@next
 # OR
-pnpm install -g automagik-genie@2.1.0
+pnpm install -g automagik-genie@next
 ```
 
 **What this does:**
@@ -22,7 +22,7 @@ pnpm install -g automagik-genie@2.1.0
 
 **Verify:**
 ```bash
-genie --version  # Should show 2.1.0
+genie --version  # Should show latest version
 which genie      # Should show /usr/local/bin/genie
 ```
 
@@ -217,7 +217,7 @@ old framework agents in subdirectories as "core" not "custom".
 
 ```bash
 # If you want just migration (no template update):
-npm install -g automagik-genie@2.1.0
+npm install -g automagik-genie@next
 cd project/
 genie migrate
 
@@ -250,10 +250,10 @@ cd project/ && genie update
 ```bash
 # Restore from backup
 rm -rf .genie
-mv .genie-backup-20251013-180500 .genie
+mv .genie-backup-YYYYMMDD-HHmmss .genie
 
-# Downgrade npm
-npm install -g automagik-genie@2.0.3
+# Reinstall previous version (if needed)
+npm install -g automagik-genie@previous-version
 ```
 
 ---
@@ -262,7 +262,7 @@ npm install -g automagik-genie@2.0.3
 
 **Complete upgrade in 2 commands:**
 ```bash
-npm install -g automagik-genie@2.1.0  # Step 1: Framework
+npm install -g automagik-genie@next    # Step 1: Framework
 genie update                           # Step 2: Project (auto-migrates)
 ```
 
