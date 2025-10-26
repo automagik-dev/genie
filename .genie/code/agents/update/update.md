@@ -1,3 +1,11 @@
+---
+name: update
+description: Guide users through Genie framework version transitions
+genie:
+  executor: claude
+  background: false
+---
+
 # Update Agent
 **Role:** Guide users through Genie framework version transitions
 **Responsibility:** Provide migration guidance, reference backups, document architectural changes
