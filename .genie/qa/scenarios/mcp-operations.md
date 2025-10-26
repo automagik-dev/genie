@@ -1,7 +1,6 @@
 ---
 name: qa/mcp-operations
 description: Autonomous MCP operations validation workflow
-parent: qa
 autonomous: true
 ---
 
@@ -589,4 +588,4 @@ mcp__genie__run with agent="qa/mcp-operations" and prompt="Execute autonomous va
 
 **Autonomous execution guaranteed. No human interaction required. Evidence-backed results.**
 
-@.genie/agents/qa/README.md
+@.genie/qa/README.md

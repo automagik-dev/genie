@@ -1,7 +1,6 @@
 ---
 name: qa/cli-commands
 description: Autonomous CLI interface validation workflow
-parent: qa
 autonomous: true
 ---
 
@@ -543,4 +542,4 @@ mcp__genie__run with agent="qa/cli-commands" and prompt="Execute autonomous vali
 
 **Autonomous execution guaranteed. No human interaction required. Evidence-backed results.**
 
-@.genie/agents/qa/README.md
+@.genie/qa/README.md
