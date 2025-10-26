@@ -1,7 +1,6 @@
 ---
 name: qa/bug-102
 description: Regression test for Bug #102 - Session ID collision
-parent: qa
 ---
 
 # Bug #102 Regression Test • Session ID Collision

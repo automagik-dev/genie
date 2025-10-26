@@ -2,7 +2,7 @@
 
 **Purpose:** Specific, reproducible test scenarios complementing the comprehensive checklist
 **Relationship:** Deep-dive validation for specific features/bugs (complements broad checklist coverage)
-**Master Coordination:** `@.genie/agents/qa/README.md`
+**Master Coordination:** `@.genie/qa/README.md`
 **Checklist Reference:** `@.genie/agents/qa/checklist.md`
 
 ---
@@ -141,7 +141,6 @@ Each QA scenario is atomic, focused, and independently executable. This enables:
 ---
 name: qa/<scenario-name>
 description: <one-line purpose>
-parent: qa
 ---
 
 # QA Workflow • <Scenario Name>

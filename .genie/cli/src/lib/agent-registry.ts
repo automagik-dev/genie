@@ -59,6 +59,8 @@ export class AgentRegistry {
 
   /**
    * Scan a directory for agent markdown files (recursive)
+   * Pattern: If <folder>/<folder>.md exists at root level, skip scanning <folder>/*.md subfiles
+   * This allows agents to have helper workflows in subfolders without registering them
    */
   private async scanDirectory(dir: string, collective: 'code' | 'create'): Promise<void> {
     if (!fs.existsSync(dir)) {
@@ -72,6 +74,14 @@ export class AgentRegistry {
 
       // Recurse into subdirectories
       if (entry.isDirectory()) {
+        // Check if root-level agent exists: <parent>/<folder>.md
+        const rootAgentPath = path.join(dir, `${entry.name}.md`);
+
+        // If root agent exists, skip scanning subfolder (contains helper workflows only)
+        if (fs.existsSync(rootAgentPath)) {
+          continue;
+        }
+
         await this.scanDirectory(fullPath, collective);
         continue;
       }

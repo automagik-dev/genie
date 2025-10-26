@@ -1,7 +1,6 @@
 ---
 name: qa/bug-66
 description: Regression test for Bug #66 - Session disappears after resume
-parent: qa
 ---
 
 # Bug #66 Regression Test • Session Persistence After Resume
