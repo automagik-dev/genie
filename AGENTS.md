@@ -613,6 +613,46 @@ interface GenieVersion {
 
 **First Insight:** 2025-10-25, Routing architecture analysis and unification
 
+### 10. File Size Discipline - Keep It Under 1000 Lines 🔴 CRITICAL
+**Rule:** Source files should stay under 1000 lines where possible. Split responsibilities when crossing this threshold.
+
+**Why 1000 Lines:**
+- Cognitive load: Easier to understand, review, and maintain
+- Single responsibility: Files over 1000 lines often violate SRP
+- Faster navigation: Jump to definition, search, refactor
+- Better git: Smaller diffs, easier conflict resolution, cleaner history
+- Token efficiency: Smaller files = more targeted context loading
+
+**Enforcement Strategy:**
+- **Soft limit (800 lines):** Start planning refactor
+- **Hard limit (1000 lines):** Refactor required before next feature
+- **Emergency limit (1500 lines):** Block new work until split
+
+**How to Split:**
+1. **Extract commands** - Move command handlers to separate files (e.g., `update.ts`, `init.ts`)
+2. **Extract utilities** - Move helper functions to lib/ modules
+3. **Extract types** - Move interfaces/types to types.ts
+4. **Extract constants** - Move config/constants to separate file
+5. **Domain separation** - Group related functionality into modules
+
+**Example (This PR):**
+- **Before:** `genie-cli.ts` = 1508 lines (bloated, hard to navigate)
+- **After:** Move update logic to `update.ts` → `genie-cli.ts` = 1439 lines (better, not done)
+- **Next:** Extract more commands → Target <1000 lines
+
+**Detection:**
+Garbage collector automatically detects files over limits and creates issues with refactor suggestions.
+
+**Exceptions (Document Why):**
+- Generated code (dist/ builds)
+- Data files (changelogs, large configs)
+- Must have clear justification in file header
+
+**Reinforcer:**
+"That file is too big - I'm getting confused. Can we split it?"
+
+**First Violation:** 2025-10-26, `genie-cli.ts` reached 1508 lines (reduced to 1439, still needs work)
+
 ## Development Workflow
 
 **Branch Strategy:**
