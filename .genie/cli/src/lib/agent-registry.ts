@@ -24,9 +24,12 @@ export interface AgentMetadata {
 
     // Executor-specific permission flags (from Forge API 2025-10-26)
     dangerously_skip_permissions?: boolean;  // CLAUDE_CODE only
-    sandbox?: string;                        // CODEX only ('danger-full-access' | 'safe')
+    sandbox?: string;                        // CODEX only ('danger-full-access' | 'read-only' | 'safe')
     dangerously_allow_all?: boolean;         // AMP only
     // OPENCODE has no permission flags
+
+    // Executor-specific additional fields
+    model_reasoning_effort?: string;         // CODEX only ('low' | 'medium' | 'high')
   };
   collective: 'code' | 'create';
   filePath: string;
@@ -313,6 +316,11 @@ export class AgentRegistry {
         }
         if (executor === 'AMP' && agent.genie?.dangerously_allow_all !== undefined) {
           variantConfig.dangerously_allow_all = agent.genie.dangerously_allow_all;
+        }
+
+        // Add executor-specific additional fields
+        if (executor === 'CODEX' && agent.genie?.model_reasoning_effort !== undefined) {
+          variantConfig.model_reasoning_effort = agent.genie.model_reasoning_effort;
         }
 
         // Add model if specified in frontmatter

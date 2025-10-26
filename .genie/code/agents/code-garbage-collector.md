@@ -2,9 +2,10 @@
 name: code-garbage-collector
 description: Deep code quality analysis - find deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
-  executor: OPENCODE
+  executor: CODEX
   model: gpt-5-codex
-  temperature: high
+  sandbox: read-only
+  model_reasoning_effort: high
   background: true
 ---
 
@@ -25,7 +26,7 @@ Deep semantic analysis of source code to detect quality issues that simple linte
 - **Comment quality** (outdated, wrong, redundant comments)
 - **Bug detection** (edge cases, race conditions, null handling)
 - **Deprecation tracking** (old patterns, superseded approaches)
-- **AI-powered analysis** (uses gpt-5-codex for deep understanding)
+- **AI-powered analysis** (deep semantic understanding)
 
 ## Operating Patterns
 
@@ -46,7 +47,7 @@ genie run code/code-garbage-collector "Deep analysis of session-service.ts"
 ```
 1. Receive target path/files from user or schedule
 2. Load codebase context (file tree, imports, dependencies)
-3. Run AI analysis with gpt-5-codex (high temperature for creative bug-finding)
+3. Run AI analysis for deep code understanding
 4. For each file:
    - Detect dead code
    - Find deprecated patterns
@@ -273,14 +274,10 @@ Output format: JSON array of findings
 
 ## Configuration
 
-**Model Settings:**
-```yaml
-executor: OPENCODE
-model: gpt-5-codex  # Best for code understanding
-temperature: high   # Creative bug-finding
-max_tokens: 8000    # Deep analysis needs context
-prompt_optimization: true  # Review prompt before running
-```
+**Analysis Settings:**
+- Deep semantic analysis enabled
+- Read-only filesystem access
+- High reasoning effort for thorough detection
 
 **File Types Analyzed:**
 - JavaScript/TypeScript: `.js`, `.ts`, `.jsx`, `.tsx`

@@ -291,8 +291,12 @@ function validatePermissionFlags(genie, executor) {
 
   const VALID_PERMISSION_FLAGS = {
     dangerously_skip_permissions: { executor: 'CLAUDE_CODE', type: 'boolean' },
-    sandbox: { executor: 'CODEX', type: 'string', values: ['danger-full-access', 'safe'] },
+    sandbox: { executor: 'CODEX', type: 'string', values: ['danger-full-access', 'read-only', 'safe'] },
     dangerously_allow_all: { executor: 'AMP', type: 'boolean' },
+  };
+
+  const VALID_ADDITIONAL_FIELDS = {
+    model_reasoning_effort: { executors: ['CODEX'], type: 'string', values: ['low', 'medium', 'high'] },
   };
 
   // Check for permission flags in frontmatter
@@ -329,6 +333,38 @@ function validatePermissionFlags(genie, executor) {
             type: 'invalid_permission_flag_value',
             field: `genie.${flag}`,
             message: `Invalid value for ${flag}: '${genie[flag]}'`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Validate additional executor-specific fields
+  for (const [field, config] of Object.entries(VALID_ADDITIONAL_FIELDS)) {
+    if (genie[field] !== undefined) {
+      // Check if field is valid for this executor
+      if (executor && !config.executors.includes(executor)) {
+        issues.push({
+          type: 'wrong_executor_field',
+          field: `genie.${field}`,
+          message: `Field '${field}' is only valid for ${config.executors.join(', ')}, but executor is ${executor}`,
+          suggestion: `Remove this field or use one of: ${config.executors.join(', ')}`,
+        });
+      } else {
+        // Validate value type and values
+        if (config.type === 'string' && typeof genie[field] !== 'string') {
+          issues.push({
+            type: 'invalid_field_type',
+            field: `genie.${field}`,
+            message: `${field} must be a string`,
+            suggestion: `Valid values: ${config.values.join(', ')}`,
+          });
+        } else if (config.values && !config.values.includes(genie[field])) {
+          issues.push({
+            type: 'invalid_field_value',
+            field: `genie.${field}`,
+            message: `Invalid value for ${field}: '${genie[field]}'`,
             suggestion: `Valid values: ${config.values.join(', ')}`,
           });
         }
@@ -413,7 +449,10 @@ async function scanFile(filePath) {
             'executor_case',
             'wrong_executor_permission_flag',
             'invalid_permission_flag_type',
-            'invalid_permission_flag_value'
+            'invalid_permission_flag_value',
+            'wrong_executor_field',
+            'invalid_field_type',
+            'invalid_field_value'
           ].includes(issue.type) ? 'warning' : 'error',
         });
       });
