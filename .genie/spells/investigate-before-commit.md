@@ -100,6 +100,10 @@ When evidence contradicts assumptions:
 ❌ **Commit before investigation:** "Let's build X" → Investigate feasibility first
 ❌ **Ignore contradicting evidence:** "But I thought..." → Update beliefs
 ❌ **No decision checkpoint:** Jump from idea → implementation without Go/No-Go
+❌ **Claim process knowledge without investigation:** Listing implementation steps when automation exists
+  - Example: "Update package.json" (automated by GitHub Actions)
+  - Correct: "Let me investigate the release workflow first"
+  - Pattern: Read workflow files, check automation, THEN provide orchestration steps
 
 ## Evidence
 
