@@ -255,6 +255,10 @@ class AgentRegistry {
                 if (executor === 'AMP' && agent.genie?.dangerously_allow_all !== undefined) {
                     variantConfig.dangerously_allow_all = agent.genie.dangerously_allow_all;
                 }
+                // Add executor-specific additional fields
+                if (executor === 'CODEX' && agent.genie?.model_reasoning_effort !== undefined) {
+                    variantConfig.model_reasoning_effort = agent.genie.model_reasoning_effort;
+                }
                 // Add model if specified in frontmatter
                 if (agent.genie?.model !== undefined) {
                     variantConfig.model = agent.genie.model;
