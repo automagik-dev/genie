@@ -5,7 +5,7 @@ import YAML from 'yaml';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { emitView } from '../lib/view-helpers';
 import { buildErrorView, buildInfoView } from '../views/common';
-import { EXECUTORS } from '../lib/executor-registry';
+import { EXECUTORS, DEFAULT_EXECUTOR_KEY, USER_EXECUTOR_ORDER, normalizeExecutorKeyOrDefault } from '../lib/executor-registry';
 import { discoverCollectives } from '../lib/collective-discovery.js';
 import {
   getPackageRoot,
@@ -100,12 +100,16 @@ export async function runInit(
         );
       }
 
-      const executors = Object.keys(EXECUTORS)
-        .filter(key => key !== 'amp') // Exclude amp from user selection
-        .map(key => ({
-          label: EXECUTORS[key].label,
-          value: key
-        }));
+      const primaryExecutors = USER_EXECUTOR_ORDER.filter(key => key in EXECUTORS);
+      const additionalExecutors = Object.keys(EXECUTORS).filter(
+        key => key !== 'AMP' && !primaryExecutors.includes(key)
+      );
+      const orderedExecutors = [...primaryExecutors, ...additionalExecutors];
+
+      const executors = orderedExecutors.map(key => ({
+        label: EXECUTORS[key].label,
+        value: key
+      }));
 
       const hasGit = await pathExists(path.join(cwd, '.git'));
 
@@ -125,7 +129,7 @@ export async function runInit(
       // Automation mode: use flags or defaults
       template = (flags.template || 'code') as TemplateType;
       templates = [template];
-      executor = Object.keys(EXECUTORS)[0] || 'codex';
+      executor = DEFAULT_EXECUTOR_KEY;
       model = undefined;
     }
 
@@ -157,7 +161,7 @@ export async function runInit(
 
         // Skip file operations; go straight to executor setup
         // In partial init, use default executor (installation already attempted, use non-interactive default)
-        const resumeExecutor = Object.keys(EXECUTORS)[0] || 'codex';
+        const resumeExecutor = DEFAULT_EXECUTOR_KEY;
         const resumeModel = undefined;
         await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
         await configureBothExecutors(cwd);
@@ -253,7 +257,7 @@ export async function runInit(
     // Wizard or automation mode should have set executor by now
     // If still missing (shouldn't happen), use default
     if (!executor) {
-      executor = Object.keys(EXECUTORS)[0] || 'codex';
+      executor = DEFAULT_EXECUTOR_KEY;
       console.log(`⚠️  Warning: executor not set, using default: ${executor}`);
     }
 
