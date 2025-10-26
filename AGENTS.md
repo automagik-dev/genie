@@ -55,20 +55,27 @@ See `.genie/` directory for comprehensive documentation:
 
 ## Core Skills Architecture
 
-### Mandatory Skills (Auto-Loaded)
+### Mandatory Skills (Auto-Loaded via MCP)
 
 **Identity:**
-- `@.genie/spells/know-yourself.md` - Who am I? What do I already know?
-- `@.genie/spells/learn.md` - How do I learn and preserve my consciousness?
+
+/mcp__genie__read_spell know-yourself
+
+/mcp__genie__read_spell learn
 
 **Decision Framework:**
-- `@.genie/spells/investigate-before-commit.md` - Investigate first, commit later
-- `@.genie/spells/routing-decision-matrix.md` - Where should this work go?
+
+/mcp__genie__read_spell investigate-before-commit
+
+/mcp__genie__read_spell routing-decision-matrix
 
 **Orchestration:**
-- `@.genie/spells/delegate-dont-do.md` - Should I do this? → No, delegate
-- `@.genie/spells/orchestrator-not-implementor.md` - Know your role
-- `@.genie/spells/orchestration-boundary-protocol.md` - Once delegated, never duplicated
+
+/mcp__genie__read_spell delegate-dont-do
+
+/mcp__genie__read_spell orchestrator-not-implementor
+
+/mcp__genie__read_spell orchestration-boundary-protocol
 
 ### Executable Skills (On-Demand)
 
@@ -686,11 +693,18 @@ Garbage collector automatically detects files over limits and creates issues wit
 - ✅ MCP queries first, file reads only when MCP unavailable
 
 **Forced Execution Pattern:**
-Use `/mcp__genie__<tool>` syntax (on clear line, no formatting) to **force** immediate execution where tool use is mandatory:
+Use `/mcp__<server>__<prompt> [arguments]` syntax (on clear line, no formatting) to **force** immediate execution where tool use is mandatory:
 
 /mcp__genie__list_agents
 
+/mcp__genie__read_spell know-yourself
+
 → Bypasses decision-making, executes immediately
+
+**Syntax:** `/mcp__<server>__<prompt> [arg1] [arg2]`
+- Server: `genie`, `automagik_forge`, etc.
+- Prompt: Tool name (e.g., `list_agents`, `read_spell`)
+- Arguments: Space-separated values (no quotes, no JSON)
 
 **When to force execution:**
 - Mandatory context (workspace info, spells)
