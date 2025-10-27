@@ -13,6 +13,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { GenieOAuthProvider, OAuth2Config } from './oauth-provider.js';
 import { handleTokenEndpoint, handleProtectedResourceMetadata } from './oauth2-endpoints.js';
+import {
+  handleOpenIDConfiguration,
+  handleAuthorizationServerMetadata,
+  handleClientRegistration,
+  handleAuthorizationRequest,
+  handleAuthorizationConsent,
+} from './oidc-endpoints.js';
 import { randomUUID } from 'crypto';
 
 export interface HttpServerOptions {
@@ -53,14 +60,39 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
     });
   });
 
-  // OAuth2 token endpoint (client credentials flow)
+  // OpenID Connect Discovery (for ChatGPT)
+  app.get('/.well-known/openid-configuration', (req: Request, res: Response) => {
+    handleOpenIDConfiguration(req, res, serverUrl);
+  });
+
+  // OAuth 2.0 Authorization Server Metadata (for MCP spec)
+  app.get('/.well-known/oauth-authorization-server', (req: Request, res: Response) => {
+    handleAuthorizationServerMetadata(req, res, serverUrl);
+  });
+
+  // OAuth2 protected resource metadata endpoint (RFC 9728) - kept for backward compatibility
+  app.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
+    handleProtectedResourceMetadata(req, res, serverUrl);
+  });
+
+  // OAuth2 token endpoint (client_credentials + authorization_code flows)
   app.post('/oauth/token', (req: Request, res: Response) => {
     handleTokenEndpoint(req, res, oauth2Config, serverUrl);
   });
 
-  // OAuth2 protected resource metadata endpoint (RFC 9728)
-  app.get('/.well-known/oauth-protected-resource', (req: Request, res: Response) => {
-    handleProtectedResourceMetadata(req, res, serverUrl);
+  // OAuth2 dynamic client registration (RFC 7591)
+  app.post('/oauth2/register', (req: Request, res: Response) => {
+    handleClientRegistration(req, res);
+  });
+
+  // OAuth2 authorization endpoint (GET - shows consent page)
+  app.get('/oauth2/authorize', (req: Request, res: Response) => {
+    handleAuthorizationRequest(req, res);
+  });
+
+  // OAuth2 authorization consent endpoint (POST - processes user consent)
+  app.post('/oauth2/authorize/consent', (req: Request, res: Response) => {
+    handleAuthorizationConsent(req, res);
   });
 
   // ========================================
@@ -126,12 +158,19 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
       console.error(`   HTTP Stream: ${serverUrl}/mcp`);
       console.error(`   SSE Stream:  ${serverUrl}/mcp (GET)`);
       console.error(`   Health:      ${serverUrl}/health`);
-      console.error(`   OAuth Token: ${serverUrl}/oauth/token`);
-      console.error(`   OAuth Meta:  ${serverUrl}/.well-known/oauth-protected-resource`);
-      console.error(`\n🔐 Authentication: OAuth2.1 Client Credentials`);
-      console.error(`   ├─ Client ID:     ${oauth2Config.clientId}`);
-      console.error(`   ├─ Token Expiry:  ${oauth2Config.tokenExpiry}s`);
-      console.error(`   └─ Issuer:        ${oauth2Config.issuer}`);
+      console.error(`\n🔐 OAuth 2.0 Endpoints:`);
+      console.error(`   ├─ OIDC Discovery:      ${serverUrl}/.well-known/openid-configuration`);
+      console.error(`   ├─ Authorization:       ${serverUrl}/oauth2/authorize`);
+      console.error(`   ├─ Token Exchange:      ${serverUrl}/oauth/token`);
+      console.error(`   ├─ Client Registration: ${serverUrl}/oauth2/register`);
+      console.error(`   └─ Resource Metadata:   ${serverUrl}/.well-known/oauth-protected-resource`);
+      console.error(`\n🔑 Supported Flows:`);
+      console.error(`   ├─ Authorization Code + PKCE (for ChatGPT)`);
+      console.error(`   └─ Client Credentials (for machine-to-machine)`);
+      console.error(`\n⚙️  OAuth Config:`);
+      console.error(`   ├─ Issuer:       ${oauth2Config.issuer}`);
+      console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
+      console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
       console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
 
       if (onReady) {
