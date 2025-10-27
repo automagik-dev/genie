@@ -301,16 +301,26 @@ async function syncAgentProfilesToForge(): Promise<void> {
   }
 }
 
-// Load OAuth2 configuration (if available)
+// Load OAuth2 configuration from ~/.genie/config.yaml
 function loadOAuth2Config(): OAuth2Config | null {
   try {
-    const configModPath = path.join(WORKSPACE_ROOT, '.genie', 'cli', 'dist', 'lib', 'config-manager.js');
-    if (fs.existsSync(configModPath)) {
-      const { loadOAuth2Config } = require(configModPath);
-      return loadOAuth2Config();
+    const os = require('os');
+    const YAML = require('yaml');
+    const configPath = path.join(os.homedir(), '.genie', 'config.yaml');
+
+    if (!fs.existsSync(configPath)) {
+      return null;
+    }
+
+    const content = fs.readFileSync(configPath, 'utf8');
+    const config = YAML.parse(content);
+
+    // Validate and return OAuth2 config
+    if (config?.mcp?.auth?.oauth2?.clientId) {
+      return config.mcp.auth.oauth2;
     }
   } catch (error) {
-    // Config not available (expected for stdio transport)
+    // Config not available or invalid
   }
   return null;
 }
