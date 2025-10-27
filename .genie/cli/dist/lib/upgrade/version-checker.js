@@ -5,17 +5,17 @@ const child_process_1 = require("child_process");
 /**
  * Check if updates are available by comparing installed version with npm registry
  */
-async function checkForUpdates(installedVersion, installedCommit) {
+async function checkForUpdates(installedVersion, installedCommit, channel = 'latest') {
     try {
-        // Get latest version from npm registry
-        const latestVersion = (0, child_process_1.execSync)('npm view automagik-genie@latest version', {
+        // Get latest version from npm registry (respecting channel)
+        const latestVersion = (0, child_process_1.execSync)(`npm view automagik-genie@${channel} version`, {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
         }).trim();
         // Get git commit from npm package (if available)
         let latestCommit;
         try {
-            latestCommit = (0, child_process_1.execSync)('npm view automagik-genie@latest gitCommit', {
+            latestCommit = (0, child_process_1.execSync)(`npm view automagik-genie@${channel} gitCommit`, {
                 encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'pipe']
             }).trim();
