@@ -42,16 +42,72 @@ async function startNgrokTunnel(port, authToken) {
         if (authToken) {
             forwardOptions.authtoken = authToken;
         }
-        const listener = await ngrok.forward(forwardOptions);
-        // Store listener globally for proper cleanup
-        activeListener = listener;
-        const url = listener.url();
-        return url;
+        try {
+            const listener = await ngrok.forward(forwardOptions);
+            // Store listener globally for proper cleanup
+            activeListener = listener;
+            const url = listener.url();
+            return url;
+        }
+        catch (innerError) {
+            const message = innerError instanceof Error ? innerError.message : String(innerError);
+            // Detect ERR_NGROK_334 (endpoint already online from previous session)
+            if (message.includes('ERR_NGROK_334') || message.includes('already online')) {
+                console.error('🔧 Detected stuck tunnel session, forcing cleanup...');
+                // Force aggressive cleanup
+                await forceCleanupNgrokSession(ngrok, authToken);
+                // Retry once after cleanup
+                console.error('🔄 Retrying tunnel creation...');
+                const listener = await ngrok.forward(forwardOptions);
+                activeListener = listener;
+                const url = listener.url();
+                console.error('✅ Tunnel recovered successfully!');
+                return url;
+            }
+            // Re-throw if not the "already online" error
+            throw innerError;
+        }
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`⚠️  Failed to start ngrok tunnel: ${message}`);
         return null;
+    }
+}
+/**
+ * Force aggressive cleanup of stuck ngrok sessions
+ * Used when ERR_NGROK_334 is detected (endpoint already online)
+ *
+ * @param ngrok - ngrok SDK instance
+ * @param authToken - ngrok auth token
+ */
+async function forceCleanupNgrokSession(ngrok, authToken) {
+    try {
+        // Multiple disconnect attempts to ensure cleanup
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                await ngrok.disconnect();
+                // Small delay between attempts
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            catch (err) {
+                // Ignore errors, keep trying
+            }
+        }
+        // If we have an auth token, try killing all sessions explicitly
+        if (authToken) {
+            try {
+                await ngrok.kill();
+            }
+            catch (err) {
+                // Ignore errors
+            }
+        }
+        // Final disconnect
+        await ngrok.disconnect();
+    }
+    catch (error) {
+        // Ignore all errors - we're forcing cleanup
     }
 }
 /**
