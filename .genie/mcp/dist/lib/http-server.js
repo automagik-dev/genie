@@ -136,17 +136,45 @@ async function startHttpServer(options) {
         verifier: oauthProvider,
         requiredScopes: ['mcp:read', 'mcp:write'],
         resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
-    }), (req, res) => {
-        // SDK's middleware adds auth info to req.auth
-        transport.handleRequest(req, res);
+    }), async (req, res) => {
+        try {
+            // SDK's middleware adds auth info to req.auth
+            await transport.handleRequest(req, res);
+            if (debugMode) {
+                console.error('✅ POST /mcp handled successfully');
+            }
+        }
+        catch (error) {
+            console.error('❌ Error handling POST /mcp:', error);
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: 'Internal Server Error',
+                    message: error.message
+                });
+            }
+        }
     });
     // SSE endpoint for streaming responses (also protected)
     app.get('/mcp', (0, bearerAuth_js_1.requireBearerAuth)({
         verifier: oauthProvider,
         requiredScopes: ['mcp:read', 'mcp:write'],
         resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
-    }), (req, res) => {
-        transport.handleRequest(req, res);
+    }), async (req, res) => {
+        try {
+            await transport.handleRequest(req, res);
+            if (debugMode) {
+                console.error('✅ GET /mcp (SSE) connection established');
+            }
+        }
+        catch (error) {
+            console.error('❌ Error handling GET /mcp:', error);
+            if (!res.headersSent) {
+                res.status(500).json({
+                    error: 'Internal Server Error',
+                    message: error.message
+                });
+            }
+        }
     });
     // ========================================
     // Error handling
