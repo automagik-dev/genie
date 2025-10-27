@@ -1325,9 +1325,11 @@ async function startGenieServer(): Promise<void> {
           // Ask user if they want ngrok tunnel for ChatGPT
           console.log(magicGradient('🤖 ChatGPT Integration'));
           console.log('');
-          console.log('Connect Genie to ChatGPT via a public URL (requires zero setup!).');
+          console.log('💡 What this does:');
+          console.log('   Creates a secure tunnel between ChatGPT and your local Genie');
+          console.log('   ChatGPT → ngrok tunnel → Your Machine → Genie MCP');
           console.log('');
-          const tunnelResponse = await createQuestion(performanceGradient('? Enable ChatGPT connector? [Y/n]: '));
+          const tunnelResponse = await createQuestion(performanceGradient('? Connect ChatGPT to Genie? [Y/n]: '));
 
           // [Y/n] means Y is default, so empty string = yes
           if (tunnelResponse.toLowerCase() !== 'n') {
@@ -1343,51 +1345,157 @@ async function startGenieServer(): Promise<void> {
 
             const oauth2Conf = genieConfig.mcp.auth.oauth2;
 
-            console.log('');
-            console.log('🌐 Starting public tunnel...');
-
-            // Try starting tunnel WITHOUT token first (works for most users)
+            // Check if user already has a saved token
             let ngrokToken: string | undefined = undefined;
             if (genieConfig.mcp.tunnel?.token) {
               ngrokToken = genieConfig.mcp.tunnel.token;
+              console.log('');
+              console.log('✓ Using saved ngrok token');
+            } else {
+              // No saved token - ask if they have an account
+              console.log('');
+              console.log(performanceGradient('━'.repeat(60)));
+              console.log(performanceGradient('📝 ngrok Setup (Free Account Required)'));
+              console.log(performanceGradient('━'.repeat(60)));
+              console.log('');
+              const hasAccountResponse = await createQuestion(performanceGradient('? Do you have an ngrok account? [y/N]: '));
+
+              if (hasAccountResponse.toLowerCase() === 'y' || hasAccountResponse.toLowerCase() === 'yes') {
+                // User has account - ask for token
+                console.log('');
+                console.log('Great! Let\'s get your authtoken:');
+                console.log('');
+                console.log('📍 Step 1: Open ngrok dashboard');
+                console.log(`   ${successGradient('https://dashboard.ngrok.com/get-started/your-authtoken')}`);
+                console.log('');
+                console.log('📍 Step 2: Find the box that says "Your Authtoken"');
+                console.log('   (There\'s a password field with dots ••••• and a COPY button)');
+                console.log('');
+                console.log('📍 Step 3: Click the COPY button');
+                console.log('');
+                console.log('📍 Step 4: Paste it below');
+                console.log('');
+
+                const token = await createQuestion(performanceGradient('? Paste your ngrok authtoken here: '));
+
+                if (token && token.trim().length > 0) {
+                  ngrokToken = token.trim();
+
+                  // Save token to config
+                  try {
+                    genieConfig.mcp.tunnel = {
+                      enabled: true,
+                      provider: 'ngrok',
+                      token: ngrokToken
+                    };
+                    saveGenieConfig(genieConfig);
+                    console.log('');
+                    console.log(successGradient('✓ Token saved! You won\'t need to enter it again.'));
+                  } catch (err: any) {
+                    console.log('');
+                    console.log(`⚠️  Could not save token: ${err.message}`);
+                  }
+                } else {
+                  console.log('');
+                  console.log('⚠️  No token provided. Skipping tunnel setup.');
+                }
+              } else {
+                // User doesn't have account - guide to signup
+                console.log('');
+                console.log('No problem! Let\'s create one (takes 30 seconds):');
+                console.log('');
+                console.log('📍 Step 1: Sign up for free');
+                console.log(`   ${successGradient('https://dashboard.ngrok.com/signup')}`);
+                console.log('');
+                console.log('📍 Step 2: After signup, you\'ll see your authtoken');
+                console.log('   (A password field with ••••• and a COPY button)');
+                console.log('');
+                console.log('📍 Step 3: Click COPY');
+                console.log('');
+
+                const openBrowserResponse = await createQuestion(performanceGradient('? Open signup page in browser? [Y/n]: '));
+
+                if (openBrowserResponse.toLowerCase() !== 'n') {
+                  // Open browser
+                  const { execSync: execSyncBrowser } = await import('child_process');
+                  try {
+                    const platform = process.platform;
+                    const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+                    execSyncBrowser(`${openCommand} "https://dashboard.ngrok.com/signup"`, { stdio: 'ignore' });
+                    console.log('');
+                    console.log('✓ Browser opened! Come back here after you copy your token.');
+                  } catch {
+                    console.log('');
+                    console.log('⚠️  Could not open browser automatically.');
+                    console.log(`   Please visit: https://dashboard.ngrok.com/signup`);
+                  }
+                }
+
+                console.log('');
+                const token = await createQuestion(performanceGradient('? Paste your ngrok authtoken here (or press Enter to skip): '));
+
+                if (token && token.trim().length > 0) {
+                  ngrokToken = token.trim();
+
+                  // Save token to config
+                  try {
+                    genieConfig.mcp.tunnel = {
+                      enabled: true,
+                      provider: 'ngrok',
+                      token: ngrokToken
+                    };
+                    saveGenieConfig(genieConfig);
+                    console.log('');
+                    console.log(successGradient('✓ Token saved! You won\'t need to enter it again.'));
+                  } catch (err: any) {
+                    console.log('');
+                    console.log(`⚠️  Could not save token: ${err.message}`);
+                  }
+                } else {
+                  console.log('');
+                  console.log('⚠️  No token provided. Skipping tunnel setup.');
+                }
+              }
             }
 
-            const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
+            // Start tunnel if we have a token
+            if (ngrokToken) {
+              console.log('');
+              console.log('🌐 Starting secure tunnel...');
 
-            if (tunnelUrl) {
-              console.log('');
-              console.log(successGradient('━'.repeat(60)));
-              console.log(successGradient('✅ ChatGPT Integration Ready!'));
-              console.log(successGradient('━'.repeat(60)));
-              console.log('');
-              console.log(magicGradient('📋 Connection Details for ChatGPT:'));
-              console.log('');
-              console.log(`   ${performanceGradient('SSE Endpoint:')}`);
-              console.log(`   ${tunnelUrl}/mcp`);
-              console.log('');
-              console.log(`   ${performanceGradient('OAuth Client ID:')}`);
-              console.log(`   ${oauth2Conf.clientId}`);
-              console.log('');
-              console.log(`   ${performanceGradient('OAuth Client Secret:')}`);
-              console.log(`   ${oauth2Conf.clientSecret}`);
-              console.log('');
-              console.log(magicGradient('💡 How to connect ChatGPT:'));
-              console.log('   1. Go to ChatGPT → Settings → Connectors → Create');
-              console.log('   2. Fill in: Name, Description, MCP Server URL (SSE endpoint above)');
-              console.log('   3. Authentication: OAuth → Add Client ID and Client Secret above');
-              console.log('   4. Accept notice checkbox and create');
-              console.log('');
-              console.log(successGradient('━'.repeat(60)));
-              console.log('');
-            } else {
-              console.log('');
-              console.log('❌ Failed to start public tunnel');
-              console.log('');
-              console.log('💡 Want better reliability? Get a free ngrok token:');
-              console.log(`   ${getNgrokSignupUrl()}`);
-              console.log('');
-              console.log('Then run: genie (and enter token when prompted)');
-              console.log('');
+              const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
+
+              if (tunnelUrl) {
+                console.log('');
+                console.log(successGradient('━'.repeat(60)));
+                console.log(successGradient('✅ ChatGPT Integration Ready!'));
+                console.log(successGradient('━'.repeat(60)));
+                console.log('');
+                console.log(magicGradient('📋 Connection Details for ChatGPT:'));
+                console.log('');
+                console.log(`   ${performanceGradient('SSE Endpoint:')}`);
+                console.log(`   ${tunnelUrl}/mcp`);
+                console.log('');
+                console.log(`   ${performanceGradient('OAuth Client ID:')}`);
+                console.log(`   ${oauth2Conf.clientId}`);
+                console.log('');
+                console.log(`   ${performanceGradient('OAuth Client Secret:')}`);
+                console.log(`   ${oauth2Conf.clientSecret}`);
+                console.log('');
+                console.log(magicGradient('💡 How to connect ChatGPT:'));
+                console.log('   1. Go to ChatGPT → Settings → Connectors → Create');
+                console.log('   2. Fill in: Name, Description, MCP Server URL (SSE endpoint above)');
+                console.log('   3. Authentication: OAuth → Add Client ID and Client Secret above');
+                console.log('   4. Accept notice checkbox and create');
+                console.log('');
+                console.log(successGradient('━'.repeat(60)));
+                console.log('');
+              } else {
+                console.log('');
+                console.log('❌ Failed to start tunnel');
+                console.log('   Please check your authtoken and try again.');
+                console.log('');
+              }
             }
           }
 
