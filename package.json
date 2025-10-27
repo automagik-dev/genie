@@ -47,7 +47,7 @@
   "scripts": {
     "build": "pnpm run build:genie && pnpm run build:mcp",
     "build:genie": "tsc -p .genie/cli/src/views/tsconfig.json && tsc -p .genie/cli/tsconfig.json",
-    "build:mcp": "tsc -p .genie/mcp/tsconfig.json",
+    "build:mcp": "tsc -p .genie/mcp/tsconfig.json && mkdir -p .genie/mcp/dist/lib/views && cp .genie/mcp/src/lib/views/*.html .genie/mcp/dist/lib/views/",
     "start:mcp": "node .genie/mcp/dist/server.js",
     "start:mcp:stdio": "MCP_TRANSPORT=stdio node .genie/mcp/dist/server.js",
     "start:mcp:http": "MCP_TRANSPORT=httpStream node .genie/mcp/dist/server.js",
