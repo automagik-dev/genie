@@ -43,6 +43,21 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
   // Debug mode (enabled via MCP_DEBUG=1 environment variable)
   const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
 
+  // CORS middleware (allow ChatGPT to access OAuth endpoints)
+  app.use((req: Request, res: Response, next: any) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
+
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(200);
+    }
+
+    next();
+  });
+
   // Body parser middleware
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
