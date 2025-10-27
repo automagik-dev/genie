@@ -46,7 +46,9 @@ async function runRollback(parsed, _config, _paths) {
             return;
         }
         // Backup current state before restoring (using unified backup)
-        const preBackupId = await (0, fs_utils_1.backupGenieDirectory)(cwd, 'pre_rollback');
+        // pre_rollback always returns a string (copy-based backup, not two-stage move)
+        const backupResult = await (0, fs_utils_1.backupGenieDirectory)(cwd, 'pre_rollback');
+        const preBackupId = typeof backupResult === 'string' ? backupResult : backupResult.backupId;
         await restoreFromBackup(targetGenie, backupDir);
         // Restore root documentation files if they exist in backup (now at backup root, not in docs/)
         await restoreRootDocs(cwd, path_1.default.join(backupsRoot, targetId));

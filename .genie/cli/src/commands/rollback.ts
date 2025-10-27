@@ -72,7 +72,9 @@ export async function runRollback(
     }
 
     // Backup current state before restoring (using unified backup)
-    const preBackupId = await backupGenieDirectory(cwd, 'pre_rollback');
+    // pre_rollback always returns a string (copy-based backup, not two-stage move)
+    const backupResult = await backupGenieDirectory(cwd, 'pre_rollback');
+    const preBackupId = typeof backupResult === 'string' ? backupResult : backupResult.backupId;
 
     await restoreFromBackup(targetGenie, backupDir);
 

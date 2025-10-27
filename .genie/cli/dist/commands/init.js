@@ -178,13 +178,25 @@ async function runInit(parsed, _config, _paths) {
                 execSync('git init', { cwd, stdio: 'pipe' });
             }
         }
-        // Only backup if old Genie installation detected
+        // Backup on version mismatch or old Genie installation
+        // Until we have proper upgrade pipeline, treat all upgrades as requiring backup
         let backupId;
-        if (installType === 'old_genie') {
+        let tempBackupPath;
+        if (installType === 'old_genie' || isUpgrade) {
             console.log('');
-            console.log('💾 Creating backup of old Genie installation...');
-            backupId = await (0, fs_utils_1.backupGenieDirectory)(cwd, 'old_genie');
-            console.log(`   Backup created: .genie/backups/${backupId}`);
+            console.log('💾 Creating backup before upgrade...');
+            const reason = installType === 'old_genie' ? 'old_genie' : 'pre_upgrade';
+            const backupResult = await (0, fs_utils_1.backupGenieDirectory)(cwd, reason);
+            // Handle two return types: string (copy backup) or object (two-stage move)
+            if (typeof backupResult === 'string') {
+                backupId = backupResult;
+                console.log(`   Backup created: .genie/backups/${backupId}`);
+            }
+            else {
+                backupId = backupResult.backupId;
+                tempBackupPath = backupResult.tempPath;
+                console.log(`   Old .genie moved to: ${tempBackupPath}`);
+            }
             console.log('');
         }
         // Copy ALL selected templates (not just the first one)
@@ -193,6 +205,13 @@ async function runInit(parsed, _config, _paths) {
         }
         await copyTemplateRootFiles(packageRoot, cwd, template);
         await migrateAgentsDocs(cwd);
+        // Finalize two-stage backup if needed (move temp backup into .genie/backups/)
+        if (tempBackupPath && backupId) {
+            console.log('💾 Finalizing backup...');
+            await (0, fs_utils_1.finalizeBackup)(cwd, tempBackupPath, backupId);
+            console.log(`   Backup finalized: .genie/backups/${backupId}/genie/`);
+            console.log('');
+        }
         // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
         const templateInstallMd = path_1.default.join(templateGenie, 'INSTALL.md');
         const targetInstallMd = path_1.default.join(targetGenie, 'INSTALL.md');
