@@ -24,7 +24,8 @@ const crypto_1 = require("crypto");
 async function startHttpServer(options) {
     const { server, oauth2Config, port, onReady } = options;
     const app = (0, express_1.default)();
-    const serverUrl = `http://localhost:${port}`;
+    // Use public URL if behind tunnel (e.g., ngrok), otherwise localhost
+    const serverUrl = process.env.MCP_PUBLIC_URL || `http://localhost:${port}`;
     // Body parser middleware
     app.use(express_1.default.json());
     app.use(express_1.default.urlencoded({ extended: false }));
