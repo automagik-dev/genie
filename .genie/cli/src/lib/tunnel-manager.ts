@@ -9,10 +9,10 @@
  * Start ngrok tunnel for HTTP stream MCP server
  *
  * @param port - Local port to expose
- * @param authToken - ngrok auth token
+ * @param authToken - Optional ngrok auth token (for better reliability and persistent URLs)
  * @returns Tunnel URL or null if failed
  */
-export async function startNgrokTunnel(port: number, authToken: string): Promise<string | null> {
+export async function startNgrokTunnel(port: number, authToken?: string): Promise<string | null> {
   try {
     // Dynamically import ngrok (may not be installed)
     let ngrok: any;
@@ -24,12 +24,18 @@ export async function startNgrokTunnel(port: number, authToken: string): Promise
       return null;
     }
 
-    // Start tunnel
-    const listener = await ngrok.forward({
+    // Start tunnel (authtoken is optional - works without but with limitations)
+    const forwardOptions: any = {
       addr: port,
-      authtoken: authToken,
       schemes: ['https']
-    });
+    };
+
+    // Only add authtoken if provided
+    if (authToken) {
+      forwardOptions.authtoken = authToken;
+    }
+
+    const listener = await ngrok.forward(forwardOptions);
 
     const url = listener.url();
     return url;
