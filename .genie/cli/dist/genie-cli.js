@@ -510,10 +510,14 @@ async function smartRouter() {
         console.log('');
         console.log('🔒 ' + successGradient('DATA PRIVACY:'));
         console.log('  ✓ Everything runs locally on YOUR machine');
-        console.log('  ✓ No data leaves your computer (except LLM API calls)');
+        console.log('  ✓ No data leaves your computer (except LLM API calls + optional telemetry)');
         console.log('  ✓ Use LLM providers approved by your organization');
         console.log('  ✓ Fully compatible with private/local LLMs (we\'re agnostic!)');
         console.log('  ✓ OpenCoder executor enables 100% local operation');
+        console.log('');
+        console.log('📊 Optional telemetry helps the collective evolve faster:');
+        console.log('   • Anonymous bug reports → faster fixes');
+        console.log('   • Feature usage stats → build what you actually need');
         console.log('');
         console.log(magicGradient('BUT HEY... it\'s going to be FUN! 🎉✨'));
         console.log('');
