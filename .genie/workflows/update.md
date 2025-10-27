@@ -6,7 +6,7 @@ Automatically upgrade local `.genie/` framework files when new Genie versions ar
 ## Trigger
 - Manual: `genie update`
 - Automatic: On `genie` startup (max once per day check)
-- Post-install: After `npm install -g automagik-genie@next`
+- Post-install: After `npm install -g automagik-genie@latest`
 
 ## Workflow Steps
 

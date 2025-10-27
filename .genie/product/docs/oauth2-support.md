@@ -291,7 +291,7 @@ Check `~/.genie/config.yaml` has `mcp.auth.oauth2.enabled: true`
 
 ```bash
 # 1. Install Genie with OAuth2 support
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 
 # 2. Initialize with OAuth2
 genie init --enable-oauth2

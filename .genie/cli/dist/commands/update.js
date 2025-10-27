@@ -68,9 +68,24 @@ async function runUpdate(parsed, _config, _paths) {
                 // Handle file: protocol (when installed from local directory)
                 // pnpm stores version as "file:../path/to/package" instead of actual version
                 if (globalVersion.startsWith('file:')) {
-                    // For local file installations, both global and local point to same source
-                    // so versions always match (they're literally the same files)
-                    globalVersion = currentVersion;
+                    // Extract the path from file: protocol and read the actual version
+                    // This handles cases where global was installed from local but package.json has changed
+                    try {
+                        const filePath = globalVersion.replace('file:', '');
+                        const globalPackageJson = path_1.default.join(filePath, 'package.json');
+                        if (fs_1.default.existsSync(globalPackageJson)) {
+                            const globalPkg = JSON.parse(fs_1.default.readFileSync(globalPackageJson, 'utf8'));
+                            globalVersion = globalPkg.version || currentVersion;
+                        }
+                        else {
+                            // Fallback: If we can't read the file, assume they match
+                            globalVersion = currentVersion;
+                        }
+                    }
+                    catch {
+                        // Fallback: If we can't parse, assume they match
+                        globalVersion = currentVersion;
+                    }
                 }
             }
             catch {

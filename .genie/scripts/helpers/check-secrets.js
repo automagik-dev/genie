@@ -61,8 +61,42 @@ const SKIP_FILES = [
   '.genie/backups/',
 ];
 
+// Load .secretsignore file if it exists
+function loadSecretsIgnore() {
+  const ignorePath = path.join(process.cwd(), '.genie', '.secretsignore');
+  if (!fs.existsSync(ignorePath)) {
+    return [];
+  }
+
+  try {
+    const content = fs.readFileSync(ignorePath, 'utf8');
+    return content
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'))
+      .map(line => {
+        // Parse "file:line" format
+        const parts = line.split(':');
+        return {
+          file: parts[0],
+          line: parts[1] ? parseInt(parts[1]) : null
+        };
+      });
+  } catch (e) {
+    return [];
+  }
+}
+
 function shouldSkipFile(file) {
   return SKIP_FILES.some(skip => file.includes(skip));
+}
+
+function isIgnoredFinding(finding, ignoreList) {
+  return ignoreList.some(ignore => {
+    const fileMatches = finding.file === ignore.file || finding.file.endsWith(ignore.file);
+    const lineMatches = ignore.line === null || ignore.line === finding.line;
+    return fileMatches && lineMatches;
+  });
 }
 
 function getStagedFiles() {
@@ -177,16 +211,22 @@ function main() {
     process.exit(0);
   }
 
+  // Load ignore list
+  const ignoreList = loadSecretsIgnore();
+
   let allFindings = [];
   files.forEach(file => {
     const findings = checkFile(file);
     allFindings = allFindings.concat(findings);
   });
 
-  console.log(formatFindings(allFindings));
+  // Filter out ignored findings
+  const filteredFindings = allFindings.filter(f => !isIgnoredFinding(f, ignoreList));
+
+  console.log(formatFindings(filteredFindings));
 
   // Block on critical or high severity
-  const blocking = allFindings.filter(f => f.severity === 'critical' || f.severity === 'high');
+  const blocking = filteredFindings.filter(f => f.severity === 'critical' || f.severity === 'high');
   if (blocking.length > 0) {
     process.exit(1);
   }

@@ -151,7 +151,7 @@ GitHub Action triggers automatically
   ↓
 Version bump (rc.N → rc.N+1)
   ↓
-npm publish automagik-genie@next
+npm publish automagik-genie@latest
   ↓
 GitHub release created
 ```
@@ -166,7 +166,7 @@ GitHub release created
 - ✅ Create PR to merge dev → main
 - ✅ Wait for PR to merge
 - ✅ Trust GitHub Actions to handle publishing
-- ✅ Verify published version: `npm view automagik-genie@next version`
+- ✅ Verify published version: `npm view automagik-genie@latest version`
 
 **Evidence of Automation:**
 When PR merges to main, check:

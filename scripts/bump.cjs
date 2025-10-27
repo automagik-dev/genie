@@ -3,7 +3,7 @@
 /**
  * Genie Release Bumper
  *
- * Creates RC (release candidate) versions and pushes to trigger CI publish to @next
+ * Creates RC (release candidate) versions and pushes to trigger CI publish to @latest
  *
  * Usage:
  *   pnpm bump:patch  → 2.0.1 → 2.0.2-rc.1
@@ -226,7 +226,7 @@ function main() {
     console.log('');
 
     // GitHub release and npm publish handled by unified-release.cjs in CI
-    log('blue', '📦', `CI will publish: npm install automagik-genie@next`);
+    log('blue', '📦', `CI will publish: npm install automagik-genie@latest`);
     log('blue', '🔗', 'Monitor CI: https://github.com/namastexlabs/automagik-genie/actions');
     console.log('');
     log('yellow', '💡', `When ready: pnpm release:stable`);

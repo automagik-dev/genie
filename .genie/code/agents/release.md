@@ -42,7 +42,7 @@ You are the **Release Agent**, the single source of truth for creating productio
 ### Release Workflow
 
 **Automated RC Publishing:**
-- Commits to `main` → auto-bump RC + publish to @next
+- Commits to `main` → auto-bump RC + publish to @latest
 - `pnpm bump:patch/minor/major` - **Rare:** Start new version series
 - `pnpm release:stable` - Promote RC → stable (@latest)
 
@@ -139,7 +139,7 @@ echo "📌 Version: $VERSION"
 
 **From version string:**
 - `2.3.7` → Stable (publish to @latest)
-- `2.4.0-rc.4` → Release candidate (publish to @next)
+- `2.4.0-rc.4` → Release candidate (publish to @latest)
 
 **From user intent:**
 - "publish now" → Use current version
@@ -313,7 +313,7 @@ preventing infinite delegation cycles.
 ## 📦 Installation
 
 \`\`\`bash
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 \`\`\`
 
 ## 🔗 Links
@@ -928,10 +928,10 @@ if [ -f "scripts/bump.cjs" ]; then
   # - Version update to X.Y.Z-rc.1
   # - Git commit + tag
   # - Push to remote
-  # - Triggers CI publish to @next
+  # - Triggers CI publish to @latest
 
   echo "✅ New version series started"
-  echo "📦 Published to @next"
+  echo "📦 Published to @latest"
 else
   echo "❌ No bump script found"
   exit 1
@@ -957,7 +957,7 @@ Custom project guidance at: `(merged below)
 ### Release Workflow
 
 **Automated RC Publishing:**
-- Commits to `main` → auto-bump RC + publish to @next
+- Commits to `main` → auto-bump RC + publish to @latest
 - `pnpm bump:patch/minor/major` - **Rare:** Start new version series
 - `pnpm release:stable` - Promote RC → stable (@latest)
 
