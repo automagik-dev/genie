@@ -8,17 +8,28 @@
  * 3. Streak & Records Card (current streak, longest, peak session, peak day)
  *
  * Features:
- * - Animated token counter
+ * - Gradient headers and metrics
+ * - Smart diff rendering (no flicker)
+ * - Smooth token counter
  * - Live session timer
- * - Milestone flash notifications
- * - Task completion notifications
- * - Monthly comparison with % indicators
+ * - Color-coded metrics
+ * - Clean layout without broken ASCII boxes
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runDashboardLive = runDashboardLive;
 const stats_tracker_1 = require("../lib/stats-tracker");
 const forge_manager_1 = require("../lib/forge-manager");
 const forge_stats_1 = require("../lib/forge-stats");
+const gradient_string_1 = __importDefault(require("gradient-string"));
+// Year 3025 color palettes
+const genie = (0, gradient_string_1.default)(['#00ff88', '#00ccff', '#0099ff']); // Genie brand
+const fire = (0, gradient_string_1.default)(['#ff6b35', '#f7931e', '#fdc830']); // Streak/energy
+const success = (0, gradient_string_1.default)(['#56ab2f', '#a8e063']); // Positive metrics
+const warning = (0, gradient_string_1.default)(['#ffa500', '#ff6347']); // Alerts
+const info = (0, gradient_string_1.default)(['#667eea', '#764ba2']); // Secondary info
 async function runDashboardLive(parsed, _config, _paths) {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
     const live = parsed.options.live;
@@ -100,101 +111,105 @@ async function fetchDashboardState(tracker, dashboardStartTime) {
 }
 function renderDashboard(state, isLive = false) {
     const lines = [];
-    // Header
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    lines.push(`🧞 GENIE DASHBOARD ${isLive ? '(LIVE)' : ''}`);
+    // Year 3025 Header - Gradient banner
+    const bannerText = isLive ? '🧞 GENIE DASHBOARD • LIVE' : '🧞 GENIE DASHBOARD';
+    lines.push('');
+    lines.push(genie('═'.repeat(80)));
+    lines.push(genie(`  ${bannerText.padEnd(76)}  `));
     if (isLive) {
-        lines.push('Press Ctrl+C to exit');
+        lines.push(info('  Press Ctrl+C to exit'.padEnd(80)));
     }
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(genie('═'.repeat(80)));
     lines.push('');
     // ============================================================================
     // CARD 1: Current Session (Live)
     // ============================================================================
-    lines.push('┌─ 📊 CURRENT SESSION ─────────────────────────────────────────────────┐');
+    lines.push(success('  📊 CURRENT SESSION'));
+    lines.push('  ' + '─'.repeat(78));
     if (state.session) {
         const elapsed = Date.now() - new Date(state.session.startTime).getTime();
         const duration = formatDuration(elapsed);
-        lines.push(`│ ⏱️  Duration: ${duration.padEnd(54)} │`);
-        lines.push(`│ 💬 Tokens: ${formatNumber(state.session.tokenCount.total).padEnd(56)} │`);
-        lines.push(`│    ├─ 📥 Input: ${formatNumber(state.session.tokenCount.input).padEnd(49)} │`);
-        lines.push(`│    └─ 📤 Output: ${formatNumber(state.session.tokenCount.output).padEnd(48)} │`);
-        lines.push(`│ 📝 Tasks Completed Today: ${state.session.tasksCompleted.length.toString().padEnd(38)} │`);
-        lines.push(`│ 📂 Project: ${state.session.projectName.padEnd(53)} │`);
+        lines.push(`  ⏱️  Duration       ${genie(duration)}`);
+        lines.push(`  💬 Tokens        ${fire(formatNumber(state.session.tokenCount.total))}`);
+        lines.push(`     • Input       ${info(formatNumber(state.session.tokenCount.input))}`);
+        lines.push(`     • Output      ${info(formatNumber(state.session.tokenCount.output))}`);
+        lines.push(`  ✅ Tasks Today    ${success(state.session.tasksCompleted.length.toString())}`);
+        lines.push(`  📂 Project       ${state.session.projectName}`);
         if (state.session.agentsInvoked.length > 0) {
-            lines.push(`│ 🤖 Agents: ${state.session.agentsInvoked.join(', ').slice(0, 52).padEnd(54)} │`);
+            const agents = state.session.agentsInvoked.join(', ').slice(0, 60);
+            lines.push(`  🤖 Agents        ${info(agents)}`);
         }
     }
     else {
-        lines.push(`│ ${' No active session'.padEnd(70)} │`);
-        lines.push(`│ ${' Start a Genie task to begin tracking'.padEnd(70)} │`);
+        lines.push(warning('     No active session'));
+        lines.push('     Start a Genie task to begin tracking');
     }
-    lines.push('└──────────────────────────────────────────────────────────────────────┘');
     lines.push('');
     // ============================================================================
     // CARD 2: This Month Overview
     // ============================================================================
-    lines.push('┌─ 📅 THIS MONTH ──────────────────────────────────────────────────────┐');
+    lines.push(info('  📅 THIS MONTH'));
+    lines.push('  ' + '─'.repeat(78));
     const tokenK = (state.monthly.tokenTotal / 1000).toFixed(1);
     const timeFormatted = formatDuration(state.monthly.timeTotal);
-    lines.push(`│ 💰 Tokens: ${tokenK}k${renderComparison(state, 'tokens').padEnd(54)} │`);
-    lines.push(`│ ⏱️  Time: ${timeFormatted}${renderComparison(state, 'time').padEnd(62 - timeFormatted.length)} │`);
-    lines.push(`│ ✅ Tasks: ${state.monthly.taskCount}${renderComparison(state, 'tasks').padEnd(60)} │`);
-    lines.push(`│ 🎯 Wishes: ${state.monthly.wishCount}${renderComparison(state, 'wishes').padEnd(59)} │`);
-    lines.push('└──────────────────────────────────────────────────────────────────────┘');
+    lines.push(`  💰 Tokens        ${fire(tokenK + 'k')}${renderComparison(state, 'tokens')}`);
+    lines.push(`  ⏱️  Time          ${genie(timeFormatted)}${renderComparison(state, 'time')}`);
+    lines.push(`  ✅ Tasks         ${success(state.monthly.taskCount.toString())}${renderComparison(state, 'tasks')}`);
+    lines.push(`  🎯 Wishes        ${info(state.monthly.wishCount.toString())}${renderComparison(state, 'wishes')}`);
     lines.push('');
     // ============================================================================
     // CARD 3: Streak & Records
     // ============================================================================
-    lines.push('┌─ 🏆 STREAK & RECORDS ────────────────────────────────────────────────┐');
+    lines.push(fire('  🏆 STREAK & RECORDS'));
+    lines.push('  ' + '─'.repeat(78));
     const currentStreak = state.streak.current.days;
     const longestStreak = state.streak.longest.days;
     const peakTokens = (state.monthly.peakSession.tokens / 1000).toFixed(1);
-    lines.push(`│ 🔥 Current Streak: ${currentStreak} day${currentStreak === 1 ? '' : 's'}`.padEnd(73) + '│');
-    lines.push(`│ 🏆 Longest Streak: ${longestStreak} day${longestStreak === 1 ? '' : 's'}`.padEnd(73) + '│');
+    lines.push(`  🔥 Current       ${fire(currentStreak + ' day' + (currentStreak === 1 ? '' : 's'))}`);
+    lines.push(`  🏆 Longest       ${success(longestStreak + ' day' + (longestStreak === 1 ? '' : 's'))}`);
     if (state.monthly.peakSession.tokens > 0) {
-        lines.push(`│ 💪 Peak Session: ${peakTokens}k tokens (${state.monthly.peakSession.date})`.padEnd(73) + '│');
+        lines.push(`  💪 Peak Session  ${genie(peakTokens + 'k')} tokens • ${state.monthly.peakSession.date}`);
     }
     if (state.monthly.peakDay.tasks > 0) {
-        lines.push(`│ 📅 Peak Day: ${state.monthly.peakDay.tasks} tasks (${state.monthly.peakDay.date})`.padEnd(73) + '│');
+        lines.push(`  📅 Peak Day      ${success(state.monthly.peakDay.tasks.toString())} tasks • ${state.monthly.peakDay.date}`);
     }
-    lines.push('└──────────────────────────────────────────────────────────────────────┘');
     lines.push('');
     // ============================================================================
     // All-Time Summary
     // ============================================================================
-    lines.push('┌─ 🌟 ALL TIME ────────────────────────────────────────────────────────┐');
+    lines.push(genie('  🌟 ALL TIME'));
+    lines.push('  ' + '─'.repeat(78));
     const allTimeTokensK = (state.allTime.totalTokens / 1000).toFixed(1);
     const allTimeTime = formatDuration(state.allTime.totalTime);
-    lines.push(`│ 💬 Total Tokens: ${allTimeTokensK}k`.padEnd(73) + '│');
-    lines.push(`│ ⏱️  Total Time: ${allTimeTime}`.padEnd(73) + '│');
-    lines.push(`│ ✅ Total Tasks: ${state.allTime.totalTasks}`.padEnd(73) + '│');
-    lines.push(`│ 📊 Total Sessions: ${state.allTime.totalSessions}`.padEnd(73) + '│');
-    lines.push('└──────────────────────────────────────────────────────────────────────┘');
+    lines.push(`  💬 Tokens        ${fire(allTimeTokensK + 'k')}`);
+    lines.push(`  ⏱️  Time          ${genie(allTimeTime)}`);
+    lines.push(`  ✅ Tasks         ${success(state.allTime.totalTasks.toString())}`);
+    lines.push(`  📊 Sessions      ${info(state.allTime.totalSessions.toString())}`);
     lines.push('');
     // ============================================================================
     // System Health Card
     // ============================================================================
     const uptime = formatDuration(state.uptime);
-    lines.push('┌─ 🩺 SYSTEM HEALTH ────────────────────────────────────────────────────┐');
-    lines.push(`│ 📦 Forge Backend: ${state.forgeStats ? '🟢 Online' : '🔴 Offline'}`.padEnd(73) + '│');
+    lines.push(info('  🩺 SYSTEM HEALTH'));
+    lines.push('  ' + '─'.repeat(78));
+    const forgeStatus = state.forgeStats ? success('🟢 Online') : warning('🔴 Offline');
+    lines.push(`  📦 Forge         ${forgeStatus}`);
     if (state.forgeStats) {
-        lines.push(`│ 📊 Projects: ${state.forgeStats.projects?.total || 0}${' │'.padStart(57 - ('📊 Projects: ' + (state.forgeStats.projects?.total || 0)).length)} │`);
-        lines.push(`│ 📝 Tasks: ${state.forgeStats.tasks?.total || 0}${' │'.padStart(61 - ('📝 Tasks: ' + (state.forgeStats.tasks?.total || 0)).length)} │`);
-        lines.push(`│ 🔄 Attempts: ${state.forgeStats.attempts?.total || 0} (✅${state.forgeStats.attempts?.completed || 0} ❌${state.forgeStats.attempts?.failed || 0})`.padEnd(73) + '│');
+        lines.push(`  📊 Projects      ${info((state.forgeStats.projects?.total || 0).toString())}`);
+        lines.push(`  📝 Tasks         ${info((state.forgeStats.tasks?.total || 0).toString())}`);
+        const completed = state.forgeStats.attempts?.completed || 0;
+        const failed = state.forgeStats.attempts?.failed || 0;
+        const total = state.forgeStats.attempts?.total || 0;
+        lines.push(`  🔄 Attempts      ${total} • ${success('✅' + completed)} ${warning('❌' + failed)}`);
     }
-    lines.push(`│ ⏱️  Dashboard Uptime: ${uptime}`.padEnd(73) + '│');
-    lines.push('└──────────────────────────────────────────────────────────────────────┘');
+    lines.push(`  ⏱️  Uptime        ${genie(uptime)}`);
     lines.push('');
     // Footer
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    lines.push('💡 Commands:');
-    lines.push('   genie dashboard         - Quick snapshot');
-    lines.push('   genie dashboard --live  - Live updating dashboard');
-    if (isLive) {
-        lines.push('   Press Ctrl+C to exit');
-    }
-    lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    lines.push(genie('═'.repeat(80)));
+    lines.push(info('  💡 Commands'));
+    lines.push('     genie dashboard         Quick snapshot');
+    lines.push('     genie dashboard --live  Live updating dashboard');
+    lines.push(genie('═'.repeat(80)));
     console.log(lines.join('\n'));
 }
 function renderComparison(state, metric) {
