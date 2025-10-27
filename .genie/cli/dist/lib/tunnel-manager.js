@@ -10,6 +10,8 @@ exports.startNgrokTunnel = startNgrokTunnel;
 exports.stopNgrokTunnel = stopNgrokTunnel;
 exports.isValidNgrokToken = isValidNgrokToken;
 exports.getNgrokSignupUrl = getNgrokSignupUrl;
+// Store active listener for proper cleanup
+let activeListener = null;
 /**
  * Start ngrok tunnel for HTTP stream MCP server
  *
@@ -29,6 +31,8 @@ async function startNgrokTunnel(port, authToken) {
             console.warn('⚠️  @ngrok/ngrok not installed, skipping tunnel');
             return null;
         }
+        // Kill any existing tunnel first (prevents "endpoint already online" errors)
+        await stopNgrokTunnel();
         // Start tunnel (authtoken is optional - works without but with limitations)
         const forwardOptions = {
             addr: port,
@@ -39,6 +43,8 @@ async function startNgrokTunnel(port, authToken) {
             forwardOptions.authtoken = authToken;
         }
         const listener = await ngrok.forward(forwardOptions);
+        // Store listener globally for proper cleanup
+        activeListener = listener;
         const url = listener.url();
         return url;
     }
@@ -49,10 +55,21 @@ async function startNgrokTunnel(port, authToken) {
     }
 }
 /**
- * Stop ngrok tunnel
+ * Stop ngrok tunnel (properly closes listener and cleans up ngrok session)
  */
 async function stopNgrokTunnel() {
     try {
+        // Close specific listener if active
+        if (activeListener) {
+            try {
+                await activeListener.close();
+                activeListener = null;
+            }
+            catch (err) {
+                // Ignore close errors
+            }
+        }
+        // Also disconnect all sessions (catches any leaked sessions)
         let ngrok;
         try {
             ngrok = require('@ngrok/ngrok');
@@ -60,7 +77,6 @@ async function stopNgrokTunnel() {
         catch {
             return;
         }
-        // Close all ngrok connections
         await ngrok.disconnect();
     }
     catch (error) {
