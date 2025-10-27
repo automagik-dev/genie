@@ -1388,8 +1388,10 @@ async function startGenieServer(): Promise<void> {
 
             // Check if user already has a saved token
             let ngrokToken: string | undefined = undefined;
+            let isTokenFromSaved = false;
             if (genieConfig.mcp.tunnel?.token) {
               ngrokToken = genieConfig.mcp.tunnel.token;
+              isTokenFromSaved = true;
               console.log('');
               console.log('✓ Using saved ngrok token');
             } else {
@@ -1420,22 +1422,8 @@ async function startGenieServer(): Promise<void> {
                 const token = await createQuestion(performanceGradient('? Paste your ngrok authtoken here: '));
 
                 if (token && token.trim().length > 0) {
+                  // DON'T save yet - validate by starting tunnel first
                   ngrokToken = token.trim();
-
-                  // Save token to config
-                  try {
-                    genieConfig.mcp.tunnel = {
-                      enabled: true,
-                      provider: 'ngrok',
-                      token: ngrokToken
-                    };
-                    saveGenieConfig(genieConfig);
-                    console.log('');
-                    console.log(successGradient('✓ Token saved! You won\'t need to enter it again.'));
-                  } catch (err: any) {
-                    console.log('');
-                    console.log(`⚠️  Could not save token: ${err.message}`);
-                  }
                 } else {
                   console.log('');
                   console.log('⚠️  No token provided. Skipping tunnel setup.');
@@ -1475,22 +1463,8 @@ async function startGenieServer(): Promise<void> {
                 const token = await createQuestion(performanceGradient('? Paste your ngrok authtoken here (or press Enter to skip): '));
 
                 if (token && token.trim().length > 0) {
+                  // DON'T save yet - validate by starting tunnel first
                   ngrokToken = token.trim();
-
-                  // Save token to config
-                  try {
-                    genieConfig.mcp.tunnel = {
-                      enabled: true,
-                      provider: 'ngrok',
-                      token: ngrokToken
-                    };
-                    saveGenieConfig(genieConfig);
-                    console.log('');
-                    console.log(successGradient('✓ Token saved! You won\'t need to enter it again.'));
-                  } catch (err: any) {
-                    console.log('');
-                    console.log(`⚠️  Could not save token: ${err.message}`);
-                  }
                 } else {
                   console.log('');
                   console.log('⚠️  No token provided. Skipping tunnel setup.');
@@ -1506,6 +1480,19 @@ async function startGenieServer(): Promise<void> {
               const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
 
               if (tunnelUrl) {
+                // SUCCESS - Save token to config (only after validation)
+                try {
+                  genieConfig.mcp.tunnel = {
+                    enabled: true,
+                    provider: 'ngrok',
+                    token: ngrokToken
+                  };
+                  saveGenieConfig(genieConfig);
+                } catch (err: any) {
+                  // Log save error but don't block (tunnel is already working)
+                  console.error(`⚠️  Warning: Could not save token (${err.message})`);
+                }
+
                 console.log('');
                 console.log(successGradient('━'.repeat(60)));
                 console.log(successGradient('✅ ChatGPT Integration Ready!'));
@@ -1533,7 +1520,28 @@ async function startGenieServer(): Promise<void> {
               } else {
                 console.log('');
                 console.log('❌ Failed to start tunnel');
-                console.log('   Please check your authtoken and try again.');
+
+                // If this was a saved token, offer to clear it
+                if (isTokenFromSaved) {
+                  console.log('   Your saved token appears to be invalid.');
+                  console.log('');
+                  const clearResponse = await createQuestion(performanceGradient('? Clear saved token and try again? [Y/n]: '));
+
+                  if (clearResponse.toLowerCase() !== 'n') {
+                    try {
+                      delete genieConfig.mcp.tunnel;
+                      saveGenieConfig(genieConfig);
+                      console.log('');
+                      console.log(successGradient('✓ Saved token cleared.'));
+                      console.log('   Run ' + performanceGradient('genie') + ' again to set up a new token.');
+                    } catch (err: any) {
+                      console.log('');
+                      console.log(`⚠️  Could not clear token: ${err.message}`);
+                    }
+                  }
+                } else {
+                  console.log('   Please check your authtoken and try again.');
+                }
                 console.log('');
               }
             }
