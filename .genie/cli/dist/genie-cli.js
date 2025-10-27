@@ -474,14 +474,18 @@ if (shouldCheckVersion) {
         }
     }
 }
-// Parse arguments first to capture global options like --debug
-program.parse(process.argv);
+// Extract global options manually before routing
+const hasDebugFlag = args.includes('--debug');
 // If no command was provided, use smart router
-// program.args contains non-option arguments (commands and their args)
-if (program.args.length === 0) {
-    smartRouter();
+if (!args.length || (args.length === 1 && hasDebugFlag)) {
+    // No command (or only --debug flag) → call smartRouter()
+    // Pass debug flag explicitly since program.parse() hasn't been called yet
+    smartRouter(hasDebugFlag);
 }
-// Otherwise, the command has already been executed by program.parse()
+else {
+    // Command provided → parse with commander
+    program.parse(process.argv);
+}
 /**
  * Smart Router: Auto-detect scenario and route appropriately
  *
@@ -495,8 +499,10 @@ if (program.args.length === 0) {
  * - version: Current Genie version installed
  * - installedAt: ISO timestamp of first install
  * - updatedAt: ISO timestamp of last update
+ *
+ * @param debug - Enable debug mode (MCP_DEBUG=1)
  */
-async function smartRouter() {
+async function smartRouter(debug = false) {
     const genieDir = path_1.default.join(process.cwd(), '.genie');
     const versionPath = path_1.default.join(genieDir, 'state', 'version.json');
     const hasGenieConfig = fs_1.default.existsSync(genieDir);
@@ -679,7 +685,7 @@ async function smartRouter() {
         console.log(magicGradient('   https://namastex.ai - AI that elevates human potential, not replaces it'));
         console.log('');
         // Start Genie server (MCP + health monitoring)
-        await startGenieServer();
+        await startGenieServer(debug);
         return;
     }
     // .genie exists - check for version.json (instance check file)
@@ -720,7 +726,7 @@ async function smartRouter() {
         };
         await (0, init_1.runInit)(upgradeParsed, upgradeConfig, upgradePaths);
         // After upgrade, start server
-        await startGenieServer();
+        await startGenieServer(debug);
         return;
     }
     // version.json exists - compare versions
@@ -758,7 +764,7 @@ async function smartRouter() {
                 }
                 console.log('');
                 // Start server anyway - master genie can run with version mismatch
-                await startGenieServer();
+                await startGenieServer(debug);
                 return;
             }
             // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
@@ -813,11 +819,11 @@ async function smartRouter() {
             };
             await (0, init_1.runInit)(updateParsed, updateConfig, updatePaths);
             // After update, start server
-            await startGenieServer();
+            await startGenieServer(debug);
             return;
         }
         // SCENARIO 4: UP TO DATE - Versions match → Start server
-        await startGenieServer();
+        await startGenieServer(debug);
     }
     catch (error) {
         // Corrupted version.json - treat as needing update
@@ -853,7 +859,7 @@ async function smartRouter() {
         };
         await (0, init_1.runInit)(repairParsed, repairConfig, repairPaths);
         // After repair, start server
-        await startGenieServer();
+        await startGenieServer(debug);
     }
 }
 /**
@@ -953,8 +959,9 @@ function getBrowserOpenCommand() {
 /**
  * Start Genie server (Forge + MCP with SSE transport on port 8885)
  * This is the main entry point for npx automagik-genie
+ * @param debug - Enable debug mode (MCP_DEBUG=1)
  */
-async function startGenieServer() {
+async function startGenieServer(debug = false) {
     const startTime = Date.now();
     const timings = {};
     const mcpServer = path_1.default.join(__dirname, '../../mcp/dist/server.js');
@@ -1030,7 +1037,7 @@ async function startGenieServer() {
         MCP_TRANSPORT: 'httpStream',
         MCP_PORT: mcpPort,
         // Enable debug mode if --debug flag was passed
-        ...(program.opts().debug ? { MCP_DEBUG: '1' } : {})
+        ...(debug ? { MCP_DEBUG: '1' } : {})
     };
     // Ask user if they want to integrate Genie into ChatGPT
     const readline = require('readline');
