@@ -160,7 +160,7 @@ async function runUpdate(parsed, _config, _paths) {
             // pnpm not available, use npm
         }
         // Update global package
-        const updateCommand = `${packageManager} install -g automagik-genie@next`;
+        const updateCommand = `${packageManager} install -g automagik-genie@latest`;
         console.log(`   Running: ${updateCommand}`);
         console.log('');
         try {

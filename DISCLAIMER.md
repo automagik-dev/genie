@@ -22,7 +22,7 @@ By installing and using Genie, you acknowledge and accept the following:
 ### 1. Experimental Nature
 - This software is **experimental** and under **active development**
 - Features may change, break, or behave unexpectedly
-- No stable releases exist yet (all releases are tagged `@next` or `-rc.X`)
+- No stable releases exist yet (all releases are tagged `@latest` or `-rc.X`)
 - Bugs, errors, and unexpected behaviors should be expected
 
 ### 2. Agent Actions & Oversight
@@ -123,7 +123,7 @@ Genie is open source software licensed under the MIT License. See [LICENSE](LICE
 
 ---
 
-**Version**: Research Preview (RC builds, `@next` tag)
+**Version**: Research Preview (RC builds, `@latest` tag)
 **Status**: Experimental - Not for production use
 **Last Updated**: 2025-10-23
 

@@ -51,7 +51,7 @@ irm https://install.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"
 
 **Manual install (if you have Node.js already):**
 ```bash
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 ```
 
 **What the installer does:**
@@ -192,7 +192,7 @@ Run the performance benchmark yourself:
 
 ```bash
 # Install latest version
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 
 # Run benchmark (3 runs with warm-up)
 GENIE_SHOW_PERF=true npx automagik-genie

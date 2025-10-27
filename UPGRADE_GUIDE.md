@@ -9,9 +9,9 @@ Complete step-by-step upgrade process: **npm package update** → **project migr
 ### Step 1: Update NPM Package (Framework Update)
 
 ```bash
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 # OR
-pnpm install -g automagik-genie@next
+pnpm install -g automagik-genie@latest
 ```
 
 **What this does:**
@@ -217,7 +217,7 @@ old framework agents in subdirectories as "core" not "custom".
 
 ```bash
 # If you want just migration (no template update):
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 cd project/
 genie migrate
 
@@ -262,7 +262,7 @@ npm install -g automagik-genie@previous-version
 
 **Complete upgrade in 2 commands:**
 ```bash
-npm install -g automagik-genie@next    # Step 1: Framework
+npm install -g automagik-genie@latest    # Step 1: Framework
 genie update                           # Step 2: Project (auto-migrates)
 ```
 

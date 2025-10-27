@@ -170,8 +170,8 @@ if (Test-CommandExists genie) {
     $installedVersion = (genie --version 2>$null) -replace '.*?(\d+\.\d+\.\d+(-rc\.\d+)?).*', '$1'
     if ([string]::IsNullOrEmpty($installedVersion)) { $installedVersion = "0.0.0" }
 
-    # Get latest @next version
-    $latestVersion = (npm view automagik-genie@next version 2>$null)
+    # Get latest @latest version
+    $latestVersion = (npm view automagik-genie@latest version 2>$null)
     if ([string]::IsNullOrEmpty($latestVersion)) { $latestVersion = $installedVersion }
 
     # Compare versions
@@ -181,7 +181,7 @@ if (Test-CommandExists genie) {
         Write-Host "Master Genie: $latestVersion ⭐ NEW!"
         Write-Host ""
         Write-Info "Syncing new capabilities from the Master Genie..."
-        pnpm install -g automagik-genie@next
+        pnpm install -g automagik-genie@latest
         Write-Host ""
         Write-Success "You're now running v$latestVersion! ✨"
         Write-Host "✓ All data stays local on your machine"
@@ -193,7 +193,7 @@ if (Test-CommandExists genie) {
 } else {
     # Not installed - install globally
     Write-Info "Pulling Genie from the lamp..."
-    pnpm install -g automagik-genie@next
+    pnpm install -g automagik-genie@latest
     Write-Host ""
     Write-Success "Genie is ready to grant your wishes! ✨"
     Write-Host ""

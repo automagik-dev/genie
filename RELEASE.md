@@ -15,7 +15,7 @@ GitHub Actions auto-detects
   ↓
 Auto-bump: rc.N → rc.N+1
   ↓
-Auto-publish: npm @next
+Auto-publish: npm @latest
   ↓
 Auto-release: GitHub release
 ```
@@ -29,7 +29,7 @@ git push origin main
 
 **Verify:**
 ```bash
-npm view automagik-genie@next version
+npm view automagik-genie@latest version
 ```
 
 ## 🎯 Version Transitions (Rare)
@@ -77,17 +77,17 @@ pnpm status
 Shows:
 - Local version
 - Latest git tag
-- NPM registry versions (`@latest` and `@next`)
+- NPM registry versions (`@latest` and `@latest`)
 - Working directory status
 
 ## 📦 NPM Dist Tags
 
 - `@latest` - Stable production (default)
-- `@next` - RC versions (beta testing)
+- `@latest` - RC versions (beta testing)
 
 **Install specific tag:**
 ```bash
-npm install -g automagik-genie@next    # RC version
+npm install -g automagik-genie@latest    # RC version
 npm install -g automagik-genie         # Stable version
 ```
 
@@ -101,7 +101,7 @@ npm install -g automagik-genie         # Stable version
 
 **RC-First:**
 - Safe by default
-- Community testing on `@next`
+- Community testing on `@latest`
 - Easy iteration without version pollution
 
 **Automated:**

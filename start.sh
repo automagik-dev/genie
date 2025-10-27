@@ -423,8 +423,8 @@ install_genie() {
         # Get installed version
         local installed_version=$(genie --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' || echo "0.0.0")
 
-        # Get latest @next version from npm (silent, fast)
-        local latest_version=$(npm view automagik-genie@next version 2>/dev/null || echo "$installed_version")
+        # Get latest @latest version from npm (silent, fast)
+        local latest_version=$(npm view automagik-genie@latest version 2>/dev/null || echo "$installed_version")
 
         # Compare versions
         if [ "$installed_version" != "$latest_version" ]; then
@@ -436,7 +436,7 @@ install_genie() {
             echo "Master Genie: $latest_version ⭐ NEW!"
             echo ""
             echo -e "${CYAN}⚡ Syncing new capabilities from the Master Genie...${NC}"
-            pnpm install -g automagik-genie@next
+            pnpm install -g automagik-genie@latest
             echo ""
             echo -e "${GREEN}✅ You're now running v${latest_version}! ✨${NC}"
             echo "✓ All data stays local on your machine"
@@ -448,7 +448,7 @@ install_genie() {
     else
         # Not installed - install it globally
         echo -e "${CYAN}🎩 Pulling Genie from the lamp...${NC}"
-        pnpm install -g automagik-genie@next
+        pnpm install -g automagik-genie@latest
         echo ""
         echo -e "${GREEN}✅ Genie is ready to grant your wishes! ✨${NC}"
         echo ""

@@ -10,7 +10,7 @@ export async function checkForUpdates(
 ): Promise<UpdateCheckResult> {
   try {
     // Get latest version from npm registry
-    const latestVersion = execSync('npm view automagik-genie@next version', {
+    const latestVersion = execSync('npm view automagik-genie@latest version', {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
     }).trim();
@@ -18,7 +18,7 @@ export async function checkForUpdates(
     // Get git commit from npm package (if available)
     let latestCommit: string;
     try {
-      latestCommit = execSync('npm view automagik-genie@next gitCommit', {
+      latestCommit = execSync('npm view automagik-genie@latest gitCommit', {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe']
       }).trim();

@@ -220,7 +220,7 @@ Across May → October 2025, Felipe has reintroduced:
 ### Where We Are
 
 **Stability:** v2.4.2-rc.92 (approaching stable release)
-**Latest:** `npx automagik-genie@next` (production-ready, 92 iterations since 2.0)
+**Latest:** `npx automagik-genie@latest` (production-ready, 92 iterations since 2.0)
 
 ### What's Changing
 
