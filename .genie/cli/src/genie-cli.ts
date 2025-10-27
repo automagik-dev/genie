@@ -508,13 +508,15 @@ if (shouldCheckVersion) {
   }
 }
 
+// Parse arguments first to capture global options like --debug
+program.parse(process.argv);
+
 // If no command was provided, use smart router
-if (!args.length) {
+// program.args contains non-option arguments (commands and their args)
+if (program.args.length === 0) {
   smartRouter();
-} else {
-  // Parse arguments for other commands
-  program.parse(process.argv);
 }
+// Otherwise, the command has already been executed by program.parse()
 
 /**
  * Smart Router: Auto-detect scenario and route appropriately
