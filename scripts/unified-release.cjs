@@ -135,8 +135,8 @@ function generateMechanicalChangelog(version) {
 
   // Generate changelog using conventional-changelog via npx
   const changelogCmd = prevTag
-    ? `npx conventional-changelog-cli@next -r 0 -p angular --lerna-root . "${prevTag}..HEAD" 2>/dev/null || echo ""`
-    : `npx conventional-changelog-cli@next -i CHANGELOG.md -s -p angular 2>/dev/null || echo ""`;
+    ? `npx conventional-changelog-cli@latest -r 0 -p angular --lerna-root . "${prevTag}..HEAD" 2>/dev/null || echo ""`
+    : `npx conventional-changelog-cli@latest -i CHANGELOG.md -s -p angular 2>/dev/null || echo ""`;
 
   let changelog = '';
   try {

@@ -54,6 +54,12 @@ irm https://install.namastex.ai/start.ps1 -OutFile "$env:TEMP\genie-install.ps1"
 npm install -g automagik-genie@latest
 ```
 
+**For brave users who want bleeding edge:**
+```bash
+npm install -g automagik-genie@next
+```
+⚠️ The `@next` tag contains the latest RC builds with experimental features. Expect rough edges!
+
 **What the installer does:**
 - ✅ Detects your OS and architecture automatically
 - ✅ Installs Node.js 22 (if needed)

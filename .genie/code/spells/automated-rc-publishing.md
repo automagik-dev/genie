@@ -16,7 +16,7 @@ GitHub Actions detects push
   ↓
 Auto-bump: rc.N → rc.N+1
   ↓
-Auto-publish: npm publish @next
+Auto-publish: npm publish @latest
   ↓
 Auto-release: GitHub release created
 ```
@@ -27,7 +27,7 @@ Auto-release: GitHub release created
 1. Commit changes to main (or merge PR to main)
 2. Push to origin: `git push`
 3. **STOP** - GitHub Actions handles everything else
-4. Verify: `npm view automagik-genie@next version`
+4. Verify: `npm view automagik-genie@latest version`
 
 **What to say:**
 - ✅ "Ready to commit and push?"

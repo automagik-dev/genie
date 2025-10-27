@@ -74,7 +74,7 @@ function main() {
   log('cyan', '📡', 'NPM Registry:');
 
   const npmLatest = exec('npm view automagik-genie@latest version');
-  const npmNext = exec('npm view automagik-genie@next version');
+  const npmNext = exec('npm view automagik-genie@latest version');
 
   if (npmLatest) {
     log('green', '  @latest:', npmLatest);
@@ -83,9 +83,9 @@ function main() {
   }
 
   if (npmNext) {
-    log('yellow', '  @next:', npmNext);
+    log('yellow', '  @latest:', npmNext);
   } else {
-    log('yellow', '  @next:', 'Not found');
+    log('yellow', '  @latest:', 'Not found');
   }
 
   // Git status

@@ -13,11 +13,11 @@ Developer                    GitHub Actions               NPM Registry
 git push origin main    ──► Detects commit on main
                              Auto-bumps: rc.N → rc.N+1
                              Runs tests
-                             Publishes to @next ────────► @next: 2.4.2-rc.92
+                             Publishes to @latest ────────► @latest: 2.4.2-rc.92
 
 pnpm bump:minor         ──► Detects version tag
 (rare - new series)          Runs tests
-                             Publishes to @next ────────► @next: 2.5.0-rc.1
+                             Publishes to @latest ────────► @latest: 2.5.0-rc.1
 
 pnpm release:stable     ──► Detects stable tag
                              Runs tests
@@ -50,7 +50,7 @@ git commit -m "feat: add feature"
 git push origin main
 # GitHub Actions automatically:
 # - Bumps version (rc.91 → rc.92)
-# - Publishes to @next
+# - Publishes to @latest
 # - Creates GitHub release
 ```
 
@@ -86,14 +86,14 @@ pnpm status  # Shows local, git, and npm versions
 ✅ **Co-author support** - Adds "Automagik Genie 🧞" to commits
 ✅ **Safety checks** - Validates clean directory, runs tests
 ✅ **Idempotent** - Won't duplicate publishes if re-run
-✅ **Clear separation** - RC (@next) vs Stable (@latest)
+✅ **Clear separation** - RC (@latest) vs Stable (@latest)
 ✅ **GitHub integration** - Auto-creates releases
 ✅ **Changelog-aware** - Moves [Unreleased] to version sections
 
 ## CI Enhancements
 
 1. **Auto-detects main commits** - Bumps RC and publishes
-2. **Detects RC tags** - Publishes to `@next`
+2. **Detects RC tags** - Publishes to `@latest`
 3. **Detects stable tags** - Publishes to `@latest`
 4. **Skips sequence validation for RCs** - Only validates stable versions
 
@@ -107,7 +107,7 @@ pnpm status  # Shows local, git, and npm versions
 
 ### Why RC-first?
 - ✅ Safe by default - can't accidentally push unstable to production
-- ✅ Testable immediately - users can try `@next`
+- ✅ Testable immediately - users can try `@latest`
 - ✅ Clear intent - RC tags signal "beta"
 
 ### Trade-offs Accepted

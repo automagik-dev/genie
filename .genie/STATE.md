@@ -38,7 +38,7 @@ validation_commands:
 ## 📦 Production Status
 
 **Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.21 on npm@next (2025-10-18)
+**Published:** v2.4.0-rc.21 on npm@latest (2025-10-18)
 **Status:** 🎉 RC21 released – publish complete
 
 **Latest Commit:** !`git log --oneline -1`
