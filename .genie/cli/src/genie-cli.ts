@@ -720,8 +720,7 @@ async function smartRouter(): Promise<void> {
     // Open browser
     const { execSync: execSyncBrowser } = await import('child_process');
     try {
-      const platform = process.platform;
-      const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+      const openCommand = getBrowserOpenCommand();
       execSyncBrowser(`${openCommand} "${shortUrl}"`, { stdio: 'ignore' });
     } catch {
       // Ignore if browser open fails
@@ -989,6 +988,48 @@ function formatUptime(ms: number): string {
   if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
   if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
   return `${seconds}s`;
+}
+
+/**
+ * Detect if running in WSL (Windows Subsystem for Linux)
+ */
+function isWSL(): boolean {
+  try {
+    // Check environment variables (most reliable)
+    if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) {
+      return true;
+    }
+
+    // Check /proc/version for "microsoft" or "WSL"
+    if (fs.existsSync('/proc/version')) {
+      const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+      if (version.includes('microsoft') || version.includes('wsl')) {
+        return true;
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return false;
+}
+
+/**
+ * Get the appropriate browser open command for the current OS
+ * Handles WSL by using Windows commands instead of Linux
+ */
+function getBrowserOpenCommand(): string {
+  const platform = process.platform;
+
+  // WSL: Use Windows command
+  if (platform === 'linux' && isWSL()) {
+    return 'cmd.exe /c start';
+  }
+
+  // Regular OS detection
+  if (platform === 'darwin') return 'open';
+  if (platform === 'win32') return 'start';
+  return 'xdg-open'; // Linux (non-WSL)
 }
 
 /**
@@ -1419,8 +1460,7 @@ async function startGenieServer(): Promise<void> {
                   // Open browser
                   const { execSync: execSyncBrowser } = await import('child_process');
                   try {
-                    const platform = process.platform;
-                    const openCommand = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+                    const openCommand = getBrowserOpenCommand();
                     execSyncBrowser(`${openCommand} "https://dashboard.ngrok.com/signup"`, { stdio: 'ignore' });
                     console.log('');
                     console.log('✓ Browser opened! Come back here after you copy your token.');
