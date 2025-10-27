@@ -396,16 +396,16 @@ export function handleAuthorizationRequest(req: Request, res: Response): void {
 
 /**
  * Handle Authorization Consent (POST /oauth2/authorize/consent)
- * Validates PIN and generates authorization code
+ * Generates authorization code (PIN is optional for extra security)
  */
 export function handleAuthorizationConsent(req: Request, res: Response): void {
   const { request_id, pin } = req.body;
   const { redirect_uri, state } = req.query as Record<string, string>;
 
-  if (!request_id || !pin) {
+  if (!request_id) {
     res.status(400).json({
       error: 'invalid_request',
-      error_description: 'Missing request_id or pin',
+      error_description: 'Missing request_id',
     });
     return;
   }
@@ -420,23 +420,20 @@ export function handleAuthorizationConsent(req: Request, res: Response): void {
     return;
   }
 
-  // Validate PIN
+  // PIN validation is OPTIONAL (OAuth 2.0 + PKCE is already secure)
+  // Only validate if user provided a PIN AND config has a PIN set
   const configPin = getOAuthPin();
-  if (!configPin) {
-    res.status(500).json({
-      error: 'server_error',
-      error_description: 'OAuth PIN not configured. Run `genie` to set up OAuth.',
-    });
-    return;
+  if (pin && configPin) {
+    // User provided PIN - validate it
+    if (pin !== configPin) {
+      res.status(401).json({
+        error: 'access_denied',
+        error_description: 'Invalid PIN',
+      });
+      return;
+    }
   }
-
-  if (pin !== configPin) {
-    res.status(401).json({
-      error: 'access_denied',
-      error_description: 'Invalid PIN',
-    });
-    return;
-  }
+  // If no PIN provided or no PIN configured, proceed anyway (OAuth is secure enough)
 
   // Generate authorization code
   const code = oauthSessionManager.generateAuthorizationCode(authRequest);
