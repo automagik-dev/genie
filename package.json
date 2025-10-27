@@ -91,7 +91,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.18.2",
     "@types/express": "^5.0.4",
-    "automagik-forge": "^0.4.5",
+    "automagik-forge": "latest",
     "commander": "^12.1.0",
     "express": "^5.1.0",
     "gradient-string": "^2.0.2",

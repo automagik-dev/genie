@@ -110,25 +110,24 @@ async function runInitWizard(options) {
         },
         initial: ''
     });
-    // Git hooks installation (advanced feature)
+    // Git hooks installation
     questions.push({
         type: 'select',
         name: 'installHooks',
-        message: '🔧 Install git hooks? (Advanced - validates commits/pushes, runs tests)',
+        message: '🔧 Install git hooks?',
         choices: [
             {
-                title: 'No (default - recommended for most users)',
-                value: false,
-                description: 'You can install later with: node scripts/install-hooks.cjs'
+                title: 'Yes (Recommended)',
+                value: true,
+                description: 'Auto-validate commits, prevent broken pushes, link to GitHub issues'
             },
             {
-                title: 'Yes (advanced - modifies .git/hooks/)',
-                value: true,
-                description: 'Hooks validate worktree access, cross-refs, run tests on push'
+                title: 'No',
+                value: false,
+                description: 'Manual workflow - you manage git yourself'
             }
         ],
-        initial: 0,
-        hint: '⚠️  Only install if you understand what git hooks do'
+        initial: 0
     });
     const response = await (0, prompts_1.default)(questions, {
         onCancel: () => {

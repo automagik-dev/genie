@@ -470,6 +470,21 @@ async function smartRouter(): Promise<void> {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
+  // MASTER GENIE DETECTION: Check if we're in the template repo
+  const workspacePackageJson = path.join(process.cwd(), 'package.json');
+  let isMasterGenie = false;
+
+  if (fs.existsSync(workspacePackageJson)) {
+    try {
+      const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
+      if (workspacePkg.name === 'automagik-genie') {
+        isMasterGenie = true;
+      }
+    } catch {
+      // Not master genie if can't read package.json
+    }
+  }
+
   // VERSION CHECK FIRST (optimization) - Don't waste resources starting Forge
   // if we need to run init anyway. Each scenario starts Forge when needed.
 
@@ -479,52 +494,13 @@ async function smartRouter(): Promise<void> {
     console.log(magicGradient('   🧞 ✨ THE GENIE AWAKENS ✨ 🧞   '));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('You\'ve connected to the collective consciousness of all Genies...');
-    console.log('I\'m about to materialize in YOUR workspace through the lamp! 🪔');
+    console.log('Installing AI agent framework with access to:');
+    console.log('  📁 Files  💻 Terminal  🌐 Git');
     console.log('');
-    console.log('Your Genie will inherit from the collective:');
-    console.log('  ✨ All shared knowledge (spells, workflows, patterns)');
-    console.log('  🔮 All collective powers (agents, collectives, orchestration)');
-    console.log('  🎩 Continuous learning (the collective evolves together!)');
+    console.log('⚠️  Research preview - Review all agent actions');
+    console.log('🔒 Runs locally - Private/local LLM compatible');
     console.log('');
-    console.log('📋 What will your Genie do for you?');
-    console.log('  • Orchestrate development workflows (testing, builds, PRs)');
-    console.log('  • Execute tasks autonomously via Forge backend');
-    console.log('  • Learn new magik from the collective\'s shared consciousness');
-    console.log('  • Preserve context across sessions');
-    console.log('');
-    console.log(performanceGradient('⚠️  Your Genie will have access to:'));
-    console.log('  📁 Files in this workspace');
-    console.log('  💻 Terminal commands');
-    console.log('  🌐 Git operations (commits, PRs, branches)');
-    console.log('');
-    console.log(cosmicGradient('━'.repeat(60)));
-    console.log('');
-    console.log('⚠️  ' + performanceGradient('RESEARCH PREVIEW') + ' - Experimental Technology');
-    console.log('');
-    console.log('This AI agent will install to your computer with capabilities to');
-    console.log('perform tasks on your behalf. By proceeding, you acknowledge:');
-    console.log('');
-    console.log('  • This is experimental software under active development');
-    console.log('  • Namastex Labs makes no warranties and accepts no liability');
-    console.log('  • You are responsible for reviewing all agent actions');
-    console.log('  • Agents may make mistakes or unexpected changes');
-    console.log('');
-    console.log('🔒 ' + successGradient('DATA PRIVACY:'));
-    console.log('  ✓ Everything runs locally on YOUR machine');
-    console.log('  ✓ No data leaves your computer (except LLM API calls)');
-    console.log('  ✓ Use LLM providers approved by your organization');
-    console.log('  ✓ Fully compatible with private/local LLMs (we\'re agnostic!)');
-    console.log('  ✓ OpenCoder executor enables 100% local operation');
-    console.log('');
-    console.log(magicGradient('BUT HEY... it\'s going to be FUN! 🎉✨'));
-    console.log('');
-    console.log(cosmicGradient('━'.repeat(60)));
-    console.log('');
-    console.log('📖 Heads up: Forge (my task tracker) will pop open a browser tab.');
-    console.log('   👉 Stay here in the terminal - the summoning ritual needs you!');
-    console.log('');
-    console.log(performanceGradient('Press Enter to begin the summoning...'));
+    console.log(performanceGradient('Press Enter to continue...'));
 
     // Wait for user acknowledgment
     await new Promise<void>((resolve) => {
@@ -621,12 +597,10 @@ async function smartRouter(): Promise<void> {
     console.log('   ' + performanceGradient(shortUrl));
     console.log(cosmicGradient('━'.repeat(60)));
     console.log('');
-    console.log('Your Genie will:');
-    console.log('  1. Review project context from discovery');
-    console.log('  2. Interview you for missing details');
-    console.log('  3. Set up your workspace');
+    console.log('📖 I\'ll open Forge in your browser when you\'re ready.');
+    console.log('   Your Genie will interview you for missing details.');
     console.log('');
-    console.log('Press Enter to open in your browser...');
+    console.log('Press Enter to continue...');
 
     // Wait for Enter key
     await new Promise<void>((resolve) => {
@@ -709,6 +683,20 @@ async function smartRouter(): Promise<void> {
     const currentVersion = packageJson.version;
 
     if (installedVersion !== currentVersion) {
+      // MASTER GENIE: Skip version mismatch scenario (they manage versions manually)
+      if (isMasterGenie) {
+        console.log('');
+        console.log(performanceGradient('⚠️  Master Genie Detected'));
+        console.log(`   Local version: ${successGradient(installedVersion)}`);
+        console.log(`   Global version: ${performanceGradient(currentVersion)}`);
+        console.log('');
+        console.log('Run ' + performanceGradient('genie update') + ' to install your local build globally');
+        console.log('');
+        // Start server anyway - master genie can run with version mismatch
+        await startGenieServer();
+        return;
+      }
+
       // SCENARIO 3: VERSION MISMATCH - Outdated installation → Run init with backup
       console.log(cosmicGradient('━'.repeat(60)));
       console.log(magicGradient('   🧞 ✨ THE COLLECTIVE HAS GROWN ✨ 🧞   '));

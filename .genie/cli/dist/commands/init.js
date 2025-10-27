@@ -410,10 +410,16 @@ async function initializeProviderStatus(cwd) {
 function buildInitSummaryView(summary, includeInstallMessage = true) {
     const messages = [
         `✅ Installed Genie template at ${summary.target}`,
-        `🔌 Default executor: ${summary.executor}${summary.model ? ` (model: ${summary.model})` : ''}`,
-        `💾 Backup ID: ${summary.backupId ?? 'n/a'}`,
-        `📚 Template source: ${summary.templateSource}`
+        `🔌 Default executor: ${summary.executor}${summary.model ? ` (model: ${summary.model})` : ''}`
     ];
+    // Only show backup ID if there was actually a backup
+    if (summary.backupId) {
+        messages.push(`💾 Backup ID: ${summary.backupId}`);
+    }
+    // Only show template source in verbose mode
+    if (process.env.GENIE_VERBOSE) {
+        messages.push(`📚 Template source: ${summary.templateSource}`);
+    }
     if (includeInstallMessage) {
         messages.push(`🛠️ Started Install agent via Genie run`);
     }
