@@ -15,7 +15,7 @@ importers:
         specifier: ^5.0.4
         version: 5.0.4
       automagik-forge:
-        specifier: ^0.4.5
+        specifier: latest
         version: 0.4.5
       commander:
         specifier: ^12.1.0
