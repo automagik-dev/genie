@@ -96,11 +96,13 @@ export async function startGenie(): Promise<void> {
     // Step 5: Start tunnel if configured
     if (mcpConfig.tunnel?.enabled && mcpConfig.tunnel?.token) {
       console.error('🌐 Starting ngrok tunnel...');
-      tunnelUrl = await startNgrokTunnel(mcpConfig.server.port, mcpConfig.tunnel.token);
-      if (tunnelUrl) {
+      const tunnelResult = await startNgrokTunnel(mcpConfig.server.port, mcpConfig.tunnel.token);
+      if (tunnelResult.url) {
+        tunnelUrl = tunnelResult.url;
         console.error(`🌐 Tunnel ready: ${tunnelUrl}`);
       } else {
-        console.error('⚠️  Tunnel startup failed, continuing without tunnel');
+        console.error(`⚠️  Tunnel startup failed: ${tunnelResult.error || 'Unknown error'}`);
+        console.error('   Continuing without tunnel');
       }
     }
 

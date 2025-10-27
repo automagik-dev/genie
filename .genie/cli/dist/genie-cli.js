@@ -1166,10 +1166,10 @@ async function startGenieServer(debug = false) {
             if (ngrokToken) {
                 console.log('');
                 console.log('🌐 Starting secure tunnel...');
-                const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
-                if (tunnelUrl) {
+                const tunnelResult = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
+                if (tunnelResult.url) {
                     // SUCCESS - Set public URL in env BEFORE starting MCP
-                    env.MCP_PUBLIC_URL = tunnelUrl;
+                    env.MCP_PUBLIC_URL = tunnelResult.url;
                     // Save token to config (only after validation)
                     try {
                         genieConfig.mcp.tunnel = {
@@ -1190,7 +1190,7 @@ async function startGenieServer(debug = false) {
                     console.log(magicGradient('📋 Connection Details for ChatGPT:'));
                     console.log('');
                     console.log(`   ${performanceGradient('SSE Endpoint:')}`);
-                    console.log(`   ${tunnelUrl}/mcp`);
+                    console.log(`   ${tunnelResult.url}/mcp`);
                     console.log('');
                     console.log(`   ${performanceGradient('OAuth Client ID:')}`);
                     console.log(`   ${oauth2Conf.clientId}`);
@@ -1208,31 +1208,60 @@ async function startGenieServer(debug = false) {
                     console.log('');
                 }
                 else {
+                    // FAILURE - Distinguish error types
                     console.log('');
                     console.log('❌ Failed to start tunnel');
-                    // If this was a saved token, offer to clear it
-                    if (isTokenFromSaved) {
-                        console.log('   Your saved token appears to be invalid.');
+                    console.log('');
+                    const errorCode = tunnelResult.errorCode || 'UNKNOWN';
+                    const errorMessage = tunnelResult.error || 'Unknown error';
+                    // Distinguish between stuck endpoint vs authentication errors
+                    if (errorCode === 'ERR_NGROK_334') {
+                        // ERR_NGROK_334 = Endpoint already online (NOT a token problem!)
+                        console.log('   ⚠️  Your ngrok endpoint is stuck from a previous session.');
+                        console.log('   This is NOT a problem with your token.');
                         console.log('');
-                        const clearResponse = await createQuestion(performanceGradient('? Clear saved token and try again? [Y/n]: '));
-                        if (clearResponse.toLowerCase() !== 'n') {
-                            try {
-                                delete genieConfig.mcp.tunnel;
-                                saveGenieConfig(genieConfig);
-                                console.log('');
-                                console.log(successGradient('✓ Saved token cleared.'));
-                                console.log('   Run ' + performanceGradient('genie') + ' again to set up a new token.');
-                            }
-                            catch (err) {
-                                console.log('');
-                                console.log(`⚠️  Could not clear token: ${err.message}`);
+                        console.log('   Quick fixes:');
+                        console.log('   1. Wait 60 seconds and run ' + performanceGradient('genie') + ' again');
+                        console.log('   2. Kill stuck ngrok: ' + performanceGradient('pkill -f ngrok && genie'));
+                        console.log('   3. Or use ngrok dashboard: ' + successGradient('https://dashboard.ngrok.com/tunnels/agents'));
+                        console.log('');
+                        // DO NOT delete token for this error!
+                    }
+                    else if (errorCode.includes('ERR_NGROK_4011') || errorMessage.toLowerCase().includes('authentication') || errorMessage.toLowerCase().includes('unauthorized')) {
+                        // Authentication errors - token is actually invalid
+                        console.log('   ❌ Authentication failed - your token may be invalid.');
+                        console.log('');
+                        if (isTokenFromSaved) {
+                            const clearResponse = await createQuestion(performanceGradient('? Clear saved token and try again? [Y/n]: '));
+                            if (clearResponse.toLowerCase() !== 'n') {
+                                try {
+                                    delete genieConfig.mcp.tunnel;
+                                    saveGenieConfig(genieConfig);
+                                    console.log('');
+                                    console.log(successGradient('✓ Saved token cleared.'));
+                                    console.log('   Run ' + performanceGradient('genie') + ' again to set up a new token.');
+                                }
+                                catch (err) {
+                                    console.log('');
+                                    console.log(`⚠️  Could not clear token: ${err.message}`);
+                                }
                             }
                         }
+                        else {
+                            console.log('   Please check your authtoken and try again.');
+                        }
+                        console.log('');
                     }
                     else {
-                        console.log('   Please check your authtoken and try again.');
+                        // Unknown error
+                        console.log(`   Error: ${errorMessage}`);
+                        console.log('');
+                        if (isTokenFromSaved) {
+                            console.log('   If the problem persists, try clearing your saved token:');
+                            console.log('   Delete ~/.genie/config.yaml and run ' + performanceGradient('genie') + ' again');
+                        }
+                        console.log('');
                     }
-                    console.log('');
                 }
             }
         }
