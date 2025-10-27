@@ -267,17 +267,24 @@ async function syncAgentProfilesToForge() {
         console.warn(`⚠️  Agent profile sync failed: ${error.message}`);
     }
 }
-// Load OAuth2 configuration (if available)
+// Load OAuth2 configuration from ~/.genie/config.yaml
 function loadOAuth2Config() {
     try {
-        const configModPath = path_1.default.join(WORKSPACE_ROOT, '.genie', 'cli', 'dist', 'lib', 'config-manager.js');
-        if (fs_1.default.existsSync(configModPath)) {
-            const { loadOAuth2Config } = require(configModPath);
-            return loadOAuth2Config();
+        const os = require('os');
+        const YAML = require('yaml');
+        const configPath = path_1.default.join(os.homedir(), '.genie', 'config.yaml');
+        if (!fs_1.default.existsSync(configPath)) {
+            return null;
+        }
+        const content = fs_1.default.readFileSync(configPath, 'utf8');
+        const config = YAML.parse(content);
+        // Validate and return OAuth2 config
+        if (config?.mcp?.auth?.oauth2?.clientId) {
+            return config.mcp.auth.oauth2;
         }
     }
     catch (error) {
-        // Config not available (expected for stdio transport)
+        // Config not available or invalid
     }
     return null;
 }
