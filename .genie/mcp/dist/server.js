@@ -848,9 +848,9 @@ const roleInfo = (0, role_detector_js_1.detectGenieRole)();
 const readOnly = (0, role_detector_js_1.isReadOnlyFilesystem)(roleInfo.role);
 // Debug mode detection
 const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
-// Start server with configured transport
+// Start server with configured transport (only log in debug mode)
 if (debugMode) {
-    // Verbose startup logs (debug mode)
+    // Verbose startup logs (debug mode only)
     console.error('Starting Genie MCP Server (MVP)...');
     console.error(`Version: ${getGenieVersion()}`);
     console.error(`Transport: ${TRANSPORT}`);
