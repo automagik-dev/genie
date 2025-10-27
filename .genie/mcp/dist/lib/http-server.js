@@ -41,9 +41,21 @@ async function startHttpServer(options) {
         }
         next();
     });
-    // Body parser middleware
+    // Body parser middleware with error handling
     app.use(express_1.default.json());
     app.use(express_1.default.urlencoded({ extended: false }));
+    // Catch body-parser errors (invalid JSON, etc.)
+    app.use((err, req, res, next) => {
+        if (err instanceof SyntaxError && 'body' in err) {
+            console.error(`❌ Body parser error on ${req.method} ${req.path}:`, err.message);
+            console.error(`   Request body: ${req.body || 'Unable to parse'}`);
+            return res.status(400).json({
+                error: 'Bad Request',
+                message: 'Invalid JSON in request body'
+            });
+        }
+        next(err);
+    });
     // Debug logging middleware (logs all incoming requests)
     if (debugMode) {
         app.use((req, res, next) => {
