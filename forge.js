@@ -805,7 +805,7 @@ class ForgeClient {
      * Get forge agents (master orchestrators) for a project
      * Each agent has ONE fixed task per project
      * @param projectId - Project UUID
-     * @param agentType - Agent type filter (master, wish, forge, review)
+     * @param agentType - Agent type filter ('wish' | 'forge' | 'review')
      * @returns Array of forge agents
      */
     async getForgeAgents(projectId, agentType) {
@@ -819,7 +819,7 @@ class ForgeClient {
      * POST /api/forge/agents
      * Create a new forge agent (and its fixed task)
      * @param projectId - Project UUID
-     * @param agentType - Agent type (master, wish, forge, review)
+     * @param agentType - Agent type ('wish' | 'forge' | 'review')
      * @returns Created agent with task_id
      */
     async createForgeAgent(projectId, agentType) {
