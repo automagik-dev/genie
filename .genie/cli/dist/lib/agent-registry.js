@@ -270,11 +270,11 @@ class AgentRegistry {
                 if (executor === 'CODEX' && agent.genie?.model_reasoning_effort !== undefined) {
                     variantConfig.model_reasoning_effort = agent.genie.model_reasoning_effort;
                 }
-                // NOTE: Do not sync `model` from frontmatter to Forge profiles
-                // Reason: Forge validates model names per-executor, and agents use shorthand ("sonnet", "flash")
-                // that doesn't match Forge's validation rules (e.g., GEMINI expects "default" or "flash").
-                // Instead: Agents inherit model from DEFAULT variant, users override at runtime if needed.
-                // Runtime override: `genie run agent --executor CODEX --model o3-mini`
+                // Add model if specified in frontmatter AND this is the agent's default executor
+                // Only set model on the executor the agent is designed for (prevents validation errors)
+                if (agent.genie?.model && agent.genie?.executor === executor) {
+                    variantConfig.model = agent.genie.model;
+                }
                 // Add background setting if specified
                 if (agent.genie?.background !== undefined) {
                     variantConfig.background = agent.genie.background;
