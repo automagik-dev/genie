@@ -198,6 +198,11 @@ async function runInit(parsed, _config, _paths) {
                 console.log(`   Old .genie moved to: ${tempBackupPath}`);
             }
             console.log('');
+            // Create git checkpoint commit (clean rollback point before template modifications)
+            if (backupId && oldVersion) {
+                await createUpgradeCheckpoint(cwd, oldVersion, currentPackageVersion, backupId);
+                console.log('');
+            }
         }
         // Copy ALL selected templates (not just the first one)
         for (const tmpl of templates) {
@@ -433,6 +438,52 @@ async function getGitCommit() {
     }
     catch {
         return 'unknown';
+    }
+}
+/**
+ * Create git checkpoint commit after backup but before template modifications
+ *
+ * Purpose: Provides clean rollback point if upgrade fails
+ *
+ * @param cwd - Workspace directory
+ * @param oldVersion - Version before upgrade
+ * @param newVersion - Version after upgrade
+ * @param backupId - Backup timestamp ID
+ */
+async function createUpgradeCheckpoint(cwd, oldVersion, newVersion, backupId) {
+    const { execSync } = await import('child_process');
+    try {
+        // Verify git repo exists
+        execSync('git rev-parse --git-dir', { cwd, stdio: 'pipe' });
+        // Check for uncommitted changes in .genie/
+        const status = execSync('git status --porcelain .genie/', {
+            cwd,
+            encoding: 'utf8'
+        });
+        if (status.trim()) {
+            // Stage .genie/ changes
+            execSync('git add .genie/', { cwd, stdio: 'pipe' });
+            // Create checkpoint commit
+            // chore(upgrade): prefix = exempt from traceability requirements (commit-advisory.cjs:345)
+            // GENIE_DISABLE_COAUTHOR=1 = no co-author attribution (system operation, not Genie authoring)
+            const message = `chore(upgrade): checkpoint before upgrading from ${oldVersion} to ${newVersion}\n\nBackup ID: ${backupId}`;
+            execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+                cwd,
+                stdio: 'pipe',
+                env: {
+                    ...process.env,
+                    GENIE_DISABLE_COAUTHOR: '1' // System operation, not Genie authoring
+                }
+            });
+            console.log('✓ Checkpoint commit created');
+        }
+        else {
+            console.log('✓ No changes to checkpoint (clean state)');
+        }
+    }
+    catch (err) {
+        // Non-fatal: not a git repo or git command failed
+        console.log('⚠️  Skipped checkpoint commit (git not available)');
     }
 }
 async function initializeProviderStatus(cwd) {
