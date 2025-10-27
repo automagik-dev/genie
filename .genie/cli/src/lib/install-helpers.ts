@@ -303,7 +303,10 @@ export async function runInstallFlow(config: InstallFlowConfig): Promise<string>
 
   try {
     await forgeExecutor.syncProfiles(undefined);
-    console.log(gradient.pastel('✅ Agent profiles synced!\n'));
+    console.log(gradient.pastel('✅ Agent profiles synced!'));
+    console.log(gradient.pastel('   Waiting for Forge to reload profiles...\n'));
+    // Give Forge time to reload executor profiles before creating tasks
+    await new Promise(resolve => setTimeout(resolve, 2000));
   } catch (error: any) {
     console.log(gradient.pastel('⚠️  Using built-in profiles (agent sync skipped)\n'));
     // Continue with install - will use DEFAULT variants
