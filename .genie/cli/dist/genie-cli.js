@@ -1039,10 +1039,15 @@ async function startGenieServer(debug = false) {
         // Enable debug mode if --debug flag was passed
         ...(debug ? { MCP_DEBUG: '1' } : {})
     };
-    // Ask user if they want to integrate Genie into ChatGPT
+    // ChatGPT tunnel setup - check if already configured
     const readline = require('readline');
     const { loadConfig: loadGenieConfig, saveConfig: saveGenieConfig } = require('./lib/config-manager');
     const { startNgrokTunnel } = require('./lib/tunnel-manager');
+    // Load config first to check if tunnel is already set up
+    const genieConfig = loadGenieConfig();
+    // Check if tunnel is already configured
+    const hasSavedTunnel = genieConfig?.mcp?.tunnel?.token;
+    // Create readline interface (needed for all prompts throughout tunnel setup)
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
@@ -1052,15 +1057,23 @@ async function startGenieServer(debug = false) {
             rl.question(query, resolve);
         });
     };
-    console.log('');
-    console.log(magicGradient('✨ Would you like to integrate your Genie into ChatGPT?'));
-    console.log('   (more coming soon)');
-    console.log('');
-    const tunnelResponse = await createQuestion(performanceGradient('? Connect ChatGPT to Genie? [Y/n]: '));
+    // Only prompt if no saved tunnel configuration
+    let tunnelResponse = 'y'; // Default to yes if already configured
+    if (!hasSavedTunnel) {
+        console.log('');
+        console.log(magicGradient('✨ Would you like to integrate your Genie into ChatGPT?'));
+        console.log('   (more coming soon)');
+        console.log('');
+        tunnelResponse = await createQuestion(performanceGradient('? Connect ChatGPT to Genie? [Y/n]: '));
+    }
+    else {
+        // Tunnel already configured, start it silently
+        console.log('');
+        console.log(successGradient('✓ ChatGPT tunnel configured, starting...'));
+    }
     // [Y/n] means Y is default, so empty string = yes
     if (tunnelResponse.toLowerCase() !== 'n') {
-        // User wants tunnel - load full config
-        const genieConfig = loadGenieConfig();
+        // User wants tunnel (or already has it configured)
         if (!genieConfig || !genieConfig.mcp?.auth?.oauth2) {
             console.log('');
             console.log('❌ OAuth config not found. This should not happen.');
