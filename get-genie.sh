@@ -381,33 +381,14 @@ install_pnpm() {
 
     echo -e "${MAGENTA}⚡ Installing pnpm (fast package manager)...${NC}"
 
-    case "$OS_TYPE" in
-        macos)
-            # Use Homebrew for macOS
-            install_macos pnpm
-            ;;
-        *)
-            # Set up user-local directory for package managers
-            export PNPM_HOME="$HOME/.local/share/pnpm"
-            mkdir -p "$PNPM_HOME"
+    # Let npm handle pnpm installation (npm knows PATH)
+    npm install -g pnpm
 
-            # Install via npm with user prefix (no sudo needed)
-            npm install -g pnpm --prefix="$HOME/.local"
-
-            # Add to PATH for current session
-            export PATH="$HOME/.local/bin:$PNPM_HOME:$PATH"
-
-            # Add to shell profiles for persistence
-            add_to_profile "export PNPM_HOME=\"\$HOME/.local/share/pnpm\"" "pnpm configuration (added by Genie installer)"
-            add_to_profile "export PATH=\"\$HOME/.local/bin:\$PNPM_HOME:\$PATH\"" "pnpm PATH (added by Genie installer)"
-            ;;
-    esac
-
-    # Verify pnpm is available
+    # Verify it's immediately available
     if ! command_exists pnpm; then
-        echo -e "${YELLOW}⚠️  pnpm installed but not in PATH. Run this spell:${NC}"
-        echo "    export PATH=\"\$HOME/.local/bin:\$PNPM_HOME:\$PATH\""
-        exit 1
+        echo -e "${YELLOW}⚠️  pnpm requires shell restart, will use npm fallback${NC}"
+        echo ""
+        return 1  # Signal fallback needed
     fi
 
     echo -e "${GREEN}✅ pnpm installed successfully!${NC}"
@@ -419,6 +400,12 @@ install_pnpm() {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 install_genie() {
+    # Determine which package manager to use (pnpm if available, npm fallback)
+    local PKG_MGR="npm"
+    if command_exists pnpm; then
+        PKG_MGR="pnpm"
+    fi
+
     if command_exists genie; then
         # Get installed version
         local installed_version=$(genie --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?' || echo "0.0.0")
@@ -436,7 +423,7 @@ install_genie() {
             echo "Master Genie: $latest_version ⭐ NEW!"
             echo ""
             echo -e "${CYAN}⚡ Syncing new capabilities from the Master Genie...${NC}"
-            pnpm install -g automagik-genie@latest
+            $PKG_MGR install -g automagik-genie@latest
             echo ""
             echo -e "${GREEN}✅ You're now running v${latest_version}! ✨${NC}"
             echo "✓ All data stays local on your machine"
@@ -448,7 +435,7 @@ install_genie() {
     else
         # Not installed - install it globally
         echo -e "${CYAN}🎩 Pulling Genie from the lamp...${NC}"
-        pnpm install -g automagik-genie@latest
+        $PKG_MGR install -g automagik-genie@latest
         echo ""
         echo -e "${GREEN}✅ Genie is ready to grant your wishes! ✨${NC}"
         echo ""
