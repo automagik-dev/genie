@@ -251,16 +251,15 @@
   </div>
 
   <script>
-    // Parse query parameters
+    // Get values from data attributes (injected server-side)
+    const container = document.querySelector('.container');
+    const clientName = container.dataset.clientName || 'Unknown Application';
+    const scopes = (container.dataset.scopes || '').split(' ').filter(s => s);
+
+    // Parse URL for error parameters only
     const urlParams = new URLSearchParams(window.location.search);
-    const requestId = urlParams.get('request_id');
-    const clientName = urlParams.get('client_name') || 'Unknown Application';
-    const scopes = (urlParams.get('scope') || '').split(' ').filter(s => s);
     const error = urlParams.get('error');
     const errorDescription = urlParams.get('error_description');
-
-    // Set request_id in hidden form field
-    document.getElementById('requestId').value = requestId;
 
     // Display client name
     document.getElementById('clientName').textContent = clientName;
@@ -329,10 +328,15 @@
     // Handle deny
     function denyAccess() {
       if (confirm('Are you sure you want to deny access?')) {
-        const redirectUri = urlParams.get('redirect_uri');
-        const state = urlParams.get('state');
-        const denyUrl = `${redirectUri}?error=access_denied&error_description=User denied authorization&state=${state}`;
-        window.location.href = denyUrl;
+        // Get redirect info from form action (it has the query params)
+        const form = document.getElementById('authForm');
+        const actionUrl = new URL(form.action, window.location.origin);
+        const redirectUri = actionUrl.searchParams.get('redirect_uri');
+        const state = actionUrl.searchParams.get('state');
+        if (redirectUri && state) {
+          const denyUrl = `${redirectUri}?error=access_denied&error_description=User denied authorization&state=${state}`;
+          window.location.href = denyUrl;
+        }
       }
     }
 

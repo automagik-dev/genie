@@ -19,6 +19,7 @@ export interface OAuth2Config {
   publicKey: string;
   tokenExpiry: number;
   issuer: string;
+  pin?: string; // Authorization PIN for OAuth consent page
 }
 
 // Dynamic import of OAuth2 utilities

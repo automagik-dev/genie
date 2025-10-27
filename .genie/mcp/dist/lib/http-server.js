@@ -190,6 +190,7 @@ async function startHttpServer(options) {
                 console.error(`   ├─ Issuer:       ${oauth2Config.issuer}`);
                 console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
                 console.error(`   ├─ Client Secret: ${oauth2Config.clientSecret}`);
+                console.error(`   ├─ Authorization PIN: ${oauth2Config.pin || 'NOT SET'}`);
                 console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
                 console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
                 console.error(`\n🔍 DEBUG MODE ENABLED`);
@@ -203,6 +204,7 @@ async function startHttpServer(options) {
                 console.error(`\n🔐 ChatGPT Integration:`);
                 console.error(`   Client ID:     ${oauth2Config.clientId}`);
                 console.error(`   Client Secret: ${oauth2Config.clientSecret}`);
+                console.error(`   Authorization PIN: ${oauth2Config.pin || 'NOT SET'}`);
                 console.error(`   Token Expiry:  ${oauth2Config.tokenExpiry}s`);
             }
             if (onReady) {
