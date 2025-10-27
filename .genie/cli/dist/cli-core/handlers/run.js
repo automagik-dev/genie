@@ -19,12 +19,17 @@ function createRunHandler(ctx) {
         const agentSpec = (0, agent_resolver_1.loadAgentSpec)(resolvedAgentName);
         const agentGenie = agentSpec.meta?.genie || {};
         const { executorKey, executorVariant, model, modeName } = resolveExecutionSelection(ctx.config, parsed, agentGenie);
-        // Detect headless mode (--raw or --quiet)
-        const isHeadless = parsed.options.raw || parsed.options.quiet;
+        // Detect output mode
+        // Default: Foreground execution with live output (wait for completion)
+        // --background: Start task and exit immediately (return Forge URL)
+        // --raw: Foreground execution, output raw text only
+        // --quiet: Foreground execution, suppress startup messages
+        const isBackground = parsed.options.background;
         const isRawOutput = parsed.options.raw;
         const isQuiet = parsed.options.quiet;
-        // Check if executor is authenticated (skip in headless mode)
-        if (!isHeadless && isExecutorAuthRequired(executorKey)) {
+        const isForeground = !isBackground; // Default is foreground
+        // Check if executor is authenticated
+        if (isExecutorAuthRequired(executorKey)) {
             const isAuthenticated = await (0, executor_auth_1.checkExecutorAuth)(executorKey);
             if (!isAuthenticated) {
                 try {
@@ -36,7 +41,7 @@ function createRunHandler(ctx) {
             }
         }
         // Ensure Forge is running (silent if quiet mode)
-        if (isHeadless) {
+        if (isForeground) {
             await (0, headless_helpers_1.ensureForgeRunning)(isQuiet);
         }
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
@@ -84,42 +89,47 @@ function createRunHandler(ctx) {
             background: parsed.options.background
         };
         await ctx.sessionService.save(store);
-        // Headless mode: wait for completion and output JSON/raw
-        if (isHeadless) {
+        // Foreground mode (DEFAULT): wait for completion and show output
+        if (isForeground) {
+            if (!isQuiet) {
+                const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
+                const modelSuffix = model ? `, model=${model}` : '';
+                process.stdout.write(`✓ Running ${resolvedAgentName} (executor=${executorSummary}${modelSuffix})\n`);
+                process.stdout.write(`  Session: ${sessionName}\n`);
+                process.stdout.write(`  Waiting for completion...\n\n`);
+            }
             const result = await (0, headless_helpers_1.waitForTaskCompletion)(sessionResult.attemptId, forgeExecutor);
             const duration = Date.now() - startTime;
-            const runResult = {
-                agent: resolvedAgentName,
-                status: result.status,
-                output: result.output,
-                error: result.error,
-                duration_ms: duration,
-                executor: [executorKey, executorVariant].filter(Boolean).join('/'),
-                model: model,
-                task_id: sessionResult.taskId || 'unknown',
-                attempt_id: sessionResult.attemptId,
-                forge_url: sessionResult.forgeUrl,
-                timestamp: now
-            };
-            // Output result
+            // Output result based on mode
             if (isRawOutput) {
-                // Raw text output only
+                // Raw text output only (no JSON wrapper)
                 process.stdout.write(result.output + '\n');
             }
             else {
-                // JSON output (default for headless)
-                process.stdout.write(JSON.stringify(runResult, null, 2) + '\n');
+                // Default: show output with metadata
+                if (!isQuiet) {
+                    process.stdout.write(`\n${'='.repeat(60)}\n`);
+                    process.stdout.write(`📊 ${resolvedAgentName} Output\n`);
+                    process.stdout.write(`${'='.repeat(60)}\n\n`);
+                }
+                process.stdout.write(result.output + '\n');
+                if (!isQuiet) {
+                    process.stdout.write(`\n${'='.repeat(60)}\n`);
+                    process.stdout.write(`Status: ${result.status}\n`);
+                    process.stdout.write(`Duration: ${(duration / 1000).toFixed(2)}s\n`);
+                    process.stdout.write(`${'='.repeat(60)}\n`);
+                }
             }
             // Exit with appropriate code
-            process.exit(result.status === 'completed' ? 0 : 1);
+            process.exitCode = result.status === 'completed' ? 0 : 1;
+            return;
         }
-        // Interactive mode: show info and wait for browser open
+        // Background mode: just show Forge URL and exit
         const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
         const modelSuffix = model ? `, model=${model}` : '';
-        process.stdout.write(`✓ Started ${resolvedAgentName} via Forge (executor=${executorSummary}${modelSuffix})\n`);
+        process.stdout.write(`✓ Started ${resolvedAgentName} in background (executor=${executorSummary}${modelSuffix})\n`);
         process.stdout.write(`  Session name: ${sessionName}\n`);
         process.stdout.write(`  Forge URL: ${sessionResult.forgeUrl}\n`);
-        process.stdout.write(`\n  Press Enter to open in browser...\n`);
     };
 }
 function resolveExecutionSelection(config, parsed, agentGenie) {
