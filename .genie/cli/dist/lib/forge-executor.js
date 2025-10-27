@@ -82,27 +82,36 @@ class ForgeExecutor {
                 ? JSON.parse(currentProfiles.content)
                 : currentProfiles;
             // Merge: built-in variants + ALL agent variants
-            const payload = this.mergeProfiles(current, allAgentProfiles);
-            // Check payload size
-            const payloadSize = JSON.stringify(payload).length;
-            const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
-            const maxPayloadSize = 10 * 1024 * 1024; // 10MB limit
-            if (payloadSize > maxPayloadSize) {
-                console.warn(`⚠️  Payload too large (${payloadMB}MB > 10MB), sync aborted`);
-                console.warn(`   Try syncing fewer agents or increase Forge body limit`);
-                return;
+            const fullPayload = this.mergeProfiles(current, allAgentProfiles);
+            // Split by executor to avoid 2MB body limit (split 8 executors into groups of 2)
+            const executorKeys = Object.keys(fullPayload.executors);
+            const EXECUTORS_PER_BATCH = 2; // 2 executors per request = ~0.6MB each
+            const executorBatches = [];
+            for (let i = 0; i < executorKeys.length; i += EXECUTORS_PER_BATCH) {
+                executorBatches.push(executorKeys.slice(i, i + EXECUTORS_PER_BATCH));
             }
-            // Single request with all changes
-            try {
-                await this.forge.updateExecutorProfiles(payload);
-                console.log(`✅ Synced ${changedAgents.length} agent(s) (${payloadMB}MB)`);
+            let successfulBatches = 0;
+            let totalPayloadSize = 0;
+            for (let i = 0; i < executorBatches.length; i++) {
+                const executorBatch = executorBatches[i];
+                const batchNum = i + 1;
+                // Create payload with only these executors
+                const batchPayload = { executors: {} };
+                for (const executor of executorBatch) {
+                    batchPayload.executors[executor] = fullPayload.executors[executor];
+                }
+                const batchSize = JSON.stringify(batchPayload).length;
+                const batchMB = (batchSize / 1024 / 1024).toFixed(2);
+                try {
+                    await this.forge.updateExecutorProfiles(batchPayload);
+                    successfulBatches++;
+                    totalPayloadSize += batchSize;
+                    console.log(`✅ Batch ${batchNum}/${executorBatches.length}: ${executorBatch.join(', ')} synced (${batchMB}MB)`);
+                }
+                catch (error) {
+                    console.warn(`⚠️  Batch ${batchNum}/${executorBatches.length} failed: ${error.message}`);
+                }
             }
-            catch (error) {
-                console.warn(`⚠️  Failed to sync: ${error.message}`);
-                return;
-            }
-            const successfulBatches = 1;
-            const totalPayloadSize = payloadSize;
             // Save updated cache only if at least one batch succeeded
             if (successfulBatches > 0) {
                 cache.agentHashes = currentHashes;
@@ -114,9 +123,9 @@ class ForgeExecutor {
             // Calculate statistics
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
             const syncedCount = changedAgents.length;
-            const agentsPerSec = syncedCount > 0 ? (syncedCount / parseFloat(elapsed)).toFixed(0) : '0';
             const executors = await AgentRegistry.getSupportedExecutors(this.forge);
             const executorCount = executors.length;
+            const totalMB = (totalPayloadSize / 1024 / 1024).toFixed(2);
             // Build change summary
             const changes = [];
             if (added.length > 0)
@@ -126,7 +135,7 @@ class ForgeExecutor {
             if (removed.length > 0)
                 changes.push(`${removed.length} deleted`);
             const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
-            console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${payloadMB}MB payload)`);
+            console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total, ${successfulBatches}/${executorBatches.length} batches)`);
         }
         catch (error) {
             // Provide helpful error messages for common failures
