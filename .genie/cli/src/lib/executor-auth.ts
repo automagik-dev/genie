@@ -168,7 +168,7 @@ async function checkCodexAuth(): Promise<boolean> {
 async function configureCodex(): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`\nLaunching Codex authentication...\n`);
-    const child = spawn('npx', ['@namastex/codex-cli@latest', 'login'], {
+    const child = spawn('npx', ['@openai/codex@latest', 'login'], {
       stdio: 'inherit',
       shell: false,
     });

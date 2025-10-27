@@ -43,12 +43,12 @@ https://claude.ai/download
 
 ---
 
-## 2. ChatGPT (codex-cli)
+## 2. ChatGPT (@openai/codex)
 **Command to verify:** `codex`
 
 ### All Platforms (npm)
 ```bash
-npm install -g codex-cli
+npm install -g @openai/codex
 ```
 
 ### Authentication

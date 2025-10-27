@@ -78,7 +78,7 @@
       "id": "codex",
       "name": "ChatGPT",
       "description": "OpenAI ChatGPT via Codex CLI",
-      "package": "@namastex/codex-cli",
+      "package": "@openai/codex",
       "command": "codex",
       "install_method": "npm",
       "auth_required": true,
