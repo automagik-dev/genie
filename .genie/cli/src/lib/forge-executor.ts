@@ -125,7 +125,7 @@ export class ForgeExecutor {
 
       // Fetch current profiles to extract built-in variants
       const currentProfiles = await this.forge.getExecutorProfiles();
-      const current = typeof currentProfiles.content === 'string'
+      let accumulated = typeof currentProfiles.content === 'string'
         ? JSON.parse(currentProfiles.content)
         : currentProfiles;
 
@@ -150,14 +150,16 @@ export class ForgeExecutor {
         // Generate profiles for this agent batch (creates variants across ALL executors)
         const batchProfiles = await registry.generateForgeProfiles(this.forge, agentBatch);
 
-        // Merge with current profiles (preserves built-ins + other agents)
-        const payload = this.mergeProfiles(current, batchProfiles);
+        // Merge with accumulated state (preserves built-ins + previously synced agents)
+        const payload = this.mergeProfiles(accumulated, batchProfiles);
 
         const batchSize = JSON.stringify(payload).length;
         const batchMB = (batchSize / 1024 / 1024).toFixed(2);
 
         try {
           await this.forge.updateExecutorProfiles(payload);
+          // Update accumulated state with what we just sent
+          accumulated = payload;
           successfulBatches++;
           totalPayloadSize += batchSize;
           console.log(`✅ Batch ${batchNum}/${agentBatches.length}: ${agentBatch.length} agents synced (${batchMB}MB)`);
