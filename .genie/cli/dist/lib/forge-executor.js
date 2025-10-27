@@ -72,44 +72,39 @@ class ForgeExecutor {
                     }
                 }
             }
-            // Generate profiles for ALL agents (not just changed)
-            // Forge PUT /profiles replaces everything, so we must send complete agent set
-            const allAgentProfiles = await registry.generateForgeProfiles(this.forge);
-            // Fetch current profiles to extract ONLY built-in variants (DEFAULT, APPROVALS, etc.)
-            // We'll merge built-ins with ALL agents to create complete profile set
+            // Fetch current profiles to extract built-in variants
             const currentProfiles = await this.forge.getExecutorProfiles();
             const current = typeof currentProfiles.content === 'string'
                 ? JSON.parse(currentProfiles.content)
                 : currentProfiles;
-            // Merge: built-in variants + ALL agent variants
-            const fullPayload = this.mergeProfiles(current, allAgentProfiles);
-            // Split by executor to avoid 2MB body limit (split 8 executors into groups of 2)
-            const executorKeys = Object.keys(fullPayload.executors);
-            const EXECUTORS_PER_BATCH = 2; // 2 executors per request = ~0.6MB each
-            const executorBatches = [];
-            for (let i = 0; i < executorKeys.length; i += EXECUTORS_PER_BATCH) {
-                executorBatches.push(executorKeys.slice(i, i + EXECUTORS_PER_BATCH));
+            // Split agents into batches to stay under 2MB body limit
+            // 37 agents × 8 executors = 2.4MB total, so batch size ~20 agents = ~1.3MB per request
+            const allAgents = registry.getAllAgents();
+            const AGENTS_PER_BATCH = 20;
+            const agentBatches = [];
+            for (let i = 0; i < allAgents.length; i += AGENTS_PER_BATCH) {
+                agentBatches.push(allAgents.slice(i, i + AGENTS_PER_BATCH));
             }
             let successfulBatches = 0;
             let totalPayloadSize = 0;
-            for (let i = 0; i < executorBatches.length; i++) {
-                const executorBatch = executorBatches[i];
+            // For each batch of agents, generate profiles across ALL executors
+            for (let i = 0; i < agentBatches.length; i++) {
+                const agentBatch = agentBatches[i];
                 const batchNum = i + 1;
-                // Create payload with only these executors
-                const batchPayload = { executors: {} };
-                for (const executor of executorBatch) {
-                    batchPayload.executors[executor] = fullPayload.executors[executor];
-                }
-                const batchSize = JSON.stringify(batchPayload).length;
+                // Generate profiles for this agent batch (creates variants across ALL executors)
+                const batchProfiles = await registry.generateForgeProfiles(this.forge, agentBatch);
+                // Merge with current profiles (preserves built-ins + other agents)
+                const payload = this.mergeProfiles(current, batchProfiles);
+                const batchSize = JSON.stringify(payload).length;
                 const batchMB = (batchSize / 1024 / 1024).toFixed(2);
                 try {
-                    await this.forge.updateExecutorProfiles(batchPayload);
+                    await this.forge.updateExecutorProfiles(payload);
                     successfulBatches++;
                     totalPayloadSize += batchSize;
-                    console.log(`✅ Batch ${batchNum}/${executorBatches.length}: ${executorBatch.join(', ')} synced (${batchMB}MB)`);
+                    console.log(`✅ Batch ${batchNum}/${agentBatches.length}: ${agentBatch.length} agents synced (${batchMB}MB)`);
                 }
                 catch (error) {
-                    console.warn(`⚠️  Batch ${batchNum}/${executorBatches.length} failed: ${error.message}`);
+                    console.warn(`⚠️  Batch ${batchNum}/${agentBatches.length} failed: ${error.message}`);
                 }
             }
             // Save updated cache only if at least one batch succeeded
@@ -135,7 +130,7 @@ class ForgeExecutor {
             if (removed.length > 0)
                 changes.push(`${removed.length} deleted`);
             const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
-            console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total, ${successfulBatches}/${executorBatches.length} batches)`);
+            console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total, ${successfulBatches}/${agentBatches.length} batches)`);
         }
         catch (error) {
             // Provide helpful error messages for common failures
