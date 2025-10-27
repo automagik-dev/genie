@@ -170,7 +170,7 @@ infrastructure improvements, and enhanced automation for release workflows.
 ### 📦 Installation
 
 \`\`\`bash
-npm install -g automagik-genie@next
+npm install -g automagik-genie@latest
 # or
 genie update
 \`\`\`
@@ -280,7 +280,7 @@ echo "✅ Version not yet published"
 
 Package: automagik-genie
 Version: v2.4.0-rc.23
-Type: RC (@next tag)
+Type: RC (@latest tag)
 Branch: feat/release-rc23
 
 This will:
@@ -480,7 +480,7 @@ rm -rf $TMP_DIR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Package: automagik-genie v2.4.0-rc.23
-Type: RC release (@next tag)
+Type: RC release (@latest tag)
 
 ✅ Git tag created and pushed
 ✅ GitHub release published
@@ -494,7 +494,7 @@ Type: RC release (@next tag)
   Changelog: https://github.com/namastexlabs/automagik-genie/compare/v2.4.0-rc.22...v2.4.0-rc.23
 
 📦 Install:
-  npm install -g automagik-genie@next
+  npm install -g automagik-genie@latest
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
@@ -508,7 +508,7 @@ Type: RC release (@next tag)
 
 ## Release Details
 - **Version:** 2.4.0-rc.23
-- **Type:** RC (@next tag)
+- **Type:** RC (@latest tag)
 - **Date:** 2025-10-18 15:00 UTC
 - **Previous:** v2.4.0-rc.22
 - **Commits:** 15
@@ -544,8 +544,8 @@ Type: RC release (@next tag)
 - Publish time: 1m 45s
 
 ## Notes
-Clean automated release. All systems nominal. RC published to @next tag.
-Ready for testing. Use `npm install -g automagik-genie@next` to test.
+Clean automated release. All systems nominal. RC published to @latest tag.
+Ready for testing. Use `npm install -g automagik-genie@latest` to test.
 ```
 
 ---
@@ -596,7 +596,7 @@ exit 1
 - ✅ Git tag created and pushed
 - ✅ GitHub release with approved notes
 - ✅ PR created, tested, merged
-- ✅ NPM published to correct tag (@next or @latest)
+- ✅ NPM published to correct tag (@latest or @latest)
 - ✅ Installation verified
 - ✅ Done report saved
 - ✅ No manual intervention needed (except approval)

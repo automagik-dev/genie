@@ -323,7 +323,7 @@ async function updatePortable(appDataDir: string) {
   const packagePath = path.join(appDataDir, 'genie-portable', 'packages');
 
   // Update Genie CLI
-  await execAsync('npm install -g automagik-genie@next', {
+  await execAsync('npm install -g automagik-genie@latest', {
     env: {
       NPM_CONFIG_PREFIX: packagePath,
       NODE_PATH: path.join(packagePath, 'node_modules')
@@ -331,7 +331,7 @@ async function updatePortable(appDataDir: string) {
   });
 
   // Update Forge
-  await execAsync('npm install -g automagik-forge@next', {
+  await execAsync('npm install -g automagik-forge@latest', {
     env: {
       NPM_CONFIG_PREFIX: packagePath,
       NODE_PATH: path.join(packagePath, 'node_modules')

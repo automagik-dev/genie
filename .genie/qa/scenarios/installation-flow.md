@@ -108,7 +108,7 @@ mkdir -p "$TEST_DIR" "$EVIDENCE_DIR"
 cd "$TEST_DIR"
 
 # Execute via npx
-npx automagik-genie@next 2>&1 | tee "${EVIDENCE_DIR}/scenario2-npx-install.log"
+npx automagik-genie@latest 2>&1 | tee "${EVIDENCE_DIR}/scenario2-npx-install.log"
 
 echo $? > "${EVIDENCE_DIR}/scenario2-exit-code.txt"
 genie --version > "${EVIDENCE_DIR}/scenario2-version.txt" 2>&1
@@ -148,7 +148,7 @@ cd "$TEST_DIR"
 
 # Install old version first
 git init -b main
-npx automagik-genie@next init code --yes 2>&1 | tee "${EVIDENCE_DIR}/scenario3-initial-install.log"
+npx automagik-genie@latest init code --yes 2>&1 | tee "${EVIDENCE_DIR}/scenario3-initial-install.log"
 
 # Capture initial version
 cat .genie/state/version.json > "${EVIDENCE_DIR}/scenario3-version-before.json"
@@ -197,7 +197,7 @@ mkdir -p "$TEST_DIR" "$EVIDENCE_DIR"
 cd "$TEST_DIR"
 
 # Install and watch for Forge messages
-npx automagik-genie@next init code 2>&1 | tee "${EVIDENCE_DIR}/scenario4-forge-visibility.log"
+npx automagik-genie@latest init code 2>&1 | tee "${EVIDENCE_DIR}/scenario4-forge-visibility.log"
 
 # Check Forge process
 ps aux | grep forge | grep -v grep > "${EVIDENCE_DIR}/scenario4-forge-process.txt"
@@ -237,12 +237,12 @@ mkdir -p "$TEST_DIR" "$EVIDENCE_DIR"
 cd "$TEST_DIR"
 
 # Test 5a: Invalid Forge port
-FORGE_PORT=9999 npx automagik-genie@next init code 2>&1 | tee "${EVIDENCE_DIR}/scenario5a-invalid-port.log"
+FORGE_PORT=9999 npx automagik-genie@latest init code 2>&1 | tee "${EVIDENCE_DIR}/scenario5a-invalid-port.log"
 echo $? > "${EVIDENCE_DIR}/scenario5a-exit-code.txt"
 
 # Test 5b: Network issue simulation
 export FORGE_BASE_URL="http://invalid-host:8887"
-npx automagik-genie@next init code 2>&1 | tee "${EVIDENCE_DIR}/scenario5b-network-error.log"
+npx automagik-genie@latest init code 2>&1 | tee "${EVIDENCE_DIR}/scenario5b-network-error.log"
 echo $? > "${EVIDENCE_DIR}/scenario5b-exit-code.txt"
 unset FORGE_BASE_URL
 ```
