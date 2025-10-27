@@ -798,6 +798,39 @@ class ForgeClient {
         return this.request('GET', '/filesystem/git-repos', { query: path ? { path } : {} });
     }
     // ============================================================================
+    // FORGE AGENTS - Master Orchestrators (Wish, Forge, Review)
+    // ============================================================================
+    /**
+     * GET /api/forge/agents?project_id={project_id}&agent_type={agent_type}
+     * Get forge agents (master orchestrators) for a project
+     * Each agent has ONE fixed task per project
+     * @param projectId - Project UUID
+     * @param agentType - Agent type filter (master, wish, forge, review)
+     * @returns Array of forge agents
+     */
+    async getForgeAgents(projectId, agentType) {
+        const query = { project_id: projectId };
+        if (agentType) {
+            query.agent_type = agentType;
+        }
+        return this.request('GET', '/forge/agents', { query });
+    }
+    /**
+     * POST /api/forge/agents
+     * Create a new forge agent (and its fixed task)
+     * @param projectId - Project UUID
+     * @param agentType - Agent type (master, wish, forge, review)
+     * @returns Created agent with task_id
+     */
+    async createForgeAgent(projectId, agentType) {
+        return this.request('POST', '/forge/agents', {
+            body: {
+                project_id: projectId,
+                agent_type: agentType,
+            },
+        });
+    }
+    // ============================================================================
     // SERVER-SENT EVENTS - Real-time Updates
     // ============================================================================
     /**

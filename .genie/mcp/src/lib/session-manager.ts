@@ -23,29 +23,35 @@ export class SessionManager {
 
   /**
    * Get existing master orchestrator for workflow + project
-   * Queries Forge database for active master
+   * Uses new forge_agents table (persistent, no status-based filtering)
    */
   async getSession(workflow: WorkflowType, projectId: string): Promise<SessionInfo | null> {
     try {
-      // Query Forge for tasks
-      const tasks = await this.forgeClient.listTasks(projectId);
+      // Query forge_agents table for this workflow type
+      const agents = await this.forgeClient.getForgeAgents(projectId, workflow);
 
-      // Find master orchestrator (status='agent', executor contains neuron-{workflow}, no parent)
-      const master = tasks.find((t: any) =>
-        t.status === 'agent' &&
-        t.executor?.includes(`:neuron-${workflow}`) &&
-        !t.parent_task_attempt
-      );
+      if (agents && agents.length > 0) {
+        const agent = agents[0];
 
-      if (master && master.latest_attempt) {
-        return {
-          taskId: master.id,
-          attemptId: master.latest_attempt.id,
-          url: `${FORGE_URL}/projects/${projectId}/tasks/${master.id}/attempts/${master.latest_attempt.id}?view=diffs`,
-          projectId,
-          created: master.created_at,
-          lastUsed: master.updated_at
-        };
+        // Get the task details
+        const task = await this.forgeClient.getTask(projectId, agent.task_id);
+
+        // Get latest attempt
+        const attempts = await this.forgeClient.listTaskAttempts(projectId);
+        const latestAttempt = attempts
+          .filter((a: any) => a.task_id === agent.task_id)
+          .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))[0];
+
+        if (latestAttempt) {
+          return {
+            taskId: agent.task_id,
+            attemptId: latestAttempt.id,
+            url: `${FORGE_URL}/projects/${projectId}/tasks/${agent.task_id}/attempts/${latestAttempt.id}?view=diffs`,
+            projectId,
+            created: agent.created_at,
+            lastUsed: agent.updated_at
+          };
+        }
       }
 
       return null;
@@ -79,24 +85,29 @@ export class SessionManager {
     prompt: string
   ): Promise<SessionInfo> {
     try {
-      const result = await this.forgeClient.createAndStartTask({
-        project_id: projectId,
-        title,
-        prompt,
-        executor: `CLAUDE_CODE:neuron-${workflow}`,
-        status: 'agent', // Hidden from main Kanban
-        parent_task_attempt: null // Masters have no parent
+      // Create the agent entry and its fixed task
+      const agent = await this.forgeClient.createForgeAgent(projectId, workflow);
+
+      // Start the first attempt with the initial prompt
+      const attempt = await this.forgeClient.createTaskAttempt({
+        task_id: agent.task_id,
+        executor_profile_id: {
+          executor: 'CLAUDE_CODE',
+          variant: `neuron-${workflow}`
+        },
+        base_branch: 'main'
       });
 
-      const { task_id: taskId, attempt_id: attemptId } = result;
+      // Send the initial prompt as a follow-up
+      await this.forgeClient.followUpTaskAttempt(attempt.id, prompt);
 
       return {
-        taskId,
-        attemptId,
-        url: `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`,
+        taskId: agent.task_id,
+        attemptId: attempt.id,
+        url: `${FORGE_URL}/projects/${projectId}/tasks/${agent.task_id}/attempts/${attempt.id}?view=diffs`,
         projectId,
-        created: new Date().toISOString(),
-        lastUsed: new Date().toISOString()
+        created: agent.created_at,
+        lastUsed: agent.updated_at
       };
     } catch (error) {
       console.error(`Failed to create ${workflow} master:`, error);
