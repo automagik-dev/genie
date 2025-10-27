@@ -1329,7 +1329,8 @@ async function startGenieServer(): Promise<void> {
           console.log('');
           const tunnelResponse = await createQuestion(performanceGradient('? Enable ngrok tunnel for ChatGPT? [Y/n]: '));
 
-          if (tunnelResponse.toLowerCase() !== 'n' && tunnelResponse !== '') {
+          // [Y/n] means Y is default, so empty string = yes
+          if (tunnelResponse.toLowerCase() !== 'n') {
             // User wants tunnel - load full config
             const genieConfig = loadGenieConfig();
 
