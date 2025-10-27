@@ -94,7 +94,12 @@ export class ForgeExecutor {
 
       if (!hasChanges) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log(`✅ Agent profiles up to date (${agentCount} agents, ${elapsed}s)`);
+        const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
+        if (debugMode) {
+          console.log(` done (${agentCount} agents, ${elapsed}s)`);
+        } else {
+          console.log(` ✓ (${agentCount} agents, ${elapsed}s)`);
+        }
         return;
       }
 
@@ -106,19 +111,22 @@ export class ForgeExecutor {
       });
 
       // Delete orphaned variants (agents that were deleted or renamed)
+      const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
       if (removed.length > 0) {
-        console.log(`🗑️  Cleaning up ${removed.length} orphaned agent(s)...`);
-        for (const removedKey of removed) {
-          const [collective, name] = removedKey.split('/');
-          const variantName = `${collective.toUpperCase()}_${name.toUpperCase()}`;
+        if (debugMode) {
+          console.log(`🗑️  Cleaning up ${removed.length} orphaned agent(s)...`);
+          for (const removedKey of removed) {
+            const [collective, name] = removedKey.split('/');
+            const variantName = `${collective.toUpperCase()}_${name.toUpperCase()}`;
 
-          // Delete this variant from all executors
-          try {
-            // Forge doesn't have a "delete variant" API, so we send empty profile update
-            // which effectively removes it when we send the full set of agents
-            console.log(`   ├─ Removed: ${variantName}`);
-          } catch (error: any) {
-            console.warn(`   ├─ Failed to remove ${variantName}: ${error.message}`);
+            // Delete this variant from all executors
+            try {
+              // Forge doesn't have a "delete variant" API, so we send empty profile update
+              // which effectively removes it when we send the full set of agents
+              console.log(`   ├─ Removed: ${variantName}`);
+            } catch (error: any) {
+              console.warn(`   ├─ Failed to remove ${variantName}: ${error.message}`);
+            }
           }
         }
       }
@@ -162,12 +170,15 @@ export class ForgeExecutor {
           successfulBatches++;
           totalPayloadSize += payloadSize;
 
-          // Show progress every 5 agents
-          if (agentNum % 5 === 0 || agentNum === changedAgents.length) {
+          // Show progress every 5 agents (debug mode only)
+          if (debugMode && (agentNum % 5 === 0 || agentNum === changedAgents.length)) {
             console.log(`✅ Synced ${agentNum}/${changedAgents.length} agents (${payloadKB}KB per request)`);
           }
         } catch (error: any) {
-          console.warn(`⚠️  Failed to sync agent ${agent.name}: ${error.message}`);
+          // Only warn in debug mode
+          if (debugMode) {
+            console.warn(`⚠️  Failed to sync agent ${agent.name}: ${error.message}`);
+          }
         }
       }
 
@@ -194,8 +205,12 @@ export class ForgeExecutor {
       if (removed.length > 0) changes.push(`${removed.length} deleted`);
       const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
 
-      // Final summary (no batch count since we don't track total batches here)
-      console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
+      // Final summary - concise in normal mode, verbose in debug mode
+      if (debugMode) {
+        console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
+      } else {
+        console.log(` ✓ (${syncedCount} agents synced, ${elapsed}s)`);
+      }
     } catch (error: any) {
       // Provide helpful error messages for common failures
       if (error.message?.includes('413') || error.message?.includes('Payload Too Large')) {
