@@ -1486,12 +1486,12 @@ async function startGenieServer(): Promise<void> {
                 // SUCCESS - Update env with public URL and restart MCP server
                 env.MCP_PUBLIC_URL = tunnelUrl;
 
-                // Restart MCP server with tunnel URL
+                // Restart MCP server with tunnel URL (automatic, no user action needed)
                 if (mcpChild && !mcpChild.killed) {
                   console.log('');
                   console.log('🔄 Restarting MCP server with public tunnel URL...');
                   mcpChild.kill('SIGTERM');
-                  // Wait a bit for clean shutdown
+                  // Wait for clean shutdown
                   await new Promise(resolve => setTimeout(resolve, 500));
                   // Restart with updated env
                   mcpChild = spawn('node', [mcpServer], {
@@ -1500,7 +1500,7 @@ async function startGenieServer(): Promise<void> {
                   });
                 }
 
-                // SUCCESS - Save token to config (only after validation)
+                // Save token to config (only after validation)
                 try {
                   genieConfig.mcp.tunnel = {
                     enabled: true,
