@@ -39,7 +39,8 @@ const packageJson = JSON.parse(
 program
   .name('genie')
   .description('Self-evolving AI agent orchestration framework\n\nRun with no arguments to start Genie server (Forge + MCP)')
-  .version(packageJson.version);
+  .version(packageJson.version)
+  .option('--debug', 'Enable debug mode (logs all incoming requests to MCP server)');
 
 // ==================== SERVER MANAGEMENT ====================
 
@@ -1122,11 +1123,13 @@ async function startGenieServer(): Promise<void> {
   console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
   console.log('');
 
-  // Set environment variables
-  const env = {
+  // Set environment variables (mutable to allow adding MCP_PUBLIC_URL later)
+  const env: Record<string, string | undefined> = {
     ...process.env,
     MCP_TRANSPORT: 'httpStream',
-    MCP_PORT: mcpPort
+    MCP_PORT: mcpPort,
+    // Enable debug mode if --debug flag was passed
+    ...(program.opts().debug ? { MCP_DEBUG: '1' } : {})
   };
 
   // Track runtime stats for shutdown report
@@ -1480,6 +1483,23 @@ async function startGenieServer(): Promise<void> {
               const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
 
               if (tunnelUrl) {
+                // SUCCESS - Update env with public URL and restart MCP server
+                env.MCP_PUBLIC_URL = tunnelUrl;
+
+                // Restart MCP server with tunnel URL
+                if (mcpChild && !mcpChild.killed) {
+                  console.log('');
+                  console.log('🔄 Restarting MCP server with public tunnel URL...');
+                  mcpChild.kill('SIGTERM');
+                  // Wait a bit for clean shutdown
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                  // Restart with updated env
+                  mcpChild = spawn('node', [mcpServer], {
+                    stdio: 'inherit',
+                    env
+                  });
+                }
+
                 // SUCCESS - Save token to config (only after validation)
                 try {
                   genieConfig.mcp.tunnel = {
