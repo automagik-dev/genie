@@ -213,28 +213,38 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
 
   return new Promise((resolve) => {
     app.listen(port, () => {
-      console.error(`\n✅ Genie MCP Server started successfully`);
-      console.error(`   HTTP Stream: ${serverUrl}/mcp`);
-      console.error(`   SSE Stream:  ${serverUrl}/mcp (GET)`);
-      console.error(`   Health:      ${serverUrl}/health`);
-      console.error(`\n🔐 OAuth 2.0 Endpoints:`);
-      console.error(`   ├─ OIDC Discovery:      ${serverUrl}/.well-known/openid-configuration`);
-      console.error(`   ├─ Authorization:       ${serverUrl}/oauth2/authorize`);
-      console.error(`   ├─ Token Exchange:      ${serverUrl}/oauth/token`);
-      console.error(`   ├─ Client Registration: ${serverUrl}/oauth2/register`);
-      console.error(`   └─ Resource Metadata:   ${serverUrl}/.well-known/oauth-protected-resource`);
-      console.error(`\n🔑 Supported Flows:`);
-      console.error(`   ├─ Authorization Code + PKCE (for ChatGPT)`);
-      console.error(`   └─ Client Credentials (for machine-to-machine)`);
-      console.error(`\n⚙️  OAuth Config:`);
-      console.error(`   ├─ Issuer:       ${oauth2Config.issuer}`);
-      console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
-      console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
-      console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
-
       if (debugMode) {
+        // Verbose mode - show everything
+        console.error(`\n✅ Genie MCP Server started successfully`);
+        console.error(`   HTTP Stream: ${serverUrl}/mcp`);
+        console.error(`   SSE Stream:  ${serverUrl}/mcp (GET)`);
+        console.error(`   Health:      ${serverUrl}/health`);
+        console.error(`\n🔐 OAuth 2.0 Endpoints:`);
+        console.error(`   ├─ OIDC Discovery:      ${serverUrl}/.well-known/openid-configuration`);
+        console.error(`   ├─ Authorization:       ${serverUrl}/oauth2/authorize`);
+        console.error(`   ├─ Token Exchange:      ${serverUrl}/oauth/token`);
+        console.error(`   ├─ Client Registration: ${serverUrl}/oauth2/register`);
+        console.error(`   └─ Resource Metadata:   ${serverUrl}/.well-known/oauth-protected-resource`);
+        console.error(`\n🔑 Supported Flows:`);
+        console.error(`   ├─ Authorization Code + PKCE (for ChatGPT)`);
+        console.error(`   └─ Client Credentials (for machine-to-machine)`);
+        console.error(`\n⚙️  OAuth Config:`);
+        console.error(`   ├─ Issuer:       ${oauth2Config.issuer}`);
+        console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
+        console.error(`   ├─ Client Secret: ${oauth2Config.clientSecret}`);
+        console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
+        console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
         console.error(`\n🔍 DEBUG MODE ENABLED`);
         console.error(`   All incoming requests will be logged`);
+      } else {
+        // Concise mode - essential info only
+        console.error(`\n✅ Genie MCP Server started`);
+        console.error(`   🌐 Endpoint: ${serverUrl}/mcp`);
+        console.error(`   🏥 Health:   ${serverUrl}/health`);
+        console.error(`\n🔐 ChatGPT Integration:`);
+        console.error(`   Client ID:     ${oauth2Config.clientId}`);
+        console.error(`   Client Secret: ${oauth2Config.clientSecret}`);
+        console.error(`   Token Expiry:  ${oauth2Config.tokenExpiry}s`);
       }
 
       if (onReady) {

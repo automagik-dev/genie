@@ -206,7 +206,11 @@ function ensureDefaultChatGPTClient(clientId) {
     const clients = loadClients();
     clients.push(defaultClient);
     saveClients(clients);
-    console.error(`✅ Auto-registered default ChatGPT client (${clientId})`);
+    // Only log in debug mode
+    const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
+    if (debugMode) {
+        console.error(`✅ Auto-registered default ChatGPT client (${clientId})`);
+    }
 }
 /**
  * Validate redirect URI for a registered client

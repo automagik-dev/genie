@@ -69,12 +69,18 @@ class AgentRegistry {
                 // Allow optional leading whitespace/newlines before frontmatter
                 const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
                 if (!frontmatterMatch) {
-                    console.warn(`Agent file ${fullPath} missing frontmatter`);
+                    // Only warn in debug mode
+                    if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+                        console.warn(`Agent file ${fullPath} missing frontmatter`);
+                    }
                     continue;
                 }
                 const frontmatter = (0, yaml_1.parse)(frontmatterMatch[1]);
                 if (!frontmatter.name) {
-                    console.warn(`Agent file ${fullPath} missing 'name' in frontmatter`);
+                    // Only warn in debug mode
+                    if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+                        console.warn(`Agent file ${fullPath} missing 'name' in frontmatter`);
+                    }
                     continue;
                 }
                 // Extract markdown body (everything after frontmatter)
