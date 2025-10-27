@@ -6,11 +6,12 @@ import type { UpdateCheckResult } from './types';
  */
 export async function checkForUpdates(
   installedVersion: string,
-  installedCommit: string
+  installedCommit: string,
+  channel: 'next' | 'latest' = 'latest'
 ): Promise<UpdateCheckResult> {
   try {
-    // Get latest version from npm registry
-    const latestVersion = execSync('npm view automagik-genie@latest version', {
+    // Get latest version from npm registry (respecting channel)
+    const latestVersion = execSync(`npm view automagik-genie@${channel} version`, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
     }).trim();
@@ -18,7 +19,7 @@ export async function checkForUpdates(
     // Get git commit from npm package (if available)
     let latestCommit: string;
     try {
-      latestCommit = execSync('npm view automagik-genie@latest gitCommit', {
+      latestCommit = execSync(`npm view automagik-genie@${channel} gitCommit`, {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe']
       }).trim();

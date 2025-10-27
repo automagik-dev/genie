@@ -68,8 +68,7 @@ async function runUpdate(parsed, _config, _paths) {
             // Check npm registry for latest published version
             console.log('📦 Checking npm for updates...');
             console.log('');
-            const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown');
-            // Get currently installed global version
+            // Get currently installed global version FIRST (to detect channel)
             let globalVersion;
             try {
                 const { stdout } = await execAsync(`${packageManager} list -g automagik-genie --depth=0 --json`);
@@ -101,6 +100,8 @@ async function runUpdate(parsed, _config, _paths) {
             }
             // Detect which channel user is on (next or latest)
             const channel = detectChannel(globalVersion || currentVersion);
+            // Check for updates using correct channel
+            const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown', channel);
             // If global already matches latest npm version, nothing to do
             if (globalVersion === updateCheck.latestVersion) {
                 console.log(successGradient('━'.repeat(60)));
@@ -138,10 +139,12 @@ async function runUpdate(parsed, _config, _paths) {
             }
         }
         // NOT master genie - proceed with npm update flow
+        // Detect which channel user is on (next or latest)
+        const channel = detectChannel(currentVersion);
         // Check for updates
         console.log('📦 Checking for updates...');
         console.log('');
-        const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown');
+        const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown', channel);
         if (!updateCheck.available) {
             await (0, view_helpers_1.emitView)((0, common_1.buildInfoView)('Already up to date', [
                 `Current version: ${currentVersion}`,
@@ -185,9 +188,7 @@ async function runUpdate(parsed, _config, _paths) {
         catch {
             // pnpm not available, use npm
         }
-        // Detect which channel user is on (next or latest)
-        const channel = detectChannel(currentVersion);
-        // Update global package using detected channel
+        // Update global package using detected channel (already detected above)
         const updateCommand = `${packageManager} install -g automagik-genie@${channel}`;
         console.log(`   Running: ${updateCommand}`);
         console.log(`   Channel: @${channel}`);

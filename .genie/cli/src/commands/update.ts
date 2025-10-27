@@ -78,9 +78,7 @@ export async function runUpdate(
       console.log('📦 Checking npm for updates...');
       console.log('');
 
-      const updateCheck = await checkForUpdates(currentVersion, 'unknown');
-
-      // Get currently installed global version
+      // Get currently installed global version FIRST (to detect channel)
       let globalVersion: string;
       try {
         const { stdout } = await execAsync(`${packageManager} list -g automagik-genie --depth=0 --json`);
@@ -111,6 +109,9 @@ export async function runUpdate(
 
       // Detect which channel user is on (next or latest)
       const channel = detectChannel(globalVersion || currentVersion);
+
+      // Check for updates using correct channel
+      const updateCheck = await checkForUpdates(currentVersion, 'unknown', channel);
 
       // If global already matches latest npm version, nothing to do
       if (globalVersion === updateCheck.latestVersion) {
@@ -153,11 +154,14 @@ export async function runUpdate(
     }
 
     // NOT master genie - proceed with npm update flow
+    // Detect which channel user is on (next or latest)
+    const channel = detectChannel(currentVersion);
+
     // Check for updates
     console.log('📦 Checking for updates...');
     console.log('');
 
-    const updateCheck = await checkForUpdates(currentVersion, 'unknown');
+    const updateCheck = await checkForUpdates(currentVersion, 'unknown', channel);
 
     if (!updateCheck.available) {
       await emitView(
@@ -219,10 +223,7 @@ export async function runUpdate(
       // pnpm not available, use npm
     }
 
-    // Detect which channel user is on (next or latest)
-    const channel = detectChannel(currentVersion);
-
-    // Update global package using detected channel
+    // Update global package using detected channel (already detected above)
     const updateCommand = `${packageManager} install -g automagik-genie@${channel}`;
     console.log(`   Running: ${updateCommand}`);
     console.log(`   Channel: @${channel}`);
