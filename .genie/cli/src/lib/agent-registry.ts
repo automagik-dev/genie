@@ -239,6 +239,36 @@ export class AgentRegistry {
   }
 
   /**
+   * Load collective AGENTS.md files for context prepending
+   * @returns Map of collective name to AGENTS.md content
+   */
+  private loadCollectiveContexts(): Record<string, string> {
+    const contexts: Record<string, string> = {};
+
+    // Load code collective AGENTS.md
+    const codeAgentsPath = path.join(this.workspaceRoot, '.genie/code/AGENTS.md');
+    if (fs.existsSync(codeAgentsPath)) {
+      try {
+        contexts['code'] = fs.readFileSync(codeAgentsPath, 'utf-8');
+      } catch (error: any) {
+        console.warn(`Failed to load code collective context: ${error.message}`);
+      }
+    }
+
+    // Load create collective AGENTS.md
+    const createAgentsPath = path.join(this.workspaceRoot, '.genie/create/AGENTS.md');
+    if (fs.existsSync(createAgentsPath)) {
+      try {
+        contexts['create'] = fs.readFileSync(createAgentsPath, 'utf-8');
+      } catch (error: any) {
+        console.warn(`Failed to load create collective context: ${error.message}`);
+      }
+    }
+
+    return contexts;
+  }
+
+  /**
    * Get supported executors from Forge profiles (dynamic, not hardcoded)
    * Fallback to common executors if Forge is unavailable
    */
@@ -267,8 +297,7 @@ export class AgentRegistry {
   /**
    * Generate Forge profiles for all agents across all executors
    * Creates a variant for each agent on each executor, inheriting required fields from DEFAULT
-   * Note: Collective AGENTS.md context is NOT prepended (available via CLAUDE.md instead)
-   * This reduces payload size by ~60% (from 9.5MB to ~3MB)
+   * Prepends collective AGENTS.md context to each agent's append_prompt
    * @param forgeClient - Optional ForgeClient to fetch executors dynamically
    * @param agents - Optional subset of agents to generate profiles for (used for batching)
    */
@@ -296,6 +325,9 @@ export class AgentRegistry {
       }
     }
 
+    // Load collective AGENTS.md files (code and create)
+    const collectiveContexts = this.loadCollectiveContexts();
+
     // Use provided agents subset or all agents
     const agentsToSync = agents || Array.from(this.agents.values());
 
@@ -315,12 +347,15 @@ export class AgentRegistry {
         const sanitizedName = agent.name.toUpperCase().replace(/[\s-]+/g, '_');
         const variantName = `${agent.collective.toUpperCase()}_${sanitizedName}`;
 
+        // Get collective context for this agent
+        const collectiveContext = collectiveContexts[agent.collective] || '';
+
         // Build variant config with executor-specific fields
         const variantConfig: any = {
           // Inherit all fields from DEFAULT variant
           ...baseConfig,
-          // Use agent content directly (no collective context prepended)
-          append_prompt: agent.fullContent
+          // Combine collective context + agent content
+          append_prompt: collectiveContext ? `${collectiveContext}\n\n---\n\n${agent.fullContent}` : agent.fullContent
         };
 
         // Add executor-specific permission flags from frontmatter

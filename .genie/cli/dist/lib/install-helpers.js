@@ -113,6 +113,7 @@ async function runExploreAgent(prompt) {
     // @ts-ignore - forge is private but needed here
     const forgeClient = forgeExecutor['forge'];
     // Create explore task (read-only context gathering)
+    // Use CODE_EXPLORE agent variant (synced during install flow)
     const result = await forgeClient.createAndStartTask({
         task: {
             project_id: projectId,
@@ -121,17 +122,23 @@ async function runExploreAgent(prompt) {
         },
         executor_profile_id: {
             executor: 'CLAUDE_CODE',
-            variant: 'CODE_EXPLORE' // Correct variant name (collective_agent)
+            variant: 'CODE_EXPLORE'
         },
         base_branch: getCurrentBranch()
     });
     const taskId = result.task?.id || result.id;
     const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
-    // Validate attemptId exists (debugging aid for API response changes)
+    // Validate attemptId exists
     if (!attemptId) {
-        console.error('⚠️  Failed to extract attemptId from Forge response');
-        console.error('   Response structure:', JSON.stringify(result, null, 2));
-        throw new Error('Forge API returned unexpected response structure - no attemptId found');
+        console.log('');
+        console.log(gradient_string_1.default.pastel('⚠️  Unable to start discovery task'));
+        console.log('   The Forge task API returned an unexpected response.');
+        console.log('   This usually happens when Forge is still starting up.');
+        console.log('');
+        console.log('💡 Try again in a few seconds, or check if Forge is running:');
+        console.log('   http://localhost:8887');
+        console.log('');
+        throw new Error('Could not start discovery task - Forge may still be initializing');
     }
     // Poll for completion and stream updates
     console.log('⏳ Gathering context...\n');
@@ -232,11 +239,17 @@ async function launchMasterGenieInstall(context, config) {
     });
     const taskId = result.task?.id || result.id;
     const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
-    // Validate attemptId exists (debugging aid for API response changes)
+    // Validate attemptId exists
     if (!attemptId) {
-        console.error('⚠️  Failed to extract attemptId from Forge response');
-        console.error('   Response structure:', JSON.stringify(result, null, 2));
-        throw new Error('Forge API returned unexpected response structure - no attemptId found');
+        console.log('');
+        console.log(gradient_string_1.default.pastel('⚠️  Unable to start installation task'));
+        console.log('   The Forge task API returned an unexpected response.');
+        console.log('   This usually happens when Forge is still starting up.');
+        console.log('');
+        console.log('💡 Try again in a few seconds, or check if Forge is running:');
+        console.log('   http://localhost:8887');
+        console.log('');
+        throw new Error('Could not start installation task - Forge may still be initializing');
     }
     // Build full Forge URL
     const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
@@ -250,6 +263,22 @@ async function launchMasterGenieInstall(context, config) {
  * Main install flow orchestrator
  */
 async function runInstallFlow(config) {
+    const forgeExecutor = (0, forge_executor_js_1.createForgeExecutor)({ forgeBaseUrl: FORGE_URL });
+    // Step 0: Sync agent profiles to Forge (makes CODE_EXPLORE and other variants available)
+    console.log('');
+    console.log(gradient_string_1.default.pastel('🔄 Teaching Forge about available agents...'));
+    console.log('');
+    try {
+        await forgeExecutor.syncProfiles(undefined);
+        console.log(gradient_string_1.default.pastel('✅ Agent profiles synced!'));
+        console.log(gradient_string_1.default.pastel('   Waiting for Forge to reload profiles...\n'));
+        // Give Forge time to reload executor profiles before creating tasks
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    catch (error) {
+        console.log(gradient_string_1.default.pastel('⚠️  Using built-in profiles (agent sync skipped)\n'));
+        // Continue with install - will use DEFAULT variants
+    }
     // Step 1: Run explore agent (context gathering)
     const explorePrompt = buildExplorePrompt();
     const exploreContext = await runExploreAgent(explorePrompt);
