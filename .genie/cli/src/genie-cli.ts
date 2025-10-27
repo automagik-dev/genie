@@ -273,7 +273,8 @@ if (shouldCheckVersion) {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
-  // MASTER GENIE DETECTION: Check if we're in the template repo
+  // MASTER GENIE DETECTION: Check if we're in THE SOURCE template repo
+  // (not just any repo named automagik-genie, but THE ACTUAL UPSTREAM)
   const workspacePackageJson = path.join(process.cwd(), 'package.json');
   let isMasterGenie = false;
 
@@ -281,7 +282,23 @@ if (shouldCheckVersion) {
     try {
       const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
       if (workspacePkg.name === 'automagik-genie') {
-        isMasterGenie = true;
+        // Additional check: Verify this is THE upstream source repo
+        const { execSync } = require('child_process');
+        try {
+          const remoteUrl = execSync('git config --get remote.origin.url', {
+            encoding: 'utf8',
+            cwd: process.cwd(),
+            stdio: ['pipe', 'pipe', 'ignore']
+          }).trim();
+
+          // Only the ACTUAL source repo (namastexlabs/automagik-genie)
+          if (remoteUrl.includes('namastexlabs/automagik-genie') ||
+              remoteUrl.includes('automagik-genie/genie')) {
+            isMasterGenie = true;
+          }
+        } catch {
+          // No git remote or command failed - not master genie
+        }
       }
     } catch {
       // Not master genie if can't read package.json
@@ -470,7 +487,8 @@ async function smartRouter(): Promise<void> {
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
-  // MASTER GENIE DETECTION: Check if we're in the template repo
+  // MASTER GENIE DETECTION: Check if we're in THE SOURCE template repo
+  // (not just any repo named automagik-genie, but THE ACTUAL UPSTREAM)
   const workspacePackageJson = path.join(process.cwd(), 'package.json');
   let isMasterGenie = false;
 
@@ -478,7 +496,23 @@ async function smartRouter(): Promise<void> {
     try {
       const workspacePkg = JSON.parse(fs.readFileSync(workspacePackageJson, 'utf8'));
       if (workspacePkg.name === 'automagik-genie') {
-        isMasterGenie = true;
+        // Additional check: Verify this is THE upstream source repo
+        const { execSync } = require('child_process');
+        try {
+          const remoteUrl = execSync('git config --get remote.origin.url', {
+            encoding: 'utf8',
+            cwd: process.cwd(),
+            stdio: ['pipe', 'pipe', 'ignore']
+          }).trim();
+
+          // Only the ACTUAL source repo (namastexlabs/automagik-genie)
+          if (remoteUrl.includes('namastexlabs/automagik-genie') ||
+              remoteUrl.includes('automagik-genie/genie')) {
+            isMasterGenie = true;
+          }
+        } catch {
+          // No git remote or command failed - not master genie
+        }
       }
     } catch {
       // Not master genie if can't read package.json
@@ -683,14 +717,35 @@ async function smartRouter(): Promise<void> {
     const currentVersion = packageJson.version;
 
     if (installedVersion !== currentVersion) {
-      // MASTER GENIE: Skip version mismatch scenario (they manage versions manually)
+      // MASTER GENIE: Auto-pull from origin to sync with CI releases
       if (isMasterGenie) {
         console.log('');
         console.log(performanceGradient('⚠️  Master Genie Detected'));
         console.log(`   Local version: ${successGradient(installedVersion)}`);
         console.log(`   Global version: ${performanceGradient(currentVersion)}`);
         console.log('');
-        console.log('Run ' + performanceGradient('genie update') + ' to install your local build globally');
+
+        // Auto-pull to sync with CI releases
+        console.log('🔄 Syncing with origin/main (CI may have released a new version)...');
+        const { execSync } = require('child_process');
+        try {
+          execSync('git pull --rebase', { stdio: 'inherit', cwd: process.cwd() });
+
+          // Re-read version.json after pull
+          const updatedVersionData = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+          const updatedVersion = updatedVersionData.version;
+
+          if (updatedVersion === currentVersion) {
+            console.log(successGradient('✓ Synced successfully! Versions now match.'));
+          } else {
+            console.log(performanceGradient('ℹ Still a mismatch after pull.'));
+            console.log('Run ' + performanceGradient('genie update') + ' to install your local build globally');
+          }
+        } catch (error: any) {
+          console.log(performanceGradient('⚠️  Could not auto-pull: ' + error.message));
+          console.log('Run ' + performanceGradient('git pull') + ' manually, then ' + performanceGradient('genie update'));
+        }
+
         console.log('');
         // Start server anyway - master genie can run with version mismatch
         await startGenieServer();
