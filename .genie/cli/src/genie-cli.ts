@@ -1406,9 +1406,10 @@ async function startGenieServer(): Promise<void> {
                 console.log(`   ${oauth2Conf.clientSecret}`);
                 console.log('');
                 console.log(magicGradient('💡 How to connect ChatGPT:'));
-                console.log('   1. Go to ChatGPT → Settings → GPTs → Create GPT Actions');
-                console.log('   2. Add the SSE endpoint, Client ID, and Client Secret above');
-                console.log('   3. Test the connection - it should work!');
+                console.log('   1. Go to ChatGPT → Settings → Connectors → Create');
+                console.log('   2. Fill in: Name, Description, MCP Server URL (SSE endpoint above)');
+                console.log('   3. Authentication: OAuth → Add Client ID and Client Secret above');
+                console.log('   4. Accept notice checkbox and create');
                 console.log('');
                 console.log(successGradient('━'.repeat(60)));
                 console.log('');

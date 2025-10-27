@@ -1183,9 +1183,115 @@ async function startGenieServer() {
                 console.log('   • Press ' + performanceGradient('k') + ' in dashboard to kill Forge (with confirmation)');
                 console.log('   • Use ' + performanceGradient('Ctrl+C') + ' here to shutdown Genie gracefully');
                 console.log('');
-                console.log(genieGradient('Press Enter to open dashboard...'));
-                // Wait for Enter before launching dashboard
+                // ChatGPT integration prompt
                 (async () => {
+                    const readline = require('readline');
+                    const { loadConfig: loadGenieConfig, saveConfig: saveGenieConfig } = require('./lib/config-manager');
+                    const { isValidNgrokToken, getNgrokSignupUrl, startNgrokTunnel } = require('./lib/tunnel-manager');
+                    const rl = readline.createInterface({
+                        input: process.stdin,
+                        output: process.stdout
+                    });
+                    const createQuestion = (query) => {
+                        return new Promise(resolve => {
+                            rl.question(query, resolve);
+                        });
+                    };
+                    // Ask user if they want ngrok tunnel for ChatGPT
+                    console.log(magicGradient('🤖 ChatGPT Integration'));
+                    console.log('');
+                    console.log('Want to use Genie with ChatGPT? Enable ngrok tunnel to get a public URL.');
+                    console.log('');
+                    const tunnelResponse = await createQuestion(performanceGradient('? Enable ngrok tunnel for ChatGPT? [Y/n]: '));
+                    if (tunnelResponse.toLowerCase() !== 'n' && tunnelResponse !== '') {
+                        // User wants tunnel - load full config
+                        const genieConfig = loadGenieConfig();
+                        if (!genieConfig || !genieConfig.mcp?.auth?.oauth2) {
+                            console.log('');
+                            console.log('❌ OAuth config not found. This should not happen.');
+                            rl.close();
+                            return;
+                        }
+                        const oauth2Conf = genieConfig.mcp.auth.oauth2;
+                        // Check if config already has ngrok token
+                        let ngrokToken = null;
+                        if (genieConfig.mcp.tunnel?.token) {
+                            ngrokToken = genieConfig.mcp.tunnel.token;
+                            console.log('');
+                            console.log('✓ Using existing ngrok token from config');
+                        }
+                        // If no token, ask for one
+                        if (!ngrokToken) {
+                            console.log('');
+                            console.log(`ℹ️  Free ngrok account gives you a public URL for ChatGPT.`);
+                            console.log(`   Get your free token at: ${getNgrokSignupUrl()}`);
+                            console.log('');
+                            const token = await createQuestion(performanceGradient('? Enter your ngrok authtoken (or press Enter to skip): '));
+                            if (token && isValidNgrokToken(token)) {
+                                ngrokToken = token;
+                                // Save token to config
+                                try {
+                                    genieConfig.mcp.tunnel = {
+                                        enabled: true,
+                                        provider: 'ngrok',
+                                        token: ngrokToken
+                                    };
+                                    saveGenieConfig(genieConfig);
+                                    console.log('✓ ngrok token saved to ~/.genie/config.yaml');
+                                }
+                                catch (err) {
+                                    console.log(`⚠️  Could not save token: ${err.message}`);
+                                }
+                            }
+                            else if (token) {
+                                console.log('⚠️  Invalid token format, skipping tunnel');
+                            }
+                            else {
+                                console.log('⚠️  No token provided, skipping tunnel');
+                            }
+                        }
+                        // Start tunnel if we have a token
+                        if (ngrokToken) {
+                            console.log('');
+                            console.log('🌐 Starting ngrok tunnel...');
+                            const tunnelUrl = await startNgrokTunnel(parseInt(mcpPort), ngrokToken);
+                            if (tunnelUrl) {
+                                console.log('');
+                                console.log(successGradient('━'.repeat(60)));
+                                console.log(successGradient('✅ ChatGPT Integration Ready!'));
+                                console.log(successGradient('━'.repeat(60)));
+                                console.log('');
+                                console.log(magicGradient('📋 Connection Details for ChatGPT:'));
+                                console.log('');
+                                console.log(`   ${performanceGradient('SSE Endpoint:')}`);
+                                console.log(`   ${tunnelUrl}/mcp`);
+                                console.log('');
+                                console.log(`   ${performanceGradient('OAuth Client ID:')}`);
+                                console.log(`   ${oauth2Conf.clientId}`);
+                                console.log('');
+                                console.log(`   ${performanceGradient('OAuth Client Secret:')}`);
+                                console.log(`   ${oauth2Conf.clientSecret}`);
+                                console.log('');
+                                console.log(magicGradient('💡 How to connect ChatGPT:'));
+                                console.log('   1. Go to ChatGPT → Settings → Connectors → Create');
+                                console.log('   2. Fill in: Name, Description, MCP Server URL (SSE endpoint above)');
+                                console.log('   3. Authentication: OAuth → Add Client ID and Client Secret above');
+                                console.log('   4. Accept notice checkbox and create');
+                                console.log('');
+                                console.log(successGradient('━'.repeat(60)));
+                                console.log('');
+                            }
+                            else {
+                                console.log('');
+                                console.log('❌ Failed to start ngrok tunnel');
+                                console.log('   Continuing without tunnel...');
+                                console.log('');
+                            }
+                        }
+                    }
+                    rl.close();
+                    // Now show dashboard prompt
+                    console.log(genieGradient('Press Enter to open dashboard...'));
                     await new Promise((resolve) => {
                         process.stdin.once('data', () => resolve());
                     });
