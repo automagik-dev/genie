@@ -20,6 +20,7 @@ export interface OAuth2Config {
   publicKey: string;  // Public key for verification (PEM format)
   tokenExpiry: number; // Token expiry in seconds (default: 3600)
   issuer: string;      // Token issuer (e.g., 'genie-mcp-server')
+  pin?: string;        // OAuth authorization PIN (default: random 6 digits)
 }
 
 export interface AuthConfig {
@@ -116,6 +117,13 @@ export function saveConfig(config: GenieConfig): void {
 }
 
 /**
+ * Generate random 6-digit PIN
+ */
+function generatePin(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
  * Create default configuration with OAuth2.1 credentials (async)
  */
 export async function createDefaultConfig(ngrokToken?: string): Promise<GenieConfig> {
@@ -132,7 +140,8 @@ export async function createDefaultConfig(ngrokToken?: string): Promise<GenieCon
           signingKey: privateKey,
           publicKey: publicKey,
           tokenExpiry: 3600, // 1 hour
-          issuer: 'genie-mcp-server'
+          issuer: 'genie-mcp-server',
+          pin: generatePin() // Random 6-digit PIN for OAuth consent
         },
         created: new Date().toISOString()
       },

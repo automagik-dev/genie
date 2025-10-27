@@ -19,6 +19,7 @@ import {
   handleClientRegistration,
   handleAuthorizationRequest,
   handleAuthorizationConsent,
+  ensureDefaultChatGPTClient,
 } from './oidc-endpoints.js';
 import { randomUUID } from 'crypto';
 
@@ -85,6 +86,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
 
   // Create OAuth provider for token verification
   const oauthProvider = new GenieOAuthProvider(oauth2Config, serverUrl);
+
+  // Ensure default ChatGPT client is registered
+  ensureDefaultChatGPTClient(oauth2Config.clientId);
 
   // ========================================
   // Public Endpoints (no authentication)

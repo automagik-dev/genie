@@ -238,6 +238,39 @@ export function getRegisteredClient(clientId: string): RegisteredClient | null {
 }
 
 /**
+ * Ensure default ChatGPT client is registered
+ * Should be called during MCP server startup
+ */
+export function ensureDefaultChatGPTClient(clientId: string): void {
+  // Check if client already registered
+  const existing = getRegisteredClient(clientId);
+  if (existing) {
+    return; // Already registered, nothing to do
+  }
+
+  // Register default ChatGPT client
+  const defaultClient: RegisteredClient = {
+    client_id: clientId,
+    client_name: 'ChatGPT (Default Client)',
+    redirect_uris: [
+      'https://chatgpt.com/connector_platform_oauth_redirect',
+      'http://localhost:3000/callback'
+    ],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+    scope: 'mcp:read mcp:write',
+    created_at: Date.now()
+  };
+
+  const clients = loadClients();
+  clients.push(defaultClient);
+  saveClients(clients);
+
+  console.error(`✅ Auto-registered default ChatGPT client (${clientId})`);
+}
+
+/**
  * Validate redirect URI for a registered client
  */
 export function validateRedirectUri(clientId: string, redirectUri: string): boolean {

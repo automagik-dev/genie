@@ -67,6 +67,8 @@ async function startHttpServer(options) {
     }
     // Create OAuth provider for token verification
     const oauthProvider = new oauth_provider_js_1.GenieOAuthProvider(oauth2Config, serverUrl);
+    // Ensure default ChatGPT client is registered
+    (0, oidc_endpoints_js_1.ensureDefaultChatGPTClient)(oauth2Config.clientId);
     // ========================================
     // Public Endpoints (no authentication)
     // ========================================

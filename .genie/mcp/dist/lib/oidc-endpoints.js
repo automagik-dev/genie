@@ -17,6 +17,7 @@ exports.handleOpenIDConfiguration = handleOpenIDConfiguration;
 exports.handleAuthorizationServerMetadata = handleAuthorizationServerMetadata;
 exports.handleClientRegistration = handleClientRegistration;
 exports.getRegisteredClient = getRegisteredClient;
+exports.ensureDefaultChatGPTClient = ensureDefaultChatGPTClient;
 exports.validateRedirectUri = validateRedirectUri;
 exports.handleAuthorizationRequest = handleAuthorizationRequest;
 exports.handleAuthorizationConsent = handleAuthorizationConsent;
@@ -177,6 +178,35 @@ function handleClientRegistration(req, res) {
 function getRegisteredClient(clientId) {
     const clients = loadClients();
     return clients.find((c) => c.client_id === clientId) || null;
+}
+/**
+ * Ensure default ChatGPT client is registered
+ * Should be called during MCP server startup
+ */
+function ensureDefaultChatGPTClient(clientId) {
+    // Check if client already registered
+    const existing = getRegisteredClient(clientId);
+    if (existing) {
+        return; // Already registered, nothing to do
+    }
+    // Register default ChatGPT client
+    const defaultClient = {
+        client_id: clientId,
+        client_name: 'ChatGPT (Default Client)',
+        redirect_uris: [
+            'https://chatgpt.com/connector_platform_oauth_redirect',
+            'http://localhost:3000/callback'
+        ],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        scope: 'mcp:read mcp:write',
+        created_at: Date.now()
+    };
+    const clients = loadClients();
+    clients.push(defaultClient);
+    saveClients(clients);
+    console.error(`✅ Auto-registered default ChatGPT client (${clientId})`);
 }
 /**
  * Validate redirect URI for a registered client
