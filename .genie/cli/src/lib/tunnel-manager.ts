@@ -5,6 +5,9 @@
  * Handles auth token configuration and URL generation
  */
 
+// Store active listener for proper cleanup
+let activeListener: any = null;
+
 /**
  * Start ngrok tunnel for HTTP stream MCP server
  *
@@ -24,6 +27,9 @@ export async function startNgrokTunnel(port: number, authToken?: string): Promis
       return null;
     }
 
+    // Kill any existing tunnel first (prevents "endpoint already online" errors)
+    await stopNgrokTunnel();
+
     // Start tunnel (authtoken is optional - works without but with limitations)
     const forwardOptions: any = {
       addr: port,
@@ -37,6 +43,9 @@ export async function startNgrokTunnel(port: number, authToken?: string): Promis
 
     const listener = await ngrok.forward(forwardOptions);
 
+    // Store listener globally for proper cleanup
+    activeListener = listener;
+
     const url = listener.url();
     return url;
   } catch (error) {
@@ -47,10 +56,21 @@ export async function startNgrokTunnel(port: number, authToken?: string): Promis
 }
 
 /**
- * Stop ngrok tunnel
+ * Stop ngrok tunnel (properly closes listener and cleans up ngrok session)
  */
 export async function stopNgrokTunnel(): Promise<void> {
   try {
+    // Close specific listener if active
+    if (activeListener) {
+      try {
+        await activeListener.close();
+        activeListener = null;
+      } catch (err) {
+        // Ignore close errors
+      }
+    }
+
+    // Also disconnect all sessions (catches any leaked sessions)
     let ngrok: any;
     try {
       ngrok = require('@ngrok/ngrok');
@@ -58,7 +78,6 @@ export async function stopNgrokTunnel(): Promise<void> {
       return;
     }
 
-    // Close all ngrok connections
     await ngrok.disconnect();
   } catch (error) {
     // Ignore errors on disconnect
