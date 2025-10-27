@@ -72,16 +72,17 @@ class ForgeExecutor {
                     }
                 }
             }
-            // Generate profiles for all changed agents
-            const changedProfiles = await registry.generateForgeProfiles(this.forge, changedAgents);
-            // Fetch current profiles to preserve built-in variants and unchanged agents
-            // Forge PUT /profiles does full replace, must send complete profile set
+            // Generate profiles for ALL agents (not just changed)
+            // Forge PUT /profiles replaces everything, so we must send complete agent set
+            const allAgentProfiles = await registry.generateForgeProfiles(this.forge);
+            // Fetch current profiles to extract ONLY built-in variants (DEFAULT, APPROVALS, etc.)
+            // We'll merge built-ins with ALL agents to create complete profile set
             const currentProfiles = await this.forge.getExecutorProfiles();
             const current = typeof currentProfiles.content === 'string'
                 ? JSON.parse(currentProfiles.content)
                 : currentProfiles;
-            // Merge: Keep all current variants (built-ins + unchanged agents), update changed agents
-            const payload = this.mergeProfiles(current, changedProfiles);
+            // Merge: built-in variants + ALL agent variants
+            const payload = this.mergeProfiles(current, allAgentProfiles);
             // Check payload size
             const payloadSize = JSON.stringify(payload).length;
             const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
@@ -182,7 +183,8 @@ class ForgeExecutor {
     }
     /**
      * Merge batch profiles with current Forge profiles
-     * Preserves built-in variants (DEFAULT, APPROVALS, etc.), adds/updates agent variants
+     * Only includes: built-in variants (DEFAULT, APPROVALS) + changed agent variants
+     * Excludes: unchanged agent variants (reduces payload size)
      */
     mergeProfiles(current, batch) {
         const merged = { executors: {} };
@@ -193,10 +195,15 @@ class ForgeExecutor {
         ]);
         for (const executor of allExecutors) {
             merged.executors[executor] = {};
-            // Copy all current variants (includes built-ins + existing agents)
+            // Copy ONLY built-in variants from current (not agent variants)
             const currentVariants = current.executors?.[executor] || {};
-            Object.assign(merged.executors[executor], currentVariants);
-            // Add/update agent variants from batch (overwrite if exists)
+            for (const [variantName, variantConfig] of Object.entries(currentVariants)) {
+                // Keep only non-agent variants (DEFAULT, APPROVALS, etc.)
+                if (!variantName.startsWith('CODE_') && !variantName.startsWith('CREATE_')) {
+                    merged.executors[executor][variantName] = variantConfig;
+                }
+            }
+            // Add/update changed agent variants from batch
             const batchVariants = batch.executors?.[executor] || {};
             Object.assign(merged.executors[executor], batchVariants);
         }
