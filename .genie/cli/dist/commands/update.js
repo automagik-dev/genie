@@ -42,7 +42,7 @@ async function runUpdate(parsed, _config, _paths) {
                 // Not master genie if can't read package.json
             }
         }
-        // If master genie, install local build globally instead of fetching from npm
+        // If master genie, check npm for latest published version (not local package.json)
         if (isMasterGenie) {
             // Detect package manager (prefer pnpm, fallback to npm)
             let packageManager = 'npm';
@@ -53,7 +53,11 @@ async function runUpdate(parsed, _config, _paths) {
             catch {
                 // pnpm not available, use npm
             }
-            // Check if global package already matches local version (using detected package manager)
+            // Check npm registry for latest published version
+            console.log('📦 Checking npm for updates...');
+            console.log('');
+            const updateCheck = await (0, upgrade_1.checkForUpdates)(currentVersion, 'unknown');
+            // Get currently installed global version
             let globalVersion;
             try {
                 const { stdout } = await execAsync(`${packageManager} list -g automagik-genie --depth=0 --json`);
@@ -66,64 +70,56 @@ async function runUpdate(parsed, _config, _paths) {
                     globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
                 }
                 // Handle file:/link: protocols (when installed from local directory)
-                // pnpm stores version as "file:..." or "link:..." instead of actual version
                 if (globalVersion.startsWith('file:') || globalVersion.startsWith('link:')) {
-                    // Extract the path from protocol and read the actual version
-                    // This handles cases where global was installed from local but package.json has changed
                     try {
                         const filePath = globalVersion.replace(/^(file:|link:)/, '');
                         const globalPackageJson = path_1.default.join(filePath, 'package.json');
                         if (fs_1.default.existsSync(globalPackageJson)) {
                             const globalPkg = JSON.parse(fs_1.default.readFileSync(globalPackageJson, 'utf8'));
-                            globalVersion = globalPkg.version || currentVersion;
-                        }
-                        else {
-                            // Fallback: If we can't read the file, assume they match
-                            globalVersion = currentVersion;
+                            globalVersion = globalPkg.version || '';
                         }
                     }
                     catch {
-                        // Fallback: If we can't parse, assume they match
-                        globalVersion = currentVersion;
+                        globalVersion = '';
                     }
                 }
             }
             catch {
                 globalVersion = '';
             }
-            // If already up-to-date, show success and exit
-            if (globalVersion === currentVersion) {
+            // If global already matches latest npm version, nothing to do
+            if (globalVersion === updateCheck.latestVersion) {
                 console.log(successGradient('━'.repeat(60)));
                 console.log(successGradient('   🧞 ✨ MASTER GENIE - ALREADY UP TO DATE ✨ 🧞   '));
                 console.log(successGradient('━'.repeat(60)));
                 console.log('');
-                console.log('Your global Genie already matches your local version: ' + successGradient(currentVersion));
+                console.log('Your global Genie matches npm latest: ' + successGradient(updateCheck.latestVersion));
                 console.log('');
                 console.log('✨ Nothing to update!');
                 console.log('');
                 return;
             }
-            // Version mismatch - install local build
+            // Update available from npm - install latest from registry
             console.log(successGradient('━'.repeat(60)));
             console.log(successGradient('   🧞 ✨ MASTER GENIE UPDATE ✨ 🧞   '));
             console.log(successGradient('━'.repeat(60)));
             console.log('');
-            console.log(`Updating global Genie: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(currentVersion)}`);
+            console.log(`Updating global Genie: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(updateCheck.latestVersion)}`);
             console.log('');
-            console.log(`Installing your local build globally (using ${packageManager})...`);
+            console.log(`Installing from npm (using ${packageManager})...`);
             console.log('');
             try {
-                await execAsync(`${packageManager} install -g .`, { cwd: process.cwd() });
+                await execAsync(`${packageManager} install -g automagik-genie@next`, { cwd: process.cwd() });
                 console.log('');
-                console.log(successGradient('✅ Successfully installed local build globally!'));
+                console.log(successGradient('✅ Successfully updated global Genie from npm!'));
                 console.log('');
-                console.log('Your global Genie now matches your local version: ' + successGradient(currentVersion));
+                console.log('Your global Genie is now: ' + successGradient(updateCheck.latestVersion));
                 console.log('');
                 return;
             }
             catch (error) {
-                throw new Error(`Failed to install local build: ${error.message}\n\n` +
-                    `Please try manually: ${packageManager} install -g .`);
+                throw new Error(`Failed to install from npm: ${error.message}\n\n` +
+                    `Please try manually: ${packageManager} install -g automagik-genie@next`);
             }
         }
         // NOT master genie - proceed with npm update flow
