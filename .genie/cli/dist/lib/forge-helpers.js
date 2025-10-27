@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FORGE_RECOVERY_HINT = void 0;
 exports.describeForgeError = describeForgeError;
-exports.FORGE_RECOVERY_HINT = "Run 'genie forge restart' to recover the Automagik Forge backend.";
+exports.FORGE_RECOVERY_HINT = "Forge backend connection failed. Try running 'genie' again to restart Forge, or check if another Genie instance is running.";
 function describeForgeError(error) {
     if (error instanceof Error)
         return error.message;
