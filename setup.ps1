@@ -111,7 +111,7 @@ Write-Host ""
 
 # Step 3: Run Genie
 Write-Host "Step 3: Launching Genie..." -ForegroundColor White
-Print-Success "Running: pnpm dlx automagik-genie@next"
+Print-Success "Running: pnpm dlx automagik-genie@latest"
 Write-Host ""
 
-pnpm dlx automagik-genie@next
+pnpm dlx automagik-genie@latest

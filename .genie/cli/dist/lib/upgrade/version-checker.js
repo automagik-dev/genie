@@ -8,14 +8,14 @@ const child_process_1 = require("child_process");
 async function checkForUpdates(installedVersion, installedCommit) {
     try {
         // Get latest version from npm registry
-        const latestVersion = (0, child_process_1.execSync)('npm view automagik-genie@next version', {
+        const latestVersion = (0, child_process_1.execSync)('npm view automagik-genie@latest version', {
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
         }).trim();
         // Get git commit from npm package (if available)
         let latestCommit;
         try {
-            latestCommit = (0, child_process_1.execSync)('npm view automagik-genie@next gitCommit', {
+            latestCommit = (0, child_process_1.execSync)('npm view automagik-genie@latest gitCommit', {
                 encoding: 'utf8',
                 stdio: ['pipe', 'pipe', 'pipe']
             }).trim();
