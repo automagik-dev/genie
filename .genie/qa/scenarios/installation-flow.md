@@ -56,7 +56,7 @@ mkdir -p "$TEST_DIR" "$EVIDENCE_DIR"
 cd "$TEST_DIR"
 
 # Execute installation
-bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)" 2>&1 | tee "${EVIDENCE_DIR}/scenario1-fresh-install.log"
+bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)" 2>&1 | tee "${EVIDENCE_DIR}/scenario1-fresh-install.log"
 
 # Capture exit code
 echo $? > "${EVIDENCE_DIR}/scenario1-exit-code.txt"
@@ -154,7 +154,7 @@ npx automagik-genie@latest init code --yes 2>&1 | tee "${EVIDENCE_DIR}/scenario3
 cat .genie/state/version.json > "${EVIDENCE_DIR}/scenario3-version-before.json"
 
 # Run upgrade
-bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)" 2>&1 | tee "${EVIDENCE_DIR}/scenario3-upgrade.log"
+bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)" 2>&1 | tee "${EVIDENCE_DIR}/scenario3-upgrade.log"
 
 # Capture upgraded version
 cat .genie/state/version.json > "${EVIDENCE_DIR}/scenario3-version-after.json"

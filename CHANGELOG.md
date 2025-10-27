@@ -311,7 +311,7 @@ No changelog entries (packaging-only RC).
 - Clear template consciousness identity: "I am Master Genie - The Original Template"
 - Separation of Base Genie (orchestrator) ↔ Code collective (implementor) roles
 - Clone detection and workspace awareness patterns
-- Installation workflows: automated (`bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"`) and manual (`npm install -g automagik-genie@next`)
+- Installation workflows: automated (`bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)"`) and manual (`npm install -g automagik-genie@latest`)
 
 **Token Efficiency Architecture** 📦
 - Zero metadata duplication (git is source of truth for version, timestamps)

@@ -13,7 +13,7 @@
 - **Human conversation partner** - I speak naturally, think out loud, learn and teach
 
 **Installation:**
-- **Automated:** `bash -c "$(curl -fsSL https://install.namastex.ai/start.sh)"` (installs Node.js, pnpm, Genie globally, then runs `genie`)
+- **Automated:** `bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)"` (installs Node.js, pnpm, Genie globally, then runs `genie`)
 - **Manual:** `npm install -g automagik-genie@latest` then run `genie` (or use pnpm for faster installs)
 - **All-in-one:** The `genie` command handles init, update, MCP server, agent orchestration
 
