@@ -135,24 +135,15 @@ export async function runInitWizard(options: WizardOptions): Promise<WizardConfi
     initial: ''
   });
 
-  // Git hooks installation
+  // Git hooks installation (only offer if Code collective selected)
   questions.push({
-    type: 'select',
+    type: (prev, values) => {
+      // Only show hooks prompt if 'code' collective was selected
+      return values.templates?.includes('code') ? 'confirm' : null;
+    },
     name: 'installHooks',
-    message: '🔧 Install git hooks?',
-    choices: [
-      {
-        title: 'Yes (Recommended)',
-        value: true,
-        description: 'Auto-validate commits, prevent broken pushes, link to GitHub issues'
-      },
-      {
-        title: 'No',
-        value: false,
-        description: 'Manual workflow - you manage git yourself'
-      }
-    ],
-    initial: 0
+    message: '🔧 Install git hooks? (validates commits, runs tests before push)',
+    initial: true
   });
 
   const response = await prompts(questions, {
