@@ -83,6 +83,12 @@ function saveConfig(config) {
     }
 }
 /**
+ * Generate random 6-digit PIN
+ */
+function generatePin() {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+}
+/**
  * Create default configuration with OAuth2.1 credentials (async)
  */
 async function createDefaultConfig(ngrokToken) {
@@ -98,7 +104,8 @@ async function createDefaultConfig(ngrokToken) {
                     signingKey: privateKey,
                     publicKey: publicKey,
                     tokenExpiry: 3600, // 1 hour
-                    issuer: 'genie-mcp-server'
+                    issuer: 'genie-mcp-server',
+                    pin: generatePin() // Random 6-digit PIN for OAuth consent
                 },
                 created: new Date().toISOString()
             },
