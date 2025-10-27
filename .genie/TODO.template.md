@@ -1,14 +1,3 @@
-<!--
-Triad Validation Metadata
-last_updated: 2025-10-17T01:04:00Z
-active_tasks: 0
-completed_tasks: 0
-validation_commands:
-  has_priority_sections: grep -q "## 🔥 CRITICAL Priority" .genie/TODO.md && grep -q "## ⚠️ HIGH Priority" .genie/TODO.md
-  completed_marked: test $(grep -c "✅ COMPLETE" .genie/TODO.md) -ge 0
-  has_effort_tracking: grep -q "## 📊 Effort Tracking" .genie/TODO.md
--->
-
 # 🎯 Genie Development TODO
 **Context:** Prioritized work queue for Genie framework
 
