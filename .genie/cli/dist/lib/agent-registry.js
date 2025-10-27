@@ -278,7 +278,9 @@ class AgentRegistry {
                 if (agent.genie?.background !== undefined) {
                     variantConfig.background = agent.genie.background;
                 }
-                profiles.executors[executor][variantName] = variantConfig;
+                profiles.executors[executor][variantName] = {
+                    [executor]: variantConfig
+                };
             }
         }
         return profiles;
