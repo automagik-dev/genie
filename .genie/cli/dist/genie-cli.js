@@ -1203,7 +1203,8 @@ async function startGenieServer() {
                     console.log('Want to use Genie with ChatGPT? Enable ngrok tunnel to get a public URL.');
                     console.log('');
                     const tunnelResponse = await createQuestion(performanceGradient('? Enable ngrok tunnel for ChatGPT? [Y/n]: '));
-                    if (tunnelResponse.toLowerCase() !== 'n' && tunnelResponse !== '') {
+                    // [Y/n] means Y is default, so empty string = yes
+                    if (tunnelResponse.toLowerCase() !== 'n') {
                         // User wants tunnel - load full config
                         const genieConfig = loadGenieConfig();
                         if (!genieConfig || !genieConfig.mcp?.auth?.oauth2) {
