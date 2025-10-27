@@ -133,6 +133,13 @@ export async function runExploreAgent(prompt: string): Promise<string> {
   const taskId = result.task?.id || result.id;
   const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
 
+  // Validate attemptId exists (debugging aid for API response changes)
+  if (!attemptId) {
+    console.error('⚠️  Failed to extract attemptId from Forge response');
+    console.error('   Response structure:', JSON.stringify(result, null, 2));
+    throw new Error('Forge API returned unexpected response structure - no attemptId found');
+  }
+
   // Poll for completion and stream updates
   console.log('⏳ Gathering context...\n');
 
@@ -242,6 +249,13 @@ export async function launchMasterGenieInstall(
   const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
   const projectId = GENIE_PROJECT_ID;
 
+  // Validate attemptId exists (debugging aid for API response changes)
+  if (!attemptId) {
+    console.error('⚠️  Failed to extract attemptId from Forge response');
+    console.error('   Response structure:', JSON.stringify(result, null, 2));
+    throw new Error('Forge API returned unexpected response structure - no attemptId found');
+  }
+
   // Build full Forge URL
   const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
 
@@ -268,12 +282,16 @@ export async function runInstallFlow(config: InstallFlowConfig): Promise<string>
 }
 
 /**
- * Get current git branch
+ * Get current git branch (suppresses stderr to avoid scary errors in new repos)
  */
 function getCurrentBranch(): string {
   try {
-    return execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+    return execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
+    }).trim();
   } catch {
+    // Return 'main' for brand new repos (no commits yet) or non-git directories
     return 'main';
   }
 }
