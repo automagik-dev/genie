@@ -379,11 +379,17 @@ export function handleAuthorizationRequest(req: Request, res: Response): void {
   const htmlPath = path.join(__dirname, 'views', 'authorize.html');
   let html = fs.readFileSync(htmlPath, 'utf-8');
 
-  // Build consent page URL with parameters
-  const consentUrl = `/oauth2/authorize/consent?request_id=${requestId}&client_name=${encodeURIComponent(client.client_name)}&scope=${encodeURIComponent(authRequest.scope)}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
+  // Build consent page URL with parameters for POST action
+  const consentUrl = `/oauth2/authorize/consent?redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
 
-  // Replace the form action with proper URL
+  // Inject values directly into HTML (more reliable than URL parsing)
   html = html.replace('action="/oauth2/authorize/consent"', `action="${consentUrl}"`);
+  html = html.replace('<input type="hidden" name="request_id" id="requestId">',
+    `<input type="hidden" name="request_id" id="requestId" value="${requestId}">`);
+
+  // Inject client name and scopes as data attributes for JavaScript
+  html = html.replace('<div class="container">',
+    `<div class="container" data-client-name="${client.client_name.replace(/"/g, '&quot;')}" data-scopes="${authRequest.scope.replace(/"/g, '&quot;')}">`);
 
   res.send(html);
 }
