@@ -245,44 +245,8 @@
       errorEl.classList.add('show');
     }
 
-    // Handle form submission
-    document.getElementById('authForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-
-      const requestId = document.getElementById('requestId').value;
-      const authorizeBtn = document.getElementById('authorizeBtn');
-      const errorEl = document.getElementById('errorMessage');
-
-      // Disable button during submission
-      authorizeBtn.disabled = true;
-      authorizeBtn.textContent = 'Authorizing...';
-      errorEl.classList.remove('show');
-
-      try {
-        const response = await fetch('/oauth2/authorize/consent', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: new URLSearchParams({
-            request_id: requestId
-          })
-        });
-
-        if (response.redirected) {
-          // Success - redirect to client
-          window.location.href = response.url;
-        } else {
-          const data = await response.json();
-          throw new Error(data.error_description || 'Authorization failed');
-        }
-      } catch (err) {
-        errorEl.textContent = err.message;
-        errorEl.classList.add('show');
-        authorizeBtn.disabled = false;
-        authorizeBtn.textContent = 'Authorize';
-      }
-    });
+    // Form submits naturally - no JavaScript needed
+    // OAuth redirects work best with standard form submission
 
     // Handle deny
     function denyAccess() {
