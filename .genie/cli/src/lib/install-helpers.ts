@@ -1,24 +1,19 @@
 /**
- * Install Flow Helpers - Master Genie orchestration via Explore → Genie handoff
+ * Install Flow Helpers - Master Genie orchestration for fresh installations
  *
  * Architecture:
- * 1. Explore agent (read-only context gathering, streamed to console)
- * 2. Master Genie (interactive orchestration with injected context)
- * 3. User continues in Forge dashboard via shortened URL
+ * 1. Launch Master Genie with discovery + installation prompt
+ * 2. User continues in Forge dashboard via shortened URL
  */
 
 import gradient from 'gradient-string';
 import path from 'path';
 import { execSync } from 'child_process';
 
-// Load ForgeClient from package root
-// Resolve relative to this module's location (.genie/cli/src/lib/)
-// Package root is 4 levels up: ../../../..
-const geniePackageRoot = path.join(__dirname, '../../../..');
-const ForgeClient = require(path.join(geniePackageRoot, 'forge.js')).ForgeClient;
+// Import ForgeExecutor for workspace project management
+import { createForgeExecutor } from './forge-executor.js';
 
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-const GENIE_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce';
 
 // Import from compiled MCP dist (will be available after build)
 let shortenUrl: any;
@@ -110,22 +105,30 @@ Use this format:
  * Run explore agent, stream output to console, return last message
  */
 export async function runExploreAgent(prompt: string): Promise<string> {
-  const forgeClient = new ForgeClient(FORGE_URL);
+  const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
 
   console.log('');
   printBox('🔍 PROJECT DISCOVERY', 'Analyzing your repository...');
   console.log('');
 
+  // Get or create workspace-specific Forge project (not hardcoded!)
+  // @ts-ignore - getOrCreateGenieProject is private but needed here
+  const projectId = await forgeExecutor['getOrCreateGenieProject']();
+
+  // Get ForgeClient for raw API access
+  // @ts-ignore - forge is private but needed here
+  const forgeClient = forgeExecutor['forge'];
+
   // Create explore task (read-only context gathering)
   const result = await forgeClient.createAndStartTask({
     task: {
-      project_id: GENIE_PROJECT_ID,
+      project_id: projectId,
       title: '🔍 Installation Discovery',
       description: prompt
     },
     executor_profile_id: {
       executor: 'CLAUDE_CODE',
-      variant: 'EXPLORE'
+      variant: 'CODE_EXPLORE'  // Correct variant name (collective_agent)
     },
     base_branch: getCurrentBranch()
   });
@@ -223,7 +226,7 @@ export async function launchMasterGenieInstall(
   context: string,
   config: InstallFlowConfig
 ): Promise<string> {
-  const forgeClient = new ForgeClient(FORGE_URL);
+  const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
 
   const installPrompt = buildMasterGeniePrompt(context, config.templates);
 
@@ -231,10 +234,18 @@ export async function launchMasterGenieInstall(
   printBox('🧞 MASTER GENIE AWAKENING', 'Starting installation orchestration...');
   console.log('');
 
+  // Get or create workspace-specific Forge project (not hardcoded!)
+  // @ts-ignore - getOrCreateGenieProject is private but needed here
+  const projectId = await forgeExecutor['getOrCreateGenieProject']();
+
+  // Get ForgeClient for raw API access
+  // @ts-ignore - forge is private but needed here
+  const forgeClient = forgeExecutor['forge'];
+
   // Create Master Genie Forge task
   const result = await forgeClient.createAndStartTask({
     task: {
-      project_id: GENIE_PROJECT_ID,
+      project_id: projectId,
       title: '🧞 Genie Installation & Setup',
       description: installPrompt
     },
@@ -247,7 +258,6 @@ export async function launchMasterGenieInstall(
 
   const taskId = result.task?.id || result.id;
   const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
-  const projectId = GENIE_PROJECT_ID;
 
   // Validate attemptId exists (debugging aid for API response changes)
   if (!attemptId) {
