@@ -14,7 +14,7 @@ exports.getNgrokSignupUrl = getNgrokSignupUrl;
  * Start ngrok tunnel for HTTP stream MCP server
  *
  * @param port - Local port to expose
- * @param authToken - ngrok auth token
+ * @param authToken - Optional ngrok auth token (for better reliability and persistent URLs)
  * @returns Tunnel URL or null if failed
  */
 async function startNgrokTunnel(port, authToken) {
@@ -29,12 +29,16 @@ async function startNgrokTunnel(port, authToken) {
             console.warn('⚠️  @ngrok/ngrok not installed, skipping tunnel');
             return null;
         }
-        // Start tunnel
-        const listener = await ngrok.forward({
+        // Start tunnel (authtoken is optional - works without but with limitations)
+        const forwardOptions = {
             addr: port,
-            authtoken: authToken,
             schemes: ['https']
-        });
+        };
+        // Only add authtoken if provided
+        if (authToken) {
+            forwardOptions.authtoken = authToken;
+        }
+        const listener = await ngrok.forward(forwardOptions);
         const url = listener.url();
         return url;
     }
