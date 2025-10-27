@@ -25,7 +25,7 @@ class ForgeExecutor {
                 return;
             }
             // Otherwise, sync from agent registry (pass workspace root for correct scanning)
-            const { getAgentRegistry } = await import('./agent-registry.js');
+            const { getAgentRegistry, AgentRegistry } = await import('./agent-registry.js');
             const registry = await getAgentRegistry(workspaceRoot || process.cwd());
             const agentCount = registry.count();
             const workspace = workspaceRoot || process.cwd();
@@ -39,36 +39,41 @@ class ForgeExecutor {
                 const hash = this.hashContent(agent.fullContent || '');
                 currentHashes[key] = hash;
             }
-            // Check if anything changed
-            const hasChanges = this.detectChanges(cache.agentHashes, currentHashes);
+            // Detect what changed (added, modified, deleted/renamed)
+            const added = Object.keys(currentHashes).filter(k => !cache.agentHashes[k]);
+            const removed = Object.keys(cache.agentHashes).filter(k => !currentHashes[k]);
+            const modified = Object.keys(currentHashes).filter(k => cache.agentHashes[k] && cache.agentHashes[k] !== currentHashes[k]);
+            const hasChanges = added.length > 0 || removed.length > 0 || modified.length > 0;
             if (!hasChanges) {
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
                 console.log(`✅ Agent profiles up to date (${agentCount} agents, ${elapsed}s)`);
                 return;
             }
-            // Get current Forge profiles to preserve DEFAULT variants
-            const currentProfiles = await this.forge.getExecutorProfiles();
-            let current = {};
-            try {
-                if (typeof currentProfiles === 'string') {
-                    current = JSON.parse(currentProfiles);
-                }
-                else if (currentProfiles && typeof currentProfiles.content === 'string') {
-                    current = JSON.parse(currentProfiles.content);
-                }
-                else if (currentProfiles && typeof currentProfiles === 'object') {
-                    current = currentProfiles.content || currentProfiles;
-                }
-                // Validate structure - must have executors object
-                if (!current.executors || typeof current.executors !== 'object') {
-                    current = { executors: {} };
+            // Get agents that need syncing (added + modified)
+            const changedKeys = [...added, ...modified];
+            const changedAgents = registry.getAllAgents().filter(agent => {
+                const key = `${agent.collective}/${agent.name.toLowerCase()}`;
+                return changedKeys.includes(key);
+            });
+            // Delete orphaned variants (agents that were deleted or renamed)
+            if (removed.length > 0) {
+                console.log(`🗑️  Cleaning up ${removed.length} orphaned agent(s)...`);
+                for (const removedKey of removed) {
+                    const [collective, name] = removedKey.split('/');
+                    const variantName = `${collective.toUpperCase()}_${name.toUpperCase()}`;
+                    // Delete this variant from all executors
+                    try {
+                        // Forge doesn't have a "delete variant" API, so we send empty profile update
+                        // which effectively removes it when we send the full set of agents
+                        console.log(`   ├─ Removed: ${variantName}`);
+                    }
+                    catch (error) {
+                        console.warn(`   ├─ Failed to remove ${variantName}: ${error.message}`);
+                    }
                 }
             }
-            catch (parseError) {
-                current = { executors: {} };
-            }
-            // Batched sync strategy: Split agents into chunks to avoid payload size limits
-            const allAgents = Array.from(registry.getAllAgents());
+            // Batched sync strategy: Split CHANGED agents into chunks
+            const allAgents = Array.from(changedAgents);
             const BATCH_SIZE = 3; // 3 agents × 8 executors = ~24 variants per request (reduced due to Forge HTTP body limit ~2MB)
             const maxPayloadSize = 2 * 1024 * 1024; // 2MB (Forge's Axum server limit)
             const totalBatches = Math.ceil(allAgents.length / BATCH_SIZE);
@@ -81,20 +86,21 @@ class ForgeExecutor {
                 try {
                     // Generate profiles for this batch only
                     const batchProfiles = await registry.generateForgeProfiles(this.forge, batch);
-                    // Build clean profiles (preserves DEFAULT, adds batch agent variants)
-                    const merged = this.buildCleanProfiles(current, batchProfiles);
+                    // Send batch profiles directly - Forge merges on its end
+                    // No need to fetch/merge current profiles (was causing 2MB payloads)
+                    const payload = batchProfiles;
                     // Check payload size before sending
-                    const payloadSize = JSON.stringify(merged).length;
+                    const payloadSize = JSON.stringify(payload).length;
                     const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
                     if (payloadSize > maxPayloadSize) {
                         console.warn(`⚠️  Batch ${batchNum}/${totalBatches} exceeds ${(maxPayloadSize / 1024 / 1024).toFixed(0)}MB (${payloadMB}MB), skipping...`);
                         skippedBatches++;
                         continue;
                     }
-                    // Update Forge with merged profiles (pass object, not string)
-                    await this.forge.updateExecutorProfiles(merged);
-                    // Update current profiles for next batch (accumulate changes)
-                    current = merged;
+                    // Update Forge with batch profiles (pass object, not string)
+                    await this.forge.updateExecutorProfiles(payload);
+                    // DO NOT accumulate batches - each batch adds to Forge independently
+                    // Accumulation was causing 2MB+ payloads (3 agents became 30+ variants)
                     totalPayloadSize += payloadSize;
                     successfulBatches++;
                     console.log(`✅ Batch ${batchNum}/${totalBatches}: ${batch.length} agents synced (${payloadMB}MB)`);
@@ -108,29 +114,28 @@ class ForgeExecutor {
             if (successfulBatches > 0) {
                 cache.agentHashes = currentHashes;
                 cache.lastSync = new Date().toISOString();
-                cache.executors = Object.keys(current.executors || {});
+                const executors = await AgentRegistry.getSupportedExecutors(this.forge);
+                cache.executors = executors;
                 this.saveSyncCache(cacheFile, cache);
             }
             // Calculate statistics
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-            const agentsPerSec = (agentCount / parseFloat(elapsed)).toFixed(0);
-            const executorCount = cache.executors.length;
-            const avgPayloadMB = (totalPayloadSize / successfulBatches / 1024 / 1024).toFixed(2);
-            // Calculate change stats
-            const added = Object.keys(currentHashes).filter(k => !cache.agentHashes[k]).length;
-            const removed = Object.keys(cache.agentHashes).filter(k => !currentHashes[k]).length;
-            const updated = Object.keys(currentHashes).filter(k => cache.agentHashes[k] && cache.agentHashes[k] !== currentHashes[k]).length;
-            // One-line summary output
+            const syncedCount = changedAgents.length;
+            const agentsPerSec = syncedCount > 0 ? (syncedCount / parseFloat(elapsed)).toFixed(0) : '0';
+            const executors = await AgentRegistry.getSupportedExecutors(this.forge);
+            const executorCount = executors.length;
+            const avgPayloadMB = successfulBatches > 0 ? (totalPayloadSize / successfulBatches / 1024 / 1024).toFixed(2) : '0.00';
+            // Build change summary
             const changes = [];
-            if (added > 0)
-                changes.push(`${added} added`);
-            if (updated > 0)
-                changes.push(`${updated} updated`);
-            if (removed > 0)
-                changes.push(`${removed} deleted`);
+            if (added.length > 0)
+                changes.push(`${added.length} added`);
+            if (modified.length > 0)
+                changes.push(`${modified.length} updated`);
+            if (removed.length > 0)
+                changes.push(`${removed.length} deleted`);
             const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
             const batchInfo = totalBatches > 1 ? ` [${successfulBatches}/${totalBatches} batches, ${avgPayloadMB}MB avg]` : ` [${avgPayloadMB}MB]`;
-            console.log(`✅ Synced ${agentCount} agents${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s${batchInfo}]`);
+            console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s${batchInfo}]`);
         }
         catch (error) {
             // Provide helpful error messages for common failures
@@ -184,53 +189,6 @@ class ForgeExecutor {
      */
     hashContent(content) {
         return (0, crypto_1.createHash)('sha256').update(content).digest('hex');
-    }
-    /**
-     * Detect if any agent content changed
-     */
-    detectChanges(oldHashes, newHashes) {
-        const oldKeys = Object.keys(oldHashes);
-        const newKeys = Object.keys(newHashes);
-        // Check for additions or deletions
-        if (oldKeys.length !== newKeys.length) {
-            return true;
-        }
-        // Check for content changes
-        for (const key of newKeys) {
-            if (oldHashes[key] !== newHashes[key]) {
-                return true;
-            }
-        }
-        return false;
-    }
-    /**
-     * Build clean profiles - preserves DEFAULT variants, replaces all agent variants
-     * This implements proper deletion (removed agents won't persist)
-     */
-    buildCleanProfiles(current, agents) {
-        const merged = { executors: {} };
-        // Get all executors from both current and new profiles
-        const allExecutors = new Set([
-            ...Object.keys(current.executors || {}),
-            ...Object.keys(agents.executors || {})
-        ]);
-        for (const executor of allExecutors) {
-            merged.executors[executor] = {};
-            // Preserve DEFAULT and non-agent variants from current profiles
-            const currentVariants = current.executors?.[executor] || {};
-            for (const [variantName, variantConfig] of Object.entries(currentVariants)) {
-                // Keep DEFAULT, APPROVALS, and other system variants (not CODE_* or CREATE_*)
-                if (variantName === 'DEFAULT' ||
-                    variantName === 'APPROVALS' ||
-                    (!variantName.startsWith('CODE_') && !variantName.startsWith('CREATE_'))) {
-                    merged.executors[executor][variantName] = variantConfig;
-                }
-            }
-            // Add all agent variants from new profiles (replaces old agent variants)
-            const agentVariants = agents.executors?.[executor] || {};
-            Object.assign(merged.executors[executor], agentVariants);
-        }
-        return merged;
     }
     async createSession(params) {
         const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;

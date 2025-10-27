@@ -347,7 +347,9 @@ export class AgentRegistry {
           variantConfig.background = agent.genie.background;
         }
 
-        profiles.executors[executor][variantName] = variantConfig;
+        profiles.executors[executor][variantName] = {
+          [executor]: variantConfig
+        };
       }
     }
 
