@@ -311,7 +311,9 @@ export class AgentRegistry {
         if (!agent.fullContent) continue;
 
         // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
-        const variantName = `${agent.collective.toUpperCase()}_${agent.name.toUpperCase()}`;
+        // Sanitize agent name: replace spaces and hyphens with underscores for valid Forge variant names
+        const sanitizedName = agent.name.toUpperCase().replace(/[\s-]+/g, '_');
+        const variantName = `${agent.collective.toUpperCase()}_${sanitizedName}`;
 
         // Build variant config with executor-specific fields
         const variantConfig: any = {
