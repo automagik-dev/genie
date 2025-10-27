@@ -73,13 +73,13 @@ export async function runUpdate(
           globalVersion = globalData.dependencies?.['automagik-genie']?.version || '';
         }
 
-        // Handle file: protocol (when installed from local directory)
-        // pnpm stores version as "file:../path/to/package" instead of actual version
-        if (globalVersion.startsWith('file:')) {
-          // Extract the path from file: protocol and read the actual version
+        // Handle file:/link: protocols (when installed from local directory)
+        // pnpm stores version as "file:..." or "link:..." instead of actual version
+        if (globalVersion.startsWith('file:') || globalVersion.startsWith('link:')) {
+          // Extract the path from protocol and read the actual version
           // This handles cases where global was installed from local but package.json has changed
           try {
-            const filePath = globalVersion.replace('file:', '');
+            const filePath = globalVersion.replace(/^(file:|link:)/, '');
             const globalPackageJson = path.join(filePath, 'package.json');
             if (fs.existsSync(globalPackageJson)) {
               const globalPkg = JSON.parse(fs.readFileSync(globalPackageJson, 'utf8'));
