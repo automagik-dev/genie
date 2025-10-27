@@ -16,6 +16,7 @@ exports.readJsonFile = readJsonFile;
 exports.writeJsonFile = writeJsonFile;
 exports.collectFiles = collectFiles;
 exports.backupGenieDirectory = backupGenieDirectory;
+exports.finalizeBackup = finalizeBackup;
 const fs_1 = __importDefault(require("fs"));
 const fs_2 = require("fs");
 const path_1 = __importDefault(require("path"));
@@ -122,16 +123,25 @@ async function collectFiles(root, options = {}) {
 /**
  * Unified backup function for .genie directory
  *
- * Creates timestamped backup of entire .genie directory + root documentation
- * Stores at: .genie/backups/<backupId>/
+ * For upgrades (pre_upgrade): Uses two-stage move to ensure clean replacement
+ * For rollbacks (pre_rollback, old_genie): Uses snapshot copy to preserve original
  *
  * @param workspacePath - Root of workspace (where .genie lives)
  * @param reason - Why backup is being created (for logging/tracking)
- * @returns backupId for reference
+ * @returns backupId for reference, or object with tempPath for two-stage moves
  */
 async function backupGenieDirectory(workspacePath, reason) {
     const backupId = toIsoId();
     const genieDir = path_1.default.join(workspacePath, '.genie');
+    // Two-stage move for upgrades (move old .genie out, create fresh, move backup in)
+    if (reason === 'pre_upgrade') {
+        const tempPath = path_1.default.join(workspacePath, `.genie-backup-${backupId}`);
+        // Stage 1: Move old .genie/ to temp location at workspace root
+        await fs_2.promises.rename(genieDir, tempPath);
+        // Return both backupId and tempPath so init.ts can complete stage 3
+        return { backupId, tempPath };
+    }
+    // Snapshot copy for rollbacks (preserve original, copy to backup)
     const backupRoot = path_1.default.join(genieDir, 'backups', backupId);
     // Create backup directory
     await ensureDir(backupRoot);
@@ -146,4 +156,28 @@ async function backupGenieDirectory(workspacePath, reason) {
         }
     }
     return backupId;
+}
+/**
+ * Finalize two-stage backup by moving temp location into .genie/backups/
+ * Called after new .genie/ has been created from templates
+ *
+ * @param workspacePath - Root of workspace
+ * @param tempPath - Temporary backup location (e.g., .genie-backup-<timestamp>/)
+ * @param backupId - Backup ID for final location
+ */
+async function finalizeBackup(workspacePath, tempPath, backupId) {
+    const genieDir = path_1.default.join(workspacePath, '.genie');
+    const finalPath = path_1.default.join(genieDir, 'backups', backupId, 'genie');
+    // Ensure backups directory exists
+    await ensureDir(path_1.default.join(genieDir, 'backups', backupId));
+    // Stage 3: Move temp backup into new .genie/backups/<id>/genie/
+    await fs_2.promises.rename(tempPath, finalPath);
+    // Backup root documentation files if present
+    const rootDocs = ['AGENTS.md', 'CLAUDE.md'];
+    for (const doc of rootDocs) {
+        const docPath = path_1.default.join(workspacePath, doc);
+        if (await pathExists(docPath)) {
+            await fs_2.promises.copyFile(docPath, path_1.default.join(genieDir, 'backups', backupId, doc));
+        }
+    }
 }
