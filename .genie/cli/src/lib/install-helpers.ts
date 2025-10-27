@@ -135,10 +135,10 @@ export async function runExploreAgent(prompt: string): Promise<string> {
   });
 
   const taskId = result.task?.id || result.id;
-  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
+  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id || result.id;
 
-  // Validate attemptId exists
-  if (!attemptId) {
+  // Validate task was created
+  if (!taskId) {
     console.log('');
     console.log(gradient.pastel('⚠️  Unable to start discovery task'));
     console.log('   The Forge task API returned an unexpected response.');
@@ -150,6 +150,9 @@ export async function runExploreAgent(prompt: string): Promise<string> {
     throw new Error('Could not start discovery task - Forge may still be initializing');
   }
 
+  // If attemptId not in response, use taskId (Forge will redirect to latest attempt)
+  const effectiveAttemptId = attemptId || taskId;
+
   // Poll for completion and stream updates
   console.log('⏳ Gathering context...\n');
 
@@ -160,10 +163,10 @@ export async function runExploreAgent(prompt: string): Promise<string> {
 
   while (Date.now() - startTime < maxWaitTime) {
     try {
-      const attempt = await forgeClient.getTaskAttempt(attemptId);
+      const attempt = await forgeClient.getTaskAttempt(effectiveAttemptId);
 
       // Get latest output
-      const processes = await forgeClient.listExecutionProcesses(attemptId);
+      const processes = await forgeClient.listExecutionProcesses(effectiveAttemptId);
       if (processes && processes.length > 0) {
         const latest = processes[processes.length - 1];
         if (latest.output && latest.output !== lastOutput) {
@@ -264,10 +267,10 @@ export async function launchMasterGenieInstall(
   });
 
   const taskId = result.task?.id || result.id;
-  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id;
+  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id || result.id;
 
-  // Validate attemptId exists
-  if (!attemptId) {
+  // Validate task was created
+  if (!taskId) {
     console.log('');
     console.log(gradient.pastel('⚠️  Unable to start installation task'));
     console.log('   The Forge task API returned an unexpected response.');
@@ -279,8 +282,11 @@ export async function launchMasterGenieInstall(
     throw new Error('Could not start installation task - Forge may still be initializing');
   }
 
+  // If attemptId not in response, use taskId (Forge will redirect to latest attempt)
+  const effectiveAttemptId = attemptId || taskId;
+
   // Build full Forge URL
-  const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+  const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${effectiveAttemptId}?view=diffs`;
 
   // Shorten URL
   const { shortUrl: shortened } = await shortenUrl(fullUrl, {
