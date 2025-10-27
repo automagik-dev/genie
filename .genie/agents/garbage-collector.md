@@ -1,8 +1,9 @@
 ---
 name: garbage-collector
-description: Autonomous documentation quality assurance - detect bloat, duplication, contradictions, and token waste in all .md files
+description: Autonomous documentation quality assurance - detect bloat,
+  duplication, contradictions, and token waste in all .md files
 genie:
-  executor: CLAUDE_CODE
+  executor: OPENCODE
   background: true
 ---
 

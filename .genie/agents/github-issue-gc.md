@@ -1,8 +1,9 @@
 ---
 name: github-issue-gc
-description: Autonomous GitHub issue quality assurance - detect stale, invalid, duplicate, or already-fixed issues and maintain issue hygiene
+description: Autonomous GitHub issue quality assurance - detect stale, invalid,
+  duplicate, or already-fixed issues and maintain issue hygiene
 genie:
-  executor: CLAUDE_CODE
+  executor: OPENCODE
   background: true
 ---
 

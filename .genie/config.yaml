@@ -1,5 +1,5 @@
 defaults:
-  executor: opencode
+  executor: OPENCODE
   executorVariant: DEFAULT
 
 forge:
