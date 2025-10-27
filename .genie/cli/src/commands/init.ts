@@ -150,39 +150,53 @@ export async function runInit(
       return;
     }
 
-    // Check for partial installation (templates copied but executor not started)
-    // OR version mismatch (upgrade scenario)
+    // CRITICAL: Check version BEFORE copying any files (fixes #304)
+    // This must happen before template operations to correctly detect fresh vs upgrade installations
     const versionPath = resolveWorkspaceVersionPath(cwd);
     const currentPackageVersion = getPackageVersion();
+    let isUpgrade = false;
+    let oldVersion: string | undefined;
+    let isPartialInstall = false;
 
     if (await pathExists(versionPath)) {
-      const versionData = JSON.parse(await fsp.readFile(versionPath, 'utf8'));
-      const installedVersion = versionData.version;
+      try {
+        const versionData = JSON.parse(await fsp.readFile(versionPath, 'utf8'));
+        oldVersion = versionData.version;
 
-      if (installedVersion === currentPackageVersion) {
-        // True partial installation (same version, incomplete setup)
-        console.log('');
-        console.log('🔍 Detected partial installation');
-        console.log('📦 Templates already copied, resuming setup...');
-        console.log('');
+        if (oldVersion === currentPackageVersion) {
+          // True partial installation (same version, incomplete setup)
+          isPartialInstall = true;
+          console.log('');
+          console.log('🔍 Detected partial installation');
+          console.log('📦 Templates already copied, resuming setup...');
+          console.log('');
 
-        // Skip file operations; go straight to executor setup
-        // In partial init, use default executor (installation already attempted, use non-interactive default)
-        const resumeExecutor = DEFAULT_EXECUTOR_KEY;
-        const resumeModel = undefined;
-        await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
-        await configureBothExecutors(cwd);
-        await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
+          // Skip file operations; go straight to executor setup
+          const resumeExecutor = DEFAULT_EXECUTOR_KEY;
+          const resumeModel = undefined;
+          await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
+          await configureBothExecutors(cwd);
+          await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
 
-        // Note: Install agent is launched by start.sh after init completes
-        return;
-      } else {
-        // Version mismatch = upgrade scenario, continue with full init + backup
-        console.log('');
-        console.log(`🔄 Upgrading from ${installedVersion} to ${currentPackageVersion}...`);
-        console.log('');
-        // Continue with file operations (backup + copy)
+          // Note: Install agent is launched by start.sh after init completes
+          return;
+        } else {
+          // Version mismatch = upgrade scenario
+          isUpgrade = true;
+          console.log('');
+          console.log(`🔄 Upgrading from ${oldVersion} to ${currentPackageVersion}...`);
+          console.log('');
+        }
+      } catch {
+        // Corrupted version.json, treat as fresh install
+        isUpgrade = false;
+        oldVersion = undefined;
       }
+    } else {
+      // No version.json = fresh installation
+      console.log('');
+      console.log('🧞 Welcome to Genie! Setting up your workspace...');
+      console.log('');
     }
 
     // Auto-detect old Genie structure and suggest migration

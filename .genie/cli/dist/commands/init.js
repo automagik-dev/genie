@@ -94,36 +94,52 @@ async function runInit(parsed, _config, _paths) {
             process.exitCode = 1;
             return;
         }
-        // Check for partial installation (templates copied but executor not started)
-        // OR version mismatch (upgrade scenario)
+        // CRITICAL: Check version BEFORE copying any files (fixes #304)
+        // This must happen before template operations to correctly detect fresh vs upgrade installations
         const versionPath = (0, paths_1.resolveWorkspaceVersionPath)(cwd);
         const currentPackageVersion = (0, package_1.getPackageVersion)();
+        let isUpgrade = false;
+        let oldVersion;
+        let isPartialInstall = false;
         if (await (0, fs_utils_1.pathExists)(versionPath)) {
-            const versionData = JSON.parse(await fs_1.promises.readFile(versionPath, 'utf8'));
-            const installedVersion = versionData.version;
-            if (installedVersion === currentPackageVersion) {
-                // True partial installation (same version, incomplete setup)
-                console.log('');
-                console.log('🔍 Detected partial installation');
-                console.log('📦 Templates already copied, resuming setup...');
-                console.log('');
-                // Skip file operations; go straight to executor setup
-                // In partial init, use default executor (installation already attempted, use non-interactive default)
-                const resumeExecutor = executor_registry_1.DEFAULT_EXECUTOR_KEY;
-                const resumeModel = undefined;
-                await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
-                await (0, mcp_config_1.configureBothExecutors)(cwd);
-                await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
-                // Note: Install agent is launched by start.sh after init completes
-                return;
+            try {
+                const versionData = JSON.parse(await fs_1.promises.readFile(versionPath, 'utf8'));
+                oldVersion = versionData.version;
+                if (oldVersion === currentPackageVersion) {
+                    // True partial installation (same version, incomplete setup)
+                    isPartialInstall = true;
+                    console.log('');
+                    console.log('🔍 Detected partial installation');
+                    console.log('📦 Templates already copied, resuming setup...');
+                    console.log('');
+                    // Skip file operations; go straight to executor setup
+                    const resumeExecutor = executor_registry_1.DEFAULT_EXECUTOR_KEY;
+                    const resumeModel = undefined;
+                    await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
+                    await (0, mcp_config_1.configureBothExecutors)(cwd);
+                    await (0, view_helpers_1.emitView)(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
+                    // Note: Install agent is launched by start.sh after init completes
+                    return;
+                }
+                else {
+                    // Version mismatch = upgrade scenario
+                    isUpgrade = true;
+                    console.log('');
+                    console.log(`🔄 Upgrading from ${oldVersion} to ${currentPackageVersion}...`);
+                    console.log('');
+                }
             }
-            else {
-                // Version mismatch = upgrade scenario, continue with full init + backup
-                console.log('');
-                console.log(`🔄 Upgrading from ${installedVersion} to ${currentPackageVersion}...`);
-                console.log('');
-                // Continue with file operations (backup + copy)
+            catch {
+                // Corrupted version.json, treat as fresh install
+                isUpgrade = false;
+                oldVersion = undefined;
             }
+        }
+        else {
+            // No version.json = fresh installation
+            console.log('');
+            console.log('🧞 Welcome to Genie! Setting up your workspace...');
+            console.log('');
         }
         // Auto-detect old Genie structure and suggest migration
         const installType = (0, migrate_1.detectInstallType)();
