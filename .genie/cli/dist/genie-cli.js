@@ -1289,12 +1289,10 @@ async function startGenieServer() {
                             }
                         }
                     }
+                    // Now show dashboard prompt (keeping readline open)
+                    console.log('');
+                    await createQuestion(genieGradient('Press Enter to open dashboard...'));
                     rl.close();
-                    // Now show dashboard prompt
-                    console.log(genieGradient('Press Enter to open dashboard...'));
-                    await new Promise((resolve) => {
-                        process.stdin.once('data', () => resolve());
-                    });
                     console.log('');
                     console.log(genieGradient('📊 Launching dashboard...'));
                     console.log('');
