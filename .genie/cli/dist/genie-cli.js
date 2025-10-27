@@ -491,13 +491,29 @@ async function smartRouter() {
         console.log(magicGradient('   🧞 ✨ THE GENIE AWAKENS ✨ 🧞   '));
         console.log(cosmicGradient('━'.repeat(60)));
         console.log('');
-        console.log('Installing AI agent framework with access to:');
-        console.log('  📁 Files  💻 Terminal  🌐 Git');
+        console.log('🧞 Hey, I\'m your Genie! Here\'s what I can do for you:');
         console.log('');
-        console.log('⚠️  Research preview - Review all agent actions');
-        console.log('🔒 Runs locally - Private/local LLM compatible');
+        console.log(performanceGradient('   📁 Read & write files in this workspace'));
+        console.log(performanceGradient('   💻 Run terminal commands'));
+        console.log(performanceGradient('   🌐 Handle git operations (commits, PRs, branches)'));
         console.log('');
-        console.log(performanceGradient('Press Enter to continue...'));
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log('⚠️  ' + performanceGradient('DISCLAIMER'));
+        console.log('');
+        console.log('   • This is experimental software (research preview)');
+        console.log('   • Always review my actions before accepting changes');
+        console.log('   • I\'m learning and might make mistakes');
+        console.log('');
+        console.log('🔒 ' + successGradient('YOUR DATA STAYS PRIVATE:'));
+        console.log('   ✓ Everything runs locally on YOUR machine');
+        console.log('   ✓ No data leaves your computer (except LLM API calls)');
+        console.log('   ✓ Compatible with private/local LLMs');
+        console.log('   ✓ You choose which LLM provider to use');
+        console.log('');
+        console.log(cosmicGradient('━'.repeat(60)));
+        console.log('');
+        console.log(successGradient('Ready to grant your wishes? Press Enter to continue...'));
         // Wait for user acknowledgment
         await new Promise((resolve) => {
             process.stdin.once('data', () => resolve());
