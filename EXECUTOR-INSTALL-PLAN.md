@@ -82,7 +82,7 @@ echo "Download from: https://claude.ai/download"
 **Install:**
 ```bash
 # All platforms (npm)
-npm install -g codex-cli
+npm install -g @openai/codex
 ```
 **Login:**
 ```bash
@@ -139,7 +139,7 @@ code --install-extension continue.continue
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. Claude          - Anthropic's Claude desktop app
-2. ChatGPT         - OpenAI's ChatGPT (via codex-cli)
+2. ChatGPT         - OpenAI's ChatGPT (via @openai/codex)
 3. Cline           - Claude in VSCode (extension)
 4. Cursor          - AI-first code editor
 5. Continue        - Open-source AI coding assistant
@@ -209,14 +209,14 @@ User gets cryptic errors
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. Claude          - Anthropic's Claude desktop app
-2. ChatGPT         - OpenAI's ChatGPT (via codex-cli)
+2. ChatGPT         - OpenAI's ChatGPT (via @openai/codex)
 3. Cline           - Claude in VSCode (extension)
 4. Cursor          - AI-first code editor
 5. Continue        - Open-source AI coding assistant
 
 Enter number (1-5): 2
 
-🔍 Checking if ChatGPT (codex-cli) is installed...
+🔍 Checking if ChatGPT (@openai/codex) is installed...
 ❌ ChatGPT not installed
 
 📦 Would you like to install ChatGPT now? (y/n): y
