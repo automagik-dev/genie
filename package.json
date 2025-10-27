@@ -90,6 +90,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.2",
+    "@ngrok/ngrok": "^1.5.2",
     "@types/express": "^5.0.4",
     "automagik-forge": "latest",
     "commander": "^12.1.0",
