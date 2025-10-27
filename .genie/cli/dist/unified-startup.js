@@ -82,12 +82,14 @@ async function startGenie() {
         // Step 5: Start tunnel if configured
         if (mcpConfig.tunnel?.enabled && mcpConfig.tunnel?.token) {
             console.error('🌐 Starting ngrok tunnel...');
-            tunnelUrl = await (0, tunnel_manager_1.startNgrokTunnel)(mcpConfig.server.port, mcpConfig.tunnel.token);
-            if (tunnelUrl) {
+            const tunnelResult = await (0, tunnel_manager_1.startNgrokTunnel)(mcpConfig.server.port, mcpConfig.tunnel.token);
+            if (tunnelResult.url) {
+                tunnelUrl = tunnelResult.url;
                 console.error(`🌐 Tunnel ready: ${tunnelUrl}`);
             }
             else {
-                console.error('⚠️  Tunnel startup failed, continuing without tunnel');
+                console.error(`⚠️  Tunnel startup failed: ${tunnelResult.error || 'Unknown error'}`);
+                console.error('   Continuing without tunnel');
             }
         }
         // Step 6: Display startup info
