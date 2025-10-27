@@ -212,8 +212,9 @@ class AgentRegistry {
      * Note: Collective AGENTS.md context is NOT prepended (available via CLAUDE.md instead)
      * This reduces payload size by ~60% (from 9.5MB to ~3MB)
      * @param forgeClient - Optional ForgeClient to fetch executors dynamically
+     * @param agents - Optional subset of agents to generate profiles for (used for batching)
      */
-    async generateForgeProfiles(forgeClient) {
+    async generateForgeProfiles(forgeClient, agents) {
         const executors = await AgentRegistry.getSupportedExecutors(forgeClient);
         const profiles = { executors: {} };
         // Get current profiles to extract DEFAULT variants (for inheriting required fields)
@@ -235,13 +236,15 @@ class AgentRegistry {
                 // If fetching fails, proceed without defaults
             }
         }
+        // Use provided agents subset or all agents
+        const agentsToSync = agents || Array.from(this.agents.values());
         // For each executor, create agent variants
         for (const executor of executors) {
             profiles.executors[executor] = profiles.executors[executor] || {};
             // Get base config from DEFAULT variant (inherits model, additional_params, etc.)
             const baseConfig = defaultVariants[executor] || {};
             // Add each agent as a variant
-            for (const agent of this.agents.values()) {
+            for (const agent of agentsToSync) {
                 if (!agent.fullContent)
                     continue;
                 // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)

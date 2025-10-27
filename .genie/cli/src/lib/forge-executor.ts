@@ -92,9 +92,6 @@ export class ForgeExecutor {
         return;
       }
 
-      // Generate profiles for all agents × all executors (fetch executors from Forge dynamically)
-      const agentProfiles = await registry.generateForgeProfiles(this.forge);
-
       // Get current Forge profiles to preserve DEFAULT variants
       const currentProfiles = await this.forge.getExecutorProfiles();
       let current: any = {};
@@ -116,33 +113,65 @@ export class ForgeExecutor {
         current = { executors: {} };
       }
 
-      // Build clean profiles (preserves DEFAULT, replaces all agent variants)
-      const merged = this.buildCleanProfiles(current, agentProfiles);
-
-      // Check payload size before sending
-      const payloadSize = JSON.stringify(merged).length;
-      const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
+      // Batched sync strategy: Split agents into chunks to avoid payload size limits
+      const allAgents = Array.from(registry.getAllAgents());
+      const BATCH_SIZE = 10; // 10 agents × 8 executors = ~80 variants per request
       const maxPayloadSize = 10 * 1024 * 1024; // 10MB
+      const totalBatches = Math.ceil(allAgents.length / BATCH_SIZE);
 
-      if (payloadSize > maxPayloadSize) {
-        console.warn(`⚠️  Agent profile payload too large (${payloadMB}MB), skipping sync`);
-        console.warn(`   Reduce agent count or increase Forge body limit`);
-        return;
+      let successfulBatches = 0;
+      let skippedBatches = 0;
+      let totalPayloadSize = 0;
+
+      for (let i = 0; i < allAgents.length; i += BATCH_SIZE) {
+        const batch = allAgents.slice(i, i + BATCH_SIZE);
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+
+        try {
+          // Generate profiles for this batch only
+          const batchProfiles = await registry.generateForgeProfiles(this.forge, batch);
+
+          // Build clean profiles (preserves DEFAULT, adds batch agent variants)
+          const merged = this.buildCleanProfiles(current, batchProfiles);
+
+          // Check payload size before sending
+          const payloadSize = JSON.stringify(merged).length;
+          const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
+
+          if (payloadSize > maxPayloadSize) {
+            console.warn(`⚠️  Batch ${batchNum}/${totalBatches} exceeds ${(maxPayloadSize/1024/1024).toFixed(0)}MB (${payloadMB}MB), skipping...`);
+            skippedBatches++;
+            continue;
+          }
+
+          // Update Forge with merged profiles (pass object, not string)
+          await this.forge.updateExecutorProfiles(merged);
+
+          // Update current profiles for next batch (accumulate changes)
+          current = merged;
+
+          totalPayloadSize += payloadSize;
+          successfulBatches++;
+          console.log(`✅ Batch ${batchNum}/${totalBatches}: ${batch.length} agents synced (${payloadMB}MB)`);
+        } catch (error: any) {
+          console.warn(`⚠️  Batch ${batchNum}/${totalBatches} failed: ${error.message}`);
+          skippedBatches++;
+        }
       }
 
-      // Update Forge with merged profiles (pass object, not string)
-      await this.forge.updateExecutorProfiles(merged);
-
-      // Save updated cache
-      cache.agentHashes = currentHashes;
-      cache.lastSync = new Date().toISOString();
-      cache.executors = Object.keys(merged.executors || {});
-      this.saveSyncCache(cacheFile, cache);
+      // Save updated cache only if at least one batch succeeded
+      if (successfulBatches > 0) {
+        cache.agentHashes = currentHashes;
+        cache.lastSync = new Date().toISOString();
+        cache.executors = Object.keys(current.executors || {});
+        this.saveSyncCache(cacheFile, cache);
+      }
 
       // Calculate statistics
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
       const agentsPerSec = (agentCount / parseFloat(elapsed)).toFixed(0);
       const executorCount = cache.executors.length;
+      const avgPayloadMB = (totalPayloadSize / successfulBatches / 1024 / 1024).toFixed(2);
 
       // Calculate change stats
       const added = Object.keys(currentHashes).filter(k => !cache.agentHashes[k]).length;
@@ -158,7 +187,8 @@ export class ForgeExecutor {
       if (removed > 0) changes.push(`${removed} deleted`);
       const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
 
-      console.log(`✅ Synced ${agentCount} agents${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s, ${payloadMB}MB]`);
+      const batchInfo = totalBatches > 1 ? ` [${successfulBatches}/${totalBatches} batches, ${avgPayloadMB}MB avg]` : ` [${avgPayloadMB}MB]`;
+      console.log(`✅ Synced ${agentCount} agents${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s${batchInfo}]`);
     } catch (error: any) {
       // Provide helpful error messages for common failures
       if (error.message?.includes('413') || error.message?.includes('Payload Too Large')) {
