@@ -123,52 +123,41 @@ export class ForgeExecutor {
         }
       }
 
-      // Batched sync strategy: Split CHANGED agents into chunks
-      const allAgents = Array.from(changedAgents);
-      const BATCH_SIZE = 3; // 3 agents × 8 executors = ~24 variants per request (reduced due to Forge HTTP body limit ~2MB)
-      const maxPayloadSize = 2 * 1024 * 1024; // 2MB (Forge's Axum server limit)
-      const totalBatches = Math.ceil(allAgents.length / BATCH_SIZE);
+      // Generate profiles for all changed agents
+      const changedProfiles = await registry.generateForgeProfiles(this.forge, changedAgents);
 
-      let successfulBatches = 0;
-      let skippedBatches = 0;
-      let totalPayloadSize = 0;
+      // Fetch current profiles to preserve built-in variants and unchanged agents
+      // Forge PUT /profiles does full replace, must send complete profile set
+      const currentProfiles = await this.forge.getExecutorProfiles();
+      const current = typeof currentProfiles.content === 'string'
+        ? JSON.parse(currentProfiles.content)
+        : currentProfiles;
 
-      for (let i = 0; i < allAgents.length; i += BATCH_SIZE) {
-        const batch = allAgents.slice(i, i + BATCH_SIZE);
-        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      // Merge: Keep all current variants (built-ins + unchanged agents), update changed agents
+      const payload = this.mergeProfiles(current, changedProfiles);
 
-        try {
-          // Generate profiles for this batch only
-          const batchProfiles = await registry.generateForgeProfiles(this.forge, batch);
+      // Check payload size
+      const payloadSize = JSON.stringify(payload).length;
+      const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
+      const maxPayloadSize = 10 * 1024 * 1024; // 10MB limit
 
-          // Send batch profiles directly - Forge merges on its end
-          // No need to fetch/merge current profiles (was causing 2MB payloads)
-          const payload = batchProfiles;
-
-          // Check payload size before sending
-          const payloadSize = JSON.stringify(payload).length;
-          const payloadMB = (payloadSize / 1024 / 1024).toFixed(2);
-
-          if (payloadSize > maxPayloadSize) {
-            console.warn(`⚠️  Batch ${batchNum}/${totalBatches} exceeds ${(maxPayloadSize/1024/1024).toFixed(0)}MB (${payloadMB}MB), skipping...`);
-            skippedBatches++;
-            continue;
-          }
-
-          // Update Forge with batch profiles (pass object, not string)
-          await this.forge.updateExecutorProfiles(payload);
-
-          // DO NOT accumulate batches - each batch adds to Forge independently
-          // Accumulation was causing 2MB+ payloads (3 agents became 30+ variants)
-
-          totalPayloadSize += payloadSize;
-          successfulBatches++;
-          console.log(`✅ Batch ${batchNum}/${totalBatches}: ${batch.length} agents synced (${payloadMB}MB)`);
-        } catch (error: any) {
-          console.warn(`⚠️  Batch ${batchNum}/${totalBatches} failed: ${error.message}`);
-          skippedBatches++;
-        }
+      if (payloadSize > maxPayloadSize) {
+        console.warn(`⚠️  Payload too large (${payloadMB}MB > 10MB), sync aborted`);
+        console.warn(`   Try syncing fewer agents or increase Forge body limit`);
+        return;
       }
+
+      // Single request with all changes
+      try {
+        await this.forge.updateExecutorProfiles(payload);
+        console.log(`✅ Synced ${changedAgents.length} agent(s) (${payloadMB}MB)`);
+      } catch (error: any) {
+        console.warn(`⚠️  Failed to sync: ${error.message}`);
+        return;
+      }
+
+      const successfulBatches = 1;
+      const totalPayloadSize = payloadSize;
 
       // Save updated cache only if at least one batch succeeded
       if (successfulBatches > 0) {
@@ -185,7 +174,6 @@ export class ForgeExecutor {
       const agentsPerSec = syncedCount > 0 ? (syncedCount / parseFloat(elapsed)).toFixed(0) : '0';
       const executors = await AgentRegistry.getSupportedExecutors(this.forge);
       const executorCount = executors.length;
-      const avgPayloadMB = successfulBatches > 0 ? (totalPayloadSize / successfulBatches / 1024 / 1024).toFixed(2) : '0.00';
 
       // Build change summary
       const changes = [];
@@ -194,8 +182,7 @@ export class ForgeExecutor {
       if (removed.length > 0) changes.push(`${removed.length} deleted`);
       const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
 
-      const batchInfo = totalBatches > 1 ? ` [${successfulBatches}/${totalBatches} batches, ${avgPayloadMB}MB avg]` : ` [${avgPayloadMB}MB]`;
-      console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s [${agentsPerSec} agents/s${batchInfo}]`);
+      console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${payloadMB}MB payload)`);
     } catch (error: any) {
       // Provide helpful error messages for common failures
       if (error.message?.includes('413') || error.message?.includes('Payload Too Large')) {
@@ -249,6 +236,34 @@ export class ForgeExecutor {
    */
   private hashContent(content: string): string {
     return createHash('sha256').update(content).digest('hex');
+  }
+
+  /**
+   * Merge batch profiles with current Forge profiles
+   * Preserves built-in variants (DEFAULT, APPROVALS, etc.), adds/updates agent variants
+   */
+  private mergeProfiles(current: any, batch: any): any {
+    const merged: any = { executors: {} };
+
+    // Get all executors from both current and batch
+    const allExecutors = new Set([
+      ...Object.keys(current.executors || {}),
+      ...Object.keys(batch.executors || {})
+    ]);
+
+    for (const executor of allExecutors) {
+      merged.executors[executor] = {};
+
+      // Copy all current variants (includes built-ins + existing agents)
+      const currentVariants = current.executors?.[executor] || {};
+      Object.assign(merged.executors[executor], currentVariants);
+
+      // Add/update agent variants from batch (overwrite if exists)
+      const batchVariants = batch.executors?.[executor] || {};
+      Object.assign(merged.executors[executor], batchVariants);
+    }
+
+    return merged;
   }
 
 
