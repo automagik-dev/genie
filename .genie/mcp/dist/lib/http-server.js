@@ -127,7 +127,7 @@ async function startHttpServer(options) {
     // Create MCP transport
     const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
         sessionIdGenerator: () => (0, crypto_1.randomUUID)(),
-        enableJsonResponse: false // Use SSE streams for real-time updates
+        enableJsonResponse: true // Required for initialize handshake (JSON-RPC)
     });
     // Connect MCP server to transport (McpServer wraps the underlying Server)
     await server.server.connect(transport);
