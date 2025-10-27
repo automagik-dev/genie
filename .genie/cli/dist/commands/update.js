@@ -19,6 +19,18 @@ const execAsync = (0, util_1.promisify)(child_process_1.exec);
 const successGradient = (0, gradient_string_1.default)(['#00ff88', '#00ccff', '#0099ff']);
 const performanceGradient = (0, gradient_string_1.default)(['#ffd700', '#ff8c00', '#ff6347']);
 /**
+ * Detect which npm channel the user is on (@next or @latest)
+ * Returns 'next' for RC versions, 'latest' for stable versions
+ */
+function detectChannel(version) {
+    // RC versions are on @next channel
+    if (version.includes('-rc.')) {
+        return 'next';
+    }
+    // Stable versions are on @latest channel
+    return 'latest';
+}
+/**
  * Update command - updates the global npm package
  *
  * NO workspace changes, NO backups - just updates the global package.
@@ -87,13 +99,15 @@ async function runUpdate(parsed, _config, _paths) {
             catch {
                 globalVersion = '';
             }
+            // Detect which channel user is on (next or latest)
+            const channel = detectChannel(globalVersion || currentVersion);
             // If global already matches latest npm version, nothing to do
             if (globalVersion === updateCheck.latestVersion) {
                 console.log(successGradient('━'.repeat(60)));
                 console.log(successGradient('   🧞 ✨ MASTER GENIE - ALREADY UP TO DATE ✨ 🧞   '));
                 console.log(successGradient('━'.repeat(60)));
                 console.log('');
-                console.log('Your global Genie matches npm latest: ' + successGradient(updateCheck.latestVersion));
+                console.log(`Your global Genie matches npm @${channel}: ` + successGradient(updateCheck.latestVersion));
                 console.log('');
                 console.log('✨ Nothing to update!');
                 console.log('');
@@ -105,21 +119,22 @@ async function runUpdate(parsed, _config, _paths) {
             console.log(successGradient('━'.repeat(60)));
             console.log('');
             console.log(`Updating global Genie: ${performanceGradient(globalVersion || '(not installed)')} → ${successGradient(updateCheck.latestVersion)}`);
+            console.log(`Channel: @${channel}`);
             console.log('');
             console.log(`Installing from npm (using ${packageManager})...`);
             console.log('');
             try {
-                await execAsync(`${packageManager} install -g automagik-genie@next`, { cwd: process.cwd() });
+                await execAsync(`${packageManager} install -g automagik-genie@${channel}`, { cwd: process.cwd() });
                 console.log('');
                 console.log(successGradient('✅ Successfully updated global Genie from npm!'));
                 console.log('');
-                console.log('Your global Genie is now: ' + successGradient(updateCheck.latestVersion));
+                console.log(`Your global Genie is now: ${successGradient(updateCheck.latestVersion)} (@${channel})`);
                 console.log('');
                 return;
             }
             catch (error) {
                 throw new Error(`Failed to install from npm: ${error.message}\n\n` +
-                    `Please try manually: ${packageManager} install -g automagik-genie@next`);
+                    `Please try manually: ${packageManager} install -g automagik-genie@${channel}`);
             }
         }
         // NOT master genie - proceed with npm update flow
@@ -170,9 +185,12 @@ async function runUpdate(parsed, _config, _paths) {
         catch {
             // pnpm not available, use npm
         }
-        // Update global package
-        const updateCommand = `${packageManager} install -g automagik-genie@latest`;
+        // Detect which channel user is on (next or latest)
+        const channel = detectChannel(currentVersion);
+        // Update global package using detected channel
+        const updateCommand = `${packageManager} install -g automagik-genie@${channel}`;
         console.log(`   Running: ${updateCommand}`);
+        console.log(`   Channel: @${channel}`);
         console.log('');
         try {
             const { stdout, stderr } = await execAsync(updateCommand);
