@@ -99,32 +99,6 @@
       margin-bottom: 24px;
     }
 
-    .form-group {
-      margin-bottom: 20px;
-    }
-
-    label {
-      display: block;
-      font-size: 14px;
-      font-weight: 600;
-      color: #2d3748;
-      margin-bottom: 8px;
-    }
-
-    input[type="password"] {
-      width: 100%;
-      padding: 12px 16px;
-      font-size: 16px;
-      border: 2px solid #e2e8f0;
-      border-radius: 6px;
-      transition: border-color 0.2s;
-    }
-
-    input[type="password"]:focus {
-      outline: none;
-      border-color: #667eea;
-    }
-
     .buttons {
       display: flex;
       gap: 12px;
@@ -223,19 +197,6 @@
     <form class="auth-form" id="authForm" method="POST" action="/oauth2/authorize/consent">
       <input type="hidden" name="request_id" id="requestId">
 
-      <div class="form-group">
-        <label for="pin">Enter your Genie PIN to authorize:</label>
-        <input
-          type="password"
-          id="pin"
-          name="pin"
-          placeholder="Enter PIN"
-          autocomplete="off"
-          autofocus
-          required
-        >
-      </div>
-
       <div class="buttons">
         <button type="button" class="btn-deny" onclick="denyAccess()">Deny</button>
         <button type="submit" class="btn-authorize" id="authorizeBtn">Authorize</button>
@@ -244,8 +205,7 @@
 
     <div class="security-note">
       <p>
-        🔒 Your PIN is encrypted and never stored.<br>
-        This connection uses OAuth 2.0 with PKCE for security.
+        🔒 This connection uses OAuth 2.0 with PKCE for security.
       </p>
     </div>
   </div>
@@ -289,7 +249,6 @@
     document.getElementById('authForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const pin = document.getElementById('pin').value;
       const requestId = document.getElementById('requestId').value;
       const authorizeBtn = document.getElementById('authorizeBtn');
       const errorEl = document.getElementById('errorMessage');
@@ -306,8 +265,7 @@
             'Content-Type': 'application/x-www-form-urlencoded',
           },
           body: new URLSearchParams({
-            request_id: requestId,
-            pin: pin
+            request_id: requestId
           })
         });
 
@@ -340,9 +298,6 @@
         }
       }
     }
-
-    // Auto-focus PIN input
-    document.getElementById('pin').focus();
   </script>
 </body>
 </html>
