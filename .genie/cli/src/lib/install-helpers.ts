@@ -196,7 +196,48 @@ export async function runExploreAgent(prompt: string): Promise<string> {
   console.log('');
   console.log(gradient.pastel('✅ Context gathered!\n'));
 
-  return lastOutput;
+  // Check if we got any output at all
+  if (!lastOutput || lastOutput.trim().length === 0) {
+    console.log(gradient.pastel('⚠️  No output captured from discovery agent'));
+    console.log(gradient.pastel('   Master Genie will interview user from scratch'));
+    return '';
+  }
+
+  // Extract JSON from output (discovery agent outputs structured JSON)
+  // The agent typically wraps JSON in markdown code blocks: ```json\n{...}\n```
+  let extractedContext = lastOutput;
+
+  // Strategy 1: Extract JSON from markdown code block
+  const jsonBlockMatch = lastOutput.match(/```json\s*\n([\s\S]*?)\n```/);
+  if (jsonBlockMatch) {
+    extractedContext = jsonBlockMatch[1].trim();
+    console.log(gradient.pastel('📊 Extracted context from JSON code block'));
+    return extractedContext;
+  }
+
+  // Strategy 2: Find raw JSON object with "project" key (discovery schema)
+  const objectMatch = lastOutput.match(/(\{[\s\S]*?"project"[\s\S]*?\})\s*$/);
+  if (objectMatch) {
+    extractedContext = objectMatch[1].trim();
+    console.log(gradient.pastel('📊 Extracted context from raw JSON'));
+    return extractedContext;
+  }
+
+  // Strategy 3: Try to parse the entire output as JSON (some agents output raw JSON)
+  try {
+    const parsed = JSON.parse(lastOutput.trim());
+    if (parsed.project) {
+      console.log(gradient.pastel('📊 Extracted context from raw output'));
+      return lastOutput.trim();
+    }
+  } catch {
+    // Not valid JSON, continue to fallback
+  }
+
+  // Fallback: Return whatever we got (Master Genie will work with it)
+  console.log(gradient.pastel('⚠️  Could not extract JSON, passing raw output'));
+  console.log(gradient.pastel('   (Master Genie will interview user with available context)'));
+  return extractedContext;
 }
 
 /**

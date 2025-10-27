@@ -224,7 +224,7 @@ const args = process.argv.slice(2);
 // Skip version check for these commands (they're safe to run with any version)
 const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback', 'mcp'];
 // Non-blocking version check for these commands (show warning but continue)
-const nonBlockingCommands = ['list', 'status', 'dashboard', 'view', 'helper'];
+const nonBlockingCommands = ['list', 'status', 'dashboard', 'view', 'helper', 'run', 'talk', 'resume', 'stop'];
 // Skip version check for specific agents/spells that need to run regardless of version
 // WHY: Learn spell loads for self-enhancement, install/update handle versions themselves
 const BYPASS_VERSION_CHECK_AGENTS = ['learn', 'install', 'update', 'upstream-update'];
@@ -278,29 +278,76 @@ if (shouldCheckVersion) {
             const localVersion = versionData.version;
             const runningVersion = packageJson.version;
             if (localVersion !== runningVersion) {
+                // Compare versions to determine which is newer
+                const compareVersions = (a, b) => {
+                    const aParts = a.replace(/^v/, '').split('-');
+                    const bParts = b.replace(/^v/, '').split('-');
+                    const aBase = aParts[0].split('.').map(Number);
+                    const bBase = bParts[0].split('.').map(Number);
+                    for (let i = 0; i < Math.max(aBase.length, bBase.length); i++) {
+                        const aNum = aBase[i] || 0;
+                        const bNum = bBase[i] || 0;
+                        if (aNum > bNum)
+                            return 1;
+                        if (aNum < bNum)
+                            return -1;
+                    }
+                    // If base versions equal, compare prerelease (rc.X)
+                    if (aParts[1] && bParts[1]) {
+                        const aRc = parseInt(aParts[1].replace('rc.', '')) || 0;
+                        const bRc = parseInt(bParts[1].replace('rc.', '')) || 0;
+                        return aRc - bRc;
+                    }
+                    return 0;
+                };
+                const localIsNewer = compareVersions(localVersion, runningVersion) > 0;
                 // Non-blocking commands: show warning but continue
                 if (isNonBlockingCommand) {
-                    console.log('');
-                    console.log(performanceGradient('⚠️  Update available: ') + `${performanceGradient(runningVersion)} → ${successGradient(localVersion)}`);
-                    console.log('   Run ' + performanceGradient('genie update') + ' to install your new build');
-                    console.log('');
+                    if (localIsNewer) {
+                        console.log('');
+                        console.log(performanceGradient('⚠️  Workspace ahead: ') + `${performanceGradient('global ' + runningVersion)} → ${successGradient('workspace ' + localVersion)}`);
+                        console.log('   Run ' + performanceGradient('genie update') + ' to install your new build globally');
+                        console.log('');
+                    }
+                    else {
+                        console.log('');
+                        console.log(performanceGradient('⚠️  Workspace behind: ') + `${performanceGradient('workspace ' + localVersion)} ← ${successGradient('global ' + runningVersion)}`);
+                        console.log('   Run ' + performanceGradient('genie') + ' to sync workspace');
+                        console.log('');
+                    }
                 }
                 else {
-                    // Blocking commands: require update before proceeding
-                    console.log('');
-                    console.log(successGradient('━'.repeat(60)));
-                    console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
-                    console.log(successGradient('━'.repeat(60)));
-                    console.log('');
-                    console.log(`You bumped to ${successGradient(localVersion)} but your global Genie is still ${performanceGradient(runningVersion)}`);
-                    console.log('');
-                    console.log('Install your new build globally:');
-                    console.log('  ' + performanceGradient('pnpm install -g .'));
-                    console.log('');
-                    console.log('Or use:');
-                    console.log('  ' + performanceGradient('genie update') + '  (detects master genie and installs local build)');
-                    console.log('');
-                    process.exit(0);
+                    // Blocking commands: require sync before proceeding
+                    if (localIsNewer) {
+                        console.log('');
+                        console.log(successGradient('━'.repeat(60)));
+                        console.log(successGradient('   🧞 ✨ NEW VERSION READY! ✨ 🧞   '));
+                        console.log(successGradient('━'.repeat(60)));
+                        console.log('');
+                        console.log(`Your workspace has ${successGradient(localVersion)} but global is ${performanceGradient(runningVersion)}`);
+                        console.log('');
+                        console.log('Install your new build globally:');
+                        console.log('  ' + performanceGradient('pnpm install -g .'));
+                        console.log('');
+                        console.log('Or use:');
+                        console.log('  ' + performanceGradient('genie update') + '  (detects master genie and installs local build)');
+                        console.log('');
+                        process.exit(0);
+                    }
+                    else {
+                        console.log('');
+                        console.log(performanceGradient('━'.repeat(60)));
+                        console.log(performanceGradient('   ⚠️  WORKSPACE OUTDATED'));
+                        console.log(performanceGradient('━'.repeat(60)));
+                        console.log('');
+                        console.log(`Workspace: ${performanceGradient(localVersion)} (old)`);
+                        console.log(`Global:    ${successGradient(runningVersion)} (current)`);
+                        console.log('');
+                        console.log('Sync your workspace with global:');
+                        console.log('  ' + successGradient('genie'));
+                        console.log('');
+                        process.exit(0);
+                    }
                 }
             }
         }
