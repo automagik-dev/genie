@@ -27,9 +27,44 @@ async function startHttpServer(options) {
     const app = (0, express_1.default)();
     // Use public URL if behind tunnel (e.g., ngrok), otherwise localhost
     const serverUrl = process.env.MCP_PUBLIC_URL || `http://localhost:${port}`;
+    // Debug mode (enabled via MCP_DEBUG=1 environment variable)
+    const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
     // Body parser middleware
     app.use(express_1.default.json());
     app.use(express_1.default.urlencoded({ extended: false }));
+    // Debug logging middleware (logs all incoming requests)
+    if (debugMode) {
+        app.use((req, res, next) => {
+            const timestamp = new Date().toISOString();
+            console.error(`\n${'='.repeat(80)}`);
+            console.error(`🔍 [${timestamp}] ${req.method} ${req.path}`);
+            console.error(`${'='.repeat(80)}`);
+            // Log query parameters
+            if (Object.keys(req.query).length > 0) {
+                console.error('📋 Query Parameters:');
+                Object.entries(req.query).forEach(([key, value]) => {
+                    console.error(`   ${key}: ${value}`);
+                });
+            }
+            // Log headers (filter sensitive ones)
+            console.error('📨 Headers:');
+            Object.entries(req.headers).forEach(([key, value]) => {
+                if (key.toLowerCase() === 'authorization') {
+                    console.error(`   ${key}: ${String(value).substring(0, 20)}...`);
+                }
+                else {
+                    console.error(`   ${key}: ${value}`);
+                }
+            });
+            // Log body (for POST/PUT requests)
+            if (req.body && Object.keys(req.body).length > 0) {
+                console.error('📦 Body:');
+                console.error(JSON.stringify(req.body, null, 2));
+            }
+            console.error(`${'='.repeat(80)}\n`);
+            next();
+        });
+    }
     // Create OAuth provider for token verification
     const oauthProvider = new oauth_provider_js_1.GenieOAuthProvider(oauth2Config, serverUrl);
     // ========================================
@@ -140,6 +175,10 @@ async function startHttpServer(options) {
             console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
             console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
             console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
+            if (debugMode) {
+                console.error(`\n🔍 DEBUG MODE ENABLED`);
+                console.error(`   All incoming requests will be logged`);
+            }
             if (onReady) {
                 onReady(serverUrl);
             }
