@@ -508,15 +508,18 @@ if (shouldCheckVersion) {
   }
 }
 
-// Parse arguments first to capture global options like --debug
-program.parse(process.argv);
+// Extract global options manually before routing
+const hasDebugFlag = args.includes('--debug');
 
 // If no command was provided, use smart router
-// program.args contains non-option arguments (commands and their args)
-if (program.args.length === 0) {
-  smartRouter();
+if (!args.length || (args.length === 1 && hasDebugFlag)) {
+  // No command (or only --debug flag) → call smartRouter()
+  // Pass debug flag explicitly since program.parse() hasn't been called yet
+  smartRouter(hasDebugFlag);
+} else {
+  // Command provided → parse with commander
+  program.parse(process.argv);
 }
-// Otherwise, the command has already been executed by program.parse()
 
 /**
  * Smart Router: Auto-detect scenario and route appropriately
@@ -531,8 +534,10 @@ if (program.args.length === 0) {
  * - version: Current Genie version installed
  * - installedAt: ISO timestamp of first install
  * - updatedAt: ISO timestamp of last update
+ *
+ * @param debug - Enable debug mode (MCP_DEBUG=1)
  */
-async function smartRouter(): Promise<void> {
+async function smartRouter(debug = false): Promise<void> {
   const genieDir = path.join(process.cwd(), '.genie');
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
@@ -738,7 +743,7 @@ async function smartRouter(): Promise<void> {
     console.log('');
 
     // Start Genie server (MCP + health monitoring)
-    await startGenieServer();
+    await startGenieServer(debug);
     return;
   }
 
@@ -784,7 +789,7 @@ async function smartRouter(): Promise<void> {
     await runInit(upgradeParsed, upgradeConfig, upgradePaths);
 
     // After upgrade, start server
-    await startGenieServer();
+    await startGenieServer(debug);
     return;
   }
 
@@ -826,7 +831,7 @@ async function smartRouter(): Promise<void> {
 
         console.log('');
         // Start server anyway - master genie can run with version mismatch
-        await startGenieServer();
+        await startGenieServer(debug);
         return;
       }
 
@@ -886,12 +891,12 @@ async function smartRouter(): Promise<void> {
       await runInit(updateParsed, updateConfig, updatePaths);
 
       // After update, start server
-      await startGenieServer();
+      await startGenieServer(debug);
       return;
     }
 
     // SCENARIO 4: UP TO DATE - Versions match → Start server
-    await startGenieServer();
+    await startGenieServer(debug);
   } catch (error) {
     // Corrupted version.json - treat as needing update
     console.log(cosmicGradient('━'.repeat(60)));
@@ -930,7 +935,7 @@ async function smartRouter(): Promise<void> {
     await runInit(repairParsed, repairConfig, repairPaths);
 
     // After repair, start server
-    await startGenieServer();
+    await startGenieServer(debug);
   }
 }
 
@@ -1038,8 +1043,9 @@ function getBrowserOpenCommand(): string {
 /**
  * Start Genie server (Forge + MCP with SSE transport on port 8885)
  * This is the main entry point for npx automagik-genie
+ * @param debug - Enable debug mode (MCP_DEBUG=1)
  */
-async function startGenieServer(): Promise<void> {
+async function startGenieServer(debug = false): Promise<void> {
   const startTime = Date.now();
   const timings: Record<string, number> = {};
 
@@ -1129,7 +1135,7 @@ async function startGenieServer(): Promise<void> {
     MCP_TRANSPORT: 'httpStream',
     MCP_PORT: mcpPort,
     // Enable debug mode if --debug flag was passed
-    ...(program.opts().debug ? { MCP_DEBUG: '1' } : {})
+    ...(debug ? { MCP_DEBUG: '1' } : {})
   };
 
   // Ask user if they want to integrate Genie into ChatGPT
