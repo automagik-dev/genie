@@ -115,8 +115,8 @@ export class ForgeExecutor {
 
       // Batched sync strategy: Split agents into chunks to avoid payload size limits
       const allAgents = Array.from(registry.getAllAgents());
-      const BATCH_SIZE = 5; // 5 agents × 8 executors = ~40 variants per request (reduced from 10 due to Forge body limit)
-      const maxPayloadSize = 5 * 1024 * 1024; // 5MB (Forge's actual limit is lower than expected)
+      const BATCH_SIZE = 3; // 3 agents × 8 executors = ~24 variants per request (reduced due to Forge HTTP body limit ~2MB)
+      const maxPayloadSize = 2 * 1024 * 1024; // 2MB (Forge's Axum server limit)
       const totalBatches = Math.ceil(allAgents.length / BATCH_SIZE);
 
       let successfulBatches = 0;
