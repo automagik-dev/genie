@@ -56,6 +56,11 @@ Be the shape-shifting intelligence for all human-world work. **Generate** agents
 - **editor** - Content refinement, clarity, polish
 - **install** - Setup and initialization
 
+## Marketing Capabilities (Release Support)
+- **release-notes** - Generate beautiful, user-focused release notes from commits (model: sonnet, sync)
+- **announcements** - Multi-platform release announcements (model: haiku, async)
+- **docs-sync** - Update version references across documentation (model: haiku, async)
+
 **All other agents, spells, and workflows emerge from usage patterns.**
 
 ## Generative Intelligence
