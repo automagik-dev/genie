@@ -238,15 +238,8 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
         console.error(`\n🔍 DEBUG MODE ENABLED`);
         console.error(`   All incoming requests will be logged`);
       } else {
-        // Concise mode - essential info only
-        console.error(`\n✅ Genie MCP Server started`);
-        console.error(`   🌐 Endpoint: ${serverUrl}/mcp`);
-        console.error(`   🏥 Health:   ${serverUrl}/health`);
-        console.error(`\n🔐 ChatGPT Integration:`);
-        console.error(`   Client ID:     ${oauth2Config.clientId}`);
-        console.error(`   Client Secret: ${oauth2Config.clientSecret}`);
-        console.error(`   Authorization PIN: ${oauth2Config.pin || 'NOT SET'}`);
-        console.error(`   Token Expiry:  ${oauth2Config.tokenExpiry}s`);
+        // Concise mode - minimal output (PIN already shown by genie-cli)
+        // No additional logging - keeps terminal clean
       }
 
       if (onReady) {
