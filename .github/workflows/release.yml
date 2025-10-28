@@ -123,6 +123,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Checkout main branch (PR merge leaves detached HEAD)
+          git checkout main
+          git pull origin main
+
           # Clean conflicting RC tags
           CURRENT=$(node -p "require('./package.json').version")
           if [[ $CURRENT =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
