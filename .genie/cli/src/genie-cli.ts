@@ -1618,7 +1618,9 @@ async function startGenieServer(debug = false): Promise<void> {
           console.log('');
           await createQuestion(genieGradient('Press Enter to open dashboard...'));
 
-          rl.close();
+          // Don't close readline - keep it open to prevent process exit
+          // The stdin being open keeps Node's event loop alive
+          // rl.close(); // REMOVED - was causing premature exit
 
           console.log('');
           console.log(genieGradient('📊 Launching dashboard...'));
@@ -1626,6 +1628,10 @@ async function startGenieServer(debug = false): Promise<void> {
 
           // Launch the engagement dashboard
           execGenie(['dashboard', '--live']);
+
+          // Keep stdin open so process stays alive until Ctrl+C or MCP exit
+          console.log('');
+          console.log('💡 Press ' + performanceGradient('Ctrl+C') + ' to stop Genie');
         })();
       }
     }, 1000);
