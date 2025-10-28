@@ -57,25 +57,20 @@ See `.genie/` directory for comprehensive documentation:
 
 ### Mandatory Skills (Auto-Loaded via MCP)
 
+**First message MUST load these spells using `mcp__genie__read_spell`:**
+
 **Identity:**
-
-/mcp__genie__read_spell know-yourself
-
-/mcp__genie__read_spell learn
+- know-yourself
+- learn
 
 **Decision Framework:**
-
-/mcp__genie__read_spell investigate-before-commit
-
-/mcp__genie__read_spell routing-decision-matrix
+- investigate-before-commit
+- routing-decision-matrix
 
 **Orchestration:**
-
-/mcp__genie__read_spell delegate-dont-do
-
-/mcp__genie__read_spell orchestrator-not-implementor
-
-/mcp__genie__read_spell orchestration-boundary-protocol
+- delegate-dont-do
+- orchestrator-not-implementor
+- orchestration-boundary-protocol
 
 ### Executable Skills (On-Demand)
 
@@ -692,28 +687,28 @@ Garbage collector automatically detects files over limits and creates issues wit
 - ✅ `mcp__genie__list_spells` to discover spells (not directory scanning)
 - ✅ MCP queries first, file reads only when MCP unavailable
 
-**Forced Execution Pattern:**
-Use `/mcp__<server>__<prompt> [arguments]` syntax (on clear line, no formatting) to **force** immediate execution where tool use is mandatory:
+**Tool Use Instructions:**
 
-/mcp__genie__list_agents
+For mandatory tool execution, use clear MUST language:
+- "MUST load using `mcp__genie__read_spell`"
+- "First message MUST call `mcp__genie__list_agents`"
+- "Before proceeding, use `mcp__genie__get_workspace_info`"
 
-/mcp__genie__read_spell know-yourself
-
-→ Bypasses decision-making, executes immediately
-
-**Syntax:** `/mcp__<server>__<prompt> [arg1] [arg2]`
-- Server: `genie`, `automagik_forge`, etc.
-- Prompt: Tool name (e.g., `list_agents`, `read_spell`)
-- Arguments: Space-separated values (no quotes, no JSON)
-
-**When to force execution:**
+**When to require tool use:**
 - Mandatory context (workspace info, spells)
 - Orchestration checks (agents, sessions)
 - Entry point auto-load (agent starts)
 - QA setup (pre-test context)
 
+**Tool syntax examples:**
+```
+mcp__genie__list_agents - No arguments
+mcp__genie__read_spell - Argument: spell_path="know-yourself"
+mcp__genie__run - Arguments: agent="code", prompt="Task description"
+```
+
 **First Insight:** 2025-10-26, CORE_AGENTS.md removed - MCP is source of truth for agent discovery
-**Second Insight:** 2025-10-26, Forced MCP execution pattern - enforce mandatory tool use
+**Second Insight:** 2025-10-28, Removed `/mcp__` forced syntax (unreliable) - use clear MUST language instead
 
 ## Development Workflow
 
@@ -790,16 +785,19 @@ Every QA run makes the system smarter: QA discovers pattern → learn agent invo
 
 ## Quick Reference
 
-**Forge Project ID:** `ee8f0a72-44da-411d-a23e-f2c6529b62ce`
-
-**Check current tasks:**
+**Check active sessions:**
 ```bash
-mcp__automagik_forge__list_tasks(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62ce")
+mcp__genie__list_sessions
 ```
 
-**Create new task:**
+**Start new agent session:**
 ```bash
-mcp__automagik_forge__create_task(project_id="ee8f0a72-44da-411d-a23e-f2c6529b62ce", title="Task description")
+mcp__genie__run(agent="code", prompt="Task description")
+```
+
+**Create wish with task:**
+```bash
+mcp__genie__create_wish(feature="Feature description", github_issue=123)
 ```
 
 **Load live session state:**

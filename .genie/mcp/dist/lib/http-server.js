@@ -1,9 +1,10 @@
 "use strict";
 /**
- * HTTP Server Setup for Genie MCP with OAuth2 Authentication
+ * HTTP Server Setup for Genie MCP with Multi-Authentication Support
  *
  * Uses official MCP SDK with Express for HTTP transport.
- * - OAuth2 Client Credentials flow for authentication
+ * - OAuth2 Client Credentials + Authorization Code flows for ChatGPT
+ * - Secret Token authentication for ElevenLabs and similar services
  * - Bearer token middleware from SDK
  * - Streamable HTTP transport from SDK
  */
@@ -18,6 +19,7 @@ const bearerAuth_js_1 = require("@modelcontextprotocol/sdk/server/auth/middlewar
 const oauth_provider_js_1 = require("./oauth-provider.js");
 const oauth2_endpoints_js_1 = require("./oauth2-endpoints.js");
 const oidc_endpoints_js_1 = require("./oidc-endpoints.js");
+const secret_token_auth_js_1 = require("./secret-token-auth.js");
 const crypto_1 = require("crypto");
 /**
  * Start HTTP server with OAuth2 authentication using official MCP SDK
@@ -27,6 +29,9 @@ async function startHttpServer(options) {
     const app = (0, express_1.default)();
     // Use public URL if behind tunnel (e.g., ngrok), otherwise localhost
     const serverUrl = process.env.MCP_PUBLIC_URL || `http://localhost:${port}`;
+    // Use OAuth client secret as the secret token (dual authentication)
+    // This allows services like ElevenLabs to authenticate with the same secret
+    const secretToken = oauth2Config.clientSecret;
     // Debug mode (enabled via MCP_DEBUG=1 environment variable)
     const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
     // ========================================
@@ -129,6 +134,15 @@ async function startHttpServer(options) {
     const oauthProvider = new oauth_provider_js_1.GenieOAuthProvider(oauth2Config, serverUrl);
     // Ensure default ChatGPT client is registered
     (0, oidc_endpoints_js_1.ensureDefaultChatGPTClient)(oauth2Config.clientId);
+    // Create dual authentication middleware (OAuth2 + Secret Token)
+    const oauthMiddleware = (0, bearerAuth_js_1.requireBearerAuth)({
+        verifier: oauthProvider,
+        requiredScopes: ['mcp:read', 'mcp:write'],
+        resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
+    });
+    const dualAuthMiddleware = (0, secret_token_auth_js_1.requireOAuth2OrSecretToken)(oauthMiddleware, {
+        secretToken: secretToken
+    });
     // ========================================
     // Public Endpoints (no authentication)
     // ========================================
@@ -172,14 +186,10 @@ async function startHttpServer(options) {
     // ========================================
     // Protected Endpoints (OAuth2 required)
     // ========================================
-    // MCP endpoint - protected by OAuth2 bearer token
+    // MCP endpoint - protected by dual authentication (OAuth2 or Secret Token)
     // IMPORTANT: Create a NEW transport for EACH request to prevent race conditions
     // (per MCP SDK docs - stateless mode prevents request ID collisions)
-    app.post('/mcp', (0, bearerAuth_js_1.requireBearerAuth)({
-        verifier: oauthProvider,
-        requiredScopes: ['mcp:read', 'mcp:write'],
-        resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
-    }), async (req, res) => {
+    app.post('/mcp', dualAuthMiddleware, async (req, res) => {
         try {
             // Create new transport for this request (stateless mode)
             const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
@@ -212,13 +222,9 @@ async function startHttpServer(options) {
             }
         }
     });
-    // SSE endpoint for streaming responses (also protected)
+    // SSE endpoint for streaming responses (also protected by dual authentication)
     // IMPORTANT: Create a NEW transport for EACH request to prevent race conditions
-    app.get('/mcp', (0, bearerAuth_js_1.requireBearerAuth)({
-        verifier: oauthProvider,
-        requiredScopes: ['mcp:read', 'mcp:write'],
-        resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
-    }), async (req, res) => {
+    app.get('/mcp', dualAuthMiddleware, async (req, res) => {
         try {
             // Create new transport for this request (stateless mode)
             const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
@@ -286,13 +292,15 @@ async function startHttpServer(options) {
                 console.error(`   ├─ Token Exchange:      ${serverUrl}/oauth/token`);
                 console.error(`   ├─ Client Registration: ${serverUrl}/oauth2/register`);
                 console.error(`   └─ Resource Metadata:   ${serverUrl}/.well-known/oauth-protected-resource`);
-                console.error(`\n🔑 Supported Flows:`);
-                console.error(`   ├─ Authorization Code + PKCE (for ChatGPT)`);
-                console.error(`   └─ Client Credentials (for machine-to-machine)`);
+                console.error(`\n🔑 Authentication Methods:`);
+                console.error(`   ├─ OAuth2: Authorization Code + PKCE (ChatGPT)`);
+                console.error(`   ├─ OAuth2: Client Credentials (machine-to-machine)`);
+                console.error(`   └─ Secret Token: Bearer/Header/Query (ElevenLabs, etc.)`);
                 console.error(`\n⚙️  OAuth Config:`);
                 console.error(`   ├─ Issuer:       ${oauth2Config.issuer}`);
                 console.error(`   ├─ Client ID:    ${oauth2Config.clientId}`);
                 console.error(`   ├─ Client Secret: ${oauth2Config.clientSecret}`);
+                console.error(`   │  └─ (Also used as secret token for services like ElevenLabs)`);
                 console.error(`   ├─ Authorization PIN: ${oauth2Config.pin || 'NOT SET'}`);
                 console.error(`   └─ Token Expiry: ${oauth2Config.tokenExpiry}s`);
                 console.error(`\n📡 Transport: Streamable HTTP (MCP SDK official)`);
