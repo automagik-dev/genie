@@ -5,10 +5,10 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 // @ts-ignore - compiled client shipped at project root
-const forge_js_1 = require("../../../forge.js");
+const forge_client_js_1 = require("../../../src/lib/forge-client.js");
 async function debug() {
     const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-    const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+    const client = new forge_client_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
     console.log('🔍 Debugging Forge Stats Collection');
     console.log('===================================\n');
     try {

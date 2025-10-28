@@ -51,7 +51,8 @@ export function createRunHandler(ctx: HandlerContext): Handler {
 
     const forgeExecutor = createForgeExecutor();
     try {
-      await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+      // Skip config.forge.executors - incompatible format, Forge loads from its own config
+      await forgeExecutor.syncProfiles();
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);

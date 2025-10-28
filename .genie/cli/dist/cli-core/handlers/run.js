@@ -46,7 +46,8 @@ function createRunHandler(ctx) {
         }
         const forgeExecutor = (0, forge_executor_1.createForgeExecutor)();
         try {
-            await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+            // Skip config.forge.executors - incompatible format, Forge loads from its own config
+            await forgeExecutor.syncProfiles();
         }
         catch (error) {
             const reason = (0, forge_helpers_1.describeForgeError)(error);

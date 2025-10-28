@@ -4,7 +4,7 @@
  */
 
 // @ts-ignore
-import { ForgeClient } from '../../../forge.js';
+import { ForgeClient } from '../../../src/lib/forge-client.js';
 
 async function checkStatuses() {
   const baseUrl = 'http://localhost:8887';

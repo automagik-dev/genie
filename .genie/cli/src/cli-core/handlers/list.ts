@@ -31,7 +31,8 @@ export function createListHandler(ctx: HandlerContext): Handler {
       const forgeExecutor = createForgeExecutor();
       let forgeAvailable = true;
       try {
-        await forgeExecutor.syncProfiles(ctx.config.forge?.executors);
+        // Skip config.forge.executors - incompatible format, Forge loads from its own config
+        await forgeExecutor.syncProfiles();
       } catch (error) {
         forgeAvailable = false;
         const reason = describeForgeError(error);

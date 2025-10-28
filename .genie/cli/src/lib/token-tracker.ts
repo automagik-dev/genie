@@ -6,7 +6,7 @@
  */
 
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../../forge.js';
+import { ForgeClient } from '../../../../src/lib/forge-client.js';
 import WebSocket from 'ws';
 
 export interface TokenMetrics {

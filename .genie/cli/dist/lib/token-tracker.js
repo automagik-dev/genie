@@ -13,7 +13,7 @@ exports.collectTokensForAttempt = collectTokensForAttempt;
 exports.collectAllTokenMetrics = collectAllTokenMetrics;
 exports.formatTokenMetrics = formatTokenMetrics;
 // @ts-ignore - compiled client shipped at project root
-const forge_js_1 = require("../../../../forge.js");
+const forge_client_js_1 = require("../../../../src/lib/forge-client.js");
 const ws_1 = __importDefault(require("ws"));
 /**
  * Parse token events from JSONL logs
@@ -224,7 +224,7 @@ async function collectAllTokenMetrics(baseUrl = 'http://localhost:8887') {
         processCount: 0
     };
     try {
-        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_client_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Get all task attempts
         const attempts = await client.listTaskAttempts();
         if (!attempts || attempts.length === 0) {
