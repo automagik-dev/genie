@@ -190,14 +190,27 @@ jobs:
 
       - name: 🔄 Sync dev branch
         run: |
-          # Fetch latest main
-          git fetch origin main
+          # Fetch all branches
+          git fetch origin dev main
 
-          # Reset dev to match main exactly (fast-forward, no merge commits)
-          git checkout -B dev origin/main
+          # Checkout dev
+          git checkout dev
 
-          # Force push to sync dev with main
-          git push --force origin dev
+          # Merge main into dev (fast-forward if possible)
+          # This preserves dev's commit history while bringing in any changes from main
+          if git merge-base --is-ancestor origin/main dev; then
+            echo "✅ Dev already contains all commits from main"
+            exit 0
+          else
+            git merge origin/main --no-edit || {
+              echo "❌ Merge conflict detected"
+              echo "This should not happen - main should always be mergeable into dev"
+              exit 1
+            }
+          fi
+
+          # Push synced dev
+          git push origin dev
 
       - name: ✅ Report Success
         if: success()
