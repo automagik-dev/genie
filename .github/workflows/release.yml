@@ -222,9 +222,7 @@ jobs:
           git checkout -B dev origin/dev 2>/dev/null || git checkout -b dev origin/main
 
           # Merge main into dev
-          git merge origin/main --no-edit -m "chore: sync dev with main after v${{ needs.release.outputs.version }} release
-
-Automated sync after CI/CD version bump and changelog update."
+          git merge origin/main --no-edit -m "chore: sync dev with main after v${{ needs.release.outputs.version }} release" -m "Automated sync after CI/CD version bump and changelog update."
 
           # Push to dev
           git push origin dev
