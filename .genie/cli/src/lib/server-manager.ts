@@ -200,11 +200,11 @@ export async function startGenieServer(debug = false): Promise<void> {
       env
     });
 
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       // After grace period, consider startup successful
       if (!monitoringStarted && mcpChild) {
         monitoringStarted = true;
-        showStartupSuccess(startTime, timings, baseUrl);
+        await showStartupSuccess(startTime, timings, baseUrl);
       }
     }, 1000);
 
@@ -747,11 +747,11 @@ function displayGoodbyeReport(
 /**
  * Show startup success message and launch dashboard
  */
-function showStartupSuccess(
+async function showStartupSuccess(
   startTime: number,
   timings: Record<string, number>,
   baseUrl: string
-): void {
+): Promise<void> {
   // Calculate total startup time
   const totalTime = Date.now() - startTime;
   timings.total = totalTime;
@@ -779,37 +779,43 @@ function showStartupSuccess(
   console.log('   • Use ' + performanceGradient('Ctrl+C') + ' here to shutdown Genie gracefully');
   console.log('');
 
-  // Dashboard prompt
-  (async () => {
-    const readline = require('readline');
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
+  // Dashboard prompt - MUST await to keep process alive
+  const readline = require('readline');
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  const createQuestion = (query: string): Promise<string> => {
+    return new Promise(resolve => {
+      rl.question(query, resolve);
     });
+  };
 
-    const createQuestion = (query: string): Promise<string> => {
-      return new Promise(resolve => {
-        rl.question(query, resolve);
-      });
-    };
+  console.log('');
+  await createQuestion(genieGradient('Press Enter to open dashboard...'));
 
-    console.log('');
-    await createQuestion(genieGradient('Press Enter to open dashboard...'));
+  console.log('');
+  console.log(genieGradient('📊 Launching dashboard...'));
+  console.log('');
 
-    console.log('');
-    console.log(genieGradient('📊 Launching dashboard...'));
-    console.log('');
+  // Launch the engagement dashboard in background
+  const dashboardScript = path.join(__dirname, '../genie.js');
+  const dashboardChild = spawn('node', [dashboardScript, 'dashboard', '--live'], {
+    stdio: 'inherit',
+    detached: false,
+    env: process.env
+  });
 
-    // Launch the engagement dashboard in background
-    const dashboardScript = path.join(__dirname, '../genie.js');
-    const dashboardChild = spawn('node', [dashboardScript, 'dashboard', '--live'], {
-      stdio: 'inherit',
-      detached: false,
-      env: process.env
+  // Wait for dashboard to exit (keeps process alive)
+  await new Promise<void>((resolve) => {
+    dashboardChild.on('exit', () => {
+      console.log('');
+      console.log('📊 Dashboard closed');
+      resolve();
     });
+  });
 
-    // Keep stdin open so process stays alive until Ctrl+C or MCP exit
-    console.log('');
-    console.log('💡 Press ' + performanceGradient('Ctrl+C') + ' to stop Genie');
-  })();
+  console.log('');
+  console.log('💡 Press ' + performanceGradient('Ctrl+C') + ' to stop Genie');
 }
