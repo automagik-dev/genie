@@ -43,6 +43,50 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
   // Debug mode (enabled via MCP_DEBUG=1 environment variable)
   const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
 
+  // ========================================
+  // RAW REQUEST/RESPONSE LOGGER (FIRST - catches everything)
+  // ========================================
+  if (debugMode) {
+    app.use((req: Request, res: Response, next: any) => {
+      const timestamp = new Date().toISOString();
+      const requestId = randomUUID().slice(0, 8);
+
+      console.error(`\n${'='.repeat(80)}`);
+      console.error(`🔍 [${timestamp}] [${requestId}] ${req.method} ${req.path}`);
+      console.error(`${'='.repeat(80)}`);
+
+      // Capture response status
+      const originalSend = res.send;
+      const originalJson = res.json;
+      const originalStatus = res.status;
+
+      let statusCode = 200;
+
+      res.status = function(code: number) {
+        statusCode = code;
+        return originalStatus.call(this, code);
+      };
+
+      res.send = function(body: any) {
+        console.error(`📤 [${requestId}] Response: ${statusCode} ${req.method} ${req.path}`);
+        if (statusCode >= 400) {
+          console.error(`   ⚠️  Error response body:`, typeof body === 'string' ? body : JSON.stringify(body));
+        }
+        return originalSend.call(this, body);
+      };
+
+      res.json = function(body: any) {
+        console.error(`📤 [${requestId}] Response: ${statusCode || res.statusCode} ${req.method} ${req.path}`);
+        if ((statusCode || res.statusCode) >= 400) {
+          console.error(`   ⚠️  Error response body:`, JSON.stringify(body));
+        }
+        return originalJson.call(this, body);
+      };
+
+      next();
+    });
+  }
+
   // CORS middleware (allow ChatGPT to access OAuth endpoints)
   app.use((req: Request, res: Response, next: any) => {
     res.header('Access-Control-Allow-Origin', '*');
