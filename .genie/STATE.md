@@ -2,7 +2,7 @@
 Triad Validation Metadata
 last_updated: !`date -u +"%Y-%m-%dT%H:%M:%SZ"`
 last_commit: !`git log -1 --format=%h`
-last_version: 2.4.0-rc.33
+last_version: 2.5.5-rc.76
 validation_commands:
   version_exists: test -f package.json && jq -e .version package.json >/dev/null
   state_updated_recently: test $(git log --oneline .genie/STATE.md..HEAD 2>/dev/null | wc -l) -lt 5
@@ -16,105 +16,87 @@ validation_commands:
 
 ## 📊 Current Session
 
-**Date:** 2025-10-23
-**Focus:** Hardcoded values cleanup + Learning session
-**Branch:** !`git branch --show-current`
+**Date:** 2025-10-28
+**Focus:** Genie CLI stability fixes + Auto-sync automation
+**Branch:** dev
 
-**Active Work:**
-- ✅ Fixed hardcoded tool count in MCP server (dynamic calculation)
-- ✅ Rebuilt MCP server (TypeScript → JavaScript)
-- 📋 Created issue #227 (hardcoded values investigation)
-- 🧠 Learning session: State file architecture and native context awareness
+**Active Work (Today):**
+- ✅ Fixed genie auto-exit bug (4 PRs: #344, #346, #348, #349)
+  - PR #344: Removed rl.close() to keep stdin open
+  - PR #346: Fixed dashboard exit handler killing parent
+  - PR #348: Added MCP port conflict detection
+  - PR #349: Added takeover prompt for port conflicts
+- ✅ Published RC70-RC76 (6 versions in one session!)
+- ✅ Added auto-sync workflow (dev syncs with main after releases)
+- ✅ Context unification (Amendment #12 + CLAUDE.md optimization)
+  - Created Amendment #12: Context File Maintenance protocol
+  - Reduced CLAUDE.md from 2,029 tokens → 5 tokens (99.75% reduction)
+  - Clarified STATE.md/USERCONTEXT.md/TODO.md maintenance rules
+  - Token savings: 2,024 tokens saved per session startup
+- 📦 RC76 stable and ready for testing
 
-**Completed Work (Phases 1-3):**
-- ✅ RC21 published (v2.4.0-rc.21) - Session lifecycle + background polling fixes
-- ✅ Agents-optimization complete (AGENTS.md 2272→627 lines, 72% reduction)
-- ✅ Ecosystem Groups D-E-K complete (agent registry, headers, dependency graph)
-- ✅ Ecosystem Group C complete (token gate with tiktoken - 37,822 tokens baseline)
-- ✅ 3 wishes archived (triad-redesign, provider-runtime-override, mcp-permission-regression)
+**Recent Completed Work (Oct 26-27):**
+- ✅ MCP bug fixes (transport issues, error handling, voice mode consolidation)
+- ✅ Genie routing optimization analysis (GitHub #260)
+- ✅ Version tracking unification (single version.json)
+- ✅ Backup system consolidation (unified backupGenieDirectory)
 
 ---
 
 ## 📦 Production Status
 
-**Version:** !`node -p "require('./package.json').version"`
-**Published:** v2.4.0-rc.21 on npm@latest (2025-10-18)
-**Status:** 🎉 RC21 released – publish complete
+**Version:** 2.5.5-rc.76
+**Published:** v2.5.5-rc.76 on npm@next (2025-10-28)
+**Status:** 🎉 RC76 released – genie CLI stability fixes complete
 
-**Latest Commit:** !`git log --oneline -1`
+**RC76 Status:**
+- ✅ Four critical CLI bugs fixed (#344)
+- ✅ Takeover prompt implemented (matches Forge UX)
+- ✅ Auto-sync workflow active (dev ← main after releases)
+- ✅ All tests passing (19/19 session service, CLI tests)
+- 📦 Ready for user testing: \`npm install -g automagik-genie@next\`
 
-**RC20/RC21 Status:**
-- ✅ Bug #4 fix implemented (UUID keys + name field)
-- ❌ RC20 regression: Duplicate sessions + background polling timeout
-- 🔎 Root cause: background-launcher.ts V1/V2 mismatch (agents vs sessions)
-- 🔧 Fixes applied for RC21:
-  - background-launcher.ts: poll sessions[entry.sessionId]
-  - background-manager.ts: add INTERNAL_SESSION_ID_ENV
-  - commands/run.ts + cli-core/handlers/run.ts: reuse propagated sessionId (no duplicates)
-  - background-launcher.ts: CLI hints use `npx automagik-genie` (no ./genie)
-- 🧪 Local + MCP validation: 1 session per run, fast session ID discovery (~0.5s), no timeout
-  - Evidence: `.genie/wishes/rc21-session-lifecycle-fix/qa/group-b/`
-  - Report: `.genie/wishes/rc21-session-lifecycle-fix/reports/done-group-b-20251018.md`
-  - Tag: v2.4.0-rc.21 (pushed)
-- 📊 Report: .genie/reports/rc20-qa-failure-20251018.md
-
-**Previous RC Fixes:**
-- RC19: Post-merge STATE.md auto-update hook
-- RC16-18: Session collision + fragmentation fixes
-- RC15: 305 broken @ references fixed
-- RC9-13: MCP bugs + full transcript fix
-
----
-
-## 🔧 Working Tree
-
-**Status:**
-!`git status --short | head -10`
-
-**Recent Commits:**
-!`git log --oneline -5`
+**Recent RC History:**
+- RC70-73: MCP bug fixes + version unification
+- RC74-75: Port conflict detection + workflow fixes
+- RC76: Takeover prompt + auto-sync automation
 
 ---
 
 ## 📊 Repository Health
 
-**Issues:** !`gh issue list --state open | wc -l` open
-**Wishes:** 5 active + 2 archived
-**Technical Debt:** Medium (systematic fixes queued)
+**Branch Strategy:** dev → main (auto-synced after releases)
 
-**Archived Wishes (2025-10):**
-- token-efficient-output (100/100)
-- natural-routing-spells (100/100)
-- core-template-separation (100/100)
-- triad-redesign (100/100)
-- provider-runtime-override (100/100)
-- mcp-permission-regression (100/100)
+**Active Issues:**
+- #344: Genie auto-exit bug (RESOLVED via PRs #344-349)
+- #260: Routing optimization (analysis complete)
 
-**Active Wishes:**
-1. rc21-session-lifecycle-fix (100/100) - complete, pending archive
-2. multi-template-architecture (#37) - 50% complete
-3. backup-update-system (#38) - 0% (DEFERRED)
+**CI/CD Status:**
+- ✅ Unified Release workflow active
+- ✅ Auto-sync workflow active (new!)
+- ✅ Validate Package workflow active
+- ✅ Pre-commit hooks (secrets, worktree, user files, cross-refs, tokens)
+- ✅ Pre-push hooks (tests, commit advisory)
 
 ---
 
 ## 📁 Key File Locations
 
 **Configuration:**
-- `.genie/cli/config.yaml` - Framework config
-- `.genie/state/provider.json` - Runtime provider selection
-- `.genie/state/version.json` - Framework version
-- `package.json` - npm package metadata
+- .genie/cli/config.yaml - Framework config
+- .genie/state/provider.json - Runtime provider selection
+- .genie/state/version.json - Framework version (unified)
+- package.json - npm package metadata
 
-**Evidence:**
-- `.genie/qa/evidence/` - Knowledge graph audit data
-- `.genie/state/` - Analysis reports, audit findings
-- `.genie/wishes/*/qa/` - Per-wish validation data
-- `.genie/wishes/*/reports/` - Per-wish done reports
+**Context Files:**
+- .genie/STATE.md - This file (system state snapshot)
+- .genie/USERCONTEXT.md - User preferences and patterns
+- .genie/.session - Live Forge state (gitignored, auto-generated)
 
-**Active Work:**
-- `.genie/TODO.md` - Prioritized work queue (drives development)
-- `.genie/STATE.md` - This file (current session snapshot)
-- `.genie/USERCONTEXT.md` - User-specific preferences
+**Workflows:**
+- .github/workflows/release.yml - Unified Release (RC bumps)
+- .github/workflows/sync-dev-after-release.yml - Auto-sync dev ← main
+- .github/workflows/validate.yml - Package validation
 
 ---
 
@@ -122,26 +104,38 @@ validation_commands:
 
 **MCP Integration:**
 - ✅ mcp__genie__run - Launch agent sessions
-- ✅ mcp__genie__resume - Continue sessions
-- ✅ mcp__genie__view - Inspect output
 - ✅ mcp__genie__list_sessions - Discover sessions
+- ✅ mcp__genie__view - Inspect output
+- ✅ mcp__genie__list_agents - Discover agents (43+)
+- ✅ mcp__genie__read_spell - Load spells dynamically
+- ✅ mcp__genie__get_workspace_info - Load product docs
 
 **CLI Commands:**
-- ✅ `npx automagik-genie init [template]` - Initialize workspace
-- ✅ `npx automagik-genie update` - Framework upgrade
-- ✅ `npx automagik-genie rollback` - Restore backup
-- ✅ `npx automagik-genie model` - Executor configuration
+- ✅ genie - Start Genie (Forge + MCP)
+- ✅ genie init - Initialize workspace
+- ✅ genie update - Framework upgrade
+- ✅ genie rollback - Restore backup
+- ✅ genie talk <agent> - Interactive browser session
+- ✅ genie run <agent> <prompt> - Headless JSON execution
+- ✅ genie dashboard --live - Engagement dashboard
+- ✅ genie mcp-cleanup - Cleanup stale MCP processes
 
 ---
 
-## 📖 Documentation
+## 🔄 Dev Sync Status
 
-**Core Docs:**
-- `AGENTS.md` - Agent documentation (23KB)
-- `CLAUDE.md` - Claude Code patterns (4KB)
-- `` - Routing & architecture
-- `.genie/agents/README.md` - Agent structure
+**Auto-Sync:** ✅ Active (workflow deployed)
+**Last Manual Sync:** 2025-10-28 13:52 UTC
+**Next Sync:** Automatic after RC77 release
+
+**How It Works:**
+1. Release workflow publishes RC to npm
+2. Version bump committed to main
+3. Auto-sync workflow triggers
+4. Dev branch merges from main
+5. All version files synchronized
 
 ---
 
-**Note:** This file is READ-ONLY reference. Active work tracked in TODO.md
+**Note:** This file is READ-ONLY reference. Updated manually after significant changes.
+**Last Updated:** 2025-10-28 (RC76 release + auto-sync deployment)
