@@ -29,6 +29,42 @@ async function startHttpServer(options) {
     const serverUrl = process.env.MCP_PUBLIC_URL || `http://localhost:${port}`;
     // Debug mode (enabled via MCP_DEBUG=1 environment variable)
     const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
+    // ========================================
+    // RAW REQUEST/RESPONSE LOGGER (FIRST - catches everything)
+    // ========================================
+    if (debugMode) {
+        app.use((req, res, next) => {
+            const timestamp = new Date().toISOString();
+            const requestId = (0, crypto_1.randomUUID)().slice(0, 8);
+            console.error(`\n${'='.repeat(80)}`);
+            console.error(`🔍 [${timestamp}] [${requestId}] ${req.method} ${req.path}`);
+            console.error(`${'='.repeat(80)}`);
+            // Capture response status
+            const originalSend = res.send;
+            const originalJson = res.json;
+            const originalStatus = res.status;
+            let statusCode = 200;
+            res.status = function (code) {
+                statusCode = code;
+                return originalStatus.call(this, code);
+            };
+            res.send = function (body) {
+                console.error(`📤 [${requestId}] Response: ${statusCode} ${req.method} ${req.path}`);
+                if (statusCode >= 400) {
+                    console.error(`   ⚠️  Error response body:`, typeof body === 'string' ? body : JSON.stringify(body));
+                }
+                return originalSend.call(this, body);
+            };
+            res.json = function (body) {
+                console.error(`📤 [${requestId}] Response: ${statusCode || res.statusCode} ${req.method} ${req.path}`);
+                if ((statusCode || res.statusCode) >= 400) {
+                    console.error(`   ⚠️  Error response body:`, JSON.stringify(body));
+                }
+                return originalJson.call(this, body);
+            };
+            next();
+        });
+    }
     // CORS middleware (allow ChatGPT to access OAuth endpoints)
     app.use((req, res, next) => {
         res.header('Access-Control-Allow-Origin', '*');
