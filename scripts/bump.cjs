@@ -219,7 +219,15 @@ function main() {
   // Push to trigger CI (unless --no-push flag is set)
   if (!NO_PUSH) {
     log('blue', '📤', 'Pushing to remote...');
-    exec('git push --no-verify');
+
+    // Pull first to handle any remote changes (e.g., auto-sync workflow)
+    try {
+      exec('git pull --rebase --no-verify origin main', true);
+    } catch (e) {
+      log('yellow', '⚠️', 'Pull failed, attempting force push with lease...');
+    }
+
+    exec('git push --no-verify --force-with-lease');
     exec('git push --no-verify --tags');
 
     log('green', '🎉', 'Release candidate created!');

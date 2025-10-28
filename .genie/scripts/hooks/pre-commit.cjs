@@ -102,6 +102,7 @@ function main() {
     'validate-user-files-not-committed.cjs',
     'validate-cross-references.cjs',
     'forge-task-link.cjs',  // Auto-link Forge tasks to wishes on first commit
+    'validate-mcp-build.cjs',  // Ensure MCP dist files are in sync with source
   ];
 
   // Security validation (blocking)
