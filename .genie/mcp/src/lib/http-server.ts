@@ -215,24 +215,32 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
   // Protected Endpoints (OAuth2 required)
   // ========================================
 
-  // Create MCP transport
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-    enableJsonResponse: true // Required for initialize handshake (JSON-RPC)
-  });
-
-  // Connect MCP server to transport (McpServer wraps the underlying Server)
-  await server.server.connect(transport);
-
   // MCP endpoint - protected by OAuth2 bearer token
+  // IMPORTANT: Create a NEW transport for EACH request to prevent race conditions
+  // (per MCP SDK docs - stateless mode prevents request ID collisions)
   app.post('/mcp', requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: ['mcp:read', 'mcp:write'],
     resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
   }), async (req: Request, res: Response) => {
     try {
-      // SDK's middleware adds auth info to req.auth
-      await transport.handleRequest(req, res);
+      // Create new transport for this request (stateless mode)
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // Stateless - no session management
+        enableJsonResponse: true // Required for initialize handshake
+      });
+
+      // Close transport when response completes
+      res.on('close', () => {
+        transport.close();
+      });
+
+      // Connect server to this transport
+      await server.server.connect(transport);
+
+      // Handle the request
+      await transport.handleRequest(req, res, req.body);
+
       if (debugMode) {
         console.error('✅ POST /mcp handled successfully');
       }
@@ -240,21 +248,42 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
       console.error('❌ Error handling POST /mcp:', error);
       if (!res.headersSent) {
         res.status(500).json({
-          error: 'Internal Server Error',
-          message: error.message
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error'
+          },
+          id: null
         });
       }
     }
   });
 
   // SSE endpoint for streaming responses (also protected)
+  // IMPORTANT: Create a NEW transport for EACH request to prevent race conditions
   app.get('/mcp', requireBearerAuth({
     verifier: oauthProvider,
     requiredScopes: ['mcp:read', 'mcp:write'],
     resourceMetadataUrl: `${serverUrl}/.well-known/oauth-protected-resource`
   }), async (req: Request, res: Response) => {
     try {
+      // Create new transport for this request (stateless mode)
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // Stateless - no session management
+        enableJsonResponse: true
+      });
+
+      // Close transport when response completes
+      res.on('close', () => {
+        transport.close();
+      });
+
+      // Connect server to this transport
+      await server.server.connect(transport);
+
+      // Handle the request
       await transport.handleRequest(req, res);
+
       if (debugMode) {
         console.error('✅ GET /mcp (SSE) connection established');
       }
@@ -262,8 +291,12 @@ export async function startHttpServer(options: HttpServerOptions): Promise<void>
       console.error('❌ Error handling GET /mcp:', error);
       if (!res.headersSent) {
         res.status(500).json({
-          error: 'Internal Server Error',
-          message: error.message
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal server error'
+          },
+          id: null
         });
       }
     }
