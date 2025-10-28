@@ -123,13 +123,18 @@ Every wish document MUST include issue reference:
 
 ### Step 4: Forge Task Linkage
 
-When creating Forge task from wish:
+When creating wish with task:
 
 ```typescript
-await mcp__automagik_forge__create_task({
-  project_id: "ee8f0a72-44da-411d-a23e-f2c6529b62ce",
-  title: `Wish: MCP Server Authentication (#152)`,  // Issue # in title!
-  description: `
+await mcp__genie__create_wish({
+  feature: "MCP Server Authentication",
+  github_issue: 152  // Issue number required!
+});
+
+// Or run forge task directly:
+await mcp__genie__run_forge({
+  agent: "implementor",
+  prompt: `
     **GitHub Issue:** #152
     **Wish Document:** @.genie/wishes/mcp-auth/mcp-auth-wish.md
 

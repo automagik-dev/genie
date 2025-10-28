@@ -66,17 +66,17 @@ Check results when complete
 
 ### When `genie view` Shows Errors
 
-**1. Check Forge MCP connectivity:**
+**1. Check Genie MCP connectivity:**
 ```
-mcp__automagik_forge__list_tasks(project_id="...")
+mcp__genie__list_sessions
 ```
-If this works, Forge is fine (ignore "unreachable" message from genie view)
+If this works, backend is fine (ignore "unreachable" message from genie view)
 
-**2. Check task status:**
+**2. Check session status:**
 ```
-mcp__automagik_forge__list_tasks(project_id="...", limit=5)
+mcp__genie__list_sessions
 ```
-Look for your task in "in-progress" state
+Look for your session in "running" or "completed" state
 
 **3. Check process list:**
 ```bash
@@ -98,12 +98,11 @@ sleep 30  # Don't poll every second - be patient
 # Then check status again
 ```
 
-**6. When advanced tools available:**
+**6. View session details:**
 ```
-mcp__automagik_forge__adv_get_task_attempt(attempt_id="...")
-mcp__automagik_forge__adv_get_process(process_id="...")
+mcp__genie__view(sessionId="...", full=true)
 ```
-(Note: Requires --advanced flag, may not be enabled)
+(Get full transcript and status details)
 
 ---
 
@@ -112,26 +111,26 @@ mcp__automagik_forge__adv_get_process(process_id="...")
 ```
 Error message appears
     ↓
-Check Forge MCP (list_tasks)
+Check Genie MCP (list_sessions)
     ↓
-├─ Works → Forge is fine, trust delegation
+├─ Works → Backend is fine, trust delegation
 │   ↓
-│   Check task status
+│   Check session status
 │   ↓
-│   ├─ in-progress → Wait patiently with sleep intervals
-│   ├─ in-review → Work complete, check results
-│   ├─ completed → Success, verify output
+│   ├─ running → Wait patiently with sleep intervals
+│   ├─ completed → Work complete, check results
+│   ├─ success → Success, verify output
 │   └─ failed → Investigate failure (read logs, check diffs)
 │
-└─ Fails → Forge is actually broken
+└─ Fails → Backend is actually broken
     ↓
-    Check Forge process
+    Check backend process
     ↓
-    ├─ Running → Port/config issue, check netstat
+    ├─ Running → WebSocket/config issue
     │   ↓
-    │   Check correct port (8887 vs 8888 confusion)
+    │   Check MCP server health
     │
-    └─ Not running → Report blocker, restart Forge
+    └─ Not running → Report blocker, restart Genie MCP
 ```
 
 ---
@@ -140,14 +139,14 @@ Check Forge MCP (list_tasks)
 
 ### Trust
 - Agent sessions continue running even when view is broken
-- Forge executes tasks even when CLI shows errors
+- Genie backend executes tasks even when CLI shows errors
 - Executors (OpenCode/Claude/etc.) complete work autonomously
 - System is more robust than display suggests
 
 ### Verify
 - Use monitoring tools to check actual state
 - Check process list to confirm execution
-- Use Forge MCP to get real task status
+- Use Genie MCP to get real session status
 - Wait for completion before assuming failure
 
 ### Never
@@ -163,16 +162,16 @@ Check Forge MCP (list_tasks)
 ### Display Bug: "Forge backend unreachable"
 
 **Symptoms:**
-- `genie view` shows "Forge backend unreachable"
-- But `mcp__automagik_forge__list_tasks` WORKS
-- Process list shows Forge running
-- Task status shows "in-progress"
+- `genie view` shows "backend unreachable"
+- But `mcp__genie__list_sessions` WORKS
+- Process list shows executors running
+- Session status shows "running"
 
 **Diagnosis:** Genie CLI display bug, not real failure
 
 **Action:** Ignore "unreachable" message, trust delegation
 
-**Root cause:** Port confusion (8888 vs 8887) or HTTP health check instead of MCP connectivity check
+**Root cause:** WebSocket connection issue or HTTP health check instead of MCP connectivity check
 
 ### Display Bug: "No logs available"
 
@@ -257,12 +256,12 @@ Ongoing: 60-120 second intervals
 
 **Investigation:**
 ```bash
-# Checked Forge MCP connectivity
-mcp__automagik_forge__list_tasks(project_id="...")
-# Result: SUCCESS - full task list returned
+# Checked Genie MCP connectivity
+mcp__genie__list_sessions
+# Result: SUCCESS - full session list returned
 
-# Checked task status
-Task 1d824e13-936b-4182-a49f-9198eb2fd087: "in-progress"
+# Checked session status
+Session 1d824e13-936b-4182-a49f-9198eb2fd087: "running"
 
 # Checked processes
 ps aux | grep opencode
@@ -312,16 +311,16 @@ netstat -tlnp | grep 8887
 ## Validation
 
 **Before panicking about errors, validate:**
-- [ ] Checked Forge MCP connectivity (list_tasks)
-- [ ] Checked task status (in-progress vs failed)
+- [ ] Checked Genie MCP connectivity (list_sessions)
+- [ ] Checked session status (running vs failed)
 - [ ] Checked process existence (ps aux)
 - [ ] Waited appropriate interval (30-60 seconds)
 - [ ] Verified this is NOT just a display bug
 
 **Only bypass delegation if:**
-- [ ] Forge MCP actually fails (not display bug)
+- [ ] Genie MCP actually fails (not display bug)
 - [ ] Process confirmed not running
-- [ ] Task status confirmed failed
+- [ ] Session status confirmed failed
 - [ ] Blocker documented and reported
 
 ---

@@ -40,10 +40,10 @@
 
 Before editing ANY implementation file, Base Genie must check:
 
-1. **Is there an active Forge task attempt for this work?**
+1. **Is there an active task attempt for this work?**
    - Check SESSION-STATE.md
-   - Check `mcp__automagik_forge__list_task_attempts`
-   - If YES → STOP, let Forge handle it
+   - Check `mcp__genie__list_sessions`
+   - If YES → STOP, let executor handle it
 
 2. **Have I checked the agent's worktree for commits?**
    - List worktrees: `ls /var/tmp/automagik-forge/worktrees/`
