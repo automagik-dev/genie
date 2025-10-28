@@ -6,10 +6,6 @@ on:
       - main
     tags:
       - 'v*'
-  pull_request:
-    types: [closed]
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       action:
@@ -34,8 +30,8 @@ jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.release.outputs.version }}
-      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.bump_rc.outputs.version || steps.tag_push.outputs.version || steps.manual.outputs.version }}
+      released: ${{ steps.bump_rc.outputs.released || steps.tag_push.outputs.released || steps.manual.outputs.released }}
 
     steps:
       - name: 📥 Checkout
@@ -55,89 +51,61 @@ jobs:
 
           # Determine action based on trigger
           if [ "$EVENT" = "workflow_dispatch" ]; then
+            # Manual dispatch: use input action
             ACTION="${{ github.event.inputs.action }}"
-          elif [ "$EVENT" = "push" ] && [[ "$REF" == refs/tags/* ]]; then
+          elif [[ "$REF" == refs/tags/* ]]; then
+            # Tag push: re-publish existing tag
             ACTION="tag-push"
-          elif [ "$EVENT" = "push" ] && [ "$REF" = "refs/heads/main" ]; then
-            # Check if commit contains code changes
+          elif [ "$REF" = "refs/heads/main" ]; then
+            # Push to main: check commit message
             COMMIT_MSG=$(git log -1 --pretty=%B)
 
-            # Skip automated pre-release commits (prevents infinite loop)
-            if echo "$COMMIT_MSG" | grep -Eq "^chore: pre-release|^chore:.*bump"; then
-              echo "Skipping automated pre-release commit"
+            # Skip automated commits (prevent infinite loop)
+            if echo "$COMMIT_MSG" | grep -Eq "^chore: pre-release|^chore:.*sync dev"; then
+              echo "Skipping automated commit: $COMMIT_MSG"
               ACTION="skip"
-            # Trigger RC for code-changing commits
-            elif echo "$COMMIT_MSG" | grep -Eq "^(feat|fix|test|build):"; then
-              echo "Code-changing commit detected: triggering RC bump"
-              ACTION="auto-bump-rc"
-            # Skip documentation and non-code commits
-            elif echo "$COMMIT_MSG" | grep -Eq "^(docs|chore|style|refactor|perf|ci):"; then
-              echo "Non-code commit detected: skipping release"
-              ACTION="skip"
-            # Default: trigger RC for commits without conventional prefix (PR merges, etc)
             else
-              echo "Non-conventional commit: triggering RC bump"
-              ACTION="auto-bump-rc"
-            fi
-          elif [ "$EVENT" = "pull_request" ]; then
-            # Merge dev → main
-            HEAD="${{ github.event.pull_request.head.ref }}"
-            MERGED="${{ github.event.pull_request.merged }}"
-            if [ "$HEAD" = "dev" ] && [ "$MERGED" = "true" ]; then
-              ACTION="merge-rc"
-            else
-              ACTION="skip"
+              # Default: bump RC for all other commits (PR merges, direct pushes)
+              echo "Triggering RC bump for commit: $COMMIT_MSG"
+              ACTION="bump-rc"
             fi
           else
             ACTION="skip"
           fi
 
           echo "action=$ACTION" >> $GITHUB_OUTPUT
-          echo "Release action: $ACTION"
+          echo "🎯 Release action: $ACTION"
 
       - name: ⏭️ Skip if Not Needed
         if: steps.detect.outputs.action == 'skip'
-        run: echo "No release needed for this event"
+        run: echo "✅ No release needed for this event"
 
-      - name: 📌 Bump RC (Auto)
-        if: steps.detect.outputs.action == 'auto-bump-rc'
-        id: release
+      - name: 📌 Bump RC
+        if: steps.detect.outputs.action == 'bump-rc'
+        id: bump_rc
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/unified-release.cjs \
-            --bump rc \
-            --publish \
-            --github-release
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "released=true" >> $GITHUB_OUTPUT
-
-      - name: 📌 Bump RC (Merge dev→main)
-        if: steps.detect.outputs.action == 'merge-rc'
-        id: merge_rc
-        env:
-          GENIE_SKIP_ADVISORY_SMOKE: "1"
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Checkout main branch (PR merge leaves detached HEAD)
+          # Checkout main branch (ensure we're not in detached HEAD)
           git checkout main
           git pull origin main
 
-          # Clean conflicting RC tags
+          # Clean conflicting RC tags (from previous failed runs)
           CURRENT=$(node -p "require('./package.json').version")
           if [[ $CURRENT =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
             BASE="${BASH_REMATCH[1]}"
             RC_NUM="${BASH_REMATCH[2]}"
             NEXT_RC=$((RC_NUM + 1))
             NEXT_TAG="v${BASE}-rc.${NEXT_RC}"
+            echo "🧹 Cleaning conflicting tag: $NEXT_TAG"
             git tag -d "$NEXT_TAG" 2>/dev/null || true
             git push origin ":refs/tags/$NEXT_TAG" 2>/dev/null || true
           fi
 
+          # Bump RC version and publish
+          echo "🚀 Bumping RC version..."
           node scripts/unified-release.cjs \
             --bump rc \
             --publish \
@@ -146,6 +114,7 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "released=true" >> $GITHUB_OUTPUT
+          echo "✅ Released v$VERSION"
 
       - name: 📌 Tag Push (Publish Existing)
         if: steps.detect.outputs.action == 'tag-push'
@@ -157,6 +126,7 @@ jobs:
           TAG="${{ github.ref }}"
           VERSION=${TAG#refs/tags/v}
 
+          echo "📦 Re-publishing existing tag: v$VERSION"
           node scripts/unified-release.cjs \
             --tag "v$VERSION" \
             --publish \
@@ -165,9 +135,10 @@ jobs:
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "released=true" >> $GITHUB_OUTPUT
+          echo "✅ Published v$VERSION"
 
       - name: 🎯 Manual Dispatch
-        if: steps.detect.outputs.action == 'bump-rc' || steps.detect.outputs.action == 'promote-to-stable' || steps.detect.outputs.action == 'manual-tag'
+        if: steps.detect.outputs.action == 'promote-to-stable' || steps.detect.outputs.action == 'manual-tag'
         id: manual
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
@@ -176,26 +147,27 @@ jobs:
         run: |
           ACTION="${{ github.event.inputs.action }}"
 
-          if [ "$ACTION" = "bump-rc" ]; then
-            node scripts/unified-release.cjs --bump rc --publish --github-release
-          elif [ "$ACTION" = "promote-to-stable" ]; then
+          if [ "$ACTION" = "promote-to-stable" ]; then
+            echo "🎉 Promoting RC to stable..."
             node scripts/unified-release.cjs --promote --publish --github-release
           elif [ "$ACTION" = "manual-tag" ]; then
             TAG="${{ github.event.inputs.tag }}"
+            echo "📌 Publishing manual tag: $TAG"
             node scripts/unified-release.cjs --tag "$TAG" --publish --github-release --skip-tests
           fi
 
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "released=true" >> $GITHUB_OUTPUT
+          echo "✅ Released v$VERSION"
 
       - name: ✅ Release Summary
-        if: success() && steps.release.outputs.released == 'true' || steps.merge_rc.outputs.released == 'true' || steps.tag_push.outputs.released == 'true' || steps.manual.outputs.released == 'true'
+        if: success() && (steps.bump_rc.outputs.released == 'true' || steps.tag_push.outputs.released == 'true' || steps.manual.outputs.released == 'true')
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          echo "🎉 Released v$VERSION"
-          echo "📦 npm install automagik-genie@$(echo $VERSION | grep -q 'rc' && echo 'next' || echo 'latest')"
-          echo "🔗 https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
+          echo "🎉 Successfully released v$VERSION"
+          echo "📦 Install: npm install automagik-genie@$(echo $VERSION | grep -q 'rc' && echo 'next' || echo 'latest')"
+          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
 
   sync-dev:
     name: Sync dev with main
@@ -218,18 +190,14 @@ jobs:
 
       - name: 🔄 Sync dev branch
         run: |
-          # Fetch latest main and dev
+          # Fetch latest main
           git fetch origin main
-          git fetch origin dev || git fetch origin main:dev
 
-          # Checkout dev (create if doesn't exist)
-          git checkout -B dev origin/dev 2>/dev/null || git checkout -b dev origin/main
+          # Reset dev to match main exactly (fast-forward, no merge commits)
+          git checkout -B dev origin/main
 
-          # Merge main into dev
-          git merge origin/main --no-edit -m "chore: sync dev with main after v${{ needs.release.outputs.version }} release" -m "Automated sync after CI/CD version bump and changelog update."
-
-          # Push to dev
-          git push origin dev
+          # Force push to sync dev with main
+          git push --force origin dev
 
       - name: ✅ Report Success
         if: success()
