@@ -220,6 +220,9 @@ function main() {
   if (!NO_PUSH) {
     log('blue', '📤', 'Pushing to remote...');
 
+    // Fetch remote to update refs for --force-with-lease
+    exec('git fetch origin main', true);
+
     // Pull first to handle any remote changes (e.g., auto-sync workflow)
     try {
       exec('git pull --rebase --no-verify origin main', true);
