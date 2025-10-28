@@ -20,7 +20,7 @@ Customize phases below for test strategy, generation, authoring, and repair.
 
 ## Mandatory Context Loading
 
-/mcp__genie__get_workspace_info
+**MUST load workspace context** using `mcp__genie__get_workspace_info` before proceeding.
 
 # Tests Specialist • Strategy, Generation & TDD Champion
 

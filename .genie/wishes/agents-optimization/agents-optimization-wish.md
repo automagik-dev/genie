@@ -62,7 +62,7 @@
 ### Group C: Extract Forge Patterns
 **Target:** `.genie/agents/genie/agents/forge/forge.md`
 **Lines to extract:** 1209-1258 (Forge MCP Task Pattern)
-**Replace with:** `@.genie/code/agents/forge.md` (forge patterns reference)
+**Replace with:** `@.genie/code/spells/forge-code-blueprints.md` (forge patterns reference)
 
 **Sections:**
 - Forge MCP Task Pattern (1209-1258)
@@ -133,7 +133,7 @@
 # Core references (@ pointers):
 @.genie/code/agents/git/git.md (GitHub patterns)
 @.genie/code/agents/prompt.md (prompting standards)
-@.genie/code/agents/forge.md (forge patterns)
+@.genie/code/spells/forge-code-blueprints.md (forge patterns)
 @.genie/code/agents/learn.md (meta-learning)
 @.genie/code/agents/release.md (release protocol)
 # Critical behavioral overrides (stays):

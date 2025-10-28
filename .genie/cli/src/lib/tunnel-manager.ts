@@ -30,7 +30,9 @@ export async function startNgrokTunnel(
       return { error: '@ngrok/ngrok not installed', errorCode: 'NGROK_NOT_INSTALLED' };
     }
 
-    // Kill any existing tunnel first (prevents "endpoint already online" errors)
+    // Stop any existing tunnel first (prevents "endpoint already online" errors)
+    // NOTE: We use stopNgrokTunnel() which only closes listeners, not ngrok.kill()
+    // This prevents accidental SIGTERM to other processes (like MCP server)
     await stopNgrokTunnel();
 
     // Start tunnel (authtoken is optional - works without but with limitations)

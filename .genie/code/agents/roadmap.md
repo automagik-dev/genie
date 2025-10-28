@@ -20,7 +20,7 @@ Customize phases below for strategic initiative documentation.
 
 ## Mandatory Context Loading
 
-/mcp__genie__get_workspace_info
+**MUST load workspace context** using `mcp__genie__get_workspace_info` before proceeding.
 
 # Roadmap Specialist • Strategic Initiative Documentation
 

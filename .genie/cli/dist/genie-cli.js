@@ -1267,6 +1267,21 @@ async function startGenieServer(debug = false) {
         }
     }
     rl.close();
+    // Phase 3: Check for MCP port conflict before starting
+    const mcpPortConflict = await checkPortConflict(mcpPort);
+    if (mcpPortConflict) {
+        console.log('');
+        console.error(`❌ Port ${mcpPort} is already in use by another process`);
+        console.error(`   PID: ${mcpPortConflict.pid}`);
+        console.error(`   Command: ${mcpPortConflict.command}`);
+        console.error('');
+        console.error('Please kill that process or use a different port:');
+        console.error(`   kill ${mcpPortConflict.pid}`);
+        console.error(`   # or use a different port:`);
+        console.error(`   MCP_PORT=8886 genie`);
+        console.error('');
+        process.exit(1);
+    }
     // Phase 3: Start MCP server with SSE transport
     console.log('');
     console.log(successGradient(`📡 MCP:    http://localhost:${mcpPort}/sse ✓`));
@@ -1430,8 +1445,9 @@ async function startGenieServer(debug = false) {
         attempt += 1;
         mcpChild = (0, child_process_1.spawn)('node', [mcpServer], {
             stdio: 'inherit',
-            env,
-            detached: false // Keep in same process group so Ctrl+C works
+            env
+            // Don't specify detached - let it default to false
+            // This keeps it in the same process group for proper Ctrl+C handling
         });
         const timer = setTimeout(() => {
             // After grace period, consider startup successful

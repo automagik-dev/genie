@@ -158,7 +158,7 @@ Domain-specific implementations (code, legal, medical, etc.) should INCLUDE this
 ```markdown
 # Analyze Agent - [Domain Name]
 
-@.genie/code/agents/analyze-universal.md
+@.genie/code/teams/analyze/README.md
 
 ## Domain-Specific Extensions
 [Add domain examples, patterns, tools here]
