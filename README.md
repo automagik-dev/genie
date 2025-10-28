@@ -431,12 +431,11 @@ Genie includes a comprehensive **git hook automation system** that maintains doc
 ### What Gets Automated
 
 **Pre-Commit (Validation + Updates):**
-- ✅ **User file protection** - Blocks `.genie/TODO.md` and `.genie/USERCONTEXT.md` from commits
+- ✅ **User file protection** - Blocks `.genie/USERCONTEXT.md` from commits (per-user state)
 - ✅ **Cross-reference validation** - Catches broken `@file.md` references before commit
-- ✅ **Token efficiency gate** - Blocks commits if token count increases >5% without justification
-- ✅ **Agent graph auto-generation** - Updates AGENTS.md with token counts and dependency tree
-- ✅ **Agent registry auto-generation** - Scans folders and updates agent/spell lists
-- ✅ **Universal headers injection** - Adds `Last Updated` timestamps to all .md files
+- ✅ **Secrets detection** - Blocks commits with API keys, tokens, credentials
+- ✅ **Worktree isolation** - Prevents accidental commits to Forge worktrees
+- ✅ **Token efficiency tracking** - Reports token changes per commit (informational)
 - ✅ **Forge task linking** - Auto-links Forge task metadata to wish documents
 
 **Pre-Push (Quality Enforcement):**
