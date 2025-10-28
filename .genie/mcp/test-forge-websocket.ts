@@ -14,7 +14,7 @@ import * as path from 'path';
 const workspaceRoot = path.resolve(__dirname, '../..');
 
 // Load ForgeClient
-const { ForgeClient } = require(path.join(workspaceRoot, 'forge.js'));
+const { ForgeClient } = require(path.join(workspaceRoot, 'src/lib/forge-client.js'));
 
 // Load ForgeExecutor for session creation
 const { createForgeExecutor } = require(path.join(workspaceRoot, '.genie/cli/dist/lib/forge-executor'));

@@ -4,7 +4,7 @@
  */
 
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../forge.js';
+import { ForgeClient } from '../../../src/lib/forge-client.js';
 
 async function debug() {
   const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';

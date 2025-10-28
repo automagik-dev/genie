@@ -15,7 +15,7 @@ const child_process_1 = require("child_process");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 // @ts-ignore - compiled client shipped at project root
-const forge_js_1 = require("../../../../forge.js");
+const forge_client_js_1 = require("../../../../src/lib/forge-client.js");
 const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 const HEALTH_CHECK_TIMEOUT = 3000; // 3s per health check
 const MAX_HEALTH_RETRIES = 3;
@@ -27,7 +27,7 @@ let forgeChildProcess = null;
 async function isForgeRunning(baseUrl = DEFAULT_BASE_URL, retries = MAX_HEALTH_RETRIES) {
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+            const client = new forge_client_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT);
             const ok = await client.healthCheck();
@@ -220,7 +220,7 @@ function startForgeInBackground(opts) {
  */
 async function getRunningTasks(baseUrl = DEFAULT_BASE_URL) {
     try {
-        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_client_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Get all projects
         const projects = await client.listProjects();
         const runningTasks = [];

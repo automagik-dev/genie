@@ -10,7 +10,7 @@
  */
 
 // @ts-ignore - compiled client shipped at project root
-import { ForgeClient } from '../../../../forge.js';
+import { ForgeClient } from '../../../../src/lib/forge-client.js';
 import { TokenMetrics, collectAllTokenMetrics } from './token-tracker.js';
 
 export interface ForgeStats {

@@ -25,8 +25,6 @@ const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const zod_1 = require("zod");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-const child_process_1 = require("child_process");
-const util_1 = require("util");
 const display_transform_js_1 = require("./lib/display-transform.js");
 // Import WebSocket-native tools (MVP Phase 6)
 const wish_tool_js_1 = require("./tools/wish-tool.js");
@@ -42,208 +40,23 @@ const role_detector_js_1 = require("./lib/role-detector.js");
 const http_server_js_1 = require("./lib/http-server.js");
 // Import process cleanup utilities
 const process_cleanup_js_1 = require("./lib/process-cleanup.js");
-const execFileAsync = (0, util_1.promisify)(child_process_1.execFile);
+// Import CLI executor utilities
+const cli_executor_js_1 = require("./lib/cli-executor.js");
+// Import server helper utilities (extracted per Amendment #10)
+const server_helpers_js_1 = require("./lib/server-helpers.js");
+// Import spell utilities (extracted per Amendment #10)
+const spell_utils_js_1 = require("./lib/spell-utils.js");
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
-// Find actual workspace root by searching upward for .genie/ directory
-function findWorkspaceRoot() {
-    let dir = process.cwd();
-    while (dir !== path_1.default.dirname(dir)) {
-        if (fs_1.default.existsSync(path_1.default.join(dir, '.genie'))) {
-            return dir;
-        }
-        dir = path_1.default.dirname(dir);
-    }
-    // Fallback to process.cwd() if .genie not found
-    return process.cwd();
-}
-const WORKSPACE_ROOT = findWorkspaceRoot();
+const WORKSPACE_ROOT = (0, server_helpers_js_1.findWorkspaceRoot)();
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
-// Helper: List available agents from all collectives
-function listAgents() {
-    const agents = [];
-    // ONLY scan specific agents/ directories (not workflows/ or spells/)
-    const searchDirs = [
-        path_1.default.join(WORKSPACE_ROOT, '.genie/code/agents'),
-        path_1.default.join(WORKSPACE_ROOT, '.genie/create/agents')
-    ];
-    const visit = (dirPath, relativePath) => {
-        const entries = fs_1.default.readdirSync(dirPath, { withFileTypes: true });
-        entries.forEach((entry) => {
-            const entryPath = path_1.default.join(dirPath, entry.name);
-            if (entry.isDirectory()) {
-                // Recurse into subdirectories (for sub-agents like git/workflows/, wish/)
-                visit(entryPath, relativePath ? path_1.default.join(relativePath, entry.name) : entry.name);
-                return;
-            }
-            if (!entry.isFile() || !entry.name.endsWith('.md') || entry.name === 'README.md') {
-                return;
-            }
-            const rawId = relativePath ? path_1.default.join(relativePath, entry.name) : entry.name;
-            const normalizedId = rawId.replace(/\.md$/i, '').split(path_1.default.sep).join('/');
-            // Extract frontmatter to get name and description
-            const content = fs_1.default.readFileSync(entryPath, 'utf8');
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-            let name = normalizedId;
-            let description;
-            if (frontmatterMatch) {
-                const frontmatter = frontmatterMatch[1];
-                const nameMatch = frontmatter.match(/name:\s*(.+)/);
-                const descMatch = frontmatter.match(/description:\s*(.+)/);
-                if (nameMatch)
-                    name = nameMatch[1].trim();
-                if (descMatch)
-                    description = descMatch[1].trim();
-            }
-            // Transform display path (strip template/category folders)
-            const { displayId, displayFolder } = (0, display_transform_js_1.transformDisplayPath)(normalizedId);
-            agents.push({ id: normalizedId, displayId, name, description, folder: displayFolder || undefined });
-        });
-    };
-    // Visit all search directories
-    searchDirs.forEach(baseDir => {
-        if (fs_1.default.existsSync(baseDir)) {
-            visit(baseDir, null);
-        }
-    });
-    return agents;
-}
-// Helper: Safely load Forge executor from dist (package) or src (repo)
-function loadForgeExecutor() {
-    // Prefer compiled dist (works in published package)
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        return require('../../cli/dist/lib/forge-executor');
-    }
-    catch (_distErr) {
-        // Fallback to TypeScript sources for local dev (within repo)
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-var-requires
-            return require('../../cli/src/lib/forge-executor');
-        }
-        catch (_srcErr) {
-            return null;
-        }
-    }
-}
-// Helper: List recent sessions (uses Forge API)
-async function listSessions() {
-    try {
-        // ALWAYS use Forge API for session listing (complete executor replacement)
-        const mod = loadForgeExecutor();
-        if (!mod || typeof mod.createForgeExecutor !== 'function') {
-            throw new Error('Forge executor unavailable (did you build the CLI?)');
-        }
-        const forgeExecutor = mod.createForgeExecutor();
-        const forgeSessions = await forgeExecutor.listSessions();
-        const sessions = forgeSessions.map((entry) => ({
-            id: entry.id || 'unknown', // Task ID for Forge API lookups
-            name: entry.agent || 'unknown', // Use agent name as display name
-            agent: entry.agent || 'unknown',
-            status: entry.status || 'unknown',
-            created: entry.created || 'unknown',
-            lastUsed: entry.lastUsed || entry.created || 'unknown'
-        }));
-        // Filter: Show running sessions + recent completed (last 10)
-        // Fix Bug #5: Filter out stale sessions (>24 hours old with no recent activity)
-        const now = Date.now();
-        const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-        const running = sessions.filter((s) => {
-            const status = s.status === 'running' || s.status === 'starting';
-            if (!status)
-                return false;
-            // Check if session is stale (created >24h ago, no recent activity)
-            if (s.lastUsed !== 'unknown') {
-                const lastUsedTime = new Date(s.lastUsed).getTime();
-                const age = now - lastUsedTime;
-                if (age > STALE_THRESHOLD_MS) {
-                    // Mark as stale but keep for manual cleanup
-                    return false;
-                }
-            }
-            return true;
-        });
-        const completed = sessions
-            .filter((s) => s.status === 'completed')
-            .sort((a, b) => {
-            if (a.lastUsed === 'unknown')
-                return 1;
-            if (b.lastUsed === 'unknown')
-                return -1;
-            return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-        })
-            .slice(0, 10);
-        // Combine and sort by lastUsed descending
-        return [...running, ...completed].sort((a, b) => {
-            if (a.lastUsed === 'unknown')
-                return 1;
-            if (b.lastUsed === 'unknown')
-                return -1;
-            return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-        });
-    }
-    catch (error) {
-        // Fallback to local sessions.json if Forge API fails
-        console.warn('Failed to fetch Forge sessions, falling back to local store');
-        const sessionsFile = path_1.default.join(WORKSPACE_ROOT, '.genie/state/agents/sessions.json');
-        if (!fs_1.default.existsSync(sessionsFile)) {
-            return [];
-        }
-        try {
-            const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
-            const store = JSON.parse(content);
-            const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
-                id: entry.sessionId || key,
-                name: entry.name || key,
-                agent: entry.agent || key,
-                status: entry.status || 'unknown',
-                created: entry.created || 'unknown',
-                lastUsed: entry.lastUsed || entry.created || 'unknown'
-            }));
-            // Apply same stale filter as Forge path (Fix Bug #5)
-            const now = Date.now();
-            const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-            const running = sessions.filter(s => {
-                const status = s.status === 'running' || s.status === 'starting';
-                if (!status)
-                    return false;
-                // Filter out stale sessions
-                if (s.lastUsed !== 'unknown') {
-                    const lastUsedTime = new Date(s.lastUsed).getTime();
-                    const age = now - lastUsedTime;
-                    if (age > STALE_THRESHOLD_MS) {
-                        return false;
-                    }
-                }
-                return true;
-            });
-            const completed = sessions
-                .filter(s => s.status === 'completed')
-                .sort((a, b) => {
-                if (a.lastUsed === 'unknown')
-                    return 1;
-                if (b.lastUsed === 'unknown')
-                    return -1;
-                return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-            })
-                .slice(0, 10);
-            return [...running, ...completed].sort((a, b) => {
-                if (a.lastUsed === 'unknown')
-                    return 1;
-                if (b.lastUsed === 'unknown')
-                    return -1;
-                return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-            });
-        }
-        catch (error) {
-            return [];
-        }
-    }
-}
+// listAgents() imported from ./lib/server-helpers.js
+// loadForgeExecutor() imported from ./lib/server-helpers.js
+// listSessions() imported from ./lib/server-helpers.js
 // Helper: View session transcript (uses Forge API directly)
 async function viewSession(taskId) {
     try {
-        const mod = loadForgeExecutor();
+        const mod = (0, server_helpers_js_1.loadForgeExecutor)();
         if (!mod || typeof mod.createForgeExecutor !== 'function') {
             return {
                 status: 'error',
@@ -253,7 +66,7 @@ async function viewSession(taskId) {
         }
         const forgeExecutor = mod.createForgeExecutor();
         // Get task details to find latest attempt
-        const { ForgeClient } = require('../../../forge.js');
+        const { ForgeClient } = require('../../../src/lib/forge-client.js');
         const forge = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887', process.env.FORGE_TOKEN);
         // Get task attempts for this task
         const attempts = await forge.listTaskAttempts(taskId);
@@ -291,64 +104,15 @@ async function viewSession(taskId) {
     }
 }
 // Helper: Get Genie version from package.json
-function getGenieVersion() {
-    try {
-        const packageJsonPath = path_1.default.join(__dirname, '..', '..', '..', 'package.json');
-        const packageJson = JSON.parse(fs_1.default.readFileSync(packageJsonPath, 'utf8'));
-        return packageJson.version || '0.0.0';
-    }
-    catch (error) {
-        return '0.0.0';
-    }
-}
-// Helper: Get version header for MCP outputs
-function getVersionHeader() {
-    return `Genie MCP v${getGenieVersion()}\n\n`;
-}
-// Sync agent profiles to Forge on startup
-async function syncAgentProfilesToForge() {
-    try {
-        const mod = loadForgeExecutor();
-        if (!mod || typeof mod.createForgeExecutor !== 'function') {
-            console.warn('⚠️  Skipping agent profile sync - Forge executor unavailable');
-            return;
-        }
-        const forgeExecutor = mod.createForgeExecutor();
-        // Pass WORKSPACE_ROOT to ensure correct scanning from MCP server context
-        await forgeExecutor.syncProfiles(undefined, WORKSPACE_ROOT);
-    }
-    catch (error) {
-        console.warn(`⚠️  Agent profile sync failed: ${error.message}`);
-    }
-}
-// Load OAuth2 configuration from ~/.genie/config.yaml
-function loadOAuth2Config() {
-    try {
-        const os = require('os');
-        const YAML = require('yaml');
-        const configPath = path_1.default.join(os.homedir(), '.genie', 'config.yaml');
-        if (!fs_1.default.existsSync(configPath)) {
-            return null;
-        }
-        const content = fs_1.default.readFileSync(configPath, 'utf8');
-        const config = YAML.parse(content);
-        // Validate and return OAuth2 config
-        if (config?.mcp?.auth?.oauth2?.clientId) {
-            return config.mcp.auth.oauth2;
-        }
-    }
-    catch (error) {
-        // Config not available or invalid
-    }
-    return null;
-}
+// getGenieVersion(), getVersionHeader(), syncAgentProfilesToForge() imported from ./lib/server-helpers.js
+// loadOAuth2Config() imported from ./lib/server-helpers.js
 // Load OAuth2 config for HTTP transport
-const oauth2Config = loadOAuth2Config();
+const oauth2Config = (0, server_helpers_js_1.loadOAuth2Config)();
 const serverUrl = `http://localhost:${PORT}`;
 // Initialize MCP Server using official SDK
 const server = new mcp_js_1.McpServer({
     name: 'genie',
-    version: getGenieVersion(),
+    version: (0, server_helpers_js_1.getGenieVersion)(),
 }, {
     capabilities: {
         logging: {},
@@ -357,11 +121,11 @@ const server = new mcp_js_1.McpServer({
 });
 // Tool: list_agents - Discover available agents
 server.tool('list_agents', 'List all available Genie agents with their capabilities and descriptions. Use this first to discover which agents can help with your task.', async () => {
-    const agents = listAgents();
+    const agents = (0, server_helpers_js_1.listAgents)();
     if (agents.length === 0) {
-        return { content: [{ type: 'text', text: getVersionHeader() + 'No agents found in .genie/code/agents or .genie/create/agents directories.' }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + 'No agents found in .genie/code/agents or .genie/create/agents directories.' }] };
     }
-    let response = getVersionHeader() + `Found ${agents.length} available agents:\n\n`;
+    let response = (0, server_helpers_js_1.getVersionHeader)() + `Found ${agents.length} available agents:\n\n`;
     // Group by folder
     const grouped = {};
     agents.forEach(agent => {
@@ -387,11 +151,11 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
 });
 // Tool: list_sessions - View active and recent sessions
 server.tool('list_sessions', 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.', async () => {
-    const sessions = await listSessions();
+    const sessions = await (0, server_helpers_js_1.listSessions)();
     if (sessions.length === 0) {
-        return { content: [{ type: 'text', text: getVersionHeader() + 'No sessions found. Start a new session with the "run" tool.' }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + 'No sessions found. Start a new session with the "run" tool.' }] };
     }
-    let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
+    let response = (0, server_helpers_js_1.getVersionHeader)() + `Found ${sessions.length} session(s):\n\n`;
     sessions.forEach((session, index) => {
         const { displayId } = (0, display_transform_js_1.transformDisplayPath)(session.agent);
         response += `${index + 1}. **${session.id}** (${session.name})\n`;
@@ -420,7 +184,7 @@ server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_a
         // Resolve alias if exists
         const resolvedAgent = AGENT_ALIASES[args.agent] || args.agent;
         // Early validation: Check if agent exists BEFORE trying to run
-        const availableAgents = listAgents();
+        const availableAgents = (0, server_helpers_js_1.listAgents)();
         const agentExists = availableAgents.some(a => a.id === resolvedAgent || a.displayId === resolvedAgent);
         if (!agentExists) {
             // Fast fail with helpful error message
@@ -432,7 +196,7 @@ server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_a
             const errorMsg = `❌ **Agent not found:** '${args.agent}'\n\n` +
                 (suggestions ? `Did you mean:\n${suggestions}\n\n` : '') +
                 `💡 Use list_agents tool to see all available agents.`;
-            return { content: [{ type: 'text', text: getVersionHeader() + errorMsg }] };
+            return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + errorMsg }] };
         }
         // Use resolved agent for CLI invocation
         const cliArgs = ['run', resolvedAgent];
@@ -442,14 +206,14 @@ server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_a
         if (args.prompt?.length) {
             cliArgs.push(args.prompt);
         }
-        const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
+        const { stdout, stderr } = await (0, cli_executor_js_1.runCliCommand)(WORKSPACE_ROOT, cliArgs, 120000);
         const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
         const { displayId } = (0, display_transform_js_1.transformDisplayPath)(resolvedAgent);
         const aliasNote = AGENT_ALIASES[args.agent] ? ` (alias: ${args.agent} → ${resolvedAgent})` : '';
-        return { content: [{ type: 'text', text: getVersionHeader() + `Started agent session:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `Started agent session:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.` }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('start agent session', error) }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + (0, cli_executor_js_1.formatCliFailure)('start agent session', error) }] };
     }
 });
 // Tool: resume - Continue an existing session
@@ -462,12 +226,12 @@ server.tool('resume', 'Resume an existing agent session with a follow-up prompt.
         if (args.prompt?.length) {
             cliArgs.push(args.prompt);
         }
-        const { stdout, stderr } = await runCliCommand(cliArgs, 120000);
+        const { stdout, stderr } = await (0, cli_executor_js_1.runCliCommand)(WORKSPACE_ROOT, cliArgs, 120000);
         const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-        return { content: [{ type: 'text', text: getVersionHeader() + `Resumed session ${args.sessionId}:\n\n${output}` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `Resumed session ${args.sessionId}:\n\n${output}` }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('resume session', error) }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + (0, cli_executor_js_1.formatCliFailure)('resume session', error) }] };
     }
 });
 // Tool: view - View session transcript
@@ -478,9 +242,9 @@ server.tool('view', 'View the transcript of an agent session. Shows the conversa
     try {
         const result = await viewSession(args.sessionId);
         if (result.error) {
-            return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error viewing session:\n\n${result.error}` }] };
+            return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `❌ Error viewing session:\n\n${result.error}` }] };
         }
-        let response = getVersionHeader();
+        let response = (0, server_helpers_js_1.getVersionHeader)();
         response += `**Task:** ${args.sessionId}\n`;
         response += `**Status:** ${result.status}\n\n`;
         if (result.transcript) {
@@ -494,7 +258,7 @@ server.tool('view', 'View the transcript of an agent session. Shows the conversa
         return { content: [{ type: 'text', text: response }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error: ${error.message}` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `❌ Error: ${error.message}` }] };
     }
 });
 // Tool: stop - Terminate a running session
@@ -502,62 +266,16 @@ server.tool('stop', 'Stop a running agent session. Use this to terminate long-ru
     sessionId: zod_1.z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
 }, async (args) => {
     try {
-        const { stdout, stderr } = await runCliCommand(['stop', args.sessionId], 30000);
+        const { stdout, stderr } = await (0, cli_executor_js_1.runCliCommand)(WORKSPACE_ROOT, ['stop', args.sessionId], 30000);
         const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-        return { content: [{ type: 'text', text: getVersionHeader() + `Stopped session ${args.sessionId}:\n\n${output}` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `Stopped session ${args.sessionId}:\n\n${output}` }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('stop session', error) }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + (0, cli_executor_js_1.formatCliFailure)('stop session', error) }] };
     }
 });
 // Helper: List all spell files in a directory recursively
-function listSpellsInDir(dir, basePath = '') {
-    const spells = [];
-    try {
-        const entries = fs_1.default.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = path_1.default.join(dir, entry.name);
-            const relativePath = basePath ? path_1.default.join(basePath, entry.name) : entry.name;
-            if (entry.isDirectory()) {
-                // Recurse into subdirectories
-                spells.push(...listSpellsInDir(fullPath, relativePath));
-            }
-            else if (entry.isFile() && entry.name.endsWith('.md')) {
-                // Extract spell name from frontmatter if possible
-                try {
-                    const content = fs_1.default.readFileSync(fullPath, 'utf-8');
-                    const frontmatterMatch = content.match(/^---\s*\nname:\s*(.+)\s*\n/);
-                    const spellName = frontmatterMatch ? frontmatterMatch[1].trim() : entry.name.replace('.md', '');
-                    spells.push({ path: relativePath, name: spellName });
-                }
-                catch {
-                    spells.push({ path: relativePath, name: entry.name.replace('.md', '') });
-                }
-            }
-        }
-    }
-    catch (error) {
-        // Directory doesn't exist or can't be read
-    }
-    return spells;
-}
-// Helper: Read spell content and extract everything after frontmatter
-function readSpellContent(spellPath) {
-    try {
-        const content = fs_1.default.readFileSync(spellPath, 'utf-8');
-        // Find the end of frontmatter (second ---)
-        const frontmatterEnd = content.indexOf('---', 3);
-        if (frontmatterEnd === -1) {
-            // No frontmatter, return entire content
-            return content;
-        }
-        // Return everything after the closing ---
-        return content.substring(frontmatterEnd + 3).trim();
-    }
-    catch (error) {
-        throw new Error(`Failed to read spell: ${error.message}`);
-    }
-}
+// listSpellsInDir(), readSpellContent() imported from ./lib/spell-utils.js
 // Tool: list_spells - Discover available spells
 server.tool('list_spells', 'List all available Genie spells (reusable knowledge patterns). Returns spells from .genie/spells/ (global), .genie/code/spells/ (code-specific), and .genie/create/spells/ (create-specific).', async () => {
     // Note: Scope parameter removed - always returns all spells for simplicity (avoids MCP schema validation issues)
@@ -566,20 +284,20 @@ server.tool('list_spells', 'List all available Genie spells (reusable knowledge 
     // Global spells
     if (scope === 'all' || scope === 'global') {
         const globalSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'spells');
-        result.global = listSpellsInDir(globalSpellsDir);
+        result.global = (0, spell_utils_js_1.listSpellsInDir)(globalSpellsDir);
     }
     // Code spells
     if (scope === 'all' || scope === 'code') {
         const codeSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'code', 'spells');
-        result.code = listSpellsInDir(codeSpellsDir);
+        result.code = (0, spell_utils_js_1.listSpellsInDir)(codeSpellsDir);
     }
     // Create spells
     if (scope === 'all' || scope === 'create') {
         const createSpellsDir = path_1.default.join(WORKSPACE_ROOT, '.genie', 'create', 'spells');
-        result.create = listSpellsInDir(createSpellsDir);
+        result.create = (0, spell_utils_js_1.listSpellsInDir)(createSpellsDir);
     }
     // Format output
-    let output = getVersionHeader() + '# Genie Spells\n\n';
+    let output = (0, server_helpers_js_1.getVersionHeader)() + '# Genie Spells\n\n';
     if (result.global) {
         output += `## Global Spells (.genie/spells/) - ${result.global.length} spells\n`;
         output += 'Universal patterns applicable to all collectives:\n\n';
@@ -608,44 +326,19 @@ server.tool('list_spells', 'List all available Genie spells (reusable knowledge 
     output += `\n**Total:** ${totalCount} spells\n`;
     return { content: [{ type: 'text', text: output }] };
 });
-// Helper: Normalize spell path (strip leading .genie/, add directory if missing, add .md if missing)
-function normalizeSpellPath(userPath) {
-    // Strip leading .genie/ if present (prevents double prefix)
-    let normalized = userPath.replace(/^\.genie[\\/]/, '');
-    // If path contains no directory component and no scope prefix, search all scope directories
-    if (!normalized.includes('/') && !normalized.includes('\\')) {
-        // Try to find the spell in global, code, or create directories
-        const searchDirs = ['spells', 'code/spells', 'create/spells'];
-        for (const dir of searchDirs) {
-            const testPath = path_1.default.join(WORKSPACE_ROOT, '.genie', dir, normalized.endsWith('.md') ? normalized : `${normalized}.md`);
-            if (fs_1.default.existsSync(testPath)) {
-                normalized = path_1.default.join(dir, normalized.endsWith('.md') ? normalized : `${normalized}.md`);
-                break;
-            }
-        }
-        // If not found in any directory, default to spells/ (will fail with clear error)
-        if (!normalized.includes('/') && !normalized.includes('\\')) {
-            normalized = path_1.default.join('spells', normalized);
-        }
-    }
-    // Add .md extension if missing
-    if (!normalized.endsWith('.md')) {
-        normalized += '.md';
-    }
-    return normalized;
-}
+// normalizeSpellPath() imported from ./lib/spell-utils.js
 // Tool: read_spell - Read specific spell content
 server.tool('read_spell', 'Read the full content of a specific spell. Returns the spell content after the frontmatter (---). Use list_spells first to see available spells. Supports multiple path formats: "spells/learn.md", ".genie/spells/learn.md", "code/spells/debug.md", or just "learn" (searches all directories).', {
     spell_path: zod_1.z.string().describe('Path to spell file. Flexible formats supported: "spells/learn.md" (recommended), ".genie/spells/learn.md" (auto-strips .genie/), "code/spells/debug.md", or just "learn" (auto-searches and adds .md extension)')
 }, async (args) => {
-    const normalizedPath = normalizeSpellPath(args.spell_path);
+    const normalizedPath = (0, spell_utils_js_1.normalizeSpellPath)(args.spell_path);
     const fullPath = path_1.default.join(WORKSPACE_ROOT, '.genie', normalizedPath);
     try {
-        const content = readSpellContent(fullPath);
-        return { content: [{ type: 'text', text: getVersionHeader() + `# Spell: ${normalizedPath}\n\n${content}` }] };
+        const content = (0, spell_utils_js_1.readSpellContent)(fullPath);
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `# Spell: ${normalizedPath}\n\n${content}` }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + `Error reading spell: ${error.message}` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `Error reading spell: ${error.message}` }] };
     }
 });
 // Workflows have been merged into spells - no separate workflow tools needed
@@ -708,7 +401,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
             }
         }
         // Format lean output
-        let output = getVersionHeader();
+        let output = (0, server_helpers_js_1.getVersionHeader)();
         output += `**Project:** ${workspaceInfo.project}\n`;
         output += `**Branch:** ${workspaceInfo.currentBranch}\n`;
         output += `**Tech Stack:** ${workspaceInfo.techStack.language} + ${workspaceInfo.techStack.runtime} (${workspaceInfo.techStack.packageManager})\n\n`;
@@ -721,7 +414,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
         return { content: [{ type: 'text', text: output }] };
     }
     catch (error) {
-        return { content: [{ type: 'text', text: getVersionHeader() + `Error gathering workspace info: ${error.message}` }] };
+        return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + `Error gathering workspace info: ${error.message}` }] };
     }
 });
 // ============================================================================
@@ -958,7 +651,7 @@ process.on('unhandledRejection', (reason) => {
 if (debugMode) {
     // Verbose startup logs (debug mode only)
     console.error('Starting Genie MCP Server (MVP)...');
-    console.error(`Version: ${getGenieVersion()}`);
+    console.error(`Version: ${(0, server_helpers_js_1.getGenieVersion)()}`);
     console.error(`Transport: ${TRANSPORT}`);
     console.error(`Role: ${roleInfo.role} (${roleInfo.confidence} confidence, method: ${roleInfo.method})`);
     if (readOnly) {
@@ -1009,7 +702,7 @@ if (debugMode) {
 process.stderr.write('🔄 Syncing agent profiles...');
 // Sync agents before starting server (async but non-blocking)
 // Note: forge-executor.ts handles the completion message, so we don't print anything here
-syncAgentProfilesToForge()
+(0, server_helpers_js_1.syncAgentProfilesToForge)()
     .then(() => {
     // forge-executor.ts already printed the completion message
     // No additional output needed (prevents duplicate checkmarks)
@@ -1032,7 +725,7 @@ syncAgentProfilesToForge()
             process.exit(1);
         }
         if (debugMode) {
-            console.error(`Starting Genie MCP Server v${getGenieVersion()} (HTTP Stream)...`);
+            console.error(`Starting Genie MCP Server v${(0, server_helpers_js_1.getGenieVersion)()} (HTTP Stream)...`);
             console.error(`Port: ${PORT}`);
         }
         // Use http-server.ts (Express + SDK StreamableHTTPServerTransport + OAuth)
@@ -1055,69 +748,3 @@ syncAgentProfilesToForge()
     console.error('❌ Server startup failed:', error);
     process.exit(1);
 });
-function resolveCliInvocation() {
-    const distEntry = path_1.default.join(WORKSPACE_ROOT, '.genie/cli/dist/genie-cli.js');
-    if (fs_1.default.existsSync(distEntry)) {
-        return { command: process.execPath, args: [distEntry] };
-    }
-    const localScript = path_1.default.join(WORKSPACE_ROOT, 'genie');
-    if (fs_1.default.existsSync(localScript)) {
-        return { command: localScript, args: [] };
-    }
-    return { command: 'npx', args: ['automagik-genie'] };
-}
-function quoteArg(value) {
-    if (!value.length)
-        return '""';
-    if (/^[A-Za-z0-9._\-\/]+$/.test(value))
-        return value;
-    return '"' + value.replace(/"/g, '\\"') + '"';
-}
-function normalizeOutput(data) {
-    if (data === undefined || data === null)
-        return '';
-    return typeof data === 'string' ? data : data.toString('utf8');
-}
-async function runCliCommand(subArgs, timeoutMs = 120000) {
-    const invocation = resolveCliInvocation();
-    const execArgs = [...invocation.args, ...subArgs];
-    const commandLine = [invocation.command, ...execArgs.map(quoteArg)].join(' ');
-    const options = {
-        cwd: WORKSPACE_ROOT,
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: timeoutMs
-    };
-    try {
-        const { stdout, stderr } = await execFileAsync(invocation.command, execArgs, options);
-        return {
-            stdout: normalizeOutput(stdout),
-            stderr: normalizeOutput(stderr),
-            commandLine
-        };
-    }
-    catch (error) {
-        const err = error;
-        const wrapped = new Error(err.message || 'CLI execution failed');
-        wrapped.stdout = normalizeOutput(err.stdout);
-        wrapped.stderr = normalizeOutput(err.stderr);
-        wrapped.commandLine = commandLine;
-        throw wrapped;
-    }
-}
-function formatCliFailure(action, error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const stdout = error && typeof error === 'object' ? error.stdout : '';
-    const stderr = error && typeof error === 'object' ? error.stderr : '';
-    const commandLine = error && typeof error === 'object' ? error.commandLine : '';
-    const sections = [`Failed to ${action}:`, message];
-    if (stdout) {
-        sections.push(`Stdout:\n${stdout}`);
-    }
-    if (stderr) {
-        sections.push(`Stderr:\n${stderr}`);
-    }
-    if (commandLine) {
-        sections.push(`Command: ${commandLine}`);
-    }
-    return sections.join('\n\n');
-}

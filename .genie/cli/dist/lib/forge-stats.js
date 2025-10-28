@@ -13,11 +13,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.collectForgeStats = collectForgeStats;
 exports.formatStatsForDashboard = formatStatsForDashboard;
 // @ts-ignore - compiled client shipped at project root
-const forge_js_1 = require("../../../../forge.js");
+const forge_client_js_1 = require("../../../../src/lib/forge-client.js");
 const token_tracker_js_1 = require("./token-tracker.js");
 async function collectForgeStats(baseUrl = 'http://localhost:8887') {
     try {
-        const client = new forge_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
+        const client = new forge_client_js_1.ForgeClient(baseUrl, process.env.FORGE_TOKEN);
         // Initialize stats
         const stats = {
             projects: { total: 0 },

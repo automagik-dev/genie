@@ -6,7 +6,7 @@
 
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { ForgeClient } = require('../../forge.js');
+const { ForgeClient } = require('../../src/lib/forge-client.js');
 
 async function test() {
   console.log('🧪 Test 1: Project Creation\n');

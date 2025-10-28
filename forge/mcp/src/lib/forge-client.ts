@@ -5,7 +5,7 @@
 
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { ForgeClient: BaseForgeClient } = require('../../../../forge.js');
+const { ForgeClient: BaseForgeClient } = require('../../../../src/lib/forge-client.js');
 
 /**
  * User-facing error for MCP tools
@@ -73,15 +73,35 @@ export class ForgeClient {
     // Prefer /api/info which already contains executor profiles under a stable shape
     // This avoids strict schema issues from /api/profiles (e.g., missing top-level `executors`).
     return this.wrap(async () => {
-      const info: any = await this.client.getSystemInfo();
+      const response: any = await this.client.getSystemInfo();
+      // Base client returns { success, data: {...} }, so unwrap it
+      const info = response?.data || response;
+
+      if (process.env.DEBUG_FORGE_PROFILES === '1') {
+        console.log('[DEBUG] getExecutorProfiles: response keys:', Object.keys(response || {}));
+        console.log('[DEBUG] getExecutorProfiles: info keys:', Object.keys(info || {}));
+        console.log('[DEBUG] getExecutorProfiles: has executors:', !!info?.executors);
+      }
+
       // Normalize to the same shape expected by callers of this method
       // Priority order:
-      // 1) info.executor_profiles (recommended)
-      // 2) info.profiles
-      // 3) Fallback to direct /api/profiles
-      const profiles = info?.executor_profiles || info?.profiles;
-      if (profiles) return profiles;
+      // 1) info.executors (current API format from /api/info)
+      // 2) info.executor_profiles (legacy fallback)
+      // 3) info.profiles (legacy fallback)
+      // 4) Fallback to direct /api/profiles
+      const profiles = info?.executors || info?.executor_profiles || info?.profiles;
+      if (profiles) {
+        // Ensure consistent shape: { executors: {...} }
+        if (profiles.executors) {
+          return profiles;
+        } else {
+          return { executors: profiles };
+        }
+      }
       // Fallback for older servers
+      if (process.env.DEBUG_FORGE_PROFILES === '1') {
+        console.log('[DEBUG] getExecutorProfiles: falling back to getExecutorProfiles()');
+      }
       return await this.client.getExecutorProfiles();
     }, 'Get executor profiles');
   }
