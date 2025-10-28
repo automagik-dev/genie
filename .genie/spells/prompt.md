@@ -324,7 +324,7 @@ Advanced models are trained to have excellent baseline aesthetic taste alongside
 - Styling / UI: Tailwind CSS, shadcn/ui, Radix Themes
 - Icons: Material Symbols, Heroicons, Lucide
 - Animation: Motion
-- Fonts: San Serif, Inter, Geist, Mona Sans, IBM Plex Sans, Manrope
+- Fonts: Alegreya Sans (headings), Manrope (body), Chivo Mono (code/monospace)
 
 ### Zero-to-One App Generation
 For complex app generation, use structured quality rubrics:

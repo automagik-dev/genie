@@ -702,6 +702,46 @@ const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
 let isShuttingDown = false;
 let serverConnection: any = null; // Store server connection for cleanup
 
+/**
+ * Keep the stdio transport alive until the connection explicitly closes.
+ * Prevents Node from exiting immediately after startup (regression: MCP server
+ * would launch and exit before Genie CLI could stay alive).
+ */
+function waitForStdioTransportShutdown(transport: StdioServerTransport): Promise<void> {
+  return new Promise((resolve) => {
+    const previousOnClose = transport.onclose;
+    const previousOnError = transport.onerror;
+
+    const finalize = (reason: string) => {
+      transport.onclose = previousOnClose;
+      transport.onerror = previousOnError;
+      if (debugMode) {
+        console.error(`MCP stdio transport stopping (${reason})`);
+      }
+      resolve();
+    };
+
+    transport.onclose = () => {
+      if (typeof previousOnClose === 'function') {
+        previousOnClose();
+      }
+      finalize('close');
+    };
+
+    transport.onerror = (error: unknown) => {
+      if (typeof previousOnError === 'function') {
+        previousOnError(error as Error);
+      }
+      finalize(`error: ${error instanceof Error ? error.message : String(error)}`);
+    };
+
+    // Ensure the stream remains in flowing mode so Node keeps the event loop alive.
+    if (typeof process.stdin.resume === 'function') {
+      process.stdin.resume();
+    }
+  });
+}
+
 async function gracefulShutdown(signal: string) {
   if (isShuttingDown) return;
   isShuttingDown = true;
@@ -821,8 +861,13 @@ syncAgentProfilesToForge()
   if (TRANSPORT === 'stdio') {
     const transport = new StdioServerTransport();
     await server.connect(transport);
+    serverConnection = transport;
+
     console.error('✅ Server started successfully (stdio)');
     console.error('Ready for Claude Desktop or MCP Inspector connections');
+
+    // Keep process alive until the transport signals shutdown.
+    await waitForStdioTransportShutdown(transport);
   } else if (TRANSPORT === 'httpStream' || TRANSPORT === 'http') {
     // HTTP Stream transport with OAuth2 authentication
     if (!oauth2Config) {

@@ -105,6 +105,10 @@ async function killProcess(pid, timeout = 5000) {
  */
 function findOrphanedServers(processes) {
     return processes.filter(proc => {
+        // Never mark the current process as orphaned
+        if (proc.pid === process.pid) {
+            return false;
+        }
         // Check if parent process is still alive
         if (proc.ppid === 1) {
             // Reparented to init (parent died)
