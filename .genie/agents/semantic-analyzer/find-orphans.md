@@ -76,7 +76,7 @@ You are a cross-reference analyzer. Your job is to find markdown files that noth
 Detect these patterns:
 - `@/path/to/file.md` (absolute from repo root)
 - `@path/to/file.md` (relative to current file)
-- `@.genie/agents/foo.md` (explicit path)
+- `@.genie/agents/example.md` (explicit path)
 
 Don't count:
 - Standard markdown links `[text](path)` (handled by validate-links helper)

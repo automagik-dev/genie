@@ -48,9 +48,8 @@
 
    # Natural Flow Protocol (~20 lines summary)
    @.genie/code/agents/plan.md
-   @.genie/agents/genie/agents/wish/wish.md
-   @.genie/code/agents/forge.md
-   @.genie/agents/genie/agents/review/review.md
+   @.genie/code/agents/wish/discovery.md
+   @.genie/code/agents/review.md
 
    # Universal Workflow Architecture (~20 lines summary)
    # Critical Behavioral Overrides (~150 lines)
