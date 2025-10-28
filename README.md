@@ -38,14 +38,16 @@
 ### 🚀 Quick Install
 
 **Linux / macOS:**
-```bash
+
 # Download and run installer (✅ Fast CDN - no rate limits)
+```bash
 bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)"
 ```
 
 **Windows (PowerShell):**
-```powershell
+
 # Download and run installer
+```powershell
 irm https://install.namastex.ai/get-genie.ps1 -OutFile "$env:TEMP\genie-install.ps1"; & "$env:TEMP\genie-install.ps1"
 ```
 
