@@ -1,0 +1,67 @@
+name: 🔄 Sync Dev After Release
+
+on:
+  workflow_run:
+    workflows: ["🚀 Unified Release"]
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-dev:
+    name: Sync dev with main
+    runs-on: ubuntu-latest
+    # Only run if the release workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main
+
+      - name: 🔧 Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 🔄 Sync dev branch
+        run: |
+          # Fetch latest main and dev
+          git fetch origin main
+          git fetch origin dev || git fetch origin main:dev
+
+          # Checkout dev (create if doesn't exist)
+          git checkout -B dev origin/dev 2>/dev/null || git checkout -b dev origin/main
+
+          # Merge main into dev
+          git merge origin/main --no-edit -m "chore: sync dev with main after release
+
+Automated sync after CI/CD version bump and changelog update.
+
+Triggered by: ${{ github.event.workflow_run.display_title }}
+Run: ${{ github.event.workflow_run.html_url }}"
+
+          # Push to dev
+          git push origin dev
+
+      - name: ✅ Report Success
+        if: success()
+        run: |
+          echo "✅ Dev branch synced successfully with main"
+          echo "Main commit: $(git rev-parse origin/main)"
+          echo "Dev commit: $(git rev-parse dev)"
+
+      - name: ⚠️ Report Failure
+        if: failure()
+        run: |
+          echo "❌ Failed to sync dev branch"
+          echo "You may need to manually resolve conflicts"
+          exit 1
