@@ -1430,7 +1430,8 @@ async function startGenieServer(debug = false) {
         attempt += 1;
         mcpChild = (0, child_process_1.spawn)('node', [mcpServer], {
             stdio: 'inherit',
-            env
+            env,
+            detached: false // Keep in same process group so Ctrl+C works
         });
         const timer = setTimeout(() => {
             // After grace period, consider startup successful
@@ -1481,8 +1482,16 @@ async function startGenieServer(debug = false) {
                     console.log('');
                     console.log(genieGradient('📊 Launching dashboard...'));
                     console.log('');
-                    // Launch the engagement dashboard
-                    execGenie(['dashboard', '--live']);
+                    // Launch the engagement dashboard in background
+                    // Don't use execGenie as it exits parent when child exits
+                    const dashboardScript = path_1.default.join(__dirname, 'genie.js');
+                    const dashboardChild = (0, child_process_1.spawn)('node', [dashboardScript, 'dashboard', '--live'], {
+                        stdio: 'inherit',
+                        detached: false,
+                        env: process.env
+                    });
+                    // Don't wait for dashboard to exit - let it run independently
+                    // The parent process stays alive via stdin being open
                     // Keep stdin open so process stays alive until Ctrl+C or MCP exit
                     console.log('');
                     console.log('💡 Press ' + performanceGradient('Ctrl+C') + ' to stop Genie');
