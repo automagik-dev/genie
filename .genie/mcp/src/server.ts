@@ -42,6 +42,9 @@ import { detectGenieRole, isReadOnlyFilesystem } from './lib/role-detector.js';
 import { startHttpServer } from './lib/http-server.js';
 import { OAuth2Config } from './lib/oauth-provider.js';
 
+// Import process cleanup utilities
+import { writePidFile, isServerAlreadyRunning, cleanupStaleMcpServers } from './lib/process-cleanup.js';
+
 const execFileAsync = promisify(execFile);
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
@@ -153,7 +156,7 @@ function loadForgeExecutor(): { createForgeExecutor: () => any } | null {
 }
 
 // Helper: List recent sessions (uses Forge API)
-async function listSessions(): Promise<Array<{ name: string; agent: string; status: string; created: string; lastUsed: string }>> {
+async function listSessions(): Promise<Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }>> {
   try {
     // ALWAYS use Forge API for session listing (complete executor replacement)
     const mod = loadForgeExecutor();
@@ -165,7 +168,8 @@ async function listSessions(): Promise<Array<{ name: string; agent: string; stat
     const forgeSessions = await forgeExecutor.listSessions();
 
     const sessions = forgeSessions.map((entry: any) => ({
-      name: entry.name || entry.sessionId || 'unknown',
+      id: entry.id || 'unknown', // Task ID for Forge API lookups
+      name: entry.agent || 'unknown', // Use agent name as display name
       agent: entry.agent || 'unknown',
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
@@ -222,6 +226,7 @@ async function listSessions(): Promise<Array<{ name: string; agent: string; stat
       const store = JSON.parse(content);
 
       const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
+        id: entry.sessionId || key,
         name: entry.name || key,
         agent: entry.agent || key,
         status: entry.status || 'unknown',
@@ -265,6 +270,64 @@ async function listSessions(): Promise<Array<{ name: string; agent: string; stat
     } catch (error) {
       return [];
     }
+  }
+}
+
+// Helper: View session transcript (uses Forge API directly)
+async function viewSession(taskId: string): Promise<{status: string; transcript: string | null; error?: string}> {
+  try {
+    const mod = loadForgeExecutor();
+    if (!mod || typeof mod.createForgeExecutor !== 'function') {
+      return {
+        status: 'error',
+        transcript: null,
+        error: 'Forge executor unavailable (did you build the CLI?)'
+      };
+    }
+    const forgeExecutor = mod.createForgeExecutor();
+
+    // Get task details to find latest attempt
+    const { ForgeClient } = require('../../../forge.js');
+    const forge = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887', process.env.FORGE_TOKEN);
+
+    // Get task attempts for this task
+    const attempts = await forge.listTaskAttempts(taskId);
+
+    if (!Array.isArray(attempts) || !attempts.length) {
+      return {
+        status: 'error',
+        transcript: null,
+        error: `No attempts found for task ${taskId}`
+      };
+    }
+
+    // Get latest attempt
+    const latestAttempt = attempts[attempts.length - 1];
+    const attemptId = latestAttempt.id;
+
+    // Get attempt status
+    const attemptDetails = await forge.getTaskAttempt(attemptId);
+    const status = attemptDetails.status || 'unknown';
+
+    // Get execution logs
+    const processes = await forge.listExecutionProcesses(attemptId);
+
+    let transcript = null;
+    if (processes.length > 0) {
+      const latestProcess = processes[processes.length - 1];
+      transcript = latestProcess.output || latestProcess.logs || null;
+    }
+
+    return {
+      status,
+      transcript,
+    };
+  } catch (error: any) {
+    return {
+      status: 'error',
+      transcript: null,
+      error: error.message || 'Unknown error viewing session'
+    };
   }
 }
 
@@ -386,14 +449,14 @@ server.tool('list_sessions', 'List active and recent Genie agent sessions. Shows
 
   sessions.forEach((session, index) => {
     const { displayId } = transformDisplayPath(session.agent);
-    response += `${index + 1}. **${session.name}**\n`;
+    response += `${index + 1}. **${session.id}** (${session.name})\n`;
     response += `   Agent: ${displayId}\n`;
     response += `   Status: ${session.status}\n`;
     response += `   Created: ${session.created}\n`;
     response += `   Last Used: ${session.lastUsed}\n\n`;
   });
 
-  response += 'Use "view" to see session transcript or "resume" to continue a session.';
+  response += 'Use "view" with the session ID (e.g., "c74111b4-...") to see transcript or "resume" to continue a session.';
 
   return { content: [{ type: 'text', text: response }] };
 });
@@ -475,20 +538,31 @@ server.tool('resume', 'Resume an existing agent session with a follow-up prompt.
 
 // Tool: view - View session transcript
 server.tool('view', 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.', {
-  sessionId: z.string().describe('Session name to view (get from list_sessions tool). Example: "146-session-name-architecture"'),
+  sessionId: z.string().describe('Task ID to view (get from list_sessions tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
   full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
 }, async (args) => {
   try {
-    const cliArgs = ['view', args.sessionId];
-    if (args.full) {
-      cliArgs.push('--full');
-    }
-    const { stdout, stderr } = await runCliCommand(cliArgs, 30000);
-    const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
+    const result = await viewSession(args.sessionId);
 
-    return { content: [{ type: 'text', text: getVersionHeader() + `Session ${args.sessionId} transcript:\n\n${output}` }] };
+    if (result.error) {
+      return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error viewing session:\n\n${result.error}` }] };
+    }
+
+    let response = getVersionHeader();
+    response += `**Task:** ${args.sessionId}\n`;
+    response += `**Status:** ${result.status}\n\n`;
+
+    if (result.transcript) {
+      const lines = result.transcript.split('\n');
+      const displayLines = args.full ? lines : lines.slice(-50); // Show last 50 lines if not full
+      response += `**Transcript:**\n\`\`\`\n${displayLines.join('\n')}\n\`\`\``;
+    } else {
+      response += `**Transcript:** (No logs available yet)`;
+    }
+
+    return { content: [{ type: 'text', text: response }] };
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('view session', error) }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error: ${error.message}` }] };
   }
 });
 
@@ -947,6 +1021,56 @@ const readOnly = isReadOnlyFilesystem(roleInfo.role);
 // Debug mode detection
 const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
 
+// ============================================================================
+// CLEANUP HANDLERS - Prevent zombie processes (Fix: MCP server proliferation)
+// ============================================================================
+
+let isShuttingDown = false;
+let serverConnection: any = null; // Store server connection for cleanup
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  if (debugMode) {
+    console.error(`\n📡 Received ${signal}, shutting down MCP server gracefully...`);
+  }
+
+  try {
+    // Close server connection if exists
+    if (serverConnection && typeof serverConnection.close === 'function') {
+      await serverConnection.close();
+    }
+
+    // Give pending operations time to finish (max 2s)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    if (debugMode) {
+      console.error('✅ MCP server shutdown complete');
+    }
+  } catch (error) {
+    console.error(`⚠️  Error during shutdown: ${error}`);
+  } finally {
+    process.exit(0);
+  }
+}
+
+// Register signal handlers for all termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  console.error(`❌ Uncaught exception: ${error.message}`);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(`❌ Unhandled rejection: ${reason}`);
+  gracefulShutdown('unhandledRejection');
+});
+
 // Start server with configured transport (only log in debug mode)
 if (debugMode) {
   // Verbose startup logs (debug mode only)
@@ -977,6 +1101,33 @@ if (debugMode) {
   console.error('WebSocket: Real-time streaming enabled');
   console.error('');
 }
+
+// Check for existing server and cleanup orphans
+(async () => {
+  // Cleanup orphaned servers on startup
+  const cleanupResult = await cleanupStaleMcpServers({
+    killOrphans: true,
+    dryRun: false
+  });
+
+  if (debugMode && cleanupResult.orphans > 0) {
+    console.error(`🧹 Cleaned up ${cleanupResult.killed} orphaned MCP server(s)`);
+    if (cleanupResult.failed > 0) {
+      console.error(`⚠️  Failed to kill ${cleanupResult.failed} process(es)`);
+    }
+  }
+
+  // Check if another server is already running for this workspace
+  const serverStatus = isServerAlreadyRunning(WORKSPACE_ROOT);
+  if (serverStatus.running) {
+    console.error(`⚠️  MCP server already running (PID ${serverStatus.pid})`);
+    console.error('   Kill the existing server first or check for stale PID file');
+    process.exit(1);
+  }
+
+  // Write PID file for this instance
+  writePidFile(WORKSPACE_ROOT);
+})();
 
 // Forge sync (always show, one line)
 process.stderr.write('🔄 Syncing agent profiles...');

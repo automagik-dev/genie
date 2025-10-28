@@ -4,7 +4,9 @@
  * Verify Forge backend is accessible and can create "Genie Sessions" project
  */
 
-import { ForgeClient } from '../../forge';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { ForgeClient } = require('../../forge.js');
 
 async function test() {
   console.log('🧪 Test 1: Project Creation\n');

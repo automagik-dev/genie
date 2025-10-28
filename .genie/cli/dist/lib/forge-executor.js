@@ -83,9 +83,30 @@ class ForgeExecutor {
             }
             // Fetch current profiles to extract built-in variants
             const currentProfiles = await this.forge.getExecutorProfiles();
-            let accumulated = typeof currentProfiles.content === 'string'
-                ? JSON.parse(currentProfiles.content)
-                : currentProfiles;
+            // Parse profiles response (Forge returns { content: "JSON string" })
+            let accumulated;
+            if (typeof currentProfiles.content === 'string') {
+                try {
+                    accumulated = JSON.parse(currentProfiles.content);
+                }
+                catch (parseError) {
+                    throw new Error(`Failed to parse Forge profiles: ${parseError.message}`);
+                }
+            }
+            else if (typeof currentProfiles === 'object' && currentProfiles.content) {
+                accumulated = currentProfiles.content;
+            }
+            else {
+                accumulated = currentProfiles;
+            }
+            // Validate that profiles have executors field
+            if (!accumulated || typeof accumulated !== 'object') {
+                throw new Error('Invalid profiles structure: expected object with executors field');
+            }
+            if (!accumulated.executors) {
+                // Initialize empty executors if missing (first-time setup)
+                accumulated = { executors: {} };
+            }
             // Strategy: Sync ONE agent at a time (no batching complexity, guaranteed under 2MB)
             // Each request: built-ins (~200KB) + 1 agent (~65KB) = ~265KB per call
             let successfulBatches = 0;
@@ -213,6 +234,20 @@ class ForgeExecutor {
      * @returns Merged profiles
      */
     mergeProfiles(current, agentProfile) {
+        // Validate inputs
+        if (!current || typeof current !== 'object') {
+            throw new Error('mergeProfiles: current must be an object');
+        }
+        if (!agentProfile || typeof agentProfile !== 'object') {
+            throw new Error('mergeProfiles: agentProfile must be an object');
+        }
+        // Ensure executors field exists in both
+        if (!current.executors) {
+            current.executors = {};
+        }
+        if (!agentProfile.executors) {
+            throw new Error('mergeProfiles: agentProfile missing executors field');
+        }
         const merged = { executors: {} };
         // Get all executors from both current and agent profile
         const allExecutors = new Set([
@@ -227,6 +262,10 @@ class ForgeExecutor {
             // Add/update agent variant (overwrites if exists)
             const agentVariants = agentProfile.executors?.[executor] || {};
             Object.assign(merged.executors[executor], agentVariants);
+        }
+        // Final validation
+        if (!merged.executors || typeof merged.executors !== 'object') {
+            throw new Error('mergeProfiles: merged result missing executors field');
         }
         return merged;
     }
