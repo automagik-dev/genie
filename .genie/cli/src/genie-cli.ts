@@ -1383,16 +1383,46 @@ async function startGenieServer(debug = false): Promise<void> {
   const mcpPortConflict = await checkPortConflict(mcpPort);
   if (mcpPortConflict) {
     console.log('');
-    console.error(`❌ Port ${mcpPort} is already in use by another process`);
-    console.error(`   PID: ${mcpPortConflict.pid}`);
-    console.error(`   Command: ${mcpPortConflict.command}`);
-    console.error('');
-    console.error('Please kill that process or use a different port:');
-    console.error(`   kill ${mcpPortConflict.pid}`);
-    console.error(`   # or use a different port:`);
-    console.error(`   MCP_PORT=8886 genie`);
-    console.error('');
-    process.exit(1);
+    console.log(performanceGradient('⚠️  Another Genie instance is already running'));
+    console.log('');
+    console.log(`   Port: ${mcpPort}`);
+    console.log(`   PID: ${mcpPortConflict.pid}`);
+    console.log(`   Command: ${mcpPortConflict.command}`);
+    console.log('');
+
+    // Create readline for takeover prompt
+    const takeoverRl = require('readline').createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    const answer = await new Promise<string>((resolve) => {
+      takeoverRl.question(performanceGradient('? Take over and shutdown the other instance? [y/N]: '), resolve);
+    });
+    takeoverRl.close();
+
+    if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+      console.log('');
+      console.log(performanceGradient('🔄 Taking over from previous instance...'));
+
+      // Kill the old MCP server process
+      try {
+        process.kill(parseInt(mcpPortConflict.pid), 'SIGTERM');
+        // Wait a bit for graceful shutdown
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log(successGradient('✅ Previous instance stopped'));
+      } catch (err: any) {
+        console.error(`⚠️  Could not stop previous instance: ${err.message}`);
+        console.error(`   You may need to kill it manually: kill ${mcpPortConflict.pid}`);
+        process.exit(1);
+      }
+    } else {
+      console.log('');
+      console.log('❌ Cancelled. To use a different port:');
+      console.log(`   MCP_PORT=8886 genie`);
+      console.log('');
+      process.exit(0);
+    }
   }
 
   // Phase 3: Start MCP server with SSE transport
