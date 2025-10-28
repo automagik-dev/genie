@@ -199,7 +199,6 @@ docs/ag-ui/*.html
 !.genie/cli/snapshots/archived/
 
 # Per-user triad files (use templates to initialize)
-.genie/TODO.md
 .genie/USERCONTEXT.md
 
 # Local QA evidence/outputs (workflows and checklists ARE committed)

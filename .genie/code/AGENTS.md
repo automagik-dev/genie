@@ -529,4 +529,126 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 - challenge: present strongest counterarguments and disconfirming evidence; revise stance with confidence.
 - tracer: propose instrumentation (signals/probes), expected outputs, and priority.
 
+### Amendment #Code-9: Backup & Version Implementation Details
+**Extends Base Amendment #9** - TypeScript implementation specifics
+
+**Backup Function:**
+```typescript
+backupGenieDirectory(workspacePath, reason: 'old_genie' | 'pre_rollback')
+```
+- Location: `.genie/cli/src/lib/fs-utils.ts`
+- Backs up: `.genie/` + root docs (AGENTS.md, CLAUDE.md)
+- Output: `.genie/backups/<timestamp>/`
+- Used by: init.ts (old genie), rollback.ts (pre-restore)
+
+**Version Schema:**
+```typescript
+// .genie/state/version.json (committed)
+interface GenieVersion {
+  version: string;              // "2.5.0-rc.58"
+  installedAt: string;          // ISO timestamp
+  updatedAt: string;            // ISO timestamp
+  commit: string;               // Git SHA
+  packageName: string;          // "automagik-genie"
+  customizedFiles: string[];    // User modifications
+  deletedFiles: string[];       // User deletions
+  lastUpgrade: string | null;
+  previousVersion: string | null;
+  upgradeHistory: Array<{
+    from: string;
+    to: string;
+    date: string;
+    success: boolean;
+  }>;
+}
+```
+
+**Files:**
+- `.genie/cli/src/lib/fs-utils.ts` - Unified backup
+- `.genie/cli/src/commands/init.ts` - Uses backup (old genie only)
+- `.genie/cli/src/commands/update.ts` - npm-only (150 lines from 326)
+- `.genie/cli/src/commands/rollback.ts` - Uses backup
+- `.genie/cli/src/lib/upgrade/merge-strategy.ts` - Deprecated
+
+**See:** GitHub #260 for routing optimization phases
+
+### Amendment #Code-10: File Size Refactoring Tactics
+**Extends Base Amendment #10** - TypeScript-specific refactoring how-to
+
+**Extraction Patterns:**
+1. **Extract commands:** Move handlers to separate files (`update.ts`, `init.ts`)
+2. **Extract utilities:** Move helpers to `lib/` modules
+3. **Extract types:** Move interfaces to `types.ts`
+4. **Extract constants:** Move config to separate file
+5. **Domain separation:** Group related functionality
+
+**Example:**
+```typescript
+// Before: genie-cli.ts = 1508 lines (bloated)
+// After: Move update logic → update.ts = 150 lines
+// Result: genie-cli.ts = 1439 lines (better, not done)
+// Target: <1000 lines
+```
+
+**Violation:** 2025-10-26, `genie-cli.ts` 1508 lines (reduced to 1439)
+
+### Amendment #Code-11: Git Workflow Implementation
+**Extends Base Development Workflow** - Git commands and worktree specifics
+
+**Branch Strategy (Base Policy):**
+- `dev` is the main development branch (enforced by Base Genie)
+- Feature branches merge to `dev` via PR (enforced by Base Genie)
+- Stable releases merge `dev` → `main` (enforced by Base Genie)
+
+**Worktree Isolation (Code Implementation):**
+Every Forge task creates dedicated worktree:
+```bash
+# Forge creates isolated workspace
+git worktree add /var/tmp/automagik-forge/worktrees/<task_id> -b feature/<task-slug>
+
+# Each task has:
+- Clean workspace (no conflicts)
+- Feature branch (auto-created)
+- Isolated changes (parallel development)
+
+# After PR merge:
+git worktree remove /var/tmp/automagik-forge/worktrees/<task_id>
+```
+
+**PR Creation:**
+```bash
+# Forge task completed → Create PR
+gh pr create --base dev --head feature/<task-slug> --title "..." --body "..."
+```
+
+**Core Philosophy:**
+- Forge is PRIMARY entry point (not manual git commands)
+- Each task = isolated worktree = no conflicts
+- Parallel development enabled
+
+### Amendment #Code-12: Test Execution Commands
+**Extends Base QA Standards** - Test command specifics
+
+**Pre-Push Validation (Automated):**
+```bash
+# All tests must pass before push
+pnpm run test:genie           # CLI tests
+pnpm run test:session-service # Session service tests
+pnpm run test:all             # Run both
+
+# Smoke test
+tests/identity-smoke.sh        # Quick validation
+```
+
+**Test Patterns:**
+```javascript
+// tests/genie-cli.test.mjs
+// tests/session-service.test.mjs
+```
+
+**CI/CD Hooks:**
+- Pre-commit: Token efficiency, cross-refs, worktree isolation
+- Pre-push: All tests, commit advisory, changelog validation
+- GitHub Actions: Full test suite + package validation
+
 @AGENTS.md
