@@ -149,6 +149,10 @@ if (Test-CommandExists pnpm) {
         }
     }
 
+    # Run pnpm setup to ensure global bin directory is configured
+    Write-Host "  Configuring pnpm global bin directory..."
+    pnpm setup 2>$null
+
     # Verify installation
     if (Test-CommandExists pnpm) {
         $pnpmVersion = pnpm -v
@@ -164,6 +168,12 @@ if (Test-CommandExists pnpm) {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 4. INSTALL/UPDATE GENIE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Ensure PNPM_HOME is set (in case pnpm was just installed)
+if ([string]::IsNullOrEmpty($env:PNPM_HOME)) {
+    $env:PNPM_HOME = "$env:LOCALAPPDATA\pnpm"
+    $env:Path = "$env:PNPM_HOME;$env:Path"
+}
 
 if (Test-CommandExists genie) {
     # Get installed version
