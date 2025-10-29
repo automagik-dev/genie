@@ -831,16 +831,14 @@ if (debugMode) {
     }
   }
 
-  // Check if another server is already running for this workspace
-  const serverStatus = isServerAlreadyRunning(WORKSPACE_ROOT);
-  if (serverStatus.running) {
-    console.error(`⚠️  MCP server already running (PID ${serverStatus.pid})`);
-    console.error('   Kill the existing server first or check for stale PID file');
-    process.exit(1);
-  }
+  // NOTE: PID file conflict check moved to server-manager.ts (with takeover prompt)
+  // This allows user-friendly takeover instead of immediate exit
 
-  // Write PID file for this instance
-  writePidFile(WORKSPACE_ROOT);
+  // Write PID file ONLY for HTTP/SSE transport (singleton per port)
+  // Stdio transport allows multiple instances (no PID file needed)
+  if (TRANSPORT === 'httpStream' || TRANSPORT === 'http') {
+    writePidFile(WORKSPACE_ROOT);
+  }
 })();
 
 // Forge sync (always show, one line)

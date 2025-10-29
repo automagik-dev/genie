@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build project
+        run: pnpm run build
+
       - name: Verify CLI basic commands
         run: |
           echo "=== Testing CLI Help ==="

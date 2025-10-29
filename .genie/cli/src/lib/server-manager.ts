@@ -13,7 +13,7 @@ import { formatTokenMetrics } from './token-tracker';
 import { loadConfig as loadGenieConfig, saveConfig as saveGenieConfig } from './config-manager';
 import { loadOrCreateConfig as loadOrCreateMCPConfig } from './config-manager';
 import { startNgrokTunnel } from './tunnel-manager';
-import { checkPortConflict, formatUptime, getBrowserOpenCommand } from './cli-utils';
+import { checkPortConflict, formatUptime, getBrowserOpenCommand, isProcessAlive, killProcess } from './cli-utils';
 
 // Universe Genie-themed gradients 🧞✨🌌
 const genieGradient = gradient(['#0066ff', '#9933ff', '#ff00ff']); // Deep Blue → Purple → Fuscia
@@ -120,6 +120,9 @@ export async function startGenieServer(debug = false): Promise<void> {
 
   // ChatGPT tunnel setup
   await setupChatGPTTunnel(mcpPort, env);
+
+  // Phase 3: Check for MCP PID file conflict and handle takeover
+  await handleMCPPIDConflict();
 
   // Phase 3: Check for MCP port conflict and handle takeover
   await handleMCPPortConflict(mcpPort);
@@ -600,6 +603,82 @@ async function handleMCPPortConflict(mcpPort: string): Promise<void> {
       console.log('');
       process.exit(0);
     }
+  }
+}
+
+/**
+ * Handle MCP PID file conflict with takeover prompt
+ */
+async function handleMCPPIDConflict(): Promise<void> {
+  const pidFile = path.join(process.cwd(), '.genie', 'state', 'mcp-server.pid');
+
+  if (!fs.existsSync(pidFile)) {
+    return; // No PID file, all good
+  }
+
+  try {
+    const pidStr = fs.readFileSync(pidFile, 'utf-8').trim();
+    const pid = parseInt(pidStr, 10);
+
+    if (isNaN(pid)) {
+      // Invalid PID file, clean it up
+      fs.unlinkSync(pidFile);
+      return;
+    }
+
+    if (!isProcessAlive(pid)) {
+      // Stale PID file, clean it up
+      fs.unlinkSync(pidFile);
+      return;
+    }
+
+    // Process is alive - offer takeover prompt
+    console.log('');
+    console.log(performanceGradient('⚠️  MCP server already running'));
+    console.log('');
+    console.log(`   PID: ${pid}`);
+    console.log(`   PID File: ${pidFile}`);
+    console.log('');
+
+    // Create readline for takeover prompt
+    const takeoverRl = require('readline').createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    const answer = await new Promise<string>((resolve) => {
+      takeoverRl.question(performanceGradient('? Take over and shutdown the other instance? [y/N]: '), resolve);
+    });
+    takeoverRl.close();
+
+    if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
+      console.log('');
+      console.log(performanceGradient('🔄 Taking over from previous instance...'));
+
+      // Kill the old MCP server process
+      const killed = await killProcess(pid, 5000);
+      if (killed) {
+        console.log(successGradient('✅ Previous instance stopped'));
+        // Clean up PID file
+        if (fs.existsSync(pidFile)) {
+          fs.unlinkSync(pidFile);
+        }
+      } else {
+        console.error(`⚠️  Could not stop previous instance (PID ${pid})`);
+        console.error(`   You may need to kill it manually: kill ${pid}`);
+        process.exit(1);
+      }
+    } else {
+      console.log('');
+      console.log('❌ Cancelled. To force start, kill the existing instance:');
+      console.log(`   kill ${pid}`);
+      console.log(`   rm ${pidFile}`);
+      console.log('');
+      process.exit(0);
+    }
+  } catch (error: any) {
+    console.error(`⚠️  Error checking PID file: ${error.message}`);
+    // Continue anyway, MCP server will handle it
   }
 }
 

@@ -107,3 +107,46 @@ export function getBrowserOpenCommand(): string {
   if (platform === 'win32') return 'start';
   return 'xdg-open'; // Linux (non-WSL)
 }
+
+/**
+ * Check if a process is alive by PID
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    // Send signal 0 (no-op) to check if process exists
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kill a process gracefully (SIGTERM first, then SIGKILL if needed)
+ */
+export async function killProcess(pid: number, timeout = 5000): Promise<boolean> {
+  if (!isProcessAlive(pid)) {
+    return true; // Already dead
+  }
+
+  try {
+    // Try SIGTERM first (graceful)
+    process.kill(pid, 'SIGTERM');
+
+    // Wait for process to exit
+    const start = Date.now();
+    while (isProcessAlive(pid) && Date.now() - start < timeout) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // If still alive, force kill with SIGKILL
+    if (isProcessAlive(pid)) {
+      process.kill(pid, 'SIGKILL');
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    return !isProcessAlive(pid);
+  } catch (error) {
+    return false;
+  }
+}
