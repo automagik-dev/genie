@@ -253,14 +253,30 @@ export async function syncAgentProfilesToForge(): Promise<void> {
 // Load OAuth2 configuration (if available)
 export function loadOAuth2Config(): any | null {
   const workspaceRoot = findWorkspaceRoot();
-  try {
-    const configModPath = path.join(workspaceRoot, '.genie', 'cli', 'dist', 'lib', 'config-manager.js');
-    if (fs.existsSync(configModPath)) {
-      const { loadOAuth2Config } = require(configModPath);
-      return loadOAuth2Config();
+
+  // Try multiple locations for config-manager.js
+  const searchPaths = [
+    // 1. User workspace (for dev mode)
+    path.join(workspaceRoot, '.genie', 'cli', 'dist', 'lib', 'config-manager.js'),
+
+    // 2. Global install (resolved relative to this MCP server file)
+    // MCP server at: node_modules/automagik-genie/.genie/mcp/dist/lib/server-helpers.js
+    // CLI at:        node_modules/automagik-genie/.genie/cli/dist/lib/config-manager.js
+    path.join(__dirname, '../../../cli/dist/lib/config-manager.js'),
+  ];
+
+  for (const configModPath of searchPaths) {
+    try {
+      if (fs.existsSync(configModPath)) {
+        const { loadOAuth2Config } = require(configModPath);
+        return loadOAuth2Config();
+      }
+    } catch (error) {
+      // Try next path
+      continue;
     }
-  } catch (error) {
-    // Config not available (expected for stdio transport)
   }
+
+  // Config not available (expected for stdio transport)
   return null;
 }
