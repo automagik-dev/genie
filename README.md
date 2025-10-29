@@ -56,11 +56,11 @@ irm https://install.namastex.ai/get-genie.ps1 -OutFile "$env:TEMP\genie-install.
 npm install -g automagik-genie@latest
 ```
 
-**For brave users who want bleeding edge:**
+**For developers who want bleeding edge (release candidates):**
 ```bash
 npm install -g automagik-genie@next
 ```
-⚠️ The `@next` tag contains the latest RC builds with experimental features. Expect rough edges!
+⚠️ The `@next` tag contains pre-release RC builds with experimental features. Use `@latest` for production.
 
 **What the installer does:**
 - ✅ Detects your OS and architecture automatically
