@@ -1,7 +1,5 @@
-# Ignore compiled JS in src/ but NOT in dist/
+# Ignore compiled JS in src/
 src/**/*.js
 view/
 
-# Keep dist/ files for npm packaging
-!dist/
-!dist/**
+# dist/ is ignored by root .gitignore (build artifacts, not tracked)
