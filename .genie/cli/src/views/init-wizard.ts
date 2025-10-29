@@ -142,8 +142,8 @@ export async function runInitWizard(options: WizardOptions): Promise<WizardConfi
       return values.templates?.includes('code') ? 'confirm' : null;
     },
     name: 'installHooks',
-    message: '🔧 Install git hooks? (validates commits, runs tests before push)',
-    initial: true
+    message: '🔧 Install git hooks? (Advanced - auto-validates commits, runs tests, prevents broken pushes)',
+    initial: false
   });
 
   const response = await prompts(questions, {
