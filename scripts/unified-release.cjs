@@ -72,6 +72,10 @@ async function main() {
     bumpType = 'promote';
     version = promoteRcToStable(version);
     log('magenta', '📌', `Promoting RC → Stable: ${pkg.version} → ${version}`);
+    // Update package.json with stable version
+    pkg.version = version;
+    fs.writeFileSync(PKG_PATH, JSON.stringify(pkg, null, 2) + '\n');
+    log('green', '✅', `Updated package.json to ${version}`);
   } else if (opts['bump']) {
     bumpType = opts['bump'];
     exec(`pnpm run bump:${bumpType}`);
