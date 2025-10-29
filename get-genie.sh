@@ -384,7 +384,15 @@ install_pnpm() {
     # Let npm handle pnpm installation (npm knows PATH)
     npm install -g pnpm
 
-    # Verify it's immediately available
+    # Run pnpm setup to configure global bin directory and PATH
+    echo -e "${CYAN}🔧 Configuring pnpm global bin directory...${NC}"
+    pnpm setup 2>/dev/null || true
+
+    # Try to source shell profiles to make pnpm immediately available
+    export PNPM_HOME="$HOME/.local/share/pnpm"
+    export PATH="$PNPM_HOME:$PATH"
+
+    # Verify it's available now
     if ! command_exists pnpm; then
         echo -e "${YELLOW}⚠️  pnpm requires shell restart, will use npm fallback${NC}"
         echo ""
@@ -400,9 +408,18 @@ install_pnpm() {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 install_genie() {
+    # Ensure PNPM_HOME is set (in case pnpm was just installed)
+    export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+    export PATH="$PNPM_HOME:$PATH"
+
     # Determine which package manager to use (pnpm if available, npm fallback)
     local PKG_MGR="npm"
     if command_exists pnpm; then
+        # Run pnpm setup if global bin dir not configured (idempotent)
+        if ! pnpm root -g &>/dev/null; then
+            echo -e "${CYAN}🔧 Configuring pnpm global bin directory...${NC}"
+            pnpm setup 2>/dev/null || true
+        fi
         PKG_MGR="pnpm"
     fi
 
