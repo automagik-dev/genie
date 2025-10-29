@@ -86,12 +86,12 @@ export function loadForgeExecutor(): { createForgeExecutor: () => any } | null {
   // Prefer compiled dist (works in published package)
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require('../../cli/dist/lib/forge-executor');
+    return require('../../../cli/dist/lib/forge-executor');
   } catch (_distErr) {
     // Fallback to TypeScript sources for local dev (within repo)
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      return require('../../cli/src/lib/forge-executor');
+      return require('../../../cli/src/lib/forge-executor');
     } catch (_srcErr) {
       return null;
     }
