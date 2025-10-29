@@ -8,6 +8,24 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.5] - 2025-10-29
+
+**MCP server fixes + release automation improvements**
+
+### 🐛 Bug Fixes
+- Fixed OAuth config loading in fresh workspaces (#375)
+- Fixed Forge executor detection broken due to incorrect paths (#376, #344)
+- Fixed MCP stdio keepalive regression (#370)
+- Fixed promote-to-stable workflow not updating package.json (#377)
+
+### ✨ Improvements
+- Added HTTP takeover prompt for port conflicts (#373)
+- Consolidated release workflows (#367, #366)
+- Clarified @latest vs @next installation docs
+- MCP transport fixes + build cleanup (#374)
+
+---
+
 ## [2.5.5-rc.96] - 2025-10-29
 
 No changelog entries (packaging-only RC).
