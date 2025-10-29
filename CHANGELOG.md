@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.5-rc.97] - 2025-10-29
+
+No changelog entries (packaging-only RC).
+
 ## [2.5.5] - 2025-10-29
 
 **MCP server fixes + release automation improvements**
