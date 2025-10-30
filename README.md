@@ -125,7 +125,7 @@ It ships a ready-to-run `.genie/` workspace with 30+ specialized agents, integra
 
 - **Node.js 18+** (tested with pnpm 10+)
 - **Git** for snapshot creation
-- (Optional) **pnpm** if you plan to run tests locally: `corepack enable`
+- (Optional) **pnpm** if you plan to run tests locally: `corepack enable pnpm`
 
 ### First Run
 

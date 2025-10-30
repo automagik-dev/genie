@@ -130,7 +130,7 @@ Uses standard Done Report structure (AGENTS.md §Done Report Template) and File 
 Use these instructions whenever Automagik Genie needs to implement features in this repository.
 
 ### Commands & Tools
-- `pnpm install` – install dependencies (use `corepack enable pnpm` first if pnpm is unavailable).
+- `pnpm install` – install dependencies (if pnpm is unavailable, use `corepack enable pnpm` to install it efficiently via Node's built-in corepack).
 - `pnpm run build:genie` – compile the CLI TypeScript sources under `.genie/cli/src/` and refresh `.genie/cli/dist/`.
 - `pnpm run build:mcp` – compile the MCP server in `.genie/mcp/src/` when changes touch the server.
 - `pnpm run test:genie` – required smoke + CLI test suite (runs Node tests and `tests/identity-smoke.sh`).

@@ -381,18 +381,17 @@ install_pnpm() {
 
     echo -e "${MAGENTA}⚡ Installing pnpm (fast package manager)...${NC}"
 
-    # Let npm handle pnpm installation (npm knows PATH)
-    npm install -g pnpm
+    # Use corepack (built into Node.js 16.9+) - most efficient method
+    if command_exists corepack; then
+        echo -e "${CYAN}🔧 Enabling pnpm via corepack (built-in)...${NC}"
+        corepack enable pnpm
+    else
+        # Fallback: Use npm if corepack unavailable (older Node versions)
+        echo -e "${CYAN}🔧 Installing pnpm via npm (corepack not available)...${NC}"
+        npm install -g pnpm
+    fi
 
-    # Run pnpm setup to configure global bin directory and PATH
-    echo -e "${CYAN}🔧 Configuring pnpm global bin directory...${NC}"
-    pnpm setup 2>/dev/null || true
-
-    # Try to source shell profiles to make pnpm immediately available
-    export PNPM_HOME="$HOME/.local/share/pnpm"
-    export PATH="$PNPM_HOME:$PATH"
-
-    # Verify it's available now
+    # Verify installation
     if ! command_exists pnpm; then
         echo -e "${YELLOW}⚠️  pnpm requires shell restart, will use npm fallback${NC}"
         echo ""
@@ -408,18 +407,9 @@ install_pnpm() {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 install_genie() {
-    # Ensure PNPM_HOME is set (in case pnpm was just installed)
-    export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-    export PATH="$PNPM_HOME:$PATH"
-
     # Determine which package manager to use (pnpm if available, npm fallback)
     local PKG_MGR="npm"
     if command_exists pnpm; then
-        # Run pnpm setup if global bin dir not configured (idempotent)
-        if ! pnpm root -g &>/dev/null; then
-            echo -e "${CYAN}🔧 Configuring pnpm global bin directory...${NC}"
-            pnpm setup 2>/dev/null || true
-        fi
         PKG_MGR="pnpm"
     fi
 
