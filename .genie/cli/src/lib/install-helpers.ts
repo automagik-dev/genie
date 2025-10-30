@@ -2,8 +2,9 @@
  * Install Flow Helpers - Master Genie orchestration for fresh installations
  *
  * Architecture:
- * 1. Launch Master Genie with discovery + installation prompt
- * 2. User continues in Forge dashboard via shortened URL
+ * 1. CLI launches MASTER task with simple prompt: "Run explorer to acquire context, when it ends run the install workflow"
+ * 2. Master Genie orchestrates: explore → interview → spawn installers → completion
+ * 3. User monitors progress in Forge dashboard via shortened URL
  */
 
 import gradient from 'gradient-string';
@@ -48,286 +49,94 @@ export function printBox(title: string, content: string): void {
 }
 
 /**
- * Build explore agent prompt for context gathering
+ * Launch Master Genie orchestrator for installation
  */
-export function buildExplorePrompt(): string {
-  return `You are the Explore agent conducting project discovery for installation.
-
-@.genie/spells/install-genie.md
-
-**Mission:** Execute Phase 1-3 (Detect Repo State → Silent Analysis → Build Context)
-
-Analyze this repository and provide structured context covering:
-
-**1. Project Identity**
-- Name (from package.json, git remote, or directory)
-- Purpose (from README, package description)
-- Domain/industry
-
-**2. Tech Stack**
-- Languages (file extensions)
-- Frameworks (dependencies from package.json)
-- Package manager (pnpm, npm, yarn)
-- Deployment target
-
-**3. Architecture**
-- Type (web_app, api, cli, library, mobile)
-- Directory structure (src/, tests/, docs/)
-- Entry points (main files)
-
-**4. Existing Progress**
-- Git commits count (if git repo)
-- Features (from README ## Features section)
-- Development status (mvp, production, prototype)
-
-**5. Detection Confidence**
-- HIGH confidence items (use directly, don't ask user)
-- MEDIUM/LOW confidence items (Master Genie will ask user in interview)
-
-**IMPORTANT:** Return your final analysis as structured JSON in your LAST MESSAGE.
-Use this format:
-\`\`\`json
-{
-  "project": { "name": "...", "purpose": "...", "domain": "..." },
-  "tech": { "languages": [], "frameworks": [], "packageManager": "..." },
-  "architecture": { "type": "...", "structure": {}, "entryPoints": [] },
-  "progress": { "commits": 0, "features": [], "status": "..." },
-  "confidence": { "high": {}, "medium": {}, "low": {} }
-}
-\`\`\`
-
-**Read-only:** Do not modify any files.
-**No interview:** Master Genie will interview user with your findings.
-`;
-}
-
-/**
- * Run explore agent, stream output to console, return last message
- */
-export async function runExploreAgent(prompt: string): Promise<string> {
-  const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
-
-  console.log('');
-  printBox('🔍 PROJECT DISCOVERY', 'Analyzing your repository...');
-  console.log('');
-
-  // Get or create workspace-specific Forge project (not hardcoded!)
-  // @ts-ignore - getOrCreateGenieProject is private but needed here
-  const projectId = await forgeExecutor['getOrCreateGenieProject']();
-
-  // Get ForgeClient for raw API access
-  // @ts-ignore - forge is private but needed here
-  const forgeClient = forgeExecutor['forge'];
-
-  // Create explore task (read-only context gathering)
-  // Use CODE_EXPLORE agent variant (synced during install flow)
-  const result = await forgeClient.createAndStartTask({
-    task: {
-      project_id: projectId,
-      title: '🔍 Installation Discovery',
-      description: prompt
-    },
-    executor_profile_id: {
-      executor: 'CLAUDE_CODE',
-      variant: 'CODE_EXPLORE'
-    },
-    base_branch: getCurrentBranch()
-  });
-
-  const taskId = result.task?.id || result.id;
-  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id || result.id;
-
-  // Validate task was created
-  if (!taskId) {
-    console.log('');
-    console.log(gradient.pastel('⚠️  Unable to start discovery task'));
-    console.log('   The Forge task API returned an unexpected response.');
-    console.log('   This usually happens when Forge is still starting up.');
-    console.log('');
-    console.log('💡 Try again in a few seconds, or check if Forge is running:');
-    console.log('   http://localhost:8887');
-    console.log('');
-    throw new Error('Could not start discovery task - Forge may still be initializing');
-  }
-
-  // If attemptId not in response, use taskId (Forge will redirect to latest attempt)
-  const effectiveAttemptId = attemptId || taskId;
-
-  // Poll for completion and stream updates
-  console.log('⏳ Gathering context...\n');
-
-  let lastOutput = '';
-  const maxWaitTime = 120000; // 2 minutes
-  const pollInterval = 2000; // 2 seconds
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < maxWaitTime) {
-    try {
-      const attempt = await forgeClient.getTaskAttempt(effectiveAttemptId);
-
-      // Get latest output
-      const processes = await forgeClient.listExecutionProcesses(effectiveAttemptId);
-      if (processes && processes.length > 0) {
-        const latest = processes[processes.length - 1];
-        if (latest.output && latest.output !== lastOutput) {
-          // Print new output (show progress)
-          const newContent = latest.output.substring(lastOutput.length);
-          if (newContent.trim()) {
-            process.stdout.write(gradient.pastel('  '));
-            process.stdout.write(gradient.pastel(newContent.substring(0, 200))); // First 200 chars
-            if (newContent.length > 200) process.stdout.write(gradient.pastel('...'));
-            process.stdout.write('\n');
-          }
-          lastOutput = latest.output;
-        }
-      }
-
-      // Check if completed
-      if (attempt.status === 'completed' || attempt.status === 'failed') {
-        break;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-    } catch (error) {
-      // Continue polling on error
-    }
-  }
-
-  console.log('');
-  console.log(gradient.pastel('✅ Context gathered!\n'));
-
-  // Check if we got any output at all
-  if (!lastOutput || lastOutput.trim().length === 0) {
-    console.log(gradient.pastel('⚠️  No output captured from discovery agent'));
-    console.log(gradient.pastel('   Master Genie will interview user from scratch'));
-    return '';
-  }
-
-  // Extract JSON from output (discovery agent outputs structured JSON)
-  // The agent typically wraps JSON in markdown code blocks: ```json\n{...}\n```
-  let extractedContext = lastOutput;
-
-  // Strategy 1: Extract JSON from markdown code block
-  const jsonBlockMatch = lastOutput.match(/```json\s*\n([\s\S]*?)\n```/);
-  if (jsonBlockMatch) {
-    extractedContext = jsonBlockMatch[1].trim();
-    console.log(gradient.pastel('📊 Extracted context from JSON code block'));
-    return extractedContext;
-  }
-
-  // Strategy 2: Find raw JSON object with "project" key (discovery schema)
-  const objectMatch = lastOutput.match(/(\{[\s\S]*?"project"[\s\S]*?\})\s*$/);
-  if (objectMatch) {
-    extractedContext = objectMatch[1].trim();
-    console.log(gradient.pastel('📊 Extracted context from raw JSON'));
-    return extractedContext;
-  }
-
-  // Strategy 3: Try to parse the entire output as JSON (some agents output raw JSON)
-  try {
-    const parsed = JSON.parse(lastOutput.trim());
-    if (parsed.project) {
-      console.log(gradient.pastel('📊 Extracted context from raw output'));
-      return lastOutput.trim();
-    }
-  } catch {
-    // Not valid JSON, continue to fallback
-  }
-
-  // Fallback: Return whatever we got (Master Genie will work with it)
-  console.log(gradient.pastel('⚠️  Could not extract JSON, passing raw output'));
-  console.log(gradient.pastel('   (Master Genie will interview user with available context)'));
-  return extractedContext;
-}
-
-/**
- * Build Master Genie install prompt with injected context
- */
-export function buildMasterGeniePrompt(exploreContext: string, templates: string[]): string {
-  return `You are Master Genie, orchestrating installation.
-
-@.genie/spells/install-genie.md
-
-**Context from Explore Agent:**
-${exploreContext}
-
-**Templates Selected:** ${templates.join(', ')}
-
-**Your Mission:**
-1. Review the context above (project identity, tech stack, architecture, progress)
-2. Follow install-genie.md workflow Phase 4-6:
-   - Phase 4: Validate context with user (interview for missing/low-confidence items)
-   - Phase 5: Spawn specialized agents (Code/Create install based on templates)
-   - Phase 6: Monitor & coordinate completion
-
-**IMPORTANT:**
-- User interview is REQUIRED (Phase 4) - validate explore findings, ask about missing items
-- Technical assessment (Phase 0) was done in wizard - adapt communication accordingly
-- Spawn agents with unified context (no duplicate interviews by specialists)
-- Report completion with next steps
-
-**Execution Mode:** Interactive (interview user, spawn agents, coordinate)
-`;
-}
-
-/**
- * Launch Master Genie install task in Forge, return shortened URL
- */
-export async function launchMasterGenieInstall(
-  context: string,
+export async function launchMasterGenie(
   config: InstallFlowConfig
 ): Promise<string> {
-  const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
-
-  const installPrompt = buildMasterGeniePrompt(context, config.templates);
+  const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
 
   console.log('');
   printBox('🧞 MASTER GENIE AWAKENING', 'Starting installation orchestration...');
   console.log('');
 
-  // Get or create workspace-specific Forge project (not hardcoded!)
-  // @ts-ignore - getOrCreateGenieProject is private but needed here
-  const projectId = await forgeExecutor['getOrCreateGenieProject']();
+  // Get or create workspace-specific Forge project
+  const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
+  const projectId = await forgeExecutor.getOrCreateGenieProject();
 
-  // Get ForgeClient for raw API access
-  // @ts-ignore - forge is private but needed here
-  const forgeClient = forgeExecutor['forge'];
-
-  // Create Master Genie Forge task
-  const result = await forgeClient.createAndStartTask({
-    task: {
-      project_id: projectId,
-      title: '🧞 Genie Installation & Setup',
-      description: installPrompt
-    },
-    executor_profile_id: {
-      executor: config.executor.toUpperCase(),
-      variant: 'DEFAULT'
-    },
-    base_branch: getCurrentBranch()
-  });
-
-  const taskId = result.task?.id || result.id;
-  const attemptId = result.task_attempt?.id || result.attempts?.[0]?.id || result.id;
-
-  // Validate task was created
-  if (!taskId) {
-    console.log('');
-    console.log(gradient.pastel('⚠️  Unable to start installation task'));
-    console.log('   The Forge task API returned an unexpected response.');
-    console.log('   This usually happens when Forge is still starting up.');
-    console.log('');
-    console.log('💡 Try again in a few seconds, or check if Forge is running:');
-    console.log('   http://localhost:8887');
-    console.log('');
-    throw new Error('Could not start installation task - Forge may still be initializing');
+  // Get or create master agent (uses forge_agents table)
+  const masterResponse = await fetch(`${FORGE_URL}/api/forge/agents?project_id=${projectId}&agent_type=master`);
+  if (!masterResponse.ok) {
+    throw new Error(`Failed to query master agent: ${masterResponse.status}`);
   }
 
-  // If attemptId not in response, use taskId (Forge will redirect to latest attempt)
-  const effectiveAttemptId = attemptId || taskId;
+  const { data: agents } = await masterResponse.json();
+  let masterAgent = agents?.[0];
 
-  // Build full Forge URL
-  const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${effectiveAttemptId}?view=diffs`;
+  if (!masterAgent) {
+    console.log(gradient.pastel('Creating Master Genie agent...'));
+    const createResponse = await fetch(`${FORGE_URL}/api/forge/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        agent_type: 'master'
+      })
+    });
+
+    if (!createResponse.ok) {
+      throw new Error(`Failed to create master agent: ${createResponse.status}`);
+    }
+
+    const { data } = await createResponse.json();
+    masterAgent = data;
+  }
+
+  // Build simple orchestration prompt
+  const templates = config.templates?.join(', ') || 'code';
+  const prompt = `Run explorer to acquire context, when it ends run the install workflow.
+
+Templates to install: ${templates}
+
+See @.genie/spells/install-genie.md for detailed instructions.`;
+
+  // Create attempt with MASTER variant
+  console.log(gradient.pastel('Creating orchestration attempt...'));
+  const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task_id: masterAgent.task_id,
+      executor_profile_id: {
+        executor: config.executor?.toUpperCase() || 'CLAUDE_CODE',
+        variant: 'MASTER'
+      },
+      base_branch: getCurrentBranch()
+    })
+  });
+
+  if (!attemptResponse.ok) {
+    throw new Error(`Failed to create attempt: ${attemptResponse.status}`);
+  }
+
+  const { data: attempt } = await attemptResponse.json();
+
+  // Send installation prompt as follow-up message
+  const followUpResponse = await fetch(`${FORGE_URL}/api/task-attempts/${attempt.id}/follow-up`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt })
+  });
+
+  if (!followUpResponse.ok) {
+    throw new Error(`Failed to send installation prompt: ${followUpResponse.status}`);
+  }
+
+  console.log('');
+  console.log(gradient.pastel('✨ Master Genie orchestrating installation...'));
+  console.log('');
+
+  const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${masterAgent.task_id}/attempts/${attempt.id}?view=diffs`;
 
   // Shorten URL
   const { shortUrl: shortened } = await shortenUrl(fullUrl, {
@@ -343,7 +152,7 @@ export async function launchMasterGenieInstall(
 export async function runInstallFlow(config: InstallFlowConfig): Promise<string> {
   const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
 
-  // Step 0: Sync agent profiles to Forge (makes CODE_EXPLORE and other variants available)
+  // Step 0: Sync agent profiles to Forge (makes MASTER, EXPLORE and other variants available)
   console.log('');
   console.log(gradient.pastel('🔄 Teaching Forge about available agents...'));
   console.log('');
@@ -353,18 +162,16 @@ export async function runInstallFlow(config: InstallFlowConfig): Promise<string>
     console.log(gradient.pastel('✅ Agent profiles synced!'));
     console.log(gradient.pastel('   Waiting for Forge to reload profiles...\n'));
     // Give Forge time to reload executor profiles before creating tasks
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const PROFILE_RELOAD_DELAY_MS = 2000; // Forge needs time to reload profiles
+    await new Promise(resolve => setTimeout(resolve, PROFILE_RELOAD_DELAY_MS));
   } catch (error: any) {
-    console.log(gradient.pastel('⚠️  Using built-in profiles (agent sync skipped)\n'));
+    console.log(gradient.pastel('⚠️  Using built-in profiles (agent sync skipped)'));
+    console.log(gradient.pastel(`   Reason: ${error.message}\n`));
     // Continue with install - will use DEFAULT variants
   }
 
-  // Step 1: Run explore agent (context gathering)
-  const explorePrompt = buildExplorePrompt();
-  const exploreContext = await runExploreAgent(explorePrompt);
-
-  // Step 2: Launch Master Genie with injected context
-  const shortUrl = await launchMasterGenieInstall(exploreContext, config);
+  // Step 1: Launch Master Genie orchestrator (handles explore → install workflow)
+  const shortUrl = await launchMasterGenie(config);
 
   return shortUrl;
 }

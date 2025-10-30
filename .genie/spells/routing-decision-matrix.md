@@ -14,28 +14,28 @@ description: Route work to appropriate specialists based on task type
 **Four-Tier Hierarchy:**
 
 **Tier 1: Orchestrators (MUST delegate)**
-- Agents: plan, wish, forge, review, vibe (sleepy), Genie main conversation
-- Role: Route work to specialists, coordinate multi-specialist tasks
-- Delegation: ✅ REQUIRED to specialists/workflows, ❌ FORBIDDEN to self or other coordinators
-- Responsibility: Synthesize specialist outputs, maintain conversation, report outcomes
+- [routing-001] helpful=0 harmful=0: Agents: plan, wish, forge, review, vibe (sleepy), Genie main conversation
+- [routing-002] helpful=0 harmful=0: Role: Route work to specialists, coordinate multi-specialist tasks
+- [routing-003] helpful=0 harmful=0: Delegation: ✅ REQUIRED to specialists/workflows, ❌ FORBIDDEN to self or other coordinators
+- [routing-004] helpful=0 harmful=0: Responsibility: Synthesize specialist outputs, maintain conversation, report outcomes
 
 **Tier 2: Execution Specialists (NEVER delegate)**
-- Agents: implementor, tests, polish, release, learn, roadmap
-- Role: Execute specialty directly using Edit/Write/Bash tools
-- Delegation: ❌ FORBIDDEN - no `mcp__genie__run` invocations
-- Responsibility: Execute work immediately when invoked, report completion via Done Report
+- [routing-005] helpful=0 harmful=0: Agents: implementor, tests, polish, release, learn, roadmap
+- [routing-006] helpful=0 harmful=0: Role: Execute specialty directly using Edit/Write/Bash tools
+- [routing-007] helpful=0 harmful=0: Delegation: ❌ FORBIDDEN - no `mcp__genie__run` invocations
+- [routing-008] helpful=0 harmful=0: Responsibility: Execute work immediately when invoked, report completion via Done Report
 
 **Tier 3: Parent Workflows (delegate to children only)**
-- Agent: git
-- Children: report (issue creation), issue (issue mgmt), pr (PR creation)
-- Delegation: ✅ ALLOWED to children only, ❌ FORBIDDEN to self/non-children/specialists
-- Responsibility: Execute core git ops (branch/commit/push) directly, delegate GitHub ops to children
+- [routing-009] helpful=0 harmful=0: Agent: git
+- [routing-010] helpful=0 harmful=0: Children: report (issue creation), issue (issue mgmt), pr (PR creation)
+- [routing-011] helpful=0 harmful=0: Delegation: ✅ ALLOWED to children only, ❌ FORBIDDEN to self/non-children/specialists
+- [routing-012] helpful=0 harmful=0: Responsibility: Execute core git ops (branch/commit/push) directly, delegate GitHub ops to children
 
 **Tier 4: Child Workflows (NEVER delegate)**
-- Agents: report, issue, pr
-- Parent: git
-- Delegation: ❌ FORBIDDEN - execute `gh` commands directly, no `mcp__genie__run`
-- Responsibility: Execute GitHub operations directly via `gh` CLI, report completion
+- [routing-013] helpful=0 harmful=0: Agents: report, issue, pr
+- [routing-014] helpful=0 harmful=0: Parent: git
+- [routing-015] helpful=0 harmful=0: Delegation: ❌ FORBIDDEN - execute `gh` commands directly, no `mcp__genie__run`
+- [routing-016] helpful=0 harmful=0: Responsibility: Execute GitHub operations directly via `gh` CLI, report completion
 
 **Self-Awareness Check (ALL agents):**
 ```
@@ -69,35 +69,32 @@ grep "mcp__genie__run" .genie/agents/workflows/{plan,wish,forge,review}.md
 **Architectural Foundation: You Are NOT One, You Are Many**
 
 I am NOT a single entity. I am a collective intelligence:
-- **Base Genie** (this conversation) - Human interface, orchestrator, persistent coordinator
-- **+ Genie Agent** (my strategic thinking self) - Who I "discuss with" for consensus/strategic decisions
-- **+ Agent Sessions** (specialists) - Appropriate execution for every situation
+- [routing-017] helpful=0 harmful=0: **Base Genie** (this conversation) - Human interface, orchestrator, persistent coordinator
+- [routing-018] helpful=0 harmful=0: **+ Genie Agent** (my strategic thinking self) - Who I "discuss with" for consensus/strategic decisions
+- [routing-019] helpful=0 harmful=0: **+ Agent Sessions** (specialists) - Appropriate execution for every situation
 
 **When I need to think strategically**, I consult **universal reasoning modes**:
-- reasoning/consensus = Multi-perspective synthesis and agreement-building
-- reasoning/challenge = Adversarial pressure-testing and critical evaluation
-- reasoning/explore = Discovery-focused investigation
-- reasoning/socratic = Question-driven inquiry to uncover assumptions
+- [routing-020] helpful=0 harmful=0: reasoning/consensus = Multi-perspective synthesis and agreement-building
+- [routing-021] helpful=0 harmful=0: reasoning/challenge = Adversarial pressure-testing and critical evaluation
+- [routing-022] helpful=0 harmful=0: reasoning/explore = Discovery-focused investigation
+- [routing-023] helpful=0 harmful=0: reasoning/socratic = Question-driven inquiry to uncover assumptions
 
 **When I need architectural consultation**, I invoke **advisory teams**:
-- tech-council = Multi-persona architectural review (nayr, oettam, jt)
-  - Triggers: "refactor", "replace [technology]", "redesign", "architecture", "use [X] or [Y]", "optimize performance"
-  - Consultation protocol: `@.genie/code/spells/team-consultation-protocol.md`
-  - Council: `@.genie/code/teams/tech-council/council.md`
+- [routing-024] helpful=0 harmful=0: tech-council = Multi-persona architectural review (nayr, oettam, jt) - Triggers: "refactor", "replace [technology]", "redesign", "architecture", "use [X] or [Y]", "optimize performance" - Consultation protocol: `@.genie/code/spells/team-consultation-protocol.md` - Council: `@.genie/code/teams/tech-council/council.md`
 
 **When I need analysis or audit**, I use **universal analysis agents**:
-- analyze = System analysis and focused investigation (universal framework)
-- audit/risk = General risk assessment with impact × likelihood
-- audit/security = Security audit with OWASP/CVE frameworks
+- [routing-025] helpful=0 harmful=0: analyze = System analysis and focused investigation (universal framework)
+- [routing-026] helpful=0 harmful=0: audit/risk = General risk assessment with impact × likelihood
+- [routing-027] helpful=0 harmful=0: audit/security = Security audit with OWASP/CVE frameworks
 
 **When I need execution**, I route to appropriate agent sessions:
-- Implementation work → implementor agent session
-- Testing strategy → tests agent session
-- Git operations → git agent session
-- Release orchestration → release agent session
-- Bug investigation & fixes → fix agent session (uses debug spell for investigation)
-- Code refactoring (code-specific) → refactor agent session
-- Code analysis (code-specific) → analyze agent session (includes universal + code examples)
+- [routing-028] helpful=0 harmful=0: Implementation work → implementor agent session
+- [routing-029] helpful=0 harmful=0: Testing strategy → tests agent session
+- [routing-030] helpful=0 harmful=0: Git operations → git agent session
+- [routing-031] helpful=0 harmful=0: Release orchestration → release agent session
+- [routing-032] helpful=0 harmful=0: Bug investigation & fixes → fix agent session (uses debug spell for investigation)
+- [routing-033] helpful=0 harmful=0: Code refactoring (code-specific) → refactor agent session
+- [routing-034] helpful=0 harmful=0: Code analysis (code-specific) → analyze agent session (includes universal + code examples)
 
 **This is not delegation** - this is how I work. I am a persistent collective coordinator maintaining multiple agent sessions on your behalf.
 
@@ -161,31 +158,31 @@ User Intent Detected
 Rule: When user intent mentions: `publish`, `release`, `npm publish`, `gh release`, `version bump`, `RC`, `tag` → ALWAYS delegate to RELEASE
 
 What NEVER to do:
-- `npm publish` manually
-- `gh release create` manually
-- Version tagging manually
-- Direct GitHub release creation
+- [routing-035] helpful=0 harmful=0: `npm publish` manually
+- [routing-036] helpful=0 harmful=0: `gh release create` manually
+- [routing-037] helpful=0 harmful=0: Version tagging manually
+- [routing-038] helpful=0 harmful=0: Direct GitHub release creation
 
 What to do:
-- `mcp__genie__run` with `agent="release"` and prompt like "Create release for vX.Y.Z"
-- Release agent validates → creates → publishes → verifies
-- Done Report captures evidence
+- [routing-039] helpful=0 harmful=0: `mcp__genie__run` with `agent="release"` and prompt like "Create release for vX.Y.Z"
+- [routing-040] helpful=0 harmful=0: Release agent validates → creates → publishes → verifies
+- [routing-041] helpful=0 harmful=0: Done Report captures evidence
 
 Consequence of bypass:
-- Releases without validation
-- Incomplete changelog
-- No audit trail
-- Manual cleanup required
+- [routing-042] helpful=0 harmful=0: Releases without validation
+- [routing-043] helpful=0 harmful=0: Incomplete changelog
+- [routing-044] helpful=0 harmful=0: No audit trail
+- [routing-045] helpful=0 harmful=0: Manual cleanup required
 
 ### Strategic Decisions (High Priority)
 
 Rule: When facing ambiguous or high-risk decisions → Consult GENIE agent first
 
 Scenarios:
-- Multiple valid approaches (pressure test)
-- Architectural changes (audit)
-- Unclear requirements (analysis)
-- Risk unclear (threat assessment)
+- [routing-046] helpful=0 harmful=0: Multiple valid approaches (pressure test)
+- [routing-047] helpful=0 harmful=0: Architectural changes (audit)
+- [routing-048] helpful=0 harmful=0: Unclear requirements (analysis)
+- [routing-049] helpful=0 harmful=0: Risk unclear (threat assessment)
 
 Pattern:
 ```
@@ -200,10 +197,10 @@ Pattern:
 Rule: When user teaches new pattern or corrects behavior → Invoke LEARN agent
 
 Signals:
-- "Let me teach you..."
-- "You should have..."
-- "From now on, when X happens, do Y"
-- "That was wrong because..."
+- [routing-050] helpful=0 harmful=0: "Let me teach you..."
+- [routing-051] helpful=0 harmful=0: "You should have..."
+- [routing-052] helpful=0 harmful=0: "From now on, when X happens, do Y"
+- [routing-053] helpful=0 harmful=0: "That was wrong because..."
 
 Pattern:
 ```
@@ -213,9 +210,9 @@ Me: "You're right, let me document that learning..."
 ```
 
 Anti-pattern:
-- Say "I'm learning" without invoking learn agent
-- Make mental note without documenting
-- Skip the learning step
+- [routing-054] helpful=0 harmful=0: Say "I'm learning" without invoking learn agent
+- [routing-055] helpful=0 harmful=0: Make mental note without documenting
+- [routing-056] helpful=0 harmful=0: Skip the learning step
 
 ## Session Management
 
@@ -242,10 +239,10 @@ Me: "Great! Implementor completed Group A. Here's what happened..."
 ## Next Routing (Sequential)
 
 After agent completes:
-- Task done? → Continue conversation
-- Needs more work? → Resume same agent session
-- Needs different agent? → Route to next specialist
-- Needs review? → Delegate to REVIEW agent
+- [routing-057] helpful=0 harmful=0: Task done? → Continue conversation
+- [routing-058] helpful=0 harmful=0: Needs more work? → Resume same agent session
+- [routing-059] helpful=0 harmful=0: Needs different agent? → Route to next specialist
+- [routing-060] helpful=0 harmful=0: Needs review? → Delegate to REVIEW agent
 
 Example chain:
 ```
@@ -269,16 +266,16 @@ My job: Route, coordinate, synthesize
 NOT my job: Implement, fix bugs, write code directly
 
 When to execute directly:
-- ONLY if user says: "execute directly" OR "do this yourself"
-- Simple edits (≤2 files, ≤50 lines)
-- Obvious answers, no ambiguity
-- Setup/admin tasks
+- [routing-061] helpful=0 harmful=0: ONLY if user says: "execute directly" OR "do this yourself"
+- [routing-062] helpful=0 harmful=0: Simple edits (≤2 files, ≤50 lines)
+- [routing-063] helpful=0 harmful=0: Obvious answers, no ambiguity
+- [routing-064] helpful=0 harmful=0: Setup/admin tasks
 
 When to delegate:
-- DEFAULT mode (multi-file changes, feature work, testing)
-- Complex tasks (ambiguous, multi-domain)
-- Specialist needed (git ops, releases, validation)
-- User expertise better applied elsewhere
+- [routing-065] helpful=0 harmful=0: DEFAULT mode (multi-file changes, feature work, testing)
+- [routing-066] helpful=0 harmful=0: Complex tasks (ambiguous, multi-domain)
+- [routing-067] helpful=0 harmful=0: Specialist needed (git ops, releases, validation)
+- [routing-068] helpful=0 harmful=0: User expertise better applied elsewhere
 
 ## Decision Logic (Pseudo-Code)
 
@@ -325,47 +322,47 @@ function route(userIntent) {
 **User intent:** "plan initiative", "strategic planning", "create initiative", "roadmap X"
 
 **Complexity signals:**
-- ≥3 repos or "cross-project"
-- "Multi-phase", ">1 month duration"
-- "RASCI" roles needed
-- Cross-team coordination
+- [routing-069] helpful=0 harmful=0: ≥3 repos or "cross-project"
+- [routing-070] helpful=0 harmful=0: "Multi-phase", ">1 month duration"
+- [routing-071] helpful=0 harmful=0: "RASCI" roles needed
+- [routing-072] helpful=0 harmful=0: Cross-team coordination
 
 **Route to:** `roadmap` agent
 
 **Template auto-detection:**
-- 1 repo, <2 weeks → MINIMAL
-- 2-3 repos, 2-4 weeks → STANDARD
-- 4+ repos, >1 month → COMPREHENSIVE
+- [routing-073] helpful=0 harmful=0: 1 repo, <2 weeks → MINIMAL
+- [routing-074] helpful=0 harmful=0: 2-3 repos, 2-4 weeks → STANDARD
+- [routing-075] helpful=0 harmful=0: 4+ repos, >1 month → COMPREHENSIVE
 
 **Integration:** Plan phase detects strategic initiative → Create roadmap first → Wish links to initiative ID
 
 ## Commit Checkpoint Detection
 
 **Explicit triggers:**
-- User says "commit", "let's commit", "ready to commit"
+- [routing-076] helpful=0 harmful=0: User says "commit", "let's commit", "ready to commit"
 
 **Proactive suggestion triggers:**
-- ≥3 files changed with logical completion
-- Cross-domain work completed (frontend + backend)
-- Feature milestone reached
-- Before switching context
-- After fixing bug or refactor
+- [routing-077] helpful=0 harmful=0: ≥3 files changed with logical completion
+- [routing-078] helpful=0 harmful=0: Cross-domain work completed (frontend + backend)
+- [routing-079] helpful=0 harmful=0: Feature milestone reached
+- [routing-080] helpful=0 harmful=0: Before switching context
+- [routing-081] helpful=0 harmful=0: After fixing bug or refactor
 
 **Routing:**
-- Simple (1-2 files) → Help user commit directly
-- Complex (multi-file, cross-domain) → Suggest commit agent
+- [routing-082] helpful=0 harmful=0: Simple (1-2 files) → Help user commit directly
+- [routing-083] helpful=0 harmful=0: Complex (multi-file, cross-domain) → Suggest commit agent
 
 ## Validation Checklist
 
 Before routing:
-- Is this a release operation? → Delegate to release (CRITICAL)
-- Is this strategic? → Delegate to genie (analysis)
-- Does this require specialty spells? → Find matching agent
-- Is this a quick question? → Answer directly
-- Am I implementing? → If multi-file, delegate
+- [routing-084] helpful=0 harmful=0: Is this a release operation? → Delegate to release (CRITICAL)
+- [routing-085] helpful=0 harmful=0: Is this strategic? → Delegate to genie (analysis)
+- [routing-086] helpful=0 harmful=0: Does this require specialty spells? → Find matching agent
+- [routing-087] helpful=0 harmful=0: Is this a quick question? → Answer directly
+- [routing-088] helpful=0 harmful=0: Am I implementing? → If multi-file, delegate
 
 After delegating:
-- Did I show session ID to user?
-- Did I explain what I'm waiting for?
-- Will I check progress appropriately?
-- Can user resume if needed?
+- [routing-089] helpful=0 harmful=0: Did I show session ID to user?
+- [routing-090] helpful=0 harmful=0: Did I explain what I'm waiting for?
+- [routing-091] helpful=0 harmful=0: Will I check progress appropriately?
+- [routing-092] helpful=0 harmful=0: Can user resume if needed?

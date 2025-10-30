@@ -59,6 +59,10 @@
 | `@path/to/file` | repo | Insight | wish, docs |
 | mcp__genie__run agent="..." | background | Output summary | wish, roadmap |
 
+### Context Variants Considered
+- Candidates: C1, C2, C3
+- Winner: {C?} — reason: one‑line tradeoff statement
+
 ## Discovery Summary
 - **Primary analyst:** {Human/Agent}
 - **Key observations:** …
@@ -114,4 +118,3 @@ Concise outcome tied to user/system impact.
 ## Status Log
 - [YYYY-MM-DD HH:MMZ] Wish created
 - …
-
