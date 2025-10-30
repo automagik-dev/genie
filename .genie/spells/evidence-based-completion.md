@@ -33,10 +33,10 @@ Never mark work "completed" without verifiable evidence. Master Genie coordinati
 ### Before Marking "Completed"
 
 **Checklist:**
-- [ ] Can I see the result? (file exists, task visible, session listed)
-- [ ] Can I prove it worked? (git log, Forge UI, MCP list command)
-- [ ] Would another agent see this work? (persistent, visible, traceable)
-- [ ] Can the user act on this? (URL clickable, file accessible, PR created)
+- [evidence-001] helpful=0 harmful=0: [ ] Can I see the result? (file exists, task visible, session listed)
+- [evidence-002] helpful=0 harmful=0: [ ] Can I prove it worked? (git log, Forge UI, MCP list command)
+- [evidence-003] helpful=0 harmful=0: [ ] Would another agent see this work? (persistent, visible, traceable)
+- [evidence-004] helpful=0 harmful=0: [ ] Can the user act on this? (URL clickable, file accessible, PR created)
 
 **If ANY checkbox fails → Do NOT mark "completed"**
 
@@ -92,43 +92,43 @@ curl http://localhost:3000 (returns 200)
 ### Standard States
 
 **completed** - Evidence of success exists
-- ✅ File created and contains expected content
-- ✅ Commit made with correct message
-- ✅ Task visible in Forge UI
-- ✅ Session listed in MCP
-- ✅ URL accessible and clickable
+- [evidence-005] helpful=0 harmful=0: ✅ File created and contains expected content
+- [evidence-006] helpful=0 harmful=0: ✅ Commit made with correct message
+- [evidence-007] helpful=0 harmful=0: ✅ Task visible in Forge UI
+- [evidence-008] helpful=0 harmful=0: ✅ Session listed in MCP
+- [evidence-009] helpful=0 harmful=0: ✅ URL accessible and clickable
 
 **in_progress** - Work is actively happening
-- ✅ Currently executing this task
-- ✅ Making changes, running commands
-- ✅ Not blocked, not done
+- [evidence-010] helpful=0 harmful=0: ✅ Currently executing this task
+- [evidence-011] helpful=0 harmful=0: ✅ Making changes, running commands
+- [evidence-012] helpful=0 harmful=0: ✅ Not blocked, not done
 
 **pending** - Not yet started
-- ✅ Waiting in queue
-- ✅ Dependencies not ready
-- ✅ Will start soon
+- [evidence-013] helpful=0 harmful=0: ✅ Waiting in queue
+- [evidence-014] helpful=0 harmful=0: ✅ Dependencies not ready
+- [evidence-015] helpful=0 harmful=0: ✅ Will start soon
 
 ### Extended States (For Uncertain Outcomes)
 
 **blocked** - Cannot proceed, documented blocker
-- ❌ Infrastructure issue (MCP down, Forge unreachable)
-- ❌ Missing dependency (waiting for another task)
-- ❌ Needs user input (clarification required)
-- ✅ Blocker documented with context
-- ✅ Issue created or escalation path clear
+- [evidence-016] helpful=0 harmful=0: ❌ Infrastructure issue (MCP down, Forge unreachable)
+- [evidence-017] helpful=0 harmful=0: ❌ Missing dependency (waiting for another task)
+- [evidence-018] helpful=0 harmful=0: ❌ Needs user input (clarification required)
+- [evidence-019] helpful=0 harmful=0: ✅ Blocker documented with context
+- [evidence-020] helpful=0 harmful=0: ✅ Issue created or escalation path clear
 
 **failed** - Attempted, confirmed failure, documented
-- ❌ Tried operation, got error
-- ✅ Error message captured
-- ✅ Root cause identified (or investigation documented)
-- ✅ Next steps clear (retry, report, fix)
+- [evidence-021] helpful=0 harmful=0: ❌ Tried operation, got error
+- [evidence-022] helpful=0 harmful=0: ✅ Error message captured
+- [evidence-023] helpful=0 harmful=0: ✅ Root cause identified (or investigation documented)
+- [evidence-024] helpful=0 harmful=0: ✅ Next steps clear (retry, report, fix)
 
 **unknown** - Attempted, no evidence either way, needs verification
-- ❓ Tool returned no output (silent failure)
-- ❓ Operation may have succeeded but can't confirm
-- ❓ No error but no success signal either
-- ✅ Follow-up task created to verify
-- ✅ Documented what was attempted
+- [evidence-025] helpful=0 harmful=0: ❓ Tool returned no output (silent failure)
+- [evidence-026] helpful=0 harmful=0: ❓ Operation may have succeeded but can't confirm
+- [evidence-027] helpful=0 harmful=0: ❓ No error but no success signal either
+- [evidence-028] helpful=0 harmful=0: ✅ Follow-up task created to verify
+- [evidence-029] helpful=0 harmful=0: ✅ Documented what was attempted
 
 ## Verification Protocol
 
@@ -238,36 +238,36 @@ User can click URL ✅, see task in Forge ✅, verify work happened ✅.
 
 ### MCP Diagnostic Protocol
 When MCP tool fails → Apply diagnostics → Determine status:
-- Confirmed working → "completed"
-- Infrastructure issue → "blocked"
-- Tool broken → "failed"
-- Uncertain → "unknown"
+- [evidence-030] helpful=0 harmful=0: Confirmed working → "completed"
+- [evidence-031] helpful=0 harmful=0: Infrastructure issue → "blocked"
+- [evidence-032] helpful=0 harmful=0: Tool broken → "failed"
+- [evidence-033] helpful=0 harmful=0: Uncertain → "unknown"
 
 ### Troubleshoot Infrastructure
 When delegation monitoring fails → Check worktree → Update status:
-- Agent completed → "completed"
-- Agent working → "in_progress"
-- Infrastructure down → "blocked"
-- Agent stuck → "failed"
-- Can't determine → "unknown"
+- [evidence-034] helpful=0 harmful=0: Agent completed → "completed"
+- [evidence-035] helpful=0 harmful=0: Agent working → "in_progress"
+- [evidence-036] helpful=0 harmful=0: Infrastructure down → "blocked"
+- [evidence-037] helpful=0 harmful=0: Agent stuck → "failed"
+- [evidence-038] helpful=0 harmful=0: Can't determine → "unknown"
 
 ### Orchestration Boundary
 When delegating to agent → How to mark delegation task:
-- Delegation successful → "completed" (NOT the work, the delegation)
-- Agent task itself → Track separately, update based on evidence
-- Never mark agent's work complete until verified
+- [evidence-039] helpful=0 harmful=0: Delegation successful → "completed" (NOT the work, the delegation)
+- [evidence-040] helpful=0 harmful=0: Agent task itself → Track separately, update based on evidence
+- [evidence-041] helpful=0 harmful=0: Never mark agent's work complete until verified
 
 ## Success Criteria
 
 **This protocol is working when:**
-- ✅ Todo list reflects reality (no false completions)
-- ✅ User can trust todo status (completed = actually done)
-- ✅ Blockers are visible (not hidden as "completed")
-- ✅ Failures are documented (not optimistically completed)
-- ✅ Uncertainty is acknowledged (unknown state used)
+- [evidence-042] helpful=0 harmful=0: ✅ Todo list reflects reality (no false completions)
+- [evidence-043] helpful=0 harmful=0: ✅ User can trust todo status (completed = actually done)
+- [evidence-044] helpful=0 harmful=0: ✅ Blockers are visible (not hidden as "completed")
+- [evidence-045] helpful=0 harmful=0: ✅ Failures are documented (not optimistically completed)
+- [evidence-046] helpful=0 harmful=0: ✅ Uncertainty is acknowledged (unknown state used)
 
 **Anti-Pattern:**
-- ❌ All tasks marked "completed" but work incomplete
-- ❌ Silent failures hidden by optimistic status
-- ❌ Blockers not surfaced to user
-- ❌ "Completed" used as default when uncertain
+- [evidence-047] helpful=0 harmful=0: ❌ All tasks marked "completed" but work incomplete
+- [evidence-048] helpful=0 harmful=0: ❌ Silent failures hidden by optimistic status
+- [evidence-049] helpful=0 harmful=0: ❌ Blockers not surfaced to user
+- [evidence-050] helpful=0 harmful=0: ❌ "Completed" used as default when uncertain

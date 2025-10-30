@@ -33,12 +33,12 @@ Create chaos and lose work
 ```
 
 **Evidence:** RC 37 release failure (2025-10-21)
-- Saw "Forge backend unreachable" in `genie view`
-- Panicked and tried to execute release manually
-- Created 3 redundant release agent sessions
-- Meanwhile, agents ACTUALLY COMPLETED SUCCESSFULLY
-- RC 37 published WITHOUT uncommitted changes
-- Lost work due to panic response
+- [error-001] helpful=0 harmful=0: Saw "Forge backend unreachable" in `genie view`
+- [error-002] helpful=0 harmful=0: Panicked and tried to execute release manually
+- [error-003] helpful=0 harmful=0: Created 3 redundant release agent sessions
+- [error-004] helpful=0 harmful=0: Meanwhile, agents ACTUALLY COMPLETED SUCCESSFULLY
+- [error-005] helpful=0 harmful=0: RC 37 published WITHOUT uncommitted changes
+- [error-006] helpful=0 harmful=0: Lost work due to panic response
 
 ---
 
@@ -138,22 +138,22 @@ Check Genie MCP (list_sessions)
 ## Trust But Verify Protocol
 
 ### Trust
-- Agent sessions continue running even when view is broken
-- Genie backend executes tasks even when CLI shows errors
-- Executors (OpenCode/Claude/etc.) complete work autonomously
-- System is more robust than display suggests
+- [error-007] helpful=0 harmful=0: Agent sessions continue running even when view is broken
+- [error-008] helpful=0 harmful=0: Genie backend executes tasks even when CLI shows errors
+- [error-009] helpful=0 harmful=0: Executors (OpenCode/Claude/etc.) complete work autonomously
+- [error-010] helpful=0 harmful=0: System is more robust than display suggests
 
 ### Verify
-- Use monitoring tools to check actual state
-- Check process list to confirm execution
-- Use Genie MCP to get real session status
-- Wait for completion before assuming failure
+- [error-011] helpful=0 harmful=0: Use monitoring tools to check actual state
+- [error-012] helpful=0 harmful=0: Check process list to confirm execution
+- [error-013] helpful=0 harmful=0: Use Genie MCP to get real session status
+- [error-014] helpful=0 harmful=0: Wait for completion before assuming failure
 
 ### Never
-- Bypass delegation due to display bugs
-- Create redundant sessions without investigating
-- Attempt direct execution when agents are working
-- Panic and lose uncommitted work
+- [error-015] helpful=0 harmful=0: Bypass delegation due to display bugs
+- [error-016] helpful=0 harmful=0: Create redundant sessions without investigating
+- [error-017] helpful=0 harmful=0: Attempt direct execution when agents are working
+- [error-018] helpful=0 harmful=0: Panic and lose uncommitted work
 
 ---
 
@@ -162,10 +162,10 @@ Check Genie MCP (list_sessions)
 ### Display Bug: "Forge backend unreachable"
 
 **Symptoms:**
-- `genie view` shows "backend unreachable"
-- But `mcp__genie__list_sessions` WORKS
-- Process list shows executors running
-- Session status shows "running"
+- [error-019] helpful=0 harmful=0: `genie view` shows "backend unreachable"
+- [error-020] helpful=0 harmful=0: But `mcp__genie__list_sessions` WORKS
+- [error-021] helpful=0 harmful=0: Process list shows executors running
+- [error-022] helpful=0 harmful=0: Session status shows "running"
 
 **Diagnosis:** Genie CLI display bug, not real failure
 
@@ -176,9 +176,9 @@ Check Genie MCP (list_sessions)
 ### Display Bug: "No logs available"
 
 **Symptoms:**
-- `genie view` shows "(No logs available)"
-- But task status shows "in-progress"
-- Executor process is running
+- [error-023] helpful=0 harmful=0: `genie view` shows "(No logs available)"
+- [error-024] helpful=0 harmful=0: But task status shows "in-progress"
+- [error-025] helpful=0 harmful=0: Executor process is running
 
 **Diagnosis:** Log streaming issue, not execution failure
 
@@ -187,9 +187,9 @@ Check Genie MCP (list_sessions)
 ### Real Failure: Task Status "failed"
 
 **Symptoms:**
-- Task status shows "failed"
-- Executor process not running
-- No recent activity in worktree
+- [error-026] helpful=0 harmful=0: Task status shows "failed"
+- [error-027] helpful=0 harmful=0: Executor process not running
+- [error-028] helpful=0 harmful=0: No recent activity in worktree
 
 **Diagnosis:** Actual execution failure
 
@@ -236,15 +236,15 @@ Ongoing: 60-120 second intervals
 ### State-Based Decisions
 
 **Don't decide based on:**
-- Error messages in view output
-- Missing logs
-- Display timeouts
+- [error-029] helpful=0 harmful=0: Error messages in view output
+- [error-030] helpful=0 harmful=0: Missing logs
+- [error-031] helpful=0 harmful=0: Display timeouts
 
 **Do decide based on:**
-- Task status from Forge MCP
-- Process existence in `ps aux`
-- Actual file changes in worktree
-- Commit history in git log
+- [error-032] helpful=0 harmful=0: Task status from Forge MCP
+- [error-033] helpful=0 harmful=0: Process existence in `ps aux`
+- [error-034] helpful=0 harmful=0: Actual file changes in worktree
+- [error-035] helpful=0 harmful=0: Commit history in git log
 
 ---
 
@@ -283,26 +283,26 @@ netstat -tlnp | grep 8887
 ## Integration with Other Spells
 
 ### Combine with:
-- `@.genie/spells/delegate-dont-do.md` - Don't bypass delegation due to errors
-- `@.genie/code/spells/genie-integration.md` - Monitoring patterns for Genie MCP
-- `@.genie/spells/forge-integration.md` - Forge task status checking
+- [error-054] helpful=0 harmful=0: `@.genie/spells/delegate-dont-do.md` - Don't bypass delegation due to errors
+- [error-055] helpful=0 harmful=0: `@.genie/code/spells/genie-integration.md` - Monitoring patterns for Genie MCP
+- [error-056] helpful=0 harmful=0: `@.genie/spells/forge-integration.md` - Forge task status checking
 
 ### When to escalate:
-- Forge MCP actually fails (not just display error)
-- Process definitely not running
-- Task status stuck for >10 minutes with no activity
-- Repeated failures with clear error patterns
+- [error-036] helpful=0 harmful=0: Forge MCP actually fails (not just display error)
+- [error-037] helpful=0 harmful=0: Process definitely not running
+- [error-038] helpful=0 harmful=0: Task status stuck for >10 minutes with no activity
+- [error-039] helpful=0 harmful=0: Repeated failures with clear error patterns
 
 ---
 
 ## Future Improvements
 
 **Genie CLI fixes needed:**
-1. Fix "Forge backend unreachable" false positives
-2. Add real-time status polling to `genie view`
-3. Create `genie status` command for health checks
-4. Implement session→task→attempt mapping
-5. Use Forge advanced APIs for monitoring
+1. [error-040] helpful=0 harmful=0: Fix "Forge backend unreachable" false positives
+2. [error-041] helpful=0 harmful=0: Add real-time status polling to `genie view`
+3. [error-042] helpful=0 harmful=0: Create `genie status` command for health checks
+4. [error-043] helpful=0 harmful=0: Implement session→task→attempt mapping
+5. [error-044] helpful=0 harmful=0: Use Forge advanced APIs for monitoring
 
 **See:** `.genie/reports/rc37-failure-analysis-20251021.md` for detailed recommendations
 
@@ -311,17 +311,17 @@ netstat -tlnp | grep 8887
 ## Validation
 
 **Before panicking about errors, validate:**
-- [ ] Checked Genie MCP connectivity (list_sessions)
-- [ ] Checked session status (running vs failed)
-- [ ] Checked process existence (ps aux)
-- [ ] Waited appropriate interval (30-60 seconds)
-- [ ] Verified this is NOT just a display bug
+- [error-045] helpful=0 harmful=0: [ ] Checked Genie MCP connectivity (list_sessions)
+- [error-046] helpful=0 harmful=0: [ ] Checked session status (running vs failed)
+- [error-047] helpful=0 harmful=0: [ ] Checked process existence (ps aux)
+- [error-048] helpful=0 harmful=0: [ ] Waited appropriate interval (30-60 seconds)
+- [error-049] helpful=0 harmful=0: [ ] Verified this is NOT just a display bug
 
 **Only bypass delegation if:**
-- [ ] Genie MCP actually fails (not display bug)
-- [ ] Process confirmed not running
-- [ ] Session status confirmed failed
-- [ ] Blocker documented and reported
+- [error-050] helpful=0 harmful=0: [ ] Genie MCP actually fails (not display bug)
+- [error-051] helpful=0 harmful=0: [ ] Process confirmed not running
+- [error-052] helpful=0 harmful=0: [ ] Session status confirmed failed
+- [error-053] helpful=0 harmful=0: [ ] Blocker documented and reported
 
 ---
 

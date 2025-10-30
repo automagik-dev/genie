@@ -399,6 +399,16 @@ Use `genie helper count-tokens <file>.md` (tiktoken cl100k_base)
 - Ask: "Does this make me smarter or fatter?"
 - Prefer edit > create, delete > archive, reference > duplicate
 
+**Balance Principle:**
+Token efficiency ≠ brevity bias. Lean infrastructure, rich domain knowledge.
+
+- **Infrastructure:** Stay lean (spells, workflows, protocols should be concise)
+- **Domain Knowledge:** Be comprehensive (strategies, patterns, failure modes should be detailed)
+- **Why:** LLMs work better with detailed contexts than compressed summaries
+- **Core insight:** Unlike humans (who benefit from abstractions), LLMs distill relevance autonomously from abundant information
+
+Contexts should be comprehensive playbooks—detailed, inclusive, rich with insights—not compressed to save tokens at the cost of domain knowledge.
+
 ### 7. Zero Metadata - Git Is Source of Truth 🔴 CRITICAL
 **Rule:** Never duplicate metadata that git already tracks. Frontmatter contains semantic info only.
 
@@ -583,6 +593,117 @@ mcp__genie__list_agents - No arguments
 mcp__genie__read_spell - Argument: spell_path="know-yourself"
 mcp__genie__run - Arguments: agent="code", prompt="Task description"
 ```
+
+### 12. ACE Protocol - Evidence-Based Framework Optimization 🔴 CRITICAL
+**Rule:** Before adding learnings, MUST use ACE helpers for validation. All framework changes must be evidence-based and measured.
+
+**Core Principle:**
+ACE (Agentic Context Engineering) ensures framework optimization is data-driven, not intuition-driven. All 912 learnings use structured format: `[id] helpful=N harmful=M: content`
+
+**Mandatory ACE Helpers:**
+
+**1. Semantic Deduplication (Before Adding Learnings)**
+```bash
+# MUST run before adding any new learning
+genie helper embeddings "new learning text" file.md "Section Name"
+
+# Interpretation:
+# similarity > 0.85  = DUPLICATE (merge or skip)
+# similarity 0.70-0.85 = RELATED (evaluate carefully)
+# similarity < 0.70  = DIFFERENT (safe to append)
+```
+
+**When to use:**
+- Before adding new learning to any spell/agent file
+- When user teaches new pattern
+- When learn agent is invoked
+- Part of grow-and-refine protocol (learn.md lines 375-522)
+
+**2. Token Measurement (Before Committing)**
+```bash
+# Measure token impact of changes
+genie helper count-tokens file.md
+
+# Compare before/after
+genie helper count-tokens --before=old.md --after=new.md
+```
+
+**When to use:**
+- Before committing framework changes
+- When validating token efficiency (Amendment #6)
+- Part of validation checklist (learn.md lines 525-535)
+- Required by Amendment #8
+
+**3. Counter Tracking (Evidence Collection)**
+```bash
+# Query learning effectiveness
+genie helper bullet-counter learn-042
+
+# Track helpful outcomes (scenario passed)
+genie helper bullet-counter learn-042 --helpful
+
+# Track harmful outcomes (scenario failed)
+genie helper bullet-counter learn-042 --harmful
+```
+
+**When to use:**
+- After QA scenario execution (manual or automated)
+- During multi-epoch testing (Phase 5)
+- When gathering evidence for optimization decisions
+- Part of ACE workflow (future automation)
+
+**ACE Workflow Integration:**
+
+**Before Adding Learning:**
+1. ✅ MUST use `genie helper embeddings` (check for duplicates)
+2. ✅ Only add if similarity < 0.70 (DIFFERENT)
+3. ✅ If similarity > 0.85 (DUPLICATE), merge or skip
+4. ✅ Use grow-and-refine protocol (append, don't rewrite)
+
+**Before Committing:**
+1. ✅ MUST use `genie helper count-tokens` (measure token impact)
+2. ✅ Track net growth (lines added - removed)
+3. ✅ Verify healthy pattern (+added > -removed)
+4. ✅ Document evidence in commit message
+
+**During QA (Manual or Automated):**
+1. ✅ Execute scenario
+2. ✅ Track outcome: `genie helper bullet-counter ID --helpful/--harmful`
+3. ✅ Collect evidence
+4. ✅ Update framework based on data
+
+**Value Ratio Calculation:**
+```
+Formula: helpful / max(harmful, 1)
+
+Categorization:
+- ratio ≥ 3.0   → HIGH_VALUE (strengthen with examples)
+- ratio 1.0-3.0 → MEDIUM_VALUE (keep as-is)
+- ratio 0.5-1.0 → LOW_VALUE (refine or clarify)
+- ratio < 0.5   → HARMFUL (remove or rewrite)
+```
+
+**Why This Matters:**
+- Prevents duplicate learnings (semantic dedup catches paraphrases)
+- Maintains token efficiency (measure before commit)
+- Enables evidence-based optimization (track what works)
+- Framework becomes self-optimizing (remove harmful, strengthen helpful)
+
+**Current Status:**
+- ✅ All 912 learnings structured with counters
+- ✅ All ACE helpers operational (embeddings, bullet-counter, count-tokens)
+- ✅ Manual ACE workflow functional
+- ⚠️ Automation pending (Phase 5: Issue #384)
+
+**Enforcement:**
+- Learn agent MUST use embeddings before adding learnings
+- Pre-commit validation includes token measurement
+- QA workflow tracks counter updates (manual until Phase 5)
+
+**Documentation:**
+- ACE architecture: `/tmp/genie-ace-architecture-complete.md`
+- Helper usage: learn.md lines 375-522 (semantic dedup)
+- Phase 5 automation: GitHub Issue #384
 
 ## Development Workflow
 

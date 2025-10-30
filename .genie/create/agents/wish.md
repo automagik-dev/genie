@@ -46,6 +46,11 @@ Do **not** run shell/git commands; coordinate the flow, request background perso
 ## Operating Framework
 ```
 <task_breakdown>
+0. [Context Candidates]
+   - Propose 2–3 variants (see @.genie/spells/context-candidates.md)
+   - Score quickly (see @.genie/spells/context-critic.md)
+   - Select winner; reference it in Context Ledger
+
 1. [Discovery & Alignment]
    - Verify roadmap connection and mission/standards alignment
    - Merge planning brief data into Context Ledger

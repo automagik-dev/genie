@@ -127,6 +127,60 @@ const HELPERS = {
     examples: [
       '$ genie helper validate-links .genie'
     ]
+  },
+  'embeddings': {
+    script: 'embeddings.js',
+    description: 'Check if new learning already exists in target section (deduplication)',
+    usage: [
+      'genie helper embeddings "new learning text" file.md "Section Name"',
+      'genie helper embeddings clear-cache'
+    ],
+    examples: [
+      '$ genie helper embeddings "Never rewrite sections" .genie/spells/learn.md "Grow-and-Refine"',
+      '$ genie helper embeddings clear-cache'
+    ]
+  },
+  'bullet-id': {
+    script: 'bullet-id.js',
+    description: 'Generate unique IDs for structured learning bullets',
+    usage: [
+      'genie helper bullet-id file.md',
+      'genie helper bullet-id file.md --count=10',
+      'genie helper bullet-id file.md --peek'
+    ],
+    examples: [
+      '$ genie helper bullet-id .genie/spells/learn.md',
+      '$ genie helper bullet-id .genie/spells/learn.md --count=5'
+    ]
+  },
+  'bullet-counter': {
+    script: 'bullet-counter.js',
+    description: 'Update helpful/harmful counters for learning bullets',
+    usage: [
+      'genie helper bullet-counter ID',
+      'genie helper bullet-counter ID --helpful',
+      'genie helper bullet-counter ID --harmful'
+    ],
+    examples: [
+      '$ genie helper bullet-counter learn-042',
+      '$ genie helper bullet-counter learn-042 --helpful'
+    ]
+  },
+  'bullet-find': {
+    script: 'bullet-find.js',
+    description: 'Find and query structured learning bullets',
+    usage: [
+      'genie helper bullet-find ID',
+      'genie helper bullet-find --top-helpful --limit=10',
+      'genie helper bullet-find --top-harmful --limit=10',
+      'genie helper bullet-find --file=file.md',
+      'genie helper bullet-find --search="keyword"'
+    ],
+    examples: [
+      '$ genie helper bullet-find learn-042',
+      '$ genie helper bullet-find --top-helpful --limit=5',
+      '$ genie helper bullet-find --search="delegate"'
+    ]
   }
 };
 

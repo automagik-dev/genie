@@ -68,12 +68,12 @@ mcp__genie__run with agent="wish" and prompt="[User's request with full context]
 ```
 
 **wish.md creates:**
-- `.genie/wishes/YYYY-MM-DD-topic/YYYY-MM-DD-topic-wish.md`
-- Context gathered from conversation
-- Problem statement
-- Proposed solution
-- Acceptance criteria
-- References to relevant code/docs
+- [forge-orch-001] helpful=0 harmful=0: `.genie/wishes/YYYY-MM-DD-topic/YYYY-MM-DD-topic-wish.md`
+- [forge-orch-002] helpful=0 harmful=0: Context gathered from conversation
+- [forge-orch-003] helpful=0 harmful=0: Problem statement
+- [forge-orch-004] helpful=0 harmful=0: Proposed solution
+- [forge-orch-005] helpful=0 harmful=0: Acceptance criteria
+- [forge-orch-006] helpful=0 harmful=0: References to relevant code/docs
 
 **Output:** Wish document path for next step
 
@@ -87,18 +87,18 @@ mcp__genie__run with agent="forge" and prompt="Create forge plan for @.genie/wis
 ```
 
 **forge.md creates:**
-- Forge plan document: `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
-- Task files: `.genie/wishes/<slug>/task-*.md` (one per execution group)
-- **Forge MCP tasks** via `mcp__automagik_forge__create_task` (forge.md owns MCP operations)
-- Validation hooks and evidence paths
+- [forge-orch-007] helpful=0 harmful=0: Forge plan document: `.genie/wishes/<slug>/reports/forge-plan-<slug>-<timestamp>.md`
+- [forge-orch-008] helpful=0 harmful=0: Task files: `.genie/wishes/<slug>/task-*.md` (one per execution group)
+- [forge-orch-009] helpful=0 harmful=0: **Forge MCP tasks** via `mcp__automagik_forge__create_task` (forge.md owns MCP operations)
+- [forge-orch-010] helpful=0 harmful=0: Validation hooks and evidence paths
 
 **forge.md responsibilities:**
-- Parse wish document `<spec_contract>`
-- Define execution groups (A, B, C...)
-- Assign personas (implementor, tests, polish)
-- Create Forge task cards with proper context
-- Document branch strategy
-- Set up evidence collection paths
+- [forge-orch-011] helpful=0 harmful=0: Parse wish document `<spec_contract>`
+- [forge-orch-012] helpful=0 harmful=0: Define execution groups (A, B, C...)
+- [forge-orch-013] helpful=0 harmful=0: Assign personas (implementor, tests, polish)
+- [forge-orch-014] helpful=0 harmful=0: Create Forge task cards with proper context
+- [forge-orch-015] helpful=0 harmful=0: Document branch strategy
+- [forge-orch-016] helpful=0 harmful=0: Set up evidence collection paths
 
 **Output:** Forge plan + task IDs for monitoring
 
@@ -112,11 +112,11 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 ```
 
 **review.md validates:**
-- All acceptance criteria met
-- Tests passing
-- Documentation updated
-- Code quality standards met
-- Evidence collected in wish qa/ folders
+- [forge-orch-017] helpful=0 harmful=0: All acceptance criteria met
+- [forge-orch-018] helpful=0 harmful=0: Tests passing
+- [forge-orch-019] helpful=0 harmful=0: Documentation updated
+- [forge-orch-020] helpful=0 harmful=0: Code quality standards met
+- [forge-orch-021] helpful=0 harmful=0: Evidence collected in wish qa/ folders
 
 **Output:** Approval or change requests
 
@@ -127,76 +127,76 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 ### Genie (Base Orchestrator)
 
 **Responsibilities:**
-- ✅ Human interface (receive requests, provide updates)
-- ✅ Workflow coordination (delegate to wish → forge → review)
-- ✅ Session tracking (via SESSION-STATE.md)
-- ✅ Context aggregation (synthesize agent outputs)
-- ✅ Final reporting (summarize outcomes to user)
+- [forge-orch-022] helpful=0 harmful=0: ✅ Human interface (receive requests, provide updates)
+- [forge-orch-023] helpful=0 harmful=0: ✅ Workflow coordination (delegate to wish → forge → review)
+- [forge-orch-024] helpful=0 harmful=0: ✅ Session tracking (via SESSION-STATE.md)
+- [forge-orch-025] helpful=0 harmful=0: ✅ Context aggregation (synthesize agent outputs)
+- [forge-orch-026] helpful=0 harmful=0: ✅ Final reporting (summarize outcomes to user)
 
 **Forbidden:**
-- ❌ NEVER create Forge tasks directly (that's forge.md's job)
-- ❌ NEVER create wish documents directly (that's wish.md's job)
-- ❌ NEVER run validation directly (that's review.md's job)
-- ❌ NEVER execute implementation (that's specialist agents' job)
+- [forge-orch-027] helpful=0 harmful=0: ❌ NEVER create Forge tasks directly (that's forge.md's job)
+- [forge-orch-028] helpful=0 harmful=0: ❌ NEVER create wish documents directly (that's wish.md's job)
+- [forge-orch-029] helpful=0 harmful=0: ❌ NEVER run validation directly (that's review.md's job)
+- [forge-orch-030] helpful=0 harmful=0: ❌ NEVER execute implementation (that's specialist agents' job)
 
 ### wish.md Agent (Planner)
 
 **Responsibilities:**
-- ✅ Gather context from conversation
-- ✅ Create wish document structure
-- ✅ Document problem + solution + criteria
-- ✅ Collect references to code/docs
+- [forge-orch-031] helpful=0 harmful=0: ✅ Gather context from conversation
+- [forge-orch-032] helpful=0 harmful=0: ✅ Create wish document structure
+- [forge-orch-033] helpful=0 harmful=0: ✅ Document problem + solution + criteria
+- [forge-orch-034] helpful=0 harmful=0: ✅ Collect references to code/docs
 
 **Forbidden:**
-- ❌ NEVER create Forge tasks
-- ❌ NEVER execute implementation
-- ❌ NEVER perform validation
+- [forge-orch-035] helpful=0 harmful=0: ❌ NEVER create Forge tasks
+- [forge-orch-036] helpful=0 harmful=0: ❌ NEVER execute implementation
+- [forge-orch-037] helpful=0 harmful=0: ❌ NEVER perform validation
 
 **Output:** Wish document for forge.md consumption
 
 ### forge.md Agent (Executor Orchestrator)
 
 **Responsibilities:**
-- ✅ Parse wish document `<spec_contract>`
-- ✅ Break wish into execution groups
-- ✅ Create task files in wish folder
-- ✅ **Create Forge MCP tasks** via `mcp__automagik_forge__create_task`
-- ✅ Assign personas to groups
-- ✅ Document validation hooks
-- ✅ Set up evidence paths
+- [forge-orch-038] helpful=0 harmful=0: ✅ Parse wish document `<spec_contract>`
+- [forge-orch-039] helpful=0 harmful=0: ✅ Break wish into execution groups
+- [forge-orch-040] helpful=0 harmful=0: ✅ Create task files in wish folder
+- [forge-orch-041] helpful=0 harmful=0: ✅ **Create Forge MCP tasks** via `mcp__automagik_forge__create_task`
+- [forge-orch-042] helpful=0 harmful=0: ✅ Assign personas to groups
+- [forge-orch-043] helpful=0 harmful=0: ✅ Document validation hooks
+- [forge-orch-044] helpful=0 harmful=0: ✅ Set up evidence paths
 
 **Forbidden:**
-- ❌ NEVER modify original wish document
-- ❌ NEVER execute implementation directly
-- ❌ NEVER skip task file creation
-- ❌ NEVER delegate to other orchestrators
+- [forge-orch-045] helpful=0 harmful=0: ❌ NEVER modify original wish document
+- [forge-orch-046] helpful=0 harmful=0: ❌ NEVER execute implementation directly
+- [forge-orch-047] helpful=0 harmful=0: ❌ NEVER skip task file creation
+- [forge-orch-048] helpful=0 harmful=0: ❌ NEVER delegate to other orchestrators
 
 **Output:** Forge plan + Forge task IDs + task files
 
 **MCP Operations Authority:**
-- forge.md **OWNS** all Forge MCP tool usage:
+- [forge-orch-049] helpful=0 harmful=0: forge.md **OWNS** all Forge MCP tool usage:
   - `mcp__automagik_forge__create_task`
   - `mcp__automagik_forge__update_task`
   - `mcp__automagik_forge__list_tasks`
   - `mcp__automagik_forge__get_task`
 
 **Why forge.md owns MCP:**
-- Forge operations ARE execution breakdown (forge.md's specialty)
-- Genie orchestrates workflows, not tools
-- Separation: orchestration (Genie) vs execution coordination (forge.md)
+- [forge-orch-050] helpful=0 harmful=0: Forge operations ARE execution breakdown (forge.md's specialty)
+- [forge-orch-051] helpful=0 harmful=0: Genie orchestrates workflows, not tools
+- [forge-orch-052] helpful=0 harmful=0: Separation: orchestration (Genie) vs execution coordination (forge.md)
 
 ### review.md Agent (Validator)
 
 **Responsibilities:**
-- ✅ Validate against wish acceptance criteria
-- ✅ Check test coverage
-- ✅ Verify documentation
-- ✅ Approve or request changes
+- [forge-orch-053] helpful=0 harmful=0: ✅ Validate against wish acceptance criteria
+- [forge-orch-054] helpful=0 harmful=0: ✅ Check test coverage
+- [forge-orch-055] helpful=0 harmful=0: ✅ Verify documentation
+- [forge-orch-056] helpful=0 harmful=0: ✅ Approve or request changes
 
 **Forbidden:**
-- ❌ NEVER create tasks
-- ❌ NEVER execute implementation
-- ❌ NEVER modify wish
+- [forge-orch-057] helpful=0 harmful=0: ❌ NEVER create tasks
+- [forge-orch-058] helpful=0 harmful=0: ❌ NEVER execute implementation
+- [forge-orch-059] helpful=0 harmful=0: ❌ NEVER modify wish
 
 **Output:** Approval decision + feedback
 
@@ -206,15 +206,15 @@ mcp__genie__run with agent="review" and prompt="Review implementation for @.geni
 
 ### Isolated Worktrees - No Cross-Task Waiting
 
-- Each Forge task runs in isolated git worktree/sandbox
-- Tasks CANNOT wait for each other - they don't share filesystem
-- Task B cannot see Task A's changes until Task A is MERGED to base branch
+- [forge-orch-060] helpful=0 harmful=0: Each Forge task runs in isolated git worktree/sandbox
+- [forge-orch-061] helpful=0 harmful=0: Tasks CANNOT wait for each other - they don't share filesystem
+- [forge-orch-062] helpful=0 harmful=0: Task B cannot see Task A's changes until Task A is MERGED to base branch
 
 ### Humans Are The Merge Gate
 
-- Only humans can review and merge Forge task PRs
-- Agents NEVER merge - always human decision
-- This is by design for quality control
+- [forge-orch-063] helpful=0 harmful=0: Only humans can review and merge Forge task PRs
+- [forge-orch-064] helpful=0 harmful=0: Agents NEVER merge - always human decision
+- [forge-orch-065] helpful=0 harmful=0: This is by design for quality control
 
 ### Sequential Dependency Pattern
 
@@ -227,15 +227,15 @@ If Task B depends on Task A's changes:
 
 ### Parallel Tasks
 
-- Tasks CAN run in parallel if independent
-- Example: Fix test + Populate PR can run together
-- But final validation MUST wait for test fix to be merged
+- [forge-orch-066] helpful=0 harmful=0: Tasks CAN run in parallel if independent
+- [forge-orch-067] helpful=0 harmful=0: Example: Fix test + Populate PR can run together
+- [forge-orch-068] helpful=0 harmful=0: But final validation MUST wait for test fix to be merged
 
 ### Common Mistake Pattern
 
-- **Mistake:** Launch Task 3 (validation) telling it to 'wait' for Task 1 (test fix)
-- **Why impossible:** Task 3's worktree doesn't have Task 1's changes
-- **Result:** Task 3 would fail because test fix not in its base branch
+- [forge-orch-069] helpful=0 harmful=0: **Mistake:** Launch Task 3 (validation) telling it to 'wait' for Task 1 (test fix)
+- [forge-orch-070] helpful=0 harmful=0: **Why impossible:** Task 3's worktree doesn't have Task 1's changes
+- [forge-orch-071] helpful=0 harmful=0: **Result:** Task 3 would fail because test fix not in its base branch
 
 ### Correct Pattern
 
@@ -276,16 +276,16 @@ Load all context from the referenced files above. Do not duplicate content here.
 
 ### Why This Pattern
 
-- Explicit instruction tells Claude to spawn the subagent
-- Agent reference points to actual agent prompt file
-- File references provide context paths
-- Avoids token waste from duplicating task file contents
+- [forge-orch-072] helpful=0 harmful=0: Explicit instruction tells Claude to spawn the subagent
+- [forge-orch-073] helpful=0 harmful=0: Agent reference points to actual agent prompt file
+- [forge-orch-074] helpful=0 harmful=0: File references provide context paths
+- [forge-orch-075] helpful=0 harmful=0: Avoids token waste from duplicating task file contents
 
 ### Agent Reference Pattern
 
-- Code agents: `@.genie/code/agents/<agent>.md`
-- Universal agents: `@.genie/code/agents/<agent>.md`
-- Workflows: `@.genie/code/workflows/<workflow>.md`
+- [forge-orch-076] helpful=0 harmful=0: Code agents: `@.genie/code/agents/<agent>.md`
+- [forge-orch-077] helpful=0 harmful=0: Universal agents: `@.genie/code/agents/<agent>.md`
+- [forge-orch-078] helpful=0 harmful=0: Workflows: `@.genie/code/workflows/<workflow>.md`
 
 **Note:** This pattern is ONLY for Forge MCP task descriptions when using Claude executor. Task file creation (task-*.md) remains unchanged with full context.
 
@@ -314,17 +314,17 @@ Genie: Reports status, then continues checking periodically
 ```
 
 **Implementation:**
-- Use `mcp__automagik_forge__get_task` periodically (every 30-60s)
-- Check for status changes (in-progress → in-review → done)
-- Report meaningful updates to user
-- Continue until task complete or user interrupts
-- "Monitor" = active vigilance, not passive waiting
+- [forge-orch-079] helpful=0 harmful=0: Use `mcp__automagik_forge__get_task` periodically (every 30-60s)
+- [forge-orch-080] helpful=0 harmful=0: Check for status changes (in-progress → in-review → done)
+- [forge-orch-081] helpful=0 harmful=0: Report meaningful updates to user
+- [forge-orch-082] helpful=0 harmful=0: Continue until task complete or user interrupts
+- [forge-orch-083] helpful=0 harmful=0: "Monitor" = active vigilance, not passive waiting
 
 **Why this matters:**
-- Forge tasks run in background (separate processes)
-- User expects real-time updates on progress
-- Genie's role is orchestration = keeping user informed
-- Sleeping/polling is appropriate for async operations
+- [forge-orch-084] helpful=0 harmful=0: Forge tasks run in background (separate processes)
+- [forge-orch-085] helpful=0 harmful=0: User expects real-time updates on progress
+- [forge-orch-086] helpful=0 harmful=0: Genie's role is orchestration = keeping user informed
+- [forge-orch-087] helpful=0 harmful=0: Sleeping/polling is appropriate for async operations
 
 ---
 
@@ -371,26 +371,26 @@ GitHub issue → wish.md (plan) → forge.md (creates Forge task) → Forge exec
 ## Part 9: When to Use Each Agent
 
 ### Use wish.md when:
-- ✅ Request needs formal context capture
-- ✅ Scope spans multiple components
-- ✅ Ambiguity or risk is high
-- ✅ Compliance/approval gates required
+- [forge-orch-088] helpful=0 harmful=0: ✅ Request needs formal context capture
+- [forge-orch-089] helpful=0 harmful=0: ✅ Scope spans multiple components
+- [forge-orch-090] helpful=0 harmful=0: ✅ Ambiguity or risk is high
+- [forge-orch-091] helpful=0 harmful=0: ✅ Compliance/approval gates required
 
 ### Use forge.md when:
-- ✅ Wish is APPROVED
-- ✅ Need to break wish into execution groups
-- ✅ Need to create Forge task cards
-- ✅ Need to assign work to specialists
+- [forge-orch-092] helpful=0 harmful=0: ✅ Wish is APPROVED
+- [forge-orch-093] helpful=0 harmful=0: ✅ Need to break wish into execution groups
+- [forge-orch-094] helpful=0 harmful=0: ✅ Need to create Forge task cards
+- [forge-orch-095] helpful=0 harmful=0: ✅ Need to assign work to specialists
 
 ### Use review.md when:
-- ✅ Implementation complete
-- ✅ Need acceptance criteria validation
-- ✅ Quality gate before merge
+- [forge-orch-096] helpful=0 harmful=0: ✅ Implementation complete
+- [forge-orch-097] helpful=0 harmful=0: ✅ Need acceptance criteria validation
+- [forge-orch-098] helpful=0 harmful=0: ✅ Quality gate before merge
 
 ### Skip workflow when:
-- Simple bug fix or trivial change
-- Route directly to implementor/debug
-- Escalate to wish.md if complexity grows
+- [forge-orch-099] helpful=0 harmful=0: Simple bug fix or trivial change
+- [forge-orch-100] helpful=0 harmful=0: Route directly to implementor/debug
+- [forge-orch-101] helpful=0 harmful=0: Escalate to wish.md if complexity grows
 
 ---
 
@@ -448,25 +448,25 @@ forge.md reads wish, creates companion files (forge plan, task files)
 ## Part 11: Validation Checklist
 
 **Before creating Forge tasks, verify:**
-- [ ] Wish document exists and is APPROVED
-- [ ] Genie delegated to wish.md (not created wish directly)
-- [ ] Genie delegated to forge.md (not created Forge tasks directly)
-- [ ] forge.md parsed wish `<spec_contract>`
-- [ ] forge.md created task files in wish folder
-- [ ] forge.md created Forge MCP tasks (not Genie)
-- [ ] Evidence paths documented
-- [ ] Validation hooks specified
+- [forge-orch-102] helpful=0 harmful=0: [ ] Wish document exists and is APPROVED
+- [forge-orch-103] helpful=0 harmful=0: [ ] Genie delegated to wish.md (not created wish directly)
+- [forge-orch-104] helpful=0 harmful=0: [ ] Genie delegated to forge.md (not created Forge tasks directly)
+- [forge-orch-105] helpful=0 harmful=0: [ ] forge.md parsed wish `<spec_contract>`
+- [forge-orch-106] helpful=0 harmful=0: [ ] forge.md created task files in wish folder
+- [forge-orch-107] helpful=0 harmful=0: [ ] forge.md created Forge MCP tasks (not Genie)
+- [forge-orch-108] helpful=0 harmful=0: [ ] Evidence paths documented
+- [forge-orch-109] helpful=0 harmful=0: [ ] Validation hooks specified
 
 **During implementation, verify:**
-- [ ] Work happens in Forge task worktree
-- [ ] Evidence collected in wish qa/ folders
-- [ ] Progress tracked via Forge task updates
+- [forge-orch-110] helpful=0 harmful=0: [ ] Work happens in Forge task worktree
+- [forge-orch-111] helpful=0 harmful=0: [ ] Evidence collected in wish qa/ folders
+- [forge-orch-112] helpful=0 harmful=0: [ ] Progress tracked via Forge task updates
 
 **After implementation, verify:**
-- [ ] Genie delegated to review.md (not validated directly)
-- [ ] Review validates against wish acceptance criteria
-- [ ] All tests passing
-- [ ] Documentation updated
+- [forge-orch-113] helpful=0 harmful=0: [ ] Genie delegated to review.md (not validated directly)
+- [forge-orch-114] helpful=0 harmful=0: [ ] Review validates against wish acceptance criteria
+- [forge-orch-115] helpful=0 harmful=0: [ ] All tests passing
+- [forge-orch-116] helpful=0 harmful=0: [ ] Documentation updated
 
 ---
 
@@ -503,11 +503,11 @@ forge.md reads wish, creates companion files (forge plan, task files)
 
 ## References
 
-- `@.genie/code/workflows/wish.md` - Wish workflow documentation
-- `@.genie/code/workflows/forge.md` - Forge workflow documentation
-- `@.genie/code/workflows/review.md` - Review workflow documentation (when exists)
-- `@.genie/spells/forge-integration.md` - Forge-as-entry-point pattern
-- `@.genie/spells/orchestrator-not-implementor.md` - Agent role boundaries
+- [forge-orch-117] helpful=0 harmful=0: `@.genie/code/workflows/wish.md` - Wish workflow documentation
+- [forge-orch-118] helpful=0 harmful=0: `@.genie/code/workflows/forge.md` - Forge workflow documentation
+- [forge-orch-119] helpful=0 harmful=0: `@.genie/code/workflows/review.md` - Review workflow documentation (when exists)
+- [forge-orch-120] helpful=0 harmful=0: `@.genie/spells/forge-integration.md` - Forge-as-entry-point pattern
+- [forge-orch-121] helpful=0 harmful=0: `@.genie/spells/orchestrator-not-implementor.md` - Agent role boundaries
 
 ---
 

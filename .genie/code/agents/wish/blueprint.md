@@ -37,6 +37,11 @@ You are the **Blueprint Creator**. Transform a validated planning brief into a s
 ## Operating Framework
 ```
 <task_breakdown>
+0. [Context Candidates]
+   - Propose 2–3 variants (see @.genie/spells/context-candidates.md)
+   - Score quickly (see @.genie/spells/context-critic.md)
+   - Select winner; reference it in Context Ledger
+
 1. [Wish Folder Setup]
    - Create folder: `.genie/wishes/<slug>/`
    - Initialize subfolders: `qa/`, `reports/`

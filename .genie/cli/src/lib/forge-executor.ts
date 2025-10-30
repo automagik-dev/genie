@@ -447,7 +447,12 @@ export class ForgeExecutor {
     }));
   }
 
-  private async getOrCreateGenieProject(): Promise<string> {
+  /**
+   * Get or create the Genie project for the current workspace
+   * @returns Project ID
+   * @public Exposed for install helpers and other orchestration needs
+   */
+  async getOrCreateGenieProject(): Promise<string> {
     if (this.config.genieProjectId) {
       return this.config.genieProjectId;
     }

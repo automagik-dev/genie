@@ -25,52 +25,52 @@ When facing complex user inquiries beyond simple answers:
 ### ✅ Defer to Spells When:
 
 **Complex user inquiries:**
-- Not simple greetings or basic questions
-- Requires specialized behavioral pattern
-- Involves decision framework or protocol
-- Needs domain-specific expertise
+- [defer-001] helpful=0 harmful=0: Not simple greetings or basic questions
+- [defer-002] helpful=0 harmful=0: Requires specialized behavioral pattern
+- [defer-003] helpful=0 harmful=0: Involves decision framework or protocol
+- [defer-004] helpful=0 harmful=0: Needs domain-specific expertise
 
 **Uncertainty about approach:**
-- "How should I handle this?"
-- "What's the right protocol?"
-- "Is there a pattern for this?"
+- [defer-005] helpful=0 harmful=0: "How should I handle this?"
+- [defer-006] helpful=0 harmful=0: "What's the right protocol?"
+- [defer-007] helpful=0 harmful=0: "Is there a pattern for this?"
 
 **Behavioral decisions:**
-- Should I create a wish?
-- Should I delegate this work?
-- How do I handle being blocked?
-- Should I ask one question or multiple?
+- [defer-008] helpful=0 harmful=0: Should I create a wish?
+- [defer-009] helpful=0 harmful=0: Should I delegate this work?
+- [defer-010] helpful=0 harmful=0: How do I handle being blocked?
+- [defer-011] helpful=0 harmful=0: Should I ask one question or multiple?
 
 ### ❌ Direct Response When:
 
 **Simple interactions:**
-- Greetings ("Hello", "Hi Genie")
-- Basic questions with obvious answers
-- Conversational acknowledgments
-- Status updates
+- [defer-012] helpful=0 harmful=0: Greetings ("Hello", "Hi Genie")
+- [defer-013] helpful=0 harmful=0: Basic questions with obvious answers
+- [defer-014] helpful=0 harmful=0: Conversational acknowledgments
+- [defer-015] helpful=0 harmful=0: Status updates
 
 **No specialized knowledge needed:**
-- General conversation
-- Clarifying questions
-- Simple confirmations
+- [defer-016] helpful=0 harmful=0: General conversation
+- [defer-017] helpful=0 harmful=0: Clarifying questions
+- [defer-018] helpful=0 harmful=0: Simple confirmations
 
 ## The Decision Pattern
 
 ### Step 1: Classify the Inquiry
 
 **Simple or Complex?**
-- Simple: Answer directly
-- Complex: Proceed to Step 2
+- [defer-019] helpful=0 harmful=0: Simple: Answer directly
+- [defer-020] helpful=0 harmful=0: Complex: Proceed to Step 2
 
 ### Step 2: Identify Relevant Spells
 
 **Ask myself:**
-- "Is this about delegation?" → Load `delegate-dont-do.md`
-- "Is this about learning?" → Load `learn.md`
-- "Is this about being blocked?" → Load `blocker-protocol.md`
-- "Is this about file creation?" → Load `file-creation-protocol.md`
-- "Is this about MCP tools?" → Load `mcp-first.md`
-- "Am I investigating before acting?" → Load `investigate-before-commit.md`
+- [defer-021] helpful=0 harmful=0: "Is this about delegation?" → Load `delegate-dont-do.md`
+- [defer-022] helpful=0 harmful=0: "Is this about learning?" → Load `learn.md`
+- [defer-023] helpful=0 harmful=0: "Is this about being blocked?" → Load `blocker-protocol.md`
+- [defer-024] helpful=0 harmful=0: "Is this about file creation?" → Load `file-creation-protocol.md`
+- [defer-025] helpful=0 harmful=0: "Is this about MCP tools?" → Load `mcp-first.md`
+- [defer-026] helpful=0 harmful=0: "Am I investigating before acting?" → Load `investigate-before-commit.md`
 
 ### Step 3: Load Spells
 
@@ -82,16 +82,16 @@ mcp__genie__read_spell("learn")
 ```
 
 **Multiple spells if needed:**
-- Orchestration question → Load orchestrator + boundary spells
-- Learning moment → Load learn + know-yourself spells
+- [defer-027] helpful=0 harmful=0: Orchestration question → Load orchestrator + boundary spells
+- [defer-028] helpful=0 harmful=0: Learning moment → Load learn + know-yourself spells
 
 ### Step 4: Defer to Expertise
 
 **Let the spell guide me:**
-- Read the spell content completely
-- Follow its protocol/checklist
-- Apply its decision framework
-- Use its examples as patterns
+- [defer-029] helpful=0 harmful=0: Read the spell content completely
+- [defer-030] helpful=0 harmful=0: Follow its protocol/checklist
+- [defer-031] helpful=0 harmful=0: Apply its decision framework
+- [defer-032] helpful=0 harmful=0: Use its examples as patterns
 
 **Don't improvise when spell exists.** Trust the specialized knowledge.
 
@@ -121,9 +121,9 @@ mcp__genie__read_spell("learn")
 **Simple or Complex?** Complex (delegation decision)
 
 **Identify Spells:**
-- Routing decision → `routing-decision-matrix.md`
-- Should I do or delegate? → `delegate-dont-do.md`
-- Which collective? → Code vs Create routing
+- [defer-052] helpful=0 harmful=0: Routing decision → `routing-decision-matrix.md`
+- [defer-053] helpful=0 harmful=0: Should I do or delegate? → `delegate-dont-do.md`
+- [defer-054] helpful=0 harmful=0: Which collective? → Code vs Create routing
 
 **Load Spells:**
 ```javascript
@@ -167,37 +167,37 @@ mcp__genie__read_spell("troubleshoot-infrastructure")
 ### Enables Indefinite Learning
 
 **Without spells:**
-- All knowledge in base prompt
-- Limited by context window
-- Can't learn indefinitely
+- [defer-033] helpful=0 harmful=0: All knowledge in base prompt
+- [defer-034] helpful=0 harmful=0: Limited by context window
+- [defer-035] helpful=0 harmful=0: Can't learn indefinitely
 
 **With spells:**
-- Specialized knowledge on-demand
-- Load only what's needed
-- Can have hundreds of spells
-- Learn indefinitely without bloat
+- [defer-036] helpful=0 harmful=0: Specialized knowledge on-demand
+- [defer-037] helpful=0 harmful=0: Load only what's needed
+- [defer-038] helpful=0 harmful=0: Can have hundreds of spells
+- [defer-039] helpful=0 harmful=0: Learn indefinitely without bloat
 
 ### Maintains Quality
 
 **Spells are refined over time:**
-- Each spell is tested and validated
-- Learnings update spells surgically
-- Single source of truth per domain
-- Consistent behavior across sessions
+- [defer-040] helpful=0 harmful=0: Each spell is tested and validated
+- [defer-041] helpful=0 harmful=0: Learnings update spells surgically
+- [defer-042] helpful=0 harmful=0: Single source of truth per domain
+- [defer-043] helpful=0 harmful=0: Consistent behavior across sessions
 
 **Improvising is error-prone:**
-- No validation
-- Inconsistent approaches
-- Forgotten best practices
-- Repeated mistakes
+- [defer-044] helpful=0 harmful=0: No validation
+- [defer-045] helpful=0 harmful=0: Inconsistent approaches
+- [defer-046] helpful=0 harmful=0: Forgotten best practices
+- [defer-047] helpful=0 harmful=0: Repeated mistakes
 
 ### Reduces Cognitive Load
 
 **Don't try to remember everything:**
-- Know spell exists
-- Load when needed
-- Follow its guidance
-- Trust the expertise
+- [defer-048] helpful=0 harmful=0: Know spell exists
+- [defer-049] helpful=0 harmful=0: Load when needed
+- [defer-050] helpful=0 harmful=0: Follow its guidance
+- [defer-051] helpful=0 harmful=0: Trust the expertise
 
 **Result:** Better decisions, fewer violations, consistent quality
 
@@ -253,11 +253,11 @@ Genie: "This is code work, delegating to Code collective..."
 
 ## Checklist: Should I Load a Spell?
 
-- [ ] Is this inquiry complex (not greeting/simple answer)?
-- [ ] Do I know which spell(s) are relevant?
-- [ ] Would the spell provide better guidance than improvising?
-- [ ] Am I about to make a behavioral decision?
-- [ ] Am I uncertain about the correct protocol?
+- [defer-055] helpful=0 harmful=0: [ ] Is this inquiry complex (not greeting/simple answer)?
+- [defer-056] helpful=0 harmful=0: [ ] Do I know which spell(s) are relevant?
+- [defer-057] helpful=0 harmful=0: [ ] Would the spell provide better guidance than improvising?
+- [defer-058] helpful=0 harmful=0: [ ] Am I about to make a behavioral decision?
+- [defer-059] helpful=0 harmful=0: [ ] Am I uncertain about the correct protocol?
 
 **If yes to any:** Load relevant spell(s) and defer to their expertise
 
@@ -272,7 +272,7 @@ Genie: "This is code work, delegating to Code collective..."
 
 ## Related
 
-- `@.genie/spells/learn.md` - How to learn and update framework
-- `@.genie/spells/know-yourself.md` - Identity and self-awareness
-- `@AGENTS.md` - Skill System Philosophy section
-- All spells in `.genie/spells/` - Specialized expertise domains
+- [defer-060] helpful=0 harmful=0: `@.genie/spells/learn.md` - How to learn and update framework
+- [defer-061] helpful=0 harmful=0: `@.genie/spells/know-yourself.md` - Identity and self-awareness
+- [defer-062] helpful=0 harmful=0: `@AGENTS.md` - Skill System Philosophy section
+- [defer-063] helpful=0 harmful=0: All spells in `.genie/spells/` - Specialized expertise domains

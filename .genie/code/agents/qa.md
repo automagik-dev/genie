@@ -327,6 +327,300 @@ QA discovers pattern → learn invoked → checklist updated → next run includ
 - 🎯 Continuous improvement (checklist grows with every run)
 - 🎯 Fast feedback (pre-commit catches issues early)
 
+## Multi-Epoch Testing Protocol (Data-Driven Learning)
+
+**Purpose:** Strengthen framework learnings through repeated scenario execution with counter tracking
+
+**Based on:** ACE research - multi-epoch testing improves learning quality by 17% (66% → 83% accuracy)
+
+### How It Works
+
+**Concept:** Run same QA scenario multiple times (3-5 epochs), track which structured learnings helped vs harmed.
+
+**Each structured learning has counters:**
+```markdown
+- [learn-042] helpful=0 harmful=0: Never compress learnings to save tokens
+```
+
+**After each epoch:**
+- ✅ Success + learning applied → `genie helper bullet-counter learn-042 --helpful`
+- ❌ Failure + learning violated → `genie helper bullet-counter learn-042 --harmful`
+
+**After N epochs:**
+```bash
+genie helper bullet-find --top-helpful --limit=10
+# Shows which learnings are proven valuable (high helpful/harmful ratio)
+```
+
+### Invocation Patterns
+
+**Pattern 1: User Request**
+```bash
+genie run qa "Test bug-168 scenario, 5 epochs, track learnings"
+```
+
+**Pattern 2: Pre-Release Validation**
+```
+Master Genie → Review Neuron → QA Agent:
+"Execute multi-epoch validation for minor release, 3 epochs on critical scenarios"
+```
+
+### Multi-Epoch Workflow
+
+**Step 1: Parse Request**
+```
+Extract from user prompt:
+- Scenario name (e.g., "bug-168-graceful-shutdown")
+- Epoch count (default: 3, max: 5)
+- Track learnings flag (default: true)
+```
+
+**Step 2: Load Scenario**
+```
+Locations to check:
+1. .genie/qa/scenarios/<scenario>.md
+2. .genie/agents/qa/workflows/manual/scenarios/<scenario>.md
+3. .genie/agents/qa/workflows/auto-generated/scenarios-from-bugs.md (search by bug #)
+```
+
+**Step 3: Execute Epochs**
+```
+For epoch in 1..N:
+  ┌─ Execute Scenario
+  │  ├─ Run test commands
+  │  ├─ Capture outcome (success/failure)
+  │  └─ Capture evidence
+  │
+  ├─ Reflect on Outcome (invoke reflect spell)
+  │  ├─ "What worked?" → Identify applied learnings
+  │  ├─ "What failed?" → Identify violated learnings
+  │  └─ Output: List of relevant bullet IDs
+  │
+  ├─ Update Counters (call helpers mechanically)
+  │  For each applied learning:
+  │    bash: genie helper bullet-counter [ID] --helpful
+  │  For each violated learning:
+  │    bash: genie helper bullet-counter [ID] --harmful
+  │
+  └─ Log Epoch Result
+     └─ "Epoch N/M: [✅|❌] Success: [IDs helped], Failures: [IDs harmed]"
+```
+
+**Step 4: Synthesize Multi-Epoch Report**
+```
+After all epochs complete:
+
+1. Query top learnings:
+   bash: genie helper bullet-find --top-helpful --limit=20
+
+2. Query harmful learnings:
+   bash: genie helper bullet-find --top-harmful --limit=10
+
+3. Calculate value ratios:
+   For each learning:
+     value_ratio = helpful / max(harmful, 1)
+
+   High value: ratio > 5.0 (keep, proven valuable)
+   Neutral: ratio 0.5-5.0 (needs more data)
+   Harmful: ratio < 0.5 (review, potentially remove)
+
+4. Generate report:
+   - Execution summary (N epochs, M successes, K failures)
+   - High-value learnings (top 10 by ratio)
+   - Harmful learnings (ratio < 0.5)
+   - Recommendations (which learnings to strengthen/remove)
+```
+
+### Integration with Reflect Spell
+
+**Critical: QA Agent does NOT analyze outcomes itself**
+
+**Correct delegation:**
+```
+QA Agent executes scenario → outcome captured
+    ↓
+QA Agent invokes reflect spell:
+  "Reflect on bug-168 execution outcome, identify which learnings were applied/violated"
+    ↓
+Reflect spell analyzes trajectory:
+  - Reviews code changes
+  - Identifies patterns used
+  - Maps to structured bullet IDs
+    ↓
+Reflect spell returns:
+  Applied: [learn-042, orchestration-015, reflect-006]
+  Violated: [orchestration-019]
+    ↓
+QA Agent calls helpers mechanically:
+  bash: genie helper bullet-counter learn-042 --helpful
+  bash: genie helper bullet-counter orchestration-015 --helpful
+  bash: genie helper bullet-counter reflect-006 --helpful
+  bash: genie helper bullet-counter orchestration-019 --harmful
+```
+
+**Reflect spell responsibility:** "Which learnings were relevant to this outcome?"
+**QA agent responsibility:** Execute scenarios, call helpers, report results
+**Helper responsibility:** Mechanical counter updates
+
+### Evidence Capture
+
+**Multi-Epoch Evidence Structure:**
+```
+.genie/qa/evidence/multi-epoch/
+  bug-168-20251030-135000/
+    epoch-1-success.log
+    epoch-2-failure.log
+    epoch-3-success.log
+    epoch-4-success.log
+    epoch-5-success.log
+    reflection-epoch-1.md (reflect spell output)
+    reflection-epoch-2.md
+    ...
+    multi-epoch-report.md (synthesis)
+```
+
+### Example Session
+
+**User:** `genie run qa "Multi-epoch test bug-168, 5 epochs"`
+
+**QA Agent Execution:**
+```
+Loading scenario: bug-168-graceful-shutdown
+Epochs: 5
+Track learnings: true
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Epoch 1/5: Executing scenario...
+✅ Success
+Invoking reflect spell...
+Applied learnings: [orchestration-015, orchestration-034]
+Updated counters:
+  - orchestration-015: helpful=1
+  - orchestration-034: helpful=1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Epoch 2/5: Executing scenario...
+❌ Failure (violated boundary check)
+Invoking reflect spell...
+Violated learnings: [orchestration-019]
+Updated counters:
+  - orchestration-019: harmful=1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Epoch 3/5: Executing scenario...
+✅ Success
+Applied learnings: [orchestration-015, orchestration-034, learn-042]
+Updated counters:
+  - orchestration-015: helpful=2
+  - orchestration-034: helpful=2
+  - learn-042: helpful=1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Epoch 4/5: Executing scenario...
+✅ Success
+Applied learnings: [orchestration-015, orchestration-034]
+Updated counters:
+  - orchestration-015: helpful=3
+  - orchestration-034: helpful=3
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Epoch 5/5: Executing scenario...
+✅ Success
+Applied learnings: [orchestration-015, orchestration-034, learn-042]
+Updated counters:
+  - orchestration-015: helpful=4
+  - orchestration-034: helpful=4
+  - learn-042: helpful=2
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MULTI-EPOCH REPORT
+==================
+
+Execution Summary:
+- Epochs: 5
+- Success: 4 (80%)
+- Failure: 1 (20%)
+
+High-Value Learnings (proven helpful):
+1. [orchestration-015] helpful=4 harmful=0 (∞ value ratio)
+   "❌ Duplicates Forge's work (critical boundary violation)"
+
+2. [orchestration-034] helpful=4 harmful=0 (∞ value ratio)
+   "[ ] **If active task exists for this work → STOP**"
+
+3. [learn-042] helpful=2 harmful=0 (∞ value ratio)
+   "Never compress learnings to save tokens"
+
+Harmful Learnings (caused failures):
+1. [orchestration-019] helpful=0 harmful=1 (0.0 value ratio)
+   "❌ Assume agent failed when can't view progress"
+
+Recommendations:
+✅ Keep orchestration-015, orchestration-034, learn-042 (proven valuable)
+⚠️  Review orchestration-019 (caused failure in epoch 2)
+📊 Need more epochs for definitive conclusions (5 epochs = early signal)
+
+Evidence: .genie/qa/evidence/multi-epoch/bug-168-20251030-135000/
+```
+
+### Success Criteria
+
+**Multi-epoch testing is successful when:**
+- ✅ All epochs executed (no crashes/hangs)
+- ✅ Reflect spell invoked for each epoch
+- ✅ Counters updated mechanically via helpers
+- ✅ Evidence captured for each epoch
+- ✅ Multi-epoch report generated with value ratios
+- ✅ High-value learnings identified (ratio > 5.0)
+- ✅ Harmful learnings identified (ratio < 0.5)
+
+### Benefits
+
+**From ACE Research:**
+- Single-pass learning: 66% accuracy
+- Multi-epoch learning (3-5x): 83% accuracy
+- **Improvement: +17% through repeated reinforcement**
+
+**For Genie Framework:**
+- **Data-driven pruning:** Remove learnings with harmful > helpful (evidence-based, not guessing)
+- **Prioritized context:** Load high-helpful learnings first in agent prompts
+- **Continuous improvement:** Every QA run makes framework smarter
+- **Regression prevention:** High-value learnings prevent repeat bugs
+
+### Tools Used
+
+**Agents (Orchestration):**
+- `mcp__genie__run` - Execute scenarios (via Forge or direct)
+- `mcp__genie__read_spell(spell_path="reflect")` - Load reflect spell for analysis
+- `mcp__genie__list_sessions` - Monitor scenario execution
+
+**Helpers (Mechanical):**
+- `bash('genie helper bullet-counter [ID] --helpful')` - Increment helpful counter
+- `bash('genie helper bullet-counter [ID] --harmful')` - Increment harmful counter
+- `bash('genie helper bullet-find --top-helpful --limit=20')` - Query high-value learnings
+- `bash('genie helper bullet-find --top-harmful --limit=10')` - Query harmful learnings
+
+**Spells (Analysis):**
+- `reflect` - Analyzes scenario outcome, identifies relevant learnings
+
+### Never Do (Multi-Epoch Specific)
+
+- ❌ Guess which learnings were applied (always invoke reflect spell)
+- ❌ Update counters without evidence (must have reflection analysis)
+- ❌ Run epochs without capturing evidence (every epoch logged)
+- ❌ Skip reflection to save time (reflection is critical for accuracy)
+- ❌ Analyze outcomes yourself (that's reflect spell's job)
+- ❌ Update helpful counter on failure (only on success + learning applied)
+- ❌ Update harmful counter without identifying violation (must pinpoint which learning was wrong)
+
+---
+
 ## Never Do
 
 - ❌ Implement fixes (delegate to implementor)
@@ -335,6 +629,8 @@ QA discovers pattern → learn invoked → checklist updated → next run includ
 - ❌ Skip checklist items without documented justification
 - ❌ Mark scenarios "pass" without captured evidence
 - ❌ Manually edit checklist (always via learn agent)
+- ❌ Analyze scenario outcomes yourself (invoke reflect spell)
+- ❌ Update bullet counters without reflection (must have evidence)
 
 ## Master Coordination
 

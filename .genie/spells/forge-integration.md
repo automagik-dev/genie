@@ -25,18 +25,18 @@ GitHub issue → Forge task card → worktree + feature branch → PR back to ma
 4. **Parallel safety** via independent worktrees (no branch conflicts)
 
 **Why This Matters:**
-- **Clear ownership:** Each forge task card owns exactly one PR
-- **Parallel safety:** Independent worktrees enable simultaneous work without conflicts
-- **Traceability:** Complete chain: GitHub issue ←→ forge card ←→ worktree ←→ PR
-- **Main stays clean:** Only merged PRs (not work-in-progress branches)
-- **Atomic delivery:** Each PR is self-contained, reviewable, revertable
+- [forge-int-001] helpful=0 harmful=0: **Clear ownership:** Each forge task card owns exactly one PR
+- [forge-int-002] helpful=0 harmful=0: **Parallel safety:** Independent worktrees enable simultaneous work without conflicts
+- [forge-int-003] helpful=0 harmful=0: **Traceability:** Complete chain: GitHub issue ←→ forge card ←→ worktree ←→ PR
+- [forge-int-004] helpful=0 harmful=0: **Main stays clean:** Only merged PRs (not work-in-progress branches)
+- [forge-int-005] helpful=0 harmful=0: **Atomic delivery:** Each PR is self-contained, reviewable, revertable
 
 **Enforcement Constraints:**
-- ❌ **NEVER** create GitHub issue without forge task card
-- ❌ **NEVER** create forge task card without exactly one worktree/branch
-- ❌ **NEVER** create worktree without exactly one PR back to main
-- ❌ **NEVER** merge PR without corresponding forge task completion
-- ✅ **ALWAYS** GitHub issue → forge card → worktree → PR → main (complete chain)
+- [forge-int-006] helpful=0 harmful=0: ❌ **NEVER** create GitHub issue without forge task card
+- [forge-int-007] helpful=0 harmful=0: ❌ **NEVER** create forge task card without exactly one worktree/branch
+- [forge-int-008] helpful=0 harmful=0: ❌ **NEVER** create worktree without exactly one PR back to main
+- [forge-int-009] helpful=0 harmful=0: ❌ **NEVER** merge PR without corresponding forge task completion
+- [forge-int-010] helpful=0 harmful=0: ✅ **ALWAYS** GitHub issue → forge card → worktree → PR → main (complete chain)
 
 **Example Flow:**
 ```
@@ -53,10 +53,10 @@ Merge to main + archive worktree
 ```
 
 **Validation:**
-- Every active forge card MUST have corresponding worktree
-- Every worktree MUST have corresponding open PR (or be in progress)
-- Every merged PR MUST have completed forge card
-- Main branch MUST only receive PRs (no direct commits for forge work)
+- [forge-int-011] helpful=0 harmful=0: Every active forge card MUST have corresponding worktree
+- [forge-int-012] helpful=0 harmful=0: Every worktree MUST have corresponding open PR (or be in progress)
+- [forge-int-013] helpful=0 harmful=0: Every merged PR MUST have completed forge card
+- [forge-int-014] helpful=0 harmful=0: Main branch MUST only receive PRs (no direct commits for forge work)
 
 ---
 
@@ -65,11 +65,11 @@ Merge to main + archive worktree
 **Core Principle:** Forge is not just for code implementation. Forge can host ANY persistent work unit, including continuous learning. When Forge hosts a "learn" task, results are VISIBLE to the user.
 
 **Why This Matters:**
-- **Visibility:** User sees learning results directly in Forge UI (not hidden in MCP session logs)
-- **Persistence:** Learning task lives alongside all other work (integrated development + learning)
-- **Coordination:** Learning integrated with code tasks, not separate workflow
-- **Continuity:** Each learning session builds on previous ones documented in Forge task
-- **Accountability:** Learning outcomes traceable + reviewable just like code
+- [forge-int-015] helpful=0 harmful=0: **Visibility:** User sees learning results directly in Forge UI (not hidden in MCP session logs)
+- [forge-int-016] helpful=0 harmful=0: **Persistence:** Learning task lives alongside all other work (integrated development + learning)
+- [forge-int-017] helpful=0 harmful=0: **Coordination:** Learning integrated with code tasks, not separate workflow
+- [forge-int-018] helpful=0 harmful=0: **Continuity:** Each learning session builds on previous ones documented in Forge task
+- [forge-int-019] helpful=0 harmful=0: **Accountability:** Learning outcomes traceable + reviewable just like code
 
 **How It Works:**
 
@@ -101,17 +101,17 @@ Merge to main + archive worktree
 **Benefits Over MCP-Only Learning:**
 
 **MCP-only approach (old):**
-- ❌ Learning happens in hidden session logs
-- ❌ User must use `mcp__genie__view` to see outcomes
-- ❌ No integration with development workflow
-- ❌ Learning sessions disconnected from code work
+- [forge-int-020] helpful=0 harmful=0: ❌ Learning happens in hidden session logs
+- [forge-int-021] helpful=0 harmful=0: ❌ User must use `mcp__genie__view` to see outcomes
+- [forge-int-022] helpful=0 harmful=0: ❌ No integration with development workflow
+- [forge-int-023] helpful=0 harmful=0: ❌ Learning sessions disconnected from code work
 
 **Forge-hosted learning (new):**
-- ✅ Learning visible in same UI as code tasks
-- ✅ User sees results immediately (no tool invocation needed)
-- ✅ Learning integrated with development (one workflow)
-- ✅ Each learning session builds on previous (documented in Forge task)
-- ✅ Traceable: What was learned + when + which files changed
+- [forge-int-024] helpful=0 harmful=0: ✅ Learning visible in same UI as code tasks
+- [forge-int-025] helpful=0 harmful=0: ✅ User sees results immediately (no tool invocation needed)
+- [forge-int-026] helpful=0 harmful=0: ✅ Learning integrated with development (one workflow)
+- [forge-int-027] helpful=0 harmful=0: ✅ Each learning session builds on previous (documented in Forge task)
+- [forge-int-028] helpful=0 harmful=0: ✅ Traceable: What was learned + when + which files changed
 
 ---
 
@@ -122,14 +122,14 @@ Merge to main + archive worktree
 ### Forge Task Lifecycle
 
 **1. Task Creation**
-- **API:** `mcp__automagik_forge__create_task`
-- **Returns:** task_id (UUID format, e.g., `e84ff7e9-db49-4cdb-8f5b-3c1afd2df94f`)
-- **Status:** starts as "todo"
+- [forge-int-029] helpful=0 harmful=0: **API:** `mcp__automagik_forge__create_task`
+- [forge-int-030] helpful=0 harmful=0: **Returns:** task_id (UUID format, e.g., `e84ff7e9-db49-4cdb-8f5b-3c1afd2df94f`)
+- [forge-int-031] helpful=0 harmful=0: **Status:** starts as "todo"
 
 **2. Task Attempt Start**
-- **API:** `mcp__automagik_forge__start_task_attempt`
-- **Parameters:** task_id, executor (CLAUDE_CODE, etc.)
-- **Returns:** attempt_id (UUID format, e.g., `35a403e3-fe62-4545-bffe-0285dbfa472d`)
+- [forge-int-032] helpful=0 harmful=0: **API:** `mcp__automagik_forge__start_task_attempt`
+- [forge-int-033] helpful=0 harmful=0: **Parameters:** task_id, executor (CLAUDE_CODE, etc.)
+- [forge-int-034] helpful=0 harmful=0: **Returns:** attempt_id (UUID format, e.g., `35a403e3-fe62-4545-bffe-0285dbfa472d`)
 
 **3. Worktree Creation (Automatic)**
 Forge automatically creates a worktree with the pattern:
@@ -139,12 +139,12 @@ Forge automatically creates a worktree with the pattern:
 ```
 
 **Example:**
-- Attempt ID: `35a403e3-fe62-4545-bffe-0285dbfa472d`
-- Prefix (first 4 chars): `35a4`
-- Task title: "Forge Metadata Investigation - Extract task_id structure"
-- Abbreviation: "test-forge-metad"
-- **Worktree dir:** `35a4-test-forge-metad`
-- **Location:** `/var/tmp/automagik-forge/worktrees/35a4-test-forge-metad/`
+- [forge-int-035] helpful=0 harmful=0: Attempt ID: `35a403e3-fe62-4545-bffe-0285dbfa472d`
+- [forge-int-036] helpful=0 harmful=0: Prefix (first 4 chars): `35a4`
+- [forge-int-037] helpful=0 harmful=0: Task title: "Forge Metadata Investigation - Extract task_id structure"
+- [forge-int-038] helpful=0 harmful=0: Abbreviation: "test-forge-metad"
+- [forge-int-039] helpful=0 harmful=0: **Worktree dir:** `35a4-test-forge-metad`
+- [forge-int-040] helpful=0 harmful=0: **Location:** `/var/tmp/automagik-forge/worktrees/35a4-test-forge-metad/`
 
 **4. Branch Creation (Automatic)**
 Forge creates a forge branch with the pattern:
@@ -203,8 +203,8 @@ Wish Layer (Genie):
 
 ### Executor Profiles (`/api/profiles`)
 
-- **Endpoint:** `GET /api/profiles` returns an object with `executors` mapping executor keys to profile variants
-- **Update constraints:**
+- [forge-int-041] helpful=0 harmful=0: **Endpoint:** `GET /api/profiles` returns an object with `executors` mapping executor keys to profile variants
+- [forge-int-042] helpful=0 harmful=0: **Update constraints:**
   - Forge rejects top-level strings; the payload MUST be `{"executors": {...}}`
   - Variants are stored under upper-case keys (`DEFAULT`, `QA_CHECKLIST`, etc.)
   - Store everything upper-case to avoid mismatches
@@ -232,14 +232,14 @@ PUT /api/profiles
 }
 ```
 
-- **CLI impact:** Agents can specify a variant via front-matter (`genie.executorProfile: QA_CHECKLIST`). `genie run --executor opencode` will push `{ executor: "OPENCODE", variant: "QA_CHECKLIST" }` to Forge.
+- [forge-int-043] helpful=0 harmful=0: **CLI impact:** Agents can specify a variant via front-matter (`genie.executorProfile: QA_CHECKLIST`). `genie run --executor opencode` will push `{ executor: "OPENCODE", variant: "QA_CHECKLIST" }` to Forge.
 
 ### Task Templates (`/api/templates`)
 
-- Templates are simple `{template_name, title, description, project_id}` records
-- Description is free-form markdown/plain text
-- Use them to surface Genie instructions inside Forge's UI
-- They do not control execution or models
+- [forge-int-044] helpful=0 harmful=0: Templates are simple `{template_name, title, description, project_id}` records
+- [forge-int-045] helpful=0 harmful=0: Description is free-form markdown/plain text
+- [forge-int-046] helpful=0 harmful=0: Use them to surface Genie instructions inside Forge's UI
+- [forge-int-047] helpful=0 harmful=0: They do not control execution or models
 
 **Example sync:**
 ```ts
@@ -256,25 +256,25 @@ Remember: this only mirrors content. Execution still depends on executor profile
 
 ### Sessions
 
-- Forge session creation expects `{ executor_profile_id: { executor, variant } }`
-- `variant` must match one of the profile keys (defaults to `DEFAULT`)
-- Genie session metadata stores both `executor` and `executorVariant`
-- Ensure we set both when forging sessions (fallbacks removed)
+- [forge-int-048] helpful=0 harmful=0: Forge session creation expects `{ executor_profile_id: { executor, variant } }`
+- [forge-int-049] helpful=0 harmful=0: `variant` must match one of the profile keys (defaults to `DEFAULT`)
+- [forge-int-050] helpful=0 harmful=0: Genie session metadata stores both `executor` and `executorVariant`
+- [forge-int-051] helpful=0 harmful=0: Ensure we set both when forging sessions (fallbacks removed)
 
 ### Best Practices & Lessons
 
-- 🔁 **Roundtrip test before mutating profiles:** Slam the existing `profiles.content` into `PUT /api/profiles` to verify format, then mutate
-- 🪪 **Keep history:** Save every API interaction log in `.genie/qa/evidence/forge-api-report-YYYYMMDDHHMM.md`
-- 📜 **Front-matter contract:** Every agent that declares `genie.executor` SHOULD also declare the matching Forge variant if it is not `DEFAULT`
-- 🧩 **Future work:** Consider scripted export/import (CLI verb) to sync collectives → Forge templates & profile variants automatically
+- [forge-int-052] helpful=0 harmful=0: 🔁 **Roundtrip test before mutating profiles:** Slam the existing `profiles.content` into `PUT /api/profiles` to verify format, then mutate
+- [forge-int-053] helpful=0 harmful=0: 🪪 **Keep history:** Save every API interaction log in `.genie/qa/evidence/forge-api-report-YYYYMMDDHHMM.md`
+- [forge-int-054] helpful=0 harmful=0: 📜 **Front-matter contract:** Every agent that declares `genie.executor` SHOULD also declare the matching Forge variant if it is not `DEFAULT`
+- [forge-int-055] helpful=0 harmful=0: 🧩 **Future work:** Consider scripted export/import (CLI verb) to sync collectives → Forge templates & profile variants automatically
 
 ---
 
 ## References
 
-- `@.genie/spells/forge-orchestration.md` - Workflow delegation and orchestration patterns
-- `@.genie/code/workflows/forge.md` - Forge workflow documentation
-- `@.genie/spells/orchestrator-not-implementor.md` - Agent role boundaries
+- [forge-int-056] helpful=0 harmful=0: `@.genie/spells/forge-orchestration.md` - Workflow delegation and orchestration patterns
+- [forge-int-057] helpful=0 harmful=0: `@.genie/code/workflows/forge.md` - Forge workflow documentation
+- [forge-int-058] helpful=0 harmful=0: `@.genie/spells/orchestrator-not-implementor.md` - Agent role boundaries
 
 ---
 

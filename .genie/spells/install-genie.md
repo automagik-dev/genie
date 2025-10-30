@@ -23,7 +23,244 @@ My job during installation:
 
 ---
 
-## Installation Flow
+## Installation Orchestration (For Master Genie MASTER Task)
+
+**When you receive:** "Run explorer to acquire context, when it ends run the install workflow. Templates: [templates]"
+
+You are running as a MASTER task in Forge. Your job: coordinate the entire installation workflow.
+
+### Step 1: Run Explorer
+
+Create explore task to analyze repository. You have Forge API access:
+
+```javascript
+// Get context from environment/tools
+const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const PROJECT_ID = '<your-project-id>'; // Available in your context
+const CURRENT_BRANCH = '<current-branch>'; // Use git branch --show-current or Read .git/HEAD
+
+// Create task
+const taskRes = await fetch(`${FORGE_URL}/api/tasks`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    project_id: PROJECT_ID,
+    title: '🔍 Repository Analysis',
+    description: 'Analyze repository structure, detect project metadata, tech stack, architecture. Output as JSON.'
+  })
+});
+const { data: task } = await taskRes.json();
+
+// Create attempt with EXPLORE variant (global agent)
+const attemptRes = await fetch(`${FORGE_URL}/api/task-attempts`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    task_id: task.id,
+    executor_profile_id: {
+      executor: 'CLAUDE_CODE',
+      variant: 'EXPLORE'
+    },
+    base_branch: CURRENT_BRANCH
+  })
+});
+const { data: attempt } = await attemptRes.json();
+
+console.log(`Explorer launched: ${attempt.id}`);
+```
+
+### Step 2: Wait for Explorer to End
+
+Poll attempt status until complete:
+
+```javascript
+let status = 'running';
+while (status === 'running' || status === 'pending') {
+  await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+
+  const statusRes = await fetch(`${FORGE_URL}/api/task-attempts/${attempt.id}`);
+  const { data: attemptData } = await statusRes.json();
+  status = attemptData.status;
+
+  console.log(`Explorer status: ${status}`);
+}
+
+if (status === 'failed') {
+  console.log('Explorer failed - will proceed with basic interview');
+}
+```
+
+### Step 3: Acquire Context
+
+Extract context from explorer output:
+
+```javascript
+// Get output from completed explorer
+const outputRes = await fetch(`${FORGE_URL}/api/task-attempts/${attempt.id}/output`);
+const explorerOutput = await outputRes.text();
+
+// Parse JSON from output (explorer outputs structured JSON)
+const contextMatch = explorerOutput.match(/```json\n([\s\S]*?)\n```/);
+const explorerContext = contextMatch ? JSON.parse(contextMatch[1]) : {};
+
+// Now you have: explorerContext.project, explorerContext.tech, explorerContext.architecture, explorerContext.progress
+console.log(`Context acquired: ${explorerContext.project?.name}`);
+```
+
+### Step 4: Brief Validation with User
+
+Present explorer findings and get quick confirmation:
+
+```
+🔍 **I analyzed your repository!**
+
+📦 **Project:** ${explorerContext.project?.name || 'Unknown'}
+🎯 **Purpose:** ${explorerContext.project?.purpose || 'Unknown'}
+🛠️ **Tech Stack:** ${explorerContext.tech?.frameworks?.join(', ') || 'Unknown'}
+
+Is this correct? (Just a quick yes/no - the installers will ask detailed questions)
+```
+
+Wait for user confirmation. If anything major is wrong, ask for corrections.
+
+### Step 5: Spawn Collective Installers (IN PARALLEL)
+
+Based on templates selected, spawn installers with explorer context:
+
+```javascript
+const templates = '<templates-from-prompt>'; // e.g., "code, create"
+const spawnedTasks = [];
+
+// Spawn Code installer (if code template selected)
+if (templates.includes('code')) {
+  console.log('🤖 Spawning Code installer...');
+
+  const codeTaskRes = await fetch(`${FORGE_URL}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: PROJECT_ID,
+      title: '🤖 Code Collective Installation',
+      description: `Setup development environment for ${explorerContext.project?.name}.
+
+Explorer context:
+${JSON.stringify(explorerContext, null, 2)}
+
+Your job: Interactive conversation about technical preferences, then setup:
+- Git hooks (pre-commit, pre-push)
+- CI/CD workflows
+- Testing structure
+- tech-stack.md (technical details)
+- environment.md (dev setup)
+- CONTEXT.md (technical section)
+
+See @.genie/code/agents/install.md for full workflow.`
+    })
+  });
+
+  const { data: codeTask } = await codeTaskRes.json();
+
+  const codeAttemptRes = await fetch(`${FORGE_URL}/api/task-attempts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task_id: codeTask.id,
+      executor_profile_id: {
+        executor: 'CLAUDE_CODE',
+        variant: 'DEFAULT' // Code install is regular agent
+      },
+      base_branch: CURRENT_BRANCH
+    })
+  });
+
+  const { data: codeAttempt } = await codeAttemptRes.json();
+  spawnedTasks.push({ name: 'code', attempt_id: codeAttempt.id });
+
+  console.log(`✅ Code installer launched: ${codeAttempt.id}`);
+}
+
+// Spawn Create installer (if create template selected)
+if (templates.includes('create')) {
+  console.log('✏️ Spawning Create installer...');
+
+  const createTaskRes = await fetch(`${FORGE_URL}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project_id: PROJECT_ID,
+      title: '✏️ Create Collective Installation',
+      description: `Welcome user and build relationship for ${explorerContext.project?.name}.
+
+Explorer context:
+${JSON.stringify(explorerContext, null, 2)}
+
+Your job: Natural conversation to get to know the USER personally, then setup:
+- mission.md (product vision)
+- mission-lite.md (elevator pitch)
+- roadmap.md (phases, features)
+- CONTEXT.md (personal section)
+- Wish templates
+
+Create is their personal companion for ALL non-coding work - shape-shifts based on who they are.
+
+See @.genie/create/agents/install.md for full workflow.`
+    })
+  });
+
+  const { data: createTask } = await createTaskRes.json();
+
+  const createAttemptRes = await fetch(`${FORGE_URL}/api/task-attempts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      task_id: createTask.id,
+      executor_profile_id: {
+        executor: 'CLAUDE_CODE',
+        variant: 'DEFAULT' // Create install is regular agent
+      },
+      base_branch: CURRENT_BRANCH
+    })
+  });
+
+  const { data: createAttempt } = await createAttemptRes.json();
+  spawnedTasks.push({ name: 'create', attempt_id: createAttempt.id });
+
+  console.log(`✅ Create installer launched: ${createAttempt.id}`);
+}
+```
+
+### Step 6: Monitor and Report Completion
+
+Tell user installers are running and they can interact with them:
+
+```
+✨ **Installation in progress!**
+
+I've spawned your installers:
+${spawnedTasks.map(t => `- ${t.name}: ${FORGE_URL}/task-attempts/${t.attempt_id}`).join('\n')}
+
+**What happens next:**
+- Code installer will ask about your technical preferences (Git, CI/CD, testing...)
+- Create installer will get to know YOU personally (work style, communication preferences, needs...)
+- Both run in PARALLEL - you can talk to them in separate tabs
+- They'll create their workspace files and coordinate shared files
+- Create learns to shape-shift into YOUR personal companion for all non-coding work
+
+**You can:**
+- Click the links above to chat with each installer
+- Or wait here and I'll monitor their progress
+
+Which would you prefer?
+```
+
+If user wants to monitor:
+- Poll both attempt statuses
+- Report when each completes
+- Celebrate when all done!
+
+---
+
+## Installation Flow (For Reference - Installers Do This)
 
 ### Phase 0: Technical Assessment (FIRST!)
 
