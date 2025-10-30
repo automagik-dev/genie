@@ -129,57 +129,107 @@ function promoteRcToStable(version) {
 }
 
 function generateMechanicalChangelog(version) {
-  // Get previous tag
+  // Get previous tag - for stable releases, find the last stable (not RC)
   let prevTag = '';
   try {
-    prevTag = exec(`git describe --tags --abbrev=0 2>/dev/null || echo ""`, true);
+    if (!version.includes('-rc.')) {
+      // Stable release: compare against last stable, not last RC
+      prevTag = exec(`git tag --sort=-creatordate | grep -v 'rc' | grep -v '^v${version}$' | head -1`, true);
+    } else {
+      // RC release: compare against previous tag (could be RC or stable)
+      prevTag = exec(`git describe --tags --abbrev=0 2>/dev/null || echo ""`, true);
+    }
   } catch (e) {
     prevTag = '';
   }
 
-  // Generate changelog using conventional-changelog via npx
-  const changelogCmd = prevTag
-    ? `npx conventional-changelog-cli@latest -r 0 -p angular --lerna-root . "${prevTag}..HEAD" 2>/dev/null || echo ""`
-    : `npx conventional-changelog-cli@latest -i CHANGELOG.md -s -p angular 2>/dev/null || echo ""`;
+  // Always use fallback changelog (concise summary, not full conventional-changelog)
+  const changelog = generateFallbackChangelog(version, prevTag);
 
-  let changelog = '';
-  try {
-    changelog = exec(changelogCmd, true).trim();
-  } catch (e) {
-    // Fallback: manual commit analysis
-    changelog = generateFallbackChangelog(version, prevTag);
-  }
-
-  if (!changelog) {
-    changelog = generateFallbackChangelog(version, prevTag);
+  // Enforce GitHub's 125,000 character limit
+  const MAX_GITHUB_BODY = 120000; // 120k to leave buffer
+  if (changelog.length > MAX_GITHUB_BODY) {
+    log('yellow', '⚠️', `Changelog too long (${changelog.length} chars), truncating...`);
+    return changelog.substring(0, MAX_GITHUB_BODY) + '\n\n---\n\n*Changelog truncated due to length. See full diff at the compare URL above.*';
   }
 
   return changelog;
 }
 
 function generateFallbackChangelog(version, prevTag) {
-  // Fallback: Extract commits and generate summary
+  // Extract commits and generate summary
   const range = prevTag ? `${prevTag}..HEAD` : `--all`;
   const commits = exec(`git log ${range} --pretty=format:"%h|%s|%an" 2>/dev/null || echo ""`, true).split('\n').filter(Boolean);
 
   if (commits.length === 0) {
-    return `## [${version}]\n\nRelease ${version}`;
+    return `## v${version}\n\n**Release Date:** ${new Date().toISOString().split('T')[0]}\n\nRelease ${version}`;
   }
 
-  const features = commits.filter(c => c.includes('feat:')).length;
-  const fixes = commits.filter(c => c.includes('fix:')).length;
-  const other = commits.length - features - fixes;
+  // Categorize commits
+  const features = commits.filter(c => c.toLowerCase().includes('feat:') || c.toLowerCase().includes('feature:'));
+  const fixes = commits.filter(c => c.toLowerCase().includes('fix:'));
+  const chores = commits.filter(c => c.toLowerCase().includes('chore:'));
+  const docs = commits.filter(c => c.toLowerCase().includes('docs:'));
+  const refactors = commits.filter(c => c.toLowerCase().includes('refactor:'));
 
-  let changelog = `## [${version}]\n\n`;
-  changelog += `**${new Date().toISOString().split('T')[0]}**\n\n`;
+  // Build changelog
+  let changelog = `## v${version}\n\n`;
+  changelog += `**Release Date:** ${new Date().toISOString().split('T')[0]}\n\n`;
 
-  if (features > 0) changelog += `### ✨ Features\n- ${features} feature${features > 1 ? 's' : ''}\n\n`;
-  if (fixes > 0) changelog += `### 🐛 Bug Fixes\n- ${fixes} fix${fixes > 1 ? 's' : ''}\n\n`;
-  if (other > 0) changelog += `### 📚 Other Changes\n- ${other} commit${other > 1 ? 's' : ''}\n\n`;
+  if (features.length > 0) {
+    changelog += `### ✨ Features (${features.length})\n\n`;
+    features.slice(0, 20).forEach(c => {
+      const [hash, ...msgParts] = c.split('|');
+      const msg = msgParts.slice(0, -1).join('|').replace(/^feat:\s*/i, '').replace(/^feature:\s*/i, '');
+      changelog += `- ${msg} (${hash})\n`;
+    });
+    if (features.length > 20) changelog += `- ...and ${features.length - 20} more features\n`;
+    changelog += `\n`;
+  }
 
-  changelog += `### 📊 Statistics\n`;
+  if (fixes.length > 0) {
+    changelog += `### 🐛 Bug Fixes (${fixes.length})\n\n`;
+    fixes.slice(0, 20).forEach(c => {
+      const [hash, ...msgParts] = c.split('|');
+      const msg = msgParts.slice(0, -1).join('|').replace(/^fix:\s*/i, '');
+      changelog += `- ${msg} (${hash})\n`;
+    });
+    if (fixes.length > 20) changelog += `- ...and ${fixes.length - 20} more fixes\n`;
+    changelog += `\n`;
+  }
+
+  if (refactors.length > 0) {
+    changelog += `### 🔧 Refactoring (${refactors.length})\n\n`;
+    refactors.slice(0, 10).forEach(c => {
+      const [hash, ...msgParts] = c.split('|');
+      const msg = msgParts.slice(0, -1).join('|').replace(/^refactor:\s*/i, '');
+      changelog += `- ${msg} (${hash})\n`;
+    });
+    if (refactors.length > 10) changelog += `- ...and ${refactors.length - 10} more refactorings\n`;
+    changelog += `\n`;
+  }
+
+  if (docs.length > 0) {
+    changelog += `### 📚 Documentation (${docs.length})\n\n`;
+    if (docs.length > 5) {
+      changelog += `- ${docs.length} documentation updates\n\n`;
+    } else {
+      docs.forEach(c => {
+        const [hash, ...msgParts] = c.split('|');
+        const msg = msgParts.slice(0, -1).join('|').replace(/^docs:\s*/i, '');
+        changelog += `- ${msg} (${hash})\n`;
+      });
+      changelog += `\n`;
+    }
+  }
+
+  // Statistics
+  changelog += `### 📊 Statistics\n\n`;
   changelog += `- **Total Commits**: ${commits.length}\n`;
   changelog += `- **Contributors**: ${new Set(commits.map(c => c.split('|')[2])).size}\n`;
+  if (prevTag) {
+    changelog += `\n**Full Changelog**: https://github.com/namastexlabs/automagik-genie/compare/${prevTag}...v${version}\n`;
+  }
 
   return changelog;
 }
