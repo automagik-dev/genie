@@ -408,6 +408,16 @@ Read file → Generate entire new version → Overwrite
 6. Show diff
 ```
 
+### ⚠️ EXCEPTION: When Wholesale Rewrite Is Justified
+- [learn-190] helpful=0 harmful=0: **Fundamental architecture change:** Old content documents completely different system (e.g., manual workflow → automated workflow)
+- [learn-191] helpful=0 harmful=0: **Negative value content:** Following old documentation would cause failures or teach wrong patterns
+- [learn-192] helpful=0 harmful=0: **No salvageable patterns:** Complete redesign makes preservation impossible (not just inconvenient)
+- [learn-193] helpful=0 harmful=0: **Clear documentation required:** Must document evidence for why replacement was necessary (commit message, learning report)
+
+**Example:** Release workflow docs referenced v2.4.0 manual process, but v2.5.1 is fully automated GitHub Actions. Old content misleading, architecture fundamentally changed, no salvageable patterns. Complete rewrite justified with evidence.
+
+**This is NOT license for lazy editing.** Surgical edits remain default. Replacement requires evidence-based justification.
+
 ---
 
 ## Grow-and-Refine Protocol (Context Collapse Protection)
