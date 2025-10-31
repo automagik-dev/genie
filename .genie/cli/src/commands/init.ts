@@ -321,12 +321,38 @@ export async function runInit(
     // Install git hooks if user opted in during wizard
     await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
 
-    // Show completion summary (install agent will be launched by start.sh via exec)
-    const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
-    await emitView(buildInitSummaryView(summary), parsed.options);
+    // Auto-commit template files if git repo exists
+    await commitTemplateFiles(cwd);
 
-    // Note: Install agent is launched by start.sh after init completes
-    // start.sh uses 'exec genie run' to replace itself and give install agent fresh stdin
+    // Launch install orchestration via Forge (if available)
+    let dashboardUrl: string | undefined;
+    let installOrchestrationStarted = false;
+
+    try {
+      const { runInstallFlow } = await import('../lib/install-helpers.js');
+      dashboardUrl = await runInstallFlow({
+        templates,
+        executor,
+        model
+      });
+      installOrchestrationStarted = true;
+    } catch (error) {
+      // Forge unavailable or install flow failed - non-fatal
+      console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
+      console.log('   You can run manually: genie run install');
+      console.log('');
+    }
+
+    // Show completion summary
+    const summary: InitSummary = { executor, model, backupId, templateSource: templateGenie, target: targetGenie };
+    await emitView(buildInitSummaryView(summary, installOrchestrationStarted), parsed.options);
+
+    if (installOrchestrationStarted && dashboardUrl) {
+      console.log('');
+      console.log('🧞 Master Genie is orchestrating installation...');
+      console.log(`📊 Monitor progress: ${dashboardUrl}`);
+      console.log('');
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await emitView(buildErrorView('Init failed', message), parsed.options, { stream: process.stderr });
@@ -395,7 +421,7 @@ async function copyTemplateFiles(
       // Blacklist takes priority (never copy these user directories)
       if (blacklist.has(firstSeg)) return false;
 
-      // Only copy: agents, workflows, skills, spells, AGENTS.md, CORE_AGENTS.md, config.yaml, templates
+      // Only copy: agents, workflows, skills, spells, AGENTS.md, config.yaml, templates
       if (['agents', 'workflows', 'skills', 'spells'].includes(firstSeg)) return true;
       if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
       if (relPath.endsWith('.template.md')) return true; // Copy all template files
@@ -416,8 +442,8 @@ async function copyTemplateFiles(
 }
 
 async function copyTemplateRootFiles(packageRoot: string, targetDir: string, template: TemplateType): Promise<void> {
-  // Copy AGENTS.md, CORE_AGENTS.md, CLAUDE.md, and .gitignore from package root
-  const rootFiles = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md', '.gitignore'];
+  // Copy AGENTS.md, CLAUDE.md, and .gitignore from package root
+  const rootFiles = ['AGENTS.md', 'CLAUDE.md', '.gitignore'];
   for (const file of rootFiles) {
     const sourcePath = path.join(packageRoot, file);
     const targetPath = path.join(targetDir, file);
@@ -593,6 +619,60 @@ async function initializeProviderStatus(cwd: string): Promise<void> {
   const existing = await pathExists(statusPath);
   if (!existing) {
     await writeJsonFile(statusPath, { entries: [] });
+  }
+}
+
+/**
+ * Auto-commit template files after init completes
+ *
+ * Creates checkpoint commit with all Genie template files
+ * Non-fatal: skips if not a git repo or commit fails
+ */
+async function commitTemplateFiles(cwd: string): Promise<void> {
+  // Only commit if git repo exists
+  if (!await pathExists(path.join(cwd, '.git'))) {
+    return;
+  }
+
+  const { execSync } = await import('child_process');
+
+  try {
+    // Check if there are files to commit
+    const status = execSync('git status --porcelain .genie/ AGENTS.md CLAUDE.md .gitignore .mcp.json', {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    if (!status.trim()) {
+      // No changes to commit
+      return;
+    }
+
+    // Stage Genie template files
+    execSync('git add .genie/ AGENTS.md CLAUDE.md .gitignore .mcp.json', {
+      cwd,
+      stdio: 'pipe'
+    });
+
+    // Create init commit
+    // chore(init): prefix = exempt from traceability requirements
+    // GENIE_DISABLE_COAUTHOR=1 = no co-author attribution (system operation)
+    const message = 'chore(init): initialize Genie framework';
+    execSync(`git commit -m "${message}"`, {
+      cwd,
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        GENIE_DISABLE_COAUTHOR: '1'  // System operation, not Genie authoring
+      }
+    });
+
+    console.log('✓ Template files committed to git');
+    console.log('');
+  } catch (err) {
+    // Non-fatal: commit failed (maybe pre-commit hooks, dirty state, etc.)
+    // Don't block init process
   }
 }
 

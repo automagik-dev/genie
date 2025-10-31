@@ -8,7 +8,6 @@
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { isForgeRunning, startForgeInBackground, waitForForgeReady } from '../lib/forge-manager';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
-import { generateSessionName } from '../session-store';
 import { createForgeExecutor } from '../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../lib/forge-helpers';
 import { normalizeExecutorKeyOrDefault } from '../lib/executor-registry';
@@ -109,11 +108,7 @@ export async function runTalk(
     process.exit(1);
   }
 
-  const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
-  const now = new Date().toISOString();
-
-  // Save session to state (optional for talk mode)
-  // Session will be tracked in Forge, this is for 'genie list' compatibility
+  const attemptId = sessionResult.attemptId; // Use Forge UUID (issue #407 fix)
 
   // Show success message
   console.log('');
@@ -121,6 +116,7 @@ export async function runTalk(
   console.log(successGradient(`✨ ${resolvedAgentName} session ready! ✨`));
   console.log(successGradient('━'.repeat(60)));
   console.log('');
+  console.log(`📊 Session ID: ${attemptId}`);
   console.log(`📊 Opening task in browser...`);
   console.log('');
 

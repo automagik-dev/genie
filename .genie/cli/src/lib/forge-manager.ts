@@ -107,6 +107,17 @@ function resolveForgeBinary(): Result<string> {
     return { ok: true, value: npmPath };
   }
 
+  // Try npm nested dependency structure (global installs)
+  // npm sometimes creates: node_modules/automagik-genie/node_modules/automagik-forge/
+  try {
+    const npmNestedPath = path.join(baseDir, 'automagik-genie/node_modules/automagik-forge/bin/cli.js');
+    if (fs.existsSync(npmNestedPath)) {
+      return { ok: true, value: npmNestedPath };
+    }
+  } catch (error) {
+    // Continue to next fallback
+  }
+
   // Try pnpm structure with glob pattern (version-agnostic)
   try {
     const pnpmBase = path.join(baseDir, '.pnpm');

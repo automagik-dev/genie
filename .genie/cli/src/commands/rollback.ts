@@ -181,7 +181,7 @@ async function mergeBackupHistories(targetGenie: string, backupsRoot: string, pr
 
 async function restoreRootDocs(cwd: string, backupRoot: string): Promise<void> {
   // Root docs are now stored directly in backup root (not in docs/ subfolder)
-  const rootDocsFiles = ['AGENTS.md', 'CORE_AGENTS.md', 'CLAUDE.md'];
+  const rootDocsFiles = ['AGENTS.md', 'CLAUDE.md'];
   for (const file of rootDocsFiles) {
     const srcPath = path.join(backupRoot, file);
     const destPath = path.join(cwd, file);

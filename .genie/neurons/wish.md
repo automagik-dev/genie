@@ -1,5 +1,5 @@
 ---
-name: neuron-wish
+name: WISH
 description: Persistent wish master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE
@@ -41,7 +41,7 @@ mcp__genie__run agent="code/wish" prompt="Author wish for <intent>. Context: @.g
 ### Context Candidates (ACE‑style)
 - Before locking the brief, generate 2–3 context variants using @.genie/spells/context-candidates.md
 - Run quick scoring with @.genie/spells/context-critic.md
-- Select a winner and proceed; note selection in the wish’s Context Ledger
+- Select a winner and proceed; note selection in the wish's Context Ledger
 - For heavier checks, create subtasks per candidate with `mcp__genie__create_subtask` and aggregate
 
 ### State Persistence

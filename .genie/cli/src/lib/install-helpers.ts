@@ -100,7 +100,27 @@ Templates to install: ${templates}
 
 See @.genie/spells/install-genie.md for detailed instructions.`;
 
-  // Create attempt with MASTER variant
+  // Get master agent definition from registry
+  let masterVariant = 'MASTER';  // Fallback
+  let masterExecutor = config.executor?.toUpperCase() || 'CLAUDE_CODE';
+  try {
+    const { getAgentRegistry } = await import('./agent-registry.js');
+    const registry = await getAgentRegistry();
+    // Lookup master neuron by workflow name
+    // Neurons are registered as "neuron/master" without collective
+    const masterAgentDef = registry.getAgent('master');
+    if (masterAgentDef) {
+      // Derive forge_profile_name: use explicit or derive from neuron name
+      masterVariant = masterAgentDef.forge_profile_name
+        || (masterAgentDef.type === 'neuron' ? masterAgentDef.name.toUpperCase() : 'MASTER');
+      masterExecutor = masterAgentDef.genie?.executor || masterExecutor;
+    }
+  } catch (error) {
+    // Use fallback MASTER if registry unavailable
+    console.warn('Failed to load master agent definition, using fallback variant');
+  }
+
+  // Create attempt with master variant from registry
   console.log(gradient.pastel('Creating orchestration attempt...'));
   const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
     method: 'POST',
@@ -108,8 +128,8 @@ See @.genie/spells/install-genie.md for detailed instructions.`;
     body: JSON.stringify({
       task_id: masterAgent.task_id,
       executor_profile_id: {
-        executor: config.executor?.toUpperCase() || 'CLAUDE_CODE',
-        variant: 'MASTER'
+        executor: masterExecutor,
+        variant: masterVariant
       },
       base_branch: getCurrentBranch()
     })

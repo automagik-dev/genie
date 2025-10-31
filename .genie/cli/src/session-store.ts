@@ -2,34 +2,39 @@ import fs from 'fs';
 import { DEFAULT_EXECUTOR_KEY, normalizeExecutorKeyOrDefault, normalizeExecutorKey } from './lib/executor-registry';
 
 /**
- * Session entry metadata
+ * Session entry metadata (v4)
+ *
+ * Breaking Change (Issue #407):
+ * - Sessions are now keyed by Forge attemptId (UUID) instead of friendly names
+ * - This removes the abstraction layer and aligns directly with Forge's API
+ * - Friendly name generation (generateSessionName) has been removed
  *
  * Forge Integration (Wish #120-A):
- * - When `executor === 'forge'`, `sessionId` is the Forge task attempt ID
- * - Forge sessions use Forge backend for all operations (create, resume, stop, view)
- * - Traditional sessions use background-launcher.ts with PID-based management
- * - Both types coexist in the same session store (backwards compatibility)
+ * - All sessions use Forge backend for operations (create, resume, stop, view)
+ * - attemptId is the natural identifier provided by Forge
+ * - taskId and projectId track the parent entities in Forge
  */
 export interface SessionEntry {
   agent: string;
-  name?: string;  // Friendly session name (user-provided or auto-generated)
+  taskId?: string;         // Forge task ID (optional for migrated v3 sessions)
+  projectId?: string;      // Forge project ID (optional for migrated v3 sessions)
   preset?: string;
   mode?: string;
   executor?: string;
   executorVariant?: string | null;
   model?: string | null;
-  sessionId?: string | null;
   status?: string;
   created?: string;
   lastUsed?: string;
   lastPrompt?: string;
+  forgeUrl?: string;       // Full Forge URL for easy access
   background?: boolean;
 }
 
 export interface SessionStore {
   version: number;
-  sessions: Record<string, SessionEntry>; // keyed by name (v3) or sessionId (v2)
-  // Legacy format compatibility (will be migrated on load)
+  sessions: Record<string, SessionEntry>; // keyed by attemptId (UUID) - v4
+  // Legacy format compatibility (will be migrated on load or rejected)
   agents?: Record<string, SessionEntry>;
 }
 
@@ -49,24 +54,6 @@ export interface SessionDefaults {
   };
 }
 
-/**
- * Generate a friendly session name from agent name and timestamp.
- * Format: "{agent}-{YYMMDDHHmm}"
- * Example: "analyze-2310171530"
- */
-export function generateSessionName(agentName: string): string {
-  const now = new Date();
-  const timestamp = now.toISOString()
-    .replace(/[-:T]/g, '')
-    .slice(2, 12); // YYMMDDHHmm
-  const slug = agentName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    || 'session';
-  return `${slug}-${timestamp}`;
-}
-
 export function loadSessions(
   paths: SessionPathsConfig = {},
   config: SessionLoadConfig = {},
@@ -79,7 +66,7 @@ export function loadSessions(
   if (storePath && fs.existsSync(storePath)) {
     store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
   } else {
-    store = { version: 3, sessions: {} };
+    store = { version: 4, sessions: {} };
   }
 
   const defaultExecutor = resolveDefaultExecutor(config, defaults);
@@ -109,7 +96,7 @@ function normalizeSessionStore(
   callbacks: { onWarning?: (message: string) => void } = {}
 ): SessionStore {
   if (!data || typeof data !== 'object') {
-    return { version: 3, sessions: {} };
+    return { version: 4, sessions: {} };
   }
 
   const incoming = data as Partial<SessionStore> & {
@@ -117,101 +104,120 @@ function normalizeSessionStore(
     sessions?: Record<string, SessionEntry>;
   };
 
-  // Version 3 format (sessions keyed by name) - current
-  if (incoming.version === 3 && incoming.sessions) {
+  // Version 4 format (sessions keyed by attemptId/UUID) - current
+  if (incoming.version === 4 && incoming.sessions) {
     return {
-      version: 3,
+      version: 4,
       sessions: incoming.sessions
     };
   }
 
-  // Version 2 format (sessions keyed by sessionId) - MIGRATE to v3
-  if (incoming.version === 2 && incoming.sessions) {
-    callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
-
+  // Version 3 or earlier - MIGRATE to v4
+  // Rationale: Preserve user's ability to resume/stop/view existing sessions
+  // Key change: Use attemptId (from v3's sessionId field) as the v4 key
+  if (incoming.version && incoming.version < 4) {
     const sessions: Record<string, SessionEntry> = {};
-    Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+    let migratedCount = 0;
+
+    // v3 sessions were keyed by friendly name, need to rekey by attemptId
+    Object.entries(incoming.sessions || {}).forEach(([_friendlyName, entry]: [string, any]) => {
       if (!entry || typeof entry !== 'object') return;
 
-      // Use existing name or generate one from sessionId
-      const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
-      sessions[name] = {
-        ...entry,
-        name
+      // v3 stored attemptId in the 'sessionId' field
+      const attemptId = entry.sessionId;
+      if (!attemptId || typeof attemptId !== 'string') return;
+
+      // Migrate to v4 format (taskId/projectId will be undefined for migrated sessions)
+      sessions[attemptId] = {
+        agent: entry.agent,
+        // taskId and projectId omitted (not available in v3)
+        preset: entry.preset,
+        mode: entry.mode,
+        executor: entry.executor,
+        executorVariant: entry.executorVariant,
+        model: entry.model,
+        status: entry.status,
+        created: entry.created,
+        lastUsed: entry.lastUsed,
+        lastPrompt: entry.lastPrompt,
+        forgeUrl: entry.forgeUrl,
+        background: entry.background
       };
+      migratedCount++;
     });
 
+    callbacks.onWarning?.(
+      `Migrated ${migratedCount} session(s) from v${incoming.version} to v4. ` +
+      `Sessions can be viewed/resumed/stopped using their IDs. ` +
+      `Some metadata (taskId/projectId) may be incomplete for migrated sessions.`
+    );
+
     return {
-      version: 3,
+      version: 4,
       sessions
     };
   }
 
-  // Version 2 without explicit version number
-  if (incoming.sessions && !incoming.version) {
-    callbacks.onWarning?.('Migrating sessions.json from v2 (sessionId-keyed) to v3 (name-keyed)');
-
+  // No version number - treat as v2 and migrate
+  if (!incoming.version && incoming.sessions) {
     const sessions: Record<string, SessionEntry> = {};
-    Object.entries(incoming.sessions).forEach(([sessionId, entry]) => {
+    let migratedCount = 0;
+
+    // v2 sessions were keyed by sessionId (attemptId), already in correct format
+    Object.entries(incoming.sessions).forEach(([attemptId, entry]: [string, any]) => {
       if (!entry || typeof entry !== 'object') return;
 
-      const name = entry.name || `migrated-${sessionId.slice(0, 8)}`;
-      sessions[name] = {
-        ...entry,
-        name
+      // v2 already used attemptId as key, just need to copy fields
+      sessions[attemptId] = {
+        agent: entry.agent,
+        // taskId and projectId omitted (not available in v2)
+        preset: entry.preset,
+        mode: entry.mode,
+        executor: entry.executor,
+        executorVariant: entry.executorVariant,
+        model: entry.model,
+        status: entry.status,
+        created: entry.created,
+        lastUsed: entry.lastUsed,
+        lastPrompt: entry.lastPrompt,
+        forgeUrl: entry.forgeUrl,
+        background: entry.background
       };
+      migratedCount++;
     });
 
-    return {
-      version: 3,
-      sessions
-    };
-  }
-
-  // Version 1 format (agents keyed by agent name) - MIGRATE to v3
-  if (incoming.agents) {
-    callbacks.onWarning?.('Migrating sessions.json from v1 (agent-keyed) to v3 (name-keyed)');
-
-    const sessions: Record<string, SessionEntry> = {};
-    Object.entries(incoming.agents).forEach(([agentName, entry]) => {
-      if (typeof entry !== 'object' || entry === null) return;
-      if (agentName === 'version' || agentName === 'sessions' || agentName === 'executor') return;
-      if (!entry.agent && !entry.sessionId) return;
-
-      const name = entry.name || `migrated-${agentName}`;
-      sessions[name] = {
-        ...entry,
-        agent: entry.agent || agentName,
-        name
-      };
-    });
+    callbacks.onWarning?.(
+      `Migrated ${migratedCount} session(s) from v2 to v4. ` +
+      `Sessions can be viewed/resumed/stopped using their IDs. ` +
+      `Some metadata (taskId/projectId) may be incomplete for migrated sessions.`
+    );
 
     return {
-      version: 3,
+      version: 4,
       sessions
     };
   }
 
   // Empty or malformed
   return {
-    version: 3,
+    version: 4,
     sessions: {}
   };
 }
 
 function migrateSessionEntries(store: SessionStore, defaultExecutor: string): SessionStore {
   const result: SessionStore = {
-    version: store.version ?? 2,
+    version: store.version ?? 4,
     sessions: { ...store.sessions }
   };
 
   // Migrate session entries (apply defaults)
-  Object.entries(result.sessions || {}).forEach(([sessionId, entry]) => {
+  Object.entries(result.sessions || {}).forEach(([attemptId, entry]) => {
     if (!entry || typeof entry !== 'object') return;
-    if (!entry.mode && entry.preset) result.sessions[sessionId].mode = entry.preset;
-    if (!entry.preset && entry.mode) result.sessions[sessionId].preset = entry.mode;
+    if (!entry.mode && entry.preset) result.sessions[attemptId].mode = entry.preset;
+    if (!entry.preset && entry.mode) result.sessions[attemptId].preset = entry.mode;
     const normalized = entry.executor ? normalizeExecutorKey(entry.executor) : undefined;
-    result.sessions[sessionId].executor = normalized ?? defaultExecutor;
+    result.sessions[attemptId].executor = normalized ?? defaultExecutor;
   });
 
   return result;

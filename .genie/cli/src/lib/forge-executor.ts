@@ -76,18 +76,23 @@ export class ForgeExecutor {
       const { getAgentRegistry, AgentRegistry } = await import('./agent-registry.js');
       const registry = await getAgentRegistry(workspaceRoot || process.cwd());
 
-      const agentCount = registry.count();
+      const allItems = registry.getAllAgents();
+      const agentCount = allItems.filter(a => a.type === 'agent' || !a.type).length;
+      const neuronCount = allItems.filter(a => a.type === 'neuron').length;
       const workspace = workspaceRoot || process.cwd();
 
       // Load sync cache
       const cacheFile = path.join(workspace, '.genie/state/agent-sync-cache.json');
       let cache: AgentSyncCache = this.loadSyncCache(cacheFile);
 
-      // Compute hashes for all current agents
+      // Compute hashes for all current agents and neurons
       const currentHashes: Record<string, string> = {};
-      for (const agent of registry.getAllAgents()) {
-        const key = `${agent.collective}/${agent.name.toLowerCase()}`;
-        const hash = this.hashContent(agent.fullContent || '');
+      for (const item of allItems) {
+        // Key format: for agents use "collective/name", for neurons use "neuron/name"
+        const key = item.type === 'neuron'
+          ? `neuron/${item.name.toLowerCase()}`
+          : `${item.collective}/${item.name.toLowerCase()}`;
+        const hash = this.hashContent(item.fullContent || '');
         currentHashes[key] = hash;
       }
 
@@ -104,19 +109,23 @@ export class ForgeExecutor {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
         const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
         if (debugMode) {
-          console.log(` done (${agentCount} agents, ${elapsed}s)`);
+          console.log(` done (${agentCount} agents, ${neuronCount} neurons, ${elapsed}s)`);
         } else {
-          console.log(` ✓ (${agentCount} agents, ${elapsed}s)`);
+          console.log(` ✓ (${agentCount} agents, ${neuronCount} neurons, ${elapsed}s)`);
         }
         return;
       }
 
-      // Get agents that need syncing (added + modified)
+      // Get agents/neurons that need syncing (added + modified)
       const changedKeys = [...added, ...modified];
-      const changedAgents = registry.getAllAgents().filter(agent => {
-        const key = `${agent.collective}/${agent.name.toLowerCase()}`;
+      const changedItems = allItems.filter(item => {
+        const key = item.type === 'neuron'
+          ? `neuron/${item.name.toLowerCase()}`
+          : `${item.collective}/${item.name.toLowerCase()}`;
         return changedKeys.includes(key);
       });
+      const changedAgents = changedItems.filter(i => i.type === 'agent' || !i.type);
+      const changedNeurons = changedItems.filter(i => i.type === 'neuron');
 
       // Delete orphaned variants (agents that were deleted or renamed)
       const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
@@ -161,22 +170,23 @@ export class ForgeExecutor {
       let successfulBatches = 0;
       let totalPayloadSize = 0;
 
-      // Sync only changed agents individually
-      for (let i = 0; i < changedAgents.length; i++) {
-        const agent = changedAgents[i];
-        const agentNum = i + 1;
+      // Sync changed items individually
+      for (let i = 0; i < changedItems.length; i++) {
+        const item = changedItems[i];
+        const itemNum = i + 1;
+        const itemType = item.type === 'neuron' ? 'neuron' : 'agent';
 
         try {
-          // Get current Forge state (includes built-ins + previously synced agents)
+          // Get current Forge state (includes built-ins + previously synced items)
           const currentProfiles = await this.forge.getExecutorProfiles();
           // Forge wrapper already returns normalized { executors: {...} }
           const current = currentProfiles;
 
-          // Generate profile for THIS agent only
-          const agentProfile = await registry.generateForgeProfiles(this.forge, [agent]);
+          // Generate profile for THIS item only
+          const itemProfile = await registry.generateForgeProfiles(this.forge, [item]);
 
-          // Merge current + this agent (preserves all existing variants)
-          const payload = this.mergeProfiles(current, agentProfile);
+          // Merge current + this item (preserves all existing variants)
+          const payload = this.mergeProfiles(current, itemProfile);
 
           const payloadSize = JSON.stringify(payload).length;
           const payloadKB = (payloadSize / 1024).toFixed(0);
@@ -187,14 +197,14 @@ export class ForgeExecutor {
           successfulBatches++;
           totalPayloadSize += payloadSize;
 
-          // Show progress every 5 agents (debug mode only)
-          if (debugMode && (agentNum % 5 === 0 || agentNum === changedAgents.length)) {
-            console.log(`✅ Synced ${agentNum}/${changedAgents.length} agents (${payloadKB}KB per request)`);
+          // Show progress every 5 items (debug mode only)
+          if (debugMode && (itemNum % 5 === 0 || itemNum === changedItems.length)) {
+            console.log(`✅ Synced ${itemNum}/${changedItems.length} items (${payloadKB}KB per request)`);
           }
         } catch (error: any) {
           // Only warn in debug mode
           if (debugMode) {
-            console.warn(`⚠️  Failed to sync agent ${agent.name}: ${error.message}`);
+            console.warn(`⚠️  Failed to sync ${itemType} ${item.name}: ${error.message}`);
           }
         }
       }
@@ -210,7 +220,8 @@ export class ForgeExecutor {
 
       // Calculate statistics
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-      const syncedCount = changedAgents.length;
+      const syncedAgentCount = changedAgents.length;
+      const syncedNeuronCount = changedNeurons.length;
       const executors = await AgentRegistry.getSupportedExecutors(this.forge);
       const executorCount = executors.length;
       const totalMB = (totalPayloadSize / 1024 / 1024).toFixed(2);
@@ -224,9 +235,9 @@ export class ForgeExecutor {
 
       // Final summary - concise in normal mode, verbose in debug mode
       if (debugMode) {
-        console.log(`✅ Synced ${syncedCount} agent(s)${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
+        console.log(`✅ Synchronized ${syncedAgentCount} agents, ${syncedNeuronCount} neurons${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
       } else {
-        console.log(` ✓ (${syncedCount} agents synced, ${elapsed}s)`);
+        console.log(` ✓ (${syncedAgentCount} agents, ${syncedNeuronCount} neurons synced, ${elapsed}s)`);
       }
     } catch (error: any) {
       // Provide helpful error messages for common failures
@@ -434,17 +445,48 @@ export class ForgeExecutor {
 
   async listSessions(): Promise<ForgeSessionSummary[]> {
     const projectId = await this.getOrCreateGenieProject();
-    const tasks = await this.forge.listTasks(projectId);
-    return tasks.map((task: any) => ({
-      id: task.id,
-      agent: this.extractAgentNameFromTitle(task.title),
-      status: task.status || 'unknown',
-      executor: (task.executor_profile_id?.executor || '').toLowerCase() || null,
-      variant: task.executor_profile_id?.variant || null,
-      model: task.executor_profile_id?.model || null,
-      created: task.created_at,
-      updated: task.updated_at
-    }));
+
+    // Query tasks and attempts separately
+    const [tasks, allAttempts] = await Promise.all([
+      this.forge.listTasks(projectId),
+      this.forge.listTaskAttempts()
+    ]);
+
+    // Filter attempts to current project
+    const projectAttempts = allAttempts.filter((attempt: any) => attempt.project_id === projectId);
+
+    // Build task lookup map (task_id -> task)
+    const taskMap = new Map<string, any>();
+    for (const task of tasks) {
+      taskMap.set(task.id, task);
+    }
+
+    // Group attempts by task_id and get latest attempt for each task
+    const latestAttemptsByTask = new Map<string, any>();
+    for (const attempt of projectAttempts) {
+      const taskId = attempt.task_id;
+      const existing = latestAttemptsByTask.get(taskId);
+
+      // Keep the most recently created attempt for each task
+      if (!existing || new Date(attempt.created_at) > new Date(existing.created_at)) {
+        latestAttemptsByTask.set(taskId, attempt);
+      }
+    }
+
+    // Return attempt summaries (using attempt ID, not task ID)
+    return Array.from(latestAttemptsByTask.values()).map((attempt: any) => {
+      const task = taskMap.get(attempt.task_id);
+      return {
+        id: attempt.id,  // ✅ Now returns attempt ID (UUID) instead of task ID
+        agent: this.extractAgentNameFromTitle(task?.title || ''),
+        status: attempt.status || 'unknown',
+        executor: (attempt.executor_profile_id?.executor || '').toLowerCase() || null,
+        variant: attempt.executor_profile_id?.variant || null,
+        model: attempt.executor_profile_id?.model || null,
+        created: attempt.created_at,
+        updated: attempt.updated_at
+      };
+    });
   }
 
   /**
@@ -457,54 +499,60 @@ export class ForgeExecutor {
       return this.config.genieProjectId;
     }
 
-    const currentRepoPath = process.cwd();
-    const projects = await this.forge.listProjects();
-    const existingProject = projects.find((p: any) => p.git_repo_path === currentRepoPath);
-
-    if (existingProject) {
-      this.config.genieProjectId = existingProject.id;
-      return existingProject.id;
-    }
-
-    // Auto-detect project name from git repo or directory name
-    let projectName = 'Genie Project';
     try {
-      // Try git remote first
-      const remoteUrl = execSync('git config --get remote.origin.url', {
-        encoding: 'utf8',
-        cwd: currentRepoPath,
-        stdio: ['pipe', 'pipe', 'ignore']
-      }).trim();
+      const currentRepoPath = process.cwd();
+      const projects = await this.forge.listProjects();
+      const existingProject = projects.find((p: any) => p.git_repo_path === currentRepoPath);
 
-      // Extract repo name from URL (e.g., "automagik-genie.git" → "automagik-genie")
-      const match = remoteUrl.match(/\/([^\/]+?)(\.git)?$/);
-      if (match && match[1]) {
-        projectName = match[1].replace(/\.git$/, '');
+      if (existingProject) {
+        this.config.genieProjectId = existingProject.id;
+        return existingProject.id;
       }
-    } catch {
-      // Fallback to directory name if git fails
+
+      // Auto-detect project name from git repo or directory name
+      let projectName = 'Genie Project';
       try {
-        const dirName = execSync('basename "$(pwd)"', {
+        // Try git remote first
+        const remoteUrl = execSync('git config --get remote.origin.url', {
           encoding: 'utf8',
           cwd: currentRepoPath,
           stdio: ['pipe', 'pipe', 'ignore']
         }).trim();
-        if (dirName) {
-          projectName = dirName;
+
+        // Extract repo name from URL (e.g., "automagik-genie.git" → "automagik-genie")
+        const match = remoteUrl.match(/\/([^\/]+?)(\.git)?$/);
+        if (match && match[1]) {
+          projectName = match[1].replace(/\.git$/, '');
         }
       } catch {
-        // Keep default "Genie Project"
+        // Fallback to directory name if git fails
+        try {
+          const dirName = execSync('basename "$(pwd)"', {
+            encoding: 'utf8',
+            cwd: currentRepoPath,
+            stdio: ['pipe', 'pipe', 'ignore']
+          }).trim();
+          if (dirName) {
+            projectName = dirName;
+          }
+        } catch {
+          // Keep default "Genie Project"
+        }
       }
+
+      const newProject = await this.forge.createProject({
+        name: projectName,
+        git_repo_path: currentRepoPath,
+        use_existing_repo: true
+      });
+
+      this.config.genieProjectId = newProject.id;
+      return newProject.id;
+    } catch (error: any) {
+      // Provide context for downstream error handlers
+      const message = error.message || String(error);
+      throw new Error(`Failed to create Forge project: ${message}`);
     }
-
-    const newProject = await this.forge.createProject({
-      name: projectName,
-      git_repo_path: currentRepoPath,
-      use_existing_repo: true
-    });
-
-    this.config.genieProjectId = newProject.id;
-    return newProject.id;
   }
 
   private mapExecutorToProfile(

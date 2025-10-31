@@ -1,5 +1,5 @@
 ---
-name: neuron-review
+name: REVIEW
 description: Persistent review master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE

@@ -57,25 +57,27 @@ async function testBasicLoadSave() {
     defaults: {}
   });
 
-  // Initial load should create empty store (v3 format after migration)
+  // Initial load should create empty store (v4 format after migration - issue #407 fix)
   const store1 = service.load();
-  assert(store1.version === 3, 'Initial store has version 3');
+  assert(store1.version === 4, 'Initial store has version 4');
   assert(Object.keys(store1.sessions || store1.agents || {}).length === 0, 'Initial store has no sessions');
 
-  // Add an agent and save
-  store1.sessions['test-agent'] = {
+  // Add a session using UUID (attemptId) as key
+  const attemptId = 'test-uuid-123-abc';
+  store1.sessions[attemptId] = {
     agent: 'test-agent',
+    taskId: 'task-123',
+    projectId: 'proj-1',
     status: 'running',
-    sessionId: 'test-123',
     created: new Date().toISOString()
   };
 
   const result = await service.save(store1);
-  assert(result.store.sessions['test-agent'].status === 'running', 'Agent saved with correct status');
+  assert(result.store.sessions[attemptId].status === 'running', 'Session saved with correct status');
 
   // Load again and verify persistence
   const store2 = service.load();
-  assert(store2.sessions['test-agent'].sessionId === 'test-123', 'Agent persisted correctly');
+  assert(store2.sessions[attemptId].taskId === 'task-123', 'Session persisted correctly');
 
   cleanupTestDir();
   console.log('✅ Test 1 passed');

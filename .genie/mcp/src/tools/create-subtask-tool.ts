@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import path from 'path';
 import { execSync } from 'child_process';
+import { formatTaskTitle } from '../lib/task-title-formatter.js';
 
 // Load ForgeClient
 const geniePackageRoot = path.resolve(__dirname, '../../../..');
@@ -79,7 +80,7 @@ export async function executeCreateSubtaskTool(
     const result = await forgeClient.createAndStartTask({
       task: {
         project_id: projectId,
-        title: args.title,
+        title: formatTaskTitle('MCP', `Subtask: ${args.title}`),
         description: args.prompt,
         parent_task_attempt: args.parent_attempt_id
       },

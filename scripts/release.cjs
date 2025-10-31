@@ -159,7 +159,14 @@ Co-authored-by: Automagik Genie 🧞 <genie@namastex.ai>`;
   log('blue', '🏷️', 'Creating GitHub release...');
   try {
     const changelogSection = extractChangelogSection(stableVersion);
-    const releaseBody = changelogSection || generateStableReleaseNotes(stableVersion);
+    let releaseBody = changelogSection || generateStableReleaseNotes(stableVersion);
+
+    // GitHub has an effective limit of ~125k characters for release body
+    const MAX_GITHUB_BODY = 120000; // Leave buffer below GitHub's limit
+    if (releaseBody.length > MAX_GITHUB_BODY) {
+      log('yellow', '⚠️', `Release body too long (${releaseBody.length} chars), truncating to ${MAX_GITHUB_BODY}...`);
+      releaseBody = releaseBody.substring(0, MAX_GITHUB_BODY) + '\n\n---\n\n*Changelog truncated due to length. See full CHANGELOG.md for details.*';
+    }
 
     exec(`gh release create v${stableVersion} --title "v${stableVersion}" --notes "${releaseBody}" --latest`, true);
     log('green', '✅', 'GitHub release created with changelog content');
