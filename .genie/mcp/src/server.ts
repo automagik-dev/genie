@@ -220,12 +220,9 @@ server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_a
   name: z.string().optional().describe('Friendly session name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
 }, async (args) => {
   try {
-    // Agent alias mapping (Fix Bug #1: plan → wish/blueprint)
+    // Agent alias mapping (no wish aliases - use code/wish or create/wish directly)
     const AGENT_ALIASES: Record<string, string> = {
-      'plan': 'wish/blueprint',
-      'discover': 'wish/discovery',
-      'requirements': 'wish/requirements',
-      'align': 'wish/alignment'
+      // No aliases - explicit agent paths only
     };
 
     // Resolve alias if exists
