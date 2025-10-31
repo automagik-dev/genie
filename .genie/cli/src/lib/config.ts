@@ -14,7 +14,7 @@ try {
 
 const BASE_CONFIG: GenieConfig = {
   defaults: {
-    executor: 'opencode',
+    executor: 'OPENCODE',
     executorVariant: 'DEFAULT',
     background: true
   },
@@ -93,7 +93,7 @@ export function loadConfig(): GenieConfig {
 
   // Ensure defaults exist
   config.defaults = config.defaults || {};
-  if (!config.defaults.executor) config.defaults.executor = 'opencode';
+  if (!config.defaults.executor) config.defaults.executor = 'OPENCODE';
   if (!config.defaults.executorVariant) config.defaults.executorVariant = 'DEFAULT';
   config.defaults.background = config.defaults.background ?? true;
 

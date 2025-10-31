@@ -104,7 +104,8 @@ export function getTemplateRelativeBlacklist(): Set<string> {
     'backups',    // User backups
     'wishes',     // User wishes (preserve entirely)
     'reports',    // User reports (preserve entirely)
-    'state'       // User session state (preserve entirely)
+    'state',      // User session state (preserve entirely)
+    'neurons'     // User custom neurons (preserve entirely)
   ]);
 }
 
