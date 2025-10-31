@@ -7,10 +7,12 @@
 
 import { z } from 'zod';
 import { wsManager } from '../websocket-manager.js';
-import { checkGitState, formatGitStateError, detectProjectFromWorktree } from '../lib/git-validation.js';
+import { checkGitState, formatGitStateError } from '../lib/git-validation.js';
 import { shortenUrl, getApiKeyFromEnv } from '../lib/url-shortener.js';
 import { sessionManager } from '../lib/session-manager.js';
+import { getOrCreateGenieProject } from '../lib/project-detector.js';
 import path from 'path';
+import { execSync } from 'child_process';
 
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/forge-tool.js
@@ -20,15 +22,13 @@ const geniePackageRoot = path.resolve(__dirname, '../../../..');
 const ForgeClient = require(path.join(geniePackageRoot, 'forge.js')).ForgeClient;
 
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-const DEFAULT_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce'; // Genie project ID
 
 /**
  * Forge tool parameters
  */
 export const forgeToolSchema = z.object({
   prompt: z.string().describe('Task prompt (e.g., "Fix bug in login flow")'),
-  agent: z.string().describe('Agent to use (e.g., "implementor", "tests", "polish")'),
-  project_id: z.string().optional().describe('Project ID (defaults to current Genie project)')
+  agent: z.string().describe('Agent to use (e.g., "implementor", "tests", "polish")')
 });
 
 export type ForgeToolParams = z.infer<typeof forgeToolSchema>;
@@ -42,19 +42,9 @@ export async function executeForgeTool(
 ): Promise<void> {
   const { streamContent, reportProgress } = context;
 
-  // Step -1: Detect project from worktree (prevent duplicate projects)
+  // Step -1: Detect or create project automatically by git repo path
   const forgeClient = new ForgeClient(FORGE_URL);
-  const detectedProjectId = await detectProjectFromWorktree(forgeClient);
-
-  // Use detected project if in worktree, otherwise use provided or default
-  const projectId = detectedProjectId || args.project_id || DEFAULT_PROJECT_ID;
-
-  if (detectedProjectId) {
-    await streamContent({
-      type: 'text',
-      text: `📍 Detected worktree project: ${detectedProjectId}\n\n`
-    });
-  }
+  const projectId = await getOrCreateGenieProject(forgeClient);
 
   // Step 0: Validate git state (CRITICAL: Agents in separate worktrees need clean state)
   await streamContent({
@@ -135,6 +125,26 @@ export async function executeForgeTool(
     text: `🚀 Starting Forge task with agent: ${args.agent}\n\n`
   });
 
+  // Detect current git branch (same logic as other neuron tools)
+  let baseBranch = 'main'; // Default fallback
+  try {
+    baseBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf8',
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
+    }).trim();
+  } catch (error) {
+    // If git detection fails, try to get default_base_branch from project
+    try {
+      const project = await forgeClient.getProject(projectId);
+      if (project.default_base_branch) {
+        baseBranch = project.default_base_branch;
+      }
+    } catch {
+      // Use fallback 'main'
+    }
+  }
+
   let taskResult;
   try {
     taskResult = await forgeClient.createAndStartTask({
@@ -145,9 +155,9 @@ export async function executeForgeTool(
       },
       executor_profile_id: {
         executor: 'CLAUDE_CODE',
-        variant: 'neuron-forge'
+        variant: 'FORGE' // Neuron orchestrator variant
       },
-      base_branch: 'dev'
+      base_branch: baseBranch
     });
   } catch (error: any) {
     await streamContent({

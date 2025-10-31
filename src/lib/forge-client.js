@@ -366,7 +366,7 @@ class ForgeClient {
      */
     async followUpTaskAttempt(id, prompt) {
         return this.request('POST', `/task-attempts/${id}/follow-up`, {
-            body: { follow_up_prompt: prompt },
+            body: { prompt: prompt },
         });
     }
     /**

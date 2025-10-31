@@ -7,13 +7,13 @@
 
 import { z } from 'zod';
 import path from 'path';
+import { execSync } from 'child_process';
 
 // Load ForgeClient
 const geniePackageRoot = path.resolve(__dirname, '../../../..');
 const ForgeClient = require(path.join(geniePackageRoot, 'forge.js')).ForgeClient;
 
 const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
-const DEFAULT_PROJECT_ID = 'ee8f0a72-44da-411d-a23e-f2c6529b62ce'; // Genie project ID
 
 /**
  * Create subtask parameters
@@ -22,7 +22,7 @@ export const createSubtaskToolSchema = z.object({
   parent_attempt_id: z.string().describe('Parent task attempt ID (the master orchestrator)'),
   title: z.string().describe('Subtask title'),
   prompt: z.string().describe('Subtask prompt/description'),
-  executor: z.string().optional().default('CLAUDE_CODE:DEFAULT').describe('Executor variant (e.g., "CLAUDE_CODE:wish", "CLAUDE_CODE:DEFAULT")')
+  executor: z.string().optional().default('CLAUDE_CODE:DEFAULT').describe('Executor variant (e.g., "CLAUDE_CODE:CODE_INSTALL", "CLAUDE_CODE:CODE_EXPLORE", "CLAUDE_CODE:MASTER"). Format: EXECUTOR:VARIANT where VARIANT is {COLLECTIVE}_{AGENT} like CODE_INSTALL or CREATE_INSTALL, or special variants like MASTER, DEFAULT.')
 });
 
 export type CreateSubtaskToolParams = z.infer<typeof createSubtaskToolSchema>;
@@ -45,17 +45,54 @@ export async function executeCreateSubtaskTool(
   const forgeClient = new ForgeClient(FORGE_URL);
 
   try {
+    // Get project ID dynamically from workspace
+    const projects = await forgeClient.listProjects();
+    const projectId = projects[0]?.id;
+
+    if (!projectId) {
+      throw new Error('No Forge project found. Run genie init first.');
+    }
+
+    // Parse executor string (format: "CLAUDE_CODE:DEFAULT" or "CLAUDE_CODE")
+    const [executor, variant = 'DEFAULT'] = args.executor.split(':');
+
+    // Detect current git branch (same logic as forge-executor.ts)
+    let baseBranch = 'main'; // Default fallback
+    try {
+      baseBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+        encoding: 'utf8',
+        cwd: process.cwd(),
+        stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
+      }).trim();
+    } catch (error) {
+      // If git detection fails, try to get default_base_branch from project
+      try {
+        const project = await forgeClient.getProject(projectId);
+        if (project.default_base_branch) {
+          baseBranch = project.default_base_branch;
+        }
+      } catch {
+        // Use fallback 'main'
+      }
+    }
+
     const result = await forgeClient.createAndStartTask({
-      project_id: DEFAULT_PROJECT_ID,
-      title: args.title,
-      prompt: args.prompt,
-      executor: args.executor,
-      parent_task_attempt: args.parent_attempt_id
+      task: {
+        project_id: projectId,
+        title: args.title,
+        description: args.prompt,
+        parent_task_attempt: args.parent_attempt_id
+      },
+      executor_profile_id: {
+        executor: executor.toUpperCase(),
+        variant: variant.toUpperCase()
+      },
+      base_branch: baseBranch
     });
 
-    const taskId = result.task_id || 'unknown';
-    const attemptId = result.attempt_id || 'unknown';
-    const url = `${FORGE_URL}/projects/${DEFAULT_PROJECT_ID}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+    const taskId = result.id;
+    const attemptId = result.attempts?.[0]?.id || result.id;
+    const url = `${FORGE_URL}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
 
     const successMsg = `✅ Subtask created successfully\n\n` +
       `📋 Title: ${args.title}\n` +
