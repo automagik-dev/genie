@@ -1,7 +1,6 @@
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
 import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver';
-import { generateSessionName } from '../../session-store';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
@@ -77,13 +76,14 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       throw new Error(`Forge backend rejected session creation. ${FORGE_RECOVERY_HINT}`);
     }
 
-    const sessionName = parsed.options.name || generateSessionName(resolvedAgentName);
+    const attemptId = sessionResult.attemptId; // Use Forge's UUID directly (issue #407 fix)
     const now = new Date().toISOString();
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-    store.sessions[sessionName] = {
+    store.sessions[attemptId] = {
       agent: resolvedAgentName,
-      name: sessionName,
+      taskId: sessionResult.taskId,
+      projectId: sessionResult.projectId,
       executor: executorKey,
       executorVariant,
       model: model || undefined,
@@ -92,7 +92,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       lastUsed: now,
       lastPrompt: prompt.slice(0, 200),
       mode: modeName,
-      sessionId: sessionResult.attemptId,
+      forgeUrl: sessionResult.forgeUrl,
       background: parsed.options.background
     };
     await ctx.sessionService.save(store);
@@ -103,7 +103,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
         const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
         const modelSuffix = model ? `, model=${model}` : '';
         process.stdout.write(`✓ Running ${resolvedAgentName} (executor=${executorSummary}${modelSuffix})\n`);
-        process.stdout.write(`  Session: ${sessionName}\n`);
+        process.stdout.write(`  Session ID: ${attemptId}\n`);
         process.stdout.write(`  Waiting for completion...\n\n`);
       }
 
@@ -139,8 +139,9 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const executorSummary = [executorKey, executorVariant].filter(Boolean).join('/');
     const modelSuffix = model ? `, model=${model}` : '';
     process.stdout.write(`✓ Started ${resolvedAgentName} in background (executor=${executorSummary}${modelSuffix})\n`);
-    process.stdout.write(`  Session name: ${sessionName}\n`);
+    process.stdout.write(`  Session ID: ${attemptId}\n`);
     process.stdout.write(`  Forge URL: ${sessionResult.forgeUrl}\n`);
+    process.stdout.write(`  View session: genie view ${attemptId}\n`);
   };
 }
 

@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import type { Handler, HandlerContext } from '../context';
 import type { ParsedCommand } from '../types';
-import { findSessionEntry } from '../../lib/session-helpers';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 
@@ -20,16 +19,16 @@ function readLocalTranscript(entry: Record<string, any>): string | null {
 
 export function createViewHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
-    const [sessionName] = parsed.commandArgs;
-    if (!sessionName) {
-      throw new Error('Usage: genie view <session-name> [--full]');
+    const [attemptId] = parsed.commandArgs;
+    if (!attemptId) {
+      throw new Error('Usage: genie view <attempt-id> [--full]');
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-    const found = findSessionEntry(store, sessionName, ctx.paths);
+    const entry = store.sessions[attemptId]; // Direct lookup by UUID (issue #407 fix)
 
-    if (!found || !found.entry.sessionId) {
-      throw new Error(`❌ No session found with name '${sessionName}'`);
+    if (!entry) {
+      throw new Error(`❌ No session found with ID '${attemptId}'`);
     }
 
     const forgeExecutor = createForgeExecutor();
@@ -43,9 +42,9 @@ export function createViewHandler(ctx: HandlerContext): Handler {
 
     if (forgeAvailable) {
       try {
-        const remoteStatus = await forgeExecutor.getSessionStatus(found.entry.sessionId);
+        const remoteStatus = await forgeExecutor.getSessionStatus(attemptId);
         status = remoteStatus.status || null;
-        transcript = await forgeExecutor.fetchLatestLogs(found.entry.sessionId);
+        transcript = await forgeExecutor.fetchLatestLogs(attemptId);
       } catch (error) {
         forgeAvailable = false;
         const reason = describeForgeError(error);
@@ -53,7 +52,7 @@ export function createViewHandler(ctx: HandlerContext): Handler {
       }
     }
 
-    const localTranscript = readLocalTranscript(found.entry as Record<string, any>);
+    const localTranscript = readLocalTranscript(entry as Record<string, any>);
 
     if (!forgeAvailable && !transcript && localTranscript) {
       transcript = localTranscript;
@@ -63,13 +62,17 @@ export function createViewHandler(ctx: HandlerContext): Handler {
     }
 
     const lines = [
-      `Session: ${found.entry.name || sessionName}`,
-      `Agent: ${found.agentName}`,
-      `Status: ${status || found.entry.status || 'unknown'}`
+      `Session ID: ${attemptId}`,
+      `Agent: ${entry.agent}`,
+      `Status: ${status || entry.status || 'unknown'}`
     ];
 
-    if (found.entry.model) {
-      lines.push(`Model: ${found.entry.model}`);
+    if (entry.forgeUrl) {
+      lines.push(`Forge URL: ${entry.forgeUrl}`);
+    }
+
+    if (entry.model) {
+      lines.push(`Model: ${entry.model}`);
     }
 
     if (!forgeAvailable) {

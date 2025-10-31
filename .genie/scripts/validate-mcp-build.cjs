@@ -85,6 +85,13 @@ function validateTypeScriptBuild(stagedFiles) {
   );
 
   for (const tsFile of stagedTsFiles) {
+    const srcPath = path.join(gitRoot, tsFile);
+
+    // Skip deleted files (they won't exist in filesystem)
+    if (!fs.existsSync(srcPath)) {
+      continue; // File deleted - no validation needed
+    }
+
     // Convert src path to expected dist path
     const distFile = tsFile
       .replace('.genie/mcp/src/', '.genie/mcp/dist/')
@@ -100,7 +107,6 @@ function validateTypeScriptBuild(stagedFiles) {
       });
     } else {
       // Check if source is newer than compiled output
-      const srcPath = path.join(gitRoot, tsFile);
       const srcMtime = fs.statSync(srcPath).mtime;
       const distMtime = fs.statSync(distPath).mtime;
 

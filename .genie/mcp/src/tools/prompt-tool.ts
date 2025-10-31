@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { execSync } from 'child_process';
 import path from 'path';
 import { getOrCreateGenieProject } from '../lib/project-detector.js';
+import { formatTaskTitle } from '../lib/task-title-formatter.js';
 
 // Load ForgeClient from Genie package root (not user's cwd)
 // The MCP server is at: <genie-package>/.genie/mcp/dist/tools/prompt-tool.js
@@ -80,7 +81,7 @@ export async function executePromptTool(
     taskResult = await forgeClient.createAndStartTask({
       task: {
         project_id: projectId,
-        title: `Prompt Transform: ${args.prompt.substring(0, 50)}...`,
+        title: formatTaskTitle('MCP', `Prompt Transform: ${args.prompt.substring(0, 50)}...`),
         description: `Transform this prompt:\n\n${args.prompt}\n\nAgent: ${agent}`
       },
       executor_profile_id: {

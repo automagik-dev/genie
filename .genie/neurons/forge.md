@@ -1,5 +1,5 @@
 ---
-name: neuron-forge
+name: FORGE
 description: Persistent forge master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE

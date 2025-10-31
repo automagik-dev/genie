@@ -7,16 +7,16 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
   return async (parsed: ParsedCommand) => {
     const cmdArgs = parsed.commandArgs;
     if (cmdArgs.length < 2) {
-      throw new Error('Usage: genie resume <session-name> "<prompt>"');
+      throw new Error('Usage: genie resume <attempt-id> "<prompt>"');
     }
 
     const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-    const sessionName = cmdArgs[0];
+    const attemptId = cmdArgs[0]; // Direct UUID (issue #407 fix)
     const prompt = cmdArgs.slice(1).join(' ').trim();
-    const entry = store.sessions[sessionName];
+    const entry = store.sessions[attemptId];
 
-    if (!entry || !entry.sessionId) {
-      throw new Error(`❌ No session found with name '${sessionName}'`);
+    if (!entry) {
+      throw new Error(`❌ No session found with ID '${attemptId}'`);
     }
 
     const forgeExecutor = createForgeExecutor();
@@ -26,23 +26,23 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge sync failed: ${reason}`);
-      throw new Error(`Forge backend unavailable while resuming '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
+      throw new Error(`Forge backend unavailable while resuming session '${attemptId}'. ${FORGE_RECOVERY_HINT}`);
     }
 
     try {
-      await forgeExecutor.resumeSession(entry.sessionId, prompt);
+      await forgeExecutor.resumeSession(attemptId, prompt);
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge resume failed: ${reason}`);
-      throw new Error(`Forge backend rejected resume for '${sessionName}'. ${FORGE_RECOVERY_HINT}`);
+      throw new Error(`Forge backend rejected resume for session '${attemptId}'. ${FORGE_RECOVERY_HINT}`);
     }
 
     entry.lastPrompt = prompt.slice(0, 200);
     entry.lastUsed = new Date().toISOString();
     entry.status = 'running';
-    store.sessions[sessionName] = entry;
+    store.sessions[attemptId] = entry;
     await ctx.sessionService.save(store);
 
-    process.stdout.write(`✓ Resumed ${sessionName} via Forge\n`);
+    process.stdout.write(`✓ Resumed session ${attemptId} via Forge\n`);
   };
 }

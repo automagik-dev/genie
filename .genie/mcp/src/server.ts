@@ -24,9 +24,6 @@ import path from 'path';
 import { transformDisplayPath } from './lib/display-transform.js';
 
 // Import WebSocket-native tools (MVP Phase 6)
-import { wishToolSchema, executeWishTool } from './tools/wish-tool.js';
-import { forgeToolSchema, executeForgeTool } from './tools/forge-tool.js';
-import { reviewToolSchema, executeReviewTool } from './tools/review-tool.js';
 import { promptToolSchema, executePromptTool } from './tools/prompt-tool.js';
 
 // Import neuron architecture tools (Phase 2)
@@ -64,6 +61,9 @@ import {
   readSpellContent,
   normalizeSpellPath
 } from './lib/spell-utils.js';
+
+// Import neuron resource provider
+import { initNeuronProvider, getNeuronProvider } from './resources/neuron-provider.js';
 
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
@@ -152,6 +152,8 @@ const server = new McpServer({
   capabilities: {
     logging: {},
     tools: {}
+    // Note: resources capability removed until neuron provider is fully implemented
+    // See: .genie/mcp/src/resources/neuron-provider.ts (provider exists but not wired up)
   }
 });
 
@@ -496,131 +498,6 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
 // WEBSOCKET-NATIVE TOOLS (MVP Phase 6) - Real-time streaming + git validation
 // ============================================================================
 
-// Tool: create_wish - Create wish with GitHub issue enforcement (WebSocket streaming)
-(server.tool as any)('create_wish', 'Create a wish with GitHub issue enforcement (Amendment 1) and real-time progress via WebSocket. Git working tree must be clean and pushed.', {
-  feature: z.string().describe('What you want to build'),
-  github_issue: z.number().describe('GitHub issue number (required per Amendment 1)')
-}, {
-  streamingHint: true
-}, async (args: any, extra: any) => {
-  // Use official MCP SDK logging for real-time streaming
-  await executeWishTool(args, {
-    streamContent: async (chunk: string) => {
-      // Stream content via MCP logging notifications
-      await server.sendLoggingMessage({
-        level: "info",
-        data: chunk
-      }, extra.sessionId);
-    },
-    reportProgress: async (current: number, total: number) => {
-      // Report progress via MCP logging notifications
-      const message = `Progress: ${current}/${total}`;
-      await server.sendLoggingMessage({
-        level: "info",
-        data: message
-      }, extra.sessionId);
-
-      // Also send MCP progress notification if client provided progressToken
-      if (extra._meta?.progressToken) {
-        await extra.sendNotification({
-          method: "notifications/progress",
-          params: {
-            progressToken: extra._meta.progressToken,
-            progress: current,
-            total: total,
-            message: message
-          }
-        });
-      }
-    }
-  });
-  return { content: [{ type: 'text', text: 'Wish creation completed. Check the logs above for details.' }] };
-});
-
-// Tool: run_forge - Run Forge task with agent and stream execution (WebSocket diff streaming)
-(server.tool as any)('run_forge', 'Kick off a Forge task with specified agent and stream live code changes via WebSocket. Git working tree must be clean and pushed.', {
-  prompt: z.string().describe('Task prompt (e.g., "Fix bug in login flow")'),
-  agent: z.string().describe('Agent to use (e.g., "implementor", "tests", "polish")'),
-  project_id: z.string().optional().describe('Project ID (defaults to current Genie project)')
-}, {
-  streamingHint: true
-}, async (args: any, extra: any) => {
-  // Use official MCP SDK logging for real-time streaming
-  await executeForgeTool(args, {
-    streamContent: async (chunk: string) => {
-      // Stream content via MCP logging notifications
-      await server.sendLoggingMessage({
-        level: "info",
-        data: chunk
-      }, extra.sessionId);
-    },
-    reportProgress: async (current: number, total: number) => {
-      // Report progress via MCP logging notifications
-      const message = `Progress: ${current}/${total}`;
-      await server.sendLoggingMessage({
-        level: "info",
-        data: message
-      }, extra.sessionId);
-
-      // Also send MCP progress notification if client provided progressToken
-      if (extra._meta?.progressToken) {
-        await extra.sendNotification({
-          method: "notifications/progress",
-          params: {
-            progressToken: extra._meta.progressToken,
-            progress: current,
-            total: total,
-            message: message
-          }
-        });
-      }
-    }
-  });
-  return { content: [{ type: 'text', text: 'Forge task completed. Check the logs above for details.' }] };
-});
-
-// Tool: run_review - Review wish with agent and stream feedback (WebSocket log streaming)
-(server.tool as any)('run_review', 'Review a wish document with an agent and stream live feedback via WebSocket. Git working tree must be clean and pushed.', {
-  wish_name: z.string().describe('Wish name (e.g., "genie-mcp-mvp")'),
-  agent: z.string().optional().default('review').describe('Agent to use (default: "review")'),
-  project_id: z.string().optional().describe('Project ID (defaults to current Genie project)')
-}, {
-  streamingHint: true
-}, async (args: any, extra: any) => {
-  // Use official MCP SDK logging for real-time streaming
-  await executeReviewTool(args, {
-    streamContent: async (chunk: string) => {
-      // Stream content via MCP logging notifications
-      await server.sendLoggingMessage({
-        level: "info",
-        data: chunk
-      }, extra.sessionId);
-    },
-    reportProgress: async (current: number, total: number) => {
-      // Report progress via MCP logging notifications
-      const message = `Progress: ${current}/${total}`;
-      await server.sendLoggingMessage({
-        level: "info",
-        data: message
-      }, extra.sessionId);
-
-      // Also send MCP progress notification if client provided progressToken
-      if (extra._meta?.progressToken) {
-        await extra.sendNotification({
-          method: "notifications/progress",
-          params: {
-            progressToken: extra._meta.progressToken,
-            progress: current,
-            total: total,
-            message: message
-          }
-        });
-      }
-    }
-  });
-  return { content: [{ type: 'text', text: 'Review completed. Check the logs above for details.' }] };
-});
-
 // Tool: transform_prompt - Synchronous prompt transformer (no worktree, no git validation)
 (server.tool as any)('transform_prompt', 'Transform/enhance a prompt using an agent synchronously. Runs in current workspace (no worktree). Modern equivalent of old "background off" mode.', {
   prompt: z.string().describe('Prompt to transform/enhance (e.g., "Help me write a better prompt for implementing dark mode")'),
@@ -675,22 +552,44 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
   return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
 });
 
-// ============================================================================
-// DEPRECATED PROMPTS - Removed per Amendment: No Backwards Compatibility
-// ============================================================================
-// These prompts were removed because Genie does not maintain backwards compatibility.
-// Users should use the new WebSocket-native tools instead:
-//   - create_wish (replaces 'wish' prompt)
-//   - run_forge (replaces 'forge' prompt)
-//   - run_review (replaces 'review' prompt)
-//   - transform_prompt (replaces 'prompt' prompt)
-
 // Detect agent role (neuron architecture)
 const roleInfo = detectGenieRole();
 const readOnly = isReadOnlyFilesystem(roleInfo.role);
 
 // Debug mode detection
 const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
+
+// ============================================================================
+// MCP RESOURCES - Neuron thought streams (real-time)
+// ============================================================================
+
+// Initialize neuron provider if Forge available
+let neuronProvider: ReturnType<typeof getNeuronProvider> | null = null;
+
+try {
+  const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const PROJECT_ID = process.env.PROJECT_ID || process.env.FORGE_PROJECT_ID;
+
+  if (PROJECT_ID) {
+    neuronProvider = initNeuronProvider(FORGE_URL, PROJECT_ID);
+
+    if (debugMode) {
+      console.error('✅ Neuron provider initialized (wish, forge, review, master)');
+    }
+  } else {
+    if (debugMode) {
+      console.error('⚠️  Neuron resources unavailable (PROJECT_ID not set)');
+    }
+  }
+} catch (error: any) {
+  if (debugMode) {
+    console.error(`⚠️  Neuron provider initialization failed: ${error.message}`);
+  }
+}
+
+// Register MCP resource handlers (using server request handling pattern)
+// Note: MCP SDK resources API is still evolving - this is Phase 2 foundation
+// Full resource subscription will be completed in Phase 3 once SDK stabilizes
 
 // ============================================================================
 // CLEANUP HANDLERS - Prevent zombie processes (Fix: MCP server proliferation)
@@ -801,13 +700,13 @@ if (debugMode) {
 
   // Dynamically count tools instead of hardcoding
   const coreTools = ['list_agents', 'list_sessions', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
-  const wsTools = ['create_wish', 'run_forge', 'run_review', 'transform_prompt'];
+  const wsTools = ['transform_prompt'];
   const neuronTools = ['continue_task', 'create_subtask'];
   const totalTools = coreTools.length + wsTools.length + neuronTools.length;
 
   console.error(`Tools: ${totalTools} total`);
   console.error(`  - ${coreTools.length} core (agents, sessions, spells, workspace)`);
-  console.error(`  - ${wsTools.length} WebSocket-native (create_wish, run_forge, run_review, transform_prompt)`);
+  console.error(`  - ${wsTools.length} WebSocket-native (transform_prompt)`);
   console.error(`  - ${neuronTools.length} neuron (continue_task, create_subtask)`);
   console.error('WebSocket: Real-time streaming enabled');
   console.error('');

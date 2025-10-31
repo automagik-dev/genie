@@ -63,14 +63,18 @@ async function runCliCoreTests() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
   const sessionsFile = path.join(tmpDir, 'sessions.json');
 
-  // V3 format: sessions keyed by name (not agent name or sessionId)
+  // V4 format: sessions keyed by attemptId (UUID) - issue #407 fix
+  const uuidA = 'abc-123-uuid-genie-a';
+  const uuidB = 'def-456-uuid-genie-b';
+  const uuidC = 'ghi-789-uuid-genie-c';
+
   fs.writeFileSync(
     sessionsFile,
     JSON.stringify(
       {
-        version: 3,
+        version: 4,
         sessions: {
-          genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' }
+          [uuidA]: { agent: 'genieA', taskId: 'task-a', projectId: 'proj-1', executor: 'codex' }
         }
       },
       null,
@@ -86,17 +90,17 @@ async function runCliCoreTests() {
     });
 
     const store = service.load();
-    store.sessions.genieB = { agent: 'genieB', name: 'genieB', executor: 'codex', sessionId: 'genieB-uuid' };
+    store.sessions[uuidB] = { agent: 'genieB', taskId: 'task-b', projectId: 'proj-1', executor: 'codex' };
 
     // Simulate concurrent write (another process adds session-c)
     fs.writeFileSync(
       sessionsFile,
       JSON.stringify(
         {
-          version: 3,
+          version: 4,
           sessions: {
-            genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' },
-            genieC: { agent: 'genieC', name: 'genieC', executor: 'codex', sessionId: 'genieC-uuid' }
+            [uuidA]: { agent: 'genieA', taskId: 'task-a', projectId: 'proj-1', executor: 'codex' },
+            [uuidC]: { agent: 'genieC', taskId: 'task-c', projectId: 'proj-1', executor: 'codex' }
           }
         },
         null,
@@ -107,9 +111,9 @@ async function runCliCoreTests() {
     await service.save(store);
 
     const merged = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-    assert.ok(merged.sessions.genieA, 'should retain original entries');
-    assert.ok(merged.sessions.genieB, 'should include newly saved session');
-    assert.ok(merged.sessions.genieC, 'should merge concurrent session additions');
+    assert.ok(merged.sessions[uuidA], 'should retain original entries');
+    assert.ok(merged.sessions[uuidB], 'should include newly saved session');
+    assert.ok(merged.sessions[uuidC], 'should merge concurrent session additions');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

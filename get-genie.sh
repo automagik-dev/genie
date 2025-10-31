@@ -80,9 +80,19 @@ install_package() {
     esac
 }
 
-# Check if a command exists
+# Check if a command exists (with WSL path filtering)
 command_exists() {
-    command -v "$1" &> /dev/null
+    local cmd="$1"
+    local cmd_path=$(command -v "$cmd" 2>/dev/null)
+
+    # In WSL, ignore Windows paths (mounted under /mnt/)
+    # Windows binaries cannot be executed from Linux context
+    if [[ -n "$cmd_path" ]] && [[ "$cmd_path" == /mnt/* ]]; then
+        return 1  # Treat as not found
+    fi
+
+    # Verify the command is actually executable
+    [ -n "$cmd_path" ] && [ -x "$cmd_path" ]
 }
 
 # Add line to shell profile if not already present

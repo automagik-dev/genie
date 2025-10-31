@@ -297,6 +297,24 @@ async function handleNewUser(
     console.error('⚠️  Failed to start Master Genie orchestration');
     console.error(`   Reason: ${error.message || error}`);
     console.error('');
+
+    // Provide specific guidance based on error type
+    const errorMsg = error.message || String(error);
+    if (errorMsg.includes('project')) {
+      console.error('   💡 Forge project creation failed');
+      console.error('   📜 Check Forge logs: .genie/state/forge.log');
+      console.error('   🔍 Common causes: Forge database issues, network errors');
+    } else if (errorMsg.includes('agent')) {
+      console.error('   💡 Master Genie agent creation failed');
+      console.error('   📜 Check Forge logs: .genie/state/forge.log');
+    } else if (errorMsg.includes('attempt')) {
+      console.error('   💡 Task attempt creation failed');
+      console.error('   📜 Check Forge logs: .genie/state/forge.log');
+    } else {
+      console.error('   📜 Check Forge logs: .genie/state/forge.log');
+    }
+
+    console.error('');
     console.error('💡 Your workspace is ready, but automated setup is skipped.');
     console.error('   You can retry: genie init');
     console.error('');

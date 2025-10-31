@@ -34,41 +34,6 @@ export function clearRuntimeWarnings(): void {
 }
 
 /**
- * Finds a session entry by name.
- *
- * In v3, sessions are keyed by name. This does a direct lookup.
- *
- * @param {SessionStore} store - Session store containing sessions (name-keyed in v3)
- * @param {string} name - Session name to search for
- * @param {Required<ConfigPaths>} paths - Configuration paths (unused in v3)
- * @returns {{ agentName: string; entry: SessionEntry } | null} - Found session or null
- *
- * @example
- * const result = findSessionEntry(store, '115-session-architecture', paths);
- * if (result) {
- *   console.log(`Found session for agent: ${result.agentName}`);
- * }
- */
-export function findSessionEntry(
-  store: SessionStore,
-  name: string,
-  paths: Required<ConfigPaths>
-) {
-  if (!name || typeof name !== 'string') return null;
-  const trimmed = name.trim();
-  if (!trimmed) return null;
-
-  // v3: Direct lookup by name (sessions are name-keyed)
-  const entry = store.sessions[trimmed];
-  if (entry) {
-    return { agentName: entry.agent, entry };
-  }
-
-  // Not found - provide helpful error message
-  return null;
-}
-
-/**
  * Resolves human-readable display status for a session entry.
  *
  * Combines entry status with process liveness checks to determine accurate state.

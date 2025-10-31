@@ -1,146 +1,193 @@
-# Neurons • Master Orchestrators
+# Genie Neuron Architecture
 
-**Neurons** are persistent master orchestrators that live in Forge and coordinate work across domains. Unlike regular agents, neurons:
+## What are Neurons?
 
-- **Persist indefinitely** (survive MCP server restarts)
-- **Live in Forge worktrees** (`/var/tmp/automagik-forge/worktrees/`)
-- **Have read-only filesystems** (can only read, delegate, coordinate)
-- **Reuse across sessions** (ONE neuron per type per project)
-- **Use Claude Haiku** (fast, efficient orchestration)
+**Neurons are NOT agents. They are live socket sessions - like electricity sparks.**
 
-## Available Neurons
-
-| Neuron | File | MCP Tool | Purpose |
-|--------|------|----------|---------|
-| **Wish Master** | `neuron-wish.md` | `create_wish` | Coordinates wish authoring |
-| **Forge Master** | `neuron-forge.md` | `run_forge` | Coordinates execution |
-| **Review Master** | `neuron-review.md` | `run_review` | Coordinates validation |
-
-## When to Use Neurons
-
-✅ **Use neurons for:**
-- Persistent coordination that spans multiple sessions
-- Work that requires maintaining state across disconnects
-- Delegating to domain-specific executors
-- Managing complex multi-step workflows
-
-❌ **Don't use neurons for:**
-- Direct implementation (use regular agents instead)
-- One-off tasks that don't need persistence
-- File modifications (neurons are read-only)
+Traditional agents use task-based communication (create task → wait → check status).
+Neurons use real-time streaming communication (connect to WebSocket → receive thoughts as they happen).
 
 ## Architecture
 
-```
-MCP Client (Claude Code)
-    ↓ calls create_wish()
-SessionManager
-    ↓ queries Forge SQLite
-Existing Neuron? → YES → followUpTaskAttempt()
-                → NO  → createAndStartTask(variant: 'wish')
-    ↓
-Neuron Master (Haiku)
-    ↓ delegates via mcp__genie__run
-Domain Executor (e.g., create/wish)
-    ↓ implements
-Actual Work Done
-```
+### Neuron Provider (`.genie/mcp/src/resources/neuron-provider.ts`)
 
-## Discovery
+Central EventEmitter-based provider that manages real-time WebSocket connections to Forge neurons.
 
-Neurons are **automatically discovered** by:
-1. MCP server scans `.genie/neurons/*.md` on startup
-2. Creates executor profiles for each neuron
-3. Syncs to Forge backend
-4. Available as executor variants: `CLAUDE_CODE:neuron-wish`
+**Key Features:**
+- Uses production WebSocketManager for connection pooling and auto-reconnect
+- Subscribes to Forge diff streams (JsonPatch operations)
+- Emits thoughts as they happen (event-driven)
+- Four neuron types: WISH, FORGE, REVIEW, MASTER
 
-## Executor Configuration
-
-All neurons use:
-```yaml
-genie:
-  executor: CLAUDE_CODE
-  model: haiku      # Fast, efficient for orchestration
-  background: true  # Runs in Forge worktree
+**Stream Format:**
+```json
+{
+  "JsonPatch": [
+    {
+      "op": "replace",
+      "path": "/tasks",
+      "value": {}
+    }
+  ]
+}
 ```
 
-## Self-Awareness
+### Neuron Agents (`.genie/neurons/`)
 
-Neurons can detect their role:
-```bash
-# Branch name pattern
-git branch --show-current
-# → forge/XXXX-wish-description
+Four global orchestrators that live as persistent socket connections:
 
-# Role detection
-if [[ $branch =~ ^forge/[0-9a-f]+-(\w+)- ]]; then
-  role="${BASH_REMATCH[1]}-master"
-fi
-```
+1. **WISH** (`wish.md`) - Feature wish creation and validation
+2. **FORGE** (`forge.md`) - Implementation task execution
+3. **REVIEW** (`review.md`) - Code review and quality gates
+4. **MASTER** (`master.md`) - Master orchestration and delegation
 
-## Neuron Behavior
+Each neuron definition includes:
+- `forge_profile_name` - Links to Forge executor profile (e.g., `WISH`, `FORGE`)
+- Agent instructions - What this neuron does
+- Communication protocol - How it streams thoughts
 
-### Persistence
-- Task stored in Forge SQLite (`~/.local/share/automagik-forge/db.sqlite`)
-- Status: `agent` (hidden from main Kanban)
-- Parent: None (masters are top-level)
+### Agent Registry Integration
 
-### Reconnection
-When MCP tool called again:
-1. Query existing neuron by: `status='agent' && executor.includes(':neuron-wish') && !parent_task_attempt`
-2. If found: Send follow-up via `continue_task` tool
-3. If not: Create new neuron
+`AgentRegistry` (`.genie/cli/src/lib/agent-registry.ts`) scans `.genie/neurons/` and syncs to Forge profiles.
 
-### Read-Only Filesystem
-Neurons cannot modify files. Instead:
+**Metadata Structure:**
 ```typescript
-// ❌ NOT ALLOWED
-fs.writeFileSync('wish.md', content);
-
-// ✅ ALLOWED
-mcp__genie__create_subtask(
-  parent_attempt_id: myAttemptId,
-  title: "Create wish document",
-  prompt: "Write wish to .genie/wishes/...",
-  executor: "CLAUDE_CODE:DEFAULT"  // Subtask CAN write
-);
+interface AgentMetadata {
+  id: string;                  // Full path: "neuron/wish"
+  name: string;                // Display name: "WISH"
+  description: string;         // One-line purpose
+  forge_profile_name?: string; // Forge profile: "WISH"
+  type?: 'neuron';             // Type discriminator
+  // No collective for neurons (global)
+}
 ```
 
-## vs Regular Agents
+## How It Works
 
-| Feature | Regular Agents | Neurons |
-|---------|---------------|---------|
-| **Persistence** | Session-scoped | Forever |
-| **Filesystem** | Read/write | Read-only |
-| **Invocation** | `genie run <agent>` | MCP tools |
-| **Storage** | sessions.json | Forge SQLite |
-| **Delegation** | Optional | **Required** |
-| **Executor** | Various | Haiku (all) |
-| **Location** | `.genie/agents/` or collective | `.genie/neurons/` |
+### 1. Neuron Registration (Startup)
 
-## Adding New Neurons
+```
+Genie CLI starts
+  ↓
+AgentRegistry.scan()
+  ↓
+Discovers .genie/neurons/*.md
+  ↓
+Parses forge_profile_name from frontmatter
+  ↓
+Syncs to Forge executor profiles (CLAUDE_CODE:WISH, etc.)
+```
 
-1. Create `.genie/neurons/neuron-<name>.md`
-2. Add frontmatter with `model: haiku`
-3. Define delegation strategy
-4. Document read-only constraints
-5. Restart MCP server (auto-discovers new neuron)
-6. Create corresponding MCP tool if needed
+### 2. Real-Time Streaming (Runtime)
 
-## Legacy Cleanup
+```
+Master Genie starts neuron session
+  ↓
+neuronProvider.subscribeToNeuron(neuron, attemptId)
+  ↓
+WebSocket connection to Forge diff stream
+  ↓
+JsonPatch messages received
+  ↓
+neuronProvider.emit('thought', neuronThought)
+  ↓
+Master Genie receives real-time updates
+```
 
-**OLD terminology** (deprecated):
-- "neurons" folder in old migrations → Now "agents"
-- "neuron" as synonym for "agent" → Now separate concept
+### 3. Event Structure
 
-**NEW terminology** (current):
-- **Agent** = Executable unit (regular agents in `.genie/agents/`)
-- **Neuron** = Persistent master orchestrator (`.genie/neurons/`)
-- **Master** = Synonym for neuron orchestrator
+```typescript
+interface NeuronThought {
+  timestamp: string;           // ISO 8601
+  neuron: 'wish' | 'forge' | 'review' | 'master';
+  source: 'diff' | 'logs' | 'tasks';
+  data: any;                   // JsonPatch operations
+}
+```
 
-## Related Documentation
+## Usage
 
-- **MCP Tools**: `.genie/mcp/src/tools/` (create_wish, run_forge, run_review, continue_task, create_subtask)
-- **Session Manager**: `.genie/mcp/src/lib/session-manager.ts` (Forge-backed persistence)
-- **Role Detection**: `.genie/mcp/src/lib/role-detector.ts` (Branch pattern matching)
-- **CORE_AGENTS.md**: Global agent documentation (includes neuron references)
+### Starting a Neuron Session
+
+```typescript
+// Master Genie delegates to WISH neuron
+const task = await forgeClient.createTask({
+  project_id: PROJECT_ID,
+  title: "Create feature wish",
+  prompt: "Design authentication system",
+  executor_profile: {
+    executor: 'CLAUDE_CODE',
+    variant: 'WISH'
+  }
+});
+
+// Subscribe to neuron thoughts
+neuronProvider.subscribeToNeuron('wish', task.latest_attempt_id);
+
+neuronProvider.on('thought:wish', (thought: NeuronThought) => {
+  console.log('WISH thought:', thought.data);
+  // Real-time processing of neuron output
+});
+```
+
+### Cleanup
+
+```typescript
+// Unsubscribe from neuron
+neuronProvider.unsubscribeFromNeuron('wish');
+
+// Cleanup all neurons
+neuronProvider.cleanup();
+```
+
+## MCP Integration
+
+Neurons are exposed via MCP resources (Phase 3 - future):
+
+```
+neuron://wish/stream     - WISH neuron thought stream
+neuron://forge/stream    - FORGE neuron thought stream
+neuron://review/stream   - REVIEW neuron thought stream
+neuron://master/stream   - MASTER neuron thought stream
+```
+
+Master Genie can subscribe to these resources for real-time neuron communication.
+
+## Key Differences: Neurons vs Agents
+
+| Aspect | Traditional Agent | Neuron |
+|--------|------------------|---------|
+| Communication | Task-based (create → wait → check) | Real-time streaming (WebSocket) |
+| Latency | High (polling intervals) | Low (instant thoughts) |
+| Connection | Stateless (HTTP requests) | Stateful (persistent socket) |
+| Data Format | Task status updates | JsonPatch operations |
+| Use Case | Long-running tasks | Live orchestration |
+| Location | `.genie/agents/` or `.genie/code/agents/` | `.genie/neurons/` |
+
+## Implementation Status
+
+- ✅ Phase 0: Stream format discovery (JsonPatch via WebSocketManager)
+- ✅ Phase 1: Neuron resource provider created
+- ✅ Phase 2: MCP server integration (provider initialized)
+- ✅ Phase 3: Documentation and usage patterns (this file)
+- ⏳ Phase 4: MCP resource subscriptions (pending SDK stabilization)
+
+## Evidence
+
+**Stream Format Discovery:**
+- `/tmp/neuron-stream-realtime-capture.json` - Raw captured messages
+- `/tmp/neuron-stream-realtime-summary.md` - Format analysis
+- `/tmp/neuron-stream-format-discovery.md` - Discovery process
+
+**Implementation Files:**
+- `.genie/mcp/src/resources/neuron-provider.ts` - Provider implementation
+- `.genie/mcp/src/server.ts` - MCP integration (lines 560-594)
+- `.genie/cli/src/lib/agent-registry.ts` - Agent scanning and sync
+
+## Future Enhancements
+
+1. **MCP Resource Subscriptions** - Full MCP protocol support once SDK stabilizes
+2. **Neuron Dashboard** - Real-time visualization of neuron thoughts
+3. **Multi-Neuron Orchestration** - Coordinate multiple neurons simultaneously
+4. **Thought Persistence** - Store neuron thoughts for replay/analysis
+5. **Neuron Health Monitoring** - Track connection state, reconnects, errors

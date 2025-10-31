@@ -63,8 +63,8 @@ export function createListHandler(ctx: HandlerContext): Handler {
       }
 
       const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
-      const sessions = Object.entries(store.sessions || {}).map(([name, entry]) => ({
-        sessionId: name,
+      const sessions = Object.entries(store.sessions || {}).map(([attemptId, entry]) => ({
+        sessionId: attemptId, // Now truly the UUID (issue #407 fix)
         agent: entry.agent,
         status: entry.status || 'unknown',
         executor: [entry.executor, entry.executorVariant].filter(Boolean).join('/'),

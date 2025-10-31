@@ -14,8 +14,10 @@ import { parse as parseYAML } from 'yaml';
 export interface AgentMetadata {
   name: string;
   description: string;
+  type?: 'agent' | 'neuron';  // Distinguish agents from neurons
   color?: string;
   emoji?: string;
+  forge_profile_name?: string;  // Explicit Forge profile variant name (overrides derived name)
   genie?: {
     executor?: string;
     executorVariant?: string;
@@ -31,7 +33,7 @@ export interface AgentMetadata {
     // Executor-specific additional fields
     model_reasoning_effort?: string;         // CODEX only ('low' | 'medium' | 'high')
   };
-  collective: 'code' | 'create';
+  collective?: 'code' | 'create';  // Optional for neurons (neurons are global)
   filePath: string;
   fullContent?: string; // Full markdown content for Forge sync
 }
@@ -51,10 +53,72 @@ export class AgentRegistry {
     this.agents.clear();
 
     // Scan code collective agents
-    await this.scanDirectory(path.join(this.workspaceRoot, '.genie/code/agents'), 'code');
+    await this.scanDirectory(path.join(this.workspaceRoot, '.genie/code/agents'), 'code', 'agent');
 
     // Scan create collective agents
-    await this.scanDirectory(path.join(this.workspaceRoot, '.genie/create/agents'), 'create');
+    await this.scanDirectory(path.join(this.workspaceRoot, '.genie/create/agents'), 'create', 'agent');
+
+    // Scan global neurons
+    await this.scanNeurons();
+  }
+
+  /**
+   * Scan neurons directory
+   */
+  private async scanNeurons(): Promise<void> {
+    const neuronDir = path.join(this.workspaceRoot, '.genie/neurons');
+    if (!fs.existsSync(neuronDir)) {
+      return;
+    }
+
+    const files = fs.readdirSync(neuronDir).filter(f => f.endsWith('.md'));
+
+    for (const file of files) {
+      const filePath = path.join(neuronDir, file);
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // Parse frontmatter
+        const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
+        if (!frontmatterMatch) {
+          if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+            console.warn(`Neuron file ${filePath} missing frontmatter`);
+          }
+          continue;
+        }
+
+        const frontmatter = parseYAML(frontmatterMatch[1]);
+
+        if (!frontmatter.name) {
+          if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+            console.warn(`Neuron file ${filePath} missing 'name' in frontmatter`);
+          }
+          continue;
+        }
+
+        // Extract markdown body
+        const markdownBody = content.substring(frontmatterMatch[0].length);
+
+        const metadata: AgentMetadata = {
+          name: frontmatter.name,
+          description: frontmatter.description || '',
+          type: 'neuron',
+          color: frontmatter.color,
+          emoji: frontmatter.emoji,
+          forge_profile_name: frontmatter.forge_profile_name,
+          genie: frontmatter.genie,
+          // No collective for neurons (global)
+          filePath: filePath,
+          fullContent: markdownBody
+        };
+
+        // Use neuron/ prefix for namespacing
+        const namespacedKey = `neuron/${frontmatter.name.toLowerCase()}`;
+        this.agents.set(namespacedKey, metadata);
+      } catch (error: any) {
+        console.warn(`Failed to parse neuron file ${filePath}: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -62,7 +126,7 @@ export class AgentRegistry {
    * Pattern: If <folder>/<folder>.md exists at root level, skip scanning <folder>/*.md subfiles
    * This allows agents to have helper workflows in subfolders without registering them
    */
-  private async scanDirectory(dir: string, collective: 'code' | 'create'): Promise<void> {
+  private async scanDirectory(dir: string, collective: 'code' | 'create', type: 'agent' | 'neuron' = 'agent'): Promise<void> {
     if (!fs.existsSync(dir)) {
       return;
     }
@@ -82,7 +146,7 @@ export class AgentRegistry {
           continue;
         }
 
-        await this.scanDirectory(fullPath, collective);
+        await this.scanDirectory(fullPath, collective, type);
         continue;
       }
 
@@ -126,8 +190,10 @@ export class AgentRegistry {
         const metadata: AgentMetadata = {
           name: frontmatter.name,
           description: frontmatter.description || '',
+          type, // Set type based on parameter
           color: frontmatter.color,
           emoji: frontmatter.emoji, // If explicitly set in frontmatter
+          forge_profile_name: frontmatter.forge_profile_name, // Explicit Forge profile variant name
           genie: frontmatter.genie,
           collective,
           filePath: fullPath,
@@ -348,13 +414,24 @@ export class AgentRegistry {
       for (const agent of agentsToSync) {
         if (!agent.fullContent) continue;
 
-        // Use namespaced variant name: CODE_INSTALL, CREATE_INSTALL (explicit collective)
-        // Sanitize agent name: replace spaces and hyphens with underscores for valid Forge variant names
-        const sanitizedName = agent.name.toUpperCase().replace(/[\s-]+/g, '_');
-        const variantName = `${agent.collective.toUpperCase()}_${sanitizedName}`;
+        // Use explicit forge_profile_name if present, otherwise derive from collective/name
+        let variantName: string;
+        if (agent.forge_profile_name) {
+          // Use explicit profile name from frontmatter
+          variantName = agent.forge_profile_name.toUpperCase();
+        } else if (agent.type === 'neuron') {
+          // Neurons: use just the name (no collective prefix)
+          const sanitizedName = agent.name.toUpperCase().replace(/[\s-]+/g, '_');
+          variantName = sanitizedName;
+        } else {
+          // Agents: use collective_name
+          // Sanitize agent name: replace spaces and hyphens with underscores for valid Forge variant names
+          const sanitizedName = agent.name.toUpperCase().replace(/[\s-]+/g, '_');
+          variantName = `${agent.collective!.toUpperCase()}_${sanitizedName}`;
+        }
 
-        // Get collective context for this agent
-        const collectiveContext = collectiveContexts[agent.collective] || '';
+        // Get collective context for this agent (neurons have no collective context)
+        const collectiveContext = agent.collective ? (collectiveContexts[agent.collective] || '') : '';
 
         // Build variant config with executor-specific fields
         const variantConfig: any = {

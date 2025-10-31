@@ -22,6 +22,52 @@ export class SessionManager {
   }
 
   /**
+   * Get agent definition for workflow type
+   * Looks up neuron agent from registry, falls back to hardcoded variant
+   */
+  private async getAgentForWorkflow(workflow: WorkflowType): Promise<{
+    forge_profile_name?: string;
+    executor?: string;
+    model?: string;
+    background?: boolean;
+  }> {
+    try {
+      // Import agent registry (resolve from global package or workspace)
+      // @ts-ignore - Dynamic import from compiled CLI
+      const { getAgentRegistry } = await import('../../../cli/dist/lib/agent-registry.js');
+
+      const registry = await getAgentRegistry();
+
+      // Try to find neuron agent by workflow name
+      // Neurons are registered as "neuron/${workflow}" without collective
+      // e.g., "wish" -> registry key "neuron/wish"
+      const neuronAgent = registry.getAgent(workflow);
+
+      if (neuronAgent) {
+        // Derive forge_profile_name: use explicit or derive from neuron name
+        const profileName = neuronAgent.forge_profile_name
+          || (neuronAgent.type === 'neuron' ? neuronAgent.name.toUpperCase() : workflow.toUpperCase());
+
+        return {
+          forge_profile_name: profileName,
+          executor: neuronAgent.genie?.executor || 'CLAUDE_CODE',
+          model: neuronAgent.genie?.model,
+          background: neuronAgent.genie?.background
+        };
+      }
+    } catch (error) {
+      // Registry not available, fall back
+      console.warn(`Failed to load agent for workflow ${workflow}, using fallback`);
+    }
+
+    // Fallback: Use uppercase workflow name (WISH, FORGE, REVIEW, MASTER)
+    return {
+      forge_profile_name: workflow.toUpperCase(),
+      executor: 'CLAUDE_CODE'
+    };
+  }
+
+  /**
    * Get existing master orchestrator for workflow + project
    * Uses new forge_agents table (persistent, no status-based filtering)
    */
@@ -88,12 +134,15 @@ export class SessionManager {
       // Create the agent entry and its fixed task
       const agent = await this.forgeClient.createForgeAgent(projectId, workflow);
 
+      // Lookup agent definition from registry
+      const agentConfig = await this.getAgentForWorkflow(workflow);
+
       // Start the first attempt with the initial prompt
       const attempt = await this.forgeClient.createTaskAttempt({
         task_id: agent.task_id,
         executor_profile_id: {
-          executor: 'CLAUDE_CODE',
-          variant: `neuron-${workflow}`
+          executor: agentConfig.executor || 'CLAUDE_CODE',
+          variant: agentConfig.forge_profile_name || workflow.toUpperCase()
         },
         base_branch: 'main'
       });
