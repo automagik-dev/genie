@@ -8,6 +8,21 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.9-rc.1] - 2025-10-31
+
+**MCP Neuron Tools: Project Detection & Worktree Support**
+
+### 🐛 Bug Fixes
+- Fixed MCP neuron tools hardcoded project IDs and branch names (#398)
+- Fixed P1: Prevent duplicate projects when running in Forge worktrees (#398)
+- Fixed forge-client.js API field name (follow_up_prompt → prompt)
+
+### ✨ Improvements
+- Automatic project detection by git repo path
+- Dynamic base branch detection (current branch, not hardcoded)
+- Correct neuron variant names (FORGE, WISH, REVIEW)
+- Worktree-aware project matching using git worktree list
+
 ## [2.5.8-rc.2] - 2025-10-31
 
 No changelog entries (packaging-only RC).
