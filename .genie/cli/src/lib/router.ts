@@ -284,37 +284,59 @@ async function handleNewUser(
   console.log('');
 
   const { runInstallFlow } = await import('./install-helpers.js');
-  const shortUrl = await runInstallFlow({
-    templates: ['code'], // Default to code template (can expand later)
-    executor: userConfig.defaults?.executor || 'opencode',
-    model: userConfig.defaults?.model
-  });
+  let shortUrl: string | undefined;
 
-  console.log('');
-  console.log(successGradient('✨ Installation started!'));
-  console.log('');
-  console.log(cosmicGradient('━'.repeat(60)));
-  console.log('🔗 Continue setup in Forge:');
-  console.log('   ' + performanceGradient(shortUrl));
-  console.log(cosmicGradient('━'.repeat(60)));
-  console.log('');
-  console.log('📖 I\'ll open Forge in your browser when you\'re ready.');
-  console.log('   Your Genie will interview you for missing details.');
-  console.log('');
-  console.log('Press Enter to continue...');
-
-  // Wait for Enter key
-  await new Promise<void>((resolve) => {
-    process.stdin.once('data', () => resolve());
-  });
-
-  // Open browser
-  const { execSync: execSyncBrowser } = await import('child_process');
   try {
-    const openCommand = getBrowserOpenCommand();
-    execSyncBrowser(`${openCommand} "${shortUrl}"`, { stdio: 'ignore' });
-  } catch {
-    // Ignore if browser open fails
+    shortUrl = await runInstallFlow({
+      templates: ['code'], // Default to code template (can expand later)
+      executor: userConfig.defaults?.executor, // Use what user selected, no fallback
+      model: userConfig.defaults?.model
+    });
+  } catch (error: any) {
+    console.error('');
+    console.error('⚠️  Failed to start Master Genie orchestration');
+    console.error(`   Reason: ${error.message || error}`);
+    console.error('');
+    console.error('💡 Your workspace is ready, but automated setup is skipped.');
+    console.error('   You can retry: genie init');
+    console.error('');
+    // Continue without Master Genie - workspace templates are already copied
+  }
+
+  if (shortUrl) {
+    console.log('');
+    console.log(successGradient('✨ Installation started!'));
+    console.log('');
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('🔗 Continue setup in Forge:');
+    console.log('   ' + performanceGradient(shortUrl));
+    console.log(cosmicGradient('━'.repeat(60)));
+    console.log('');
+    console.log('📖 I\'ll open Forge in your browser when you\'re ready.');
+    console.log('   Your Genie will interview you for missing details.');
+    console.log('');
+    console.log('Press Enter to continue...');
+
+    // Wait for Enter key
+    await new Promise<void>((resolve) => {
+      process.stdin.once('data', () => resolve());
+    });
+
+    // Open browser
+    const { execSync: execSyncBrowser } = await import('child_process');
+    try {
+      const openCommand = getBrowserOpenCommand();
+      execSyncBrowser(`${openCommand} "${shortUrl}"`, { stdio: 'ignore' });
+    } catch {
+      // Ignore if browser open fails
+    }
+  } else {
+    // Master Genie failed to start, but workspace is ready
+    console.log('');
+    console.log(successGradient('✨ Workspace initialized!'));
+    console.log('');
+    console.log('Your .genie/ directory is ready. Run `genie` to start working.');
+    console.log('');
   }
 
   console.log('');

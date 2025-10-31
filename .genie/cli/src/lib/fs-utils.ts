@@ -132,7 +132,11 @@ export async function backupGenieDirectory(
     const tempPath = path.join(workspacePath, `.genie-backup-${backupId}`);
 
     // Stage 1: Move old .genie/ to temp location at workspace root
-    await fsp.rename(genieDir, tempPath);
+    try {
+      await fsp.rename(genieDir, tempPath);
+    } catch (err) {
+      throw new Error(`Failed to create backup: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     // Return both backupId and tempPath so init.ts can complete stage 3
     return { backupId, tempPath };
@@ -179,7 +183,11 @@ export async function finalizeBackup(
   await ensureDir(path.join(genieDir, 'backups', backupId));
 
   // Stage 3: Move temp backup into new .genie/backups/<id>/genie/
-  await fsp.rename(tempPath, finalPath);
+  try {
+    await fsp.rename(tempPath, finalPath);
+  } catch (err) {
+    throw new Error(`Failed to finalize backup: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Backup root documentation files if present
   const rootDocs = ['AGENTS.md', 'CLAUDE.md'];

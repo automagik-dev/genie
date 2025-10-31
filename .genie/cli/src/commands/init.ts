@@ -246,14 +246,15 @@ export async function runInit(
       }
     }
 
-    // Backup on version mismatch or old Genie installation
-    // Until we have proper upgrade pipeline, treat all upgrades as requiring backup
+    // CRITICAL: Always backup if .genie/ exists - no exceptions
+    // Prevents data loss on re-init, aborted installs, or any overwrite scenario
     let backupId: string | undefined;
     let tempBackupPath: string | undefined;
 
-    if (installType === 'old_genie' || isUpgrade) {
+    const genieExists = await pathExists(targetGenie);
+    if (genieExists) {
       console.log('');
-      console.log('💾 Creating backup before upgrade...');
+      console.log('💾 Creating backup before overwriting...');
       const reason = installType === 'old_genie' ? 'old_genie' : 'pre_upgrade';
       const backupResult = await backupGenieDirectory(cwd, reason);
 
@@ -394,8 +395,8 @@ async function copyTemplateFiles(
       // Blacklist takes priority (never copy these user directories)
       if (blacklist.has(firstSeg)) return false;
 
-      // Only copy: agents, workflows, skills, AGENTS.md, CORE_AGENTS.md, config.yaml, templates
-      if (['agents', 'workflows', 'skills'].includes(firstSeg)) return true;
+      // Only copy: agents, workflows, skills, spells, AGENTS.md, CORE_AGENTS.md, config.yaml, templates
+      if (['agents', 'workflows', 'skills', 'spells'].includes(firstSeg)) return true;
       if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
       if (relPath.endsWith('.template.md')) return true; // Copy all template files
       return false;
