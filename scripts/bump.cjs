@@ -110,6 +110,20 @@ function calculateNewVersion(current, bumpType) {
         log('red', '❌', `Current version ${current} is not an RC. Use bump:patch/minor/major instead.`);
         process.exit(1);
       }
+
+      // Smart auto-detection: Check if stable tag exists for current RC base
+      // If v2.5.9 stable exists and current is v2.5.9-rc.2 → bump to v2.5.10-rc.1
+      const currentBase = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
+      const stableTag = `v${currentBase}`;
+      const stableExists = exec(`git tag -l "${stableTag}"`, true).trim() === stableTag;
+
+      if (stableExists) {
+        log('blue', '🔍', `Detected stable release: ${stableTag}`);
+        log('magenta', '📌', `Auto-bumping to next patch: ${currentBase} → ${parsed.major}.${parsed.minor}.${parsed.patch + 1}-rc.1`);
+        return `${parsed.major}.${parsed.minor}.${parsed.patch + 1}-rc.1`;
+      }
+
+      // No stable tag yet, just increment RC
       return `${parsed.major}.${parsed.minor}.${parsed.patch}-rc.${parsed.rc + 1}`;
 
     default:
