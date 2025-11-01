@@ -220,24 +220,47 @@ export class ForgeExecutor {
 
       // Calculate statistics
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-      const syncedAgentCount = changedAgents.length;
-      const syncedNeuronCount = changedNeurons.length;
       const executors = await AgentRegistry.getSupportedExecutors(this.forge);
       const executorCount = executors.length;
       const totalMB = (totalPayloadSize / 1024 / 1024).toFixed(2);
 
-      // Build change summary
-      const changes = [];
-      if (added.length > 0) changes.push(`${added.length} added`);
-      if (modified.length > 0) changes.push(`${modified.length} updated`);
-      if (removed.length > 0) changes.push(`${removed.length} deleted`);
-      const changeStr = changes.length > 0 ? ` (${changes.join(', ')})` : '';
+      // Count what changed by type
+      const addedAgents = added.filter(k => !k.startsWith('neuron/')).length;
+      const addedNeurons = added.filter(k => k.startsWith('neuron/')).length;
+      const removedAgents = removed.filter(k => !k.startsWith('neuron/')).length;
+      const removedNeurons = removed.filter(k => k.startsWith('neuron/')).length;
 
-      // Final summary - concise in normal mode, verbose in debug mode
-      if (debugMode) {
-        console.log(`✅ Synchronized ${syncedAgentCount} agents, ${syncedNeuronCount} neurons${changeStr} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
+      // Build change summary for agents
+      let agentChange = '';
+      if (addedAgents > 0 && removedAgents > 0) {
+        agentChange = ` (+${addedAgents} -${removedAgents})`;
+      } else if (addedAgents > 0) {
+        agentChange = ` (+${addedAgents})`;
+      } else if (removedAgents > 0) {
+        agentChange = ` (-${removedAgents})`;
       } else {
-        console.log(` ✓ (${syncedAgentCount} agents, ${syncedNeuronCount} neurons synced, ${elapsed}s)`);
+        agentChange = ' (no changes made)';
+      }
+
+      // Build change summary for neurons
+      let neuronChange = '';
+      if (addedNeurons > 0 && removedNeurons > 0) {
+        neuronChange = ` (+${addedNeurons} -${removedNeurons})`;
+      } else if (addedNeurons > 0) {
+        neuronChange = ` (+${addedNeurons})`;
+      } else if (removedNeurons > 0) {
+        neuronChange = ` (-${removedNeurons})`;
+      } else {
+        neuronChange = ' (no changes made)';
+      }
+
+      // Final summary - one line per type
+      if (debugMode) {
+        console.log(`✅ Synchronized ${agentCount} agents${agentChange} across ${executorCount} executors in ${elapsed}s (${totalMB}MB total)`);
+        console.log(`✅ Synchronized ${neuronCount} neurons${neuronChange}`);
+      } else {
+        console.log(` ✓ Synchronized ${agentCount} agents${agentChange}`);
+        console.log(` ✓ Synchronized ${neuronCount} neurons${neuronChange}`);
       }
     } catch (error: any) {
       // Provide helpful error messages for common failures

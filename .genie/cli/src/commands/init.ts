@@ -252,7 +252,10 @@ export async function runInit(
     let tempBackupPath: string | undefined;
 
     const genieExists = await pathExists(targetGenie);
-    if (genieExists) {
+    // Check if .genie/ has actual content (not just empty state/ directory from version check)
+    const hasActualContent = genieExists ? await genieHasContent(targetGenie) : false;
+
+    if (genieExists && hasActualContent) {
       console.log('');
       console.log('💾 Creating backup before overwriting...');
       const reason = installType === 'old_genie' ? 'old_genie' : 'pre_upgrade';
@@ -339,7 +342,7 @@ export async function runInit(
     } catch (error) {
       // Forge unavailable or install flow failed - non-fatal
       console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
-      console.log('   You can run manually: genie run install');
+      console.log(`   Run: genie run master "Run explorer to acquire context, when it ends run the install workflow. Templates: ${templates.join(', ')}"`);
       console.log('');
     }
 
@@ -421,8 +424,8 @@ async function copyTemplateFiles(
       // Blacklist takes priority (never copy these user directories)
       if (blacklist.has(firstSeg)) return false;
 
-      // Only copy: agents, workflows, skills, spells, AGENTS.md, config.yaml, templates
-      if (['agents', 'workflows', 'skills', 'spells'].includes(firstSeg)) return true;
+      // Only copy: agents, workflows, skills, spells, scripts, neurons, product, AGENTS.md, config.yaml, templates
+      if (['agents', 'workflows', 'skills', 'spells', 'scripts', 'neurons', 'product'].includes(firstSeg)) return true;
       if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
       if (relPath.endsWith('.template.md')) return true; // Copy all template files
       return false;
@@ -475,6 +478,39 @@ async function migrateAgentsDocs(cwd: string): Promise<void> {
     }
   } catch (err) {
     console.log(`⚠️  Agents docs migration skipped: ${(err as Error)?.message || String(err)}`);
+  }
+}
+
+/**
+ * Check if .genie/ has actual content worth backing up
+ * Returns false if it only contains empty state/ directory (from version check)
+ */
+async function genieHasContent(geniePath: string): Promise<boolean> {
+  try {
+    const entries = await fsp.readdir(geniePath);
+
+    // Filter out state/ directory and check if anything else exists
+    const nonStateEntries = entries.filter(entry => entry !== 'state');
+
+    if (nonStateEntries.length > 0) {
+      // Has other directories/files besides state/
+      return true;
+    }
+
+    // Only state/ exists - check if it has any actual content
+    const statePath = path.join(geniePath, 'state');
+    if (await pathExists(statePath)) {
+      const stateEntries = await fsp.readdir(statePath);
+      // Fresh install might have version.json and provider.json from version check
+      // Consider this "empty" since it's just metadata, not user content
+      return false;
+    }
+
+    // Empty .genie/ directory
+    return false;
+  } catch {
+    // If we can't read it, assume it has content to be safe
+    return true;
   }
 }
 
