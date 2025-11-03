@@ -74,7 +74,7 @@ function sendRequest(process, request, timeout = 10000) {
  */
 function startServer() {
   return new Promise((resolve, reject) => {
-    const serverPath = path.join(__dirname, '../.genie/mcp/dist/server.js');
+    const serverPath = path.join(__dirname, '../dist/mcp/server.js');
 
     if (!fs.existsSync(serverPath)) {
       reject(new Error('MCP server not built'));
@@ -126,7 +126,7 @@ async function runTests() {
     console.log('\n[Test 1-2] Server Startup');
     server = await startServer();
     assert(server && server.pid, 'Server started with PID');
-    assert(fs.existsSync('.genie/mcp/dist/server.js'), 'Server artifact exists');
+    assert(fs.existsSync('dist/mcp/server.js'), 'Server artifact exists');
 
     // Test 3-6: Initialize Handshake
     console.log('\n[Test 3-6] MCP Initialize Protocol');

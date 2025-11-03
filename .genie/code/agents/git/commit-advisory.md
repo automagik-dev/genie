@@ -161,7 +161,7 @@ Extract from sections: `## Scope`, `Files:`, `Modified:`, `Touched:`
 
 Called by pre-push hook:
 ```bash
-node .genie/cli/dist/genie-cli.js run "agents/git/commit-advisory"
+node dist/cli/genie-cli.js run "agents/git/commit-advisory"
 ```
 
 Exit codes:

@@ -181,6 +181,20 @@ const HELPERS = {
       '$ genie helper bullet-find --top-helpful --limit=5',
       '$ genie helper bullet-find --search="delegate"'
     ]
+  },
+  'validate-paths': {
+    script: 'validate-paths.js',
+    description: 'Validate all literal file path references in codebase',
+    usage: [
+      'genie helper validate-paths',
+      'genie helper validate-paths --staged',
+      'genie helper validate-paths --verbose'
+    ],
+    examples: [
+      '$ genie helper validate-paths',
+      '$ genie helper validate-paths --staged',
+      '$ genie helper validate-paths --verbose'
+    ]
   }
 };
 

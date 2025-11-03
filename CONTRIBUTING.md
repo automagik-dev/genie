@@ -86,10 +86,10 @@ We use a **3-layer branching system**:
 ### 3. Development Workflow
 
 1. Create a descriptive branch from `dev` (`git checkout -b feat/cli-diff-preview dev`)
-2. Implement changes under `.genie/cli/src/`
+2. Implement changes under `src/cli/`
 3. Rebuild the dist bundle: `pnpm run build:genie`
 4. Run tests: `pnpm run test:genie`
-5. Stage changed source *and* the generated `.genie/cli/dist/**/*`
+5. Stage changed source *and* the generated `dist/cli/**/*`
 6. Commit using Conventional Commits and include the Genie co-author line
 7. Push and create PR to `dev` (not `main`)
 
@@ -100,7 +100,7 @@ We use a **3-layer branching system**:
 pnpm run test:genie
 
 # Run a smoke test for init/update manually (optional)
-node .genie/cli/dist/genie.js init --help
+node dist/cli/genie.js init --help
 
 # Check coverage (optional for now)
 pnpm run test:genie -- --coverage
@@ -110,7 +110,7 @@ pnpm run test:genie -- --coverage
 
 ```bash
 # Format TypeScript (if you have prettier installed globally)
-pnpm exec prettier --write ".genie/cli/src/**/*.ts"
+pnpm exec prettier --write "src/cli/**/*.ts"
 
 # Type-check by rebuilding
 pnpm run build:genie  # (or your equivalent tsc invocation)

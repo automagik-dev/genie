@@ -4,8 +4,9 @@ description: Discovery-focused exploratory reasoning without adversarial pressur
 color: indigo
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 # Genie Explore • Discovery Mode

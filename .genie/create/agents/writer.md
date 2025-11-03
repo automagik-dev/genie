@@ -3,8 +3,9 @@ name: writer
 description: Draft clear, audience‑aligned content from briefs and research
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 # Writer • Identity & Mission

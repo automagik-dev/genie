@@ -17,7 +17,7 @@ const {
   resolveWorkspacePackageJson,
   resolveProviderStatusPath,
   resolveTempBackupsRoot
-} = require('../.genie/cli/dist/lib/paths.js');
+} = require('../dist/cli/lib/paths.js');
 
 const ORIGINAL_CWD = process.cwd();
 

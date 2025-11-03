@@ -8,7 +8,7 @@ const {
   safeIsoString,
   deriveStartTime,
   deriveLogFile
-} = require('../.genie/cli/dist/lib/utils.js');
+} = require('../dist/cli/lib/utils.js');
 
 // Test: formatRelativeTime with just now
 (function testFormatRelativeTimeJustNow() {

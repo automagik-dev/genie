@@ -4,7 +4,7 @@ const {
   getRuntimeWarnings,
   clearRuntimeWarnings,
   resolveDisplayStatus
-} = require('../.genie/cli/dist/lib/session-helpers.js');
+} = require('../dist/cli/lib/session-helpers.js');
 
 // Test: recordRuntimeWarning and getRuntimeWarnings
 (function testRecordAndGetRuntimeWarnings() {

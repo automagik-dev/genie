@@ -3,8 +3,9 @@ name: install
 description: Install Genie template and CLI setup for new projects
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference

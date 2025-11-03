@@ -9,7 +9,7 @@ Neurons use real-time streaming communication (connect to WebSocket → receive 
 
 ## Architecture
 
-### Neuron Provider (`.genie/mcp/src/resources/neuron-provider.ts`)
+### Neuron Provider (`src/mcp/resources/neuron-provider.ts`)
 
 Central EventEmitter-based provider that manages real-time WebSocket connections to Forge neurons.
 
@@ -48,7 +48,7 @@ Each neuron definition includes:
 
 ### Agent Registry Integration
 
-`AgentRegistry` (`.genie/cli/src/lib/agent-registry.ts`) scans `.genie/neurons/` and syncs to Forge profiles.
+`AgentRegistry` (`src/cli/lib/agent-registry.ts`) scans `.genie/neurons/` and syncs to Forge profiles.
 
 **Metadata Structure:**
 ```typescript
@@ -180,9 +180,9 @@ Master Genie can subscribe to these resources for real-time neuron communication
 - `/tmp/neuron-stream-format-discovery.md` - Discovery process
 
 **Implementation Files:**
-- `.genie/mcp/src/resources/neuron-provider.ts` - Provider implementation
-- `.genie/mcp/src/server.ts` - MCP integration (lines 560-594)
-- `.genie/cli/src/lib/agent-registry.ts` - Agent scanning and sync
+- `src/mcp/resources/neuron-provider.ts` - Provider implementation
+- `src/mcp/server.ts` - MCP integration (lines 560-594)
+- `src/cli/lib/agent-registry.ts` - Agent scanning and sync
 
 ## Future Enhancements
 

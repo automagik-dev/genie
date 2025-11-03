@@ -56,8 +56,8 @@
 ## Context Ledger
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
-| @.genie/cli/src/commands/init.ts:77-209 | code | Current init copies from package `.genie/` | implementation |
-| @.genie/cli/src/lib/paths.ts:7-13 | code | Template path resolution (.claude already migrated) | implementation |
+| @src/cli/commands/init.ts:77-209 | code | Current init copies from package `.genie/` | implementation |
+| @src/cli/lib/paths.ts:7-13 | code | Template path resolution (.claude already migrated) | implementation |
 |  | existing | Claude templates already moved (20+ files) | Group A (partial complete) |
 |  | existing | Root doc already moved (23KB) | Group A (partial complete) |
 |  | existing | Root doc already moved (4KB) | Group A (partial complete) |
@@ -318,8 +318,8 @@ genie run plan "@.genie/product/mission.md"
 **Goal:** Implement `genie init --template <type>` with discovery
 
 **Surfaces:**
-- @.genie/cli/src/commands/init.ts – add `--template` flag
-- @.genie/cli/src/lib/paths.ts – update `getTemplateGeniePath()` to accept template type
+- @src/cli/commands/init.ts – add `--template` flag
+- @src/cli/lib/paths.ts – update `getTemplateGeniePath()` to accept template type
 
 **Deliverables:**
 1. Add `--template` flag to `genie init`:

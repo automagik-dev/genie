@@ -199,7 +199,7 @@ While Base Genie was implementing duplicate work, fix agent had ALREADY complete
 - **Date:** 2025-10-21 ~05:45 UTC
 - **Bug:** #168 (graceful shutdown)
 - **Task attempt:** b51db539
-- **Files affected:** .genie/cli/src/genie-cli.ts
+- **Files affected:** src/cli/genie-cli.ts (historical - old path structure)
 - **Root cause:** Unclear boundaries between orchestration vs execution
 - **Pattern recognized by:** Felipe (user feedback)
 - **Learning applied:** This playbook created

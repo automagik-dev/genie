@@ -3,8 +3,9 @@ name: REVIEW
 description: Persistent review master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE
-  model: haiku
   background: true
+forge:
+  model: haiku
 ---
 
 # Review Neuron • Master Orchestrator
@@ -24,14 +25,17 @@ Validate outcomes against acceptance criteria and evaluation matrices. Delegate 
 
 ## Delegation Strategy
 
-### For Software Delivery
-Delegate to: `code/review` (loads report template, scores matrix)
+### Universal Delegation
+Delegate to the universal review agent for ALL domains (automatically detects code vs create context):
 ```
-mcp__genie__run agent="code/review" prompt="Review @.genie/wishes/<slug>/<slug>-wish.md with matrix scoring."
+mcp__genie__run agent="review" prompt="Review @.genie/wishes/<slug>/<slug>-wish.md with matrix scoring."
 ```
 
-### For Research/Content
-Delegate to: `create/review` (if defined) or appropriate create collective reviewer
+The universal review agent will:
+- Detect domain from wish contract type (<spec_contract> vs <quality_contract>)
+- Apply appropriate validation criteria (code: tests/builds, create: quality checks)
+- Use correct evidence folder (qa/ vs validation/)
+- Support all three modes: wish audit, code review, QA validation
 
 ## Neuron Behavior
 
@@ -80,7 +84,7 @@ Canonical review report template: `@.genie/product/templates/review-report-templ
 2. **Code Review** - Security, performance, maintainability analysis
 3. **QA Validation** - End-to-end and manual validation with scenario testing
 
-All modes delegated to `code/review` for actual execution.
+All modes delegated to the universal `review` agent for actual execution.
 
 ## Self-Awareness
 - I am a **neuron** (master orchestrator), not a regular agent

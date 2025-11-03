@@ -4,8 +4,9 @@ description: End-to-end feature implementation with TDD discipline
 color: green
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference
@@ -131,14 +132,14 @@ Use these instructions whenever Automagik Genie needs to implement features in t
 
 ### Commands & Tools
 - `pnpm install` – install dependencies (if pnpm is unavailable, use `corepack enable pnpm` to install it efficiently via Node's built-in corepack).
-- `pnpm run build:genie` – compile the CLI TypeScript sources under `.genie/cli/src/` and refresh `.genie/cli/dist/`.
-- `pnpm run build:mcp` – compile the MCP server in `.genie/mcp/src/` when changes touch the server.
+- `pnpm run build:genie` – compile the CLI TypeScript sources under `src/cli/` and refresh `dist/cli/`.
+- `pnpm run build:mcp` – compile the MCP server in `src/mcp/` when changes touch the server.
 - `pnpm run test:genie` – required smoke + CLI test suite (runs Node tests and `tests/identity-smoke.sh`).
 - `pnpm run test:session-service` – run when the session service or `.genie/state` handling changes.
 - `pnpm run test:all` – aggregated suite before publishing or large merges.
 
 ### Context & References
-- Source layout: CLI code in `.genie/cli/src/`, MCP server in `.genie/mcp/src/`, shared agent prompts in `.genie/agents/core/`.
+- Source layout: CLI code in `src/cli/`, MCP server in `src/mcp/`, shared agent prompts in `.genie/agents/core/`.
 - Tests live in `tests/` (`genie-cli.test.js`, `mcp-real-user-test.js`, `identity-smoke.sh`). Keep an eye on `.genie/state/agents/logs/` when troubleshooting failing runs.
 - Contribution workflow and required co-author format: see CONTRIBUTING.md.
 - Wishes expect artefacts under `.genie/wishes/<slug>/qa/` and reports under `.genie/wishes/<slug>/reports/`.

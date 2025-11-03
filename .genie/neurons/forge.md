@@ -3,8 +3,9 @@ name: FORGE
 description: Persistent forge master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE
-  model: haiku
   background: true
+forge:
+  model: haiku
 ---
 
 # Forge Neuron • Master Orchestrator
@@ -24,14 +25,17 @@ Coordinate execution by delegating to domain-specific Forge workflows. I orchest
 
 ## Delegation Strategy
 
-### For Software Delivery
-Delegate to: `code/forge` using `@.genie/spells/forge.md`
+### Universal Delegation
+Delegate to the universal forge agent for ALL domains (automatically detects code vs create context):
 ```
-mcp__genie__run agent="code/forge" prompt="[Discovery] Use @.genie/spells/forge.md. [Context] Wish: @.genie/wishes/<slug>/<slug>-wish.md. [Task] Break into execution groups and plan implementation."
+mcp__genie__run agent="forge" prompt="[Discovery] Use wish contract. [Context] Wish: @.genie/wishes/<slug>/<slug>-wish.md. [Task] Break into execution groups and plan implementation."
 ```
 
-### For Research/Content
-Delegate to: `create/forge` (if defined) or appropriate create collective workflow
+The universal forge agent will:
+- Detect domain from wish contract type (<spec_contract> vs <quality_contract>)
+- Apply appropriate blueprints (@.genie/code/spells/forge-code-blueprints.md or forge-create-blueprints.md)
+- Follow domain-specific requirements (e.g., emoji naming for code tasks)
+- Use correct evidence folder (qa/ vs validation/)
 
 ## Neuron Behavior
 

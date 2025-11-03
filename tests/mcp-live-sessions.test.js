@@ -73,7 +73,7 @@ function sendRequest(process, request, timeout = 30000) {
  */
 function startServer() {
   return new Promise((resolve, reject) => {
-    const serverPath = path.join(__dirname, '../.genie/mcp/dist/server.js');
+    const serverPath = path.join(__dirname, '../dist/mcp/server.js');
 
     if (!fs.existsSync(serverPath)) {
       reject(new Error('MCP server not built'));

@@ -88,12 +88,12 @@ grep "@.*<topic>" .genie/**/*.md
 - ✅ Can I update an existing file instead?
 - ✅ Is this a duplicate of existing content?
 - ✅ Does this belong in an existing spell/agent/workflow?
-- ✅ Is this temporary (should go to `/tmp/` instead)?
+- ✅ Is this temporary (should go to `/tmp/genie/` instead)?
 - ✅ Will this be loaded every session (permanent) or once (ephemeral)?
 
 **Classification:**
 - **Permanent consciousness** → `.genie/` (committed, loaded by users)
-- **Scratch thinking** → `/tmp/` (never committed, deleted after session)
+- **Scratch thinking** → `/tmp/genie/` (never committed, deleted after session, organized)
 - **Evidence/reports** → `.genie/reports/` (committed, loaded on-demand only)
 
 ### Step 5: Measure Context Impact
@@ -158,7 +158,7 @@ cat .genie/STATE.md
 - [ ] **Step 3:** Did I check AGENTS.md/CLAUDE.md for references?
 - [ ] **Step 4:** Can I update existing file instead of creating new one?
 - [ ] **Step 5:** Did I measure context impact (lines/tokens added)?
-- [ ] **Classification:** Is this permanent (`.genie/`) or scratch (`/tmp/`)?
+- [ ] **Classification:** Is this permanent (`.genie/`) or scratch (`/tmp/genie/`)?
 - [ ] **Justification:** Can I explain why this NEW file is necessary?
 
 ## Special Cases

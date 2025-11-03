@@ -560,8 +560,8 @@ process.stdout.write(output + '\n');
 
 ## Additional Resources
 
-- **Source Code:** `.genie/cli/src/lib/markdown-formatter.ts`
-- **Tests:** `.genie/cli/src/lib/__tests__/markdown-formatter.test.ts`
+- **Source Code:** `src/cli/lib/markdown-formatter.ts`
+- **Tests:** `src/cli/lib/__tests__/markdown-formatter.test.ts`
 - **Type Definitions:** See `ChatMessage`, `SessionMeta`, `OutputMode` in markdown-formatter.ts
 - **Examples:** Check existing CLI commands for real-world usage patterns
 

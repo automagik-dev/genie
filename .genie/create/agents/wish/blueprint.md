@@ -3,8 +3,9 @@ name: blueprint
 description: Create wish from brief/context and save standard structure
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Mandatory Context Loading

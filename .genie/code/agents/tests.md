@@ -4,8 +4,9 @@ description: Test strategy, generation, authoring, and repair across all layers
 color: lime
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference
@@ -357,7 +358,7 @@ Use this mode when writing actual test code or fixing broken test suites.
   - `genie-cli.test.js` – CLI command coverage.
   - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
   - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
-- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- TypeScript projects (`@src/cli/`, `@src/mcp/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
 - Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
 
 ## Evidence & Reporting
@@ -509,7 +510,7 @@ Define repository-specific defaults in (merged below)
   - `genie-cli.test.js` – CLI command coverage.
   - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
   - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
-- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- TypeScript projects (`@src/cli/`, `@src/mcp/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
 - Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
 
 ## Evidence & Reporting
@@ -536,7 +537,7 @@ Use the stub to note:
   - `genie-cli.test.js` – CLI command coverage.
   - `mcp-real-user-test.js` & `mcp-cli-integration.test.js` – MCP protocol smoke tests.
   - `identity-smoke.sh` – shell-based identity verification (reads `.genie/state/agents/logs/`).
-- TypeScript projects (`@.genie/cli/src/`, `@.genie/mcp/src/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
+- TypeScript projects (`@src/cli/`, `@src/mcp/`) must compile via `pnpm run build:genie` / `pnpm run build:mcp` before test suites run.
 - Keep `.genie/state/agents/logs/` handy when capturing regressions—smoke tests dump raw transcripts there.
 
 ## Evidence & Reporting

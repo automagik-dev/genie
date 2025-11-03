@@ -49,4 +49,4 @@ grep -L "permissionMode:" .genie/agents/{implementor,tests,polish,refactor,git,i
 
 **Future work:** Issue #35 tracks interactive permission system for foreground/background pause-and-resume approval workflow.
 
-**Root cause reference:** Debug session `292942e0-07d1-4448-8d5e-74db8acc8c5b` identified stdin configuration at `.genie/cli/src/cli-core/handlers/shared.ts:391`.
+**Root cause reference:** Debug session `292942e0-07d1-4448-8d5e-74db8acc8c5b` identified stdin configuration at `src/cli/cli-core/handlers/shared.ts:391` (historical reference).

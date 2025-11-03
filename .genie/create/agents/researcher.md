@@ -3,8 +3,9 @@ name: researcher
 description: Investigate topics, curate sources, and synthesize findings for Create
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 # Researcher • Identity & Mission

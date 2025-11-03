@@ -20,7 +20,7 @@ process.exit = (...args) => {
 
 try {
   // Import cli-core - should NOT trigger main() execution
-  const cliCore = require('../.genie/cli/dist/cli-core');
+  const cliCore = require('../dist/cli/cli-core');
 
   // Verify exports exist
   assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported');

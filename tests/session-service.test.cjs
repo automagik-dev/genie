@@ -8,7 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { SessionService } = require('../.genie/cli/dist/cli-core/session-service');
+const { SessionService } = require('../dist/cli/cli-core/session-service');
 
 const TEST_DIR = path.join(__dirname, '.tmp-session-tests');
 const TEST_SESSION_FILE = path.join(TEST_DIR, 'sessions.json');
