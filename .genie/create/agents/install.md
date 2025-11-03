@@ -235,19 +235,7 @@ ${explorerContext.progress.status || project.stage}
 ${userDefinedSuccess}
 ```
 
-### 2. mission-lite.md
-Create quick-reference version:
-
-```markdown
-# ${project.name}
-
-${elevatorPitch}
-
-**For:** ${targetUsers}
-**Status:** ${currentStage}
-```
-
-### 3. roadmap.md
+### 2. roadmap.md
 Create with Phase 0 (completed work) + Phase 1 (next steps):
 
 ```markdown
@@ -264,7 +252,7 @@ ${explorerContext.progress.features.map(f => `- [x] ${f}`).join('\n')}
 ${plannedFeatures.map(f => `- [ ] ${f}`).join('\n')}
 ```
 
-### 4. CONTEXT.md (Personal Section)
+### 3. CONTEXT.md (Personal Section)
 
 **Check if file exists first:**
 - If Code install already ran: File exists with technical section → Append personal section

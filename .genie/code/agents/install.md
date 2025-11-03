@@ -326,9 +326,18 @@ Check if `.genie/CONTEXT.md` exists:
 
 ### 6. .gitignore
 
-Update `.gitignore` to protect user context:
+Update `.gitignore` to protect user context and runtime state:
 
 ```bash
+# Genie runtime state (auto-generated, never commit)
+.genie/state/
+!.genie/state/version.json
+
+# Genie session data (auto-generated from Forge API)
+.genie/.session
+.genie/.framework-version
+.genie.backup-*
+
 # User context file (project-local, per-user)
 .genie/CONTEXT.md
 ```
@@ -355,10 +364,21 @@ mkdir -p .genie
 # Copy and populate template
 # (Use file read/write tools to replace {{USER_NAME}} and {{PROJECT_NAME}})
 
-# Update .gitignore
-echo "" >> .gitignore
-echo "# User context file (project-local, per-user)" >> .gitignore
-echo ".genie/CONTEXT.md" >> .gitignore
+# Update .gitignore with proper Genie exclusions
+cat >> .gitignore << 'EOF'
+
+# Genie runtime state (auto-generated, never commit)
+.genie/state/
+!.genie/state/version.json
+
+# Genie session data (auto-generated from Forge API)
+.genie/.session
+.genie/.framework-version
+.genie.backup-*
+
+# User context file (project-local, per-user)
+.genie/CONTEXT.md
+EOF
 ```
 
 ### Verification
@@ -378,7 +398,7 @@ echo ".genie/CONTEXT.md" >> .gitignore
 - ✅ Handoff to `/wish` prepared with a concise brief
 
 ## Verification Checklist
-- [ ] `.genie/product/` contains mission, mission-lite, tech-stack, roadmap, environment
+- [ ] `.genie/product/` contains mission, tech-stack, roadmap, environment
 - [ ] Roadmap reflects reality (Phase 0 for existing work, next phases clear)
 - [ ] Tech stack matches detected dependencies and deployment
 - [ ] Environment variables documented and scoped
@@ -429,7 +449,7 @@ Contents:
 ```
 ## ✅ Genie Install Completed
 - Mode: {{mode}}
-- Product docs created: mission, mission-lite, tech-stack, roadmap, environment
+- Product docs created: mission, tech-stack, roadmap, environment
 - User context file: `.genie/context.md` (cross-repo session continuity enabled)
 - `.gitignore` updated to protect context file from repo tracking
 - Next: Run wish → forge → review

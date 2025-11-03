@@ -292,6 +292,18 @@ export async function runInit(
       await finalizeBackup(cwd, tempBackupPath, backupId);
       console.log(`   Backup finalized: .genie/backups/${backupId}/genie/`);
       console.log('');
+
+      // Write backup metadata for Master Genie's backup-analyzer agent
+      const backupInfoPath = path.join(targetGenie, 'state', 'backup-info.json');
+      await writeJsonFile(backupInfoPath, {
+        backupId,
+        oldVersion: oldVersion || 'unknown',
+        newVersion: currentPackageVersion,
+        timestamp: new Date().toISOString(),
+        backupPath: `.genie/backups/${backupId}/genie`
+      });
+      console.log('📦 Backup metadata saved for restoration');
+      console.log('');
     }
 
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
