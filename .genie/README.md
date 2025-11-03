@@ -58,63 +58,53 @@ mcp__genie__list_sessions
 **Auto-generated** from `.genie/` folder structure
 
 **Summary:**
-- Code agents: 30
-- Code workflows: 4
-- Git workflows: 4
-- Create agents: 1
-- Orchestrators: 2
-- **Total: 41 agents**
+- Code agents: 24
+- Code workflows: 0
+- Git workflows: 0
+- Create agents: 5
+- Orchestrators: 0
+- **Total: 29 agents**
 
 ### Code Collective
 
 **Orchestrator:** `code`
 
 **Agents:**
-- **analyze**
 - **audit**
 - **challenge**
+- **change-reviewer**
+- **code-garbage-collector**
+- **code-quality**
 - **commit**
+- **commit-suggester**
 - **consensus**
-- **debate**
-- **debug**
-- **deep-dive**
-- **design-review**
 - **docgen**
 - **explore**
+- **fix**
 - **git** → `report`, `issue`, `pr`, `git`
 - **implementor** → `implementor`
 - **install** → `wish`, `forge`, `review`
-- **learn** → `learn`
+- **issue-creator**
 - **polish** → `polish`
-- **precommit**
-- **prompt**
-- **qa** → `learn`
+- **qa**
 - **refactor**
 - **release** → `commit`, `release`
-- **review** → `review`
-- **risk-audit**
 - **roadmap** → `roadmap`
-- **socratic**
-- **test-strategy**
 - **tests** → `tests`
 - **tracer**
 - **update**
 - **vibe** → `sleepy`, `$agent`
-
-**Workflows:**
-- **forge**
-- **session-state-updater**
-- **session-state-updater-example**
-- **wish**
-
-**Git workflows:** `issue`, `pr`, `report`
 
 ### Create Collective
 
 **Orchestrator:** `create`
 
 **Agents:**
-- **wish**
+- **editor**
+- **install**
+- **README**
+- **researcher**
+- **writer**
 <!-- NEURAL_TREE_END -->
 
 ---

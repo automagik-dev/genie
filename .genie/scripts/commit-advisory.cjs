@@ -59,9 +59,9 @@ class CommitAdvisory {
           cwd: REPO_ROOT,
           stdio: ['pipe', 'pipe', 'ignore']
         });
-        // Empty log = no new commits (everything pushed)
-        // This is SUCCESS, not failure - return empty commits
-        return this.parseCommitLog(log, delimiter);
+        if (log.trim()) {
+          return this.parseCommitLog(log, delimiter);
+        }
       } catch {
         // Upstream doesn't exist yet (branch not pushed)
       }
@@ -134,9 +134,8 @@ class CommitAdvisory {
    */
   parseCommitLog(log, delimiter) {
     const entries = log.split(delimiter).filter(e => e.trim());
-    // Empty entries = no commits to push (synced with remote)
-    // This is SUCCESS, not a warning
     if (entries.length === 0) {
+      this.warnings.push('No commits found in recent history');
       return [];
     }
 
@@ -296,114 +295,35 @@ class CommitAdvisory {
 
   /**
    * Check if commit is exempt from traceability requirements
-   *
-   * COMMIT TYPE DETECTION (Conventional Commits + Genie-specific)
-   * ================================================================
-   * EXEMPT TYPES (no wish/issue required):
-   *   - docs:      Documentation-only changes
-   *   - style:     Formatting, whitespace, semicolons (no logic change)
-   *   - refactor:  Code restructuring without behavior change
-   *   - perf:      Performance improvements (speed, memory)
-   *   - chore:     Maintenance, dependencies, tooling, configs
-   *   - build:     Build system, CI/CD, tooling
-   *   - test:      Adding/updating tests only
-   *
-   * FEATURE TYPES (require wish or GitHub issue):
-   *   - feat:      New features (requires wish or issue)
-   *   - fix:       Bug fixes (MUST have GitHub issue)
-   *   - [no type]: Untyped commits (treated as feature work)
-   *
-   * WHY: Non-functional commits (docs/style/refactor/chore) don't need
-   * work item traceability - they're maintenance, not user stories.
-   * This aligns with Conventional Commits specification.
-   * ================================================================
+   * Includes: automated commits, chores, and non-functional enhancements
    */
   isAutomatedCommit(commit) {
     const full = `${commit.subject} ${commit.body}`;
 
-    // Pattern categories for clarity and maintainability
-    const patterns = {
-      // Auto-generated commits (scripts, CI, bots)
-      automated: [
-        /\(auto-generated\)/i,
-        /\[skip ci\]/i,
-        /\[auto\]/i,
-        /agent graph/i,
-        /\(automagik-forge\s+[a-f0-9-]+\)/i,  // Forge task IDs
-      ],
+    // Patterns for automated commits and exempt commit types
+    const patterns = [
+      // Auto-generated commits
+      /\(auto-generated\)/i,
+      /\[skip ci\]/i,
+      /\[auto\]/i,
+      /agent graph/i,
+      /\(automagik-forge\s+[a-f0-9-]+\)/i,  // Forge task references
 
-      // Conventional Commits types (exempt from traceability)
-      conventionalExempt: [
-        /^docs:/i,           // Documentation updates
-        /^docs\(/i,          // docs(scope): format
-        /^style:/i,          // Formatting/style changes
-        /^style\(/i,
-        /^refactor:/i,       // Code quality improvements
-        /^refactor\(/i,
-        /^perf:/i,           // Performance optimizations
-        /^perf\(/i,
-        /^chore:/i,          // Maintenance tasks
-        /^chore\(/i,
-        /^build:/i,          // Build system, tooling
-        /^build\(/i,
-        /^test:/i,           // Test-only changes
-        /^test\(/i,
-        /^ci:/i,             // CI/CD configuration
-        /^ci\(/i,
-      ],
-
-      // Infrastructure maintenance (hooks, scripts, configs)
-      infrastructure: [
-        /pre-push hook/i,
-        /pre-commit hook/i,
-        /\.genie\/scripts/i,
-        /git hook/i,
-        /hook warning/i,
-        /commit advisory/i,
-      ],
-    };
-
-    // Flatten all patterns and check
-    const allPatterns = [
-      ...patterns.automated,
-      ...patterns.conventionalExempt,
-      ...patterns.infrastructure,
+      // Exempt commit types (don't require issues)
+      /^chore:/i,           // All maintenance tasks
+      /^perf:/i,            // Performance improvements (speed)
+      /^refactor:/i,        // Code quality (reduce LOC, cleanup)
+      /^style:/i,           // Formatting/style changes
+      /^docs:/i             // Documentation updates
     ];
 
-    return allPatterns.some(pattern => pattern.test(full));
+    return patterns.some(pattern => pattern.test(full));
   }
 
   /**
-   * Get branch validation tier
-   *
-   * HIERARCHICAL VALIDATION STRATEGY:
-   * - Worktree branches (forge/*): Relaxed (warnings only, fast iteration in isolated worktrees)
-   * - Feature branches (feat/*, bug/*, fix/*): Relaxed (warnings only, work in progress)
-   * - Dev branch: Stricter (require issues for feat/fix)
-   * - Main branch: Extreme (require everything + version bump)
+   * Validate commits
    */
-  getBranchTier(branch) {
-    // Forge worktrees: isolated environment, relaxed validation
-    if (branch.startsWith('forge/')) {
-      return 'feature'; // Relaxed (warnings only)
-    }
-    // Manual feature branches: work in progress
-    if (branch.startsWith('feat/') || branch.startsWith('bug/') || branch.startsWith('fix/')) {
-      return 'feature'; // Relaxed (warnings only)
-    }
-    if (branch === 'dev' || branch === 'develop') {
-      return 'dev'; // Stricter
-    }
-    if (branch === 'main' || branch === 'master') {
-      return 'main'; // Strictest
-    }
-    return 'feature'; // Default: relaxed for unknown branches
-  }
-
-  /**
-   * Validate commits (branch-aware)
-   */
-  validateCommits(branch, isReleaseBranch = false) {
+  validateCommits(isReleaseBranch = false) {
     if (this.commits.length === 0) {
       this.passes.push('No new commits to validate');
       return;
@@ -423,10 +343,7 @@ class CommitAdvisory {
       return;
     }
 
-    // Get validation tier based on branch
-    const tier = this.getBranchTier(branch);
-
-    // Rule 2: Commit Traceability (TIERED ENFORCEMENT)
+    // Rule 2: Commit Traceability (BLOCKING)
     let exemptCount = 0;
     for (const commit of this.commits) {
       // Skip automated/forge commits from traceability check
@@ -437,7 +354,7 @@ class CommitAdvisory {
 
       const refs = references.get(commit.hash);
       if (!refs.hasWishRef && !refs.hasIssueRef) {
-        const violation = {
+        this.errors.push({
           commit: commit.hash.substring(0, 8),
           subject: commit.subject.substring(0, 60),
           reason: 'Not linked to wish or GitHub issue',
@@ -454,23 +371,7 @@ class CommitAdvisory {
               description: 'Replace NNN with actual GitHub issue number'
             }
           ]
-        };
-
-        // TIERED ENFORCEMENT:
-        if (tier === 'feature') {
-          // Feature branches: Warning only (fast iteration)
-          this.warnings.push(
-            `[${violation.commit}] ${violation.reason}\n` +
-            `     Commit: ${violation.subject}\n` +
-            `     Suggestion: Link to issue before merging to dev`
-          );
-        } else if (tier === 'dev') {
-          // Dev branch: Block on missing issues (stricter)
-          this.errors.push(violation);
-        } else if (tier === 'main') {
-          // Main branch: Strict blocking (extreme validation)
-          this.errors.push(violation);
-        }
+        });
       }
     }
 
@@ -569,15 +470,11 @@ class CommitAdvisory {
   validateBranch() {
     const branch = this.getCurrentBranch();
     if (branch === 'main' || branch === 'master') {
-      // Only warn if there are non-exempt commits (actual feature work)
-      const hasNonExemptCommits = this.commits.some(c => !this.isAutomatedCommit(c));
-      if (hasNonExemptCommits) {
-        this.warnings.push(
-          `Pushing to "${branch}" branch directly\n` +
-          `     Suggestion: Use feature branch (feat/wish-slug) for traced work\n` +
-          `     Override: Set GENIE_ALLOW_MAIN_PUSH=1`
-        );
-      }
+      this.warnings.push(
+        `Pushing to "${branch}" branch directly\n` +
+        `     Suggestion: Use feature branch (feat/wish-slug) for traced work\n` +
+        `     Override: Set GENIE_ALLOW_MAIN_PUSH=1`
+      );
     }
   }
 
@@ -665,7 +562,7 @@ class CommitAdvisory {
       this.passes.push('No commits to analyze (working tree clean).');
       const report = this.generateReport(branch, 0);
       console.log(report);
-      this.log('green', '✅', 'Working tree clean - no commits to push');
+      this.log('yellow', '⚠️ ', 'No commits to analyze');
       return 0;
     }
 
@@ -674,7 +571,7 @@ class CommitAdvisory {
 
     this.loadWishes();
     this.validateBranch();
-    this.validateCommits(branch, isReleaseBranch);
+    this.validateCommits(isReleaseBranch);
 
     const report = this.generateReport(branch, this.commits.length);
     console.log(report);

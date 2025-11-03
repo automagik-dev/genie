@@ -31,7 +31,6 @@ import {
 } from '../lib/fs-utils';
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
-import { configureBothExecutors } from '../lib/mcp-config';
 import { configureExecutor, type ExecutorId } from '../lib/executor-auth';
 import prompts from 'prompts';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
@@ -176,7 +175,7 @@ export async function runInit(
           const resumeExecutor = DEFAULT_EXECUTOR_KEY;
           const resumeModel = undefined;
           await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
-          await configureBothExecutors(cwd);
+          // Note: MCP configuration handled by Forge, not init
           await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
 
           // Note: Install agent is launched by start.sh after init completes
@@ -318,8 +317,7 @@ export async function runInit(
     await initializeProviderStatus(cwd);
     await applyExecutorDefaults(targetGenie, executor, model);
 
-    // Configure MCP servers for both Codex and Claude Code
-    await configureBothExecutors(cwd);
+    // Note: MCP configuration handled by Forge, not init
 
     // Install git hooks if user opted in during wizard
     await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
@@ -414,7 +412,7 @@ async function copyTemplateFiles(
   const blacklist = getTemplateRelativeBlacklist();
   await ensureDir(targetGenie);
 
-  // 1. Copy root agents/workflows/skills from package .genie/
+  // 1. Copy root agents/skills/spells/neurons/product from package .genie/
   const rootGenieDir = path.join(packageRoot, '.genie');
   await copyDirectory(rootGenieDir, targetGenie, {
     filter: (relPath) => {
@@ -424,15 +422,22 @@ async function copyTemplateFiles(
       // Blacklist takes priority (never copy these user directories)
       if (blacklist.has(firstSeg)) return false;
 
-      // Only copy: agents, workflows, skills, spells, scripts, neurons, product, AGENTS.md, config.yaml, templates
-      if (['agents', 'workflows', 'skills', 'spells', 'scripts', 'neurons', 'product'].includes(firstSeg)) return true;
+      // Only copy: agents, skills, spells, neurons, product, AGENTS.md, config.yaml, templates
+      if (['agents', 'skills', 'spells', 'neurons', 'product'].includes(firstSeg)) return true;
       if (relPath === 'AGENTS.md' || relPath === 'config.yaml') return true;
       if (relPath.endsWith('.template.md')) return true; // Copy all template files
       return false;
     }
   });
 
-  // 2. Copy chosen collective DIRECTORY (preserving structure)
+  // 2. Copy only scripts/helpers directory (generic user-facing utilities)
+  const helpersSource = path.join(packageRoot, '.genie', 'scripts', 'helpers');
+  const helpersTarget = path.join(targetGenie, 'scripts', 'helpers');
+  if (await pathExists(helpersSource)) {
+    await copyDirectory(helpersSource, helpersTarget);
+  }
+
+  // 3. Copy chosen collective DIRECTORY (preserving structure)
   const collectiveSource = path.join(packageRoot, '.genie', template);
   const collectiveTarget = path.join(targetGenie, template);
   await copyDirectory(collectiveSource, collectiveTarget, {
@@ -445,14 +450,66 @@ async function copyTemplateFiles(
 }
 
 async function copyTemplateRootFiles(packageRoot: string, targetDir: string, template: TemplateType): Promise<void> {
-  // Copy AGENTS.md, CLAUDE.md, and .gitignore from package root
-  const rootFiles = ['AGENTS.md', 'CLAUDE.md', '.gitignore'];
-  for (const file of rootFiles) {
+  // Copy AGENTS.md and CLAUDE.md (overwrite)
+  const simpleFiles = ['AGENTS.md', 'CLAUDE.md'];
+  for (const file of simpleFiles) {
     const sourcePath = path.join(packageRoot, file);
     const targetPath = path.join(targetDir, file);
     if (await pathExists(sourcePath)) {
       await fsp.copyFile(sourcePath, targetPath);
     }
+  }
+
+  // Special handling for .gitignore (merge, don't overwrite)
+  const sourceGitignore = path.join(packageRoot, '.gitignore');
+  const targetGitignore = path.join(targetDir, '.gitignore');
+
+  if (await pathExists(sourceGitignore)) {
+    await mergeGitignore(sourceGitignore, targetGitignore);
+  }
+}
+
+async function mergeGitignore(sourcePath: string, targetPath: string): Promise<void> {
+  const sourceContent = await fsp.readFile(sourcePath, 'utf8');
+  const sourceLines = new Set(
+    sourceContent.split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'))
+  );
+
+  // If target .gitignore exists, merge
+  if (await pathExists(targetPath)) {
+    const targetContent = await fsp.readFile(targetPath, 'utf8');
+    const targetLines = targetContent.split('\n');
+
+    // Backup original
+    const backupPath = `${targetPath}.backup.${Date.now()}`;
+    await fsp.copyFile(targetPath, backupPath);
+    console.log(`   Backed up existing .gitignore: ${path.basename(backupPath)}`);
+
+    // Merge: keep existing lines, add new ones from template
+    const existingSet = new Set(
+      targetLines.map(line => line.trim()).filter(line => line && !line.startsWith('#'))
+    );
+
+    const newLines: string[] = [];
+    for (const line of sourceLines) {
+      if (!existingSet.has(line)) {
+        newLines.push(line);
+      }
+    }
+
+    if (newLines.length > 0) {
+      const mergedContent = targetContent.trimEnd() + '\n\n# Added by Genie init\n' + newLines.join('\n') + '\n';
+      await fsp.writeFile(targetPath, mergedContent, 'utf8');
+      console.log(`   Merged ${newLines.length} new entries into .gitignore`);
+    } else {
+      console.log('   .gitignore already contains all Genie entries');
+    }
+  } else {
+    // No existing .gitignore, copy template as-is
+    await fsp.copyFile(sourcePath, targetPath);
+    console.log('   Created .gitignore from template');
   }
 }
 
@@ -674,7 +731,7 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
 
   try {
     // Check if there are files to commit
-    const status = execSync('git status --porcelain .genie/ AGENTS.md CLAUDE.md .gitignore .mcp.json', {
+    const status = execSync('git status --porcelain .genie/ AGENTS.md CLAUDE.md .gitignore', {
       cwd,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe']
@@ -686,7 +743,7 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
     }
 
     // Stage Genie template files
-    execSync('git add .genie/ AGENTS.md CLAUDE.md .gitignore .mcp.json', {
+    execSync('git add .genie/ AGENTS.md CLAUDE.md .gitignore', {
       cwd,
       stdio: 'pipe'
     });
@@ -872,9 +929,53 @@ async function installGitHooksIfRequested(packageRoot: string, shouldInstall: bo
   console.log('');
   console.log('🔧 Installing git hooks...');
 
-  const { spawnSync } = await import('child_process');
-  const installScript = path.join(packageRoot, '.genie', 'scripts', 'install-hooks.cjs');
+  // Copy hook dependencies before installing hooks
   const projectDir = process.cwd();
+  const targetGenie = path.join(projectDir, '.genie');
+
+  // Copy hooks directory (git hook templates)
+  const hooksSource = path.join(packageRoot, '.genie', 'scripts', 'hooks');
+  const hooksTarget = path.join(targetGenie, 'scripts', 'hooks');
+  if (await pathExists(hooksSource)) {
+    await copyDirectory(hooksSource, hooksTarget);
+  }
+
+  // Copy hook dependencies (scripts that hooks call)
+  const hookDependencies = [
+    'commit-advisory.cjs',
+    'forge-task-link.cjs',
+    'prevent-worktree-access.sh',
+    'run-tests.cjs',
+    'update-changelog.cjs',
+    'validate-cross-references.cjs',
+    'validate-mcp-build.cjs',
+    'validate-user-files-not-committed.cjs',
+  ];
+
+  for (const script of hookDependencies) {
+    const src = path.join(packageRoot, '.genie', 'scripts', script);
+    const dst = path.join(targetGenie, 'scripts', script);
+    if (await pathExists(src)) {
+      await fsp.copyFile(src, dst);
+    }
+  }
+
+  // Copy token-efficiency directory (used by pre-commit hook)
+  const tokenEffSource = path.join(packageRoot, '.genie', 'scripts', 'token-efficiency');
+  const tokenEffTarget = path.join(targetGenie, 'scripts', 'token-efficiency');
+  if (await pathExists(tokenEffSource)) {
+    await copyDirectory(tokenEffSource, tokenEffTarget);
+  }
+
+  // Copy install-hooks.cjs (used by hook installer)
+  const installHooksSource = path.join(packageRoot, '.genie', 'scripts', 'install-hooks.cjs');
+  const installHooksTarget = path.join(targetGenie, 'scripts', 'install-hooks.cjs');
+  if (await pathExists(installHooksSource)) {
+    await fsp.copyFile(installHooksSource, installHooksTarget);
+  }
+
+  const { spawnSync } = await import('child_process');
+  const installScript = path.join(targetGenie, 'scripts', 'install-hooks.cjs');
 
   const result = spawnSync('node', [installScript, projectDir, packageRoot], {
     stdio: 'inherit'

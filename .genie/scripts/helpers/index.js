@@ -13,6 +13,7 @@
  *   count-tokens <file>                - Count tokens in file
  *   count-tokens --before=f1 --after=f2 - Compare token counts
  *   validate-frontmatter <dir>         - Validate YAML frontmatter
+ *   create-frontmatter <file.md>       - Generate frontmatter from content
  *   detect-markers <dir>               - Find TODO/FIXME markers
  *   list                              - List all available helpers
  *   help [command]                    - Show help for a command
@@ -194,6 +195,18 @@ const HELPERS = {
       '$ genie helper validate-paths',
       '$ genie helper validate-paths --staged',
       '$ genie helper validate-paths --verbose'
+    ]
+  },
+  'create-frontmatter': {
+    script: 'create-frontmatter.js',
+    description: 'Content-aware frontmatter generator (reads .md, analyzes, generates)',
+    usage: [
+      'genie helper create-frontmatter <file.md>',
+      'genie helper create-frontmatter <file.md> --type=TYPE'
+    ],
+    examples: [
+      '$ genie helper create-frontmatter .genie/agents/my-agent.md',
+      '$ genie helper create-frontmatter .genie/spells/learn.md --type=spell'
     ]
   }
 };
