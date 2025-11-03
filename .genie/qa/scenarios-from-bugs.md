@@ -1,15 +1,15 @@
 # QA Scenarios from GitHub Issues
-**Auto-Generated:** 2025-10-26 18:22:40 UTC
+**Auto-Generated:** 2025-11-03 13:49:06 UTC
 **Source:** GitHub Issues with label `type:bug`
-**Script:** `.genie/agents/qa/workflows/auto-generated/generator.cjs`
+**Script:** `.genie/scripts/sync-qa-from-issues.js`
 
 ---
 
 ## Summary
 
-**Total Bugs:** 62
+**Total Bugs:** 65
 - 🔴 Open: 2
-- ✅ Fixed: 60
+- ✅ Fixed: 63
 
 ---
 
@@ -95,6 +95,90 @@ The prompt appears momentarily but automatically proceeds without user interacti
 ---
 
 ## Fixed Bugs
+
+## Bug #369: [Bug] Genie MCP stdio server exits immediately in non-interactive shells
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, area:cli
+**Created:** 2025-10-28
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/369
+
+### Description
+Bug Description:
+- After the CLI refactor, starting Genie via `node .genie/cli/dist/genie-cli.js` or `npx automagik-genie` in a non-interactive shell exits immediately. The MCP stdio server shuts down once startup completes, so the process never stays alive for ChatGPT connections.
+
+Steps to Reproduce:
+1. Build the project: `pnpm run build:mcp`
+2. Run: `node .genie/cli/dist/genie-cli.js`
+3. Observe the process exits right after printing "Genie is ready and running"
+
+Expected Behavior:
+- The CLI should keep running until the user terminates it (Ctrl+C) or the dashboard closes, keeping the MCP stdio transport alive so ChatGPT can connect.
+
+Actual Behavior:
+- The process exits as soon as startup completes because the stdio transport shuts down, so Genie cannot stay online.
+
+Environment:
+- OS: Linux (WSL2)
+- Node: v22.16.0
+- Package: 2.5.5-rc.88
+- Shell: non-interactive (e.g. CI or nohup)
+
+Impact:
+- High (major impact)
+
+Error Logs / Screenshots:
+- N/A
+
+Possible Solution (Optional):
+- Keep the stdio transport running until it receives an explicit shutdown signal and avoid killing the newly spawned server in cleanup.
+
+Affected Areas (Optional):
+- CLI
+- MCP Server
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #317: [Bug] Installer starts MCP server before OAuth2 configuration
+**Status:** ✅ Fixed
+**Labels:** type:bug, area:mcp, priority:medium, area:cli, status:needs-triage
+**Created:** 2025-10-27
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/317
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
+
+## Bug #315: Bug: genie update shows downgrade for @next users (2.5.5-rc.22 → 2.5.3)
+**Status:** ✅ Fixed
+**Labels:** type:bug, priority:high, area:cli
+**Created:** 2025-10-27
+**GitHub:** https://github.com/namastexlabs/automagik-genie/issues/315
+
+### Expected Behavior
+1. Detect user's channel first (line 113 already does this)
+2. Pass channel to `checkForUpdates(currentVersion, commit, channel)`
+3. Fetch latest from **correct channel**: `npm view automagik-genie@${channel} version`
+4. Show correct comparison:
+   - `@next` user: Compare against latest `@next` version
+   - `@latest` user: Compare against latest `@latest` version
+
+### Validation
+- [x] Bug verified fixed
+- [ ] Test scenario executed
+- [ ] Regression test added
+- [ ] Documentation updated
+
+---
 
 ## Bug #231: 🐛 Agent registry skips all agents due to frontmatter regex
 **Status:** ✅ Fixed
@@ -1705,13 +1789,13 @@ With `permissionMode: default`, ALL file operations (Write, Edit, Read) should p
 This file is auto-generated from GitHub issues. To update:
 
 ```bash
-node .genie/agents/qa/workflows/auto-generated/generator.cjs
+node .genie/scripts/sync-qa-from-issues.js
 ```
 
 To run manually with dry-run:
 
 ```bash
-node .genie/agents/qa/workflows/auto-generated/generator.cjs --dry-run
+node .genie/scripts/sync-qa-from-issues.js --dry-run
 ```
 
 To automate via GitHub Actions (future):
