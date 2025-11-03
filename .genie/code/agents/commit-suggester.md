@@ -67,7 +67,7 @@ Closes #260
 3. Analyze changes using deterministic patterns:
    - File types modified (*.ts, *.md, *.json, etc.)
    - Change magnitude (lines added/removed)
-   - File locations (.genie/cli/, .genie/scripts/, etc.)
+   - File locations (src/cli/, src/mcp/, .genie/scripts/, etc.)
 
 4. Determine commit type:
    - New files → "feat"
@@ -79,7 +79,8 @@ Closes #260
    - Build/config → "build/chore"
 
 5. Extract scope from file paths:
-   - .genie/cli/ → "cli"
+   - src/cli/ → "cli"
+   - src/mcp/ → "mcp"
    - .genie/scripts/ → "scripts"
    - .genie/agents/ → "agents"
 
@@ -119,7 +120,8 @@ Closes #260
 
 | File Location | Scope |
 |---------------|-------|
-| .genie/cli/ | cli |
+| src/cli/ | cli |
+| src/mcp/ | mcp |
 | .genie/scripts/ | scripts |
 | .genie/agents/ | agents |
 | .genie/spells/ | spells |

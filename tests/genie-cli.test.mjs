@@ -8,8 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // FIXME: codex-log-viewer removed - these tests need updating
-// const { extractSessionIdFromContent, buildJsonlView} = await import('../.genie/cli/dist/executors/codex-log-viewer.js');
-// const { loadSessions } = await import('../.genie/cli/dist/session-store.js');
+// const { extractSessionIdFromContent, buildJsonlView} = await import('../dist/cli/executors/codex-log-viewer.js');
+// const { loadSessions } = await import('../dist/cli/session-store.js');
 
 // (function testExtractSessionId() {
 //   const lines = [
@@ -56,7 +56,7 @@ const __dirname = path.dirname(__filename);
 // })();
 
 async function runCliCoreTests() {
-  const cliCore = await import('../.genie/cli/dist/cli-core/index.js');
+  const cliCore = await import('../dist/cli/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
   assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
 

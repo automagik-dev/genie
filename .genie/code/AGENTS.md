@@ -5,9 +5,10 @@ description: Software dev agents (Git, PR, tests, CI/CD workflows)
 github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/code
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
   permissionMode: bypassPermissions
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference
@@ -536,7 +537,7 @@ Provide clarity with empathy; challenge ideas constructively and back conclusion
 ```typescript
 backupGenieDirectory(workspacePath, reason: 'old_genie' | 'pre_rollback')
 ```
-- Location: `.genie/cli/src/lib/fs-utils.ts`
+- Location: `src/cli/lib/fs-utils.ts`
 - Backs up: `.genie/` + root docs (AGENTS.md, CLAUDE.md)
 - Output: `.genie/backups/<timestamp>/`
 - Used by: init.ts (old genie), rollback.ts (pre-restore)
@@ -564,11 +565,11 @@ interface GenieVersion {
 ```
 
 **Files:**
-- `.genie/cli/src/lib/fs-utils.ts` - Unified backup
-- `.genie/cli/src/commands/init.ts` - Uses backup (old genie only)
-- `.genie/cli/src/commands/update.ts` - npm-only (150 lines from 326)
-- `.genie/cli/src/commands/rollback.ts` - Uses backup
-- `.genie/cli/src/lib/upgrade/merge-strategy.ts` - Deprecated
+- `src/cli/lib/fs-utils.ts` - Unified backup
+- `src/cli/commands/init.ts` - Uses backup (old genie only)
+- `src/cli/commands/update.ts` - npm-only (150 lines from 326)
+- `src/cli/commands/rollback.ts` - Uses backup
+- `src/cli/lib/upgrade/merge-strategy.ts` - Deprecated
 
 **See:** GitHub #260 for routing optimization phases
 
@@ -595,12 +596,7 @@ interface GenieVersion {
 ### Amendment #Code-11: Git Workflow Implementation
 **Extends Base Development Workflow** - Git commands and worktree specifics
 
-**Branch Strategy (Base Policy):**
-- `dev` is the main development branch (enforced by Base Genie)
-- Feature branches merge to `dev` via PR (enforced by Base Genie)
-- Stable releases merge `dev` → `main` (enforced by Base Genie)
-
-**Worktree Isolation (Code Implementation):**
+**Worktree Isolation:**
 Every Forge task creates dedicated worktree:
 ```bash
 # Forge creates isolated workspace
@@ -684,9 +680,9 @@ tests/identity-smoke.sh        # Quick validation
 - **INHERITED:** Review tasks (from wish), Subtasks (from parent, can override)
 
 **Implementation:**
-- MCP tools: `.genie/mcp/src/tools/*-tool.ts`
-- CLI commands: `.genie/cli/src/commands/forge.ts`, `.genie/cli/src/commands/run.ts`
-- Formatter: `.genie/mcp/src/lib/task-title-formatter.ts`
+- MCP tools: `src/mcp/tools/*-tool.ts`
+- CLI commands: `src/cli/commands/forge.ts`, `src/cli/commands/run.ts`
+- Formatter: `src/mcp/lib/task-title-formatter.ts`
 
 **Validation:**
 - Pre-commit hook validates format (future enhancement)

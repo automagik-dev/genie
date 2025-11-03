@@ -16,7 +16,7 @@ const isUnifiedStartup = args.length === 0;
 
 if (isUnifiedStartup) {
   // Launch unified startup (Forge + MCP together)
-  const unifiedStartup = path.join(__dirname, '..', '.genie', 'cli', 'dist', 'unified-startup.js');
+  const unifiedStartup = path.join(__dirname, '..', 'dist', 'cli', 'unified-startup.js');
 
   // Hard dependency check: Ensure unified-startup.js exists
   if (!fs.existsSync(unifiedStartup)) {
@@ -31,7 +31,7 @@ if (isUnifiedStartup) {
   require(unifiedStartup);
 } else {
   // Delegate to genie-cli for commands like 'genie run', 'genie forge start', etc.
-  const entry = path.join(__dirname, '..', '.genie', 'cli', 'dist', 'genie-cli.js');
+  const entry = path.join(__dirname, '..', 'dist', 'cli', 'genie-cli.js');
 
   // Hard dependency check: Ensure genie-cli.js exists
   if (!fs.existsSync(entry)) {

@@ -3,8 +3,9 @@ name: commit
 description: Execute commit and push routine (with safety checks)
 genie:
   executor: OPENCODE
-  model: xai/grok-4-fast
   background: false
+forge:
+  model: xai/grok-4-fast
 ---
 
 ## Framework Reference

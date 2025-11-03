@@ -1,5 +1,0 @@
-# Ignore compiled JS in src/
-src/**/*.js
-view/
-
-# dist/ is ignored by root .gitignore (build artifacts, not tracked)

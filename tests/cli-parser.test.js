@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { parseArguments } = require('../.genie/cli/dist/lib/cli-parser.js');
+const { parseArguments } = require('../dist/cli/lib/cli-parser.js');
 
 // Test: parseArguments with basic command
 (function testParseArgumentsBasicCommand() {

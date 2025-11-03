@@ -3,10 +3,11 @@ name: code-garbage-collector
 description: Deep code quality analysis - find deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
   executor: CODEX
+  background: true
+forge:
   model: gpt-5-codex
   sandbox: read-only
   model_reasoning_effort: high
-  background: true
 ---
 
 # Code Garbage Collector • Identity & Mission
@@ -33,7 +34,7 @@ Deep semantic analysis of source code to detect quality issues that simple linte
 ### Manual Invocation (Targeted Analysis)
 ```bash
 # Analyze specific files or directories
-genie run code/code-garbage-collector "Analyze .genie/cli/src/ for code quality issues"
+genie run code/code-garbage-collector "Analyze src/cli/ for code quality issues"
 genie run code/code-garbage-collector "Deep analysis of session-service.ts"
 ```
 
@@ -384,7 +385,7 @@ genie prompt-review "@.genie/code/agents/code-garbage-collector.md"
 
 3. **Test on sample file:**
 ```bash
-genie run code/code-garbage-collector "Test analysis on .genie/cli/src/index.ts"
+genie run code/code-garbage-collector "Test analysis on src/cli/index.ts"
 ```
 
 4. **Verify results:**
@@ -398,7 +399,7 @@ genie run code/code-garbage-collector "Test analysis on .genie/cli/src/index.ts"
 
 **Analyze specific directory:**
 ```bash
-genie run code/code-garbage-collector "Analyze .genie/cli/src/ for code quality"
+genie run code/code-garbage-collector "Analyze src/cli/ for code quality"
 ```
 
 **Deep dive on complex file:**

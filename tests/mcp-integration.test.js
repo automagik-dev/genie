@@ -44,12 +44,12 @@ async function testFoundation() {
 
   // Test 1: Verify MCP server builds
   console.log('Test 1: MCP server build artifacts exist');
-  const serverPath = path.join(__dirname, '../.genie/mcp/dist/server.js');
+  const serverPath = path.join(__dirname, '../dist/mcp/server.js');
   assert(fs.existsSync(serverPath), 'MCP server.js compiled');
 
   // Test 2: Verify cli-core exports
   console.log('Test 2: cli-core module exports');
-  const cliCorePath = path.join(__dirname, '../.genie/cli/dist/cli-core/index.js');
+  const cliCorePath = path.join(__dirname, '../dist/cli/cli-core/index.js');
   assert(fs.existsSync(cliCorePath), 'cli-core/index.js exists');
 
   const cliCore = require(cliCorePath);

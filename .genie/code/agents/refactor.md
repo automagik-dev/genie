@@ -4,8 +4,9 @@ description: Design review and staged refactor planning with verification and ro
 color: brown
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Mandatory Context Loading

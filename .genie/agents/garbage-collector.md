@@ -423,7 +423,7 @@ Issue: [GARBAGE] Duplicate code detected
 **Helper Tool:**
 ```bash
 # Manual inspection of similar patterns
-grep -r "function functionName" .genie/cli/src/
+grep -r "function functionName" src/cli/
 ```
 
 ### 17. Refactor Opportunities

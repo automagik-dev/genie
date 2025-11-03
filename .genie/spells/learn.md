@@ -738,7 +738,7 @@ Target: learn.md (add anti-pattern)"
 /learn "Pattern: Minimal delegation prompts
 Description: MCP prompts delegate to agents, don't duplicate logic
 Example: return `run wish \"${args.feature}\"`
-Evidence: .genie/mcp/src/server.ts surgical fix
+Evidence: src/mcp/server.ts surgical fix
 Target: prompting standards"
 ```
 

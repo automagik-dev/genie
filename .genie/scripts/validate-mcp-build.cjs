@@ -35,8 +35,8 @@ function getStagedFiles() {
  */
 function hasMCPChanges(stagedFiles) {
   return stagedFiles.some(file =>
-    file.startsWith('.genie/mcp/src/') ||
-    file.startsWith('.genie/mcp/dist/')
+    file.startsWith('src/mcp/') ||
+    file.startsWith('dist/mcp/')
   );
 }
 
@@ -47,8 +47,8 @@ function validateHTMLFiles() {
   const errors = [];
 
   // Check if authorize.html exists in dist
-  const srcHtml = path.join(gitRoot, '.genie/mcp/src/lib/views/authorize.html');
-  const distHtml = path.join(gitRoot, '.genie/mcp/dist/lib/views/authorize.html');
+  const srcHtml = path.join(gitRoot, 'src/mcp/lib/views/authorize.html');
+  const distHtml = path.join(gitRoot, 'dist/mcp/lib/views/authorize.html');
 
   if (fs.existsSync(srcHtml) && !fs.existsSync(distHtml)) {
     errors.push({
@@ -81,7 +81,7 @@ function validateTypeScriptBuild(stagedFiles) {
 
   // Get all staged .ts files in src/
   const stagedTsFiles = stagedFiles.filter(file =>
-    file.startsWith('.genie/mcp/src/') && file.endsWith('.ts')
+    file.startsWith('src/mcp/') && file.endsWith('.ts')
   );
 
   for (const tsFile of stagedTsFiles) {
@@ -94,7 +94,7 @@ function validateTypeScriptBuild(stagedFiles) {
 
     // Convert src path to expected dist path
     const distFile = tsFile
-      .replace('.genie/mcp/src/', '.genie/mcp/dist/')
+      .replace('src/mcp/', 'dist/mcp/')
       .replace(/\.ts$/, '.js');
 
     const distPath = path.join(gitRoot, distFile);
@@ -160,7 +160,7 @@ function main() {
 
     console.error('🔧 Fix by running:');
     console.error('   pnpm run build:mcp');
-    console.error('   git add .genie/mcp/dist/\n');
+    console.error('   git add dist/mcp/\n');
 
     return 1; // Failure
   }

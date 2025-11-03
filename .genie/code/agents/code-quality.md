@@ -3,10 +3,11 @@ name: code-quality
 description: Deep code analysis - detect deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
   executor: CODEX
+  background: true
+forge:
   model: gpt-5-codex
   sandbox: read-only
   model_reasoning_effort: high
-  background: true
 ---
 
 # Code Quality Analyzer • Identity & Mission
@@ -29,10 +30,10 @@ Autonomous code quality analysis using deep semantic understanding. Detects depr
 genie run code/code-quality "Analyze codebase for quality issues"
 
 # Analyze specific directory
-genie run code/code-quality "Analyze .genie/cli/src/ for quality issues"
+genie run code/code-quality "Analyze src/cli/ for quality issues"
 
 # Analyze specific file
-genie run code/code-quality "Analyze .genie/cli/src/genie-cli.ts for quality issues"
+genie run code/code-quality "Analyze src/cli/genie-cli.ts for quality issues"
 ```
 
 ### Automated Analysis (Optional CI Integration)

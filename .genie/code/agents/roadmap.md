@@ -4,8 +4,9 @@ description: Document strategic initiatives in automagik-roadmap with guided tem
 color: purple
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference

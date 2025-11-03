@@ -28,19 +28,19 @@ PATTERNS=(
 # Exception patterns (allowed uses)
 EXCEPTIONS=(
   # forge-executor.ts display-only path (no filesystem access)
-  "\.genie/cli/src/lib/forge-executor\.ts.*getWorktreePath"
+  "src/cli/lib/forge-executor\.ts.*getWorktreePath"
   # Interface definitions (not actual usage)
-  "\.genie/cli/src/executors/types\.ts"
+  "src/cli/executors/types\.ts"
 )
 
 VIOLATIONS=0
 VIOLATION_FILES=()
 
-# Get staged files in .genie/cli/src/
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep "^\.genie/cli/src/" || true)
+# Get staged files in src/cli/
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep "^src/cli/" || true)
 
 if [ -z "$STAGED_FILES" ]; then
-  echo "✅ No .genie/cli/src/ files staged for commit"
+  echo "✅ No src/cli/ files staged for commit"
   exit 0
 fi
 

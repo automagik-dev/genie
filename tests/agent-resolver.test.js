@@ -7,7 +7,7 @@ const {
   agentExists,
   loadAgentSpec,
   extractFrontMatter
-} = require('../.genie/cli/dist/lib/agent-resolver.js');
+} = require('../dist/cli/lib/agent-resolver.js');
 
 // Test: extractFrontMatter with no frontmatter
 (function testExtractFrontMatterNone() {

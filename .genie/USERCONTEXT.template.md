@@ -7,7 +7,7 @@
 
 ## 🎯 Quick Reference
 
-**Work Queue:** <TODO file planned> (prioritized tasks)
+**Work Queue:** Todo (session-based)
 **System State:** @.genie/STATE.md (repository snapshot)
 **This File:** User preferences + relationship context
 
@@ -75,7 +75,7 @@
 ## 🛠️ How This Context System Works
 
 **File Structure:**
-- `.genie/TODO.md` - Prioritized work queue (drives development)
+- Todo - Task tracking (session-based)
 - `.genie/STATE.md` - System snapshot (reference only)
 - `.genie/USERCONTEXT.md` - This file (user preferences + history)
 
@@ -86,7 +86,7 @@
 - `!command` statements execute for fresh git context
 
 **Maintenance:**
-- TODO.md: Update as tasks progress (work queue)
+- Todo: Update as tasks progress (session tracking)
 - STATE.md: Update at major milestones (snapshot)
 - USERCONTEXT.md: Update when learning new patterns (rarely)
 
@@ -94,7 +94,7 @@
 
 ## 🎯 Priority System
 
-**Hierarchy (from TODO.md):**
+**Hierarchy (from Todo):**
 1. CRITICAL - System health, blocking issues
 2. HIGH - Technical debt, investigations
 3. MEDIUM - New features, enhancements
@@ -113,7 +113,7 @@
 **System Status:** ✅ ACTIVE
 
 **File locations:**
-- Work queue: `.genie/TODO.md`
+- Work queue: Todo (session-based)
 - System state: `.genie/STATE.md`
 - User context: `.genie/USERCONTEXT.md` (this file)
 

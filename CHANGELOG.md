@@ -6,6 +6,14 @@
 
 All notable changes to this project will be documented in this file.
 
+### Changed
+- **INTERNAL:** Refactored folder structure - moved `.genie/{cli,mcp}` to `src/{cli,mcp}` (#359)
+  - Consolidated build output to `dist/{cli,mcp}` from `.genie/{cli,mcp}/dist`
+  - Consolidated forge client to `src/lib/forge-client.js`
+  - No user-facing changes (all entry points abstracted via npm bin commands)
+  - Improved npm package conventions and IDE support
+  - PRs: #426 (structure migration), #427 (MCP dynamic requires), #429 (forge client consolidation)
+
 ---
 
 ## [2.5.10-rc.3] - 2025-11-01

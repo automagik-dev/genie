@@ -5,7 +5,7 @@ const {
   withTimeout,
   runSequential,
   TimeoutError
-} = require('../.genie/cli/dist/lib/async.js');
+} = require('../dist/cli/lib/async.js');
 
 // Test: retryWithBackoff succeeds on first attempt
 (async function testRetryWithBackoffSuccessImmediate() {

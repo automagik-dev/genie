@@ -3,7 +3,7 @@ Genie Dev extends the core Genie template with diagnostics and automation focuse
 
 ## Core CLI
 - **Runtime:** Node.js 20.x managed with `pnpm`
-- **Language:** TypeScript 5.9 (compiled via `.genie/cli/tsconfig.json`)
+- **Language:** TypeScript 5.9 (compiled via `src/cli/tsconfig.json`)
 - **UI:** `ink` + `react` for interactive CLI flows
 - **Formatting & Parsing:** `yaml` for agent metadata, native fs/stream tooling for logs
 

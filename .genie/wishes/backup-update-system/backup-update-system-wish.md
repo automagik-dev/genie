@@ -58,9 +58,9 @@
 | Source | Type | Summary | Routed To |
 | --- | --- | --- | --- |
 | .genie/cli/src/commands/update.ts (removed in refactoring):133+ | code | Current backup mechanism (update flow) | implementation |
-| @.genie/cli/src/commands/init.ts:86-106 | code | Backup mechanism (init flow) | implementation |
-| @.genie/cli/src/lib/fs-utils.ts:64-72 | code | Atomic snapshot implementation | implementation |
-| @.genie/cli/src/commands/rollback.ts | code | Existing rollback command | implementation |
+| @src/cli/commands/init.ts:86-106 | code | Backup mechanism (init flow) | implementation |
+| @src/cli/lib/fs-utils.ts:64-72 | code | Atomic snapshot implementation | implementation |
+| @src/cli/commands/rollback.ts | code | Existing rollback command | implementation |
 | User clarification (items #1-3) | requirements | Always backup, tailored update agent per version | entire wish |
 |  | template | Wish structure requirements | wish structure |
 
@@ -133,8 +133,8 @@ Current `genie update` command works but **overwrites user customizations**. Thi
 
 **Surfaces:**
 - .genie/cli/src/commands/update.ts (removed in refactoring):133+ – `createBackup()` function (primary target)
-- @.genie/cli/src/commands/init.ts:86-106 – Init backup flow (secondary alignment)
-- @.genie/cli/src/lib/fs-utils.ts:64-72 – `snapshotDirectory()` helper (reuse atomic pattern)
+- @src/cli/commands/init.ts:86-106 – Init backup flow (secondary alignment)
+- @src/cli/lib/fs-utils.ts:64-72 – `snapshotDirectory()` helper (reuse atomic pattern)
 
 **Deliverables:**
 1. Extend `update.ts:createBackup()` to snapshot:

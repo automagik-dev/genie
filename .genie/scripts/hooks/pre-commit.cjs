@@ -116,6 +116,17 @@ function main() {
     exitCode = 1;
   }
 
+  // Path validation (blocking)
+  console.log('🔗 Validating file path references...');
+  const validatePathsPath = path.join(gitRoot, '.genie', 'scripts', 'helpers', 'validate-paths.js');
+  const pathsCheckCode = timeExecution('Path validation', () => {
+    const pathsCheck = spawnSync('node', [validatePathsPath, '--staged'], { stdio: 'inherit' });
+    return pathsCheck.status || 0;
+  });
+  if (pathsCheckCode !== 0) {
+    exitCode = 1;
+  }
+
   // Amendment #7: Git is source of truth - no auto-metadata generation
   // Disabled: update-genie-markdown-metadata.cjs (timestamps/versions duplicate git data)
 
@@ -136,19 +147,7 @@ function main() {
   }
 
   // Amendment #7: Removed generate-workspace-summary.cjs (redundant with hand-curated knowledge graph in AGENTS.md)
-
-  // Migrate QA workflows from scenarios-from-bugs.md (auto-generate stubs)
-  try {
-    timeExecution('QA migration', () => {
-      const migCode = run('migrate-qa-from-bugs.cjs');
-      if (migCode !== 0) {
-        console.warn('⚠️  QA migration script failed (non-blocking)');
-      }
-      return migCode;
-    });
-  } catch (e) {
-    console.warn('⚠️  QA migration error (non-blocking)');
-  }
+  // Removed migrate-qa-from-bugs.cjs (generated useless TBD files in wrong location, scenarios-from-bugs.md is sufficient)
 
   // Generate token usage and quality summary (non-blocking)
   try {

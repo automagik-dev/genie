@@ -3,8 +3,9 @@ name: release
 description: Complete GitHub release orchestration with approval workflow
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference

@@ -3,8 +3,9 @@ name: MASTER
 description: Persistent master orchestrator (neuron)
 genie:
   executor: CLAUDE_CODE
-  model: opus-4
   background: true
+forge:
+  model: opus-4
   dangerously_skip_permissions: true
 ---
 

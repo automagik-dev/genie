@@ -6,5 +6,5 @@ const path = require('path');
 // Launches MCP in stdio mode for Desktop communication
 process.argv = process.argv.slice(0, 2).concat(['mcp']);
 
-const entry = path.join(__dirname, '..', '.genie', 'cli', 'dist', 'genie-cli.js');
+const entry = path.join(__dirname, '..', 'dist', 'cli', 'genie-cli.js');
 require(entry);

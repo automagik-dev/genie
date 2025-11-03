@@ -4,8 +4,8 @@ const fs = require('fs');
 const os = require('os');
 
 // FIXME: codex-log-viewer removed - these tests need updating
-// const { extractSessionIdFromContent, buildJsonlView } = require('../.genie/cli/dist/executors/codex-log-viewer.js');
-// const { loadSessions } = require('../.genie/cli/dist/session-store.js');
+// const { extractSessionIdFromContent, buildJsonlView } = require('../dist/cli/executors/codex-log-viewer.js');
+// const { loadSessions } = require('../dist/cli/session-store.js');
 
 // (function testExtractSessionId() {
 //   const lines = [
@@ -52,7 +52,7 @@ const os = require('os');
 // })();
 
 async function runCliCoreTests() {
-  const cliCore = require('../.genie/cli/dist/cli-core/index.js');
+  const cliCore = require('../dist/cli/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
   assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
 

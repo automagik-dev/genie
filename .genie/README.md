@@ -206,7 +206,7 @@ genie:
 ```
 
 Supported keys are derived from the codex executor defaults
-(`.genie/cli/src/executors/codex.ts`). Any value omitted in front matter keeps
+(`src/cli/executors/codex.ts` - if it exists). Any value omitted in front matter keeps
 the executor default. Unknown keys under `genie.exec` become additional `npx ...
 exec` overrides, so the safest pattern is to use the fields above. Put extra
 flags in `additionalArgs` to avoid accidentally shadowing future options.

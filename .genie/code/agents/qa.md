@@ -3,8 +3,9 @@ name: qa
 description: QA orchestrator - coordinates validation workflows via MCP, orchestrated by review neuron
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: false
+forge:
+  model: sonnet
 ---
 
 # QA Agent • Validation Orchestrator

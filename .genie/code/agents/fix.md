@@ -4,8 +4,9 @@ description: Apply fixes using debug spell and other code agents/spells as neede
 color: green
 genie:
   executor: OPENCODE
-  model: xai/grok-4-fast
   background: true
+forge:
+  model: xai/grok-4-fast
 ---
 
 ## Mandatory Context Loading

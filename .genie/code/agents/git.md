@@ -4,8 +4,9 @@ description: Core Git operations (branch, commit, push) - lean agent
 color: cyan
 genie:
   executor: CLAUDE_CODE
-  model: sonnet
   background: true
+forge:
+  model: sonnet
 ---
 
 ## Framework Reference

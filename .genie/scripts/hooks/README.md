@@ -16,13 +16,14 @@
 **Execution Flow:**
 ```
 1. Fast-path check (skip if only wish files changed)
-2. Worktree validation (prevent editing Forge worktrees)
-3. User file validation (no personal files committed)
-4. Cross-reference validation (all @ references valid)
-5. Forge task linking (auto-link wishes to Forge tasks)
-6. QA migration (sync scenarios from GitHub issues)
-7. Token counting (non-blocking, reports usage)
-8. Quality gate (non-blocking, warns on bloat)
+2. Secret detection (blocking, prevents credential leaks)
+3. Worktree validation (prevent editing Forge worktrees)
+4. User file validation (no personal files committed)
+5. Cross-reference validation (all @ references valid)
+6. Forge task linking (auto-link wishes to Forge tasks)
+7. MCP build validation (ensure dist files match source)
+8. Token counting (non-blocking, reports usage)
+9. Quality gate (non-blocking, warns on bloat)
 ```
 
 **Performance:**
@@ -33,11 +34,12 @@
 - None (runs always)
 
 **Files Called:**
+- `helpers/check-secrets.js`
+- `prevent-worktree-access.sh` (bash)
 - `validate-user-files-not-committed.cjs`
 - `validate-cross-references.cjs`
 - `forge-task-link.cjs`
-- `prevent-worktree-access.sh` (bash)
-- `migrate-qa-from-bugs.cjs`
+- `validate-mcp-build.cjs`
 - `token-efficiency/count-tokens.cjs`
 - `token-efficiency/quality-gate.cjs`
 

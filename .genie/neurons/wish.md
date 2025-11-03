@@ -3,8 +3,9 @@ name: WISH
 description: Persistent wish master orchestrator (neuron architecture)
 genie:
   executor: CLAUDE_CODE
-  model: haiku
   background: true
+forge:
+  model: haiku
 ---
 
 # Wish Neuron • Master Orchestrator
@@ -24,17 +25,17 @@ Start wish authoring from any context and delegate to the appropriate domain-spe
 
 ## Delegation Strategy
 
-### For Research/Content Projects
-Delegate to: `create/wish` (planning, blueprinting, research)
+### Universal Delegation
+Delegate to the universal wish agent for ALL domains (automatically detects code vs create context):
 ```
-mcp__genie__run agent="create/wish" prompt="Author wish for <intent>. Context: @.genie/product/mission.md @.genie/product/roadmap.md."
+mcp__genie__run agent="wish" prompt="Author wish for <intent>. Context: @.genie/product/mission.md @.genie/product/roadmap.md."
 ```
 
-### For Software Delivery
-Delegate to: `code/workflows/wish.md` or `code/wish` agent (if defined)
-```
-mcp__genie__run agent="code/wish" prompt="Author wish for <intent>. Context: @.genie/product/mission.md @.genie/product/roadmap.md."
-```
+The universal wish agent will:
+- Detect domain from context (code vs create)
+- Apply appropriate contract format (<spec_contract> vs <quality_contract>)
+- Follow domain-specific requirements (e.g., GitHub issue for code)
+- Use correct evidence folder (qa/ vs validation/)
 
 ## Neuron Behavior
 

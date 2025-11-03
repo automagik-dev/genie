@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const { SessionService } = await import('../.genie/cli/dist/cli-core/session-service.js');
+const { SessionService } = await import('../dist/cli/cli-core/session-service.js');
 
 const TEST_DIR = path.join(__dirname, '.tmp-session-tests');
 const TEST_SESSION_FILE = path.join(TEST_DIR, 'sessions.json');

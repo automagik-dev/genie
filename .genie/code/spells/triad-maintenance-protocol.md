@@ -16,11 +16,11 @@ description: Validate state files before commits via git pre-commit hooks
 - Everyone sees same state
 - Pre-commit ALWAYS validates
 
-**Per-user (gitignored, validated if exists):**
-- `.genie/TODO.md` - Your work queue (from TODO.template.md)
+**Per-user (gitignored, not validated):**
 - `.genie/USERCONTEXT.md` - Your preferences (from USERCONTEXT.template.md)
+- Todo - Task tracking (session-based)
 - Each developer maintains their own
-- Pre-commit validates IF EXISTS
+- Pre-commit does NOT validate (user-specific)
 
 ## Natural Context Acquisition
 
@@ -33,13 +33,12 @@ description: Validate state files before commits via git pre-commit hooks
 
 - ✅ Pre-commit hook runs `.genie/scripts/check-triad.sh` before EVERY commit
 - ✅ Cannot commit with stale STATE.md (git rejects)
-- ✅ Validates per-user files if present (optional)
-- ✅ Self-validating metadata in all files
+- ✅ Self-validating metadata in STATE.md
 - ✅ Clear error messages with setup instructions
 
 ## Forbidden Patterns
 
-- ❌ Completing TODO task without marking complete in TODO.md
+- ❌ Completing task without updating Todo status
 - ❌ Publishing release without updating STATE.md version info
 - ❌ Saying "I'm learning" without invoking learn agent to document
 - ❌ Claiming "done" when STATE.md is stale
@@ -53,14 +52,12 @@ description: Validate state files before commits via git pre-commit hooks
 - Metadata tracks: last_version, last_commit, last_updated
 - Validation: version matches package.json, not stale (< 5 commits behind)
 
-**TODO.md (per-user work queue):**
-- **Committed**: No (gitignored)
-- **Validated**: If exists (optional per developer)
+**Todo (per-user task tracking):**
+- **Committed**: No (session-based)
+- **Validated**: Not validated (session-specific)
 - Update when: Task starts (pending → in progress) or completes (in progress → complete)
-- Before claiming "done" in chat, verify TODO.md updated
-- Metadata tracks: active_tasks, completed_tasks
-- Validation: completed count, priority sections exist
-- Initialize: `cp .genie/TODO.template.md .genie/TODO.md`
+- Before claiming "done" in chat, verify Todo status updated
+- Used during active sessions only
 
 **USERCONTEXT.md (per-user preferences):**
 - **Committed**: No (gitignored)
@@ -74,15 +71,15 @@ description: Validate state files before commits via git pre-commit hooks
 **Files:**
 - `.genie/scripts/check-triad.sh` - Self-validating checker
 - `.git/hooks/pre-commit` - Automatic enforcement
-- STATE.md/TODO.md - Embedded validation metadata
+- STATE.md - Embedded validation metadata
 
 **How it works:**
 1. Before commit, pre-commit hook runs check-triad.sh
 2. Script extracts validation commands from file metadata
 3. Checks version match (STATE.md vs package.json)
-4. Validates task counts, priority sections, staleness
+4. Validates staleness (< 5 commits behind HEAD)
 5. If ANY check fails → commit BLOCKED with clear error
-6. Fix files, stage them, retry commit
+6. Fix STATE.md, stage it, retry commit
 
 ## Example Errors
 
@@ -92,7 +89,7 @@ description: Validate state files before commits via git pre-commit hooks
 
 Fix with:
   1. Update .genie/STATE.md (version, commits)
-  2. Update .genie/TODO.md (mark tasks COMPLETE) [if you have one]
+  2. Mark tasks complete in Todo
   3. Run: git add .genie/STATE.md
   4. Retry commit
 ```
