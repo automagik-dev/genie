@@ -294,6 +294,21 @@ export async function runInit(
       console.log('');
     }
 
+    // Write backup metadata for Master Genie's backup-analyzer agent
+    // CRITICAL: Must run for ALL backup scenarios (old_genie and pre_upgrade)
+    if (backupId) {
+      const backupInfoPath = path.join(targetGenie, 'state', 'backup-info.json');
+      await writeJsonFile(backupInfoPath, {
+        backupId,
+        oldVersion: oldVersion || 'unknown',
+        newVersion: currentPackageVersion,
+        timestamp: new Date().toISOString(),
+        backupPath: `.genie/backups/${backupId}/genie`
+      });
+      console.log('📦 Backup metadata saved for restoration');
+      console.log('');
+    }
+
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)
     const templateInstallMd = path.join(templateGenie, 'INSTALL.md');
     const targetInstallMd = path.join(targetGenie, 'INSTALL.md');
