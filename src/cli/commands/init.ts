@@ -292,8 +292,11 @@ export async function runInit(
       await finalizeBackup(cwd, tempBackupPath, backupId);
       console.log(`   Backup finalized: .genie/backups/${backupId}/genie/`);
       console.log('');
+    }
 
-      // Write backup metadata for Master Genie's backup-analyzer agent
+    // Write backup metadata for Master Genie's backup-analyzer agent
+    // CRITICAL: Must run for ALL backup scenarios (old_genie and pre_upgrade)
+    if (backupId) {
       const backupInfoPath = path.join(targetGenie, 'state', 'backup-info.json');
       await writeJsonFile(backupInfoPath, {
         backupId,
