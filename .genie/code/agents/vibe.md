@@ -2,8 +2,13 @@
 name: sleepy
 description: Autonomous wish coordinator with Genie orchestrator validation
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

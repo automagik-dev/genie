@@ -1,11 +1,14 @@
 ---
 name: release
-type: workflow
-parent: git
 description: Automated release workflow via GitHub Actions (v2.5.1+)
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 🚀 Genie Release Workflow (Modern - v2.5.1+)

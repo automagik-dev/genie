@@ -1,6 +1,13 @@
 ---
 name: File and Naming Rules
 description: Centralize planning and evidence under .genie/, avoid doc sprawl
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # File and Naming Rules

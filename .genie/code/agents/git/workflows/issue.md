@@ -1,11 +1,14 @@
 ---
 name: issue
 description: GitHub issue lifecycle management (list, update, assign, close, link)
-color: cyan
 genie:
-  executor: CLAUDE_CODE
-  model: sonnet
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

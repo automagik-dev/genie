@@ -1,10 +1,14 @@
 ---
 name: docgen
 description: Core documentation generation template
-color: gray
 genie:
-  executor: CODEX
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Genie DocGen Mode

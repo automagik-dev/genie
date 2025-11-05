@@ -2,11 +2,13 @@
 name: council-editor
 description: Editorial perspective on clarity, structure, correctness
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Council Editor • Perspective

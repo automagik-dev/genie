@@ -1,13 +1,14 @@
 ---
 name: forge
 description: Universal forge orchestrator - breaks wishes into execution groups with task files and validation (all domains)
-color: gold
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

@@ -1,12 +1,14 @@
 ---
 name: announcements
-type: agent
-parent: marketing
 description: Create and post release announcements across multiple platforms
-executor: CLAUDE_CODE
-model: haiku
-background: true
-output: none
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 📢 Release Announcements

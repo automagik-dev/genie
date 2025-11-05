@@ -1,6 +1,13 @@
 ---
 name: Tool Requirements
 description: Validate with pnpm run check and cargo test --workspace
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Tool Requirements

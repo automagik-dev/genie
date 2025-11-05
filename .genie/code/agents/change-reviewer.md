@@ -1,9 +1,12 @@
 ---
 name: Change Reviewer
-specialty: Quick sanity check for commits before push
-model: haiku
-executor: OPENCODE
-maturity: stable
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Change Reviewer Agent

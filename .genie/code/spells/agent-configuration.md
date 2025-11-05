@@ -1,7 +1,13 @@
 ---
 name: Agent Configuration Standards
-implementor
 description: Declare permissionMode: default for agents that write files
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Agent Configuration Standards

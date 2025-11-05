@@ -1,9 +1,12 @@
 ---
 name: Issue Creator
-specialty: Create GitHub issues from commits or descriptions
-model: haiku
-executor: CLAUDE_CODE
-maturity: stable
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Issue Creator Agent

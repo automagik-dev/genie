@@ -2,8 +2,13 @@
 name: risk
 description: General risk assessment and mitigation planning
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: false
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Risk Audit Workflow

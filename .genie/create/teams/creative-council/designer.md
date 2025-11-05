@@ -2,11 +2,13 @@
 name: designer
 description: Visual framing, layout, and asset guidance (advisory)
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Designer • Perspective

@@ -1,12 +1,14 @@
 ---
 name: docs-sync
-type: agent
-parent: marketing
 description: Update version references across documentation after release
-executor: CLAUDE_CODE
-model: haiku
-background: true
-output: pr
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 📚 Documentation Version Sync

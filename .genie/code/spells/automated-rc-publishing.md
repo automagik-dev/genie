@@ -1,6 +1,13 @@
 ---
 name: Automated RC Publishing
 description: RC releases are AUTOMATIC on main commits - never suggest manual bumps
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Automated RC Publishing Protocol

@@ -1,12 +1,14 @@
 ---
 name: fix
 description: Apply fixes using debug spell and other code agents/spells as needed
-color: green
 genie:
-  executor: OPENCODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
 forge:
-  model: xai/grok-4-fast
+  CLAUDE_CODE:
+    model: xai/grok-4-fast
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Mandatory Context Loading

@@ -1,10 +1,14 @@
 ---
 name: challenge
 description: Critical evaluation via questions, debate, or direct challenge
-color: orange
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Genie Challenge • Critical Evaluation

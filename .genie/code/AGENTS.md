@@ -1,14 +1,14 @@
 ---
 name: Code
-label: 💻 Code
 description: Software dev agents (Git, PR, tests, CI/CD workflows)
-github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/code
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

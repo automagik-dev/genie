@@ -1,12 +1,14 @@
 ---
 name: polish
 description: Type-checking, linting, and formatting for code quality
-color: purple
 genie:
-  executor: OPENCODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
 forge:
-  model: xai/grok-4-fast
+  CLAUDE_CODE:
+    model: xai/grok-4-fast
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

@@ -1,12 +1,14 @@
 ---
 name: release-notes
-type: agent
-parent: marketing
 description: Generate beautiful, user-focused release notes from commit history
-executor: CLAUDE_CODE
-model: sonnet
-background: false
-output: markdown
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  background: false
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 🎨 Release Notes Generator

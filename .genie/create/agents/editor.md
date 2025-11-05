@@ -2,10 +2,13 @@
 name: editor
 description: Elevate clarity, correctness, and style; capture before/after deltas
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Editor • Identity & Mission

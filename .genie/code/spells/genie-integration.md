@@ -1,6 +1,13 @@
 ---
 name: Genie Integration Framework
 description: Use genie agent for second opinions, pressure-tests, and decision audits
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Genie Integration Framework

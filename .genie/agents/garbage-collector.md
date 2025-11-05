@@ -1,10 +1,14 @@
 ---
 name: garbage-collector
 description: Autonomous documentation quality assurance - detect bloat,
-  duplication, contradictions, and token waste in all .md files
 genie:
-  executor: OPENCODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Garbage Collector • Identity & Mission

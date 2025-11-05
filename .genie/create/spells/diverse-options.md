@@ -1,6 +1,13 @@
 ---
 name: Diverse Options (Creative Exploration Pattern)
 description: Generate diverse creative options by exploring possibility space before probability ordering
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 🧞🎨 Diverse Options - Unleash Creative Possibility Space

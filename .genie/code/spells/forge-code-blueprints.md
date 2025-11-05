@@ -1,6 +1,13 @@
 ---
 name: Forge Blueprints
 description: Templates for groups, plans, task files, and error handling
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Forge Blueprints
