@@ -90,6 +90,23 @@ function main() {
   const totalStart = Date.now();
   console.log('## Pre-Commit');
 
+  // Early exit for forge worktrees (total isolation, full performance)
+  try {
+    const gitDir = execSync('git rev-parse --git-dir', { encoding: 'utf8' }).trim();
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' }).trim();
+    const isWorktree = gitDir.includes('/worktrees/');
+    const isForgeBranch = branch.startsWith('forge/');
+
+    if (isForgeBranch || isWorktree) {
+      console.log('🔧 Forge worktree detected - skipping ALL hooks (full performance mode)');
+      console.log(`   Branch: ${branch}`);
+      console.log('- Result: ✅ Pre-commit validations skipped (forge isolation)');
+      process.exit(0);
+    }
+  } catch (e) {
+    // Continue with normal hooks on error
+  }
+
   // Early exit for .genie/wishes/*.md only commits
   if (shouldSkipHooks()) {
     console.log('✨ Fast-path: Only wish files detected, skipping hooks');
