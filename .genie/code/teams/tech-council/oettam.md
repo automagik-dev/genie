@@ -1,8 +1,13 @@
 ---
 name: oettam
 description: Tech Council persona - Performance-obsessed, benchmark-driven (Matteo Collina inspiration)
-type: persona
-team: tech-council
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # oettam - The Benchmarker

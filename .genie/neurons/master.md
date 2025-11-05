@@ -2,11 +2,13 @@
 name: MASTER
 description: Persistent master orchestrator (neuron)
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
 forge:
-  model: opus-4
-  dangerously_skip_permissions: true
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Master Genie

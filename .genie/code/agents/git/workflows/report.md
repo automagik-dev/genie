@@ -1,11 +1,14 @@
 ---
 name: report
 description: GitHub issue creation workflow with template selection
-color: cyan
 genie:
-  executor: OPENCODE
-  model: xai/grok-4-fast
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

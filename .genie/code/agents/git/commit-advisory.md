@@ -2,8 +2,13 @@
 name: git/commit-advisory
 description: Pre-push commit validation and traceability check
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: false
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Git Commit Advisory Workflow

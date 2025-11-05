@@ -2,11 +2,13 @@
 name: strategist
 description: Audience, positioning, and objective clarity
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Strategist • Perspective

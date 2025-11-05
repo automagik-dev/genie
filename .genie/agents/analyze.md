@@ -1,10 +1,14 @@
 ---
 name: analyze
 description: System analysis and focused investigations (universal framework)
-color: navy
 genie:
-  executor: OPENCODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Analyze Agent (Universal Framework)

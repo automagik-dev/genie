@@ -1,10 +1,14 @@
 ---
 name: audit
 description: Risk and impact assessment framework (universal)
-color: maroon
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Audit Agent (Universal Framework)

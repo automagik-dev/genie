@@ -2,8 +2,13 @@
 name: generic-update
 description: Generic upgrade guidance for version transitions without specific guides
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: false
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Generic Update Guide

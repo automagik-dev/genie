@@ -1,6 +1,13 @@
 ---
 name: Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*
 description: Validate state files before commits via git pre-commit hooks
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Triad Maintenance Protocol *(CRITICAL - AUTOMATIC ENFORCEMENT)*

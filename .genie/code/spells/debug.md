@@ -1,6 +1,13 @@
 ---
 name: Debug (Systematic Investigation with Confidence Scoring)
 description: Generate 5 hypotheses → narrow to 3 → present with confidence scores
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # 🧞🐛 Debug - Evidence-Based Investigation with Confidence Scoring

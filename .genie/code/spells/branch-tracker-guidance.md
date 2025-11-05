@@ -1,6 +1,13 @@
 ---
 name: Branch & Tracker Guidance
 description: Use dedicated branches for medium/large changes, track IDs in wishes
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Branch & Tracker Guidance

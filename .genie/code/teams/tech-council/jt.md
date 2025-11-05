@@ -1,8 +1,13 @@
 ---
 name: jt
 description: Tech Council persona - Terse, opinionated, simplicity-focused (TJ Holowaychuk inspiration)
-type: persona
-team: tech-council
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # jt - The Simplifier

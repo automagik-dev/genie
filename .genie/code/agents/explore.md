@@ -1,12 +1,14 @@
 ---
 name: explore
 description: Discovery-focused exploratory reasoning without adversarial pressure
-color: indigo
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Genie Explore • Discovery Mode

@@ -1,11 +1,14 @@
 ---
 name: pr
 description: Pull request creation workflow with proper descriptions
-color: cyan
 genie:
-  executor: CLAUDE_CODE
-  model: sonnet
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

@@ -1,6 +1,13 @@
 ---
 name: Publishing Protocol *(CRITICAL)*
 description: Never publish directly; always delegate to the release agent
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Publishing Protocol *(CRITICAL)*

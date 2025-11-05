@@ -2,8 +2,13 @@
 name: install
 description: Welcome humans to Create - shape-shifting intelligence for all human work
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Mandatory Context Loading

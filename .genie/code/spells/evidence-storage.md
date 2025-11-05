@@ -1,6 +1,13 @@
 ---
 name: Evidence & Storage Conventions
 description: Declare artifact locations and maintain evidence checklists
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Evidence & Storage Conventions

@@ -1,6 +1,13 @@
 ---
 name: Team Consultation Protocol
 description: When and how to invoke advisory teams for architectural decisions
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Team Consultation Protocol

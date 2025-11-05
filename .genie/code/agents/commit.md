@@ -2,10 +2,13 @@
 name: commit
 description: Execute commit and push routine (with safety checks)
 genie:
-  executor: OPENCODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: false
 forge:
-  model: xai/grok-4-fast
+  CLAUDE_CODE:
+    model: xai/grok-4-fast
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 ## Framework Reference

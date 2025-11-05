@@ -1,14 +1,14 @@
 ---
 name: Create
-label: ✍️  Create
 description: Content creation agents (writing, research, planning)
-github_url: https://github.com/namastexlabs/automagik-genie/tree/main/.genie/create
 genie:
-  executor: CLAUDE_CODE
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
   background: true
-  permissionMode: bypassPermissions
 forge:
-  model: sonnet
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Create Orchestrator • Identity & Routing

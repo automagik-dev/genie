@@ -1,9 +1,13 @@
 ---
 name: Tech Council
 description: Board of Technology - Multi-persona architectural advisory team
-type: team
-personas: [nayr, oettam, jt]
-voting_threshold: 2/3
+genie:
+  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+forge:
+  CLAUDE_CODE:
+    model: sonnet
+  CODEX: {}
+  OPENCODE: {}
 ---
 
 # Tech Council - Board of Technology
