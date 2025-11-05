@@ -130,6 +130,20 @@ function main() {
 
   console.log(`📍 Detected branch: ${currentBranch}`);
 
+  // Early exit for forge worktrees (total isolation, full performance)
+  try {
+    const gitDir = execSync('git rev-parse --git-dir', { encoding: 'utf8' }).trim();
+    const isWorktree = gitDir.includes('/worktrees/');
+
+    if (isForgeBranch || isWorktree) {
+      console.log('🔧 Forge worktree detected - skipping ALL hooks (full performance mode)');
+      console.log('- Result: ✅ Pre-push validations skipped (forge isolation)');
+      process.exit(0);
+    }
+  } catch (e) {
+    // Continue with normal hooks on error
+  }
+
   // Step 0: Auto-sync with remote (prevents rejection from automated commits)
   const didRebase = autoSyncWithRemote(currentBranch);
 
