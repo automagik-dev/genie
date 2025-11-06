@@ -92,62 +92,26 @@ export async function waitForForgeReady(
 }
 
 /**
- * Resolve automagik-forge binary path (version-agnostic)
+ * Resolve automagik-forge binary path
  *
- * When installed via npm/pnpm/npx, automagik-forge is a sibling dependency in parent node_modules.
- * __dirname is dist/cli/lib/, so we go up 3 levels to reach package root (where node_modules/ is)
+ * With bundledDependencies, Forge is always included in the genie package.
+ * Node.js module resolution automatically finds it in node_modules.
  */
 function resolveForgeBinary(): Result<string> {
-  const baseDir = path.join(__dirname, '../../../');
-
-  // Try standard npm/npx structure first (fastest)
-  // automagik-forge is a sibling in node_modules/
-  const npmPath = path.join(baseDir, 'automagik-forge/bin/cli.js');
-  if (fs.existsSync(npmPath)) {
-    return { ok: true, value: npmPath };
-  }
-
-  // Try npm nested dependency structure (global installs)
-  // npm sometimes creates: node_modules/automagik-genie/node_modules/automagik-forge/
   try {
-    const npmNestedPath = path.join(baseDir, 'automagik-genie/node_modules/automagik-forge/bin/cli.js');
-    if (fs.existsSync(npmNestedPath)) {
-      return { ok: true, value: npmNestedPath };
-    }
-  } catch (error) {
-    // Continue to next fallback
-  }
-
-  // Try pnpm structure with glob pattern (version-agnostic)
-  try {
-    const pnpmBase = path.join(baseDir, '.pnpm');
-    if (fs.existsSync(pnpmBase)) {
-      const entries = fs.readdirSync(pnpmBase);
-      const forgeDir = entries.find(e => e.startsWith('automagik-forge@'));
-
-      if (forgeDir) {
-        const pnpmPath = path.join(
-          pnpmBase,
-          forgeDir,
-          'node_modules/automagik-forge/bin/cli.js'
-        );
-
-        if (fs.existsSync(pnpmPath)) {
-          return { ok: true, value: pnpmPath };
-        }
-      }
-    }
+    // require.resolve() uses Node.js module resolution algorithm
+    // Works with all package managers (npm, pnpm, yarn, bun)
+    const forgePath = require.resolve('automagik-forge/bin/cli.js');
+    return { ok: true, value: forgePath };
   } catch (error) {
     return {
       ok: false,
-      error: new Error(`Failed to resolve pnpm structure: ${error}`)
+      error: new Error(
+        'automagik-forge not found (bundled dependency missing). ' +
+        'This should not happen - please reinstall: npm install -g automagik-genie@latest'
+      )
     };
   }
-
-  return {
-    ok: false,
-    error: new Error('automagik-forge binary not found in node_modules')
-  };
 }
 
 /**
