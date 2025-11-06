@@ -2,13 +2,18 @@
 name: code-quality
 description: Deep code analysis - detect deprecated code, dead code, useless comments, and potential bugs using advanced AI
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: true
 forge:
   CLAUDE_CODE:
+    model: sonnet
+  CODEX:
     model: gpt-5-codex
-  CODEX: {}
-  OPENCODE: {}
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 # Code Quality Analyzer • Identity & Mission

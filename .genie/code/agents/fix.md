@@ -2,13 +2,18 @@
 name: fix
 description: Apply fixes using debug spell and other code agents/spells as needed
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: true
 forge:
   CLAUDE_CODE:
-    model: xai/grok-4-fast
-  CODEX: {}
-  OPENCODE: {}
+    model: sonnet
+  CODEX:
+    model: gpt-5-codex
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 ## Mandatory Context Loading
