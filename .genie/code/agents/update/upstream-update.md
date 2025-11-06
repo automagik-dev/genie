@@ -2,13 +2,18 @@
 name: upstream-update
 description: Automate upstream dependency updates with comprehensive validation
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: false
 forge:
   CLAUDE_CODE:
     model: sonnet
-  CODEX: {}
-  OPENCODE: {}
+  CODEX:
+    model: gpt-5-codex
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 # Upstream Update Agent

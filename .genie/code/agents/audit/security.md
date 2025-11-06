@@ -2,13 +2,18 @@
 name: security
 description: Security vulnerability assessment and remediation using OWASP/CVE frameworks
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: false
 forge:
   CLAUDE_CODE:
     model: sonnet
-  CODEX: {}
-  OPENCODE: {}
+  CODEX:
+    model: gpt-5-codex
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 # Security Audit Workflow

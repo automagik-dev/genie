@@ -2,13 +2,18 @@
 name: analyze
 description: System analysis and focused investigations (universal framework)
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: true
 forge:
   CLAUDE_CODE:
     model: sonnet
-  CODEX: {}
-  OPENCODE: {}
+  CODEX:
+    model: gpt-5-codex
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 # Analyze Agent (Universal Framework)
