@@ -22,7 +22,7 @@ importers:
         version: 2.17.2
       automagik-forge:
         specifier: latest
-        version: 0.4.5
+        version: 0.5.7
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -240,6 +240,10 @@ packages:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
 
+  adm-zip@0.5.16:
+    resolution: {integrity: sha512-TGw5yVi4saajsSEgz25grObGHEUaDrniwvA2qwSC060KfqGPdglhvPMA2lPIoxs3PQIItj2iag35fONcQqgUaQ==}
+    engines: {node: '>=12.0'}
+
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
 
@@ -247,8 +251,8 @@ packages:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
     engines: {node: '>=8'}
 
-  automagik-forge@0.4.5:
-    resolution: {integrity: sha512-KBQBUuOzJCGzxxLzDAYlGMBRrkDJrV/VDKKzVxOYS3t/wCo8SE1rLFFqF+fD7frZ8I9C6HqA0yPouCsRwEP9Zw==}
+  automagik-forge@0.5.7:
+    resolution: {integrity: sha512-iw+8L17BEebwki3HQPnZj2egIepNXkDexR9LraAichjD6PeuOd8rFDH0D2Fn1eTmNc8Nx4yH3JCoWZJmSr4u4A==}
     hasBin: true
 
   b4a@1.7.3:
@@ -395,6 +399,10 @@ packages:
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
+
+  dotenv@16.6.1:
+    resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
+    engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -1059,6 +1067,8 @@ snapshots:
       mime-types: 3.0.1
       negotiator: 1.0.0
 
+  adm-zip@0.5.16: {}
+
   ajv@6.12.6:
     dependencies:
       fast-deep-equal: 3.1.3
@@ -1070,7 +1080,10 @@ snapshots:
     dependencies:
       color-convert: 2.0.1
 
-  automagik-forge@0.4.5: {}
+  automagik-forge@0.5.7:
+    dependencies:
+      adm-zip: 0.5.16
+      dotenv: 16.6.1
 
   b4a@1.7.3: {}
 
@@ -1209,6 +1222,8 @@ snapshots:
   depd@2.0.0: {}
 
   detect-libc@2.1.2: {}
+
+  dotenv@16.6.1: {}
 
   dunder-proto@1.0.1:
     dependencies:
