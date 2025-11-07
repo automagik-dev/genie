@@ -21,7 +21,7 @@ importers:
         specifier: ^2.17.2
         version: 2.17.2
       automagik-forge:
-        specifier: latest
+        specifier: 0.5.7
         version: 0.5.7
       commander:
         specifier: ^12.1.0
