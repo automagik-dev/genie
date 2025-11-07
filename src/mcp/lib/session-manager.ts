@@ -7,7 +7,7 @@
 
 import { WorkflowType, SessionInfo } from './session-types.js';
 import path from 'path';
-import { getForgeConfig } from '../../cli/lib/service-config.js';
+import { getForgeConfig } from '../lib/service-config.js';
 
 // Load ForgeClient from src/lib (resolves from package root)
 // Compiled location: dist/mcp/lib/session-manager.js

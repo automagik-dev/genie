@@ -13,7 +13,7 @@ import { execSync } from 'child_process';
 import path from 'path';
 import { getOrCreateGenieProject } from '../lib/project-detector.js';
 import { formatTaskTitle } from '../lib/task-title-formatter.js';
-import { getForgeConfig } from '../../cli/lib/service-config.js';
+import { getForgeConfig } from '../lib/service-config.js';
 
 // Load ForgeClient from Genie package root (not user's cwd)
 // Compiled location: dist/mcp/tools/prompt-tool.js

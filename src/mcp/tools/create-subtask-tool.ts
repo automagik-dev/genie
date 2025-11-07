@@ -9,7 +9,7 @@ import { z } from 'zod';
 import path from 'path';
 import { execSync } from 'child_process';
 import { formatTaskTitle } from '../lib/task-title-formatter.js';
-import { getForgeConfig } from '../../cli/lib/service-config.js';
+import { getForgeConfig } from '../lib/service-config.js';
 
 // Load ForgeClient from src/lib (resolves from package root)
 // Compiled location: dist/mcp/tools/create-subtask-tool.js
