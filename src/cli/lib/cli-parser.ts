@@ -32,7 +32,9 @@ export function parseArguments(argv: string[]): ParsedCommand {
     live: false,
     executor: undefined,
     model: undefined,
-    name: undefined
+    name: undefined,
+    forgePort: undefined,
+    geniePort: undefined
   };
 
   const filtered: string[] = [];
@@ -75,6 +77,22 @@ export function parseArguments(argv: string[]): ParsedCommand {
       const nextToken = raw[i + 1];
       if (nextToken && !nextToken.startsWith('-')) {
         options.name = nextToken;
+        i++; // Skip next token
+        continue;
+      }
+    }
+    if (token === '--forge-port') {
+      const nextToken = raw[i + 1];
+      if (nextToken && !nextToken.startsWith('-')) {
+        options.forgePort = nextToken;
+        i++; // Skip next token
+        continue;
+      }
+    }
+    if (token === '--genie-port' || token === '--mcp-port') {
+      const nextToken = raw[i + 1];
+      if (nextToken && !nextToken.startsWith('-')) {
+        options.geniePort = nextToken;
         i++; // Skip next token
         continue;
       }

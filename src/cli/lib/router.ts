@@ -8,6 +8,7 @@
  * 4. version.json exists and versions match → Up to date → Start server
  */
 
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import path from 'path';
 import fs from 'fs';
 import gradient from 'gradient-string';
@@ -214,7 +215,7 @@ async function handleNewUser(
   console.log('🔮 Preparing the lamp... (initializing Forge)');
   console.log('');
 
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
   const logDir = path.join(genieDir, 'state');
 
   // Ensure log directory exists

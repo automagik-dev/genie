@@ -42,7 +42,7 @@ export interface ProtectedResourceMetadata {
 /**
  * Generate protected resource metadata
  *
- * @param serverUrl - Base URL of the MCP server (e.g., 'http://localhost:8885')
+ * @param serverUrl - Base URL of the MCP server (e.g., 'http://localhost:{MCP_PORT}')
  * @returns RFC 9728 compliant metadata
  */
 export function generateResourceMetadata(serverUrl: string): ProtectedResourceMetadata {

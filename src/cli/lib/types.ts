@@ -11,6 +11,8 @@ export interface CLIOptions {
   name?: string;  // Friendly session name for run command
   raw?: boolean;  // Output raw text only (no JSON)
   quiet?: boolean;  // Suppress startup messages
+  forgePort?: string;  // Custom Forge backend port
+  geniePort?: string;  // Custom Genie MCP server port (alias: mcpPort)
 }
 
 export interface ParsedCommand {

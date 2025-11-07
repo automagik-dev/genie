@@ -9,6 +9,7 @@ import { z } from 'zod';
 import path from 'path';
 import { execSync } from 'child_process';
 import { formatTaskTitle } from '../lib/task-title-formatter.js';
+import { getForgeConfig } from '../../cli/lib/service-config.js';
 
 // Load ForgeClient from src/lib (resolves from package root)
 // Compiled location: dist/mcp/tools/create-subtask-tool.js
@@ -16,7 +17,7 @@ import { formatTaskTitle } from '../lib/task-title-formatter.js';
 const geniePackageRoot = path.resolve(__dirname, '../../..');
 const ForgeClient = require(path.join(geniePackageRoot, 'src/lib/forge-client.js')).ForgeClient;
 
-const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const { baseUrl: FORGE_URL } = getForgeConfig();
 
 /**
  * Create subtask parameters

@@ -9,6 +9,7 @@
  */
 
 import fs from 'fs';
+import { getMcpConfig } from './service-config.js';
 import path from 'path';
 import YAML from 'yaml';
 import os from 'os';
@@ -143,7 +144,7 @@ export async function createDefaultConfig(ngrokToken?: string): Promise<GenieCon
         token: ngrokToken || null
       },
       server: {
-        port: 8885,
+        port: getMcpConfig().port,
         transport: 'httpStream'
       }
     }

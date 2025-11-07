@@ -39,7 +39,7 @@ export class WebSocketManager {
   /**
    * Subscribe to a WebSocket stream
    *
-   * @param streamUrl WebSocket URL (e.g., ws://localhost:8887/api/tasks/stream/ws?project_id=xxx)
+   * @param streamUrl WebSocket URL (e.g., ws://localhost:{FORGE_PORT}/api/tasks/stream/ws?project_id=xxx)
    * @param onMessage Callback for incoming messages
    * @param onError Optional error callback
    * @param maxReconnectAttempts Maximum reconnection attempts (default: 5)

@@ -7,6 +7,7 @@
  * 3. User monitors progress in Forge dashboard via shortened URL
  */
 
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import gradient from 'gradient-string';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -14,7 +15,7 @@ import { execSync } from 'child_process';
 // Import ForgeExecutor for workspace project management
 import { createForgeExecutor } from './forge-executor.js';
 
-const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
 // Import from compiled MCP dist (will be available after build)
 let shortenUrl: any;
@@ -54,7 +55,7 @@ export function printBox(title: string, content: string): void {
 export async function launchMasterGenie(
   config: InstallFlowConfig
 ): Promise<string> {
-  const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
   console.log('');
   printBox('🧞 MASTER GENIE AWAKENING', 'Starting installation orchestration...');

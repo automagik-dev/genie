@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { getForgeConfig, getMcpConfig } from './lib/service-config.js';
 /**
  * Debug script to test Forge stats collection
  */
@@ -7,7 +8,7 @@
 import { ForgeClient } from '../../src/lib/forge-client.js';
 
 async function debug() {
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
   const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
 
   console.log('🔍 Debugging Forge Stats Collection');

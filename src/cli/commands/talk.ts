@@ -5,6 +5,7 @@
  * Similar to 'genie run' but opens browser instead of waiting in terminal.
  */
 
+import { getForgeConfig, getMcpConfig } from '../lib/service-config.js';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { isForgeRunning, startForgeInBackground, waitForForgeReady } from '../lib/forge-manager';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
@@ -49,7 +50,7 @@ export async function runTalk(
   ).trim().toUpperCase();
   const model = agentGenie.model || config.defaults?.model;
 
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const { baseUrl } = getForgeConfig();
   const logDir = path.join(process.cwd(), '.genie', 'state');
 
   // Start Forge if not running

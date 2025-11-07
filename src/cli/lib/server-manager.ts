@@ -3,6 +3,7 @@
  * Manages the Genie server (Forge + MCP with SSE transport)
  */
 
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
@@ -40,7 +41,7 @@ export async function startGenieServer(debug = false): Promise<void> {
   }
 
   // Phase 1: Start Forge in background
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = getForgeConfig().baseUrl;
   const logDir = path.join(process.cwd(), '.genie', 'state');
   const forgePort = new URL(baseUrl).port || '8887';
 

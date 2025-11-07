@@ -1,4 +1,5 @@
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
+import { getForgeConfig } from '../lib/service-config.js';
 import { isForgeRunning } from '../lib/forge-manager';
 import { collectForgeStats, formatStatsForDashboard } from '../lib/forge-stats';
 
@@ -28,7 +29,7 @@ export async function runStatus(
   _config: GenieConfig,
   _paths: Required<ConfigPaths>
 ): Promise<void> {
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const { baseUrl } = getForgeConfig();
   const mcpPort = process.env.MCP_PORT || '8885';
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

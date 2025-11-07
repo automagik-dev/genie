@@ -4,6 +4,7 @@
  * Utilities for running agents in headless mode (JSON/raw output)
  */
 
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import { isForgeRunning, startForgeInBackground, waitForForgeReady } from './forge-manager';
 import { ForgeExecutor } from './forge-executor';
 import path from 'path';
@@ -27,7 +28,7 @@ export interface RunResult {
  * Silent or with minimal output based on quiet flag
  */
 export async function ensureForgeRunning(quiet: boolean = false): Promise<void> {
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
   const logDir = path.join(process.cwd(), '.genie', 'state');
 
   const running = await isForgeRunning(baseUrl);

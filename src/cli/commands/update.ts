@@ -1,4 +1,5 @@
 import { exec } from 'child_process';
+import { getForgeConfig } from '../lib/service-config.js';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -245,7 +246,7 @@ export async function runUpdate(
     console.log('');
 
     // Check if Forge is already running
-    const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+    const { baseUrl } = getForgeConfig();
     const forgeRunning = await isForgeRunning(baseUrl);
 
     if (forgeRunning) {

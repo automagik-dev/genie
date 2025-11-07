@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { getForgeConfig, getMcpConfig } from './lib/service-config.js';
 /**
  * Unified Genie MCP Startup
  *
@@ -24,8 +25,8 @@ import { startForgeInBackground, waitForForgeReady, killForgeProcess, stopForge 
 import { runSetupWizard, isSetupNeeded } from './lib/setup-wizard';
 import { startNgrokTunnel, stopNgrokTunnel } from './lib/tunnel-manager';
 
-const DEFAULT_FORGE_URL = 'http://localhost:8887';
-const DEFAULT_MCP_URL = 'http://localhost:8885/sse';
+const DEFAULT_FORGE_URL = getForgeConfig().baseUrl;
+const DEFAULT_MCP_URL = getMcpConfig().sseUrl;
 
 /**
  * Main unified startup function
