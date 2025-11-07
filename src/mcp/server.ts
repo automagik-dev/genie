@@ -64,8 +64,9 @@ import {
 
 // Import neuron resource provider
 import { initNeuronProvider, getNeuronProvider } from './resources/neuron-provider.js';
+import { getMcpConfig, getForgeConfig } from './lib/service-config.js';
 
-const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8885;
+const { port: PORT } = getMcpConfig();
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
 
 const WORKSPACE_ROOT = findWorkspaceRoot();
@@ -92,7 +93,8 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
 
     // Get task details to find latest attempt
     const { ForgeClient } = require('../../src/lib/forge-client.js');
-    const forge = new ForgeClient(process.env.FORGE_BASE_URL || 'http://localhost:8887', process.env.FORGE_TOKEN);
+    const { baseUrl, token } = getForgeConfig();
+    const forge = new ForgeClient(baseUrl, token);
 
     // Get task attempts for this task
     const attempts = await forge.listTaskAttempts(taskId);
@@ -567,7 +569,7 @@ const debugMode = process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1';
 let neuronProvider: ReturnType<typeof getNeuronProvider> | null = null;
 
 try {
-  const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const { baseUrl: FORGE_URL } = getForgeConfig();
   const PROJECT_ID = process.env.PROJECT_ID || process.env.FORGE_PROJECT_ID;
 
   if (PROJECT_ID) {

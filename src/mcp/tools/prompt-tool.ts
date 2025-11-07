@@ -13,6 +13,7 @@ import { execSync } from 'child_process';
 import path from 'path';
 import { getOrCreateGenieProject } from '../lib/project-detector.js';
 import { formatTaskTitle } from '../lib/task-title-formatter.js';
+import { getForgeConfig } from '../lib/service-config.js';
 
 // Load ForgeClient from Genie package root (not user's cwd)
 // Compiled location: dist/mcp/tools/prompt-tool.js
@@ -21,7 +22,7 @@ import { formatTaskTitle } from '../lib/task-title-formatter.js';
 const geniePackageRoot = path.resolve(__dirname, '../../..');
 const ForgeClient = require(path.join(geniePackageRoot, 'src/lib/forge-client.js')).ForgeClient;
 
-const FORGE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const { baseUrl: FORGE_URL } = getForgeConfig();
 
 /**
  * Prompt tool parameters

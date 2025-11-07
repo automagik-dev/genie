@@ -39,6 +39,14 @@ async function main(): Promise<void> {
   try {
     let parsed = parseArguments(process.argv.slice(2));
 
+    // Set port environment variables from CLI flags (early, before any config loading)
+    if (parsed.options.forgePort) {
+      process.env.FORGE_PORT = parsed.options.forgePort;
+    }
+    if (parsed.options.geniePort) {
+      process.env.MCP_PORT = parsed.options.geniePort;
+    }
+
     // Fast path for help commands - skip config loading
     const isHelpOnly = (parsed.command === 'help' || parsed.command === undefined) ||
                       parsed.options.requestHelp;

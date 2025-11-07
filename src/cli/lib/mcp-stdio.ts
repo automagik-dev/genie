@@ -3,6 +3,7 @@
  * For Claude Desktop integration
  */
 
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
@@ -22,7 +23,7 @@ export async function startMCPStdio(): Promise<void> {
   }
 
   // Check if Forge is running
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
   const forgeRunning = await isForgeRunning(baseUrl);
 
   if (!forgeRunning) {

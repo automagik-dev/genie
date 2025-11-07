@@ -15,6 +15,7 @@
  * - Clean layout without broken ASCII boxes
  */
 
+import { getForgeConfig, getMcpConfig } from '../lib/service-config.js';
 import WebSocket from 'ws';
 import type { ParsedCommand, GenieConfig, ConfigPaths } from '../lib/types';
 import { StatsTracker, type SessionStats, type MonthlyStats, type AllTimeStats } from '../lib/stats-tracker';
@@ -47,7 +48,7 @@ export async function runDashboardLive(
   _config: GenieConfig,
   _paths: Required<ConfigPaths>
 ): Promise<void> {
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = getForgeConfig().baseUrl;
   const live = parsed.options.live;
 
   const tracker = new StatsTracker(process.cwd());
@@ -108,7 +109,7 @@ export async function runDashboardLive(
 }
 
 async function fetchDashboardState(tracker: StatsTracker, dashboardStartTime: number): Promise<DashboardState> {
-  const baseUrl = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+  const baseUrl = getForgeConfig().baseUrl;
   const session = tracker.getCurrentSession();
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;

@@ -4,6 +4,7 @@ import path from 'path';
 
 // @ts-ignore - compiled client shipped at project root
 import { ForgeClient } from '../../../src/lib/forge-client.js';
+import { getForgeConfig } from './service-config.js';
 
 export interface ForgeStartOptions {
   baseUrl?: string;
@@ -21,7 +22,7 @@ export type Result<T, E = Error> =
   | { ok: true; value: T }
   | { ok: false; error: E };
 
-const DEFAULT_BASE_URL = process.env.FORGE_BASE_URL || 'http://localhost:8887';
+const DEFAULT_BASE_URL = getForgeConfig().baseUrl;
 const HEALTH_CHECK_TIMEOUT = 3000; // 3s per health check
 const MAX_HEALTH_RETRIES = 3;
 

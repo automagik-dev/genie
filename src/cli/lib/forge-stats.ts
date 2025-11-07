@@ -10,6 +10,7 @@
  */
 
 // @ts-ignore - compiled client shipped at project root
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import { ForgeClient } from '../../../src/lib/forge-client.js';
 import { TokenMetrics, collectAllTokenMetrics } from './token-tracker.js';
 
@@ -38,7 +39,7 @@ export interface ForgeStats {
   hasRunningWork: boolean;
 }
 
-export async function collectForgeStats(baseUrl: string = 'http://localhost:8887'): Promise<ForgeStats | null> {
+export async function collectForgeStats(baseUrl: string = getForgeConfig().baseUrl): Promise<ForgeStats | null> {
   try {
     const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
 

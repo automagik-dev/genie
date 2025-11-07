@@ -6,6 +6,7 @@
  */
 
 // @ts-ignore - compiled client shipped at project root
+import { getForgeConfig, getMcpConfig } from './service-config.js';
 import { ForgeClient } from '../../../src/lib/forge-client.js';
 import WebSocket from 'ws';
 
@@ -221,7 +222,7 @@ export async function collectTokensForAttempt(
       return aggregated;
     }
 
-    const baseUrl = client.baseUrl || 'http://localhost:8887';
+    const baseUrl = client.baseUrl || getForgeConfig().baseUrl;
 
     for (const process of processes) {
       try {
@@ -253,7 +254,7 @@ export async function collectTokensForAttempt(
  * Collect token metrics across all task attempts
  */
 export async function collectAllTokenMetrics(
-  baseUrl: string = 'http://localhost:8887'
+  baseUrl: string = getForgeConfig().baseUrl
 ): Promise<TokenMetrics> {
   const aggregated: TokenMetrics = {
     input: 0,

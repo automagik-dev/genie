@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { getForgeConfig, getMcpConfig } from './lib/service-config.js';
 /**
  * Check all unique status values in Forge execution processes
  */
@@ -7,7 +8,7 @@
 import { ForgeClient } from '../../src/lib/forge-client.js';
 
 async function checkStatuses() {
-  const baseUrl = 'http://localhost:8887';
+  const baseUrl = getForgeConfig().baseUrl;
   const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
 
   try {
