@@ -79,12 +79,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/automagik-genie/genie.git"
+    "url": "https://github.com/namastexlabs/automagik-genie.git"
   },
   "bugs": {
-    "url": "https://github.com/automagik-genie/genie/issues"
+    "url": "https://github.com/namastexlabs/automagik-genie/issues"
   },
-  "homepage": "https://github.com/automagik-genie/genie#readme",
+  "homepage": "https://github.com/namastexlabs/automagik-genie#readme",
   "engines": {
     "node": ">=18.0.0"
   },
