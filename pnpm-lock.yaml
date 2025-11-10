@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@automagik/forge':
+        specifier: 0.6.2
+        version: 0.6.2
       '@modelcontextprotocol/sdk':
         specifier: ^1.20.2
         version: 1.20.2
@@ -20,9 +23,6 @@ importers:
       '@xenova/transformers':
         specifier: ^2.17.2
         version: 2.17.2
-      automagik-forge:
-        specifier: 0.5.7
-        version: 0.5.7
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -65,6 +65,10 @@ importers:
         version: 5.9.2
 
 packages:
+
+  '@automagik/forge@0.6.2':
+    resolution: {integrity: sha512-zJMagnZHs/+qUVna9U0MsTpX83JqF4amhkg5S2I47VPDIzzZGj5CKrzYpUjzlOxSY04AYtAeTuo1irhIwBiNQw==}
+    hasBin: true
 
   '@huggingface/jinja@0.2.2':
     resolution: {integrity: sha512-/KPde26khDUIPkTGU82jdtTW9UAuvUTumCAbFs/7giR0SxsvZC4hru51PBvpijH6BVkHcROcvZM/lpy5h1jRRA==}
@@ -250,10 +254,6 @@ packages:
   ansi-styles@4.3.0:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
     engines: {node: '>=8'}
-
-  automagik-forge@0.5.7:
-    resolution: {integrity: sha512-iw+8L17BEebwki3HQPnZj2egIepNXkDexR9LraAichjD6PeuOd8rFDH0D2Fn1eTmNc8Nx4yH3JCoWZJmSr4u4A==}
-    hasBin: true
 
   b4a@1.7.3:
     resolution: {integrity: sha512-5Q2mfq2WfGuFp3uS//0s6baOJLMoVduPYVeNmDYxu5OUA1/cBfvr2RIS7vi62LdNj/urk1hfmj867I3qt6uZ7Q==}
@@ -891,6 +891,11 @@ packages:
 
 snapshots:
 
+  '@automagik/forge@0.6.2':
+    dependencies:
+      adm-zip: 0.5.16
+      dotenv: 16.6.1
+
   '@huggingface/jinja@0.2.2': {}
 
   '@modelcontextprotocol/sdk@1.20.2':
@@ -1079,11 +1084,6 @@ snapshots:
   ansi-styles@4.3.0:
     dependencies:
       color-convert: 2.0.1
-
-  automagik-forge@0.5.7:
-    dependencies:
-      adm-zip: 0.5.16
-      dotenv: 16.6.1
 
   b4a@1.7.3: {}
 

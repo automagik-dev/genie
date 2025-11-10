@@ -62,7 +62,7 @@ Genie passes `forge.*` fields directly to Forge without validation. Forge valida
 | `claude_code_router` | CLAUDE_CODE | Enable Claude Code routing behavior |
 | `additional_params` | OPENCODE, CODEX | Array of key-value parameters |
 
-See Forge executor schemas for complete field reference: `automagik-forge/shared/schemas/*.json`
+See Forge executor schemas for complete field reference: `@automagik/forge/shared/schemas/*.json`
 
 ### Precedence
 
@@ -77,7 +77,7 @@ The last value wins. CLI flags override agent frontmatter, which overrides works
 ### Discovering available Forge options
 
 1. **Inspect Forge executor schemas**
-   Check `automagik-forge/shared/schemas/*.json` for complete field definitions per executor. Each schema defines valid `forge.*` fields for that executor.
+   Check `@automagik/forge/shared/schemas/*.json` for complete field definitions per executor. Each schema defines valid `forge.*` fields for that executor.
 
 2. **Inspect Forge UI**
    The Automagik Forge UI exposes executor configurations under *Settings → Coding Agent Configurations*. Each field shown there can be set in agent `forge.*` frontmatter.
