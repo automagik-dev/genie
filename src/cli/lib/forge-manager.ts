@@ -93,7 +93,7 @@ export async function waitForForgeReady(
 }
 
 /**
- * Resolve automagik-forge binary path
+ * Resolve @automagik/forge binary path
  *
  * With bundledDependencies, Forge is always included in the genie package.
  * Node.js module resolution automatically finds it in node_modules.
@@ -102,13 +102,13 @@ function resolveForgeBinary(): Result<string> {
   try {
     // require.resolve() uses Node.js module resolution algorithm
     // Works with all package managers (npm, pnpm, yarn, bun)
-    const forgePath = require.resolve('automagik-forge/bin/cli.js');
+    const forgePath = require.resolve('@automagik/forge/bin/cli.js');
     return { ok: true, value: forgePath };
   } catch (error) {
     return {
       ok: false,
       error: new Error(
-        'automagik-forge not found (bundled dependency missing). ' +
+        '@automagik/forge not found (bundled dependency missing). ' +
         'This should not happen - please reinstall: npm install -g automagik-genie@latest'
       )
     };
