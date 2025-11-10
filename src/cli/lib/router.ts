@@ -82,7 +82,7 @@ export async function smartRouter(
   const versionPath = path.join(genieDir, 'state', 'version.json');
   const hasGenieConfig = fs.existsSync(genieDir);
 
-  // MASTER GENIE DETECTION: Check if we're in THE SOURCE template repo
+  // GENIE SOURCE DETECTION: Check if we're in THE SOURCE template repo
   const workspacePackageJson = path.join(process.cwd(), 'package.json');
   let isMasterGenie = false;
 
@@ -295,7 +295,7 @@ async function handleNewUser(
     });
   } catch (error: any) {
     console.error('');
-    console.error('⚠️  Failed to start Master Genie orchestration');
+    console.error('⚠️  Failed to start Genie orchestration');
     console.error(`   Reason: ${error.message || error}`);
     console.error('');
 
@@ -306,7 +306,7 @@ async function handleNewUser(
       console.error('   📜 Check Forge logs: .genie/state/forge.log');
       console.error('   🔍 Common causes: Forge database issues, network errors');
     } else if (errorMsg.includes('agent')) {
-      console.error('   💡 Master Genie agent creation failed');
+      console.error('   💡 Genie agent creation failed');
       console.error('   📜 Check Forge logs: .genie/state/forge.log');
     } else if (errorMsg.includes('attempt')) {
       console.error('   💡 Task attempt creation failed');
@@ -319,7 +319,7 @@ async function handleNewUser(
     console.error('💡 Your workspace is ready, but automated setup is skipped.');
     console.error('   You can retry: genie init');
     console.error('');
-    // Continue without Master Genie - workspace templates are already copied
+    // Continue without Genie - workspace templates are already copied
   }
 
   if (shortUrl) {
@@ -420,7 +420,7 @@ async function handlePreVersionTracking(
 }
 
 /**
- * Handle master genie version mismatch
+ * Handle genie source version mismatch
  */
 async function handleMasterGenieMismatch(
   installedVersion: string,
@@ -429,7 +429,7 @@ async function handleMasterGenieMismatch(
   debug: boolean
 ): Promise<void> {
   console.log('');
-  console.log(performanceGradient('⚠️  Master Genie Detected'));
+  console.log(performanceGradient('⚠️  Genie Source Detected'));
   console.log(`   Local version: ${successGradient(installedVersion)}`);
   console.log(`   Global version: ${performanceGradient(currentVersion)}`);
   console.log('');
@@ -457,7 +457,7 @@ async function handleMasterGenieMismatch(
   }
 
   console.log('');
-  // Start server anyway - master genie can run with version mismatch
+  // Start server anyway - genie source can run with version mismatch
   await startGenieServerFn(debug);
 }
 

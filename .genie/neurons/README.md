@@ -17,7 +17,7 @@ Central EventEmitter-based provider that manages real-time WebSocket connections
 - Uses production WebSocketManager for connection pooling and auto-reconnect
 - Subscribes to Forge diff streams (JsonPatch operations)
 - Emits thoughts as they happen (event-driven)
-- Four neuron types: WISH, FORGE, REVIEW, MASTER
+- Four neuron types: WISH, FORGE, REVIEW, GENIE
 
 **Stream Format:**
 ```json
@@ -39,7 +39,7 @@ Four global orchestrators that live as persistent socket connections:
 1. **WISH** (`wish.md`) - Feature wish creation and validation
 2. **FORGE** (`forge.md`) - Implementation task execution
 3. **REVIEW** (`review.md`) - Code review and quality gates
-4. **MASTER** (`master.md`) - Master orchestration and delegation
+4. **GENIE** (`genie.md`) - Top-level orchestration and delegation
 
 Each neuron definition includes:
 - `forge_profile_name` - Links to Forge executor profile (e.g., `WISH`, `FORGE`)
@@ -81,7 +81,7 @@ Syncs to Forge executor profiles (CLAUDE_CODE:WISH, etc.)
 ### 2. Real-Time Streaming (Runtime)
 
 ```
-Master Genie starts neuron session
+Genie starts neuron session
   ↓
 neuronProvider.subscribeToNeuron(neuron, attemptId)
   ↓
@@ -91,7 +91,7 @@ JsonPatch messages received
   ↓
 neuronProvider.emit('thought', neuronThought)
   ↓
-Master Genie receives real-time updates
+Genie receives real-time updates
 ```
 
 ### 3. Event Structure
@@ -99,7 +99,7 @@ Master Genie receives real-time updates
 ```typescript
 interface NeuronThought {
   timestamp: string;           // ISO 8601
-  neuron: 'wish' | 'forge' | 'review' | 'master';
+  neuron: 'wish' | 'forge' | 'review' | 'genie';
   source: 'diff' | 'logs' | 'tasks';
   data: any;                   // JsonPatch operations
 }
@@ -110,7 +110,7 @@ interface NeuronThought {
 ### Starting a Neuron Session
 
 ```typescript
-// Master Genie delegates to WISH neuron
+// Genie delegates to WISH neuron
 const task = await forgeClient.createTask({
   project_id: PROJECT_ID,
   title: "Create feature wish",
@@ -148,10 +148,10 @@ Neurons are exposed via MCP resources (Phase 3 - future):
 neuron://wish/stream     - WISH neuron thought stream
 neuron://forge/stream    - FORGE neuron thought stream
 neuron://review/stream   - REVIEW neuron thought stream
-neuron://master/stream   - MASTER neuron thought stream
+neuron://genie/stream    - GENIE neuron thought stream
 ```
 
-Master Genie can subscribe to these resources for real-time neuron communication.
+Genie can subscribe to these resources for real-time neuron communication.
 
 ## Key Differences: Neurons vs Agents
 
