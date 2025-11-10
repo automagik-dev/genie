@@ -106,8 +106,7 @@ async function main() {
   if (opts['publish']) {
     log('blue', '📦', 'Publishing to npm...');
     const tag = version.includes('-rc.') ? 'next' : 'latest';
-    // Use --provenance for npm trusted publishers (OIDC auth)
-    exec(`npm publish --tag ${tag} --access public --provenance`, false);
+    exec(`npm publish --tag ${tag} --access public`, false);
     log('green', '✅', `Published to @${tag}`);
   }
 

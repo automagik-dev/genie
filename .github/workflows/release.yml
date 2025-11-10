@@ -25,7 +25,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  id-token: write  # Required for npm provenance
 
 jobs:
   release:
@@ -86,6 +85,7 @@ jobs:
         id: bump_rc
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Checkout main branch (ensure we're not in detached HEAD)
@@ -120,6 +120,7 @@ jobs:
         if: steps.detect.outputs.action == 'tag-push'
         id: tag_push
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref }}"
@@ -141,6 +142,7 @@ jobs:
         id: manual
         env:
           GENIE_SKIP_ADVISORY_SMOKE: "1"
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ACTION="${{ github.event.inputs.action }}"
