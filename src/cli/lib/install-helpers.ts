@@ -1,9 +1,9 @@
 /**
- * Install Flow Helpers - Master Genie orchestration for fresh installations
+ * Install Flow Helpers - Genie orchestration for fresh installations
  *
  * Architecture:
- * 1. CLI launches MASTER task with simple prompt: "Run explorer to acquire context, when it ends run the install workflow"
- * 2. Master Genie orchestrates: explore → interview → spawn installers → completion
+ * 1. CLI launches GENIE task with simple prompt: "Run explorer to acquire context, when it ends run the install workflow"
+ * 2. Genie orchestrates: explore → interview → spawn installers → completion
  * 3. User monitors progress in Forge dashboard via shortened URL
  */
 
@@ -50,7 +50,7 @@ export function printBox(title: string, content: string): void {
 }
 
 /**
- * Launch Master Genie orchestrator for installation
+ * Launch Genie orchestrator for installation
  */
 export async function launchMasterGenie(
   config: InstallFlowConfig
@@ -58,7 +58,7 @@ export async function launchMasterGenie(
   const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
   console.log('');
-  printBox('🧞 MASTER GENIE AWAKENING', 'Starting installation orchestration...');
+  printBox('🧞 GENIE AWAKENING', 'Starting installation orchestration...');
   console.log('');
 
   // Get or create workspace-specific Forge project
@@ -75,7 +75,7 @@ export async function launchMasterGenie(
   let masterAgent = agents?.[0];
 
   if (!masterAgent) {
-    console.log(gradient.pastel('Creating Master Genie agent...'));
+    console.log(gradient.pastel('Creating Genie agent...'));
     const createResponse = await fetch(`${FORGE_URL}/api/forge/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -101,27 +101,27 @@ Templates to install: ${templates}
 
 See @.genie/spells/install-genie.md for detailed instructions.`;
 
-  // Get master agent definition from registry
-  let masterVariant = 'MASTER';  // Fallback
-  let masterExecutor = config.executor?.toUpperCase() || 'CLAUDE_CODE';
+  // Get genie agent definition from registry
+  let genieVariant = 'GENIE';  // Fallback
+  let genieExecutor = config.executor?.toUpperCase() || 'CLAUDE_CODE';
   try {
     const { getAgentRegistry } = await import('./agent-registry.js');
     const registry = await getAgentRegistry();
-    // Lookup master neuron by workflow name
-    // Neurons are registered as "neuron/master" without collective
-    const masterAgentDef = registry.getAgent('master');
-    if (masterAgentDef) {
+    // Lookup genie neuron by workflow name
+    // Neurons are registered as "neuron/genie" without collective
+    const genieAgentDef = registry.getAgent('genie');
+    if (genieAgentDef) {
       // Derive forge_profile_name: use explicit or derive from neuron name
-      masterVariant = masterAgentDef.forge_profile_name
-        || (masterAgentDef.type === 'neuron' ? masterAgentDef.name.toUpperCase() : 'MASTER');
-      masterExecutor = masterAgentDef.genie?.executor || masterExecutor;
+      genieVariant = genieAgentDef.forge_profile_name
+        || (genieAgentDef.type === 'neuron' ? genieAgentDef.name.toUpperCase() : 'GENIE');
+      genieExecutor = genieAgentDef.genie?.executor || genieExecutor;
     }
   } catch (error) {
-    // Use fallback MASTER if registry unavailable
-    console.warn('Failed to load master agent definition, using fallback variant');
+    // Use fallback GENIE if registry unavailable
+    console.warn('Failed to load genie agent definition, using fallback variant');
   }
 
-  // Create attempt with master variant from registry
+  // Create attempt with genie variant from registry
   console.log(gradient.pastel('Creating orchestration attempt...'));
   const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
     method: 'POST',
@@ -129,8 +129,8 @@ See @.genie/spells/install-genie.md for detailed instructions.`;
     body: JSON.stringify({
       task_id: masterAgent.task_id,
       executor_profile_id: {
-        executor: masterExecutor,
-        variant: masterVariant
+        executor: genieExecutor,
+        variant: genieVariant
       },
       base_branch: getCurrentBranch()
     })
@@ -154,7 +154,7 @@ See @.genie/spells/install-genie.md for detailed instructions.`;
   }
 
   console.log('');
-  console.log(gradient.pastel('✨ Master Genie orchestrating installation...'));
+  console.log(gradient.pastel('✨ Genie orchestrating installation...'));
   console.log('');
 
   const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${masterAgent.task_id}/attempts/${attempt.id}?view=diffs`;
@@ -175,7 +175,7 @@ export async function runInstallFlow(config: InstallFlowConfig): Promise<string>
 
   // NOTE: Agent profile sync removed - Forge discovers .genie folders natively
 
-  // Step 1: Launch Master Genie orchestrator (handles explore → install workflow)
+  // Step 1: Launch Genie orchestrator (handles explore → install workflow)
   const shortUrl = await launchMasterGenie(config);
 
   return shortUrl;

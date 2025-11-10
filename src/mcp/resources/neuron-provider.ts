@@ -2,13 +2,13 @@
  * Neuron Resource Provider - MCP Resources for real-time neuron communication
  *
  * Purpose: Provide real-time access to neuron "thoughts" via MCP Resources
- * Architecture: Master Genie subscribes to neuron resources, receives updates automatically
+ * Architecture: Genie subscribes to neuron resources, receives updates automatically
  *
  * Resources provided:
  * - neuron://wish/stream - WISH neuron thought stream
  * - neuron://forge/stream - FORGE neuron thought stream
  * - neuron://review/stream - REVIEW neuron thought stream
- * - neuron://master/stream - MASTER neuron thought stream
+ * - neuron://genie/stream - GENIE neuron thought stream
  *
  * Message format: JsonPatch operations (discovered via WebSocketManager testing)
  * Infrastructure: Uses production WebSocketManager for connection pooling + auto-reconnect
@@ -22,7 +22,7 @@ import { wsManager } from '../websocket-manager.js';
 /**
  * Neuron names matching the 4 neurons moved to .genie/agents/neurons/
  */
-const NEURON_NAMES = ['wish', 'forge', 'review', 'master'] as const;
+const NEURON_NAMES = ['wish', 'forge', 'review', 'genie'] as const;
 type NeuronName = typeof NEURON_NAMES[number];
 
 /**
@@ -56,7 +56,7 @@ export class NeuronResourceProvider extends EventEmitter {
   /**
    * Start subscribing to a neuron's stream
    *
-   * @param neuron Neuron name (wish, forge, review, master)
+   * @param neuron Neuron name (wish, forge, review, genie)
    * @param attemptId Forge task attempt ID for this neuron's execution
    */
   subscribeToNeuron(neuron: NeuronName, attemptId: string): void {
