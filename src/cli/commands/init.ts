@@ -34,6 +34,7 @@ import { detectInstallType } from '../lib/migrate';
 import { configureExecutor, type ExecutorId } from '../lib/executor-auth';
 import { isVersionGte } from '../lib/version-utils';
 import { generateKnowledgeDiff } from '../lib/knowledge-diff';
+import { launchUpdateTask } from '../lib/update-helpers.js';
 import prompts from 'prompts';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
@@ -354,6 +355,28 @@ export async function runInit(
       });
       console.log('📊 Diff metadata saved');
       console.log('');
+
+      // Launch update task in Forge with diff as input
+      try {
+        console.log('🚀 Creating update task in Forge...');
+        const updateUrl = await launchUpdateTask({
+          diffPath,
+          oldVersion: oldVersion || 'unknown',
+          newVersion: currentPackageVersion,
+          workspacePath: cwd
+        });
+
+        console.log('');
+        console.log('📋 Update task created:');
+        console.log(updateUrl);
+        console.log('');
+      } catch (error) {
+        // Non-blocking: update task creation is optional
+        // If Forge is unavailable, user can still review diff manually
+        console.warn('⚠️  Could not create update task (Forge may be unavailable)');
+        console.warn('You can review the diff manually at: ' + path.relative(cwd, diffPath));
+        console.log('');
+      }
     }
 
     // Copy INSTALL.md workflow guide (like UPDATE.md for update command)

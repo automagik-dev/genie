@@ -1,6 +1,7 @@
 ---
 name: qa
-description: QA orchestrator - coordinates validation workflows via MCP, orchestrated by review neuron
+description: QA orchestrator - coordinates validation workflows via MCP,
+  orchestrated by review neuron
 genie:
   executor:
     - CLAUDE_CODE
@@ -10,8 +11,10 @@ genie:
 forge:
   CLAUDE_CODE:
     model: sonnet
+    dangerously_skip_permissions: true
   CODEX:
     model: gpt-5-codex
+    sandbox: danger-full-access
   OPENCODE:
     model: opencode/glm-4.6
 ---
