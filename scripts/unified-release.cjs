@@ -19,6 +19,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
 const COLORS = {
@@ -250,9 +251,6 @@ function createGitHubRelease(version, changelog) {
     try { fs.unlinkSync(notesFile); } catch (e) {}
   }
 }
-
-// Get temp dir
-const os = require('os');
 
 main().catch(e => {
   log('red', '❌', e.message);
