@@ -32,6 +32,8 @@ import {
 import { getPackageVersion } from '../lib/package';
 import { detectInstallType } from '../lib/migrate';
 import { configureExecutor, type ExecutorId } from '../lib/executor-auth';
+import { isVersionGte } from '../lib/version-utils';
+import { generateKnowledgeDiff } from '../lib/knowledge-diff';
 import prompts from 'prompts';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
@@ -245,45 +247,82 @@ export async function runInit(
       }
     }
 
-    // CRITICAL: Always backup if .genie/ exists - no exceptions
-    // Prevents data loss on re-init, aborted installs, or any overwrite scenario
+    // CRITICAL: Backup/diff handling based on version
     let backupId: string | undefined;
     let tempBackupPath: string | undefined;
+    let diffPath: string | undefined;
 
     const genieExists = await pathExists(targetGenie);
     // Check if .genie/ has actual content (not just empty state/ directory from version check)
     const hasActualContent = genieExists ? await genieHasContent(targetGenie) : false;
 
+    const useKnowledgeDiff = isUpgrade && oldVersion && isVersionGte(currentPackageVersion, '2.5.14');
+
     if (genieExists && hasActualContent) {
-      console.log('');
-      console.log('💾 Creating backup before overwriting...');
-      const reason = installType === 'old_genie' ? 'old_genie' : 'pre_upgrade';
-      const backupResult = await backupGenieDirectory(cwd, reason);
-
-      // Handle two return types: string (copy backup) or object (two-stage move)
-      if (typeof backupResult === 'string') {
-        backupId = backupResult;
-        console.log(`   Backup created: .genie/backups/${backupId}`);
-      } else {
-        backupId = backupResult.backupId;
-        tempBackupPath = backupResult.tempPath;
-        console.log(`   Old .genie moved to: ${tempBackupPath}`);
-      }
-      console.log('');
-
-      // Create git checkpoint commit (clean rollback point before template modifications)
-      if (backupId && oldVersion) {
-        await createUpgradeCheckpoint(cwd, oldVersion, currentPackageVersion, backupId);
+      if (useKnowledgeDiff) {
         console.log('');
+        console.log('📊 Generating knowledge diff (v2.5.14+ efficient update)...');
+        
+        const oldGeniePath = targetGenie;
+        
+        const tempOldGenie = path.join(cwd, `.genie-old-${toIsoId()}`);
+        await moveDirectory(oldGeniePath, tempOldGenie);
+        
+        for (const tmpl of templates) {
+          await copyTemplateFiles(packageRoot, tmpl as TemplateType, targetGenie);
+        }
+        await copyTemplateRootFiles(packageRoot, cwd, template as TemplateType);
+        
+        const diffResult = await generateKnowledgeDiff(
+          cwd,
+          tempOldGenie,
+          targetGenie,
+          oldVersion,
+          currentPackageVersion
+        );
+        
+        diffPath = diffResult.diffPath;
+        
+        console.log(`   Knowledge diff generated: ${path.relative(cwd, diffPath)}`);
+        console.log(`   Changes: +${diffResult.summary.added} -${diffResult.summary.removed} ~${diffResult.summary.modified}`);
+        
+        await fsp.rm(tempOldGenie, { recursive: true, force: true });
+        
+        console.log('');
+      } else {
+        console.log('');
+        console.log('💾 Creating backup before overwriting...');
+        const reason = installType === 'old_genie' ? 'old_genie' : 'pre_upgrade';
+        const backupResult = await backupGenieDirectory(cwd, reason);
+
+        // Handle two return types: string (copy backup) or object (two-stage move)
+        if (typeof backupResult === 'string') {
+          backupId = backupResult;
+          console.log(`   Backup created: .genie/backups/${backupId}`);
+        } else {
+          backupId = backupResult.backupId;
+          tempBackupPath = backupResult.tempPath;
+          console.log(`   Old .genie moved to: ${tempBackupPath}`);
+        }
+        console.log('');
+
+        // Create git checkpoint commit (clean rollback point before template modifications)
+        if (backupId && oldVersion) {
+          await createUpgradeCheckpoint(cwd, oldVersion, currentPackageVersion, backupId);
+          console.log('');
+        }
       }
     }
 
-    // Copy ALL selected templates (not just the first one)
-    for (const tmpl of templates) {
-      await copyTemplateFiles(packageRoot, tmpl as TemplateType, targetGenie);
-    }
+    if (!useKnowledgeDiff) {
+      // Copy ALL selected templates (not just the first one)
+      for (const tmpl of templates) {
+        await copyTemplateFiles(packageRoot, tmpl as TemplateType, targetGenie);
+      }
 
-    await copyTemplateRootFiles(packageRoot, cwd, template as TemplateType);
+      await copyTemplateRootFiles(packageRoot, cwd, template as TemplateType);
+    }
+    
     await migrateAgentsDocs(cwd);
 
     // Finalize two-stage backup if needed (move temp backup into .genie/backups/)
@@ -294,8 +333,6 @@ export async function runInit(
       console.log('');
     }
 
-    // Write backup metadata for Master Genie's backup-analyzer agent
-    // CRITICAL: Must run for ALL backup scenarios (old_genie and pre_upgrade)
     if (backupId) {
       const backupInfoPath = path.join(targetGenie, 'state', 'backup-info.json');
       await writeJsonFile(backupInfoPath, {
@@ -306,6 +343,16 @@ export async function runInit(
         backupPath: `.genie/backups/${backupId}/genie`
       });
       console.log('📦 Backup metadata saved for restoration');
+      console.log('');
+    } else if (diffPath) {
+      const diffInfoPath = path.join(targetGenie, 'state', 'update-diff-info.json');
+      await writeJsonFile(diffInfoPath, {
+        diffPath: path.relative(cwd, diffPath),
+        oldVersion: oldVersion || 'unknown',
+        newVersion: currentPackageVersion,
+        timestamp: new Date().toISOString()
+      });
+      console.log('📊 Diff metadata saved');
       console.log('');
     }
 
