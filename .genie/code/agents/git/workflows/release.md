@@ -2,13 +2,20 @@
 name: release
 description: Automated release workflow via GitHub Actions (v2.5.1+)
 genie:
-  executor: [CLAUDE_CODE, CODEX, OPENCODE]
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+    - OPENCODE
   background: true
 forge:
   CLAUDE_CODE:
     model: sonnet
-  CODEX: {}
-  OPENCODE: {}
+    dangerously_skip_permissions: true
+  CODEX:
+    model: gpt-5-codex
+    sandbox: danger-full-access
+  OPENCODE:
+    model: opencode/glm-4.6
 ---
 
 # 🚀 Genie Release Workflow (Modern - v2.5.1+)

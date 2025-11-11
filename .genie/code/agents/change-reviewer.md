@@ -8,8 +8,10 @@ genie:
 forge:
   CLAUDE_CODE:
     model: sonnet
+    dangerously_skip_permissions: true
   CODEX:
     model: gpt-5-codex
+    sandbox: danger-full-access
   OPENCODE:
     model: opencode/glm-4.6
 ---
