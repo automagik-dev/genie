@@ -35,7 +35,7 @@
 - Router between humans and specialized collectives
 - Persistent state coordinator
 
-## Session Context (Auto-Loaded)
+## Task Context (Auto-Loaded)
 @.genie/STATE.md
 
 ## Product Documentation
@@ -117,7 +117,7 @@ Create agent inherits Base AGENTS.md + loads Create-specific AGENTS.md (compleme
 **Enforcement:**
 - Genie checks for issue before creating wish task
 - Forge tasks must reference GitHub issue number
-- SESSION-STATE.md tracks issue↔task mapping
+- TASK-STATE.md tracks issue↔task mapping
 
 **Why:**
 - Single source of truth (GitHub issues)
@@ -176,7 +176,7 @@ Before editing ANY implementation file, Base Genie must check:
 
 **When Genie CAN Touch Files:**
 - No Forge task exists for this work
-- Pure orchestration files (SESSION-STATE.md, MASTER-PLAN.md)
+- Pure orchestration files (TASK-STATE.md, MASTER-PLAN.md)
 - Emergency hotfix (and no Forge available)
 - Applying meta-learning (creating/updating .genie/spells/)
 
@@ -192,19 +192,19 @@ Before editing ANY implementation file, Base Genie must check:
 - Bug #168, task b51db539, 2025-10-21 (duplicate implementation)
 - 2025-10-26 (claimed release implementation steps without investigating automation)
 
-### 4. Session State Optimization - Live State, Not Documentation 🔴 CRITICAL
-**Rule:** Session state is ephemeral runtime data, not permanent documentation
+### 4. Task State Optimization - Live State, Not Documentation 🔴 CRITICAL
+**Rule:** Task state is ephemeral runtime data, not permanent documentation
 
 **Architecture:**
 - AGENTS.md (committed) → Amendments, workflows, quality standards
 - `.genie/.session` (gitignored) → Live Forge state (auto-generated from API)
 - Wishes (committed) → Track completion, milestones, deliverables
 
-**Load Session State:**
+**Load Task State:**
 Use `!cat .genie/.session` when coordination needed (NOT auto-loaded)
 
 **Why:**
-- Session state changes constantly (task status updates)
+- Task state changes constantly (task status updates)
 - Committing ephemeral data = noisy git history + token waste
 - 90% token reduction (load only when needed)
 
@@ -238,7 +238,7 @@ Use `genie helper count-tokens <file>.md` (tiktoken cl100k_base)
 - ✅ Load dependencies: required_skills
 - ✅ Behavioral flags: breaking_changes, load_priority
 
-**Token Savings:** ~1,470 tokens per session (284 files cleaned)
+**Token Savings:** ~1,470 tokens per task (284 files cleaned)
 
 ### 7. Token Counting Protocol - Official Helper Only 🔴 CRITICAL
 **Rule:** NOBODY in this codebase calculates tokens manually. Always use the official token counting helper.
@@ -270,10 +270,10 @@ genie helper count-tokens --before=old.md --after=new.md
 
 **MCP Tools (Source of Truth):**
 - `mcp__genie__list_agents` - Discover all available agents dynamically (43+ agents)
-- `mcp__genie__run` - Start agent sessions with persistent context
-- `mcp__genie__list_sessions` - View active/completed sessions
-- `mcp__genie__view` - Read session transcripts
-- `mcp__genie__stop` - Halt running sessions
+- `mcp__genie__task` - Start agent tasks with persistent context
+- `mcp__genie__list_tasks` - View active/completed tasks
+- `mcp__genie__view_task` - Read task transcripts
+- `mcp__genie__stop` - Halt running tasks
 - `mcp__genie__list_spells` - Discover available spells
 - `mcp__genie__read_spell` - Load spell content
 - `mcp__genie__get_workspace_info` - Load product docs (mission, tech stack, roadmap)
@@ -293,6 +293,7 @@ genie helper count-tokens --before=old.md --after=new.md
 
 **Correct Patterns:**
 - ✅ `mcp__genie__list_agents` to discover agents (MCP always up-to-date)
+- ✅ `mcp__genie__list_tasks` to view tasks (MCP always up-to-date)
 - ✅ `mcp__genie__get_workspace_info` for product context (not manual file reads)
 - ✅ `mcp__genie__list_spells` to discover spells (not directory scanning)
 - ✅ MCP queries first, file reads only when MCP unavailable
@@ -306,7 +307,7 @@ For mandatory tool execution, use clear MUST language:
 
 **When to require tool use:**
 - Mandatory context (workspace info, spells)
-- Orchestration checks (agents, sessions)
+- Orchestration checks (agents, tasks)
 - Entry point auto-load (agent starts)
 - QA setup (pre-test context)
 
@@ -314,7 +315,7 @@ For mandatory tool execution, use clear MUST language:
 ```
 mcp__genie__list_agents - No arguments
 mcp__genie__read_spell - Argument: spell_path="know-yourself"
-mcp__genie__run - Arguments: agent="code", prompt="Task description"
+mcp__genie__task - Arguments: agent="code", prompt="Task description"
 ```
 
 ### 10. ACE Protocol - Evidence-Based Framework Optimization 🔴 CRITICAL
@@ -371,14 +372,14 @@ ACE (Agentic Context Engineering) ensures framework optimization is data-driven,
 
 ## Quick Reference
 
-**Check active sessions:**
+**Check active tasks:**
 ```bash
-mcp__genie__list_sessions
+mcp__genie__list_tasks
 ```
 
-**Start new agent session:**
+**Start new agent task:**
 ```bash
-mcp__genie__run(agent="code", prompt="Task description")
+mcp__genie__task(agent="code", prompt="Task description")
 ```
 
 **Create wish with task:**
@@ -402,7 +403,7 @@ mcp__genie__create_wish(
 - ❌ Never pass poor/brief input directly (causes poor agent output)
 - 📁 All scratchpad files in `/tmp/genie/` (organized, not committed)
 
-**Load live session state:**
+**Load live task state:**
 ```bash
 !cat .genie/.session
 ```

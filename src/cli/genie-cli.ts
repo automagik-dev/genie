@@ -104,7 +104,7 @@ program
 // Talk command
 program
   .command('talk <agent>')
-  .description('Start interactive browser session with agent (Forge UI)')
+  .description('Start interactive browser task with agent (Forge UI)')
   .action((agent: string) => {
     execGenie(['talk', agent]);
   });
@@ -112,7 +112,7 @@ program
 // Resume command
 program
   .command('resume <taskId> <prompt>')
-  .description('Resume an existing agent session')
+  .description('Resume an existing agent task')
   .action((taskId: string, prompt: string) => {
     execGenie(['resume', taskId, prompt]);
   });
@@ -120,12 +120,12 @@ program
 // List command
 program
   .command('list [type]')
-  .description('List agents, sessions, or workflows')
+  .description('List agents, tasks, or workflows')
   .action((type: string | undefined) => {
     const normalized = (type || 'agents').toLowerCase();
-    const validTypes = ['agents', 'sessions', 'workflows'];
+    const validTypes = ['agents', 'tasks', 'workflows'];
     if (!validTypes.includes(normalized)) {
-      console.error('Error: list command accepts agents (default), sessions, or workflows');
+      console.error('Error: list command accepts agents (default), tasks, or workflows');
       process.exit(1);
     }
     execGenie(['list', normalized]);
@@ -134,7 +134,7 @@ program
 // View command
 program
   .command('view <taskId>')
-  .description('View session transcript')
+  .description('View task transcript')
   .option('--full', 'Show full transcript')
   .option('--live', 'Live view (auto-refresh)')
   .action((taskId: string, options: { full?: boolean; live?: boolean }) => {
@@ -147,7 +147,7 @@ program
 // Stop command
 program
   .command('stop <taskId>')
-  .description('Stop a running session')
+  .description('Stop a running task')
   .action((taskId: string) => {
     execGenie(['stop', taskId]);
   });
