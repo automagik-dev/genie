@@ -108,7 +108,7 @@ async function runTests() {
     const toolNames = toolsResponse.result.tools.map(t => t.name);
     test('All tools discoverable',
       toolNames.includes('list_agents') &&
-      toolNames.includes('list_sessions') &&
+      toolNames.includes('list_tasks') &&
       toolNames.includes('run') &&
       toolNames.includes('resume') &&
       toolNames.includes('view') &&

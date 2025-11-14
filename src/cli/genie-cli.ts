@@ -111,10 +111,10 @@ program
 
 // Resume command
 program
-  .command('resume <sessionId> <prompt>')
+  .command('resume <taskId> <prompt>')
   .description('Resume an existing agent session')
-  .action((sessionId: string, prompt: string) => {
-    execGenie(['resume', sessionId, prompt]);
+  .action((taskId: string, prompt: string) => {
+    execGenie(['resume', taskId, prompt]);
   });
 
 // List command
@@ -133,12 +133,12 @@ program
 
 // View command
 program
-  .command('view <sessionId>')
+  .command('view <taskId>')
   .description('View session transcript')
   .option('--full', 'Show full transcript')
   .option('--live', 'Live view (auto-refresh)')
-  .action((sessionId: string, options: { full?: boolean; live?: boolean }) => {
-    const args = ['view', sessionId];
+  .action((taskId: string, options: { full?: boolean; live?: boolean }) => {
+    const args = ['view', taskId];
     if (options.full) args.push('--full');
     if (options.live) args.push('--live');
     execGenie(args);
@@ -146,10 +146,10 @@ program
 
 // Stop command
 program
-  .command('stop <sessionId>')
+  .command('stop <taskId>')
   .description('Stop a running session')
-  .action((sessionId: string) => {
-    execGenie(['stop', sessionId]);
+  .action((taskId: string) => {
+    execGenie(['stop', taskId]);
   });
 
 // ==================== WORKSPACE MANAGEMENT ====================

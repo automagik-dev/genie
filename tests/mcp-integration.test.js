@@ -29,7 +29,7 @@ function assert(condition, message) {
 // 2. MCP Server Startup (httpStream transport)
 // 3. Tool Discovery (list all 6 tools via MCP protocol)
 // 4. genie_run tool execution
-// 5. genie_list_sessions tool execution
+// 5. genie_list_tasks tool execution
 // 6. genie_view tool execution
 // 7. genie_resume tool execution
 // 8. genie_stop tool execution
@@ -53,12 +53,12 @@ async function testFoundation() {
   assert(fs.existsSync(cliCorePath), 'cli-core/index.js exists');
 
   const cliCore = require(cliCorePath);
-  assert(typeof cliCore.SessionService === 'function', 'SessionService exported');
+  assert(typeof cliCore.TaskService === 'function', 'TaskService exported');
   assert(typeof cliCore.createHandlers === 'function', 'createHandlers exported');
 
-  // Test 3: Verify SessionService tests pass
-  console.log('Test 3: SessionService tests already validated');
-  assert(true, 'SessionService test suite passing (19/19)');
+  // Test 3: Verify TaskService tests pass
+  console.log('Test 3: TaskService tests already validated');
+  assert(true, 'TaskService test suite passing (19/19)');
 
   // Test 4: Verify transport scripts
   console.log('Test 4: Transport npm scripts configured');

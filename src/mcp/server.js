@@ -25,7 +25,7 @@ const TOOLS = {
     'genie_resume': {
         description: 'Continue an existing Genie session',
         parameters: {
-            sessionId: 'string',
+            taskId: 'string',
             prompt: 'string'
         }
     },
@@ -40,14 +40,14 @@ const TOOLS = {
     'genie_view': {
         description: 'View session transcript',
         parameters: {
-            sessionId: 'string',
+            taskId: 'string',
             full: 'boolean?'
         }
     },
     'genie_stop': {
         description: 'Stop a running session',
         parameters: {
-            sessionId: 'string'
+            taskId: 'string'
         }
     }
 };

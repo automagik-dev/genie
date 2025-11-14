@@ -173,8 +173,8 @@ export class TaskService {
       sessions: { ...base.sessions }
     };
 
-    Object.entries(incoming.sessions || {}).forEach(([sessionId, entry]) => {
-      merged.sessions[sessionId] = { ...(base.sessions?.[sessionId] || {}), ...entry };
+    Object.entries(incoming.sessions || {}).forEach(([taskId, entry]) => {
+      merged.sessions[taskId] = { ...(base.sessions?.[taskId] || {}), ...entry };
     });
 
     return merged;

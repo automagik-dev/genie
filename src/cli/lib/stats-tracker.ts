@@ -48,7 +48,7 @@ export interface MonthlyStats {
   taskCount: number;
   wishCount: number;
   dailyActivity: DailyActivity[];
-  peakSession: { date: string; tokens: number; sessionId: string };
+  peakSession: { date: string; tokens: number; taskId: string };
   peakDay: { date: string; tasks: number };
 }
 
@@ -66,7 +66,7 @@ export interface Milestone {
   value: number;
   title: string;
   reached: string; // ISO timestamp
-  sessionId: string;
+  taskId: string;
 }
 
 export interface StatsData {
@@ -119,9 +119,9 @@ export class StatsTracker {
     return session;
   }
 
-  endSession(sessionId: string): void {
+  endSession(taskId: string): void {
     const current = this.loadCurrentSession();
-    if (!current || current.id !== sessionId) return;
+    if (!current || current.id !== taskId) return;
 
     current.endTime = new Date().toISOString();
 
@@ -143,7 +143,7 @@ export class StatsTracker {
       monthly.peakSession = {
         date: this.getDateKey(new Date(current.startTime)),
         tokens: current.tokenCount.total,
-        sessionId: current.id
+        taskId: current.id
       };
     }
 
@@ -164,9 +164,9 @@ export class StatsTracker {
   // Token Tracking
   // ============================================================================
 
-  recordTokens(sessionId: string, inputTokens: number, outputTokens: number): void {
+  recordTokens(taskId: string, inputTokens: number, outputTokens: number): void {
     const current = this.loadCurrentSession();
-    if (!current || current.id !== sessionId) return;
+    if (!current || current.id !== taskId) return;
 
     current.tokenCount.input += inputTokens;
     current.tokenCount.output += outputTokens;
@@ -198,12 +198,12 @@ export class StatsTracker {
   // Task Tracking
   // ============================================================================
 
-  recordTaskCompletion(sessionId: string, taskId: string, taskTitle: string): void {
+  recordTaskCompletion(sessionTaskId: string, forgeTaskId: string, taskTitle: string): void {
     const current = this.loadCurrentSession();
-    if (!current || current.id !== sessionId) return;
+    if (!current || current.id !== sessionTaskId) return;
 
-    if (!current.tasksCompleted.includes(taskId)) {
-      current.tasksCompleted.push(taskId);
+    if (!current.tasksCompleted.includes(forgeTaskId)) {
+      current.tasksCompleted.push(forgeTaskId);
     }
 
     this.saveCurrentSession(current);
@@ -231,7 +231,7 @@ export class StatsTracker {
     this.save(data);
   }
 
-  recordWishFulfillment(sessionId: string): void {
+  recordWishFulfillment(taskId: string): void {
     const data = this.load();
     const month = this.getMonthKey(new Date());
     const monthly = this.getOrCreateMonthly(data, month);
@@ -239,9 +239,9 @@ export class StatsTracker {
     this.save(data);
   }
 
-  recordAgentInvocation(sessionId: string, agentId: string): void {
+  recordAgentInvocation(taskId: string, agentId: string): void {
     const current = this.loadCurrentSession();
-    if (!current || current.id !== sessionId) return;
+    if (!current || current.id !== taskId) return;
 
     if (!current.agentsInvoked.includes(agentId)) {
       current.agentsInvoked.push(agentId);
@@ -403,7 +403,7 @@ export class StatsTracker {
   // Milestone Detection
   // ============================================================================
 
-  private checkMilestones(data: StatsData, session: SessionStats): void {
+  private checkMilestones(data: StatsData, task: SessionStats): void {
     const milestones: Array<{ type: 'tokens'; value: number; title: string }> = [
       { type: 'tokens', value: 100000, title: '🎉 100k tokens!' },
       { type: 'tokens', value: 500000, title: '🚀 500k tokens!' },
@@ -414,16 +414,16 @@ export class StatsTracker {
 
     for (const m of milestones) {
       const alreadyReached = data.milestones.some(
-        milestone => milestone.type === m.type && milestone.value === m.value && milestone.sessionId === session.id
+        milestone => milestone.type === m.type && milestone.value === m.value && milestone.taskId === task.id
       );
 
-      if (!alreadyReached && session.tokenCount.total >= m.value) {
+      if (!alreadyReached && task.tokenCount.total >= m.value) {
         data.milestones.push({
           type: m.type,
           value: m.value,
           title: m.title,
           reached: new Date().toISOString(),
-          sessionId: session.id
+          taskId: task.id
         });
       }
     }
@@ -433,21 +433,21 @@ export class StatsTracker {
   // Git Notes Integration (Store in Commit Metadata)
   // ============================================================================
 
-  private storeInGitNotes(session: SessionStats): void {
+  private storeInGitNotes(task: SessionStats): void {
     try {
       // Get current HEAD commit
       const commit = execSync('git rev-parse HEAD', { cwd: this.workspaceRoot, encoding: 'utf-8' }).trim();
 
       // Create notes content
       const notes = {
-        sessionId: session.id,
-        tokens: session.tokenCount,
-        tasks: session.tasksCompleted.length,
-        duration: session.endTime
-          ? new Date(session.endTime).getTime() - new Date(session.startTime).getTime()
+        taskId: task.id,
+        tokens: task.tokenCount,
+        tasks: task.tasksCompleted.length,
+        duration: task.endTime
+          ? new Date(task.endTime).getTime() - new Date(task.startTime).getTime()
           : 0,
-        agents: session.agentsInvoked,
-        timestamp: session.endTime || session.startTime
+        agents: task.agentsInvoked,
+        timestamp: task.endTime || task.startTime
       };
 
       const notesContent = JSON.stringify(notes, null, 2);
@@ -504,13 +504,13 @@ export class StatsTracker {
     }
   }
 
-  private saveCurrentSession(session: SessionStats): void {
+  private saveCurrentSession(task: SessionStats): void {
     const dir = path.dirname(this.currentSessionPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    fs.writeFileSync(this.currentSessionPath, JSON.stringify(session, null, 2));
+    fs.writeFileSync(this.currentSessionPath, JSON.stringify(task, null, 2));
   }
 
   private clearCurrentSession(): void {
@@ -570,7 +570,7 @@ export class StatsTracker {
         taskCount: 0,
         wishCount: 0,
         dailyActivity: [],
-        peakSession: { date: '', tokens: 0, sessionId: '' },
+        peakSession: { date: '', tokens: 0, taskId: '' },
         peakDay: { date: '', tasks: 0 }
       };
     }

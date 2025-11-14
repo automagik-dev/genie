@@ -112,7 +112,7 @@ export async function listSessions(): Promise<Array<{ id: string; name: string; 
     const forgeSessions = await forgeExecutor.listSessions();
 
     const sessions = forgeSessions.map((entry: any) => ({
-      name: entry.name || entry.sessionId || 'unknown',
+      name: entry.name || entry.taskId || 'unknown',
       agent: entry.agent || 'unknown',
       status: entry.status || 'unknown',
       created: entry.created || 'unknown',
@@ -169,7 +169,7 @@ export async function listSessions(): Promise<Array<{ id: string; name: string; 
       const store = JSON.parse(content);
 
       const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
-        id: entry.sessionId || key,
+        id: entry.taskId || key,
         name: entry.name || key,
         agent: entry.agent || key,
         status: entry.status || 'unknown',

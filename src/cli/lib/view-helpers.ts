@@ -41,7 +41,7 @@ import type { CLIOptions } from './types';
  *   { role: 'assistant', title: 'Task completed', body: ['All tests passing'] }
  * ];
  * const meta: SessionMeta = {
- *   sessionId: 'abc-123',
+ *   taskId: 'abc-123',
  *   agent: 'implementor',
  *   status: 'completed'
  * };

@@ -101,7 +101,7 @@ const mockMessages: ChatMessage[] = [
 ];
 
 const mockMeta: SessionMeta = {
-  sessionId: 'abc123-def456-ghi789',
+  taskId: 'abc123-def456-ghi789',
   agent: 'implementor',
   status: 'running',
   executor: 'claude',
@@ -116,19 +116,19 @@ const mockMeta: SessionMeta = {
 
 const mockSessions: SessionEntry[] = [
   {
-    sessionId: 'abc123-def456-ghi789',
+    taskId: 'abc123-def456-ghi789',
     agent: 'implementor',
     status: 'running',
     executor: 'claude'
   },
   {
-    sessionId: 'xyz789-uvw456-rst123',
+    taskId: 'xyz789-uvw456-rst123',
     agent: 'tests',
     status: 'completed',
     executor: 'codex'
   },
   {
-    sessionId: 'mno456-jkl123-pqr789',
+    taskId: 'mno456-jkl123-pqr789',
     agent: 'review',
     status: 'pending',
     executor: 'claude'
@@ -264,7 +264,7 @@ describe('formatTranscriptMarkdown - overview mode', () => {
 
   it('should handle missing optional metadata', () => {
     const minimalMeta: SessionMeta = {
-      sessionId: 'test-123',
+      taskId: 'test-123',
       agent: 'test',
       status: 'running'
     };
@@ -320,9 +320,9 @@ describe('formatSessionList', () => {
 // ============================================================================
 
 describe('edge cases', () => {
-  it('should handle null/missing sessionId', () => {
+  it('should handle null/missing taskId', () => {
     const metaNoId: SessionMeta = {
-      sessionId: null,
+      taskId: null,
       agent: 'test',
       status: 'running'
     };

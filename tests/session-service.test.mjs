@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionService Unit Tests
+ * TaskService Unit Tests
  *
  * Tests production-grade file locking, atomic writes, stale lock reclamation,
  * and concurrent write handling.
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const { SessionService } = await import('../dist/cli/cli-core/session-service.js');
+const { TaskService } = await import('../dist/cli/cli-core/task-service.js');
 
 const TEST_DIR = path.join(__dirname, '.tmp-session-tests');
 const TEST_SESSION_FILE = path.join(TEST_DIR, 'sessions.json');
@@ -52,7 +52,7 @@ async function testBasicLoadSave() {
   console.log('\n=== Test 1: Basic Load/Save ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {}
   });
@@ -88,7 +88,7 @@ async function testAtomicWrites() {
   console.log('\n=== Test 2: Atomic Write Protection ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {}
   });
@@ -124,7 +124,7 @@ async function testStaleLockReclamation() {
   console.log('\n=== Test 3: Stale Lock Reclamation ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {},
     onWarning: (msg) => console.log(`  [Warning] ${msg}`)
@@ -161,7 +161,7 @@ async function testFreshReloadBeforeMerge() {
   console.log('\n=== Test 4: Fresh Reload Before Merge ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {}
   });
@@ -193,7 +193,7 @@ async function testConcurrentWrites() {
   console.log('\n=== Test 5: Concurrent Writes ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {}
   });
@@ -236,7 +236,7 @@ async function testLockRetry() {
   console.log('\n=== Test 6: Lock Retry on Contention ===');
   setupTestDir();
 
-  const service = new SessionService({
+  const service = new TaskService({
     paths: { sessionsFile: TEST_SESSION_FILE },
     defaults: {}
   });
@@ -273,7 +273,7 @@ async function testLockRetry() {
 
 // Run all tests
 async function runAllTests() {
-  console.log('Starting SessionService Unit Tests...\n');
+  console.log('Starting TaskService Unit Tests...\n');
 
   try {
     await testBasicLoadSave();

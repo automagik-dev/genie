@@ -163,7 +163,7 @@ function normalizeTaskStore(
     const sessions: Record<string, TaskEntry> = {};
     let migratedCount = 0;
 
-    // v2 sessions were keyed by sessionId (attemptId), already in correct format
+    // v2 sessions were keyed by taskId (attemptId), already in correct format
     Object.entries(incoming.sessions).forEach(([attemptId, entry]: [string, any]) => {
       if (!entry || typeof entry !== 'object') return;
 

@@ -58,7 +58,7 @@ const __dirname = path.dirname(__filename);
 async function runCliCoreTests() {
   const cliCore = await import('../dist/cli/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
-  assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
+  assert.strictEqual(typeof cliCore.TaskService, 'function', 'TaskService should be exported from cli-core');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
   const sessionsFile = path.join(tmpDir, 'sessions.json');
@@ -83,7 +83,7 @@ async function runCliCoreTests() {
   );
 
   try {
-    const service = new cliCore.SessionService({
+    const service = new cliCore.TaskService({
       paths: { sessionsFile },
       loadConfig: { defaults: { executor: 'codex' } },
       defaults: { defaults: { executor: 'codex' } }

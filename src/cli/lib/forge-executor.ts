@@ -107,22 +107,22 @@ export class ForgeExecutor {
     };
   }
 
-  async resumeSession(sessionId: string, followUpPrompt: string): Promise<void> {
-    await this.forge.followUpTaskAttempt(sessionId, followUpPrompt);
+  async resumeSession(taskId: string, followUpPrompt: string): Promise<void> {
+    await this.forge.followUpTaskAttempt(taskId, followUpPrompt);
   }
 
-  async stopSession(sessionId: string): Promise<void> {
-    await this.forge.stopTaskAttemptExecution(sessionId);
+  async stopSession(taskId: string): Promise<void> {
+    await this.forge.stopTaskAttemptExecution(taskId);
   }
 
-  async getSessionStatus(sessionId: string): Promise<{ status: string }> {
-    const attempt = await this.forge.getTaskAttempt(sessionId);
+  async getSessionStatus(taskId: string): Promise<{ status: string }> {
+    const attempt = await this.forge.getTaskAttempt(taskId);
     return { status: attempt.status || 'unknown' };
   }
 
-  async fetchLatestLogs(sessionId: string): Promise<string | null> {
+  async fetchLatestLogs(taskId: string): Promise<string | null> {
     try {
-      const processes = await this.forge.listExecutionProcesses(sessionId);
+      const processes = await this.forge.listExecutionProcesses(taskId);
       if (!Array.isArray(processes) || !processes.length) return null;
       const latest = processes[processes.length - 1];
       return latest?.output || null;

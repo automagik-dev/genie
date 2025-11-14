@@ -132,7 +132,7 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
     return {
       status: 'error',
       transcript: null,
-      error: error.message || 'Unknown error viewing session'
+      error: error.message || 'Unknown error viewing task'
     };
   }
 }
@@ -193,35 +193,35 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
   return { content: [{ type: 'text', text: response }] };
 });
 
-// Tool: list_sessions - View active and recent sessions
-server.tool('list_sessions', 'List active and recent Genie agent sessions. Shows session names, agents, status, and timing. Use this to find sessions to resume or view.', async () => {
-  const sessions = await listSessions();
+// Tool: list_tasks - View active and recent tasks
+server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to resume or view.', async () => {
+  const tasks = await listSessions();
 
-  if (sessions.length === 0) {
-    return { content: [{ type: 'text', text: getVersionHeader() + 'No sessions found. Start a new session with the "run" tool.' }] };
+  if (tasks.length === 0) {
+    return { content: [{ type: 'text', text: getVersionHeader() + 'No tasks found. Start a new task with the "run" tool.' }] };
   }
 
-  let response = getVersionHeader() + `Found ${sessions.length} session(s):\n\n`;
+  let response = getVersionHeader() + `Found ${tasks.length} task(s):\n\n`;
 
-  sessions.forEach((session, index) => {
-    const { displayId } = transformDisplayPath(session.agent);
-    response += `${index + 1}. **${session.id}** (${session.name})\n`;
+  tasks.forEach((task, index) => {
+    const { displayId } = transformDisplayPath(task.agent);
+    response += `${index + 1}. **${task.id}** (${task.name})\n`;
     response += `   Agent: ${displayId}\n`;
-    response += `   Status: ${session.status}\n`;
-    response += `   Created: ${session.created}\n`;
-    response += `   Last Used: ${session.lastUsed}\n\n`;
+    response += `   Status: ${task.status}\n`;
+    response += `   Created: ${task.created}\n`;
+    response += `   Last Used: ${task.lastUsed}\n\n`;
   });
 
-  response += 'Use "view" with the session ID (e.g., "c74111b4-...") to see transcript or "resume" to continue a session.';
+  response += 'Use "view" with the task ID (e.g., "c74111b4-...") to see transcript or "resume" to continue a task.';
 
   return { content: [{ type: 'text', text: response }] };
 });
 
-// Tool: run - Start a new agent session
-server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.', {
+// Tool: run - Start a new agent task
+server.tool('run', 'Start a new Genie agent task. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.', {
   agent: z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
   prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
-  name: z.string().optional().describe('Friendly session name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
+  name: z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
 }, async (args) => {
   try {
     // Agent alias mapping (no wish aliases - use code/wish or create/wish directly)
@@ -264,45 +264,45 @@ server.tool('run', 'Start a new Genie agent session. Choose an agent (use list_a
 
     const { displayId } = transformDisplayPath(resolvedAgent);
     const aliasNote = AGENT_ALIASES[args.agent] ? ` (alias: ${args.agent} → ${resolvedAgent})` : '';
-    return { content: [{ type: 'text', text: getVersionHeader() + `Started agent session:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_sessions to see the session ID, then use view/resume/stop as needed.` }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + `Started agent task:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_tasks to see the task ID, then use view/resume/stop as needed.` }] };
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('start agent session', error) }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('start agent task', error) }] };
   }
 });
 
-// Tool: resume - Continue an existing session
-server.tool('resume', 'Resume an existing agent session with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', {
-  sessionId: z.string().describe('Session name to resume (get from list_sessions tool). Example: "146-session-name-architecture"'),
+// Tool: resume - Continue an existing task
+server.tool('resume', 'Resume an existing agent task with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', {
+  taskId: z.string().describe('Task name to resume (get from list_tasks tool). Example: "146-task-name-architecture"'),
   prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
 }, async (args) => {
   try {
-    const cliArgs = ['resume', args.sessionId];
+    const cliArgs = ['resume', args.taskId];
     if (args.prompt?.length) {
       cliArgs.push(args.prompt);
     }
     const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, cliArgs, 120000);
     const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    return { content: [{ type: 'text', text: getVersionHeader() + `Resumed session ${args.sessionId}:\n\n${output}` }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + `Resumed task ${args.taskId}:\n\n${output}` }] };
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('resume session', error) }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('resume task', error) }] };
   }
 });
 
-// Tool: view - View session transcript
-server.tool('view', 'View the transcript of an agent session. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.', {
-  sessionId: z.string().describe('Task ID to view (get from list_sessions tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
+// Tool: view - View task transcript
+server.tool('view', 'View the transcript of an agent task. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.', {
+  taskId: z.string().describe('Task ID to view (get from list_tasks tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
   full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
 }, async (args) => {
   try {
-    const result = await viewSession(args.sessionId);
+    const result = await viewSession(args.taskId);
 
     if (result.error) {
-      return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error viewing session:\n\n${result.error}` }] };
+      return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error viewing task:\n\n${result.error}` }] };
     }
 
     let response = getVersionHeader();
-    response += `**Task:** ${args.sessionId}\n`;
+    response += `**Task:** ${args.taskId}\n`;
     response += `**Status:** ${result.status}\n\n`;
 
     if (result.transcript) {
@@ -319,17 +319,17 @@ server.tool('view', 'View the transcript of an agent session. Shows the conversa
   }
 });
 
-// Tool: stop - Terminate a running session
-server.tool('stop', 'Stop a running agent session. Use this to terminate long-running agents or cancel sessions that are no longer needed. The session state is preserved for later viewing.', {
-  sessionId: z.string().describe('Session name to stop (get from list_sessions tool). Example: "146-session-name-architecture"')
+// Tool: stop - Terminate a running task
+server.tool('stop', 'Stop a running agent task. Use this to terminate long-running agents or cancel tasks that are no longer needed. The task state is preserved for later viewing.', {
+  taskId: z.string().describe('Task name to stop (get from list_tasks tool). Example: "146-task-name-architecture"')
 }, async (args) => {
   try {
-    const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, ['stop', args.sessionId], 30000);
+    const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, ['stop', args.taskId], 30000);
     const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    return { content: [{ type: 'text', text: getVersionHeader() + `Stopped session ${args.sessionId}:\n\n${output}` }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + `Stopped task ${args.taskId}:\n\n${output}` }] };
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('stop session', error) }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('stop task', error) }] };
   }
 });
 
@@ -514,7 +514,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.sessionId);
+      }, extra.taskId);
     }
   });
   return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
@@ -530,7 +530,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.sessionId);
+      }, extra.taskId);
     }
   });
   return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
@@ -548,7 +548,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.sessionId);
+      }, extra.taskId);
     }
   });
   return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
@@ -701,13 +701,13 @@ if (debugMode) {
   }
 
   // Dynamically count tools instead of hardcoding
-  const coreTools = ['list_agents', 'list_sessions', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
+  const coreTools = ['list_agents', 'list_tasks', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
   const wsTools = ['transform_prompt'];
   const neuronTools = ['continue_task', 'create_subtask'];
   const totalTools = coreTools.length + wsTools.length + neuronTools.length;
 
   console.error(`Tools: ${totalTools} total`);
-  console.error(`  - ${coreTools.length} core (agents, sessions, spells, workspace)`);
+  console.error(`  - ${coreTools.length} core (agents, tasks, spells, workspace)`);
   console.error(`  - ${wsTools.length} WebSocket-native (transform_prompt)`);
   console.error(`  - ${neuronTools.length} neuron (continue_task, create_subtask)`);
   console.error('WebSocket: Real-time streaming enabled');

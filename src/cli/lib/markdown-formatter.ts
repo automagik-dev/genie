@@ -18,7 +18,7 @@ export interface ChatMessage {
 export type OutputMode = 'final' | 'recent' | 'overview' | 'full';
 
 export interface SessionMeta {
-  sessionId: string | null;
+  taskId: string | null;
   agent: string;
   status: string | null;
   executor?: string;
@@ -28,7 +28,7 @@ export interface SessionMeta {
 }
 
 export interface SessionEntry {
-  sessionId: string;
+  taskId: string;
   agent: string;
   status: string;
   executor: string;
@@ -70,8 +70,8 @@ export function formatTranscriptMarkdown(
   const parts: string[] = [];
 
   // Session header
-  const sessionId = meta.sessionId || 'pending';
-  parts.push(`## Session: ${sessionId}`);
+  const taskId = meta.taskId || 'pending';
+  parts.push(`## Session: ${taskId}`);
 
   switch (mode) {
     case 'final':
@@ -103,10 +103,10 @@ export function formatSessionList(sessions: SessionEntry[]): string {
   parts.push('| Session ID | Agent | Status | Executor | Model |');
   parts.push('|------------|-------|--------|----------|-------|');
 
-  for (const session of sessions) {
-    const id = trimSessionId(session.sessionId);
-    const model = session.model ? session.model : '';
-    parts.push(`| ${id} | ${session.agent} | ${session.status} | ${session.executor} | ${model} |`);
+  for (const task of sessions) {
+    const id = trimSessionId(task.taskId);
+    const model = task.model ? task.model : '';
+    parts.push(`| ${id} | ${task.agent} | ${task.status} | ${task.executor} | ${model} |`);
   }
 
   return parts.join('\n') + '\n';
@@ -335,11 +335,11 @@ function truncateText(text: string, maxLength: number): string {
 /**
  * Trim session ID for display (keep first 8 chars)
  */
-function trimSessionId(sessionId: string): string {
-  if (sessionId.length <= 10) {
-    return sessionId;
+function trimSessionId(taskId: string): string {
+  if (taskId.length <= 10) {
+    return taskId;
   }
-  return `${sessionId.slice(0, 8)}...`;
+  return `${taskId.slice(0, 8)}...`;
 }
 
 /**

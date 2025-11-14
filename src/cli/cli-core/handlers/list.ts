@@ -37,7 +37,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
           const sessions = await forgeExecutor.listSessions();
           const markdown = formatSessionList(
             sessions.map((session) => ({
-              sessionId: session.id,
+              taskId: session.id,
               agent: session.agent,
               status: session.status,
               executor: [session.executor, session.variant].filter(Boolean).join('/'),
@@ -57,7 +57,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
 
       const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
       const sessions = Object.entries(store.sessions || {}).map(([attemptId, entry]) => ({
-        sessionId: attemptId, // Now truly the UUID (issue #407 fix)
+        taskId: attemptId, // Now truly the UUID (issue #407 fix)
         agent: entry.agent,
         status: entry.status || 'unknown',
         executor: [entry.executor, entry.executorVariant].filter(Boolean).join('/'),

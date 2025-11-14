@@ -19,7 +19,7 @@ export async function runInstallChat(options: InstallChatOptions): Promise<void>
       name: `install-${options.template}-${Date.now()}`
     });
 
-    const sessionId = result.sessionId;
+    const taskId = result.taskId;
     console.log(`🤖 Agent: ${result.response || 'Hello! I\'m the install agent. Let me help you set up Genie.'}\n`);
 
     // Interactive chat loop
@@ -42,7 +42,7 @@ export async function runInstallChat(options: InstallChatOptions): Promise<void>
 
       try {
         const result = await options.mcpClient.resume({
-          sessionId,
+          taskId,
           prompt: userInput
         });
 

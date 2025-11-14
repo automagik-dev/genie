@@ -22,29 +22,29 @@ export function getStatsTracker(): StatsTracker {
  */
 export function hookSessionStart(projectId: string, projectName: string): void {
   const tracker = getStatsTracker();
-  const session = tracker.startSession(projectId, projectName);
-  console.error(`📊 Session started: ${session.id}`);
+  const task = tracker.startSession(projectId, projectName);
+  console.error(`📊 Session started: ${task.id}`);
 }
 
 /**
  * Hook 2: End Session (call from execution completion or SIGINT)
  */
-export function hookSessionEnd(sessionId: string): void {
+export function hookSessionEnd(taskId: string): void {
   const tracker = getStatsTracker();
-  tracker.endSession(sessionId);
-  console.error(`📊 Session ended: ${sessionId}`);
+  tracker.endSession(taskId);
+  console.error(`📊 Session ended: ${taskId}`);
 }
 
 /**
  * Hook 3: Record Tokens (call from execution process token updates)
  */
-export function hookTokenUpdate(sessionId: string, inputTokens: number, outputTokens: number): void {
+export function hookTokenUpdate(taskId: string, inputTokens: number, outputTokens: number): void {
   const tracker = getStatsTracker();
-  tracker.recordTokens(sessionId, inputTokens, outputTokens);
+  tracker.recordTokens(taskId, inputTokens, outputTokens);
 
   // Check for milestones
-  const session = tracker.getCurrentSession();
-  if (session) {
+  const task = tracker.getCurrentSession();
+  if (task) {
     const milestones = tracker.getRecentMilestones(1);
     if (milestones.length > 0) {
       const latest = milestones[0];
@@ -57,27 +57,27 @@ export function hookTokenUpdate(sessionId: string, inputTokens: number, outputTo
 /**
  * Hook 4: Record Task Completion (call when Forge task status changes to 'done')
  */
-export function hookTaskCompletion(sessionId: string, taskId: string, taskTitle: string): void {
+export function hookTaskCompletion(sessionTaskId: string, forgeTaskId: string, taskTitle: string): void {
   const tracker = getStatsTracker();
-  tracker.recordTaskCompletion(sessionId, taskId, taskTitle);
+  tracker.recordTaskCompletion(sessionTaskId, forgeTaskId, taskTitle);
   console.error(`✅ Task completed: ${taskTitle}`);
 }
 
 /**
  * Hook 5: Record Wish Fulfillment (call when wish is marked complete)
  */
-export function hookWishFulfillment(sessionId: string): void {
+export function hookWishFulfillment(taskId: string): void {
   const tracker = getStatsTracker();
-  tracker.recordWishFulfillment(sessionId);
+  tracker.recordWishFulfillment(taskId);
   console.error(`🎯 Wish fulfilled!`);
 }
 
 /**
  * Hook 6: Record Agent Invocation (call when agent starts)
  */
-export function hookAgentInvocation(sessionId: string, agentId: string): void {
+export function hookAgentInvocation(taskId: string, agentId: string): void {
   const tracker = getStatsTracker();
-  tracker.recordAgentInvocation(sessionId, agentId);
+  tracker.recordAgentInvocation(taskId, agentId);
 }
 
 /**
@@ -85,8 +85,8 @@ export function hookAgentInvocation(sessionId: string, agentId: string): void {
  */
 export function getCurrentSessionId(): string | null {
   const tracker = getStatsTracker();
-  const session = tracker.getCurrentSession();
-  return session ? session.id : null;
+  const task = tracker.getCurrentSession();
+  return task ? task.id : null;
 }
 
 /**
@@ -94,11 +94,11 @@ export function getCurrentSessionId(): string | null {
  */
 export function ensureSession(projectId: string = 'default', projectName: string = 'Genie Workspace'): string {
   const tracker = getStatsTracker();
-  let session = tracker.getCurrentSession();
+  let task = tracker.getCurrentSession();
 
-  if (!session) {
-    session = tracker.startSession(projectId, projectName);
+  if (!task) {
+    task = tracker.startSession(projectId, projectName);
   }
 
-  return session.id;
+  return task.id;
 }

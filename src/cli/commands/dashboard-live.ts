@@ -110,7 +110,7 @@ export async function runDashboardLive(
 
 async function fetchDashboardState(tracker: StatsTracker, dashboardStartTime: number): Promise<DashboardState> {
   const baseUrl = getForgeConfig().baseUrl;
-  const session = tracker.getCurrentSession();
+  const task = tracker.getCurrentSession();
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -127,7 +127,7 @@ async function fetchDashboardState(tracker: StatsTracker, dashboardStartTime: nu
   }
 
   return {
-    session,
+    session: task,
     monthly: comparison.current,
     previousMonth: comparison.previous,
     allTime,

@@ -5,7 +5,7 @@ export interface BackgroundLoadingParams {
 
 export interface BackgroundStartParams {
   agentName: string;
-  sessionName?: string | null;
+  taskName?: string | null;
   executor?: string | null;
   mode?: string | null;
   background?: boolean | null;
@@ -15,7 +15,7 @@ export interface BackgroundStartParams {
 export interface RunCompletionParams {
   agentName: string;
   outcome: 'success' | 'warning' | 'failure';
-  sessionName?: string | null;
+  taskName?: string | null;
   executorKey?: string;
   model?: string | null;
   permissionMode?: string | null;
@@ -55,8 +55,8 @@ export function buildBackgroundStartView(params: BackgroundStartParams): string 
 
   // Badges
   const badges: string[] = [];
-  if (params.sessionName) {
-    badges.push(`Session ${params.sessionName}`);
+  if (params.taskName) {
+    badges.push(`Session ${params.taskName}`);
   } else {
     badges.push('Session pending');
   }
@@ -67,8 +67,8 @@ export function buildBackgroundStartView(params: BackgroundStartParams): string 
   lines.push('');
 
   // Key-value pairs
-  if (params.sessionName) {
-    lines.push(`**Session:** ${params.sessionName}`);
+  if (params.taskName) {
+    lines.push(`**Session:** ${params.taskName}`);
   } else {
     lines.push(`**Session:** pending`);
   }
@@ -111,8 +111,8 @@ export function buildRunCompletionView(params: RunCompletionParams): string {
 
   // Only show stats for attached mode (not background)
   if (params.background === false) {
-    if (params.sessionName) {
-      lines.push(`**Resume:** npx automagik-genie resume ${params.sessionName} "continue"`);
+    if (params.taskName) {
+      lines.push(`**Resume:** npx automagik-genie resume ${params.taskName} "continue"`);
     }
 
     // Executor and model on same line

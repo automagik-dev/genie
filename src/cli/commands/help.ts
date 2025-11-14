@@ -14,9 +14,9 @@ export async function runHelp(
     { command: 'run', args: '<agent> "<prompt>" [-x <executor>] [-m <model>]', description: 'Start or attach to an agent' },
     { command: 'list agents', args: '', description: 'Show all available agents' },
     { command: 'list sessions', args: '', description: 'Display active and recent runs' },
-    { command: 'resume', args: '<sessionId> "<prompt>"', description: 'Continue a background session' },
-    { command: 'view', args: '<sessionId> [--full]', description: 'Show transcript for a session' },
-    { command: 'stop', args: '<sessionId>', description: 'End a background session' },
+    { command: 'resume', args: '<taskId> "<prompt>"', description: 'Continue a background session' },
+    { command: 'view', args: '<taskId> [--full]', description: 'Show transcript for a session' },
+    { command: 'stop', args: '<taskId>', description: 'End a background session' },
     { command: 'statusline', args: '', description: 'Emit deprecated status line output' },
     { command: 'help', args: '', description: 'Show this panel' }
   ];
