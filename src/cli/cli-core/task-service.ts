@@ -2,45 +2,45 @@ import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
 import {
-  loadSessions,
-  SessionStore,
-  SessionPathsConfig,
-  SessionLoadConfig,
-  SessionDefaults
-} from '../session-store';
+  loadTasks,
+  TaskStore,
+  TaskPathsConfig,
+  TaskLoadConfig,
+  TaskDefaults
+} from '../task-store';
 
-export interface SessionServiceOptions {
-  paths: SessionPathsConfig;
-  loadConfig?: SessionLoadConfig;
-  defaults?: SessionDefaults;
+export interface TaskServiceOptions {
+  paths: TaskPathsConfig;
+  loadConfig?: TaskLoadConfig;
+  defaults?: TaskDefaults;
   onWarning?: (message: string) => void;
 }
 
 interface SaveResult {
-  store: SessionStore;
+  store: TaskStore;
 }
 
-export class SessionService {
-  private readonly paths: SessionPathsConfig;
-  private readonly loadConfig?: SessionLoadConfig;
-  private readonly defaults?: SessionDefaults;
+export class TaskService {
+  private readonly paths: TaskPathsConfig;
+  private readonly loadConfig?: TaskLoadConfig;
+  private readonly defaults?: TaskDefaults;
   private readonly onWarning?: (message: string) => void;
 
-  constructor(options: SessionServiceOptions) {
+  constructor(options: TaskServiceOptions) {
     this.paths = options.paths;
     this.loadConfig = options.loadConfig;
     this.defaults = options.defaults;
     this.onWarning = options.onWarning;
   }
 
-  load(callbacks: { onWarning?: (message: string) => void } = {}): SessionStore {
+  load(callbacks: { onWarning?: (message: string) => void } = {}): TaskStore {
     const mergedCallbacks = {
       onWarning: callbacks.onWarning || this.onWarning
     };
-    return loadSessions(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
+    return loadTasks(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
   }
 
-  async save(store: SessionStore): Promise<SaveResult> {
+  async save(store: TaskStore): Promise<SaveResult> {
     if (!this.paths.sessionsFile) {
       return { store };
     }
@@ -51,7 +51,7 @@ export class SessionService {
     // Native file locking with retry logic
     return await this.retryWithLock(async () => {
       // TWIN FIX #3: Reload fresh disk state immediately before merge to prevent rollback
-      const diskStore = loadSessions(this.paths, this.loadConfig, this.defaults, {
+      const diskStore = loadTasks(this.paths, this.loadConfig, this.defaults, {
         onWarning: this.onWarning
       });
       const merged = this.mergeStores(diskStore, store);
@@ -155,20 +155,20 @@ export class SessionService {
         throw err;
       }
     }
-    throw new Error('SessionService: Lock acquisition timeout after ' + maxRetries + ' retries');
+    throw new Error('TaskService: Lock acquisition timeout after ' + maxRetries + ' retries');
   }
 
   private async ensureFile(target: string): Promise<void> {
     const dir = path.dirname(target);
     await fsPromises.mkdir(dir, { recursive: true });
     if (!fs.existsSync(target)) {
-      const initial: SessionStore = { version: 2, sessions: {} };
+      const initial: TaskStore = { version: 2, sessions: {} };
       await fsPromises.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
     }
   }
 
-  private mergeStores(base: SessionStore, incoming: SessionStore): SessionStore {
-    const merged: SessionStore = {
+  private mergeStores(base: TaskStore, incoming: TaskStore): TaskStore {
+    const merged: TaskStore = {
       version: incoming.version ?? base.version ?? 2,
       sessions: { ...base.sessions }
     };

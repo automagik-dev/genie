@@ -2,19 +2,19 @@ import fs from 'fs';
 import { DEFAULT_EXECUTOR_KEY, normalizeExecutorKeyOrDefault, normalizeExecutorKey } from './lib/executor-registry';
 
 /**
- * Session entry metadata (v4)
+ * Task entry metadata (v4)
  *
  * Breaking Change (Issue #407):
- * - Sessions are now keyed by Forge attemptId (UUID) instead of friendly names
+ * - Tasks are now keyed by Forge attemptId (UUID) instead of friendly names
  * - This removes the abstraction layer and aligns directly with Forge's API
- * - Friendly name generation (generateSessionName) has been removed
+ * - Friendly name generation (generateTaskName) has been removed
  *
  * Forge Integration (Wish #120-A):
- * - All sessions use Forge backend for operations (create, resume, stop, view)
+ * - All tasks use Forge backend for operations (create, resume, stop, view)
  * - attemptId is the natural identifier provided by Forge
  * - taskId and projectId track the parent entities in Forge
  */
-export interface SessionEntry {
+export interface TaskEntry {
   agent: string;
   taskId?: string;         // Forge task ID (optional for migrated v3 sessions)
   projectId?: string;      // Forge project ID (optional for migrated v3 sessions)
@@ -31,49 +31,49 @@ export interface SessionEntry {
   background?: boolean;
 }
 
-export interface SessionStore {
+export interface TaskStore {
   version: number;
-  sessions: Record<string, SessionEntry>; // keyed by attemptId (UUID) - v4
+  sessions: Record<string, TaskEntry>; // keyed by attemptId (UUID) - v4
   // Legacy format compatibility (will be migrated on load or rejected)
-  agents?: Record<string, SessionEntry>;
+  agents?: Record<string, TaskEntry>;
 }
 
-export interface SessionPathsConfig {
+export interface TaskPathsConfig {
   sessionsFile?: string;
 }
 
-export interface SessionLoadConfig {
+export interface TaskLoadConfig {
   defaults?: {
     executor?: string;
   };
 }
 
-export interface SessionDefaults {
+export interface TaskDefaults {
   defaults?: {
     executor?: string;
   };
 }
 
-export function loadSessions(
-  paths: SessionPathsConfig = {},
-  config: SessionLoadConfig = {},
-  defaults: SessionDefaults = {},
+export function loadTasks(
+  paths: TaskPathsConfig = {},
+  config: TaskLoadConfig = {},
+  defaults: TaskDefaults = {},
   callbacks: { onWarning?: (message: string) => void } = {}
-): SessionStore {
+): TaskStore {
   const storePath = paths.sessionsFile;
-  let store: SessionStore;
+  let store: TaskStore;
 
   if (storePath && fs.existsSync(storePath)) {
-    store = normalizeSessionStore(readJson(storePath, callbacks), callbacks);
+    store = normalizeTaskStore(readJson(storePath, callbacks), callbacks);
   } else {
     store = { version: 4, sessions: {} };
   }
 
   const defaultExecutor = resolveDefaultExecutor(config, defaults);
-  return migrateSessionEntries(store, defaultExecutor);
+  return migrateTaskEntries(store, defaultExecutor);
 }
 
-export function saveSessions(paths: SessionPathsConfig = {}, store: SessionStore): void {
+export function saveTasks(paths: TaskPathsConfig = {}, store: TaskStore): void {
   if (!paths.sessionsFile) return;
   const payload = JSON.stringify(store, null, 2);
   fs.writeFileSync(paths.sessionsFile, payload);
@@ -91,17 +91,17 @@ function readJson(filePath: string, callbacks: { onWarning?: (message: string) =
   }
 }
 
-function normalizeSessionStore(
+function normalizeTaskStore(
   data: unknown,
   callbacks: { onWarning?: (message: string) => void } = {}
-): SessionStore {
+): TaskStore {
   if (!data || typeof data !== 'object') {
     return { version: 4, sessions: {} };
   }
 
-  const incoming = data as Partial<SessionStore> & {
-    agents?: Record<string, SessionEntry>;
-    sessions?: Record<string, SessionEntry>;
+  const incoming = data as Partial<TaskStore> & {
+    agents?: Record<string, TaskEntry>;
+    sessions?: Record<string, TaskEntry>;
   };
 
   // Version 4 format (sessions keyed by attemptId/UUID) - current
@@ -113,10 +113,10 @@ function normalizeSessionStore(
   }
 
   // Version 3 or earlier - MIGRATE to v4
-  // Rationale: Preserve user's ability to resume/stop/view existing sessions
+  // Rationale: Preserve user's ability to resume/stop/view existing tasks
   // Key change: Use attemptId (from v3's sessionId field) as the v4 key
   if (incoming.version && incoming.version < 4) {
-    const sessions: Record<string, SessionEntry> = {};
+    const sessions: Record<string, TaskEntry> = {};
     let migratedCount = 0;
 
     // v3 sessions were keyed by friendly name, need to rekey by attemptId
@@ -147,9 +147,9 @@ function normalizeSessionStore(
     });
 
     callbacks.onWarning?.(
-      `Migrated ${migratedCount} session(s) from v${incoming.version} to v4. ` +
-      `Sessions can be viewed/resumed/stopped using their IDs. ` +
-      `Some metadata (taskId/projectId) may be incomplete for migrated sessions.`
+      `Migrated ${migratedCount} task(s) from v${incoming.version} to v4. ` +
+      `Tasks can be viewed/resumed/stopped using their IDs. ` +
+      `Some metadata (taskId/projectId) may be incomplete for migrated tasks.`
     );
 
     return {
@@ -160,7 +160,7 @@ function normalizeSessionStore(
 
   // No version number - treat as v2 and migrate
   if (!incoming.version && incoming.sessions) {
-    const sessions: Record<string, SessionEntry> = {};
+    const sessions: Record<string, TaskEntry> = {};
     let migratedCount = 0;
 
     // v2 sessions were keyed by sessionId (attemptId), already in correct format
@@ -187,9 +187,9 @@ function normalizeSessionStore(
     });
 
     callbacks.onWarning?.(
-      `Migrated ${migratedCount} session(s) from v2 to v4. ` +
-      `Sessions can be viewed/resumed/stopped using their IDs. ` +
-      `Some metadata (taskId/projectId) may be incomplete for migrated sessions.`
+      `Migrated ${migratedCount} task(s) from v2 to v4. ` +
+      `Tasks can be viewed/resumed/stopped using their IDs. ` +
+      `Some metadata (taskId/projectId) may be incomplete for migrated tasks.`
     );
 
     return {
@@ -205,8 +205,8 @@ function normalizeSessionStore(
   };
 }
 
-function migrateSessionEntries(store: SessionStore, defaultExecutor: string): SessionStore {
-  const result: SessionStore = {
+function migrateTaskEntries(store: TaskStore, defaultExecutor: string): TaskStore {
+  const result: TaskStore = {
     version: store.version ?? 4,
     sessions: { ...store.sessions }
   };
@@ -223,7 +223,7 @@ function migrateSessionEntries(store: SessionStore, defaultExecutor: string): Se
   return result;
 }
 
-function resolveDefaultExecutor(config: SessionLoadConfig = {}, defaults: SessionDefaults = {}): string {
+function resolveDefaultExecutor(config: TaskLoadConfig = {}, defaults: TaskDefaults = {}): string {
   return normalizeExecutorKeyOrDefault(
     config.defaults?.executor ??
       defaults.defaults?.executor ??
@@ -234,7 +234,7 @@ function resolveDefaultExecutor(config: SessionLoadConfig = {}, defaults: Sessio
 
 export const _internals = {
   readJson,
-  normalizeSessionStore,
-  migrateSessionEntries,
+  normalizeTaskStore,
+  migrateTaskEntries,
   resolveDefaultExecutor
 };

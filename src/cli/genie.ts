@@ -12,7 +12,7 @@ import {
   getStartupWarnings,
   clearStartupWarnings
 } from './lib/config';
-import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/session-helpers';
+import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/task-helpers';
 import {
   buildRunHelpView,
   buildResumeHelpView,
@@ -22,7 +22,7 @@ import {
 } from './views/help';
 import { buildErrorView, buildInfoView, buildWarningView } from './views/common';
 import { emitView } from './lib/view-helpers';
-import { SessionService, createHandlers } from './cli-core';
+import { TaskService, createHandlers } from './cli-core';
 import type { HandlerContext } from './cli-core';
 import { runHelp } from './commands/help';
 import { runInit } from './commands/init';
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
       }
 
       // Create handler context for run/resume/list/view/stop commands
-      const sessionService = new SessionService({
+      const sessionService = new TaskService({
         paths,
         loadConfig: config,
         defaults: { defaults: config.defaults }
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
         sessionService,
         emitView,
         recordRuntimeWarning: (msg: string) => {
-          const { recordRuntimeWarning } = require('./lib/session-helpers');
+          const { recordRuntimeWarning } = require('./lib/task-helpers');
           recordRuntimeWarning(msg);
         },
         recordStartupWarning: (msg: string) => {
