@@ -86,10 +86,9 @@ export class TaskManager {
         const task = await this.forgeClient.getTask(projectId, agent.task_id);
 
         // Get latest attempt
-        const attempts = await this.forgeClient.listTaskAttempts(projectId);
+        const attempts = await this.forgeClient.listTaskAttempts(agent.task_id);
         const latestAttempt = attempts
-          .filter((a: any) => a.task_id === agent.task_id)
-          .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))[0];
+          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
 
         if (latestAttempt) {
           return {

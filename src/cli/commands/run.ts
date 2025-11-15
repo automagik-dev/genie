@@ -47,7 +47,7 @@ export async function runRun(
     process.exit(1);
   }
 
-  if (parsed.options.background) {
+  if (parsed.options.background === true) {
     const { runTask } = await import('./task.js');
     return runTask(parsed, config, paths);
   }

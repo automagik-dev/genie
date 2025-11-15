@@ -80,8 +80,11 @@ program
   .option('--quiet', 'Suppress startup messages')
   .action((agent: string, prompt: string, options: { background?: boolean; executor?: string; model?: string; name?: string; raw?: boolean; quiet?: boolean }) => {
     const args = ['run', agent, prompt];
-    if (options.background) {
+    if (options.background === true) {
       args.push('--background');
+    }
+    if (options.background === false) {
+      args.push('--no-background');
     }
     if (options.executor) {
       args.push('--executor', options.executor);

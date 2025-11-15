@@ -1,6 +1,6 @@
 export interface CLIOptions {
   rawArgs: string[];
-  background: boolean;
+  background?: boolean;
   backgroundExplicit: boolean;
   backgroundRunner: boolean;
   requestHelp?: boolean;

@@ -124,7 +124,7 @@ export function prepareDirectories(paths: Required<ConfigPaths>): void {
 }
 
 export function applyDefaults(options: CLIOptions, defaults?: GenieConfig['defaults']): void {
-  if (!options.backgroundExplicit) {
-    options.background = Boolean(defaults?.background);
+  if (options.background === undefined) {
+    options.background = defaults?.background ?? true;
   }
 }
