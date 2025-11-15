@@ -68,7 +68,7 @@ export async function runRun(
   ).trim().toUpperCase();
   const model = parsed.options.model || agentGenie.model || config.defaults?.model;
 
-  const { baseUrl } = getForgeConfig();
+  const { baseUrl, token } = getForgeConfig();
   const logDir = path.join(process.cwd(), '.genie', 'state');
   const quiet = parsed.options.quiet || false;
   const raw = parsed.options.raw || false;
@@ -176,6 +176,8 @@ export async function runRun(
     const result = await monitorTaskCompletion({
       attemptId,
       baseUrl,
+      token,
+      taskUrl,
       onStatus: (status) => {
         if (!quiet && status !== 'running') {
           process.stderr.write(`Status: ${status}\n`);

@@ -14,6 +14,8 @@ export interface TaskMonitorOptions {
   onLog?: (log: string) => void;
   onStatus?: (status: string) => void;
   timeout?: number;
+  token?: string;
+  taskUrl?: string;
 }
 
 export interface TaskResult {
@@ -41,32 +43,23 @@ export async function monitorTaskCompletion(
     baseUrl,
     onLog,
     onStatus,
-    timeout = 300000
+    timeout = 300000,
+    token,
+    taskUrl: providedTaskUrl
   } = options;
 
   const startTime = Date.now();
-  const taskUrl = `${baseUrl}/tasks/${attemptId}`;
+  const authToken = token ?? process.env.FORGE_TOKEN;
+  const client = new ForgeClient(baseUrl, authToken);
+  const attemptMeta = await getTaskAttemptSafe(client, attemptId);
+  const taskUrl = providedTaskUrl || deriveTaskUrl(baseUrl, attemptMeta, attemptId);
+  const processId = await waitForLatestProcessId(client, attemptId);
 
-  const client = new ForgeClient(baseUrl, process.env.FORGE_TOKEN);
-  
-  let processId: string;
-  try {
-    const processes = await client.listExecutionProcesses(attemptId);
-    if (!processes || processes.length === 0) {
-      return {
-        status: 'failed',
-        output: '',
-        error: 'No execution process found for task attempt',
-        duration_ms: Date.now() - startTime,
-        task_url: taskUrl
-      };
-    }
-    processId = processes[processes.length - 1].id;
-  } catch (error) {
+  if (!processId) {
     return {
       status: 'failed',
       output: '',
-      error: `Failed to fetch execution process: ${error}`,
+      error: 'No execution process found for task attempt (executor did not start in time)',
       duration_ms: Date.now() - startTime,
       task_url: taskUrl
     };
@@ -79,10 +72,12 @@ export async function monitorTaskCompletion(
     let timeoutId: NodeJS.Timeout | null = null;
     let outputBuffer: string[] = [];
     let lastStatus = 'running';
+    let settled = false;
 
     // Cleanup function
     const cleanup = () => {
       if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = null;
       if (ws) {
         ws.removeAllListeners();
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
@@ -91,10 +86,16 @@ export async function monitorTaskCompletion(
       }
     };
 
+    const resolveOnce = (result: TaskResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
     // Timeout handler
     timeoutId = setTimeout(() => {
-      cleanup();
-      resolve({
+      resolveOnce({
         status: 'timeout',
         output: outputBuffer.join('\n'),
         error: 'Task did not complete within timeout',
@@ -107,7 +108,8 @@ export async function monitorTaskCompletion(
     try {
       ws = new WebSocket(wsUrl, {
         headers: {
-          'User-Agent': 'Genie-TaskMonitor/1.0'
+          'User-Agent': 'Genie-TaskMonitor/1.0',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
         }
       });
     } catch (error) {
@@ -139,16 +141,14 @@ export async function monitorTaskCompletion(
 
           // Check for completion
           if (message.status === 'completed' || message.status === 'success') {
-            cleanup();
-            resolve({
+            resolveOnce({
               status: 'completed',
               output: outputBuffer.join('\n') || '(no output)',
               duration_ms: Date.now() - startTime,
               task_url: taskUrl
             });
           } else if (message.status === 'failed' || message.status === 'error') {
-            cleanup();
-            resolve({
+            resolveOnce({
               status: 'failed',
               output: outputBuffer.join('\n') || '(no output)',
               error: message.error || 'Task execution failed',
@@ -173,8 +173,7 @@ export async function monitorTaskCompletion(
 
     // Error handler
     ws.on('error', (error: Error) => {
-      cleanup();
-      resolve({
+      resolveOnce({
         status: 'failed',
         output: outputBuffer.join('\n'),
         error: `WebSocket error: ${error.message}`,
@@ -185,23 +184,74 @@ export async function monitorTaskCompletion(
 
     // Connection closed
     ws.on('close', (code: number, reason: Buffer) => {
-      cleanup();
+      const closedStatus = lastStatus === 'completed' || lastStatus === 'success'
+        ? 'completed'
+        : lastStatus === 'failed' || lastStatus === 'error'
+        ? 'failed'
+        : 'failed';
 
-      // If we haven't resolved yet, treat close as completion
-      if (timeoutId) {
-        const finalStatus = lastStatus === 'completed' || lastStatus === 'success'
-          ? 'completed'
-          : lastStatus === 'failed' || lastStatus === 'error'
-          ? 'failed'
-          : 'completed'; // Default to completed if connection closed gracefully
+      const errorMessage =
+        closedStatus === 'failed' && (!lastStatus || lastStatus === 'running')
+          ? `Connection closed (code ${code}) before receiving final status${reason?.length ? `: ${reason.toString()}` : ''}`
+          : undefined;
 
-        resolve({
-          status: finalStatus as 'completed' | 'failed',
-          output: outputBuffer.join('\n') || '(no output)',
-          duration_ms: Date.now() - startTime,
-          task_url: taskUrl
-        });
-      }
+      resolveOnce({
+        status: closedStatus as 'completed' | 'failed',
+        output: outputBuffer.join('\n') || '(no output)',
+        error: errorMessage,
+        duration_ms: Date.now() - startTime,
+        task_url: taskUrl
+      });
     });
   });
+}
+
+async function getTaskAttemptSafe(client: ForgeClient, attemptId: string): Promise<any | null> {
+  try {
+    return await client.getTaskAttempt(attemptId);
+  } catch {
+    return null;
+  }
+}
+
+function deriveTaskUrl(baseUrl: string, attempt: any | null, attemptId: string): string {
+  if (attempt) {
+    const projectId = attempt.project_id || attempt.projectId;
+    const taskId = attempt.task_id || attempt.taskId;
+    if (projectId && taskId) {
+      const cleanBase = baseUrl.replace(/\/$/, '');
+      return `${cleanBase}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;
+    }
+  }
+  return `${baseUrl.replace(/\/$/, '')}/tasks/${attemptId}`;
+}
+
+async function waitForLatestProcessId(
+  client: ForgeClient,
+  attemptId: string,
+  timeoutMs = 45000,
+  pollIntervalMs = 1000
+): Promise<string | null> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const processes = await client.listExecutionProcesses(attemptId);
+      if (Array.isArray(processes) && processes.length > 0) {
+        const latest = processes[processes.length - 1];
+        if (latest?.id) {
+          return latest.id;
+        }
+      }
+    } catch {
+      // Ignore temporary errors – Forge may still be booting the executor
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  return null;
+}
+
+function sleep(durationMs: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, durationMs));
 }

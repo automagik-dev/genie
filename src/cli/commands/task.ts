@@ -149,7 +149,7 @@ async function runTaskMonitor(
     process.exit(1);
   }
 
-  const { baseUrl } = getForgeConfig();
+  const { baseUrl, token } = getForgeConfig();
 
   console.log(`📡 Monitoring task attempt: ${attemptId}`);
   console.log('');
@@ -158,6 +158,7 @@ async function runTaskMonitor(
     const result = await monitorTaskCompletion({
       attemptId,
       baseUrl,
+      token,
       onLog: (log) => {
         console.log(log);
       },
