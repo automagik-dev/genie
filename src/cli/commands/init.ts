@@ -165,6 +165,7 @@ export async function runInit(
       }
     } else {
       // Automation mode OR upgrade mode: use flags or detect from existing installation
+      const targetGenie = resolveTargetGeniePath(cwd);
       if (isUpgrade && await pathExists(targetGenie)) {
         // Upgrade: detect installed collectives from existing .genie/
         templates = await detectInstalledCollectives(targetGenie);

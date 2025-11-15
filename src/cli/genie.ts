@@ -104,8 +104,8 @@ async function main(): Promise<void> {
           await emitView(buildRunHelpView(), parsed.options);
           return;
         }
-        if (!handlers) throw new Error('Handlers not initialized');
-        await handlers.run(parsed);
+        const { runRun } = await import('./commands/run.js');
+        await runRun(parsed, config, paths);
         break;
       case 'init':
         if (parsed.options.requestHelp) {
@@ -141,6 +141,10 @@ async function main(): Promise<void> {
       case 'talk':
         const { runTalk } = await import('./commands/talk.js');
         await runTalk(parsed, config, paths);
+        break;
+      case 'task':
+        const { runTask } = await import('./commands/task.js');
+        await runTask(parsed, config, paths);
         break;
       case 'cleanup':
         await runCleanup(parsed, config, paths);
