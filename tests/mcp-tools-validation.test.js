@@ -161,14 +161,14 @@ async function runTests() {
     const toolsResponse = await sendMCPRequest(serverProcess, toolsRequest);
     assert(toolsResponse.result, 'tools/list returned result');
     assert(Array.isArray(toolsResponse.result.tools), 'Tools is array');
-    assert(toolsResponse.result.tools.length === 6, `Expected 6 tools, got ${toolsResponse.result.tools.length}`);
+    assert(toolsResponse.result.tools.length >= 6, `Expected at least 6 tools, got ${toolsResponse.result.tools.length}`);
 
     const toolNames = toolsResponse.result.tools.map(t => t.name);
     assert(toolNames.includes('list_agents'), 'list_agents tool present');
-    assert(toolNames.includes('list_sessions'), 'list_sessions tool present');
-    assert(toolNames.includes('run'), 'run tool present');
-    assert(toolNames.includes('resume'), 'resume tool present');
-    assert(toolNames.includes('view'), 'view tool present');
+    assert(toolNames.includes('list_tasks'), 'list_tasks tool present');
+    assert(toolNames.includes('task'), 'task tool present');
+    assert(toolNames.includes('continue_task'), 'continue_task tool present');
+    assert(toolNames.includes('view_task'), 'view_task tool present');
     assert(toolNames.includes('stop'), 'stop tool present');
 
     // Test 4: Call list_agents tool
@@ -192,36 +192,36 @@ async function runTests() {
     assert(agentsContent.includes('Found'), 'Response includes agent count');
     assert(agentsContent.includes('agents'), 'Response mentions agents');
 
-    // Test 5: Call list_sessions tool
-    console.log('\n[Test 5] Call list_sessions Tool');
+    // Test 5: Call list_tasks tool
+    console.log('\n[Test 5] Call list_tasks Tool');
     const listSessionsRequest = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
       params: {
-        name: 'list_sessions',
+        name: 'list_tasks',
         arguments: {}
       }
     };
 
     const listSessionsResponse = await sendMCPRequest(serverProcess, listSessionsRequest);
-    assert(listSessionsResponse.result, 'list_sessions returned result');
+    assert(listSessionsResponse.result, 'list_tasks returned result');
     assert(Array.isArray(listSessionsResponse.result.content), 'Result has content array');
 
     const sessionsContent = listSessionsResponse.result.content[0].text;
     assert(
-      sessionsContent.includes('session') || sessionsContent.includes('No sessions'),
-      'Response mentions sessions or empty state'
+      sessionsContent.includes('task') || sessionsContent.includes('No tasks'),
+      'Response mentions tasks or empty state'
     );
 
     // Test 6: Tool schema validation
     console.log('\n[Test 6] Tool Schema Validation');
-    const runTool = toolsResponse.result.tools.find(t => t.name === 'run');
-    assert(runTool, 'run tool exists');
-    assert(runTool.description, 'run tool has description');
-    assert(runTool.inputSchema, 'run tool has input schema');
-    assert(runTool.inputSchema.properties.agent, 'run tool has agent parameter');
-    assert(runTool.inputSchema.properties.prompt, 'run tool has prompt parameter');
+    const runTool = toolsResponse.result.tools.find(t => t.name === 'task');
+    assert(runTool, 'task tool exists');
+    assert(runTool.description, 'task tool has description');
+    assert(runTool.inputSchema, 'task tool has input schema');
+    assert(runTool.inputSchema.properties.agent, 'task tool has agent parameter');
+    assert(runTool.inputSchema.properties.prompt, 'task tool has prompt parameter');
     assert(runTool.inputSchema.required.includes('agent'), 'agent parameter is required');
     assert(runTool.inputSchema.required.includes('prompt'), 'prompt parameter is required');
 

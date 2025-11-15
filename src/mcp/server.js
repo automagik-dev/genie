@@ -15,15 +15,15 @@ const http_1 = __importDefault(require("http"));
 const PORT = process.env.MCP_PORT ? parseInt(process.env.MCP_PORT) : 8080;
 // MCP Tools using cli-core handlers
 const TOOLS = {
-    'genie_run': {
-        description: 'Start a new Genie agent session',
+    'genie_task': {
+        description: 'Start a new Genie agent task',
         parameters: {
             agent: 'string',
             prompt: 'string'
         }
     },
-    'genie_resume': {
-        description: 'Continue an existing Genie session',
+    'genie_continue_task': {
+        description: 'Continue an existing Genie task',
         parameters: {
             taskId: 'string',
             prompt: 'string'
@@ -33,19 +33,19 @@ const TOOLS = {
         description: 'List all available Genie agents',
         parameters: {}
     },
-    'genie_list_sessions': {
-        description: 'List active and recent sessions',
+    'genie_list_tasks': {
+        description: 'List active and recent tasks',
         parameters: {}
     },
-    'genie_view': {
-        description: 'View session transcript',
+    'genie_view_task': {
+        description: 'View task transcript',
         parameters: {
             taskId: 'string',
             full: 'boolean?'
         }
     },
     'genie_stop': {
-        description: 'Stop a running session',
+        description: 'Stop a running task',
         parameters: {
             taskId: 'string'
         }

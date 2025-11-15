@@ -21,6 +21,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import WebSocket from 'ws';
 import { transformDisplayPath } from './lib/display-transform.js';
 
 // Import WebSocket-native tools (MVP Phase 6)
@@ -78,7 +79,7 @@ const WORKSPACE_ROOT = findWorkspaceRoot();
 
 // listSessions() imported from ./lib/server-helpers.js
 
-// Helper: View session transcript (uses Forge API directly)
+// Helper: View session transcript (uses Forge API + WebSocket normalized logs)
 async function viewSession(taskId: string): Promise<{status: string; transcript: string | null; error?: string}> {
   try {
     const mod = loadForgeExecutor();
@@ -89,45 +90,50 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
         error: 'Forge executor unavailable (did you build the CLI?)'
       };
     }
-    const forgeExecutor = mod.createForgeExecutor();
+    mod.createForgeExecutor(); // Warmup (ensures CLI build available)
 
-    // Get task details to find latest attempt
     const { ForgeClient } = require('../../src/lib/forge-client.js');
     const { baseUrl, token } = getForgeConfig();
     const forge = new ForgeClient(baseUrl, token);
 
-    // Get task attempts for this task
-    const attempts = await forge.listTaskAttempts(taskId);
+    // Attempt IDs are preferred; fall back to task IDs for backward compatibility
+    let attemptId = taskId;
+    let attemptDetails: any;
 
-    if (!Array.isArray(attempts) || !attempts.length) {
+    try {
+      attemptDetails = await forge.getTaskAttempt(attemptId);
+    } catch (err) {
+      const attempts = await forge.listTaskAttempts(taskId);
+      if (!Array.isArray(attempts) || !attempts.length) {
+        return {
+          status: 'error',
+          transcript: null,
+          error: `No attempts found for task ${taskId}`
+        };
+      }
+      const latestAttempt = attempts[attempts.length - 1];
+      attemptId = latestAttempt.id;
+      attemptDetails = await forge.getTaskAttempt(attemptId);
+    }
+
+    const status = attemptDetails.status || 'unknown';
+    const latestProcess = await waitForLatestProcess(forge, attemptId);
+
+    if (!latestProcess) {
       return {
-        status: 'error',
+        status,
         transcript: null,
-        error: `No attempts found for task ${taskId}`
+        error: 'Task executor has not produced logs yet. Try again shortly.'
       };
     }
 
-    // Get latest attempt
-    const latestAttempt = attempts[attempts.length - 1];
-    const attemptId = latestAttempt.id;
+    let transcript = await streamNormalizedLogs(forge, latestProcess.id, token);
 
-    // Get attempt status
-    const attemptDetails = await forge.getTaskAttempt(attemptId);
-    const status = attemptDetails.status || 'unknown';
-
-    // Get execution logs
-    const processes = await forge.listExecutionProcesses(attemptId);
-
-    let transcript = null;
-    if (processes.length > 0) {
-      const latestProcess = processes[processes.length - 1];
+    if (!transcript) {
       transcript = latestProcess.output || latestProcess.logs || null;
     }
 
-    return {
-      status,
-      transcript,
-    };
+    return { status, transcript };
   } catch (error: any) {
     return {
       status: 'error',
@@ -135,6 +141,156 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
       error: error.message || 'Unknown error viewing task'
     };
   }
+}
+
+async function waitForLatestProcess(
+  forge: any,
+  attemptId: string,
+  timeoutMs = 45000,
+  pollIntervalMs = 1000
+): Promise<any | null> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const processes = await forge.listExecutionProcesses(attemptId);
+      if (Array.isArray(processes) && processes.length > 0) {
+        return processes[processes.length - 1];
+      }
+    } catch {
+      // Ignore temporary API failures and keep polling
+    }
+    await sleep(pollIntervalMs);
+  }
+
+  return null;
+}
+
+async function streamNormalizedLogs(
+  forge: any,
+  processId: string,
+  token?: string,
+  timeoutMs = 30000
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const wsUrl = forge.getNormalizedLogsStreamUrl(processId);
+    const headers: Record<string, string> = { 'User-Agent': 'Genie-MCP/1.0' };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const entryOrder: string[] = [];
+    const entryText = new Map<string, string>();
+
+    const compileTranscript = () =>
+      entryOrder
+        .map((key) => entryText.get(key))
+        .filter((line): line is string => Boolean(line))
+        .join('\n') || null;
+
+    const upsertEntry = (path: string, text: string | null) => {
+      if (!text) return;
+      if (!entryText.has(path)) {
+        entryOrder.push(path);
+      }
+      entryText.set(path, text);
+    };
+
+    let resolved = false;
+    const finalize = () => {
+      if (resolved) return;
+      resolved = true;
+      resolve(compileTranscript());
+    };
+
+    const ws = new WebSocket(wsUrl, { headers });
+    const timer = setTimeout(() => {
+      ws.close();
+      finalize();
+    }, timeoutMs);
+
+    ws.on('message', (data: Buffer) => {
+      try {
+        const message = JSON.parse(data.toString());
+
+        if (message.JsonPatch && Array.isArray(message.JsonPatch)) {
+          for (const patch of message.JsonPatch) {
+            const formatted = formatNormalizedEntry(patch.value);
+            if (formatted) {
+              upsertEntry(patch.path || String(entryOrder.length), formatted);
+            }
+          }
+        }
+
+        if (message.finished === true) {
+          clearTimeout(timer);
+          ws.close();
+          finalize();
+        }
+      } catch {
+        upsertEntry(String(entryOrder.length), data.toString());
+      }
+    });
+
+    ws.on('error', () => {
+      clearTimeout(timer);
+      finalize();
+    });
+
+    ws.on('close', () => {
+      clearTimeout(timer);
+      finalize();
+    });
+  });
+}
+
+function formatNormalizedEntry(value: any): string | null {
+  if (!value || value.type !== 'NORMALIZED_ENTRY') {
+    return null;
+  }
+
+  const entryType = value.content?.entry_type?.type;
+  const content = value.content?.content ?? value.content?.metadata?.text;
+  if (!content) {
+    return null;
+  }
+
+  const asString = typeof content === 'string' ? content : JSON.stringify(content);
+  const prefix = (() => {
+    switch (entryType) {
+      case 'assistant_message':
+        return 'assistant';
+      case 'user_message':
+        return 'user';
+      case 'system_message':
+        return 'system';
+      case 'tool_use': {
+        const toolName = value.content?.entry_type?.tool_name || value.content?.metadata?.name || 'tool';
+        return `tool:${toolName}`;
+      }
+      case 'tool_result': {
+        const toolName = value.content?.entry_type?.tool_name || value.content?.metadata?.name || 'tool-result';
+        return `tool-result:${toolName}`;
+      }
+      default:
+        return entryType || 'log';
+    }
+  })();
+
+  return `${prefix}: ${asString}`;
+}
+
+function sleep(durationMs: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, durationMs));
+}
+
+function buildTextResponse(text: string) {
+  return {
+    content: [{
+      type: 'text' as const,
+      text
+    }]
+  } as any;
 }
 
 // Helper: Get Genie version from package.json
@@ -188,7 +344,7 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
     response += '\n';
   });
 
-  response += '\nUse the "run" tool with an agent id and prompt to start an agent session.';
+  response += '\nUse the "task" tool with an agent id and prompt to start an agent task.';
 
   return { content: [{ type: 'text', text: response }] };
 });
@@ -198,7 +354,7 @@ server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task 
   const tasks = await listSessions();
 
   if (tasks.length === 0) {
-    return { content: [{ type: 'text', text: getVersionHeader() + 'No tasks found. Start a new task with the "run" tool.' }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + 'No tasks found. Start a new task with the "task" tool.' }] };
   }
 
   let response = getVersionHeader() + `Found ${tasks.length} task(s):\n\n`;
@@ -212,32 +368,28 @@ server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task 
     response += `   Last Used: ${task.lastUsed}\n\n`;
   });
 
-  response += 'Use "view" with the task ID (e.g., "c74111b4-...") to see transcript or "resume" to continue a task.';
+  response += 'Use "view_task" with the task ID (e.g., "c74111b4-...") to see transcript or "continue_task" to send a follow-up.';
 
   return { content: [{ type: 'text', text: response }] };
 });
 
-// Tool: run - Start a new agent task
-server.tool('run', 'Start a new Genie agent task. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.', {
+const taskToolShape = {
   agent: z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
   prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
   name: z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
-}, async (args) => {
-  try {
-    // Agent alias mapping (no wish aliases - use code/wish or create/wish directly)
-    const AGENT_ALIASES: Record<string, string> = {
-      // No aliases - explicit agent paths only
-    };
+};
+const TaskToolParams = z.object(taskToolShape);
+type TaskToolInput = z.infer<typeof TaskToolParams>;
 
-    // Resolve alias if exists
+const handleTaskTool = async (args: TaskToolInput) => {
+  try {
+    const AGENT_ALIASES: Record<string, string> = {};
     const resolvedAgent = AGENT_ALIASES[args.agent] || args.agent;
 
-    // Early validation: Check if agent exists BEFORE trying to run
     const availableAgents = listAgents();
     const agentExists = availableAgents.some(a => a.id === resolvedAgent || a.displayId === resolvedAgent);
 
     if (!agentExists) {
-      // Fast fail with helpful error message
       const suggestions = availableAgents
         .filter(a => a.id.includes(args.agent) || a.displayId.includes(args.agent))
         .slice(0, 3)
@@ -248,11 +400,10 @@ server.tool('run', 'Start a new Genie agent task. Choose an agent (use list_agen
         (suggestions ? `Did you mean:\n${suggestions}\n\n` : '') +
         `💡 Use list_agents tool to see all available agents.`;
 
-      return { content: [{ type: 'text', text: getVersionHeader() + errorMsg }] };
+      return buildTextResponse(getVersionHeader() + errorMsg);
     }
 
-    // Use resolved agent for CLI invocation
-    const cliArgs = ['run', resolvedAgent];
+    const cliArgs = ['task', resolvedAgent];
     if (args.name?.length) {
       cliArgs.push('--name', args.name);
     }
@@ -264,17 +415,28 @@ server.tool('run', 'Start a new Genie agent task. Choose an agent (use list_agen
 
     const { displayId } = transformDisplayPath(resolvedAgent);
     const aliasNote = AGENT_ALIASES[args.agent] ? ` (alias: ${args.agent} → ${resolvedAgent})` : '';
-    return { content: [{ type: 'text', text: getVersionHeader() + `Started agent task:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_tasks to see the task ID, then use view/resume/stop as needed.` }] };
+    return buildTextResponse(
+      getVersionHeader() +
+      `Started agent task:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_tasks to see the task ID, then use view_task/continue_task/stop as needed.`
+    );
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('start agent task', error) }] };
+    return buildTextResponse(getVersionHeader() + formatCliFailure('start agent task', error));
   }
-});
+};
 
-// Tool: resume - Continue an existing task
-server.tool('resume', 'Resume an existing agent task with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', {
+// Tool: task - Start a new agent task (headless)
+server.tool('task', 'Start a new Genie agent task. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.', taskToolShape, handleTaskTool);
+// Backward-compatible alias
+server.tool('run', '[Deprecated] Alias for task tool (use mcp__genie__task).', taskToolShape, handleTaskTool);
+
+const continueTaskShape = {
   taskId: z.string().describe('Task name to resume (get from list_tasks tool). Example: "146-task-name-architecture"'),
   prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
-}, async (args) => {
+};
+const ContinueTaskParams = z.object(continueTaskShape);
+type ContinueTaskInput = z.infer<typeof ContinueTaskParams>;
+
+const handleContinueTask = async (args: ContinueTaskInput) => {
   try {
     const cliArgs = ['resume', args.taskId];
     if (args.prompt?.length) {
@@ -283,22 +445,28 @@ server.tool('resume', 'Resume an existing agent task with a follow-up prompt. Us
     const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, cliArgs, 120000);
     const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    return { content: [{ type: 'text', text: getVersionHeader() + `Resumed task ${args.taskId}:\n\n${output}` }] };
+    return buildTextResponse(getVersionHeader() + `Resumed task ${args.taskId}:\n\n${output}`);
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('resume task', error) }] };
+    return buildTextResponse(getVersionHeader() + formatCliFailure('resume task', error));
   }
-});
+};
 
-// Tool: view - View task transcript
-server.tool('view', 'View the transcript of an agent task. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.', {
+server.tool('continue_task', 'Resume an existing agent task with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', continueTaskShape, handleContinueTask);
+server.tool('resume', '[Deprecated] Alias for continue_task (use mcp__genie__continue_task).', continueTaskShape, handleContinueTask);
+
+const viewTaskShape = {
   taskId: z.string().describe('Task ID to view (get from list_tasks tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
   full: z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
-}, async (args) => {
+};
+const ViewTaskParams = z.object(viewTaskShape);
+type ViewTaskInput = z.infer<typeof ViewTaskParams>;
+
+const handleViewTask = async (args: ViewTaskInput) => {
   try {
     const result = await viewSession(args.taskId);
 
     if (result.error) {
-      return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error viewing task:\n\n${result.error}` }] };
+      return buildTextResponse(getVersionHeader() + `❌ Error viewing task:\n\n${result.error}`);
     }
 
     let response = getVersionHeader();
@@ -307,17 +475,20 @@ server.tool('view', 'View the transcript of an agent task. Shows the conversatio
 
     if (result.transcript) {
       const lines = result.transcript.split('\n');
-      const displayLines = args.full ? lines : lines.slice(-50); // Show last 50 lines if not full
+      const displayLines = args.full ? lines : lines.slice(-200);
       response += `**Transcript:**\n\`\`\`\n${displayLines.join('\n')}\n\`\`\``;
     } else {
       response += `**Transcript:** (No logs available yet)`;
     }
 
-    return { content: [{ type: 'text', text: response }] };
+    return buildTextResponse(response);
   } catch (error: any) {
-    return { content: [{ type: 'text', text: getVersionHeader() + `❌ Error: ${error.message}` }] };
+    return buildTextResponse(getVersionHeader() + `❌ Error: ${error.message}`);
   }
-});
+};
+
+server.tool('view_task', 'View the transcript of an agent task. Shows the conversation history, agent outputs, and any artifacts generated. Use full=true for complete transcript or false for recent messages only.', viewTaskShape, handleViewTask);
+server.tool('view', '[Deprecated] Alias for view_task (use mcp__genie__view_task).', viewTaskShape, handleViewTask);
 
 // Tool: stop - Terminate a running task
 server.tool('stop', 'Stop a running agent task. Use this to terminate long-running agents or cancel tasks that are no longer needed. The task state is preserved for later viewing.', {

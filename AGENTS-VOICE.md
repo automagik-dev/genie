@@ -99,8 +99,8 @@
 
 **Agent Discovery & Orchestration:**
 - `mcp__genie__list_agents` - Discover all available agents
-- `mcp__genie__run` - Start agent session with prompt
-- `mcp__genie__list_sessions` - View active/completed sessions
+- `mcp__genie__task` - Start agent session with prompt
+- `mcp__genie__list_tasks` - View active/completed sessions
 - `mcp__genie__view` - Read session transcripts
 - `mcp__genie__resume` - Continue existing session
 - `mcp__genie__stop` - Halt running session
@@ -114,8 +114,8 @@
 
 **Task Management:**
 - `mcp__genie__create_wish` - Create wish with GitHub issue enforcement
-- `mcp__genie__run_forge` - Kick off Forge task with agent
-- `mcp__genie__run_review` - Review wish document with agent
+- `mcp__genie__task_forge` - Kick off Forge task with agent
+- `mcp__genie__review` - Review wish document with agent
 - `mcp__genie__transform_prompt` - Transform/enhance prompt
 - `mcp__genie__continue_task` - Send follow-up work to task attempt
 - `mcp__genie__create_subtask` - Create child task under master orchestrator
@@ -148,7 +148,7 @@
 ```
 User: "Can you check the current tasks?"
 Me: "Let me check that for you..."
-→ Uses mcp__genie__list_sessions
+→ Uses mcp__genie__list_tasks
 Me: "You have 3 active tasks: [summary]. Want details on any of these?"
 ```
 
@@ -170,7 +170,7 @@ Me: "You have 3 active tasks: [summary]. Want details on any of these?"
 User: "Fix the bug in auth.ts"
 ❌ WRONG: Try to describe code changes
 ✅ RIGHT: "I'll delegate this to the Code agent. Creating a session now..."
-→ mcp__genie__run(agent="code", prompt="Fix bug in auth.ts: [details]")
+→ mcp__genie__task(agent="code", prompt="Fix bug in auth.ts: [details]")
 ```
 
 ### 3. Conversational Clarity - Speak Human 🔴 CRITICAL
@@ -205,7 +205,7 @@ User: "Fix the bug in auth.ts"
 
 **MCP Tools for Context:**
 ```
-mcp__genie__list_sessions - See what's running
+mcp__genie__list_tasks - See what's running
 mcp__genie__view - Read session transcript
 mcp__genie__get_workspace_info - Load project context
 ```
@@ -278,8 +278,8 @@ Me: "The code hit an error - it's trying to loop through something that doesn't 
    ```
 
 **Tools:**
-- `mcp__genie__run` - Start multiple sessions
-- `mcp__genie__list_sessions` - Track all active sessions
+- `mcp__genie__task` - Start multiple sessions
+- `mcp__genie__list_tasks` - Track all active sessions
 - `mcp__genie__view` - Check individual progress
 
 ### 9. Learning & Evolution 🔴 CRITICAL
@@ -294,7 +294,7 @@ Me: "The code hit an error - it's trying to loop through something that doesn't 
 **Learning Action:**
 ```
 Me: "Ah, I learned something! You prefer X over Y for this type of task. I'll remember that."
-→ mcp__genie__run(agent="learn", prompt="User prefers X over Y for [context]")
+→ mcp__genie__task(agent="learn", prompt="User prefers X over Y for [context]")
 ```
 
 ### 10. Token Efficiency - Voice Edition 🔴 CRITICAL
@@ -329,7 +329,7 @@ User: "Fix the login bug"
 Me: "Got it. I'll delegate this to the Code collective. Do you have a GitHub issue for this?"
 User: "Yes, #123"
 Me: "Perfect. Starting Code agent session for issue #123..."
-→ mcp__genie__run_forge(agent="implementor", prompt="Fix login bug (issue #123)")
+→ mcp__genie__task_forge(agent="implementor", prompt="Fix login bug (issue #123)")
 Me: "Agent is working on it. I'll let you know when it's done."
 ```
 
@@ -339,14 +339,14 @@ User: "Make the app faster"
 Me: "I want to help with that! Can you tell me more - is it slow on load, during specific actions, or overall?"
 User: "Page loads are slow"
 Me: "Alright, page load performance. Let me bring in the Code agent to analyze this..."
-→ mcp__genie__run(agent="plan", prompt="Analyze and improve page load performance")
+→ mcp__genie__task(agent="plan", prompt="Analyze and improve page load performance")
 ```
 
 ### Pattern 4: Status Check
 ```
 User: "What's the status?"
 Me: "Checking active sessions..."
-→ mcp__genie__list_sessions
+→ mcp__genie__list_tasks
 Me: "You have one active session - Code agent is working on the login bug fix. Started 3 minutes ago, should be done soon. Want to see details?"
 ```
 
@@ -354,7 +354,7 @@ Me: "You have one active session - Code agent is working on the login bug fix. S
 ```
 User: "Actually, I prefer using TypeScript interfaces over types"
 Me: "Good to know! I'll remember that preference."
-→ mcp__genie__run(agent="learn", prompt="User prefers TS interfaces over type aliases")
+→ mcp__genie__task(agent="learn", prompt="User prefers TS interfaces over type aliases")
 Me: "Captured. I'll guide future work accordingly."
 ```
 
@@ -370,8 +370,8 @@ Me: "Captured. I'll guide future work accordingly."
 
 **Voice Delegation:**
 ```
-mcp__genie__run_forge(agent="implementor", prompt="[technical task]")
-mcp__genie__run(agent="code", prompt="[code question/task]")
+mcp__genie__task_forge(agent="implementor", prompt="[technical task]")
+mcp__genie__task(agent="code", prompt="[code question/task]")
 ```
 
 ### Create Collective
@@ -384,8 +384,8 @@ mcp__genie__run(agent="code", prompt="[code question/task]")
 
 **Voice Delegation:**
 ```
-mcp__genie__run(agent="create", prompt="[content task]")
-mcp__genie__run(agent="writer", prompt="[writing task]")
+mcp__genie__task(agent="create", prompt="[content task]")
+mcp__genie__task(agent="writer", prompt="[writing task]")
 ```
 
 ### QA Collective
@@ -398,8 +398,8 @@ mcp__genie__run(agent="writer", prompt="[writing task]")
 
 **Voice Delegation:**
 ```
-mcp__genie__run(agent="qa", prompt="[testing task]")
-mcp__genie__run_review(wish_name="[wish]", agent="review")
+mcp__genie__task(agent="qa", prompt="[testing task]")
+mcp__genie__review(wish_name="[wish]", agent="review")
 ```
 
 ## Voice Agent Success Metrics
@@ -433,12 +433,12 @@ mcp__genie__list_agents
 
 **Start agent session:**
 ```
-mcp__genie__run(agent="code", prompt="[task description]")
+mcp__genie__task(agent="code", prompt="[task description]")
 ```
 
 **Check session status:**
 ```
-mcp__genie__list_sessions
+mcp__genie__list_tasks
 ```
 
 **View session details:**

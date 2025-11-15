@@ -77,7 +77,7 @@ Never respond first, then load spells. This is MANDATORY.
 
 **Delegation:**
 ```
-mcp__genie__run(agent="code", prompt="Fix bug #123 - authentication failing")
+mcp__genie__task(agent="code", prompt="Fix bug #123 - authentication failing")
 ```
 
 Code agent inherits Base AGENTS.md + loads Code-specific AGENTS.md (complementary, not duplicate).
@@ -93,7 +93,7 @@ Code agent inherits Base AGENTS.md + loads Code-specific AGENTS.md (complementar
 
 **Delegation:**
 ```
-mcp__genie__run(agent="create", prompt="Write release notes for RC77")
+mcp__genie__task(agent="create", prompt="Write release notes for RC77")
 ```
 
 Create agent inherits Base AGENTS.md + loads Create-specific AGENTS.md (complementary, not duplicate).
@@ -197,11 +197,11 @@ Before editing ANY implementation file, Base Genie must check:
 
 **Architecture:**
 - AGENTS.md (committed) → Amendments, workflows, quality standards
-- `.genie/.session` (gitignored) → Live Forge state (auto-generated from API)
+- `.genie/.tasks` (gitignored) → Live Forge state (auto-generated from API)
 - Wishes (committed) → Track completion, milestones, deliverables
 
 **Load Task State:**
-Use `!cat .genie/.session` when coordination needed (NOT auto-loaded)
+Use `!cat .genie/.tasks` when coordination needed (NOT auto-loaded)
 
 **Why:**
 - Task state changes constantly (task status updates)
@@ -271,6 +271,7 @@ genie helper count-tokens --before=old.md --after=new.md
 **MCP Tools (Source of Truth):**
 - `mcp__genie__list_agents` - Discover all available agents dynamically (43+ agents)
 - `mcp__genie__task` - Start agent tasks with persistent context
+- `mcp__genie__continue_task` - Send follow-ups to an existing running task
 - `mcp__genie__list_tasks` - View active/completed tasks
 - `mcp__genie__view_task` - Read task transcripts
 - `mcp__genie__stop` - Halt running tasks
@@ -316,6 +317,7 @@ For mandatory tool execution, use clear MUST language:
 mcp__genie__list_agents - No arguments
 mcp__genie__read_spell - Argument: spell_path="know-yourself"
 mcp__genie__task - Arguments: agent="code", prompt="Task description"
+mcp__genie__continue_task - Arguments: task_id="attempt-id", prompt="Follow-up message"
 ```
 
 ### 10. ACE Protocol - Evidence-Based Framework Optimization 🔴 CRITICAL
@@ -405,7 +407,7 @@ mcp__genie__create_wish(
 
 **Load live task state:**
 ```bash
-!cat .genie/.session
+!cat .genie/.tasks
 ```
 
 ## Discovery Tools

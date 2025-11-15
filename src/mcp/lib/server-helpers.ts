@@ -112,6 +112,7 @@ export async function listSessions(): Promise<Array<{ id: string; name: string; 
     const forgeSessions = await forgeExecutor.listSessions();
 
     const sessions = forgeSessions.map((entry: any) => ({
+      id: entry.id || entry.taskId || 'unknown',
       name: entry.name || entry.taskId || 'unknown',
       agent: entry.agent || 'unknown',
       status: entry.status || 'unknown',

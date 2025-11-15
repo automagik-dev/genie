@@ -28,13 +28,13 @@ function assert(condition, message) {
 // 1. MCP Server Startup (stdio transport)
 // 2. MCP Server Startup (httpStream transport)
 // 3. Tool Discovery (list all 6 tools via MCP protocol)
-// 4. genie_run tool execution
+// 4. genie_task tool execution
 // 5. genie_list_tasks tool execution
-// 6. genie_view tool execution
-// 7. genie_resume tool execution
+// 6. genie_view_task tool execution
+// 7. genie_continue_task tool execution
 // 8. genie_stop tool execution
-// 9. Session consistency (CLI creates session → MCP sees it)
-// 10. Session consistency (MCP creates session → CLI sees it)
+// 9. Task consistency (CLI creates task → MCP sees it)
+// 10. Task consistency (MCP creates task → CLI sees it)
 //
 // Current status: Foundation complete, handler integration pending
 

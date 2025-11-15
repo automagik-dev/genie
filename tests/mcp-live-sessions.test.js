@@ -2,7 +2,7 @@
 /**
  * MCP Live Session Integration Tests
  *
- * Tests the full lifecycle: run → view → resume → stop
+ * Tests the full lifecycle: task → view → continue → stop
  * Validates session state consistency between CLI and MCP
  *
  * Target: 10+ assertions covering all 6 tools with live execution
@@ -113,8 +113,8 @@ function startServer() {
  */
 async function runTests() {
   console.log('\n=== MCP Live Session Integration Tests ===');
-  console.log('Target: 10+ assertions covering run/resume/view/stop');
-  console.log('Workflow: run agent → view transcript → resume session → stop session\n');
+  console.log('Target: 10+ assertions covering task/continue/view/stop');
+  console.log('Workflow: task agent → view transcript → continue task → stop task\n');
 
   let server;
   let requestId = 1;
@@ -140,14 +140,14 @@ async function runTests() {
     await sendRequest(server, initRequest);
     console.log('✅ Server initialized\n');
 
-    // Test 1-3: Run Tool (Create Session)
-    console.log('[Test 1-3] run Tool - Create New Session');
+    // Test 1-3: Task Tool (Create Session)
+    console.log('[Test 1-3] task Tool - Create New Session');
     const runCall = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
       params: {
-        name: 'run',
+        name: 'task',
         arguments: {
           agent: 'analyze',
           prompt: 'Test session for integration tests'
@@ -156,15 +156,15 @@ async function runTests() {
     };
 
     const runResponse = await sendRequest(server, runCall, 30000);
-    assert(runResponse.result, 'run tool executed');
-    assert(Array.isArray(runResponse.result.content), 'run tool returned content');
+    assert(runResponse.result, 'task tool executed');
+    assert(Array.isArray(runResponse.result.content), 'task tool returned content');
 
     const runText = runResponse.result.content[0]?.text || '';
-    assert(runText.length > 0, 'run tool returned non-empty response');
+    assert(runText.length > 0, 'task tool returned non-empty response');
 
     // Extract session ID from response
-    const sessionIdMatch = runText.match(/Session ID: ([a-f0-9-]+)/i) ||
-                          runText.match(/session[:\s]+([a-f0-9-]+)/i);
+    const sessionIdMatch = runText.match(/"task_id"[:\s"]+([a-f0-9-]+)/i) ||
+                          runText.match(/Task ID:\s*([a-f0-9-]+)/i);
 
     if (sessionIdMatch) {
       sessionId = sessionIdMatch[1];
@@ -172,7 +172,7 @@ async function runTests() {
     }
 
     // Test 4-6: View Tool (Check Transcript)
-    console.log('\n[Test 4-6] view Tool - Retrieve Session Transcript');
+    console.log('\n[Test 4-6] view_task Tool - Retrieve Session Transcript');
 
     // First, list sessions to verify it exists
     const listSessionsCall = {
@@ -180,16 +180,16 @@ async function runTests() {
       id: requestId++,
       method: 'tools/call',
       params: {
-        name: 'list_sessions',
+        name: 'list_tasks',
         arguments: {}
       }
     };
 
     const listResponse = await sendRequest(server, listSessionsCall, 15000);
-    assert(listResponse.result, 'list_sessions executed for verification');
+    assert(listResponse.result, 'list_tasks executed for verification');
 
     const listText = listResponse.result.content[0]?.text || '';
-    const hasActiveSessions = listText.includes('session') && !listText.includes('No sessions');
+    const hasActiveSessions = listText.includes('task') && !listText.includes('No tasks');
     assert(hasActiveSessions, 'Active session exists in list');
 
     // Extract first session ID from list if we don't have one
@@ -207,26 +207,26 @@ async function runTests() {
         id: requestId++,
         method: 'tools/call',
         params: {
-          name: 'view',
+          name: 'view_task',
           arguments: {
-            sessionId: sessionId,
+            taskId: sessionId,
             full: false
           }
         }
       };
 
       const viewResponse = await sendRequest(server, viewCall, 15000);
-      assert(viewResponse.result, 'view tool executed');
+      assert(viewResponse.result, 'view_task tool executed');
 
       const viewText = viewResponse.result.content[0]?.text || '';
-      assert(viewText.length > 0, 'view tool returned transcript');
+      assert(viewText.length > 0, 'view_task tool returned transcript');
     } else {
-      console.log('  ⚠️  No session ID available for view test (skipping)');
+      console.log('  ⚠️  No session ID available for view_task test (skipping)');
       testsFailed += 2; // Mark as failures since we couldn't test
     }
 
     // Test 7-9: Resume Tool (Continue Session)
-    console.log('\n[Test 7-9] resume Tool - Continue Existing Session');
+    console.log('\n[Test 7-9] continue_task Tool - Continue Existing Session');
 
     if (sessionId) {
       const resumeCall = {
@@ -234,25 +234,25 @@ async function runTests() {
         id: requestId++,
         method: 'tools/call',
         params: {
-          name: 'resume',
+          name: 'continue_task',
           arguments: {
-            sessionId: sessionId,
+            taskId: sessionId,
             prompt: 'Follow-up test message'
           }
         }
       };
 
       const resumeResponse = await sendRequest(server, resumeCall, 30000);
-      assert(resumeResponse.result, 'resume tool executed');
+      assert(resumeResponse.result, 'continue_task tool executed');
 
       const resumeText = resumeResponse.result.content[0]?.text || '';
-      assert(resumeText.length > 0, 'resume tool returned response');
+      assert(resumeText.length > 0, 'continue_task tool returned response');
       assert(
         resumeText.includes('Follow-up') || resumeText.includes('resumed') || resumeText.length > 10,
-        'resume tool continued conversation'
+        'continue_task tool continued conversation'
       );
     } else {
-      console.log('  ⚠️  No session ID available for resume test (skipping)');
+      console.log('  ⚠️  No session ID available for continue_task test (skipping)');
       testsFailed += 3; // Mark as failures
     }
 
@@ -288,7 +288,7 @@ async function runTests() {
         id: requestId++,
         method: 'tools/call',
         params: {
-          name: 'list_sessions',
+        name: 'list_tasks',
           arguments: {}
         }
       };
@@ -320,7 +320,7 @@ async function runTests() {
         id: requestId++,
         method: 'tools/call',
         params: {
-          name: 'list_sessions',
+        name: 'list_tasks',
           arguments: {}
         }
       };
@@ -349,19 +349,19 @@ async function runTests() {
     if (testsFailed > 0) {
       console.error('⚠️  Some tests failed (may be due to session creation issues)\n');
       console.log('📋 Integration Validation Summary:');
-      console.log('  • run tool creates sessions');
-      console.log('  • view tool retrieves transcripts');
-      console.log('  • resume tool continues conversations');
-      console.log('  • stop tool terminates sessions');
-      console.log('  • CLI-MCP session state unified\n');
+      console.log('  • task tool creates executions');
+      console.log('  • view_task tool retrieves transcripts');
+      console.log('  • continue_task tool continues conversations');
+      console.log('  • stop tool terminates tasks');
+      console.log('  • CLI-MCP task state unified\n');
       process.exit(testsPassed >= 10 ? 0 : 1); // Pass if we got 10+ assertions
     } else {
       console.log('✅ All integration tests PASSED');
-      console.log('\n📋 Live Session Workflow Validated:');
-      console.log('  ✅ run → create session');
-      console.log('  ✅ view → retrieve transcript');
-      console.log('  ✅ resume → continue conversation');
-      console.log('  ✅ stop → terminate session');
+      console.log('\n📋 Live Task Workflow Validated:');
+      console.log('  ✅ task → create execution');
+      console.log('  ✅ view_task → retrieve transcript');
+      console.log('  ✅ continue_task → continue conversation');
+      console.log('  ✅ stop → terminate task');
       console.log('  ✅ CLI-MCP state consistency\n');
       process.exit(0);
     }
