@@ -1,0 +1,12 @@
+Timestamp: 2025-11-15T20:13:01Z
+
+== Files importing task-service.ts ==
+src/cli/cli-core/context.ts
+src/cli/cli-core/index.ts
+src/cli/commands/run.ts
+src/cli/commands/task.ts
+
+== Files importing task-manager.ts ==
+
+== Files importing task-types.ts ==
+src/mcp/lib/task-manager.ts

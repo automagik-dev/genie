@@ -6,6 +6,7 @@
  */
 
 import WebSocket from 'ws';
+// @ts-ignore - legacy JS Forge client does not ship TypeScript typings
 import { ForgeClient } from '../../../src/lib/forge-client.js';
 
 export interface TaskMonitorOptions {

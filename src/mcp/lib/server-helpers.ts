@@ -155,75 +155,83 @@ export async function listTasks(): Promise<Array<{ id: string; name: string; age
       .slice(0, 10);
 
     // Combine and sort by lastUsed descending
+    const combined = [...running, ...completed].sort((a, b) => {
+      if (a.lastUsed === 'unknown') return 1;
+      if (b.lastUsed === 'unknown') return -1;
+      return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+    });
+
+    if (combined.length === 0) {
+      return loadTasksFromLocalStore(workspaceRoot);
+    }
+
+    return combined;
+  } catch (error) {
+    // Fallback to local tasks.json if Forge API fails
+    console.warn('Failed to fetch Forge sessions, falling back to local store');
+    return loadTasksFromLocalStore(workspaceRoot);
+  }
+}
+
+function loadTasksFromLocalStore(workspaceRoot: string): Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }> {
+  const tasksFile = path.join(workspaceRoot, '.genie/state/tasks.json');
+  const legacySessionsFile = path.join(workspaceRoot, '.genie/state/agents/sessions.json');
+  const fallbackFile = fs.existsSync(tasksFile)
+    ? tasksFile
+    : fs.existsSync(legacySessionsFile)
+    ? legacySessionsFile
+    : null;
+
+  if (!fallbackFile) {
+    return [];
+  }
+
+  try {
+    const content = fs.readFileSync(fallbackFile, 'utf8');
+    const store = JSON.parse(content);
+
+    const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
+      id: entry.taskId || key,
+      name: entry.name || key,
+      agent: entry.agent || key,
+      status: entry.status || 'unknown',
+      created: entry.created || 'unknown',
+      lastUsed: entry.lastUsed || entry.created || 'unknown'
+    }));
+
+    const now = Date.now();
+    const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+    const running = sessions.filter(s => {
+      const status = s.status === 'running' || s.status === 'starting' || s.status === 'background';
+      if (!status) return false;
+
+      if (s.lastUsed !== 'unknown') {
+        const lastUsedTime = new Date(s.lastUsed).getTime();
+        const age = now - lastUsedTime;
+        if (age > STALE_THRESHOLD_MS) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const completed = sessions
+      .filter(s => s.status === 'completed')
+      .sort((a, b) => {
+        if (a.lastUsed === 'unknown') return 1;
+        if (b.lastUsed === 'unknown') return -1;
+        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+      })
+      .slice(0, 10);
+
     return [...running, ...completed].sort((a, b) => {
       if (a.lastUsed === 'unknown') return 1;
       if (b.lastUsed === 'unknown') return -1;
       return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
     });
   } catch (error) {
-    // Fallback to local tasks.json if Forge API fails
-    console.warn('Failed to fetch Forge sessions, falling back to local store');
-    const tasksFile = path.join(workspaceRoot, '.genie/state/tasks.json');
-    const legacySessionsFile = path.join(workspaceRoot, '.genie/state/agents/sessions.json');
-    const fallbackFile = fs.existsSync(tasksFile)
-      ? tasksFile
-      : fs.existsSync(legacySessionsFile)
-      ? legacySessionsFile
-      : null;
-
-    if (!fallbackFile) {
-      return [];
-    }
-
-    try {
-      const content = fs.readFileSync(fallbackFile, 'utf8');
-      const store = JSON.parse(content);
-
-      const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
-        id: entry.taskId || key,
-        name: entry.name || key,
-        agent: entry.agent || key,
-        status: entry.status || 'unknown',
-        created: entry.created || 'unknown',
-        lastUsed: entry.lastUsed || entry.created || 'unknown'
-      }));
-
-      // Apply same stale filter as Forge path (Fix Bug #5)
-      const now = Date.now();
-      const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-      const running = sessions.filter(s => {
-        const status = s.status === 'running' || s.status === 'starting';
-        if (!status) return false;
-
-        // Filter out stale sessions
-        if (s.lastUsed !== 'unknown') {
-          const lastUsedTime = new Date(s.lastUsed).getTime();
-          const age = now - lastUsedTime;
-          if (age > STALE_THRESHOLD_MS) {
-            return false;
-          }
-        }
-        return true;
-      });
-
-      const completed = sessions
-        .filter(s => s.status === 'completed')
-        .sort((a, b) => {
-          if (a.lastUsed === 'unknown') return 1;
-          if (b.lastUsed === 'unknown') return -1;
-          return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-        })
-        .slice(0, 10);
-
-      return [...running, ...completed].sort((a, b) => {
-        if (a.lastUsed === 'unknown') return 1;
-        if (b.lastUsed === 'unknown') return -1;
-        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-      });
-    } catch (error) {
-      return [];
-    }
+    return [];
   }
 }
 

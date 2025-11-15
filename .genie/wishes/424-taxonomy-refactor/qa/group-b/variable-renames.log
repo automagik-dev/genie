@@ -1,0 +1,15 @@
+Timestamp: 2025-11-15T20:16:56Z
+
+sessionId occurrences:
+src/mcp/lib/http-server.ts:242:        sessionIdGenerator: undefined, // Stateless - no session management
+src/mcp/lib/http-server.ts:281:        sessionIdGenerator: undefined, // Stateless - no session management
+src/cli/task-store.ts:130:  // Key change: Use attemptId (from v3's sessionId field) as the v4 key
+src/cli/task-store.ts:139:      // v3 stored attemptId in the 'sessionId' field
+src/cli/task-store.ts:140:      const attemptId = entry.sessionId;
+
+session_id occurrences:
+
+camel taskId count:
+152
+snake task_id count:
+33

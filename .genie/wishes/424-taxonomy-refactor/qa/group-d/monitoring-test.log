@@ -1,0 +1,16 @@
+📡 Monitoring task attempt: f7c30f2e-a787-4a5d-8785-d1cc192607df
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ Task Failed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+{
+  "task_url": "http://localhost:8887/tasks/f7c30f2e-a787-4a5d-8785-d1cc192607df",
+  "result": "",
+  "status": "failed",
+  "duration_ms": 45993,
+  "attempt_id": "f7c30f2e-a787-4a5d-8785-d1cc192607df",
+  "error": "No execution process found for task attempt (executor did not start in time)"
+}
+

@@ -2,8 +2,8 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "NodeNext",
-    "outDir": "../../dist/mcp",
-    "rootDir": ".",
+    "outDir": "../../dist",
+    "rootDir": "..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

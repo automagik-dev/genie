@@ -22,6 +22,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import WebSocket from 'ws';
+import { execSync } from 'child_process';
 import { transformDisplayPath } from './lib/display-transform.js';
 
 // Import WebSocket-native tools (MVP Phase 6)
@@ -66,6 +67,10 @@ import {
 // Import neuron resource provider
 import { initNeuronProvider, getNeuronProvider } from './resources/neuron-provider.js';
 import { getMcpConfig, getForgeConfig } from './lib/service-config.js';
+import { resolveAgentIdentifier, loadAgentSpec } from '../cli/lib/agent-resolver.js';
+import { normalizeExecutorKeyOrDefault } from '../cli/lib/executor-registry.js';
+import { monitorTaskCompletion } from '../cli/lib/task-monitor.js';
+import { TaskService } from '../cli/cli-core/task-service.js';
 
 const { port: PORT } = getMcpConfig();
 const TRANSPORT = process.env.MCP_TRANSPORT || 'stdio';
@@ -127,10 +132,22 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
       };
     }
 
-    let transcript = await streamNormalizedLogs(forge, latestProcess.id, token);
+    const completedStatuses = new Set(['completed', 'success', 'failed', 'error', 'stopped']);
+    if (completedStatuses.has(status)) {
+      const gitTranscript = readTranscriptFromCommit(attemptDetails, latestProcess);
+      if (gitTranscript) {
+        return { status, transcript: gitTranscript };
+      }
+    }
+
+    let transcript = await streamNormalizedLogs(forge, latestProcess.id, token, 10000);
 
     if (!transcript) {
       transcript = latestProcess.output || latestProcess.logs || null;
+    }
+
+    if (!transcript && completedStatuses.has(status)) {
+      transcript = readTranscriptFromCommit(attemptDetails, latestProcess);
     }
 
     return { status, transcript };
@@ -140,6 +157,33 @@ async function viewSession(taskId: string): Promise<{status: string; transcript:
       transcript: null,
       error: error.message || 'Unknown error viewing task'
     };
+  }
+}
+
+function readTranscriptFromCommit(attemptDetails: any, latestProcess: any): string | null {
+  const commitSha = latestProcess?.after_head_commit || latestProcess?.afterHeadCommit;
+  const containerRef = attemptDetails?.container_ref || attemptDetails?.containerRef;
+
+  if (!commitSha || !containerRef) {
+    return null;
+  }
+
+  const gitDir = path.join(containerRef, '.git');
+  if (!fs.existsSync(gitDir)) {
+    return null;
+  }
+
+  try {
+    const output = execSync(`git --git-dir="${gitDir}" log -1 --format="%B" ${commitSha}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    }).trim();
+    if (!output.length) {
+      return null;
+    }
+    return `Commit ${commitSha.slice(0, 7)}\n${output}`;
+  } catch {
+    return null;
   }
 }
 
@@ -376,20 +420,22 @@ server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task 
 const taskToolShape = {
   agent: z.string().describe('Agent ID to run (e.g., "plan", "implementor", "debug"). Get available agents from list_agents tool.'),
   prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
-  name: z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".')
+  name: z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".'),
+  executor: z.string().optional().describe('Override executor key (e.g., "OPENCODE"). Uses agent/default config when omitted.'),
+  model: z.string().optional().describe('Override model for the selected executor.'),
+  monitor: z.boolean().optional().describe('Set true to wait for completion with WebSocket streaming. Default: false (return immediately).')
 };
 const TaskToolParams = z.object(taskToolShape);
 type TaskToolInput = z.infer<typeof TaskToolParams>;
 
 const handleTaskTool = async (args: TaskToolInput) => {
   try {
-    const AGENT_ALIASES: Record<string, string> = {};
-    const resolvedAgent = AGENT_ALIASES[args.agent] || args.agent;
-
+    const resolvedAgentId = resolveAgentIdentifier(args.agent) || args.agent;
     const availableAgents = listAgents();
-    const agentExists = availableAgents.some(a => a.id === resolvedAgent || a.displayId === resolvedAgent);
-
-    if (!agentExists) {
+    let agentSpec;
+    try {
+      agentSpec = loadAgentSpec(resolvedAgentId);
+    } catch {
       const suggestions = availableAgents
         .filter(a => a.id.includes(args.agent) || a.displayId.includes(args.agent))
         .slice(0, 3)
@@ -402,30 +448,133 @@ const handleTaskTool = async (args: TaskToolInput) => {
 
       return buildTextResponse(getVersionHeader() + errorMsg);
     }
+    const agentMeta = agentSpec.meta?.genie || {};
+    const metaExecutor = Array.isArray(agentMeta.executor)
+      ? agentMeta.executor[0]
+      : agentMeta.executor;
+    const executorKey = normalizeExecutorKeyOrDefault(args.executor || metaExecutor);
+    const executorVariant = (
+      agentMeta.executorVariant ||
+      agentMeta.variant ||
+      'DEFAULT'
+    ).trim().toUpperCase();
+    const model = args.model || agentMeta.model;
 
-    const cliArgs = ['task', resolvedAgent];
-    if (args.name?.length) {
-      cliArgs.push('--name', args.name);
+    const forgeModule = loadForgeExecutor();
+    if (!forgeModule || typeof forgeModule.createForgeExecutor !== 'function') {
+      return buildTextResponse(getVersionHeader() + '❌ Forge executor unavailable (did you run `pnpm run build:genie`?).');
     }
-    if (args.prompt?.length) {
-      cliArgs.push(args.prompt);
-    }
-    const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, cliArgs, 120000);
-    const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    const { displayId } = transformDisplayPath(resolvedAgent);
-    const aliasNote = AGENT_ALIASES[args.agent] ? ` (alias: ${args.agent} → ${resolvedAgent})` : '';
-    return buildTextResponse(
-      getVersionHeader() +
-      `Started agent task:\nAgent: ${displayId}${aliasNote}\n\n${output}\n\nUse list_tasks to see the task ID, then use view_task/continue_task/stop as needed.`
-    );
+    const forgeExecutor = forgeModule.createForgeExecutor();
+    const monitorRequested = Boolean(args.monitor);
+    const executionMode = monitorRequested ? 'interactive' : 'background';
+
+    const sessionResult = await forgeExecutor.createTask({
+      agentName: resolvedAgentId,
+      prompt: args.prompt,
+      executorKey,
+      executorVariant,
+      executionMode,
+      model,
+      ...(args.name?.length ? { name: args.name } : {})
+    });
+
+    const { displayId } = transformDisplayPath(resolvedAgentId);
+
+    const tasksFile = path.join(WORKSPACE_ROOT, '.genie', 'state', 'tasks.json');
+    const legacySessionsFile = path.join(WORKSPACE_ROOT, '.genie', 'state', 'agents', 'sessions.json');
+    const taskService = new TaskService({
+      paths: { tasksFile, legacySessionsFile }
+    });
+    const store = taskService.load();
+    const now = new Date().toISOString();
+    store.sessions[sessionResult.attemptId] = {
+      agent: resolvedAgentId,
+      taskId: sessionResult.taskId,
+      projectId: sessionResult.projectId,
+      executor: executorKey,
+      executorVariant,
+      model: model || undefined,
+      status: monitorRequested ? 'running' : 'background',
+      created: now,
+      lastUsed: now,
+      lastPrompt: args.prompt.slice(0, 200),
+      forgeUrl: sessionResult.forgeUrl,
+      background: !monitorRequested
+    };
+    await taskService.save(store);
+
+    if (!monitorRequested) {
+      const payload = {
+        task_id: sessionResult.attemptId,
+        task_url: sessionResult.forgeUrl,
+        agent: displayId,
+        executor: `${executorKey}:${executorVariant}`,
+        ...(model ? { model } : {}),
+        status: 'started',
+        message: 'Task running in background'
+      };
+
+      return buildTextResponse(
+        getVersionHeader() +
+        `Started background task for ${displayId}.\n` +
+        `Task ID: ${sessionResult.attemptId}\n` +
+        `Forge URL: ${sessionResult.forgeUrl}\n\n` +
+        `**Result JSON:**\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n`
+      );
+    }
+
+    const { baseUrl, token } = getForgeConfig();
+    const logBuffer: string[] = [];
+    const monitorResult = await monitorTaskCompletion({
+      attemptId: sessionResult.attemptId,
+      baseUrl,
+      token,
+      taskUrl: sessionResult.forgeUrl,
+      onLog: (line) => {
+        logBuffer.push(line);
+      }
+    });
+
+    const outputPayload = {
+      task_url: monitorResult.task_url,
+      attempt_id: sessionResult.attemptId,
+      status: monitorResult.status,
+      duration_ms: monitorResult.duration_ms,
+      result: monitorResult.output,
+      ...(monitorResult.error ? { error: monitorResult.error } : {})
+    };
+
+    const updatedStore = taskService.load();
+    if (updatedStore.sessions[sessionResult.attemptId]) {
+      updatedStore.sessions[sessionResult.attemptId].status = monitorResult.status;
+      updatedStore.sessions[sessionResult.attemptId].lastUsed = new Date().toISOString();
+      updatedStore.sessions[sessionResult.attemptId].background = false;
+      updatedStore.sessions[sessionResult.attemptId].lastPrompt = args.prompt.slice(0, 200);
+    }
+    await taskService.save(updatedStore);
+
+    const recentLogs = logBuffer.slice(-40).join('\n');
+    let response = getVersionHeader();
+    response += `Started interactive task for ${displayId}.\n`;
+    response += `Task ID: ${sessionResult.attemptId}\n`;
+    response += `Forge URL: ${sessionResult.forgeUrl}\n`;
+    response += `Status: ${monitorResult.status}\n\n`;
+    response += `**Result JSON:**\n\`\`\`json\n${JSON.stringify(outputPayload, null, 2)}\n\`\`\`\n`;
+    if (recentLogs) {
+      response += '\n**Recent Logs:**\n\`\`\`\n' + recentLogs + '\n\`\`\`\n';
+    }
+    response += '\nUse list_tasks to see task history, or view_task/continue_task for follow-ups.';
+
+    return buildTextResponse(response);
   } catch (error: any) {
-    return buildTextResponse(getVersionHeader() + formatCliFailure('start agent task', error));
+    const message = error?.message || String(error);
+    return buildTextResponse(getVersionHeader() + `❌ Error starting task: ${message}`);
   }
 };
 
-// Tool: task - Start a new agent task (headless)
-server.tool('task', 'Start a new Genie agent task. Choose an agent (use list_agents first) and provide a detailed prompt describing the task. The agent will analyze, plan, or implement based on its specialization.', taskToolShape, handleTaskTool);
+// Tool: task - Start a new agent task (headless by default)
+server.tool('task', 'Start a new Genie agent task. Returns immediately when monitor=false, or streams live progress when monitor=true.', taskToolShape, handleTaskTool);
 // Backward-compatible alias
 server.tool('run', '[Deprecated] Alias for task tool (use mcp__genie__task).', taskToolShape, handleTaskTool);
 
@@ -492,13 +641,18 @@ server.tool('view', '[Deprecated] Alias for view_task (use mcp__genie__view_task
 
 // Tool: stop - Terminate a running task
 server.tool('stop', 'Stop a running agent task. Use this to terminate long-running agents or cancel tasks that are no longer needed. The task state is preserved for later viewing.', {
-  taskId: z.string().describe('Task name to stop (get from list_tasks tool). Example: "146-task-name-architecture"')
+  taskId: z.string().optional().describe('Task name to stop (get from list_tasks tool). Example: "146-task-name-architecture"'),
+  sessionId: z.string().optional().describe('Legacy alias for taskId.')
 }, async (args) => {
   try {
-    const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, ['stop', args.taskId], 30000);
+    const taskId = (args.taskId || (args as any).sessionId || '').trim();
+    if (!taskId) {
+      return { content: [{ type: 'text', text: getVersionHeader() + '❌ Error: taskId or sessionId is required.' }] };
+    }
+    const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, ['stop', taskId], 30000);
     const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    return { content: [{ type: 'text', text: getVersionHeader() + `Stopped task ${args.taskId}:\n\n${output}` }] };
+    return { content: [{ type: 'text', text: getVersionHeader() + `Stopped task ${taskId}:\n\n${output}` }] };
   } catch (error: any) {
     return { content: [{ type: 'text', text: getVersionHeader() + formatCliFailure('stop task', error) }] };
   }
@@ -691,21 +845,27 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
   return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
 });
 
-// Tool: continue_task - Send follow-up work to existing task
-(server.tool as any)('continue_task', 'Send follow-up work to an existing task attempt. Used primarily by master orchestrators to receive new work.', {
-  attempt_id: z.string().describe('Task attempt ID to send work to'),
-  prompt: z.string().describe('Follow-up prompt with new work')
-}, async (args: any, extra: any) => {
-  await executeContinueTaskTool(args, {
-    streamContent: async (chunk: any) => {
-      await server.sendLoggingMessage({
-        level: "info",
-        data: chunk
-      }, extra.taskId);
-    }
+// Tool: continue_task - Send follow-up work to existing task (skip if already registered earlier)
+try {
+  (server.tool as any)('continue_task', 'Send follow-up work to an existing task attempt. Used primarily by master orchestrators to receive new work.', {
+    attempt_id: z.string().describe('Task attempt ID to send work to'),
+    prompt: z.string().describe('Follow-up prompt with new work')
+  }, async (args: any, extra: any) => {
+    await executeContinueTaskTool(args, {
+      streamContent: async (chunk: any) => {
+        await server.sendLoggingMessage({
+          level: "info",
+          data: chunk
+        }, extra.taskId);
+      }
+    });
+    return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
   });
-  return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
-});
+} catch (error: any) {
+  if (!String(error?.message || '').includes('already registered')) {
+    throw error;
+  }
+}
 
 // Tool: create_subtask - Create child task under master orchestrator
 (server.tool as any)('create_subtask', 'Create a child task under a master orchestrator. Allows masters to delegate work as subtasks.', {

@@ -299,6 +299,7 @@ const shouldCheckVersion = args.length > 0 &&
   !shouldBypassForAgent;
 
 const isNonBlockingCommand = nonBlockingCommands.includes(args[0]);
+const skipVersionGate = process.env.GENIE_SKIP_VERSION_CHECK === '1';
 
 if (shouldCheckVersion) {
   // Check if version.json exists and matches current version
@@ -345,7 +346,7 @@ if (shouldCheckVersion) {
       const localVersion = versionData.version;
       const runningVersion = packageJson.version;
 
-      if (localVersion !== runningVersion) {
+      if (localVersion !== runningVersion && !skipVersionGate) {
         // Compare versions to determine which is newer
         const compareVersions = (a: string, b: string) => {
           const aParts = a.replace(/^v/, '').split('-');
@@ -416,6 +417,10 @@ if (shouldCheckVersion) {
             process.exit(0);
           }
         }
+      } else if (localVersion !== runningVersion && skipVersionGate) {
+        console.log('');
+        console.log(performanceGradient('⚠️  Version mismatch suppressed via GENIE_SKIP_VERSION_CHECK. Workspace ') + `${performanceGradient(localVersion)} vs global ${successGradient(runningVersion)}`);
+        console.log('');
       }
     } catch {
       // Ignore version check errors for master genie
