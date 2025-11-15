@@ -53,7 +53,7 @@ const WORKSPACE_ROOT = (0, server_helpers_js_1.findWorkspaceRoot)();
 // transformDisplayPath imported from ./lib/display-transform (single source of truth)
 // listAgents() imported from ./lib/server-helpers.js
 // loadForgeExecutor() imported from ./lib/server-helpers.js
-// listSessions() imported from ./lib/server-helpers.js
+// listTasks() imported from ./lib/server-helpers.js
 // Helper: View session transcript (uses Forge API + WebSocket normalized logs)
 async function viewSession(taskId) {
     try {
@@ -284,7 +284,7 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
 });
 // Tool: list_tasks - View active and recent tasks
 server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to resume or view.', async () => {
-    const tasks = await (0, server_helpers_js_1.listSessions)();
+    const tasks = await (0, server_helpers_js_1.listTasks)();
     if (tasks.length === 0) {
         return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + 'No tasks found. Start a new task with the "task" tool.' }] };
     }

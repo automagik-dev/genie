@@ -41,12 +41,12 @@ export class TaskService {
   }
 
   async save(store: TaskStore): Promise<SaveResult> {
-    if (!this.paths.sessionsFile) {
+    const targetFile = this.paths.tasksFile || this.paths.sessionsFile || this.paths.legacySessionsFile;
+    if (!targetFile) {
       return { store };
     }
 
-    const sessionFile = this.paths.sessionsFile;
-    await this.ensureFile(sessionFile);
+    await this.ensureFile(targetFile);
 
     // Native file locking with retry logic
     return await this.retryWithLock(async () => {
@@ -57,7 +57,7 @@ export class TaskService {
       const merged = this.mergeStores(diskStore, store);
 
       // TWIN FIX #1: Atomic write via temp file + rename to prevent partial reads
-      const tempFile = sessionFile + '.tmp';
+      const tempFile = targetFile + '.tmp';
       await fsPromises.writeFile(tempFile, JSON.stringify(merged, null, 2), 'utf8');
 
       // Ensure data is flushed to disk before rename
@@ -66,14 +66,18 @@ export class TaskService {
       await fd.close();
 
       // Atomic rename - readers will only see complete JSON
-      await fsPromises.rename(tempFile, sessionFile);
+      await fsPromises.rename(tempFile, targetFile);
 
       return { store: merged };
     });
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const lockPath = this.paths.sessionsFile + '.lock';
+    const baseFile = this.paths.tasksFile || this.paths.sessionsFile || this.paths.legacySessionsFile;
+    if (!baseFile) {
+      throw new Error('TaskService: No tasks file configured for locking');
+    }
+    const lockPath = baseFile + '.lock';
     let handle: fsPromises.FileHandle | null = null;
 
     try {
@@ -162,7 +166,7 @@ export class TaskService {
     const dir = path.dirname(target);
     await fsPromises.mkdir(dir, { recursive: true });
     if (!fs.existsSync(target)) {
-      const initial: TaskStore = { version: 2, sessions: {} };
+      const initial: TaskStore = { version: 4, sessions: {} };
       await fsPromises.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
     }
   }

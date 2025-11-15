@@ -130,7 +130,7 @@
 **When to require tools:**
 - Mandatory context loading (spells, workspace info)
 - Session initialization (first message)
-- Orchestration checks (list sessions before delegating)
+- Orchestration checks (list tasks before delegating)
 
 ## Core Amendments (Voice Orchestration Rules)
 

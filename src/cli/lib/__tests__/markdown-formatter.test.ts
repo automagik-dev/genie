@@ -11,7 +11,7 @@
 
 import {
   formatTranscriptMarkdown,
-  formatSessionList,
+  formatTaskList,
   type SessionMeta,
   type SessionEntry,
   type OutputMode,
@@ -282,9 +282,9 @@ describe('formatTranscriptMarkdown - overview mode', () => {
 // Session List Tests
 // ============================================================================
 
-describe('formatSessionList', () => {
+describe('formatTaskList', () => {
   it('should format sessions as markdown table', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     expect(result).toContain('## Active Sessions');
     expect(result).toContain('| Session ID | Agent | Status | Executor |');
@@ -292,7 +292,7 @@ describe('formatSessionList', () => {
   });
 
   it('should include all sessions', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     expect(result).toContain('implementor');
     expect(result).toContain('tests');
@@ -302,14 +302,14 @@ describe('formatSessionList', () => {
   });
 
   it('should trim long session IDs', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     // Should truncate IDs longer than 10 chars
     expect(result).toContain('abc123-d...');
   });
 
   it('should handle empty session list', () => {
-    const result = formatSessionList([]);
+    const result = formatTaskList([]);
 
     expect(result).toContain('**No sessions found**');
   });

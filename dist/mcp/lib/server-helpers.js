@@ -10,7 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.findWorkspaceRoot = findWorkspaceRoot;
 exports.listAgents = listAgents;
 exports.loadForgeExecutor = loadForgeExecutor;
-exports.listSessions = listSessions;
+exports.listTasks = listTasks;
 exports.getGenieVersion = getGenieVersion;
 exports.getVersionHeader = getVersionHeader;
 exports.syncAgentProfilesToForge = syncAgentProfilesToForge;
@@ -99,7 +99,7 @@ function loadForgeExecutor() {
     }
 }
 // Helper: List recent sessions (uses Forge API)
-async function listSessions() {
+async function listTasks() {
     const workspaceRoot = findWorkspaceRoot();
     try {
         // ALWAYS use Forge API for session listing (complete executor replacement)
@@ -108,15 +108,19 @@ async function listSessions() {
             throw new Error('Forge executor unavailable (did you build the CLI?)');
         }
         const forgeExecutor = mod.createForgeExecutor();
-        const forgeSessions = await forgeExecutor.listSessions();
-        const sessions = forgeSessions.map((entry) => ({
-            id: entry.id || entry.taskId || 'unknown',
-            name: entry.name || entry.taskId || 'unknown',
-            agent: entry.agent || 'unknown',
-            status: entry.status || 'unknown',
-            created: entry.created || 'unknown',
-            lastUsed: entry.lastUsed || entry.created || 'unknown'
-        }));
+        const forgeSessions = await forgeExecutor.listTasks();
+        const sessions = forgeSessions.map((entry) => {
+            const created = entry.created || entry.created_at || 'unknown';
+            const updated = entry.updated || entry.updated_at || entry.lastUsed || created;
+            return {
+                id: entry.id || entry.taskId || 'unknown',
+                name: entry.name || entry.taskId || 'unknown',
+                agent: entry.agent || 'unknown',
+                status: entry.status || 'unknown',
+                created,
+                lastUsed: updated
+            };
+        });
         // Filter: Show running sessions + recent completed (last 10)
         // Fix Bug #5: Filter out stale sessions (>24 hours old with no recent activity)
         const now = Date.now();
@@ -156,14 +160,20 @@ async function listSessions() {
         });
     }
     catch (error) {
-        // Fallback to local sessions.json if Forge API fails
+        // Fallback to local tasks.json if Forge API fails
         console.warn('Failed to fetch Forge sessions, falling back to local store');
-        const sessionsFile = path_1.default.join(workspaceRoot, '.genie/state/agents/sessions.json');
-        if (!fs_1.default.existsSync(sessionsFile)) {
+        const tasksFile = path_1.default.join(workspaceRoot, '.genie/state/tasks.json');
+        const legacySessionsFile = path_1.default.join(workspaceRoot, '.genie/state/agents/sessions.json');
+        const fallbackFile = fs_1.default.existsSync(tasksFile)
+            ? tasksFile
+            : fs_1.default.existsSync(legacySessionsFile)
+                ? legacySessionsFile
+                : null;
+        if (!fallbackFile) {
             return [];
         }
         try {
-            const content = fs_1.default.readFileSync(sessionsFile, 'utf8');
+            const content = fs_1.default.readFileSync(fallbackFile, 'utf8');
             const store = JSON.parse(content);
             const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
                 id: entry.taskId || key,

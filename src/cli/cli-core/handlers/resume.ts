@@ -23,7 +23,7 @@ export function createResumeHandler(ctx: HandlerContext): Handler {
     // NOTE: Agent profile sync removed - Forge discovers .genie folders natively
 
     try {
-      await forgeExecutor.resumeSession(attemptId, prompt);
+      await forgeExecutor.resumeTask(attemptId, prompt);
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge resume failed: ${reason}`);

@@ -269,7 +269,9 @@ async function handleNewUser(
   const initConfig: GenieConfig = { defaults: {} };
   const initPaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+    tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -408,7 +410,9 @@ async function handlePreVersionTracking(
   const upgradeConfig: GenieConfig = { defaults: {} };
   const upgradePaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+    tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -517,7 +521,9 @@ async function handleVersionMismatch(
   const updateConfig: GenieConfig = { defaults: {} };
   const updatePaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+    tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -563,7 +569,9 @@ async function handleCorruptedVersion(
   const repairConfig: GenieConfig = { defaults: {} };
   const repairPaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'sessions.json'),
+    tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
+    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };

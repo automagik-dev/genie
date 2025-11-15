@@ -65,7 +65,7 @@ export function buildHelpView(params: HelpViewParams): string {
 
   // Tips
   lines.push('💡 **Tips**');
-  lines.push('- Watch sessions: `genie list sessions`.');
+  lines.push('- Watch tasks: `genie list tasks`.');
   lines.push('- Run an agent: `genie run <agent-id> "<prompt>"`.');
 
   return lines.join('\n');
@@ -136,7 +136,7 @@ export function buildSubcommandHelpView(params: SubcommandHelpParams): string {
 export function buildRunHelpView(): string {
   return buildSubcommandHelpView({
     command: 'run',
-    description: 'Start or attach to an agent task',
+    description: 'Start an agent task with browser UI + live monitoring',
     usage: 'genie run <agent> "<prompt>" [--help]',
     arguments: [
       { name: '<agent>', description: 'Agent identifier (from genie list agents)' },
@@ -160,6 +160,36 @@ export function buildRunHelpView(): string {
       'Use quotes around prompts containing spaces or special characters',
       'Agent identifiers can be found with: genie list agents',
       'Executor/model values must exist in Forge or the workspace profile sync will fail'
+    ]
+  });
+}
+
+export function buildTaskHelpView(): string {
+  return buildSubcommandHelpView({
+    command: 'task',
+    description: 'Headless task execution (immediate JSON output, optional monitoring)',
+    usage: 'genie task <agent> "<prompt>" | genie task monitor <attempt-id>',
+    arguments: [
+      { name: '<agent>', description: 'Agent identifier (use genie list agents)' },
+      { name: '<prompt>', description: 'Detailed task description for the agent' }
+    ],
+    options: [
+      { flag: '--executor, -x', description: 'Override executor profile' },
+      { flag: '--model, -m', description: 'Override model for the selected executor' },
+      { flag: '--name, -n', description: 'Friendly task name (stored in tasks.json)' },
+      { flag: '--raw', description: 'Raw attempt ID only (no JSON wrapper)' },
+      { flag: '--quiet', description: 'Suppress startup messages' },
+      { flag: '--help, -h', description: 'Show this help message' }
+    ],
+    examples: [
+      'genie task implementor "Fix lint errors" --executor opencode',
+      'genie task master "Daily plan" --raw',
+      'genie task monitor 0f4f0d07-1337-42b2-9d58-aaaa1111bbbb'
+    ],
+    notes: [
+      'Use genie list tasks to find attempt IDs for monitoring/resume',
+      'Monitor subcommand streams WebSocket output without opening a browser',
+      'Outputs structured JSON so scripts can parse task_id/task_url/status'
     ]
   });
 }

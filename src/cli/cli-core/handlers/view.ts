@@ -42,9 +42,9 @@ export function createViewHandler(ctx: HandlerContext): Handler {
 
     if (forgeAvailable) {
       try {
-        const remoteStatus = await forgeExecutor.getSessionStatus(attemptId);
+        const remoteStatus = await forgeExecutor.getTaskStatus(attemptId);
         status = remoteStatus.status || null;
-        transcript = await forgeExecutor.fetchLatestLogs(attemptId);
+        transcript = await forgeExecutor.fetchTaskLogs(attemptId);
       } catch (error) {
         forgeAvailable = false;
         const reason = describeForgeError(error);

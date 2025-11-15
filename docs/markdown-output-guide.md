@@ -23,7 +23,7 @@ The new `formatTranscriptMarkdown()` function addresses all these needs while ma
 |----------|----------|----------|
 | `formatTranscriptMarkdown()` | Session transcripts with metadata | AI orchestration, session monitoring, detailed reports |
 | Direct `stream.write()` | Simple string output | Basic messages, raw content, custom formatting |
-| `formatSessionList()` | Multiple session overview | Session dashboards, status pages |
+| `formatTaskList()` | Multiple session overview | Session dashboards, status pages |
 
 ### formatTranscriptMarkdown() Output Modes
 
@@ -491,7 +491,7 @@ process.stdout.write(jsonOutput + '\n');
 
 - **Simple strings:** Use `process.stdout.write()`
 - **Structured transcripts:** Use `formatTranscriptMarkdown()`
-- **Session lists:** Use `formatSessionList()`
+- **Session lists:** Use `formatTaskList()`
 
 ### 2. Always Provide Complete Metadata
 

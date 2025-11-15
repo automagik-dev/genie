@@ -11,7 +11,7 @@ export interface ForgeExecutorConfig {
   genieProjectId?: string;
 }
 
-export interface CreateSessionParams {
+export interface CreateTaskParams {
   agentName: string;
   prompt: string;
   executorKey: string;
@@ -20,15 +20,16 @@ export interface CreateSessionParams {
   model?: string;
 }
 
-export interface CreateSessionResult {
+export interface CreateTaskResult {
   attemptId: string;
   taskId: string;
   projectId: string;
   forgeUrl: string;
 }
 
-export interface ForgeSessionSummary {
+export interface ForgeTaskSummary {
   id: string;
+  name: string;
   agent: string;
   status: string;
   executor?: string | null;
@@ -54,7 +55,7 @@ export class ForgeExecutor {
    * Removed: syncProfiles, loadSyncCache, saveSyncCache, hashContent, cleanNullValues, mergeProfiles
    */
 
-  async createSession(params: CreateSessionParams): Promise<CreateSessionResult> {
+  async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {
     const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
 
     const projectId = await this.getOrCreateGenieProject();
@@ -107,20 +108,20 @@ export class ForgeExecutor {
     };
   }
 
-  async resumeSession(taskId: string, followUpPrompt: string): Promise<void> {
+  async resumeTask(taskId: string, followUpPrompt: string): Promise<void> {
     await this.forge.followUpTaskAttempt(taskId, followUpPrompt);
   }
 
-  async stopSession(taskId: string): Promise<void> {
+  async stopTask(taskId: string): Promise<void> {
     await this.forge.stopTaskAttemptExecution(taskId);
   }
 
-  async getSessionStatus(taskId: string): Promise<{ status: string }> {
+  async getTaskStatus(taskId: string): Promise<{ status: string }> {
     const attempt = await this.forge.getTaskAttempt(taskId);
     return { status: attempt.status || 'unknown' };
   }
 
-  async fetchLatestLogs(taskId: string): Promise<string | null> {
+  async fetchTaskLogs(taskId: string): Promise<string | null> {
     try {
       const processes = await this.forge.listExecutionProcesses(taskId);
       if (!Array.isArray(processes) || !processes.length) return null;
@@ -131,7 +132,7 @@ export class ForgeExecutor {
     }
   }
 
-  async listSessions(): Promise<ForgeSessionSummary[]> {
+  async listTasks(): Promise<ForgeTaskSummary[]> {
     const projectId = await this.getOrCreateGenieProject();
 
     // Query tasks and attempts separately
@@ -164,8 +165,10 @@ export class ForgeExecutor {
     // Return attempt summaries (using attempt ID, not task ID)
     return Array.from(latestAttemptsByTask.values()).map((attempt: any) => {
       const task = taskMap.get(attempt.task_id);
+      const displayName = task?.title || attempt.description || attempt.id;
       return {
         id: attempt.id,  // ✅ Now returns attempt ID (UUID) instead of task ID
+        name: displayName,
         agent: this.extractAgentNameFromTitle(task?.title || ''),
         status: attempt.status || 'unknown',
         executor: (attempt.executor_profile_id?.executor || '').toLowerCase() || null,

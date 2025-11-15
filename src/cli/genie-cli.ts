@@ -155,12 +155,19 @@ program
   .description('List agents, tasks, or workflows')
   .action((type: string | undefined) => {
     const normalized = (type || 'agents').toLowerCase();
-    const validTypes = ['agents', 'tasks', 'workflows'];
-    if (!validTypes.includes(normalized)) {
-      console.error('Error: list command accepts agents (default), tasks, or workflows');
+    const aliasMap: Record<string, string> = {
+      session: 'tasks',
+      sessions: 'tasks',
+      task: 'tasks',
+      agent: 'agents'
+    };
+    const resolved = aliasMap[normalized] || normalized;
+    const validTypes = new Set(['agents', 'collectives', 'tasks', 'workflows', 'skills']);
+    if (!validTypes.has(resolved)) {
+      console.error('Error: list command accepts agents (default), tasks, workflows, skills, or collectives');
       process.exit(1);
     }
-    execGenie(['list', normalized]);
+    execGenie(['list', resolved]);
   });
 
 // View command

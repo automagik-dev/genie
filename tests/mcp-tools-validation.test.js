@@ -194,7 +194,7 @@ async function runTests() {
 
     // Test 5: Call list_tasks tool
     console.log('\n[Test 5] Call list_tasks Tool');
-    const listSessionsRequest = {
+    const listTasksRequest = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
@@ -204,11 +204,11 @@ async function runTests() {
       }
     };
 
-    const listSessionsResponse = await sendMCPRequest(serverProcess, listSessionsRequest);
-    assert(listSessionsResponse.result, 'list_tasks returned result');
-    assert(Array.isArray(listSessionsResponse.result.content), 'Result has content array');
+    const listTasksResponse = await sendMCPRequest(serverProcess, listTasksRequest);
+    assert(listTasksResponse.result, 'list_tasks returned result');
+    assert(Array.isArray(listTasksResponse.result.content), 'Result has content array');
 
-    const sessionsContent = listSessionsResponse.result.content[0].text;
+    const sessionsContent = listTasksResponse.result.content[0].text;
     assert(
       sessionsContent.includes('task') || sessionsContent.includes('No tasks'),
       'Response mentions tasks or empty state'

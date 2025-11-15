@@ -21,8 +21,8 @@ const __dirname = path.dirname(__filename);
 // })();
 
 // (function testSessionDefaults() {
-//   const tempSessionsPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json');
-//   const store = loadSessions({ sessionsFile: tempSessionsPath }, { defaults: { executor: 'codex' } }, { defaults: { executor: 'codex' } });
+//   const tempSessionsPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'tasks.json');
+//   const store = loadSessions({ tasksFile: tempSessionsPath }, { defaults: { executor: 'codex' } }, { defaults: { executor: 'codex' } });
 //   assert.ok(store && typeof store === 'object', 'loadSessions returns an object');
 //   Object.values(store.sessions || store.agents || {}).forEach((entry) => {
 //     assert.ok(entry.executor, 'each session entry should have an executor');
@@ -61,7 +61,7 @@ async function runCliCoreTests() {
   assert.strictEqual(typeof cliCore.TaskService, 'function', 'TaskService should be exported from cli-core');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
-  const sessionsFile = path.join(tmpDir, 'sessions.json');
+  const tasksFile = path.join(tmpDir, 'tasks.json');
 
   // V4 format: sessions keyed by attemptId (UUID) - issue #407 fix
   const uuidA = 'abc-123-uuid-genie-a';
@@ -69,7 +69,7 @@ async function runCliCoreTests() {
   const uuidC = 'ghi-789-uuid-genie-c';
 
   fs.writeFileSync(
-    sessionsFile,
+    tasksFile,
     JSON.stringify(
       {
         version: 4,
@@ -84,7 +84,7 @@ async function runCliCoreTests() {
 
   try {
     const service = new cliCore.TaskService({
-      paths: { sessionsFile },
+      paths: { tasksFile },
       loadConfig: { defaults: { executor: 'codex' } },
       defaults: { defaults: { executor: 'codex' } }
     });
@@ -94,7 +94,7 @@ async function runCliCoreTests() {
 
     // Simulate concurrent write (another process adds session-c)
     fs.writeFileSync(
-      sessionsFile,
+      tasksFile,
       JSON.stringify(
         {
           version: 4,
@@ -110,7 +110,7 @@ async function runCliCoreTests() {
 
     await service.save(store);
 
-    const merged = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+    const merged = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
     assert.ok(merged.sessions[uuidA], 'should retain original entries');
     assert.ok(merged.sessions[uuidB], 'should include newly saved session');
     assert.ok(merged.sessions[uuidC], 'should merge concurrent session additions');

@@ -104,7 +104,7 @@ export async function runTalk(
 
   let sessionResult;
   try {
-    sessionResult = await forgeExecutor.createSession({
+    sessionResult = await forgeExecutor.createTask({
       agentName: resolvedAgentName,
       prompt,
       executorKey,

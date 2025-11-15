@@ -54,7 +54,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const startTime = Date.now();
     let sessionResult;
     try {
-      sessionResult = await forgeExecutor.createSession({
+      sessionResult = await forgeExecutor.createTask({
         agentName: resolvedAgentName,
         prompt,
         executorKey,

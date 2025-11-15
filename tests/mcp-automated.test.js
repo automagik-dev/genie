@@ -198,7 +198,7 @@ async function runTests() {
 
     // Test 20-22: list_tasks Tool Execution
     console.log('\n[Test 20-22] list_tasks Tool Execution');
-    const listSessionsCall = {
+    const listTasksCall = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
@@ -208,10 +208,10 @@ async function runTests() {
       }
     };
 
-    const listSessionsResponse = await sendRequest(server, listSessionsCall, 15000);
-    assert(listSessionsResponse.result, 'list_tasks executed');
-    assert(Array.isArray(listSessionsResponse.result.content), 'list_tasks returned content');
-    const sessionsText = listSessionsResponse.result.content[0]?.text || '';
+    const listTasksResponse = await sendRequest(server, listTasksCall, 15000);
+    assert(listTasksResponse.result, 'list_tasks executed');
+    assert(Array.isArray(listTasksResponse.result.content), 'list_tasks returned content');
+    const sessionsText = listTasksResponse.result.content[0]?.text || '';
     assert(
       sessionsText.includes('session') || sessionsText.includes('No sessions'),
       'list_tasks response valid'

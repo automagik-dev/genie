@@ -74,7 +74,7 @@ export async function runTask(
 
   let sessionResult;
   try {
-    sessionResult = await forgeExecutor.createSession({
+    sessionResult = await forgeExecutor.createTask({
       agentName: resolvedAgentName,
       prompt,
       executorKey,
@@ -96,7 +96,7 @@ export async function runTask(
   const taskUrl = sessionResult.forgeUrl;
 
   const sessionService = new TaskService({
-    paths: { sessionsFile: paths.sessionsFile }
+    paths: { tasksFile: paths.tasksFile, legacySessionsFile: paths.legacySessionsFile }
   });
   const store = sessionService.load();
   const now = new Date().toISOString();

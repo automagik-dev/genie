@@ -15,6 +15,7 @@ import {
 import { getRuntimeWarnings, clearRuntimeWarnings } from './lib/task-helpers';
 import {
   buildRunHelpView,
+  buildTaskHelpView,
   buildResumeHelpView,
   buildListHelpView,
   buildViewHelpView,
@@ -143,6 +144,10 @@ async function main(): Promise<void> {
         await runTalk(parsed, config, paths);
         break;
       case 'task':
+        if (parsed.options.requestHelp) {
+          await emitView(buildTaskHelpView(), parsed.options);
+          return;
+        }
         const { runTask } = await import('./commands/task.js');
         await runTask(parsed, config, paths);
         break;

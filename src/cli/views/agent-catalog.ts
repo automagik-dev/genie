@@ -48,7 +48,7 @@ export function buildAgentCatalogView(params: AgentCatalogParams): string {
   lines.push('💡 **Commands**');
   lines.push('```');
   lines.push('genie run <agent-id> "<prompt>"');
-  lines.push('genie list sessions');
+  lines.push('genie list tasks');
   lines.push('```');
 
   return lines.join('\n');

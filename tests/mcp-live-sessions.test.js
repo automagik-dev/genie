@@ -174,8 +174,8 @@ async function runTests() {
     // Test 4-6: View Tool (Check Transcript)
     console.log('\n[Test 4-6] view_task Tool - Retrieve Session Transcript');
 
-    // First, list sessions to verify it exists
-    const listSessionsCall = {
+    // First, list tasks to verify it exists
+    const listTasksCall = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
@@ -185,7 +185,7 @@ async function runTests() {
       }
     };
 
-    const listResponse = await sendRequest(server, listSessionsCall, 15000);
+    const listResponse = await sendRequest(server, listTasksCall, 15000);
     assert(listResponse.result, 'list_tasks executed for verification');
 
     const listText = listResponse.result.content[0]?.text || '';
@@ -309,10 +309,12 @@ async function runTests() {
 
     // Test 13: CLI-MCP Session Consistency
     console.log('\n[Test 13] CLI-MCP Session Consistency Check');
-    const sessionsPath = path.join(__dirname, '../.genie/state/agents/sessions.json');
+    const tasksPath = path.join(__dirname, '../.genie/state/tasks.json');
+    const legacySessionsPath = path.join(__dirname, '../.genie/state/agents/sessions.json');
+    const resolvedTasksPath = fs.existsSync(tasksPath) ? tasksPath : legacySessionsPath;
 
-    if (fs.existsSync(sessionsPath)) {
-      const sessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    if (resolvedTasksPath && fs.existsSync(resolvedTasksPath)) {
+      const sessionsData = JSON.parse(fs.readFileSync(resolvedTasksPath, 'utf8'));
       const cliSessions = Object.keys(sessionsData.sessions || {});
 
       const mcpListCall = {
@@ -334,9 +336,9 @@ async function runTests() {
         'CLI and MCP share unified session state'
       );
 
-      console.log(`  → CLI sessions: ${cliSessions.length}, MCP accessible: yes`);
+      console.log(`  → CLI tasks: ${cliSessions.length}, MCP accessible: yes`);
     } else {
-      console.log('  ⚠️  No sessions.json found (acceptable for fresh install)');
+      console.log('  ⚠️  No tasks.json found (acceptable for fresh install)');
       testsPassed++; // Don't penalize for clean state
     }
 

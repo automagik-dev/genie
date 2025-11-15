@@ -88,29 +88,32 @@ export function formatTranscriptMarkdown(
 }
 
 /**
- * Format session list into compact markdown table
+ * Format task list into compact markdown table
  *
- * @param sessions - Array of session entries
- * @returns Markdown table with session info
+ * @param sessions - Array of task entries
+ * @returns Markdown table with task info
  */
-export function formatSessionList(sessions: SessionEntry[]): string {
+export function formatTaskList(sessions: SessionEntry[]): string {
   if (sessions.length === 0) {
-    return '**No sessions found**\n';
+    return '**No tasks found**\n';
   }
 
   const parts: string[] = [];
-  parts.push('## Active Sessions\n');
-  parts.push('| Session ID | Agent | Status | Executor | Model |');
-  parts.push('|------------|-------|--------|----------|-------|');
+  parts.push('## Active Tasks\n');
+  parts.push('| Task ID | Agent | Status | Executor | Model |');
+  parts.push('|---------|-------|--------|----------|-------|');
 
   for (const task of sessions) {
-    const id = trimSessionId(task.taskId);
+    const id = trimTaskId(task.taskId);
     const model = task.model ? task.model : '';
     parts.push(`| ${id} | ${task.agent} | ${task.status} | ${task.executor} | ${model} |`);
   }
 
   return parts.join('\n') + '\n';
 }
+
+/** @deprecated Use formatTaskList instead. */
+export const formatSessionList = formatTaskList;
 
 // ============================================================================
 // Mode-Specific Formatters
@@ -333,9 +336,9 @@ function truncateText(text: string, maxLength: number): string {
 }
 
 /**
- * Trim session ID for display (keep first 8 chars)
+ * Trim task ID for display (keep first 8 chars)
  */
-function trimSessionId(taskId: string): string {
+function trimTaskId(taskId: string): string {
   if (taskId.length <= 10) {
     return taskId;
   }

@@ -4,7 +4,7 @@ set -euo pipefail
 # Quick QA validation for Genie CLI Bug #1
 # Validates that `genie run <agent> "<prompt>"`:
 #  - returns within ~5–10 seconds (non-hanging background launch)
-#  - creates/updates a background session entry in sessions.json
+#  - creates/updates a background task entry in tasks.json
 #  - creates a log file for the run
 #  - optionally detects a printed banner (best-effort; may depend on TTY)
 
@@ -37,29 +37,34 @@ else
   echo "[FAIL] Command exceeded expected timeout window (>10s)" | tee -a "$OUTFILE"
 fi
 
-# 2) Check sessions.json updated and contains agent entry
-SESS_FILE=".genie/state/agents/sessions.json"
-if [ -f "$SESS_FILE" ]; then
-  echo "[INFO] sessions.json present" | tee -a "$OUTFILE"
+# 2) Check tasks.json updated and contains agent entry
+TASK_FILE=".genie/state/tasks.json"
+LEGACY_SESSIONS_FILE=".genie/state/agents/sessions.json"
+if [ ! -f "$TASK_FILE" ] && [ -f "$LEGACY_SESSIONS_FILE" ]; then
+  TASK_FILE="$LEGACY_SESSIONS_FILE"
+fi
+
+if [ -f "$TASK_FILE" ]; then
+  echo "[INFO] Task store present at $TASK_FILE" | tee -a "$OUTFILE"
   # Try to extract agent block with jq if available; otherwise grep
   if command -v jq >/dev/null 2>&1; then
-    agent_present=$(jq -r --arg a "$AGENT" '.agents[$a] | if . == null then "no" else "yes" end' "$SESS_FILE")
+    agent_present=$(jq -r --arg a "$AGENT" '.agents[$a] | if . == null then "no" else "yes" end' "$TASK_FILE")
   else
-    agent_present=$(grep -q '"agent"\s*:\s*"'"$AGENT"'"' "$SESS_FILE" && echo yes || echo no)
+    agent_present=$(grep -q '"agent"\s*:\s*"'"$AGENT"'"' "$TASK_FILE" && echo yes || echo no)
   fi
   if [ "$agent_present" = "yes" ]; then
-    echo "[PASS] sessions.json contains agent entry: $AGENT" | tee -a "$OUTFILE"
+    echo "[PASS] Task store contains agent entry: $AGENT" | tee -a "$OUTFILE"
   else
-    echo "[FAIL] sessions.json missing agent entry: $AGENT" | tee -a "$OUTFILE"
+    echo "[FAIL] Task store missing agent entry: $AGENT" | tee -a "$OUTFILE"
   fi
 else
-  echo "[FAIL] sessions.json not found at $SESS_FILE" | tee -a "$OUTFILE"
+  echo "[FAIL] Task store not found at .genie/state/tasks.json (checked legacy path too)" | tee -a "$OUTFILE"
 fi
 
 # 3) Check log file existence for that agent entry
 LOG_FILE=""
-if command -v jq >/dev/null 2>&1 && [ -f "$SESS_FILE" ]; then
-  LOG_FILE=$(jq -r --arg a "$AGENT" '.agents[$a].logFile // ""' "$SESS_FILE")
+if command -v jq >/dev/null 2>&1 && [ -f "$TASK_FILE" ]; then
+  LOG_FILE=$(jq -r --arg a "$AGENT" '.agents[$a].logFile // ""' "$TASK_FILE")
 fi
 
 if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then

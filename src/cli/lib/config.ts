@@ -20,9 +20,10 @@ const BASE_CONFIG: GenieConfig = {
   },
   paths: {
     baseDir: undefined,
-    sessionsFile: '.genie/state/agents/sessions.json',
+    tasksFile: '.genie/state/tasks.json',
     logsDir: '.genie/state/agents/logs',
-    backgroundDir: '.genie/state/agents/background'
+    backgroundDir: '.genie/state/agents/background',
+    legacySessionsFile: '.genie/state/agents/sessions.json'
   },
   forge: {
     executors: {}
@@ -107,16 +108,26 @@ export function loadConfig(): GenieConfig {
 
 export function resolvePaths(paths: ConfigPaths): Required<ConfigPaths> {
   const baseDir = paths.baseDir ? path.resolve(paths.baseDir) : findWorkspaceRoot();
+  const configuredTasksFile = paths.tasksFile || paths.sessionsFile;
+  const tasksFile = configuredTasksFile
+    ? path.resolve(baseDir, configuredTasksFile)
+    : path.join(baseDir, '.genie/state/tasks.json');
+  const legacySessionsFile = path.resolve(
+    baseDir,
+    paths.legacySessionsFile || '.genie/state/agents/sessions.json'
+  );
   return {
     baseDir,
-    sessionsFile: paths.sessionsFile || path.join(baseDir, '.genie/state/agents/sessions.json'),
+    tasksFile,
+    sessionsFile: tasksFile,
+    legacySessionsFile,
     logsDir: paths.logsDir || path.join(baseDir, '.genie/state/agents/logs'),
     backgroundDir: paths.backgroundDir || path.join(baseDir, '.genie/state/agents/background')
   };
 }
 
 export function prepareDirectories(paths: Required<ConfigPaths>): void {
-  [paths.logsDir, paths.backgroundDir, path.dirname(paths.sessionsFile)].forEach((dir) => {
+  [paths.logsDir, paths.backgroundDir, path.dirname(paths.tasksFile)].forEach((dir) => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }

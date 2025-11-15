@@ -49,7 +49,7 @@ import {
   findWorkspaceRoot,
   listAgents,
   loadForgeExecutor,
-  listSessions,
+  listTasks,
   getGenieVersion,
   getVersionHeader,
   syncAgentProfilesToForge,
@@ -77,7 +77,7 @@ const WORKSPACE_ROOT = findWorkspaceRoot();
 
 // loadForgeExecutor() imported from ./lib/server-helpers.js
 
-// listSessions() imported from ./lib/server-helpers.js
+// listTasks() imported from ./lib/server-helpers.js
 
 // Helper: View session transcript (uses Forge API + WebSocket normalized logs)
 async function viewSession(taskId: string): Promise<{status: string; transcript: string | null; error?: string}> {
@@ -351,7 +351,7 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
 
 // Tool: list_tasks - View active and recent tasks
 server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to resume or view.', async () => {
-  const tasks = await listSessions();
+  const tasks = await listTasks();
 
   if (tasks.length === 0) {
     return { content: [{ type: 'text', text: getVersionHeader() + 'No tasks found. Start a new task with the "task" tool.' }] };
