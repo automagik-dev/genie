@@ -159,6 +159,12 @@ export async function monitorTaskCompletion(
           }
         }
 
+        // Handle finished flag from normalized log stream
+        if (message.finished === true) {
+          lastStatus = 'finished';
+          // WebSocket will close after this, and close handler will query actual status
+        }
+
         // Handle raw log messages (fallback)
         if (typeof message === 'string') {
           outputBuffer.push(message);
@@ -184,7 +190,36 @@ export async function monitorTaskCompletion(
     });
 
     // Connection closed
-    ws.on('close', (code: number, reason: Buffer) => {
+    ws.on('close', async (code: number, reason: Buffer) => {
+      // If we received the 'finished' flag, query actual task status
+      if (lastStatus === 'finished') {
+        try {
+          const attempt = await client.getTaskAttempt(attemptId);
+          const actualStatus = attempt?.status || 'unknown';
+
+          if (actualStatus === 'completed' || actualStatus === 'success') {
+            resolveOnce({
+              status: 'completed',
+              output: outputBuffer.join('\n') || '(no output)',
+              duration_ms: Date.now() - startTime,
+              task_url: taskUrl
+            });
+            return;
+          } else if (actualStatus === 'failed' || actualStatus === 'error') {
+            resolveOnce({
+              status: 'failed',
+              output: outputBuffer.join('\n') || '(no output)',
+              error: 'Task execution failed',
+              duration_ms: Date.now() - startTime,
+              task_url: taskUrl
+            });
+            return;
+          }
+        } catch (error) {
+          // Fall through to default handling if query fails
+        }
+      }
+
       const closedStatus = lastStatus === 'completed' || lastStatus === 'success'
         ? 'completed'
         : lastStatus === 'failed' || lastStatus === 'error'
