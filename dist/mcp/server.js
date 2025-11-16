@@ -322,7 +322,7 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
     return { content: [{ type: 'text', text: response }] };
 });
 // Tool: list_tasks - View active and recent tasks
-server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to resume or view.', async () => {
+server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to view or continue.', async () => {
     const tasks = await (0, server_helpers_js_1.listTasks)();
     if (tasks.length === 0) {
         return { content: [{ type: 'text', text: (0, server_helpers_js_1.getVersionHeader)() + 'No tasks found. Start a new task with the "task" tool.' }] };
@@ -500,7 +500,6 @@ const handleContinueTask = async (args) => {
     }
 };
 server.tool('continue_task', 'Resume an existing agent task with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', continueTaskShape, handleContinueTask);
-server.tool('resume', '[Deprecated] Alias for continue_task (use mcp__genie__continue_task).', continueTaskShape, handleContinueTask);
 const viewTaskShape = {
     taskId: zod_1.z.string().describe('Task ID to view (get from list_tasks tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
     full: zod_1.z.boolean().optional().default(false).describe('Show full transcript (true) or recent messages only (false). Default: false.')
@@ -706,10 +705,11 @@ server.tool('transform_prompt', 'Transform/enhance a prompt using an agent synch
     await (0, prompt_tool_js_1.executePromptTool)(args, {
         streamContent: async (chunk) => {
             // Stream content via MCP logging notifications
+            // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
             await server.sendLoggingMessage({
                 level: "info",
                 data: chunk
-            }, extra.taskId);
+            }, extra.sessionId);
         }
     });
     return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
@@ -722,10 +722,11 @@ try {
     }, async (args, extra) => {
         await (0, continue_task_tool_js_1.executeContinueTaskTool)(args, {
             streamContent: async (chunk) => {
+                // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId.
                 await server.sendLoggingMessage({
                     level: "info",
                     data: chunk
-                }, extra.taskId);
+                }, extra.sessionId);
             }
         });
         return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
@@ -745,10 +746,11 @@ server.tool('create_subtask', 'Create a child task under a master orchestrator. 
 }, async (args, extra) => {
     await (0, create_subtask_tool_js_1.executeCreateSubtaskTool)(args, {
         streamContent: async (chunk) => {
+            // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
             await server.sendLoggingMessage({
                 level: "info",
                 data: chunk
-            }, extra.taskId);
+            }, extra.sessionId);
         }
     });
     return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
@@ -881,7 +883,7 @@ if (debugMode) {
         console.error(`Worktree: ${roleInfo.worktree}`);
     }
     // Dynamically count tools instead of hardcoding
-    const coreTools = ['list_agents', 'list_tasks', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
+    const coreTools = ['list_agents', 'list_tasks', 'run', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
     const wsTools = ['transform_prompt'];
     const neuronTools = ['continue_task', 'create_subtask'];
     const totalTools = coreTools.length + wsTools.length + neuronTools.length;
