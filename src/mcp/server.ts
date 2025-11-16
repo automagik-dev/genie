@@ -835,10 +835,11 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
   await executePromptTool(args, {
     streamContent: async (chunk: string) => {
       // Stream content via MCP logging notifications
+      // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.taskId);
+      }, extra.sessionId);
     }
   });
   return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
@@ -852,10 +853,11 @@ try {
   }, async (args: any, extra: any) => {
     await executeContinueTaskTool(args, {
       streamContent: async (chunk: any) => {
+        // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId.
         await server.sendLoggingMessage({
           level: "info",
           data: chunk
-        }, extra.taskId);
+        }, extra.sessionId);
       }
     });
     return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
@@ -875,10 +877,11 @@ try {
 }, async (args: any, extra: any) => {
   await executeCreateSubtaskTool(args, {
     streamContent: async (chunk: any) => {
+      // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.taskId);
+      }, extra.sessionId);
     }
   });
   return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
