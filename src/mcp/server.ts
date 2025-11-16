@@ -394,7 +394,7 @@ server.tool('list_agents', 'List all available Genie agents with their capabilit
 });
 
 // Tool: list_tasks - View active and recent tasks
-server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to resume or view.', async () => {
+server.tool('list_tasks', 'List active and recent Genie agent tasks. Shows task names, agents, status, and timing. Use this to find tasks to view or continue.', async () => {
   const tasks = await listTasks();
 
   if (tasks.length === 0) {
@@ -601,7 +601,6 @@ const handleContinueTask = async (args: ContinueTaskInput) => {
 };
 
 server.tool('continue_task', 'Resume an existing agent task with a follow-up prompt. Use this to continue conversations, provide additional context, or ask follow-up questions to an agent.', continueTaskShape, handleContinueTask);
-server.tool('resume', '[Deprecated] Alias for continue_task (use mcp__genie__continue_task).', continueTaskShape, handleContinueTask);
 
 const viewTaskShape = {
   taskId: z.string().describe('Task ID to view (get from list_tasks tool). Example: "c74111b4-1a81-49d9-b7d3-d57e31926710"'),
@@ -1032,7 +1031,7 @@ if (debugMode) {
   }
 
   // Dynamically count tools instead of hardcoding
-  const coreTools = ['list_agents', 'list_tasks', 'run', 'resume', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
+  const coreTools = ['list_agents', 'list_tasks', 'run', 'view', 'stop', 'list_spells', 'read_spell', 'get_workspace_info'];
   const wsTools = ['transform_prompt'];
   const neuronTools = ['continue_task', 'create_subtask'];
   const totalTools = coreTools.length + wsTools.length + neuronTools.length;
