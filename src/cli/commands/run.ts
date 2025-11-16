@@ -185,6 +185,14 @@ export async function runRun(
       }
     });
 
+    // Persist final task status to local store
+    const updatedStore = sessionService.load();
+    if (updatedStore.sessions[attemptId]) {
+      updatedStore.sessions[attemptId].status = result.status;
+      updatedStore.sessions[attemptId].lastUsed = new Date().toISOString();
+      await sessionService.save(updatedStore);
+    }
+
     if (raw) {
       console.log(result.output);
     } else {
@@ -218,6 +226,14 @@ export async function runRun(
 
     process.exitCode = result.status === 'completed' ? 0 : 1;
   } catch (error) {
+    // Update status to error on monitoring failure
+    const errorStore = sessionService.load();
+    if (errorStore.sessions[attemptId]) {
+      errorStore.sessions[attemptId].status = 'error';
+      errorStore.sessions[attemptId].lastUsed = new Date().toISOString();
+      await sessionService.save(errorStore);
+    }
+
     console.error('');
     console.error('❌ Monitoring failed:', error);
     console.error('');
