@@ -67,7 +67,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
       }));
       const markdown = formatTaskList(sessions);
       const fallbackLines = [
-        '⚠️ Forge backend unreachable. Showing cached tasks from `.genie/state/tasks.json` (legacy: `.genie/state/agents/sessions.json`).',
+        '⚠️ Forge backend unreachable. Showing cached tasks from `.genie/state/tasks.json`.',
         FORGE_RECOVERY_HINT,
         '',
         markdown.trim()

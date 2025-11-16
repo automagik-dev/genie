@@ -133,7 +133,7 @@ export async function runRun(
   const taskUrl = sessionResult.forgeUrl;
 
   const sessionService = new TaskService({
-    paths: { tasksFile: paths.tasksFile, legacySessionsFile: paths.legacySessionsFile }
+    paths: { tasksFile: paths.tasksFile }
   });
   const store = sessionService.load();
   const now = new Date().toISOString();

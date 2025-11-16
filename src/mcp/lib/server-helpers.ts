@@ -175,14 +175,8 @@ export async function listTasks(): Promise<Array<{ id: string; name: string; age
 
 function loadTasksFromLocalStore(workspaceRoot: string): Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }> {
   const tasksFile = path.join(workspaceRoot, '.genie/state/tasks.json');
-  const legacySessionsFile = path.join(workspaceRoot, '.genie/state/agents/sessions.json');
-  const fallbackFile = fs.existsSync(tasksFile)
-    ? tasksFile
-    : fs.existsSync(legacySessionsFile)
-    ? legacySessionsFile
-    : null;
 
-  if (!fallbackFile) {
+  if (!fs.existsSync(tasksFile)) {
     return [];
   }
 

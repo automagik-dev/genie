@@ -271,7 +271,6 @@ async function handleNewUser(
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -412,7 +411,6 @@ async function handlePreVersionTracking(
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -523,7 +521,6 @@ async function handleVersionMismatch(
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -571,7 +568,6 @@ async function handleCorruptedVersion(
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    legacySessionsFile: path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };

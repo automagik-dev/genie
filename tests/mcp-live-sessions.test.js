@@ -310,11 +310,9 @@ async function runTests() {
     // Test 13: CLI-MCP Session Consistency
     console.log('\n[Test 13] CLI-MCP Session Consistency Check');
     const tasksPath = path.join(__dirname, '../.genie/state/tasks.json');
-    const legacySessionsPath = path.join(__dirname, '../.genie/state/agents/sessions.json');
-    const resolvedTasksPath = fs.existsSync(tasksPath) ? tasksPath : legacySessionsPath;
 
-    if (resolvedTasksPath && fs.existsSync(resolvedTasksPath)) {
-      const sessionsData = JSON.parse(fs.readFileSync(resolvedTasksPath, 'utf8'));
+    if (fs.existsSync(tasksPath)) {
+      const sessionsData = JSON.parse(fs.readFileSync(tasksPath, 'utf8'));
       const cliSessions = Object.keys(sessionsData.sessions || {});
 
       const mcpListCall = {

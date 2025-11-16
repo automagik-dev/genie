@@ -57,10 +57,6 @@ fi
 
 # 3) Check tasks.json updated and contains agent entry
 TASK_FILE=".genie/state/tasks.json"
-LEGACY_SESSIONS_FILE=".genie/state/agents/sessions.json"
-if [ ! -f "$TASK_FILE" ] && [ -f "$LEGACY_SESSIONS_FILE" ]; then
-  TASK_FILE="$LEGACY_SESSIONS_FILE"
-fi
 
 if [ -f "$TASK_FILE" ]; then
   echo "[INFO] Task store present at $TASK_FILE" | tee -a "$OUTFILE"

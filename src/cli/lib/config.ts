@@ -22,8 +22,7 @@ const BASE_CONFIG: GenieConfig = {
     baseDir: undefined,
     tasksFile: '.genie/state/tasks.json',
     logsDir: '.genie/state/agents/logs',
-    backgroundDir: '.genie/state/agents/background',
-    legacySessionsFile: '.genie/state/agents/sessions.json'
+    backgroundDir: '.genie/state/agents/background'
   },
   forge: {
     executors: {}
@@ -112,15 +111,10 @@ export function resolvePaths(paths: ConfigPaths): Required<ConfigPaths> {
   const tasksFile = configuredTasksFile
     ? path.resolve(baseDir, configuredTasksFile)
     : path.join(baseDir, '.genie/state/tasks.json');
-  const legacySessionsFile = path.resolve(
-    baseDir,
-    paths.legacySessionsFile || '.genie/state/agents/sessions.json'
-  );
   return {
     baseDir,
     tasksFile,
     sessionsFile: tasksFile,
-    legacySessionsFile,
     logsDir: paths.logsDir || path.join(baseDir, '.genie/state/agents/logs'),
     backgroundDir: paths.backgroundDir || path.join(baseDir, '.genie/state/agents/background')
   };

@@ -29,7 +29,6 @@ export interface ConfigPaths {
    * Prefer tasksFile moving forward.
    */
   sessionsFile?: string;
-  legacySessionsFile?: string;
   logsDir?: string;
   backgroundDir?: string;
 }
