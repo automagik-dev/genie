@@ -16,7 +16,7 @@ const BASE_CONFIG: GenieConfig = {
   defaults: {
     executor: 'OPENCODE',
     executorVariant: 'DEFAULT',
-    background: true
+    background: false
   },
   paths: {
     baseDir: undefined,
@@ -96,7 +96,7 @@ export function loadConfig(): GenieConfig {
   config.defaults = config.defaults || {};
   if (!config.defaults.executor) config.defaults.executor = 'OPENCODE';
   if (!config.defaults.executorVariant) config.defaults.executorVariant = 'DEFAULT';
-  config.defaults.background = config.defaults.background ?? true;
+  config.defaults.background = config.defaults.background ?? false;
 
   config.forge = config.forge || { executors: {} };
   config.forge.executors = config.forge.executors || {};
@@ -135,7 +135,14 @@ export function prepareDirectories(paths: Required<ConfigPaths>): void {
 }
 
 export function applyDefaults(options: CLIOptions, defaults?: GenieConfig['defaults']): void {
-  if (options.background === undefined) {
-    options.background = defaults?.background ?? true;
+  // Only apply config defaults if user hasn't explicitly set --background or --no-background
+  // The run command defaults to foreground (interactive) mode, so we don't force background: true
+  // Users can still pass --background to enable headless mode
+  if (!options.backgroundExplicit && defaults?.background !== undefined) {
+    // Respect explicit config override, but don't force background: true by default
+    // This allows the run command to default to foreground (interactive) mode
+    options.background = defaults.background;
   }
+  // Note: if backgroundExplicit is false and defaults.background is undefined,
+  // options.background stays as initialized (false), enabling foreground mode
 }
