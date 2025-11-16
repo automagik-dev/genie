@@ -54,17 +54,17 @@ const os = require('os');
 async function runCliCoreTests() {
   const cliCore = require('../dist/cli/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
-  assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
+  assert.strictEqual(typeof cliCore.TaskService, 'function', 'TaskService should be exported from cli-core');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
   const tasksFile = path.join(tmpDir, 'tasks.json');
 
-  // V3 format: sessions keyed by name (not agent name or sessionId)
+  // V4 format: sessions keyed by name (not agent name or sessionId)
   fs.writeFileSync(
     tasksFile,
     JSON.stringify(
       {
-        version: 3,
+        version: 4,
         sessions: {
           genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' }
         }
@@ -75,7 +75,7 @@ async function runCliCoreTests() {
   );
 
   try {
-    const service = new cliCore.SessionService({
+    const service = new cliCore.TaskService({
       paths: { tasksFile },
       loadConfig: { defaults: { executor: 'codex' } },
       defaults: { defaults: { executor: 'codex' } }
@@ -89,7 +89,7 @@ async function runCliCoreTests() {
       tasksFile,
       JSON.stringify(
         {
-          version: 3,
+          version: 4,
           sessions: {
             genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' },
             genieC: { agent: 'genieC', name: 'genieC', executor: 'codex', sessionId: 'genieC-uuid' }
