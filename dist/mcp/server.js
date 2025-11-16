@@ -701,6 +701,7 @@ server.tool('transform_prompt', 'Transform/enhance a prompt using an agent synch
 }, {
     readOnlyHint: true
 }, async (args, extra) => {
+    const { sessionId } = extra;
     // Use official MCP SDK logging for real-time streaming
     await (0, prompt_tool_js_1.executePromptTool)(args, {
         streamContent: async (chunk) => {
@@ -709,7 +710,7 @@ server.tool('transform_prompt', 'Transform/enhance a prompt using an agent synch
             await server.sendLoggingMessage({
                 level: "info",
                 data: chunk
-            }, extra.sessionId);
+            }, sessionId);
         }
     });
     return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
@@ -720,13 +721,14 @@ try {
         attempt_id: zod_1.z.string().describe('Task attempt ID to send work to'),
         prompt: zod_1.z.string().describe('Follow-up prompt with new work')
     }, async (args, extra) => {
+        const { sessionId } = extra;
         await (0, continue_task_tool_js_1.executeContinueTaskTool)(args, {
             streamContent: async (chunk) => {
                 // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId.
                 await server.sendLoggingMessage({
                     level: "info",
                     data: chunk
-                }, extra.sessionId);
+                }, sessionId);
             }
         });
         return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
@@ -744,13 +746,14 @@ server.tool('create_subtask', 'Create a child task under a master orchestrator. 
     prompt: zod_1.z.string().describe('Subtask prompt/description'),
     executor: zod_1.z.string().optional().default('CLAUDE_CODE:DEFAULT').describe('Executor variant (e.g., "CLAUDE_CODE:wish", "CLAUDE_CODE:DEFAULT")')
 }, async (args, extra) => {
+    const { sessionId } = extra;
     await (0, create_subtask_tool_js_1.executeCreateSubtaskTool)(args, {
         streamContent: async (chunk) => {
             // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
             await server.sendLoggingMessage({
                 level: "info",
                 data: chunk
-            }, extra.sessionId);
+            }, sessionId);
         }
     });
     return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };

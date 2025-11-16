@@ -831,6 +831,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
 }, {
   readOnlyHint: true
 }, async (args: any, extra: any) => {
+  const { sessionId } = extra as { sessionId: string };
   // Use official MCP SDK logging for real-time streaming
   await executePromptTool(args, {
     streamContent: async (chunk: string) => {
@@ -839,7 +840,7 @@ server.tool('get_workspace_info', 'Get essential workspace info for agent self-a
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.sessionId);
+      }, sessionId);
     }
   });
   return { content: [{ type: 'text', text: 'Prompt transformation completed. Check the logs above for details.' }] };
@@ -851,13 +852,14 @@ try {
     attempt_id: z.string().describe('Task attempt ID to send work to'),
     prompt: z.string().describe('Follow-up prompt with new work')
   }, async (args: any, extra: any) => {
+    const { sessionId } = extra as { sessionId: string };
     await executeContinueTaskTool(args, {
       streamContent: async (chunk: any) => {
         // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId.
         await server.sendLoggingMessage({
           level: "info",
           data: chunk
-        }, extra.sessionId);
+        }, sessionId);
       }
     });
     return { content: [{ type: 'text', text: 'Follow-up sent successfully. Check the logs above for details.' }] };
@@ -875,13 +877,14 @@ try {
   prompt: z.string().describe('Subtask prompt/description'),
   executor: z.string().optional().default('CLAUDE_CODE:DEFAULT').describe('Executor variant (e.g., "CLAUDE_CODE:wish", "CLAUDE_CODE:DEFAULT")')
 }, async (args: any, extra: any) => {
+  const { sessionId } = extra as { sessionId: string };
   await executeCreateSubtaskTool(args, {
     streamContent: async (chunk: any) => {
       // IMPORTANT: MCP routing uses sessionId (from ToolContext). Do not replace with taskId. (important-comment)
       await server.sendLoggingMessage({
         level: "info",
         data: chunk
-      }, extra.sessionId);
+      }, sessionId);
     }
   });
   return { content: [{ type: 'text', text: 'Subtask created successfully. Check the logs above for details.' }] };
