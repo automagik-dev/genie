@@ -64,7 +64,6 @@ export async function runTask(
   ).trim().toUpperCase();
   const model = parsed.options.model || agentGenie.model || config.defaults?.model;
   const sessionName = parsed.options.name;
-  const quiet = parsed.options.quiet || false;
   const raw = parsed.options.raw || false;
 
   // Ensure Forge is running (quiet mode)
@@ -139,8 +138,8 @@ export async function runTask(
 
 async function runTaskMonitor(
   args: string[],
-  config: GenieConfig,
-  paths: Required<ConfigPaths>
+  _config: GenieConfig,
+  _paths: Required<ConfigPaths>
 ): Promise<void> {
   const [attemptId] = args;
 

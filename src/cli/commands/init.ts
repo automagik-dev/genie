@@ -165,10 +165,10 @@ export async function runInit(
       }
     } else {
       // Automation mode OR upgrade mode: use flags or detect from existing installation
-      const targetGenie = resolveTargetGeniePath(cwd);
-      if (isUpgrade && await pathExists(targetGenie)) {
+      const automationTargetGenie = resolveTargetGeniePath(cwd);
+      if (isUpgrade && await pathExists(automationTargetGenie)) {
         // Upgrade: detect installed collectives from existing .genie/
-        templates = await detectInstalledCollectives(targetGenie);
+        templates = await detectInstalledCollectives(automationTargetGenie);
         template = templates[0]; // Primary template (first one)
         console.log(`📦 Detected installed collectives: ${templates.join(', ')}`);
       } else {
