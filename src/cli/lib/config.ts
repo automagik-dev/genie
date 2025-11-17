@@ -107,14 +107,12 @@ export function loadConfig(): GenieConfig {
 
 export function resolvePaths(paths: ConfigPaths): Required<ConfigPaths> {
   const baseDir = paths.baseDir ? path.resolve(paths.baseDir) : findWorkspaceRoot();
-  const configuredTasksFile = paths.tasksFile || paths.sessionsFile;
-  const tasksFile = configuredTasksFile
-    ? path.resolve(baseDir, configuredTasksFile)
+  const tasksFile = paths.tasksFile
+    ? path.resolve(baseDir, paths.tasksFile)
     : path.join(baseDir, '.genie/state/tasks.json');
   return {
     baseDir,
     tasksFile,
-    sessionsFile: tasksFile,
     logsDir: paths.logsDir || path.join(baseDir, '.genie/state/agents/logs'),
     backgroundDir: paths.backgroundDir || path.join(baseDir, '.genie/state/agents/background')
   };

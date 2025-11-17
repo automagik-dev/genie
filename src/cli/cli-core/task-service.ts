@@ -41,7 +41,7 @@ export class TaskService {
   }
 
   async save(store: TaskStore): Promise<SaveResult> {
-    const targetFile = this.paths.tasksFile || this.paths.sessionsFile || this.paths.legacySessionsFile;
+    const targetFile = this.paths.tasksFile;
     if (!targetFile) {
       return { store };
     }
@@ -73,7 +73,7 @@ export class TaskService {
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const baseFile = this.paths.tasksFile || this.paths.sessionsFile || this.paths.legacySessionsFile;
+    const baseFile = this.paths.tasksFile;
     if (!baseFile) {
       throw new Error('TaskService: No tasks file configured for locking');
     }

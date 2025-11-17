@@ -270,7 +270,6 @@ async function handleNewUser(
   const initPaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -410,7 +409,6 @@ async function handlePreVersionTracking(
   const upgradePaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -520,7 +518,6 @@ async function handleVersionMismatch(
   const updatePaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };
@@ -567,7 +564,6 @@ async function handleCorruptedVersion(
   const repairPaths: Required<ConfigPaths> = {
     baseDir: path.join(process.cwd(), '.genie'),
     tasksFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
-    sessionsFile: path.join(process.cwd(), '.genie', 'state', 'tasks.json'),
     logsDir: path.join(process.cwd(), '.genie', 'state'),
     backgroundDir: path.join(process.cwd(), '.genie', 'state')
   };

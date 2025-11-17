@@ -171,17 +171,11 @@ async function listTasks() {
 }
 function loadTasksFromLocalStore(workspaceRoot) {
     const tasksFile = path_1.default.join(workspaceRoot, '.genie/state/tasks.json');
-    const legacySessionsFile = path_1.default.join(workspaceRoot, '.genie/state/agents/sessions.json');
-    const fallbackFile = fs_1.default.existsSync(tasksFile)
-        ? tasksFile
-        : fs_1.default.existsSync(legacySessionsFile)
-            ? legacySessionsFile
-            : null;
-    if (!fallbackFile) {
+    if (!fs_1.default.existsSync(tasksFile)) {
         return [];
     }
     try {
-        const content = fs_1.default.readFileSync(fallbackFile, 'utf8');
+        const content = fs_1.default.readFileSync(tasksFile, 'utf8');
         const store = JSON.parse(content);
         const sessions = Object.entries(store.sessions || {}).map(([key, entry]) => ({
             id: key, // Use attempt ID as primary identifier for resume/view/stop commands

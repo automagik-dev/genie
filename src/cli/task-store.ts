@@ -40,11 +40,6 @@ export interface TaskStore {
 
 export interface TaskPathsConfig {
   tasksFile?: string;
-  /**
-   * @deprecated Compatibility alias for legacy configs.
-   */
-  sessionsFile?: string;
-  legacySessionsFile?: string;
 }
 
 export interface TaskLoadConfig {
@@ -65,14 +60,7 @@ export function loadTasks(
   defaults: TaskDefaults = {},
   callbacks: { onWarning?: (message: string) => void } = {}
 ): TaskStore {
-  const preferredPath = paths.tasksFile || paths.sessionsFile;
-  const legacyPath = paths.legacySessionsFile;
-  let storePath = preferredPath;
-
-  if (preferredPath && !fs.existsSync(preferredPath) && legacyPath && fs.existsSync(legacyPath)) {
-    storePath = legacyPath;
-  }
-
+  const storePath = paths.tasksFile;
   let store: TaskStore;
 
   if (storePath && fs.existsSync(storePath)) {
@@ -86,7 +74,7 @@ export function loadTasks(
 }
 
 export function saveTasks(paths: TaskPathsConfig = {}, store: TaskStore): void {
-  const target = paths.tasksFile || paths.sessionsFile || paths.legacySessionsFile;
+  const target = paths.tasksFile;
   if (!target) return;
   const payload = JSON.stringify(store, null, 2);
   fs.writeFileSync(target, payload);

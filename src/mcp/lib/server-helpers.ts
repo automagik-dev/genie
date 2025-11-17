@@ -181,7 +181,7 @@ function loadTasksFromLocalStore(workspaceRoot: string): Array<{ id: string; nam
   }
 
   try {
-    const content = fs.readFileSync(fallbackFile, 'utf8');
+    const content = fs.readFileSync(tasksFile, 'utf8');
     const store = JSON.parse(content);
 
     const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({

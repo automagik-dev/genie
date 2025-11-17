@@ -24,11 +24,6 @@ export interface ParsedCommand {
 export interface ConfigPaths {
   baseDir?: string;
   tasksFile?: string;
-  /**
-   * @deprecated Legacy override for old taxonomy configs.
-   * Prefer tasksFile moving forward.
-   */
-  sessionsFile?: string;
   logsDir?: string;
   backgroundDir?: string;
 }

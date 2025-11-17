@@ -482,9 +482,8 @@ const handleTaskTool = async (args: TaskToolInput) => {
     const { displayId } = transformDisplayPath(resolvedAgentId);
 
     const tasksFile = path.join(WORKSPACE_ROOT, '.genie', 'state', 'tasks.json');
-    const legacySessionsFile = path.join(WORKSPACE_ROOT, '.genie', 'state', 'agents', 'sessions.json');
     const taskService = new TaskService({
-      paths: { tasksFile, legacySessionsFile }
+      paths: { tasksFile }
     });
     const store = taskService.load();
     const now = new Date().toISOString();
@@ -579,22 +578,27 @@ server.tool('task', 'Start a new Genie agent task. Returns immediately when moni
 server.tool('run', '[Deprecated] Alias for task tool (use mcp__genie__task).', taskToolShape, handleTaskTool);
 
 const continueTaskShape = {
-  taskId: z.string().describe('Task name to resume (get from list_tasks tool). Example: "146-task-name-architecture"'),
+  task_id: z.string().optional().describe('Task attempt ID to resume (preferred snake_case, e.g., "c74111b4-...").'),
+  taskId: z.string().optional().describe('Legacy camelCase alias for task_id.'),
   prompt: z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
 };
-const ContinueTaskParams = z.object(continueTaskShape);
+const ContinueTaskParams = z.object(continueTaskShape).refine(
+  (data) => Boolean((data.task_id ?? data.taskId)?.trim()),
+  { message: 'task_id (or taskId) is required' }
+);
 type ContinueTaskInput = z.infer<typeof ContinueTaskParams>;
 
 const handleContinueTask = async (args: ContinueTaskInput) => {
   try {
-    const cliArgs = ['resume', args.taskId];
+    const taskId = (args.task_id || args.taskId || '').trim();
+    const cliArgs = ['resume', taskId];
     if (args.prompt?.length) {
       cliArgs.push(args.prompt);
     }
     const { stdout, stderr } = await runCliCommand(WORKSPACE_ROOT, cliArgs, 120000);
     const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
 
-    return buildTextResponse(getVersionHeader() + `Resumed task ${args.taskId}:\n\n${output}`);
+    return buildTextResponse(getVersionHeader() + `Resumed task ${taskId}:\n\n${output}`);
   } catch (error: any) {
     return buildTextResponse(getVersionHeader() + formatCliFailure('resume task', error));
   }

@@ -394,9 +394,8 @@ const handleTaskTool = async (args) => {
         });
         const { displayId } = (0, display_transform_js_1.transformDisplayPath)(resolvedAgentId);
         const tasksFile = path_1.default.join(WORKSPACE_ROOT, '.genie', 'state', 'tasks.json');
-        const legacySessionsFile = path_1.default.join(WORKSPACE_ROOT, '.genie', 'state', 'agents', 'sessions.json');
         const taskService = new task_service_js_1.TaskService({
-            paths: { tasksFile, legacySessionsFile }
+            paths: { tasksFile }
         });
         const store = taskService.load();
         const now = new Date().toISOString();
@@ -481,19 +480,21 @@ server.tool('task', 'Start a new Genie agent task. Returns immediately when moni
 // Backward-compatible alias
 server.tool('run', '[Deprecated] Alias for task tool (use mcp__genie__task).', taskToolShape, handleTaskTool);
 const continueTaskShape = {
-    taskId: zod_1.z.string().describe('Task name to resume (get from list_tasks tool). Example: "146-task-name-architecture"'),
+    task_id: zod_1.z.string().optional().describe('Task attempt ID to resume (preferred snake_case, e.g., "c74111b4-...").'),
+    taskId: zod_1.z.string().optional().describe('Legacy camelCase alias for task_id.'),
     prompt: zod_1.z.string().describe('Follow-up message or question for the agent. Build on the previous conversation context.')
 };
-const ContinueTaskParams = zod_1.z.object(continueTaskShape);
+const ContinueTaskParams = zod_1.z.object(continueTaskShape).refine((data) => Boolean((data.task_id ?? data.taskId)?.trim()), { message: 'task_id (or taskId) is required' });
 const handleContinueTask = async (args) => {
     try {
-        const cliArgs = ['resume', args.taskId];
+        const taskId = (args.task_id || args.taskId || '').trim();
+        const cliArgs = ['resume', taskId];
         if (args.prompt?.length) {
             cliArgs.push(args.prompt);
         }
         const { stdout, stderr } = await (0, cli_executor_js_1.runCliCommand)(WORKSPACE_ROOT, cliArgs, 120000);
         const output = stdout + (stderr ? `\n\nStderr:\n${stderr}` : '');
-        return buildTextResponse((0, server_helpers_js_1.getVersionHeader)() + `Resumed task ${args.taskId}:\n\n${output}`);
+        return buildTextResponse((0, server_helpers_js_1.getVersionHeader)() + `Resumed task ${taskId}:\n\n${output}`);
     }
     catch (error) {
         return buildTextResponse((0, server_helpers_js_1.getVersionHeader)() + (0, cli_executor_js_1.formatCliFailure)('resume task', error));

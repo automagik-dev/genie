@@ -54,7 +54,8 @@ export async function monitorTaskCompletion(
   const client = new ForgeClient(baseUrl, authToken);
   const attemptMeta = await getTaskAttemptSafe(client, attemptId);
   const taskUrl = providedTaskUrl || deriveTaskUrl(baseUrl, attemptMeta, attemptId);
-  const processId = await waitForLatestProcessId(client, attemptId);
+  const processWaitMs = Math.min(Math.max(timeout - 5000, 60000), timeout);
+  const processId = await waitForLatestProcessId(client, attemptId, processWaitMs);
 
   if (!processId) {
     return {
@@ -265,7 +266,7 @@ function deriveTaskUrl(baseUrl: string, attempt: any | null, attemptId: string):
 async function waitForLatestProcessId(
   client: ForgeClient,
   attemptId: string,
-  timeoutMs = 45000,
+  timeoutMs = 60000,
   pollIntervalMs = 1000
 ): Promise<string | null> {
   const start = Date.now();
