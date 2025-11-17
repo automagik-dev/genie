@@ -17,11 +17,11 @@ TS=$(date -u +%Y%m%d%H%M%S)
 OUTFILE="$OUTDIR/bug1-qa-${TS}.txt"
 
 echo "[Bug1 QA] Starting validation at $(date -u -Iseconds)" | tee "$OUTFILE"
-echo "[Bug1 QA] Command: genie run $AGENT \"$PROMPT\"" | tee -a "$OUTFILE"
+echo "[Bug1 QA] Command: genie run --background $AGENT \"$PROMPT\"" | tee -a "$OUTFILE"
 
 start_ts=$(date +%s)
 set +e
-timeout 12s genie run "$AGENT" "$PROMPT" >"$OUTDIR/bug1-qa-run-${TS}.stdout" 2>"$OUTDIR/bug1-qa-run-${TS}.stderr"
+timeout 12s genie run --background "$AGENT" "$PROMPT" >"$OUTDIR/bug1-qa-run-${TS}.stdout" 2>"$OUTDIR/bug1-qa-run-${TS}.stderr"
 rc=$?
 set -e
 end_ts=$(date +%s)
@@ -46,7 +46,13 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 if [ -z "$attempt_id" ]; then
-  attempt_id=$(grep -Eo 'genie resume [0-9a-f-]+' "$stdout_file" "$stderr_file" 2>/dev/null | awk '{print $3}' | tail -n1 || echo "")
+  attempt_id=$(grep -Eo 'Session ID:[[:space:]]*[0-9a-f-]+' "$stdout_file" "$stderr_file" 2>/dev/null \
+    | sed -E 's/Session ID:[[:space:]]*//' | tail -n1 || echo "")
+fi
+
+if [ -z "$attempt_id" ]; then
+  attempt_id=$(grep -Eo 'genie (resume|view) [0-9a-f-]+' "$stdout_file" "$stderr_file" 2>/dev/null \
+    | awk '{print $3}' | tail -n1 || echo "")
 fi
 
 if [ -n "$attempt_id" ]; then
