@@ -41,18 +41,20 @@ pnpm run test:genie
 
 #### Optional: Forge Backend Integration
 
-Genie now supports Automagik Forge as the primary backend for session management (RC28+). This is **optional** for development but recommended for testing the full feature set.
+Genie now supports Automagik Forge as the primary backend for task management. Forge is bundled with Genie as a dependency.
 
 ```bash
-# Start Forge backend (optional)
-cd /path/to/automagik-forge
-pnpm dev
+# Forge starts automatically when you run:
+genie
 
-# Configure Genie to use Forge
-export FORGE_BASE_URL="http://localhost:3000"
+# Or start Forge explicitly (runs on port 8887):
+genie --forge-only
+
+# Configure custom port if needed:
+export FORGE_BASE_URL="http://localhost:8887"
 
 # Now Genie commands use Forge backend
-npx automagik-genie run analyze "test"
+genie run analyze "test"
 ```
 
 **Benefits of Forge integration:**

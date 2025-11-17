@@ -34,8 +34,10 @@ import { detectInstallType } from '../lib/migrate';
 import { configureExecutor, type ExecutorId } from '../lib/executor-auth';
 import { isVersionGte } from '../lib/version-utils';
 import { generateKnowledgeDiff } from '../lib/knowledge-diff';
+import { generateGenesisDiff } from '../lib/genesis-diff';
 import { launchUpdateTask } from '../lib/update-helpers.js';
 import prompts from 'prompts';
+import { execSync } from 'child_process';
 // Forge is launched and used via `genie run` (handlers/); no direct Forge API here
 
 interface InitFlags {
@@ -280,34 +282,76 @@ export async function runInit(
     if (genieExists && hasActualContent) {
       if (useKnowledgeDiff) {
         console.log('');
-        console.log('📊 Generating knowledge diff (v2.5.14+ efficient update)...');
-        
-        const oldGeniePath = targetGenie;
-        
-        const tempOldGenie = path.join(cwd, `.genie-old-${toIsoId()}`);
-        await moveDirectory(oldGeniePath, tempOldGenie);
-        
-        for (const tmpl of templates) {
-          await copyTemplateFiles(packageRoot, tmpl as TemplateType, targetGenie);
-        }
-        await copyTemplateRootFiles(packageRoot, cwd, template as TemplateType);
-        
-        const diffResult = await generateKnowledgeDiff(
+        console.log('📊 Generating framework upgrade diff (non-destructive)...');
+        console.log('');
+
+        // NON-DESTRUCTIVE: Compare local workspace vs upstream package template
+        // NO file copying, NO file moving - just generate diff
+        const diffResult = await generateGenesisDiff(
           cwd,
-          tempOldGenie,
-          targetGenie,
+          packageRoot,
           oldVersion,
           currentPackageVersion
         );
-        
+
         diffPath = diffResult.diffPath;
-        
-        console.log(`   Knowledge diff generated: ${path.relative(cwd, diffPath)}`);
-        console.log(`   Changes: +${diffResult.summary.added} -${diffResult.summary.removed} ~${diffResult.summary.modified}`);
-        
-        await fsp.rm(tempOldGenie, { recursive: true, force: true });
-        
+
+        console.log(`   ✅ Diff generated: ${path.relative(cwd, diffPath)}`);
+        console.log(`   📊 Changes: +${diffResult.summary.added} -${diffResult.summary.removed} ~${diffResult.summary.modified}`);
         console.log('');
+
+        if (!diffResult.hasChanges) {
+          console.log('   ℹ️  No framework changes detected. You are up to date!');
+          console.log('');
+          return;
+        }
+
+        // Commit the diff file to repository
+        console.log('💾 Committing upgrade diff...');
+        try {
+          execSync(`git add "${diffPath}"`, { cwd, stdio: 'pipe' });
+          const commitMsg = `docs: upgrade diff v${oldVersion} → v${currentPackageVersion}`;
+          execSync(`git commit -m "${commitMsg}"`, { cwd, stdio: 'pipe' });
+          console.log(`   ✅ Committed: ${commitMsg}`);
+        } catch (error) {
+          // Git commit might fail if no changes or not a git repo
+          console.log('   ⚠️  Could not commit diff (may not be a git repo or no changes)');
+        }
+        console.log('');
+
+        // Launch agent task to learn and apply changes
+        console.log('🚀 Launching update agent...');
+        console.log('');
+
+        try {
+          const taskUrl = await launchUpdateTask({
+            diffPath,
+            oldVersion,
+            newVersion: currentPackageVersion,
+            workspacePath: cwd
+          });
+
+          console.log('');
+          console.log('🎯 Update task created!');
+          console.log(`   Monitor progress: ${taskUrl}`);
+          console.log('');
+          console.log('The agent will:');
+          console.log('   1. Read and understand the diff');
+          console.log('   2. Learn new patterns and teachings');
+          console.log('   3. Apply changes selectively (preserving your customizations)');
+          console.log('   4. Generate a report of what was learned');
+          console.log('');
+        } catch (error) {
+          console.log('');
+          console.log('⚠️  Could not launch update agent automatically.');
+          console.log('   You can manually run: genie update');
+          console.log(`   With diff file: @${path.relative(cwd, diffPath)}`);
+          console.log('');
+        }
+
+        // EXIT EARLY - No destructive file operations
+        // The agent will handle applying changes intelligently
+        return;
       } else {
         console.log('');
         console.log('💾 Creating backup before overwriting...');

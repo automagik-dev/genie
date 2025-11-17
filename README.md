@@ -180,7 +180,7 @@ genie
 ### What Happens
 
 1. **I route your wish** to appropriate specialists
-2. **Execute in isolation** (powered by [Automagik Forge](https://github.com/namastexlabs/automagik-forge))
+2. **Execute in isolation** (powered by [@automagik/forge](https://www.npmjs.com/package/@automagik/forge))
 3. **Coordinate parallel work** across multiple agents
 4. **You review** before anything merges
 
@@ -340,7 +340,7 @@ Personal AI companion growing with you indefinitely. Your Jarvis. Your data. You
 
 - **Discord:** [Join community](https://discord.gg/xcW8c7fF3R)
 - **GitHub:** [namastexlabs/automagik-genie](https://github.com/namastexlabs/automagik-genie)
-- **Automagik Forge:** [github.com/namastexlabs/automagik-forge](https://github.com/namastexlabs/automagik-forge)
+- **Automagik Forge:** [@automagik/forge on npm](https://www.npmjs.com/package/@automagik/forge)
 
 ---
 
