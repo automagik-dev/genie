@@ -27,9 +27,15 @@ importers:
       '@xenova/transformers':
         specifier: ^2.17.2
         version: 2.17.2
+      adm-zip:
+        specifier: ^0.5.16
+        version: 0.5.16
       commander:
         specifier: ^12.1.0
         version: 12.1.0
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
       express:
         specifier: ^5.1.0
         version: 5.1.0
