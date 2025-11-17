@@ -13,8 +13,8 @@ importers:
   .:
     dependencies:
       '@automagik/forge':
-        specifier: 0.7.2
-        version: 0.7.2
+        specifier: 0.7.4
+        version: 0.7.4
       '@modelcontextprotocol/sdk':
         specifier: ^1.20.2
         version: 1.20.2
@@ -74,8 +74,8 @@ importers:
 
 packages:
 
-  '@automagik/forge@0.7.2':
-    resolution: {integrity: sha512-wwn9XRONlfBXPSi7Da5szQZSyrhQkIBJZG20XTvF+aVP4sWWo7RkjboL4WxuJKGfpsDkJB3q7yeQFbR+lbpmCA==}
+  '@automagik/forge@0.7.4':
+    resolution: {integrity: sha512-JiX0SVb4vx4+kLHCcotPNUSs36wwnhnufa5PTp3sKa06Azck95LSwxetQwxsJKhLdn0pRF8/oIVIiaAmtF5Ygw==}
     hasBin: true
 
   '@emnapi/runtime@1.7.0':
@@ -867,7 +867,7 @@ packages:
 
 snapshots:
 
-  '@automagik/forge@0.7.2':
+  '@automagik/forge@0.7.4':
     dependencies:
       adm-zip: 0.5.16
       dotenv: 16.6.1
