@@ -65,7 +65,7 @@ export function buildHelpView(params: HelpViewParams): string {
 
   // Tips
   lines.push('💡 **Tips**');
-  lines.push('- Watch sessions: `genie list sessions`.');
+  lines.push('- Watch tasks: `genie list tasks`.');
   lines.push('- Run an agent: `genie run <agent-id> "<prompt>"`.');
 
   return lines.join('\n');
@@ -136,7 +136,7 @@ export function buildSubcommandHelpView(params: SubcommandHelpParams): string {
 export function buildRunHelpView(): string {
   return buildSubcommandHelpView({
     command: 'run',
-    description: 'Start or attach to an agent session',
+    description: 'Start an agent task with browser UI + live monitoring',
     usage: 'genie run <agent> "<prompt>" [--help]',
     arguments: [
       { name: '<agent>', description: 'Agent identifier (from genie list agents)' },
@@ -145,7 +145,7 @@ export function buildRunHelpView(): string {
     options: [
       { flag: '--executor, -x', description: 'Override executor for this run' },
       { flag: '--model, -m', description: 'Override model for the selected executor' },
-      { flag: '--name, -n', description: 'Custom session name (defaults to agent-timestamp)' },
+      { flag: '--name, -n', description: 'Custom task name (defaults to agent-timestamp)' },
       { flag: '--background, -b', description: 'Force background execution (default from config/agent)' },
       { flag: '--help, -h', description: 'Show this help message' }
     ],
@@ -164,13 +164,43 @@ export function buildRunHelpView(): string {
   });
 }
 
+export function buildTaskHelpView(): string {
+  return buildSubcommandHelpView({
+    command: 'task',
+    description: 'Headless task execution (immediate JSON output, optional monitoring)',
+    usage: 'genie task <agent> "<prompt>" | genie task monitor <attempt-id>',
+    arguments: [
+      { name: '<agent>', description: 'Agent identifier (use genie list agents)' },
+      { name: '<prompt>', description: 'Detailed task description for the agent' }
+    ],
+    options: [
+      { flag: '--executor, -x', description: 'Override executor profile' },
+      { flag: '--model, -m', description: 'Override model for the selected executor' },
+      { flag: '--name, -n', description: 'Friendly task name (stored in tasks.json)' },
+      { flag: '--raw', description: 'Raw attempt ID only (no JSON wrapper)' },
+      { flag: '--quiet', description: 'Suppress startup messages' },
+      { flag: '--help, -h', description: 'Show this help message' }
+    ],
+    examples: [
+      'genie task implementor "Fix lint errors" --executor opencode',
+      'genie task master "Daily plan" --raw',
+      'genie task monitor 0f4f0d07-1337-42b2-9d58-aaaa1111bbbb'
+    ],
+    notes: [
+      'Use genie list tasks to find attempt IDs for monitoring/resume',
+      'Monitor subcommand streams WebSocket output without opening a browser',
+      'Outputs structured JSON so scripts can parse task_id/task_url/status'
+    ]
+  });
+}
+
 export function buildResumeHelpView(): string {
   return buildSubcommandHelpView({
     command: 'resume',
-    description: 'Continue an existing agent session',
-    usage: 'genie resume <session-name> "<prompt>" [--help]',
+    description: 'Continue an existing agent task',
+    usage: 'genie resume <task-name> "<prompt>" [--help]',
     arguments: [
-      { name: '<session-name>', description: 'Session name from active or recent runs' },
+      { name: '<task-name>', description: 'Task name from active or recent runs' },
       { name: '<prompt>', description: 'Follow-up prompt or new task instruction' }
     ],
     options: [
@@ -182,8 +212,8 @@ export function buildResumeHelpView(): string {
       'genie resume create-writer-2510201205 "Add a release timeline section"'
     ],
     notes: [
-      'Session names can be found with: genie list sessions',
-      'Only active or recently completed sessions can be resumed',
+      'Task names can be found with: genie list tasks',
+      'Only active or recently completed tasks can be resumed',
       'Use quotes around prompts containing spaces or special characters'
     ]
   });
@@ -192,10 +222,10 @@ export function buildResumeHelpView(): string {
 export function buildListHelpView(): string {
   return buildSubcommandHelpView({
     command: 'list',
-    description: 'Display available agents or active sessions',
+    description: 'Display available agents or active tasks',
     usage: 'genie list <target> [--help]',
     arguments: [
-      { name: '<target>', description: 'What to list: "collectives", "agents", "workflows", "skills", or "sessions"' }
+      { name: '<target>', description: 'What to list: "collectives", "agents", "workflows", "skills", or "tasks"' }
     ],
     options: [
       { flag: '--help, -h', description: 'Show this help message' }
@@ -203,11 +233,11 @@ export function buildListHelpView(): string {
     examples: [
       'genie list collectives',
       'genie list agents',
-      'genie list sessions'
+      'genie list tasks'
     ],
     notes: [
       'Default target is "collectives" if none specified',
-      'Sessions show both active runs and recent history',
+      'Tasks show both active runs and recent history',
       'Agent list shows all available agents organized by collective'
     ]
   });
@@ -216,13 +246,13 @@ export function buildListHelpView(): string {
 export function buildViewHelpView(): string {
   return buildSubcommandHelpView({
     command: 'view',
-    description: 'Show transcript and details for a session',
-    usage: 'genie view <session-name> [--full] [--help]',
+    description: 'Show transcript and details for a task',
+    usage: 'genie view <task-name> [--full] [--help]',
     arguments: [
-      { name: '<session-name>', description: 'Session name to display' }
+      { name: '<task-name>', description: 'Task name to display' }
     ],
     options: [
-      { flag: '--full', description: 'Show complete session transcript (default: recent messages)' },
+      { flag: '--full', description: 'Show complete task transcript (default: recent messages)' },
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
@@ -230,9 +260,9 @@ export function buildViewHelpView(): string {
       'genie view plan-2510180915 --full'
     ],
     notes: [
-      'Session names can be found with: genie list sessions',
+      'Task names can be found with: genie list tasks',
       'Default view shows recent conversation; use --full for complete history',
-      'Includes session metadata like execution mode and background status'
+      'Includes task metadata like execution mode and background status'
     ]
   });
 }
@@ -240,10 +270,10 @@ export function buildViewHelpView(): string {
 export function buildStopHelpView(): string {
   return buildSubcommandHelpView({
     command: 'stop',
-    description: 'End a running background session',
-    usage: 'genie stop <session-name> [--help]',
+    description: 'End a running background task',
+    usage: 'genie stop <task-name> [--help]',
     arguments: [
-      { name: '<session-name>', description: 'Session name to stop' }
+      { name: '<task-name>', description: 'Task name to stop' }
     ],
     options: [
       { flag: '--help, -h', description: 'Show this help message' }
@@ -253,9 +283,9 @@ export function buildStopHelpView(): string {
       'genie stop plan-2510180915'
     ],
     notes: [
-      'Only affects running background sessions',
-      'Session names can be found with: genie list sessions',
-      'Stopped sessions can still be viewed but not resumed'
+      'Only affects running background tasks',
+      'Task names can be found with: genie list tasks',
+      'Stopped tasks can still be viewed but not resumed'
     ]
   });
 }

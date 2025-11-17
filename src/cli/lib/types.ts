@@ -1,6 +1,6 @@
 export interface CLIOptions {
   rawArgs: string[];
-  background: boolean;
+  background?: boolean;
   backgroundExplicit: boolean;
   backgroundRunner: boolean;
   requestHelp?: boolean;
@@ -23,7 +23,7 @@ export interface ParsedCommand {
 
 export interface ConfigPaths {
   baseDir?: string;
-  sessionsFile?: string;
+  tasksFile?: string;
   logsDir?: string;
   backgroundDir?: string;
 }

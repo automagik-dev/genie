@@ -1,6 +1,7 @@
 defaults:
   executor: OPENCODE
   executorVariant: DEFAULT
+  background: false
 
 forge:
   executors:

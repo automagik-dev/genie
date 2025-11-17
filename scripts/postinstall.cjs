@@ -128,23 +128,23 @@ printCommand(
 );
 
 printCommand(
-  'List active sessions:',
-  'genie list sessions'
+  'List active tasks:',
+  'genie list tasks'
 );
 
 printCommand(
-  'View session transcript:',
-  'genie view <sessionId> --full'
+  'View task transcript:',
+  'genie view <taskId> --full'
 );
 
 printCommand(
-  'Resume a session:',
-  'genie resume <sessionId> "<follow-up prompt>"'
+  'Resume a task:',
+  'genie resume <taskId> "<follow-up prompt>"'
 );
 
 printCommand(
-  'Stop a session:',
-  'genie stop <sessionId>'
+  'Stop a task:',
+  'genie stop <taskId>'
 );
 
 printHeader('MCP Server (Model Context Protocol)');

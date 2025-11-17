@@ -17,8 +17,8 @@ const os = require('os');
 // })();
 
 // (function testSessionDefaults() {
-//   const tempSessionsPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'sessions.json');
-//   const store = loadSessions({ sessionsFile: tempSessionsPath }, { defaults: { executor: 'codex' } }, { defaults: { executor: 'codex' } });
+//   const tempSessionsPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'tasks.json');
+//   const store = loadSessions({ tasksFile: tempSessionsPath }, { defaults: { executor: 'codex' } }, { defaults: { executor: 'codex' } });
 //   assert.ok(store && typeof store === 'object', 'loadSessions returns an object');
 //   Object.values(store.sessions || store.agents || {}).forEach((entry) => {
 //     assert.ok(entry.executor, 'each session entry should have an executor');
@@ -54,17 +54,17 @@ const os = require('os');
 async function runCliCoreTests() {
   const cliCore = require('../dist/cli/cli-core/index.js');
   assert.strictEqual(typeof cliCore.createHandlers, 'function', 'createHandlers should be exported from cli-core');
-  assert.strictEqual(typeof cliCore.SessionService, 'function', 'SessionService should be exported from cli-core');
+  assert.strictEqual(typeof cliCore.TaskService, 'function', 'TaskService should be exported from cli-core');
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'genie-sessions-'));
-  const sessionsFile = path.join(tmpDir, 'sessions.json');
+  const tasksFile = path.join(tmpDir, 'tasks.json');
 
-  // V3 format: sessions keyed by name (not agent name or sessionId)
+  // V4 format: sessions keyed by name (not agent name or sessionId)
   fs.writeFileSync(
-    sessionsFile,
+    tasksFile,
     JSON.stringify(
       {
-        version: 3,
+        version: 4,
         sessions: {
           genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' }
         }
@@ -75,8 +75,8 @@ async function runCliCoreTests() {
   );
 
   try {
-    const service = new cliCore.SessionService({
-      paths: { sessionsFile },
+    const service = new cliCore.TaskService({
+      paths: { tasksFile },
       loadConfig: { defaults: { executor: 'codex' } },
       defaults: { defaults: { executor: 'codex' } }
     });
@@ -86,10 +86,10 @@ async function runCliCoreTests() {
 
     // Simulate concurrent write (another process adds session-c)
     fs.writeFileSync(
-      sessionsFile,
+      tasksFile,
       JSON.stringify(
         {
-          version: 3,
+          version: 4,
           sessions: {
             genieA: { agent: 'genieA', name: 'genieA', executor: 'codex', sessionId: 'genieA-uuid' },
             genieC: { agent: 'genieC', name: 'genieC', executor: 'codex', sessionId: 'genieC-uuid' }
@@ -102,7 +102,7 @@ async function runCliCoreTests() {
 
     await service.save(store);
 
-    const merged = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+    const merged = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
     assert.ok(merged.sessions.genieA, 'should retain original entries');
     assert.ok(merged.sessions.genieB, 'should include newly saved session');
     assert.ok(merged.sessions.genieC, 'should merge concurrent session additions');

@@ -24,7 +24,7 @@ export function parseArguments(argv: string[]): ParsedCommand {
   const command = raw.shift()?.toLowerCase();
   const options: CLIOptions = {
     rawArgs: argv.slice(),
-    background: false,
+    background: undefined,
     backgroundExplicit: false,
     backgroundRunner: false,
     requestHelp: undefined,
@@ -54,6 +54,11 @@ export function parseArguments(argv: string[]): ParsedCommand {
     }
     if (token === '--background' || token === '-b') {
       options.background = true;
+      options.backgroundExplicit = true;
+      continue;
+    }
+    if (token === '--no-background') {
+      options.background = false;
       options.backgroundExplicit = true;
       continue;
     }

@@ -71,18 +71,18 @@ export async function waitForTaskCompletion(
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      const status = await executor.getSessionStatus(attemptId);
+      const status = await executor.getTaskStatus(attemptId);
 
       if (status.status === 'completed' || status.status === 'success') {
         // Task completed successfully
-        const logs = await executor.fetchLatestLogs(attemptId);
+        const logs = await executor.fetchTaskLogs(attemptId);
         const output = extractFinalOutput(logs);
         return { status: 'completed', output };
       }
 
       if (status.status === 'failed' || status.status === 'error') {
         // Task failed
-        const logs = await executor.fetchLatestLogs(attemptId);
+        const logs = await executor.fetchTaskLogs(attemptId);
         const output = extractFinalOutput(logs);
         return {
           status: 'failed',

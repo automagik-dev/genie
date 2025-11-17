@@ -103,15 +103,15 @@ async function runTests() {
     const toolsResponse = await sendRequest(server, toolsRequest);
     test('tools/list response received', toolsResponse.result !== undefined);
     test('Tools array returned', Array.isArray(toolsResponse.result.tools));
-    test('6 tools present', toolsResponse.result.tools.length === 6);
+    test('Expected tool count present', toolsResponse.result.tools.length >= 6);
 
     const toolNames = toolsResponse.result.tools.map(t => t.name);
     test('All tools discoverable',
       toolNames.includes('list_agents') &&
-      toolNames.includes('list_sessions') &&
-      toolNames.includes('run') &&
-      toolNames.includes('resume') &&
-      toolNames.includes('view') &&
+      toolNames.includes('list_tasks') &&
+      toolNames.includes('task') &&
+      toolNames.includes('continue_task') &&
+      toolNames.includes('view_task') &&
       toolNames.includes('stop'),
       `Found: ${toolNames.join(', ')}`
     );

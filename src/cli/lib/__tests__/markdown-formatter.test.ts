@@ -11,7 +11,7 @@
 
 import {
   formatTranscriptMarkdown,
-  formatSessionList,
+  formatTaskList,
   type SessionMeta,
   type SessionEntry,
   type OutputMode,
@@ -101,7 +101,7 @@ const mockMessages: ChatMessage[] = [
 ];
 
 const mockMeta: SessionMeta = {
-  sessionId: 'abc123-def456-ghi789',
+  taskId: 'abc123-def456-ghi789',
   agent: 'implementor',
   status: 'running',
   executor: 'claude',
@@ -116,19 +116,19 @@ const mockMeta: SessionMeta = {
 
 const mockSessions: SessionEntry[] = [
   {
-    sessionId: 'abc123-def456-ghi789',
+    taskId: 'abc123-def456-ghi789',
     agent: 'implementor',
     status: 'running',
     executor: 'claude'
   },
   {
-    sessionId: 'xyz789-uvw456-rst123',
+    taskId: 'xyz789-uvw456-rst123',
     agent: 'tests',
     status: 'completed',
     executor: 'codex'
   },
   {
-    sessionId: 'mno456-jkl123-pqr789',
+    taskId: 'mno456-jkl123-pqr789',
     agent: 'review',
     status: 'pending',
     executor: 'claude'
@@ -264,7 +264,7 @@ describe('formatTranscriptMarkdown - overview mode', () => {
 
   it('should handle missing optional metadata', () => {
     const minimalMeta: SessionMeta = {
-      sessionId: 'test-123',
+      taskId: 'test-123',
       agent: 'test',
       status: 'running'
     };
@@ -282,9 +282,9 @@ describe('formatTranscriptMarkdown - overview mode', () => {
 // Session List Tests
 // ============================================================================
 
-describe('formatSessionList', () => {
+describe('formatTaskList', () => {
   it('should format sessions as markdown table', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     expect(result).toContain('## Active Sessions');
     expect(result).toContain('| Session ID | Agent | Status | Executor |');
@@ -292,7 +292,7 @@ describe('formatSessionList', () => {
   });
 
   it('should include all sessions', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     expect(result).toContain('implementor');
     expect(result).toContain('tests');
@@ -302,14 +302,14 @@ describe('formatSessionList', () => {
   });
 
   it('should trim long session IDs', () => {
-    const result = formatSessionList(mockSessions);
+    const result = formatTaskList(mockSessions);
 
     // Should truncate IDs longer than 10 chars
     expect(result).toContain('abc123-d...');
   });
 
   it('should handle empty session list', () => {
-    const result = formatSessionList([]);
+    const result = formatTaskList([]);
 
     expect(result).toContain('**No sessions found**');
   });
@@ -320,9 +320,9 @@ describe('formatSessionList', () => {
 // ============================================================================
 
 describe('edge cases', () => {
-  it('should handle null/missing sessionId', () => {
+  it('should handle null/missing taskId', () => {
     const metaNoId: SessionMeta = {
-      sessionId: null,
+      taskId: null,
       agent: 'test',
       status: 'running'
     };

@@ -66,8 +66,36 @@ export async function runInit(
     const cwd = process.cwd();
     const packageRoot = getPackageRoot();
 
+    // CRITICAL: Check version FIRST (before wizard) to detect upgrade scenarios
+    // This must happen before any user interaction to correctly route fresh vs upgrade installations
+    const versionPath = resolveWorkspaceVersionPath(cwd);
+    const currentPackageVersion = getPackageVersion();
+    let isUpgrade = false;
+    let oldVersion: string | undefined;
+    let isPartialInstall = false;
+
+    if (await pathExists(versionPath)) {
+      try {
+        const versionData = JSON.parse(await fsp.readFile(versionPath, 'utf8'));
+        oldVersion = versionData.version;
+
+        if (oldVersion === currentPackageVersion) {
+          // True partial installation (same version, incomplete setup)
+          isPartialInstall = true;
+        } else {
+          // Version mismatch = upgrade scenario
+          isUpgrade = true;
+        }
+      } catch {
+        // Corrupted version.json, treat as fresh install
+        isUpgrade = false;
+        oldVersion = undefined;
+      }
+    }
+
     // Check if running in interactive mode (TTY) or automation mode (--yes flag or explicit template)
-    const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template;
+    // IMPORTANT: Skip wizard for upgrades (handled via diff generation flow)
+    const isInteractive = process.stdout.isTTY && !flags.yes && !flags.template && !isUpgrade;
     let template: string;
     let executor: string;
     let model: string | undefined;
@@ -136,9 +164,18 @@ export async function runInit(
         await configureExecutorAuthentication(executor);
       }
     } else {
-      // Automation mode: use flags or defaults
-      template = (flags.template || 'code') as TemplateType;
-      templates = [template];
+      // Automation mode OR upgrade mode: use flags or detect from existing installation
+      const automationTargetGenie = resolveTargetGeniePath(cwd);
+      if (isUpgrade && await pathExists(automationTargetGenie)) {
+        // Upgrade: detect installed collectives from existing .genie/
+        templates = await detectInstalledCollectives(automationTargetGenie);
+        template = templates[0]; // Primary template (first one)
+        console.log(`📦 Detected installed collectives: ${templates.join(', ')}`);
+      } else {
+        // Automation mode (fresh install): use flags or default
+        template = (flags.template || 'code') as TemplateType;
+        templates = [template];
+      }
       executor = DEFAULT_EXECUTOR_KEY;
       model = undefined;
     }
@@ -153,49 +190,30 @@ export async function runInit(
       return;
     }
 
-    // CRITICAL: Check version BEFORE copying any files (fixes #304)
-    // This must happen before template operations to correctly detect fresh vs upgrade installations
-    const versionPath = resolveWorkspaceVersionPath(cwd);
-    const currentPackageVersion = getPackageVersion();
-    let isUpgrade = false;
-    let oldVersion: string | undefined;
-    let isPartialInstall = false;
+    // Handle partial install scenario (version check already done above)
+    if (isPartialInstall) {
+      console.log('');
+      console.log('🔍 Detected partial installation');
+      console.log('📦 Templates already copied, resuming setup...');
+      console.log('');
 
-    if (await pathExists(versionPath)) {
-      try {
-        const versionData = JSON.parse(await fsp.readFile(versionPath, 'utf8'));
-        oldVersion = versionData.version;
+      // Skip file operations; go straight to executor setup
+      const resumeExecutor = DEFAULT_EXECUTOR_KEY;
+      const resumeModel = undefined;
+      await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
+      // Note: MCP configuration handled by Forge, not init
+      await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
 
-        if (oldVersion === currentPackageVersion) {
-          // True partial installation (same version, incomplete setup)
-          isPartialInstall = true;
-          console.log('');
-          console.log('🔍 Detected partial installation');
-          console.log('📦 Templates already copied, resuming setup...');
-          console.log('');
+      // Note: Install agent is launched by start.sh after init completes
+      return;
+    }
 
-          // Skip file operations; go straight to executor setup
-          const resumeExecutor = DEFAULT_EXECUTOR_KEY;
-          const resumeModel = undefined;
-          await applyExecutorDefaults(targetGenie, resumeExecutor, resumeModel);
-          // Note: MCP configuration handled by Forge, not init
-          await emitView(buildInitSummaryView({ executor: resumeExecutor, model: resumeModel, templateSource: templateGenie, target: targetGenie }), parsed.options);
-
-          // Note: Install agent is launched by start.sh after init completes
-          return;
-        } else {
-          // Version mismatch = upgrade scenario
-          isUpgrade = true;
-          console.log('');
-          console.log(`🔄 Upgrading from ${oldVersion} to ${currentPackageVersion}...`);
-          console.log('');
-        }
-      } catch {
-        // Corrupted version.json, treat as fresh install
-        isUpgrade = false;
-        oldVersion = undefined;
-      }
-    } else {
+    // Show appropriate welcome message for fresh installs or upgrades
+    if (isUpgrade && oldVersion) {
+      console.log('');
+      console.log(`🔄 Upgrading from ${oldVersion} to ${currentPackageVersion}...`);
+      console.log('');
+    } else if (!isUpgrade) {
       // No version.json = fresh installation
       console.log('');
       console.log('🧞 Welcome to Genie! Setting up your workspace...');
@@ -370,6 +388,25 @@ export async function runInit(
         console.log('📋 Update task created:');
         console.log(updateUrl);
         console.log('');
+
+        // Open browser with task URL (view=chat for immediate interaction)
+        try {
+          const { execSync } = await import('child_process');
+          const { getBrowserOpenCommand } = await import('../lib/cli-utils.js');
+
+          // Change view from diffs to chat for better UX
+          const chatUrl = updateUrl.replace('view=diffs', 'view=chat');
+          const openCommand = getBrowserOpenCommand();
+          execSync(`${openCommand} "${chatUrl}"`, { stdio: 'ignore' });
+
+          console.log('🌐 Opening browser with upgrade task...');
+          console.log('');
+        } catch (browserError) {
+          // Non-fatal: browser opening failed, user can still access URL manually
+          console.log('⚠️  Could not open browser automatically');
+          console.log(`   Visit: ${updateUrl}`);
+          console.log('');
+        }
       } catch (error) {
         // Non-blocking: update task creation is optional
         // If Forge is unavailable, user can still review diff manually
@@ -885,6 +922,32 @@ async function detectTemplateFromGenie(genieRoot: string): Promise<string> {
   if (codeExists) return 'code';
   if (createExists) return 'create';
   return 'code'; // fallback
+}
+
+/**
+ * Detect ALL installed collectives from existing .genie/ structure
+ * Used during upgrades to preserve user's collective selection
+ */
+async function detectInstalledCollectives(genieRoot: string): Promise<string[]> {
+  const collectives: string[] = [];
+
+  // Check for known collective directories
+  const knownCollectives = ['code', 'create'];
+
+  for (const collective of knownCollectives) {
+    const collectivePath = path.join(genieRoot, collective);
+    if (await pathExists(collectivePath)) {
+      collectives.push(collective);
+    }
+  }
+
+  // Fallback if no collectives detected (corrupted .genie/)
+  if (collectives.length === 0) {
+    console.warn('⚠️  No collectives detected, defaulting to code');
+    return ['code'];
+  }
+
+  return collectives;
 }
 async function applyExecutorDefaults(genieRoot: string, executorKey: string, model?: string): Promise<void> {
   await Promise.all([

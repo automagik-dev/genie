@@ -99,7 +99,7 @@ export function loadForgeExecutor(): { createForgeExecutor: () => any } | null {
 }
 
 // Helper: List recent sessions (uses Forge API)
-export async function listSessions(): Promise<Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }>> {
+export async function listTasks(): Promise<Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }>> {
   const workspaceRoot = findWorkspaceRoot();
   try {
     // ALWAYS use Forge API for session listing (complete executor replacement)
@@ -109,15 +109,20 @@ export async function listSessions(): Promise<Array<{ id: string; name: string; 
     }
     const forgeExecutor = mod.createForgeExecutor();
 
-    const forgeSessions = await forgeExecutor.listSessions();
+    const forgeSessions = await forgeExecutor.listTasks();
 
-    const sessions = forgeSessions.map((entry: any) => ({
-      name: entry.name || entry.sessionId || 'unknown',
-      agent: entry.agent || 'unknown',
-      status: entry.status || 'unknown',
-      created: entry.created || 'unknown',
-      lastUsed: entry.lastUsed || entry.created || 'unknown'
-    }));
+    const sessions = forgeSessions.map((entry: any) => {
+      const created = entry.created || entry.created_at || 'unknown';
+      const updated = entry.updated || entry.updated_at || entry.lastUsed || created;
+      return {
+        id: entry.id || entry.taskId || 'unknown',
+        name: entry.name || entry.taskId || 'unknown',
+        agent: entry.agent || 'unknown',
+        status: entry.status || 'unknown',
+        created,
+        lastUsed: updated
+      };
+    });
 
     // Filter: Show running sessions + recent completed (last 10)
     // Fix Bug #5: Filter out stale sessions (>24 hours old with no recent activity)
@@ -150,69 +155,77 @@ export async function listSessions(): Promise<Array<{ id: string; name: string; 
       .slice(0, 10);
 
     // Combine and sort by lastUsed descending
+    const combined = [...running, ...completed].sort((a, b) => {
+      if (a.lastUsed === 'unknown') return 1;
+      if (b.lastUsed === 'unknown') return -1;
+      return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+    });
+
+    if (combined.length === 0) {
+      return loadTasksFromLocalStore(workspaceRoot);
+    }
+
+    return combined;
+  } catch (error) {
+    // Fallback to local tasks.json if Forge API fails
+    console.warn('Failed to fetch Forge sessions, falling back to local store');
+    return loadTasksFromLocalStore(workspaceRoot);
+  }
+}
+
+function loadTasksFromLocalStore(workspaceRoot: string): Array<{ id: string; name: string; agent: string; status: string; created: string; lastUsed: string }> {
+  const tasksFile = path.join(workspaceRoot, '.genie/state/tasks.json');
+
+  if (!fs.existsSync(tasksFile)) {
+    return [];
+  }
+
+  try {
+    const content = fs.readFileSync(tasksFile, 'utf8');
+    const store = JSON.parse(content);
+
+    const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
+      id: key,  // Use attempt ID as primary identifier for resume/view/stop commands
+      name: entry.name || key,
+      agent: entry.agent || key,
+      status: entry.status || 'unknown',
+      created: entry.created || 'unknown',
+      lastUsed: entry.lastUsed || entry.created || 'unknown'
+    }));
+
+    const now = Date.now();
+    const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+    const running = sessions.filter(s => {
+      const status = s.status === 'running' || s.status === 'starting' || s.status === 'background';
+      if (!status) return false;
+
+      if (s.lastUsed !== 'unknown') {
+        const lastUsedTime = new Date(s.lastUsed).getTime();
+        const age = now - lastUsedTime;
+        if (age > STALE_THRESHOLD_MS) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const completed = sessions
+      .filter(s => s.status === 'completed')
+      .sort((a, b) => {
+        if (a.lastUsed === 'unknown') return 1;
+        if (b.lastUsed === 'unknown') return -1;
+        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
+      })
+      .slice(0, 10);
+
     return [...running, ...completed].sort((a, b) => {
       if (a.lastUsed === 'unknown') return 1;
       if (b.lastUsed === 'unknown') return -1;
       return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
     });
   } catch (error) {
-    // Fallback to local sessions.json if Forge API fails
-    console.warn('Failed to fetch Forge sessions, falling back to local store');
-    const sessionsFile = path.join(workspaceRoot, '.genie/state/agents/sessions.json');
-
-    if (!fs.existsSync(sessionsFile)) {
-      return [];
-    }
-
-    try {
-      const content = fs.readFileSync(sessionsFile, 'utf8');
-      const store = JSON.parse(content);
-
-      const sessions = Object.entries(store.sessions || {}).map(([key, entry]: [string, any]) => ({
-        id: entry.sessionId || key,
-        name: entry.name || key,
-        agent: entry.agent || key,
-        status: entry.status || 'unknown',
-        created: entry.created || 'unknown',
-        lastUsed: entry.lastUsed || entry.created || 'unknown'
-      }));
-
-      // Apply same stale filter as Forge path (Fix Bug #5)
-      const now = Date.now();
-      const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-      const running = sessions.filter(s => {
-        const status = s.status === 'running' || s.status === 'starting';
-        if (!status) return false;
-
-        // Filter out stale sessions
-        if (s.lastUsed !== 'unknown') {
-          const lastUsedTime = new Date(s.lastUsed).getTime();
-          const age = now - lastUsedTime;
-          if (age > STALE_THRESHOLD_MS) {
-            return false;
-          }
-        }
-        return true;
-      });
-
-      const completed = sessions
-        .filter(s => s.status === 'completed')
-        .sort((a, b) => {
-          if (a.lastUsed === 'unknown') return 1;
-          if (b.lastUsed === 'unknown') return -1;
-          return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-        })
-        .slice(0, 10);
-
-      return [...running, ...completed].sort((a, b) => {
-        if (a.lastUsed === 'unknown') return 1;
-        if (b.lastUsed === 'unknown') return -1;
-        return new Date(b.lastUsed).getTime() - new Date(a.lastUsed).getTime();
-      });
-    } catch (error) {
-      return [];
-    }
+    return [];
   }
 }
 

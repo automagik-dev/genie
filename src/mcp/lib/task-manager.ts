@@ -1,11 +1,11 @@
 /**
- * Session Manager - Query Forge for master orchestrators
+ * Task Manager - Query Forge for master orchestrators
  *
  * Phase 2: Prevents orphaned tasks by reusing master orchestrators
  * Architecture: Query Forge database for existing masters (persists across restarts)
  */
 
-import { WorkflowType, SessionInfo } from './session-types.js';
+import { WorkflowType, TaskInfo } from './task-types.js';
 import path from 'path';
 import { getForgeConfig } from '../lib/service-config.js';
 
@@ -17,7 +17,7 @@ const ForgeClient = require(path.join(geniePackageRoot, 'src/lib/forge-client.js
 
 const { baseUrl: FORGE_URL } = getForgeConfig();
 
-export class SessionManager {
+export class TaskManager {
   private forgeClient: any;
 
   constructor() {
@@ -74,7 +74,7 @@ export class SessionManager {
    * Get existing master orchestrator for workflow + project
    * Uses new forge_agents table (persistent, no status-based filtering)
    */
-  async getSession(workflow: WorkflowType, projectId: string): Promise<SessionInfo | null> {
+  async getTask(workflow: WorkflowType, projectId: string): Promise<TaskInfo | null> {
     try {
       // Query forge_agents table for this workflow type
       const agents = await this.forgeClient.getForgeAgents(projectId, workflow);
@@ -86,10 +86,9 @@ export class SessionManager {
         const task = await this.forgeClient.getTask(projectId, agent.task_id);
 
         // Get latest attempt
-        const attempts = await this.forgeClient.listTaskAttempts(projectId);
+        const attempts = await this.forgeClient.listTaskAttempts(agent.task_id);
         const latestAttempt = attempts
-          .filter((a: any) => a.task_id === agent.task_id)
-          .sort((a: any, b: any) => b.created_at.localeCompare(a.created_at))[0];
+          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
 
         if (latestAttempt) {
           return {
@@ -125,14 +124,14 @@ export class SessionManager {
 
   /**
    * Create new master orchestrator
-   * Returns session info for the new master
+   * Returns task info for the new master
    */
   async createMaster(
     workflow: WorkflowType,
     projectId: string,
     title: string,
     prompt: string
-  ): Promise<SessionInfo> {
+  ): Promise<TaskInfo> {
     try {
       // Create the agent entry and its fixed task
       const agent = await this.forgeClient.createForgeAgent(projectId, workflow);
@@ -176,9 +175,9 @@ export class SessionManager {
     projectId: string,
     title: string,
     prompt: string
-  ): Promise<SessionInfo> {
+  ): Promise<TaskInfo> {
     // Try to find existing master
-    const existing = await this.getSession(workflow, projectId);
+    const existing = await this.getTask(workflow, projectId);
     if (existing) {
       return existing;
     }
@@ -190,7 +189,7 @@ export class SessionManager {
 }
 
 /**
- * Global session manager instance
+ * Global task manager instance
  * Shared across all MCP tool calls during server lifetime
  */
-export const sessionManager = new SessionManager();
+export const taskManager = new TaskManager();

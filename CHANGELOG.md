@@ -956,7 +956,7 @@ No changelog entries (packaging-only RC).
 
 **Token Efficiency Architecture** 📦
 - Zero metadata duplication (git is source of truth for version, timestamps)
-- Session state optimization (ephemeral `.genie/.session` vs committed `AGENTS.md`)
+- Task state optimization (ephemeral `.genie/.tasks` vs committed `AGENTS.md`)
 - Stripped all `**Last Updated:**` and `version:` from frontmatter (1,470 token savings)
 - Fast, fit, smart philosophy: committed files = permanent consciousness weight
 

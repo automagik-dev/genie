@@ -2,13 +2,13 @@
  * CLI Core Module - Pure handlers with zero side effects on import
  *
  * Addresses Genie RISK-1: genie.ts main() execution on import
- * Addresses Genie RISK-2: Session store concurrency via SessionService with file locking
+ * Addresses Genie RISK-2: Session store concurrency via TaskService with file locking
  */
 
-export { SessionService } from './session-service';
+export { TaskService } from './task-service';
 export type {
-  SessionServiceOptions
-} from './session-service';
+  TaskServiceOptions
+} from './task-service';
 
 export type { HandlerContext, Handler } from './context';
 

@@ -68,11 +68,11 @@ program
 
 // ==================== AGENT ORCHESTRATION ====================
 
-// Run command
+// Run command (unified browser + monitoring)
 program
   .command('run <agent> <prompt>')
-  .description('Run an agent with a prompt (JSON output by default)')
-  .option('-b, --background', 'Run in background mode')
+  .description('Run agent with browser UI and live monitoring (outputs JSON on completion)')
+  .option('-b, --background', 'Run in background mode (uses headless task instead)')
   .option('-x, --executor <executor>', 'Override executor for this run')
   .option('-m, --model <model>', 'Override model for the selected executor')
   .option('-n, --name <name>', 'Friendly session name for easy identification')
@@ -80,8 +80,11 @@ program
   .option('--quiet', 'Suppress startup messages')
   .action((agent: string, prompt: string, options: { background?: boolean; executor?: string; model?: string; name?: string; raw?: boolean; quiet?: boolean }) => {
     const args = ['run', agent, prompt];
-    if (options.background) {
+    if (options.background === true) {
       args.push('--background');
+    }
+    if (options.background === false) {
+      args.push('--no-background');
     }
     if (options.executor) {
       args.push('--executor', options.executor);
@@ -101,44 +104,80 @@ program
     execGenie(args);
   });
 
-// Talk command
+// Task command (headless execution)
+program
+  .command('task <agent> <prompt>')
+  .description('Run agent task headlessly (no browser, immediate return with task ID)')
+  .option('-x, --executor <executor>', 'Override executor for this task')
+  .option('-m, --model <model>', 'Override model for the selected executor')
+  .option('-n, --name <name>', 'Friendly session name for easy identification')
+  .option('--raw', 'Output raw attempt ID only (no JSON)')
+  .option('--quiet', 'Suppress startup messages')
+  .action((agent: string, prompt: string, options: { executor?: string; model?: string; name?: string; raw?: boolean; quiet?: boolean }) => {
+    const args = ['task', agent, prompt];
+    if (options.executor) {
+      args.push('--executor', options.executor);
+    }
+    if (options.model) {
+      args.push('--model', options.model);
+    }
+    if (options.name) {
+      args.push('--name', options.name);
+    }
+    if (options.raw) {
+      args.push('--raw');
+    }
+    if (options.quiet) {
+      args.push('--quiet');
+    }
+    execGenie(args);
+  });
+
+// Talk command (deprecated, use 'run' instead)
 program
   .command('talk <agent>')
-  .description('Start interactive browser session with agent (Forge UI)')
+  .description('[Deprecated] Start interactive browser task with agent (use "genie run" instead)')
   .action((agent: string) => {
     execGenie(['talk', agent]);
   });
 
 // Resume command
 program
-  .command('resume <sessionId> <prompt>')
-  .description('Resume an existing agent session')
-  .action((sessionId: string, prompt: string) => {
-    execGenie(['resume', sessionId, prompt]);
+  .command('resume <taskId> <prompt>')
+  .description('Resume an existing agent task')
+  .action((taskId: string, prompt: string) => {
+    execGenie(['resume', taskId, prompt]);
   });
 
 // List command
 program
   .command('list [type]')
-  .description('List agents, sessions, or workflows')
+  .description('List agents, tasks, or workflows')
   .action((type: string | undefined) => {
     const normalized = (type || 'agents').toLowerCase();
-    const validTypes = ['agents', 'sessions', 'workflows'];
-    if (!validTypes.includes(normalized)) {
-      console.error('Error: list command accepts agents (default), sessions, or workflows');
+    const aliasMap: Record<string, string> = {
+      session: 'tasks',
+      sessions: 'tasks',
+      task: 'tasks',
+      agent: 'agents'
+    };
+    const resolved = aliasMap[normalized] || normalized;
+    const validTypes = new Set(['agents', 'collectives', 'tasks', 'workflows', 'skills']);
+    if (!validTypes.has(resolved)) {
+      console.error('Error: list command accepts agents (default), tasks, workflows, skills, or collectives');
       process.exit(1);
     }
-    execGenie(['list', normalized]);
+    execGenie(['list', resolved]);
   });
 
 // View command
 program
-  .command('view <sessionId>')
-  .description('View session transcript')
+  .command('view <taskId>')
+  .description('View task transcript')
   .option('--full', 'Show full transcript')
   .option('--live', 'Live view (auto-refresh)')
-  .action((sessionId: string, options: { full?: boolean; live?: boolean }) => {
-    const args = ['view', sessionId];
+  .action((taskId: string, options: { full?: boolean; live?: boolean }) => {
+    const args = ['view', taskId];
     if (options.full) args.push('--full');
     if (options.live) args.push('--live');
     execGenie(args);
@@ -146,10 +185,10 @@ program
 
 // Stop command
 program
-  .command('stop <sessionId>')
-  .description('Stop a running session')
-  .action((sessionId: string) => {
-    execGenie(['stop', sessionId]);
+  .command('stop <taskId>')
+  .description('Stop a running task')
+  .action((taskId: string) => {
+    execGenie(['stop', taskId]);
   });
 
 // ==================== WORKSPACE MANAGEMENT ====================
@@ -246,7 +285,7 @@ const args = process.argv.slice(2);
 const skipVersionCheck = ['--version', '-V', '--help', '-h', 'update', 'init', 'rollback', 'mcp'];
 
 // Non-blocking version check for these commands (show warning but continue)
-const nonBlockingCommands = ['list', 'status', 'dashboard', 'view', 'helper', 'run', 'talk', 'resume', 'stop'];
+const nonBlockingCommands = ['list', 'status', 'dashboard', 'view', 'helper', 'run', 'talk', 'task', 'resume', 'stop'];
 
 // Skip version check for specific agents/spells that need to run regardless of version
 // WHY: Learn spell loads for self-enhancement, install/update handle versions themselves
@@ -260,6 +299,7 @@ const shouldCheckVersion = args.length > 0 &&
   !shouldBypassForAgent;
 
 const isNonBlockingCommand = nonBlockingCommands.includes(args[0]);
+const skipVersionGate = process.env.GENIE_SKIP_VERSION_CHECK === '1';
 
 if (shouldCheckVersion) {
   // Check if version.json exists and matches current version
@@ -306,7 +346,7 @@ if (shouldCheckVersion) {
       const localVersion = versionData.version;
       const runningVersion = packageJson.version;
 
-      if (localVersion !== runningVersion) {
+      if (localVersion !== runningVersion && !skipVersionGate) {
         // Compare versions to determine which is newer
         const compareVersions = (a: string, b: string) => {
           const aParts = a.replace(/^v/, '').split('-');
@@ -377,6 +417,10 @@ if (shouldCheckVersion) {
             process.exit(0);
           }
         }
+      } else if (localVersion !== runningVersion && skipVersionGate) {
+        console.log('');
+        console.log(performanceGradient('⚠️  Version mismatch suppressed via GENIE_SKIP_VERSION_CHECK. Workspace ') + `${performanceGradient(localVersion)} vs global ${successGradient(runningVersion)}`);
+        console.log('');
       }
     } catch {
       // Ignore version check errors for master genie

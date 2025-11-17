@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="/favicon-genie-light.svg" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="/favicon-genie-dark.svg" media="(prefers-color-scheme: dark)">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorize Genie MCP Access</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:wght@300;400;500;700;800;900&family=Manrope:wght@200;300;400;500;600;700;800&family=Chivo+Mono:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      font-family: 'Alegreya Sans', sans-serif;
+    }
+
+    code, pre, .monospace {
+      font-family: 'Chivo Mono', 'Courier New', monospace;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 480px;
+      width: 100%;
+      padding: 40px;
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .logo h1 {
+      font-size: 32px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 700;
+    }
+
+    .client-info {
+      background: #f7fafc;
+      border-left: 4px solid #667eea;
+      padding: 16px;
+      margin-bottom: 24px;
+      border-radius: 4px;
+    }
+
+    .client-info h2 {
+      font-size: 18px;
+      color: #2d3748;
+      margin-bottom: 8px;
+    }
+
+    .client-info p {
+      font-size: 14px;
+      color: #718096;
+      margin-bottom: 4px;
+    }
+
+    .scopes {
+      margin-bottom: 24px;
+    }
+
+    .scopes h3 {
+      font-size: 16px;
+      color: #2d3748;
+      margin-bottom: 12px;
+    }
+
+    .scope-list {
+      background: #f7fafc;
+      border-radius: 4px;
+      padding: 12px;
+    }
+
+    .scope-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 0;
+      color: #4a5568;
+      font-size: 14px;
+    }
+
+    .scope-item::before {
+      content: '✓';
+      color: #48bb78;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+
+    .auth-form {
+      margin-bottom: 24px;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      flex: 1;
+      padding: 14px 24px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-authorize {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-authorize:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-authorize:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-deny {
+      background: #e2e8f0;
+      color: #4a5568;
+    }
+
+    .btn-deny:hover {
+      background: #cbd5e0;
+    }
+
+    .error {
+      background: #fff5f5;
+      border-left: 4px solid #f56565;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+      color: #c53030;
+      font-size: 14px;
+      display: none;
+    }
+
+    .error.show {
+      display: block;
+    }
+
+    .security-note {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #e2e8f0;
+      text-align: center;
+      font-size: 12px;
+      color: #718096;
+    }
+
+    .security-note a {
+      color: #667eea;
+      text-decoration: none;
+    }
+
+    .security-note a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1>🧞 Genie MCP</h1>
+    </div>
+
+    <div class="client-info">
+      <h2 id="clientName">Loading...</h2>
+      <p>wants to access your Genie MCP server</p>
+    </div>
+
+    <div class="scopes">
+      <h3>This application will be able to:</h3>
+      <div class="scope-list" id="scopeList">
+        <!-- Scopes will be inserted here -->
+      </div>
+    </div>
+
+    <div class="error" id="errorMessage"></div>
+
+    <form class="auth-form" id="authForm" method="POST" action="/oauth2/authorize/consent">
+      <input type="hidden" name="request_id" id="requestId">
+
+      <div class="buttons">
+        <button type="button" class="btn-deny" onclick="denyAccess()">Deny</button>
+        <button type="submit" class="btn-authorize" id="authorizeBtn">Authorize</button>
+      </div>
+    </form>
+
+    <div class="security-note">
+      <p>
+        🔒 This connection uses OAuth 2.0 with PKCE for security.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Get values from data attributes (injected server-side)
+    const container = document.querySelector('.container');
+    const clientName = container.dataset.clientName || 'Unknown Application';
+    const scopes = (container.dataset.scopes || '').split(' ').filter(s => s);
+
+    // Parse URL for error parameters only
+    const urlParams = new URLSearchParams(window.location.search);
+    const error = urlParams.get('error');
+    const errorDescription = urlParams.get('error_description');
+
+    // Display client name
+    document.getElementById('clientName').textContent = clientName;
+
+    // Display scopes
+    const scopeDescriptions = {
+      'mcp:read': 'Read your Genie agents and tools',
+      'mcp:write': 'Execute agent workflows and modify sessions'
+    };
+
+    const scopeList = document.getElementById('scopeList');
+    scopes.forEach(scope => {
+      const div = document.createElement('div');
+      div.className = 'scope-item';
+      div.textContent = scopeDescriptions[scope] || scope;
+      scopeList.appendChild(div);
+    });
+
+    // Show error if present
+    if (error) {
+      const errorEl = document.getElementById('errorMessage');
+      errorEl.textContent = errorDescription || 'Authorization failed. Please try again.';
+      errorEl.classList.add('show');
+    }
+
+    // Form submits naturally - no JavaScript needed
+    // OAuth redirects work best with standard form submission
+
+    // Handle deny
+    function denyAccess() {
+      if (confirm('Are you sure you want to deny access?')) {
+        // Get redirect info from form action (it has the query params)
+        const form = document.getElementById('authForm');
+        const actionUrl = new URL(form.action, window.location.origin);
+        const redirectUri = actionUrl.searchParams.get('redirect_uri');
+        const state = actionUrl.searchParams.get('state');
+        if (redirectUri && state) {
+          const denyUrl = `${redirectUri}?error=access_denied&error_description=User denied authorization&state=${state}`;
+          window.location.href = denyUrl;
+        }
+      }
+    }
+  </script>
+</body>
+</html>

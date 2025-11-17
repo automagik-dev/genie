@@ -21,6 +21,20 @@ import fs from 'fs';
 const genieGradient = gradient(['#0066ff', '#9933ff', '#ff00ff']);
 const successGradient = gradient(['#00ff88', '#00ccff', '#0099ff']);
 
+function firstNonEmptyString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item === 'string' && item.trim().length > 0) {
+        return item;
+      }
+    }
+  }
+  return undefined;
+}
+
 export async function runTalk(
   parsed: ParsedCommand,
   config: GenieConfig,
@@ -39,12 +53,13 @@ export async function runTalk(
   const agentGenie = agentSpec.meta?.genie || {};
 
   // Resolve executor configuration
+  const executorFromAgent = firstNonEmptyString(agentGenie.executor);
   const executorKey = normalizeExecutorKeyOrDefault(
-    agentGenie.executor || config.defaults?.executor
+    executorFromAgent || config.defaults?.executor
   );
+  const variantFromAgent = firstNonEmptyString(agentGenie.executorVariant || agentGenie.variant);
   const executorVariant = (
-    agentGenie.executorVariant ||
-    agentGenie.variant ||
+    variantFromAgent ||
     config.defaults?.executorVariant ||
     'DEFAULT'
   ).trim().toUpperCase();
@@ -89,7 +104,7 @@ export async function runTalk(
 
   let sessionResult;
   try {
-    sessionResult = await forgeExecutor.createSession({
+    sessionResult = await forgeExecutor.createTask({
       agentName: resolvedAgentName,
       prompt,
       executorKey,

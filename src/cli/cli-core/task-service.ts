@@ -2,62 +2,62 @@ import fs from 'fs';
 import fsPromises from 'fs/promises';
 import path from 'path';
 import {
-  loadSessions,
-  SessionStore,
-  SessionPathsConfig,
-  SessionLoadConfig,
-  SessionDefaults
-} from '../session-store';
+  loadTasks,
+  TaskStore,
+  TaskPathsConfig,
+  TaskLoadConfig,
+  TaskDefaults
+} from '../task-store';
 
-export interface SessionServiceOptions {
-  paths: SessionPathsConfig;
-  loadConfig?: SessionLoadConfig;
-  defaults?: SessionDefaults;
+export interface TaskServiceOptions {
+  paths: TaskPathsConfig;
+  loadConfig?: TaskLoadConfig;
+  defaults?: TaskDefaults;
   onWarning?: (message: string) => void;
 }
 
 interface SaveResult {
-  store: SessionStore;
+  store: TaskStore;
 }
 
-export class SessionService {
-  private readonly paths: SessionPathsConfig;
-  private readonly loadConfig?: SessionLoadConfig;
-  private readonly defaults?: SessionDefaults;
+export class TaskService {
+  private readonly paths: TaskPathsConfig;
+  private readonly loadConfig?: TaskLoadConfig;
+  private readonly defaults?: TaskDefaults;
   private readonly onWarning?: (message: string) => void;
 
-  constructor(options: SessionServiceOptions) {
+  constructor(options: TaskServiceOptions) {
     this.paths = options.paths;
     this.loadConfig = options.loadConfig;
     this.defaults = options.defaults;
     this.onWarning = options.onWarning;
   }
 
-  load(callbacks: { onWarning?: (message: string) => void } = {}): SessionStore {
+  load(callbacks: { onWarning?: (message: string) => void } = {}): TaskStore {
     const mergedCallbacks = {
       onWarning: callbacks.onWarning || this.onWarning
     };
-    return loadSessions(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
+    return loadTasks(this.paths, this.loadConfig, this.defaults, mergedCallbacks);
   }
 
-  async save(store: SessionStore): Promise<SaveResult> {
-    if (!this.paths.sessionsFile) {
+  async save(store: TaskStore): Promise<SaveResult> {
+    const targetFile = this.paths.tasksFile;
+    if (!targetFile) {
       return { store };
     }
 
-    const sessionFile = this.paths.sessionsFile;
-    await this.ensureFile(sessionFile);
+    await this.ensureFile(targetFile);
 
     // Native file locking with retry logic
     return await this.retryWithLock(async () => {
       // TWIN FIX #3: Reload fresh disk state immediately before merge to prevent rollback
-      const diskStore = loadSessions(this.paths, this.loadConfig, this.defaults, {
+      const diskStore = loadTasks(this.paths, this.loadConfig, this.defaults, {
         onWarning: this.onWarning
       });
       const merged = this.mergeStores(diskStore, store);
 
       // TWIN FIX #1: Atomic write via temp file + rename to prevent partial reads
-      const tempFile = sessionFile + '.tmp';
+      const tempFile = targetFile + '.tmp';
       await fsPromises.writeFile(tempFile, JSON.stringify(merged, null, 2), 'utf8');
 
       // Ensure data is flushed to disk before rename
@@ -66,14 +66,18 @@ export class SessionService {
       await fd.close();
 
       // Atomic rename - readers will only see complete JSON
-      await fsPromises.rename(tempFile, sessionFile);
+      await fsPromises.rename(tempFile, targetFile);
 
       return { store: merged };
     });
   }
 
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
-    const lockPath = this.paths.sessionsFile + '.lock';
+    const baseFile = this.paths.tasksFile;
+    if (!baseFile) {
+      throw new Error('TaskService: No tasks file configured for locking');
+    }
+    const lockPath = baseFile + '.lock';
     let handle: fsPromises.FileHandle | null = null;
 
     try {
@@ -155,26 +159,26 @@ export class SessionService {
         throw err;
       }
     }
-    throw new Error('SessionService: Lock acquisition timeout after ' + maxRetries + ' retries');
+    throw new Error('TaskService: Lock acquisition timeout after ' + maxRetries + ' retries');
   }
 
   private async ensureFile(target: string): Promise<void> {
     const dir = path.dirname(target);
     await fsPromises.mkdir(dir, { recursive: true });
     if (!fs.existsSync(target)) {
-      const initial: SessionStore = { version: 2, sessions: {} };
+      const initial: TaskStore = { version: 4, sessions: {} };
       await fsPromises.writeFile(target, JSON.stringify(initial, null, 2), 'utf8');
     }
   }
 
-  private mergeStores(base: SessionStore, incoming: SessionStore): SessionStore {
-    const merged: SessionStore = {
+  private mergeStores(base: TaskStore, incoming: TaskStore): TaskStore {
+    const merged: TaskStore = {
       version: incoming.version ?? base.version ?? 2,
       sessions: { ...base.sessions }
     };
 
-    Object.entries(incoming.sessions || {}).forEach(([sessionId, entry]) => {
-      merged.sessions[sessionId] = { ...(base.sessions?.[sessionId] || {}), ...entry };
+    Object.entries(incoming.sessions || {}).forEach(([taskId, entry]) => {
+      merged.sessions[taskId] = { ...(base.sessions?.[taskId] || {}), ...entry };
     });
 
     return merged;

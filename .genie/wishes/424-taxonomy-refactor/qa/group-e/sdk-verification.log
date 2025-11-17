@@ -1,0 +1,11 @@
+Timestamp: 2025-11-15T20:55:50Z
+== MCP SDK usages ==
+src/mcp/lib/oauth-provider.ts:8:import { OAuthTokenVerifier, OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js';
+src/mcp/lib/oauth-provider.ts:9:import { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+src/mcp/lib/oauth-provider.ts:10:import { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
+src/mcp/lib/oauth-provider.ts:11:import { OAuthClientInformationFull, OAuthTokens, OAuthTokenRevocationRequest } from '@modelcontextprotocol/sdk/shared/auth.js';
+src/mcp/server.ts:19:import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+src/mcp/server.ts:20:import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+src/mcp/lib/http-server.ts:12:import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+src/mcp/lib/http-server.ts:13:import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+src/mcp/lib/http-server.ts:14:import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';

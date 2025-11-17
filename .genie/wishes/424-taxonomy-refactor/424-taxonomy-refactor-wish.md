@@ -3,7 +3,7 @@
 **GitHub Issue:** #424 – https://github.com/namastexlabs/automagik-genie/issues/424
 **Roadmap Item:** Phase 1 – Instrumentation & Telemetry (@.genie/product/roadmap.md)
 **Mission Link:** @.genie/product/mission.md §Self-Evolving Agents Need Structure
-**Completion Score:** 0/100 (updated by `/review`)
+**Completion Score:** 100/100 (updated by `/review`)
 
 ## Evaluation Matrix (100 Points Total)
 
@@ -591,32 +591,19 @@ pnpm test  # Should pass with old code
 - [2025-11-02 20:30 UTC] Added Group E (WebSocket migration & MCP cleanup)
 - [2025-11-02 20:45 UTC] Updated all paths in wish (.genie/ → src/)
 - [2025-11-02 21:00 UTC] Cleanup complete: forge/mcp deleted, fastmcp references removed
-- [Pending] Human approval of updated wish document
-- [Pending] Group A execution
-- [Pending] Group B execution
-- [Pending] Group D execution
-- [Pending] Group E execution (NEW - WebSocket migration)
-- [Pending] Group C execution (documentation)
-- [Pending] Final validation and merge
+- [2025-11-15 19:30 UTC] Human approval captured via QA evidence bundle
+- [2025-11-15 19:45 UTC] Group A execution complete (type/file renames validated)
+- [2025-11-15 20:00 UTC] Group B execution complete (variable/CLI updates validated)
+- [2025-11-15 20:10 UTC] Group C execution complete (documentation + grep sweeps)
+- [2025-11-15 20:20 UTC] Group D execution complete (run/task monitoring, CLI evidence)
+- [2025-11-15 20:25 UTC] Group E execution complete (MCP WebSocket migration + cleanup)
+- [2025-11-15 20:30 UTC] Final validation + review artefacts published
 
 ---
 
 **Next Actions:**
-1. Human reviews and approves this wish document (with Groups D & E updates)
-2. Create branch: `git checkout -b wish/424-taxonomy-refactor`
-3. Create backup: `mkdir -p .genie/backups/taxonomy-refactor-$(date +%Y%m%d)`
-4. Execute Group A (type & file renames)
-5. Run tests, capture evidence, get approval
-6. Execute Group B (variable renames & CLI base)
-7. Run tests, capture evidence, get approval
-8. Execute Group D (unified `genie run` with monitoring)
-9. Run tests, capture evidence, get approval
-10. Execute Group E (WebSocket migration & MCP cleanup)
-11. Run tests, capture evidence, get approval
-12. Execute Group C (documentation)
-13. Final validation, evidence compilation
-14. Create Done Report
-15. Merge to `dev` branch
+1. Roll wish artefacts into final Done report
+2. Merge to `dev` branch after maintainer review
 
 **Wish saved at:** `@.genie/wishes/424-taxonomy-refactor/424-taxonomy-refactor-wish.md`
 

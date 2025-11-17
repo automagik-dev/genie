@@ -5,7 +5,7 @@ import type { ParsedCommand } from '../types';
 import { listAgents, listCollectives, type CollectiveInfo } from '../../lib/agent-resolver';
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
-import { formatSessionList } from '../../lib/markdown-formatter';
+import { formatTaskList } from '../../lib/markdown-formatter';
 import { truncateText } from '../../lib/utils';
 
 const COLLECTIVE_MARKER = 'AGENTS.md';
@@ -27,17 +27,17 @@ export function createListHandler(ctx: HandlerContext): Handler {
       return listSkillsView(ctx, parsed);
     }
 
-    if (target === 'sessions') {
+    if (target === 'tasks' || target === 'sessions') {
       const forgeExecutor = createForgeExecutor();
       // NOTE: Agent profile sync removed - Forge discovers .genie folders natively
-      let forgeAvailable = true; // Assume Forge is available (will fail on listSessions() if not)
+      let forgeAvailable = true; // Assume Forge is available (will fail on listTasks() if not)
 
       if (forgeAvailable) {
         try {
-          const sessions = await forgeExecutor.listSessions();
-          const markdown = formatSessionList(
+          const sessions = await forgeExecutor.listTasks();
+          const markdown = formatTaskList(
             sessions.map((session) => ({
-              sessionId: session.id,
+              taskId: session.id,
               agent: session.agent,
               status: session.status,
               executor: [session.executor, session.variant].filter(Boolean).join('/'),
@@ -57,7 +57,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
 
       const store = ctx.sessionService.load({ onWarning: ctx.recordRuntimeWarning });
       const sessions = Object.entries(store.sessions || {}).map(([attemptId, entry]) => ({
-        sessionId: attemptId, // Now truly the UUID (issue #407 fix)
+        taskId: attemptId, // Now truly the UUID (issue #407 fix)
         agent: entry.agent,
         status: entry.status || 'unknown',
         executor: [entry.executor, entry.executorVariant].filter(Boolean).join('/'),
@@ -65,9 +65,9 @@ export function createListHandler(ctx: HandlerContext): Handler {
         started: entry.created,
         updated: entry.lastUsed
       }));
-      const markdown = formatSessionList(sessions);
+      const markdown = formatTaskList(sessions);
       const fallbackLines = [
-        '⚠️ Forge backend unreachable. Showing cached sessions from `.genie/state/agents/sessions.json`.',
+        '⚠️ Forge backend unreachable. Showing cached tasks from `.genie/state/tasks.json`.',
         FORGE_RECOVERY_HINT,
         '',
         markdown.trim()
@@ -76,7 +76,7 @@ export function createListHandler(ctx: HandlerContext): Handler {
       return;
     }
 
-    throw new Error(`Unknown list target '${targetRaw}'. Try 'agents', 'workflows', 'skills', or 'sessions'.`);
+    throw new Error(`Unknown list target '${targetRaw}'. Try 'agents', 'workflows', 'skills', or 'tasks'.`);
   };
 }
 

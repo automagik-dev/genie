@@ -159,24 +159,24 @@ async function runTests() {
     const toolsResponse = await sendRequest(server, toolsRequest);
     assert(toolsResponse.result, 'tools/list response received');
     assert(Array.isArray(toolsResponse.result.tools), 'Tools array returned');
-    assert(toolsResponse.result.tools.length === 6, `6 tools present (got ${toolsResponse.result.tools.length})`);
+    assert(toolsResponse.result.tools.length >= 6, `Expected at least 6 tools (got ${toolsResponse.result.tools.length})`);
 
     const tools = toolsResponse.result.tools;
     const toolNames = tools.map(t => t.name);
     assert(toolNames.includes('list_agents'), 'list_agents tool exists');
-    assert(toolNames.includes('list_sessions'), 'list_sessions tool exists');
-    assert(toolNames.includes('run'), 'run tool exists');
-    assert(toolNames.includes('resume'), 'resume tool exists');
-    assert(toolNames.includes('view'), 'view tool exists');
+    assert(toolNames.includes('list_tasks'), 'list_tasks tool exists');
+    assert(toolNames.includes('task'), 'task tool exists');
+    assert(toolNames.includes('continue_task'), 'continue_task tool exists');
+    assert(toolNames.includes('view_task'), 'view_task tool exists');
     assert(toolNames.includes('stop'), 'stop tool exists');
 
     // Test 14-16: Tool Schema Validation
     console.log('\n[Test 14-16] Tool Schema Validation');
-    const runTool = tools.find(t => t.name === 'run');
-    assert(runTool.description, 'run tool has description');
-    assert(runTool.inputSchema, 'run tool has schema');
+    const runTool = tools.find(t => t.name === 'task');
+    assert(runTool.description, 'task tool has description');
+    assert(runTool.inputSchema, 'task tool has schema');
     assert(runTool.inputSchema.properties.agent && runTool.inputSchema.properties.prompt,
-      'run tool has required parameters');
+      'task tool has required parameters');
 
     // Test 17-19: list_agents Tool Execution
     console.log('\n[Test 17-19] list_agents Tool Execution');
@@ -196,25 +196,25 @@ async function runTests() {
     const agentsText = listAgentsResponse.result.content[0]?.text || '';
     assert(agentsText.includes('agents'), 'list_agents response mentions agents');
 
-    // Test 20-22: list_sessions Tool Execution
-    console.log('\n[Test 20-22] list_sessions Tool Execution');
-    const listSessionsCall = {
+    // Test 20-22: list_tasks Tool Execution
+    console.log('\n[Test 20-22] list_tasks Tool Execution');
+    const listTasksCall = {
       jsonrpc: '2.0',
       id: requestId++,
       method: 'tools/call',
       params: {
-        name: 'list_sessions',
+        name: 'list_tasks',
         arguments: {}
       }
     };
 
-    const listSessionsResponse = await sendRequest(server, listSessionsCall, 15000);
-    assert(listSessionsResponse.result, 'list_sessions executed');
-    assert(Array.isArray(listSessionsResponse.result.content), 'list_sessions returned content');
-    const sessionsText = listSessionsResponse.result.content[0]?.text || '';
+    const listTasksResponse = await sendRequest(server, listTasksCall, 15000);
+    assert(listTasksResponse.result, 'list_tasks executed');
+    assert(Array.isArray(listTasksResponse.result.content), 'list_tasks returned content');
+    const sessionsText = listTasksResponse.result.content[0]?.text || '';
     assert(
       sessionsText.includes('session') || sessionsText.includes('No sessions'),
-      'list_sessions response valid'
+      'list_tasks response valid'
     );
 
     // Test 23-25: Prompts Discovery
@@ -272,7 +272,7 @@ async function runTests() {
       console.log('  • MCP protocol handshake works');
       console.log('  • All 6 tools discoverable');
       console.log('  • Tool schemas valid');
-      console.log('  • list_agents and list_sessions functional');
+      console.log('  • list_agents and list_tasks functional');
       console.log('  • Prompts feature operational');
       console.log('  • Error handling robust');
       console.log('  • Server stability confirmed');

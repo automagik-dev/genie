@@ -1,7 +1,7 @@
 import fs from 'fs';
-import type { SessionStore, SessionEntry } from '../session-store';
+import type { TaskStore, TaskEntry } from '../task-store';
 import type { ConfigPaths } from './types';
-import { saveSessions } from '../session-store';
+import { saveTasks } from '../task-store';
 
 const runtimeWarnings: string[] = [];
 
@@ -34,12 +34,12 @@ export function clearRuntimeWarnings(): void {
 }
 
 /**
- * Resolves human-readable display status for a session entry.
+ * Resolves human-readable display status for a task entry.
  *
  * Combines entry status with process liveness checks to determine accurate state.
  * Status progression: running → pending-completion → completed/failed/stopped.
  *
- * @param {SessionEntry} entry - Session entry to evaluate
+ * @param {TaskEntry} entry - Task entry to evaluate
  * @returns {string} - Display status: 'running', 'pending-completion', 'completed', 'failed (code)', 'stopped', or base status
  *
  * @example
@@ -49,6 +49,6 @@ export function clearRuntimeWarnings(): void {
  * // Returns: 'completed' if exit code 0
  * // Returns: 'failed (1)' if exit code non-zero
  */
-export function resolveDisplayStatus(entry: SessionEntry): string {
+export function resolveDisplayStatus(entry: TaskEntry): string {
   return entry.status || 'unknown';
 }

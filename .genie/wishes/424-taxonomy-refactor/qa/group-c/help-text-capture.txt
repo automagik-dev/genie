@@ -1,0 +1,86 @@
+Timestamp: 2025-11-15T20:27:59Z
+== genie --help ==
+Usage: genie [options] [command]
+
+Self-evolving AI agent orchestration framework
+
+Run with no arguments to start Genie server (Forge + MCP)
+
+Options:
+  -V, --version                   output the version number
+  --debug                         Enable debug mode (logs all incoming requests
+                                  to MCP server)
+  -h, --help                      display help for command
+
+Commands:
+  status                          Show Genie server status (Forge backend, MCP
+                                  server, statistics)
+  dashboard [options]             Show live engagement statistics dashboard
+  mcp                             Start MCP server in stdio mode (for Claude
+                                  Desktop). Requires Forge to be running.
+  run [options] <agent> <prompt>  Run an agent with a prompt (JSON output by
+                                  default)
+  talk <agent>                    Start interactive browser session with agent
+                                  (Forge UI)
+  resume <sessionId> <prompt>     Resume an existing agent session
+  list [type]                     List agents, sessions, or workflows
+  view [options] <sessionId>      View session transcript
+  stop <sessionId>                Stop a running session
+  init [options] [template]       Initialize Genie configuration in the current
+                                  workspace
+  rollback [options]              Restore a previous Genie backup snapshot
+  update [options]                Sync with the collective (your Genie absorbs
+                                  new magik next time you run `genie`)
+  helper [command] [args...]      Run Genie helper utilities (count-tokens,
+                                  validate-frontmatter, etc.)
+  help [command]                  display help for command
+
+== genie run --help ==
+Usage: genie run [options] <agent> <prompt>
+
+Run an agent with a prompt (JSON output by default)
+
+Options:
+  -b, --background           Run in background mode
+  -x, --executor <executor>  Override executor for this run
+  -m, --model <model>        Override model for the selected executor
+  -n, --name <name>          Friendly session name for easy identification
+  --raw                      Output raw text only (no JSON)
+  --quiet                    Suppress startup messages
+  -h, --help                 display help for command
+
+== genie task --help ==
+Usage: genie [options] [command]
+
+Self-evolving AI agent orchestration framework
+
+Run with no arguments to start Genie server (Forge + MCP)
+
+Options:
+  -V, --version                   output the version number
+  --debug                         Enable debug mode (logs all incoming requests
+                                  to MCP server)
+  -h, --help                      display help for command
+
+Commands:
+  status                          Show Genie server status (Forge backend, MCP
+                                  server, statistics)
+  dashboard [options]             Show live engagement statistics dashboard
+  mcp                             Start MCP server in stdio mode (for Claude
+                                  Desktop). Requires Forge to be running.
+  run [options] <agent> <prompt>  Run an agent with a prompt (JSON output by
+                                  default)
+  talk <agent>                    Start interactive browser session with agent
+                                  (Forge UI)
+  resume <sessionId> <prompt>     Resume an existing agent session
+  list [type]                     List agents, sessions, or workflows
+  view [options] <sessionId>      View session transcript
+  stop <sessionId>                Stop a running session
+  init [options] [template]       Initialize Genie configuration in the current
+                                  workspace
+  rollback [options]              Restore a previous Genie backup snapshot
+  update [options]                Sync with the collective (your Genie absorbs
+                                  new magik next time you run `genie`)
+  helper [command] [args...]      Run Genie helper utilities (count-tokens,
+                                  validate-frontmatter, etc.)
+  help [command]                  display help for command

@@ -19,7 +19,7 @@ export function createStopHandler(ctx: HandlerContext): Handler {
 
     const forgeExecutor = createForgeExecutor();
     try {
-      await forgeExecutor.stopSession(attemptId);
+      await forgeExecutor.stopTask(attemptId);
     } catch (error) {
       const reason = describeForgeError(error);
       ctx.recordRuntimeWarning(`Forge stop failed: ${reason}`);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionService Unit Tests
+ * TaskService Unit Tests
  *
  * Tests production-grade file locking, atomic writes, stale lock reclamation,
  * and concurrent write handling.
@@ -8,10 +8,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { SessionService } = require('../dist/cli/cli-core/session-service');
+const { TaskService } = require('../dist/cli/cli-core/task-service');
 
 const TEST_DIR = path.join(__dirname, '.tmp-session-tests');
-const TEST_SESSION_FILE = path.join(TEST_DIR, 'sessions.json');
+const TEST_TASK_FILE = path.join(TEST_DIR, 'tasks.json');
 
 let testsPassed = 0;
 let testsFailed = 0;
@@ -46,14 +46,14 @@ async function testBasicLoadSave() {
   console.log('\n=== Test 1: Basic Load/Save ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {}
   });
 
-  // Initial load should create empty store (v3 format after migration)
+  // Initial load should create empty store (v4 format after migration)
   const store1 = service.load();
-  assert(store1.version === 3, 'Initial store has version 3');
+  assert(store1.version === 4, 'Initial store has version 4');
   assert(Object.keys(store1.sessions || store1.agents || {}).length === 0, 'Initial store has no sessions');
 
   // Add an agent and save
@@ -80,8 +80,8 @@ async function testAtomicWrites() {
   console.log('\n=== Test 2: Atomic Write Protection ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {}
   });
 
@@ -92,7 +92,7 @@ async function testAtomicWrites() {
   await service.save(store);
 
   // File should be complete JSON, not partial
-  const fileContent = fs.readFileSync(TEST_SESSION_FILE, 'utf8');
+  const fileContent = fs.readFileSync(TEST_TASK_FILE, 'utf8');
   let parsed = null;
   try {
     parsed = JSON.parse(fileContent);
@@ -104,7 +104,7 @@ async function testAtomicWrites() {
   assert(parsed.sessions['agent1'].status === 'running', 'Atomic write preserves complete data');
 
   // Verify no .tmp file left behind
-  const tmpFile = TEST_SESSION_FILE + '.tmp';
+  const tmpFile = TEST_TASK_FILE + '.tmp';
   assert(!fs.existsSync(tmpFile), 'Temporary file cleaned up after save');
 
   cleanupTestDir();
@@ -116,14 +116,14 @@ async function testStaleLockReclamation() {
   console.log('\n=== Test 3: Stale Lock Reclamation ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {},
     onWarning: (msg) => console.log(`  [Warning] ${msg}`)
   });
 
   // Create a stale lock file (>30 seconds old)
-  const lockPath = TEST_SESSION_FILE + '.lock';
+  const lockPath = TEST_TASK_FILE + '.lock';
   fs.writeFileSync(lockPath, JSON.stringify({
     pid: 99999, // Non-existent PID
     timestamp: Date.now() - 35000, // 35 seconds ago
@@ -153,8 +153,8 @@ async function testFreshReloadBeforeMerge() {
   console.log('\n=== Test 4: Fresh Reload Before Merge ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {}
   });
 
@@ -164,9 +164,9 @@ async function testFreshReloadBeforeMerge() {
   await service.save(store1);
 
   // Simulate concurrent modification directly to file
-  const diskStore = JSON.parse(fs.readFileSync(TEST_SESSION_FILE, 'utf8'));
+  const diskStore = JSON.parse(fs.readFileSync(TEST_TASK_FILE, 'utf8'));
   diskStore.sessions['agent2'] = { agent: 'agent2', status: 'completed' };
-  fs.writeFileSync(TEST_SESSION_FILE, JSON.stringify(diskStore, null, 2), 'utf8');
+  fs.writeFileSync(TEST_TASK_FILE, JSON.stringify(diskStore, null, 2), 'utf8');
 
   // Now save with stale store1 (should reload and merge)
   store1.sessions['agent1'].status = 'completed'; // Update agent1
@@ -185,8 +185,8 @@ async function testConcurrentWrites() {
   console.log('\n=== Test 5: Concurrent Writes ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {}
   });
 
@@ -228,13 +228,13 @@ async function testLockRetry() {
   console.log('\n=== Test 6: Lock Retry on Contention ===');
   setupTestDir();
 
-  const service = new SessionService({
-    paths: { sessionsFile: TEST_SESSION_FILE },
+  const service = new TaskService({
+    paths: { tasksFile: TEST_TASK_FILE },
     defaults: {}
   });
 
   // Create a lock file (simulating another process)
-  const lockPath = TEST_SESSION_FILE + '.lock';
+  const lockPath = TEST_TASK_FILE + '.lock';
   fs.writeFileSync(lockPath, JSON.stringify({
     pid: process.pid,
     timestamp: Date.now(),

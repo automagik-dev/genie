@@ -207,7 +207,7 @@ const {
 // Test: deriveLogFile without env
 (function testDeriveLogFileNoEnv() {
   delete process.env.GENIE_AGENT_LOG_FILE;
-  const paths = { logsDir: '.genie/state/agents/logs', baseDir: '.', sessionsFile: '', agentsDir: '' };
+  const paths = { logsDir: '.genie/state/agents/logs', baseDir: '.', tasksFile: '', agentsDir: '' };
   const result = deriveLogFile('test-agent', 1234567890000, paths);
   assert.ok(result.includes('test-agent'), 'log file should include agent name');
   assert.ok(result.includes('1234567890000'), 'log file should include timestamp');
@@ -216,9 +216,9 @@ const {
 
 // Test: deriveLogFile with env
 (function testDeriveLogFileWithEnv() {
-  const testPath = '/custom/path/test.log';
+  const testPath = path.join(process.cwd(), '.genie', 'state', 'agents', 'logs', 'custom-env.log');
   process.env.GENIE_AGENT_LOG_FILE = testPath;
-  const paths = { logsDir: '.genie/state/agents/logs', baseDir: '.', sessionsFile: '', agentsDir: '' };
+  const paths = { logsDir: '.genie/state/agents/logs', baseDir: '.', tasksFile: '', agentsDir: '' };
   const result = deriveLogFile('test-agent', 1234567890000, paths, true);
   assert.strictEqual(result, testPath, 'should use env variable when present for background runs');
   delete process.env.GENIE_AGENT_LOG_FILE;

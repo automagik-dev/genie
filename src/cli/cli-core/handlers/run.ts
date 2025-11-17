@@ -26,7 +26,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     // --background: Start task and exit immediately (return Forge URL)
     // --raw: Foreground execution, output raw text only
     // --quiet: Foreground execution, suppress startup messages
-    const isBackground = parsed.options.background;
+    const isBackground = parsed.options.background === true;
     const isRawOutput = parsed.options.raw;
     const isQuiet = parsed.options.quiet;
     const isForeground = !isBackground; // Default is foreground
@@ -54,7 +54,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
     const startTime = Date.now();
     let sessionResult;
     try {
-      sessionResult = await forgeExecutor.createSession({
+      sessionResult = await forgeExecutor.createTask({
         agentName: resolvedAgentName,
         prompt,
         executorKey,
@@ -85,7 +85,7 @@ export function createRunHandler(ctx: HandlerContext): Handler {
       lastPrompt: prompt.slice(0, 200),
       mode: modeName,
       forgeUrl: sessionResult.forgeUrl,
-      background: parsed.options.background
+      background: isBackground
     };
     await ctx.sessionService.save(store);
 

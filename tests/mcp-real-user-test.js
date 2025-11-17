@@ -2,7 +2,7 @@
 /**
  * MCP Real User Test
  * Tests the complete workflow a real user would experience:
- * run → view → resume → stop
+ * task → view → continue → stop
  */
 
 const { spawn } = require('child_process');
@@ -10,7 +10,7 @@ const path = require('path');
 const assert = require('assert');
 
 console.log('=== MCP Real User Test ===');
-console.log('Simulating real user workflow: run → view → resume → stop\n');
+console.log('Simulating real user workflow: task → view → continue → stop\n');
 
 let testsPassed = 0;
 let testsFailed = 0;
@@ -93,13 +93,13 @@ async function runTests() {
     test('Initialize successful', initResponse.result !== undefined);
 
     // Step 2: Run an agent
-    console.log('\n[Step 2] Run agent: core/analyze');
+    console.log('\n[Step 2] Task tool: core/analyze');
     const runRequest = {
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
       params: {
-        name: 'run',
+        name: 'task',
         arguments: {
           agent: 'core/analyze',
           prompt: 'Verify your identity and confirm you can access the framework. Be brief.'
@@ -108,22 +108,23 @@ async function runTests() {
     };
 
     const runResponse = await sendRequest(server, runRequest, 30000);
-    test('Run tool executed', runResponse.result !== undefined);
-    test('Run returned content',
+    test('Task tool executed', runResponse.result !== undefined);
+    test('Task tool returned content',
       runResponse.result.content &&
       runResponse.result.content.length > 0
     );
 
     const runText = runResponse.result.content[0]?.text || '';
-    test('Run tool succeeded (no error)',
+    test('Task tool succeeded (no error)',
       !runText.includes('Failed to start') && !runText.includes('not found'),
       runText.includes('Failed') ? `Error: ${runText.substring(0, 200)}` : 'Success'
     );
 
     // Extract session ID from response
-    const sessionMatch = runText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    const sessionMatch = runText.match(/"task_id"[:\s"]+([0-9a-f-]+)/i) ||
+                         runText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     if (sessionMatch) {
-      sessionId = sessionMatch[0];
+      sessionId = sessionMatch[1] || sessionMatch[0];
       test('Session ID extracted', true, `Session: ${sessionId}`);
     } else {
       test('Session ID extracted', false, 'Could not find session ID in response');
@@ -137,16 +138,16 @@ async function runTests() {
         id: 3,
         method: 'tools/call',
         params: {
-          name: 'view',
+          name: 'view_task',
           arguments: {
-            sessionId: sessionId,
+            taskId: sessionId,
             full: false
           }
         }
       };
 
       const viewResponse = await sendRequest(server, viewRequest, 15000);
-      test('View tool executed', viewResponse.result !== undefined);
+      test('view_task tool executed', viewResponse.result !== undefined);
 
       const viewText = viewResponse.result.content[0]?.text || '';
       test('View returned transcript',
@@ -157,19 +158,19 @@ async function runTests() {
     }
 
     // Step 4: List sessions to verify
-    console.log('\n[Step 4] List sessions to verify');
+    console.log('\n[Step 4] List tasks to verify');
     const listRequest = {
       jsonrpc: '2.0',
       id: 4,
       method: 'tools/call',
       params: {
-        name: 'list_sessions',
+        name: 'list_tasks',
         arguments: {}
       }
     };
 
     const listResponse = await sendRequest(server, listRequest, 10000);
-    test('List sessions executed', listResponse.result !== undefined);
+    test('List tasks executed', listResponse.result !== undefined);
 
     const listText = listResponse.result.content[0]?.text || '';
     if (sessionId) {
@@ -187,12 +188,12 @@ async function runTests() {
         id: 5,
         method: 'tools/call',
         params: {
-          name: 'stop',
-          arguments: {
-            sessionId: sessionId
-          }
+        name: 'stop',
+        arguments: {
+          taskId: sessionId
         }
-      };
+      }
+    };
 
       const stopResponse = await sendRequest(server, stopRequest, 15000);
       test('Stop tool executed', stopResponse.result !== undefined);
