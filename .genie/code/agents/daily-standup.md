@@ -78,6 +78,32 @@ git log dev --since="24 hours ago" --pretty=format:"%h|%an|%ar|%s" --no-merges
 git diff dev@{24.hours.ago}..dev --stat
 ```
 
+**Release Tracking (Senso de Continuidade):**
+```bash
+# Get latest release tag
+git describe --tags --abbrev=0 2>/dev/null || echo "no-release"
+
+# Get release date
+git log -1 --format=%ai $(git describe --tags --abbrev=0 2>/dev/null) 2>/dev/null
+
+# Count commits since last release
+git rev-list $(git describe --tags --abbrev=0 2>/dev/null)..dev --count 2>/dev/null || echo "0"
+
+# Activity since last release
+git log $(git describe --tags --abbrev=0 2>/dev/null)..dev --pretty=format:"%h|%an|%ar|%s" --no-merges 2>/dev/null
+```
+
+**Parse release context:**
+- **Teve release ontem?** (tag criada nas últimas 24h)
+- **Quanto tempo desde último release?** (dias/semanas)
+- **Quantos commits desde release?** (senso de progresso)
+- **O que mudou desde release?** (features, fixes, padrões)
+
+**Release narrative examples:**
+- ✅ "Ontem rolou release da v2.5.23! 🎉 Hoje já temos 7 commits na próxima versão."
+- ✅ "Já são 47 commits desde o último release (v2.5.22, há 5 dias). Próxima release chegando!"
+- ✅ "Última release foi há 2 semanas (v2.5.20). Time focado em desenvolvimento contínuo."
+
 **GitHub Issues (if gh CLI available):**
 ```bash
 # Recent activity on issues
@@ -403,21 +429,47 @@ Genie
 9. **Portuguese + English tech** - Fale português, mantenha termos técnicos em inglês
 10. **Foco no time** - Daily é sobre PESSOAS e CELEBRAÇÃO, não vigilância
 
-### 4. Send WhatsApp Message
+### 4. Send TWO WhatsApp Messages (Both Groups)
 
-Use Omni MCP to send your conversational message to Namastexers group:
+**🔴 CRITICAL:** You MUST send TWO messages - one Executive, one Motivational.
 
-**MCP Tool Call:**
+**Message 1: Executive Version (Leadership)**
+
+Target: NMSTX leadership group for strategic overview
+
 ```typescript
 mcp__omni__send_message({
   message_type: "text",
   instance_name: "genie",
-  phone: "120363345897732032@g.us", // Namastexers group
-  message: [your natural, conversational message from step 3]
+  phone: "120363421396472428@g.us", // NMSTX leadership
+  message: [Executive version - metrics, performance, deliverables, trends]
 })
 ```
 
-**Importante:** A mensagem deve parecer que veio de um colega de time, não de um bot. Se você não diria isso pra alguém tomando café, não escreva no standup!
+**Message 2: Motivational Version (Namastexers)**
+
+Target: Namastexers group for team celebration
+
+```typescript
+mcp__omni__send_message({
+  message_type: "text",
+  instance_name: "genie",
+  phone: "120363345897732032@g.us", // Namastexers
+  message: [Motivational version - celebration, recognition, team spirit]
+})
+```
+
+**Execution order:**
+1. Generate BOTH messages first (Executive + Motivational)
+2. Validate Omni instance is connected (see technical details below)
+3. Send Executive message to leadership
+4. Send Motivational message to Namastexers
+5. Log success/failure for both
+
+**Importante:**
+- Executive = Strategic, metrics-driven, professional
+- Motivational = Celebration, team spirit, no surveillance feeling
+- Se você não diria isso pra alguém tomando café, não escreva no standup!
 
 #### 🔴 OMNI TECHNICAL DETAILS (CRITICAL)
 
