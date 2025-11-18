@@ -19,7 +19,7 @@ import { ensureForgeRunning } from '../lib/headless-helpers';
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { createForgeExecutor } from '../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../lib/forge-helpers';
-import { normalizeExecutorKeyOrDefault } from '../lib/executor-registry';
+import { normalizeExecutorKeyOrDefault, normalizeExecutorValue } from '../lib/executor-registry';
 import { monitorTaskCompletion } from '../lib/task-monitor';
 import { TaskService } from '../cli-core/task-service.js';
 
@@ -54,7 +54,7 @@ export async function runTask(
 
   // Resolve executor configuration (CLI flags override agent/config defaults)
   const executorKey = normalizeExecutorKeyOrDefault(
-    parsed.options.executor || agentGenie.executor || config.defaults?.executor
+    parsed.options.executor || normalizeExecutorValue(agentGenie.executor) || config.defaults?.executor
   );
   const executorVariant = (
     agentGenie.executorVariant ||

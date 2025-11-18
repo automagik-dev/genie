@@ -4,7 +4,7 @@ import { resolveAgentIdentifier, loadAgentSpec } from '../../lib/agent-resolver'
 import { createForgeExecutor } from '../../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../../lib/forge-helpers';
 import { ensureForgeRunning, waitForTaskCompletion, type RunResult } from '../../lib/headless-helpers';
-import { normalizeExecutorKey, normalizeExecutorKeyOrDefault } from '../../lib/executor-registry';
+import { normalizeExecutorKey, normalizeExecutorKeyOrDefault, normalizeExecutorValue } from '../../lib/executor-registry';
 import { checkExecutorAuth, promptExecutorLogin, type ExecutorId } from '../../lib/executor-auth';
 
 export function createRunHandler(ctx: HandlerContext): Handler {
@@ -155,8 +155,9 @@ function resolveExecutionSelection(
     modeName = agentGenie.executionMode.trim();
   }
 
-  if (typeof agentGenie.executor === 'string' && agentGenie.executor.trim().length) {
-    executor = normalizeExecutorKey(agentGenie.executor) ?? executor;
+  const agentExecutor = normalizeExecutorValue(agentGenie.executor);
+  if (agentExecutor) {
+    executor = agentExecutor;
   }
 
   const agentVariant =

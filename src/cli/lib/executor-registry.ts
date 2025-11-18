@@ -70,3 +70,19 @@ export function normalizeExecutorKeyOrDefault(key?: string | null, fallback: str
 export function getExecutorLabel(executorKey: string): string {
   return CANONICAL_EXECUTOR_LABELS[executorKey] ?? executorKey;
 }
+
+/**
+ * Normalize executor value from agent spec (handles both string and array formats).
+ * Returns the first valid executor when given an array, or the string value.
+ */
+export function normalizeExecutorValue(value?: string | string[] | null): string | undefined {
+  if (value == null) return undefined;
+
+  // Handle array format (take first element)
+  if (Array.isArray(value)) {
+    return value.length > 0 ? normalizeExecutorKey(value[0]) : undefined;
+  }
+
+  // Handle string format
+  return normalizeExecutorKey(value);
+}
