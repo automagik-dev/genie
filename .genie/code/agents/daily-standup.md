@@ -1,3 +1,16 @@
+---
+name: daily-standup
+description: Daily automated standup with WhatsApp delivery to two groups (Executive + Motivational)
+genie:
+  executor:
+    - CLAUDE_CODE
+    - CODEX
+  background: true
+forge:
+  enable_web_search: false
+  enable_keyboard_browser: false
+---
+
 # Daily Standup Agent
 
 **Purpose:** Natural, conversational daily standup - Genie as teammate checking in with the team about what happened in dev branch.
