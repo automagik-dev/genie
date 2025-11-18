@@ -422,6 +422,7 @@ const taskToolShape = {
   prompt: z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
   name: z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".'),
   executor: z.string().optional().describe('Override executor key (e.g., "OPENCODE"). Uses agent/default config when omitted.'),
+  variant: z.string().optional().describe('Override executor variant (e.g., "EXPLORE", "WISH"). Derived from agent name when omitted.'),
   model: z.string().optional().describe('Override model for the selected executor.'),
   monitor: z.boolean().optional().describe('Set true to wait for completion with WebSocket streaming. Default: false (return immediately).')
 };
@@ -448,15 +449,41 @@ const handleTaskTool = async (args: TaskToolInput) => {
 
       return buildTextResponse(getVersionHeader() + errorMsg);
     }
-    const agentMeta = agentSpec.meta?.genie || {};
-    const metaExecutor = Array.isArray(agentMeta.executor)
-      ? agentMeta.executor[0]
-      : agentMeta.executor;
+    const agentGenie = agentSpec.meta?.genie || {};
+    const agentMeta = agentSpec.meta || {};
+    const metaExecutor = Array.isArray(agentGenie.executor)
+      ? agentGenie.executor[0]
+      : agentGenie.executor;
     const executorKey = normalizeExecutorKeyOrDefault(args.executor || metaExecutor);
+
+    // Derive executor variant matching Forge's naming convention
+    const deriveVariantFromAgentName = (agentPath: string): string => {
+      // Forge variant naming: CODE_<AGENT_NAME> or CREATE_<AGENT_NAME>
+      // Examples: code/explore → CODE_EXPLORE, create/writer → CREATE_WRITER
+      const parts = agentPath.split('/');
+      const template = parts[0]; // code, create, etc.
+
+      // Remove template and category folders (agents/, workflows/)
+      let remaining = parts.slice(1);
+      if (remaining.length > 0 && (remaining[0] === 'agents' || remaining[0] === 'workflows')) {
+        remaining = remaining.slice(1);
+      }
+
+      // Join remaining parts with underscores and uppercase
+      const agentName = remaining.join('_').toUpperCase();
+
+      // Prepend template prefix (CODE_, CREATE_, etc.)
+      const templatePrefix = template.toUpperCase() + '_';
+      return templatePrefix + agentName;
+    };
+
     const executorVariant = (
-      agentMeta.executorVariant ||
-      agentMeta.variant ||
-      'DEFAULT'
+      args.variant || // MCP tool parameter (highest priority)
+      agentMeta.forge_profile_name || // Explicit Forge profile name from frontmatter
+      agentGenie.executorVariant ||
+      agentGenie.variant ||
+      deriveVariantFromAgentName(resolvedAgentId) || // Derive from agent name
+      'DEFAULT' // Ultimate fallback
     ).trim().toUpperCase();
     const model = args.model || agentMeta.model;
 
@@ -507,7 +534,7 @@ const handleTaskTool = async (args: TaskToolInput) => {
       const payload = {
         task_id: sessionResult.attemptId,
         task_url: sessionResult.forgeUrl,
-        agent: displayId,
+        agent: resolvedAgentId, // Use full agent ID, not display ID
         executor: `${executorKey}:${executorVariant}`,
         ...(model ? { model } : {}),
         status: 'started',
