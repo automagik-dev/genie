@@ -7,6 +7,7 @@ Use these as the single source of truth for product context. Reference with `@.g
 - `@.genie/product/tech-stack.md` – Technologies, architecture, dependencies
 - `@.genie/product/environment.md` – Required/optional env vars and setup
 - `@.genie/product/roadmap.md` – Phases, initiatives, and milestones
+- `@.genie/product/cli-automation.md` – Complete CLI automation guide (cron, CI/CD, scripts)
 
 Framework behavior
 - The framework consumes these files via `@` references and injects their content into agent prompts.
