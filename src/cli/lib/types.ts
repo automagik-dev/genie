@@ -7,6 +7,7 @@ export interface CLIOptions {
   full: boolean;
   live: boolean;
   executor?: string;
+  variant?: string;  // Executor variant override
   model?: string;
   name?: string;  // Friendly session name for run command
   raw?: boolean;  // Output raw text only (no JSON)

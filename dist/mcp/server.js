@@ -344,6 +344,7 @@ const taskToolShape = {
     prompt: zod_1.z.string().describe('Detailed task description for the agent. Be specific about goals, context, and expected outcomes. Agents work best with clear, actionable prompts.'),
     name: zod_1.z.string().optional().describe('Friendly task name for easy identification (e.g., "bug-102-fix", "auth-feature"). If omitted, auto-generates: "{agent}-{timestamp}".'),
     executor: zod_1.z.string().optional().describe('Override executor key (e.g., "OPENCODE"). Uses agent/default config when omitted.'),
+    variant: zod_1.z.string().optional().describe('Override executor variant (e.g., "EXPLORE", "WISH"). Derived from agent name when omitted.'),
     model: zod_1.z.string().optional().describe('Override model for the selected executor.'),
     monitor: zod_1.z.boolean().optional().describe('Set true to wait for completion with WebSocket streaming. Default: false (return immediately).')
 };
@@ -367,14 +368,36 @@ const handleTaskTool = async (args) => {
                 `💡 Use list_agents tool to see all available agents.`;
             return buildTextResponse((0, server_helpers_js_1.getVersionHeader)() + errorMsg);
         }
-        const agentMeta = agentSpec.meta?.genie || {};
-        const metaExecutor = Array.isArray(agentMeta.executor)
-            ? agentMeta.executor[0]
-            : agentMeta.executor;
+        const agentGenie = agentSpec.meta?.genie || {};
+        const agentMeta = agentSpec.meta || {};
+        const metaExecutor = Array.isArray(agentGenie.executor)
+            ? agentGenie.executor[0]
+            : agentGenie.executor;
         const executorKey = (0, executor_registry_js_1.normalizeExecutorKeyOrDefault)(args.executor || metaExecutor);
-        const executorVariant = (agentMeta.executorVariant ||
-            agentMeta.variant ||
-            'DEFAULT').trim().toUpperCase();
+        // Derive executor variant matching Forge's naming convention
+        const deriveVariantFromAgentName = (agentPath) => {
+            // Forge variant naming: CODE_<AGENT_NAME> or CREATE_<AGENT_NAME>
+            // Examples: code/explore → CODE_EXPLORE, create/writer → CREATE_WRITER
+            const parts = agentPath.split('/');
+            const template = parts[0]; // code, create, etc.
+            // Remove template and category folders (agents/, workflows/)
+            let remaining = parts.slice(1);
+            if (remaining.length > 0 && (remaining[0] === 'agents' || remaining[0] === 'workflows')) {
+                remaining = remaining.slice(1);
+            }
+            // Join remaining parts with underscores and uppercase
+            const agentName = remaining.join('_').toUpperCase();
+            // Prepend template prefix (CODE_, CREATE_, etc.)
+            const templatePrefix = template.toUpperCase() + '_';
+            return templatePrefix + agentName;
+        };
+        const executorVariant = (args.variant || // MCP tool parameter (highest priority)
+            agentMeta.forge_profile_name || // Explicit Forge profile name from frontmatter
+            agentGenie.executorVariant ||
+            agentGenie.variant ||
+            deriveVariantFromAgentName(resolvedAgentId) || // Derive from agent name
+            'DEFAULT' // Ultimate fallback
+        ).trim().toUpperCase();
         const model = args.model || agentMeta.model;
         const forgeModule = (0, server_helpers_js_1.loadForgeExecutor)();
         if (!forgeModule || typeof forgeModule.createForgeExecutor !== 'function') {
@@ -418,7 +441,7 @@ const handleTaskTool = async (args) => {
             const payload = {
                 task_id: sessionResult.attemptId,
                 task_url: sessionResult.forgeUrl,
-                agent: displayId,
+                agent: resolvedAgentId, // Use full agent ID, not display ID
                 executor: `${executorKey}:${executorVariant}`,
                 ...(model ? { model } : {}),
                 status: 'started',

@@ -16,6 +16,34 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [2.5.25-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.24-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.23-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.22-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.21-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.20-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
+## [2.5.19-rc.1] - 2025-11-18
+
+No changelog entries (packaging-only RC).
+
 ## [2.5.18-rc.1] - 2025-11-17
 
 No changelog entries (packaging-only RC).
