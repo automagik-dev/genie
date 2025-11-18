@@ -105,7 +105,22 @@ export class ForgeExecutor {
 
     // Response contains: { id: taskId, project_id: projectId, attempts: [{ id: attemptId, ... }] }
     const taskId = response.id;
-    const attemptId = response.attempts?.[0]?.id || response.id; // Fallback to taskId if attempts array missing
+
+    // WORKAROUND: Forge API returns empty attempts array, need to fetch separately
+    let attemptId: string;
+    if (response.attempts && response.attempts.length > 0 && response.attempts[0].id) {
+      attemptId = response.attempts[0].id;
+    } else {
+      // Fetch the task attempt that was just created
+      const attempts = await this.forge.listTaskAttempts();
+      const taskAttempt = attempts.find((a: any) => a.task_id === taskId);
+      if (taskAttempt) {
+        attemptId = taskAttempt.id;
+      } else {
+        // Last resort fallback
+        attemptId = taskId;
+      }
+    }
 
     // Build Forge URL
     const forgeUrl = `${this.config.forgeBaseUrl}/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}?view=diffs`;

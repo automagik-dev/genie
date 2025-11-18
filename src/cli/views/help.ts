@@ -177,13 +177,12 @@ export function buildTaskHelpView(): string {
       { flag: '--executor, -x', description: 'Override executor profile' },
       { flag: '--model, -m', description: 'Override model for the selected executor' },
       { flag: '--name, -n', description: 'Friendly task name (stored in tasks.json)' },
-      { flag: '--raw', description: 'Raw attempt ID only (no JSON wrapper)' },
       { flag: '--quiet', description: 'Suppress startup messages' },
       { flag: '--help, -h', description: 'Show this help message' }
     ],
     examples: [
       'genie task implementor "Fix lint errors" --executor opencode',
-      'genie task master "Daily plan" --raw',
+      'genie task master "Daily plan" --quiet',
       'genie task monitor 0f4f0d07-1337-42b2-9d58-aaaa1111bbbb'
     ],
     notes: [

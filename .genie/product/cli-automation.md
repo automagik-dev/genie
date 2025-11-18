@@ -6,7 +6,7 @@ Complete reference for using Genie CLI in automated workflows (cron, CI/CD, scri
 
 | Command | Mode | Output | Use Case |
 |---------|------|--------|----------|
-| `genie task` | Headless | JSON/Raw | Fire-and-forget tasks |
+| `genie task` | Headless | JSON | Fire-and-forget tasks |
 | `genie run` | Foreground | JSON/Text | Wait for completion |
 | `genie run --background` | Headless | URL | Same as task |
 | `genie task monitor <id>` | Foreground | Live logs | Monitor background task |
@@ -41,14 +41,6 @@ genie task code/explore "Check system health"
 }
 ```
 
-### Raw Mode (Scriptable)
-```bash
-# Just the task ID (for piping/parsing)
-genie task --raw code/explore "Daily check"
-
-# Output: abc-123-def-456...
-```
-
 ### Quiet Mode (No Warnings)
 ```bash
 # Suppress version warnings (clean cron logs)
@@ -64,7 +56,7 @@ genie task --quiet code/explore "Silent task"
 0 3 * * * genie task --quiet code/code-garbage-collector "Daily cleanup" >> /var/log/cleanup.log 2>&1
 
 # Hourly - save task ID for later monitoring
-0 * * * * genie task --quiet --raw code/explore "Hourly scan" > /var/log/last-task-id.txt 2>&1
+0 * * * * genie task --quiet code/explore "Hourly scan" | jq -r '.task_id' > /var/log/last-task-id.txt 2>&1
 ```
 
 ---
@@ -84,14 +76,6 @@ genie run code/explore "Analyze codebase"
 # Output: Full results JSON with status
 ```
 
-### Raw Text Output
-```bash
-# Get just the agent's output (no JSON wrapper)
-genie run --raw code/explore "Generate report"
-
-# Output: (raw text from agent)
-```
-
 ### Background Mode
 ```bash
 # Same as 'genie task' (no waiting)
@@ -101,8 +85,7 @@ genie run --background code/explore "Background task"
 ### Automation Examples
 ```bash
 # CI/CD: Run tests and capture results
-TEST_RESULT=$(genie run --raw --quiet code/tests "Run all tests")
-echo "$TEST_RESULT" > test-results.txt
+genie run --quiet code/tests "Run all tests" > test-results.json
 
 # Script: Wait for analysis, then act on results
 genie run --quiet code/analyze "Check dependencies" > deps.json
@@ -124,7 +107,7 @@ fi
 ### Usage
 ```bash
 # Start task in background
-TASK_ID=$(genie task --raw code/explore "Long analysis")
+TASK_ID=$(genie task --quiet code/explore "Long analysis" | jq -r '.task_id')
 
 # Monitor it later
 genie task monitor $TASK_ID
@@ -134,7 +117,7 @@ genie task monitor $TASK_ID
 ```bash
 # Cron: Start task, then monitor in separate job
 # Job 1 (every hour): Start task
-0 * * * * genie task --quiet --raw code/explore "Hourly check" > /tmp/task-id.txt
+0 * * * * genie task --quiet code/explore "Hourly check" | jq -r '.task_id' > /tmp/task-id.txt
 
 # Job 2 (5 mins later): Monitor completion
 5 * * * * genie task monitor $(cat /tmp/task-id.txt) >> /var/log/monitored.log 2>&1
@@ -271,10 +254,10 @@ fi
 ### Task Chaining
 ```bash
 # Sequential tasks with error checking
-TASK1=$(genie task --raw code/explore "Step 1")
+TASK1=$(genie task --quiet code/explore "Step 1" | jq -r '.task_id')
 genie task monitor $TASK1 || exit 1
 
-TASK2=$(genie task --raw code/analyze "Step 2")
+TASK2=$(genie task --quiet code/analyze "Step 2" | jq -r '.task_id')
 genie task monitor $TASK2 || exit 1
 
 echo "Pipeline complete!"
@@ -326,8 +309,8 @@ stage('Genie Quality Check') {
 # JSON output for parsing
 genie task code/explore "Check" | jq '.task_id'
 
-# Plain text for humans
-genie run --raw code/explore "Generate report" | tee report.txt
+# Human-readable output
+genie run code/explore "Generate report" | tee report.json
 ```
 
 ### Log Rotation
@@ -344,7 +327,7 @@ find /var/log/genie/ -name "*.log" -mtime +7 -delete
 ## Best Practices
 
 1. **Use `--quiet`** in cron to suppress version warnings
-2. **Use `--raw`** when piping to other commands
+2. **Use `jq`** to extract specific fields from JSON output
 3. **Check `genie status`** before heavy automation
 4. **Save task IDs** for later monitoring/debugging
 5. **Use JSON output** for programmatic parsing
