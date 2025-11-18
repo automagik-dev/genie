@@ -51,16 +51,42 @@ export async function runTask(
   const resolvedAgentName = resolveAgentIdentifier(agentName);
   const agentSpec = loadAgentSpec(resolvedAgentName);
   const agentGenie = agentSpec.meta?.genie || {};
+  const agentMeta = agentSpec.meta || {};
 
   // Resolve executor configuration (CLI flags override agent/config defaults)
   const executorKey = normalizeExecutorKeyOrDefault(
     parsed.options.executor || normalizeExecutorValue(agentGenie.executor) || config.defaults?.executor
   );
+
+  // Derive executor variant matching Forge's naming convention
+  const deriveVariantFromAgentName = (agentPath: string): string => {
+    // Forge variant naming: CODE_<AGENT_NAME> or CREATE_<AGENT_NAME>
+    // Examples: code/explore → CODE_EXPLORE, create/writer → CREATE_WRITER
+    const parts = agentPath.split('/');
+    const template = parts[0]; // code, create, etc.
+
+    // Remove template and category folders (agents/, workflows/)
+    let remaining = parts.slice(1);
+    if (remaining.length > 0 && (remaining[0] === 'agents' || remaining[0] === 'workflows')) {
+      remaining = remaining.slice(1);
+    }
+
+    // Join remaining parts with underscores and uppercase
+    const agentName = remaining.join('_').toUpperCase();
+
+    // Prepend template prefix (CODE_, CREATE_, etc.)
+    const templatePrefix = template.toUpperCase() + '_';
+    return templatePrefix + agentName;
+  };
+
   const executorVariant = (
+    parsed.options.variant || // CLI flag (highest priority)
+    agentMeta.forge_profile_name || // Explicit Forge profile name from frontmatter
     agentGenie.executorVariant ||
     agentGenie.variant ||
-    config.defaults?.executorVariant ||
-    'DEFAULT'
+    deriveVariantFromAgentName(resolvedAgentName) || // Derive from agent name
+    config.defaults?.executorVariant || // Config defaults (lowest priority)
+    'DEFAULT' // Ultimate fallback
   ).trim().toUpperCase();
   const model = parsed.options.model || agentGenie.model || config.defaults?.model;
   const sessionName = parsed.options.name;
