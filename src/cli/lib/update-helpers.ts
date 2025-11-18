@@ -132,6 +132,11 @@ export async function launchUpdateTask(
 
     // Create attempt with update variant
     console.log(gradient.pastel('Creating update attempt...'));
+
+    // Validate branch name - Forge API rejects certain patterns
+    const currentBranch = getCurrentBranch();
+    const baseBranch = getValidBaseBranch(currentBranch);
+
     const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -141,7 +146,7 @@ export async function launchUpdateTask(
           executor: updateExecutor,
           variant: updateVariant
         },
-        base_branch: getCurrentBranch()
+        base_branch: baseBranch
       })
     });
 
@@ -201,6 +206,30 @@ Process this knowledge diff:
     console.error('');
     throw error;
   }
+}
+
+/**
+ * Validates branch name and returns a valid base branch for Forge API.
+ * Forge API rejects certain branch name patterns (e.g., forge/*, worktree/*).
+ * Falls back to 'dev' for forbidden patterns.
+ */
+function getValidBaseBranch(branchName: string): string {
+  // Forbidden patterns that Forge API rejects
+  const forbiddenPatterns = [/^forge\//, /^worktree\//];
+
+  for (const pattern of forbiddenPatterns) {
+    if (pattern.test(branchName)) {
+      console.log(
+        gradient.pastel(
+          `⚠️  Branch '${branchName}' not suitable for base branch`
+        )
+      );
+      console.log(gradient.pastel('   Using fallback: dev'));
+      return 'dev';
+    }
+  }
+
+  return branchName;
 }
 
 /**
