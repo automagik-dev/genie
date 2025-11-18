@@ -11,7 +11,7 @@ import { isForgeRunning, startForgeInBackground, waitForForgeReady } from '../li
 import { resolveAgentIdentifier, loadAgentSpec } from '../lib/agent-resolver';
 import { createForgeExecutor } from '../lib/forge-executor';
 import { describeForgeError, FORGE_RECOVERY_HINT } from '../lib/forge-helpers';
-import { normalizeExecutorKeyOrDefault } from '../lib/executor-registry';
+import { normalizeExecutorKeyOrDefault, normalizeExecutorValue } from '../lib/executor-registry';
 import path from 'path';
 import { execSync, spawn } from 'child_process';
 import gradient from 'gradient-string';
@@ -20,20 +20,6 @@ import fs from 'fs';
 // Genie-themed gradients
 const genieGradient = gradient(['#0066ff', '#9933ff', '#ff00ff']);
 const successGradient = gradient(['#00ff88', '#00ccff', '#0099ff']);
-
-function firstNonEmptyString(value: unknown): string | undefined {
-  if (typeof value === 'string' && value.trim().length > 0) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (typeof item === 'string' && item.trim().length > 0) {
-        return item;
-      }
-    }
-  }
-  return undefined;
-}
 
 export async function runTalk(
   parsed: ParsedCommand,
@@ -53,13 +39,12 @@ export async function runTalk(
   const agentGenie = agentSpec.meta?.genie || {};
 
   // Resolve executor configuration
-  const executorFromAgent = firstNonEmptyString(agentGenie.executor);
   const executorKey = normalizeExecutorKeyOrDefault(
-    executorFromAgent || config.defaults?.executor
+    normalizeExecutorValue(agentGenie.executor) || config.defaults?.executor
   );
-  const variantFromAgent = firstNonEmptyString(agentGenie.executorVariant || agentGenie.variant);
   const executorVariant = (
-    variantFromAgent ||
+    agentGenie.executorVariant ||
+    agentGenie.variant ||
     config.defaults?.executorVariant ||
     'DEFAULT'
   ).trim().toUpperCase();
