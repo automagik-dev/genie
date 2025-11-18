@@ -1,6 +1,7 @@
 ---
 name: update
 description: Guide users through Genie framework version transitions
+forge_profile_name: "update"
 genie:
   executor:
     - CLAUDE_CODE
