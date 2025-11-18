@@ -18,6 +18,7 @@ export interface CreateTaskParams {
   executorVariant?: string;
   executionMode: string;
   model?: string;
+  name?: string;
 }
 
 export interface CreateTaskResult {
@@ -56,7 +57,7 @@ export class ForgeExecutor {
    */
 
   async createTask(params: CreateTaskParams): Promise<CreateTaskResult> {
-    const { agentName, prompt, executorKey, executorVariant, executionMode, model } = params;
+    const { agentName, prompt, executorKey, executorVariant, executionMode, model, name } = params;
 
     const projectId = await this.getOrCreateGenieProject();
 
@@ -77,14 +78,23 @@ export class ForgeExecutor {
       }
     }
 
-    // Use emoji format per @.genie/code/skills/emoji-naming-convention.md
+    // Generate task title: use provided name or extract from prompt
     const emojiPrefix = this.getAgentEmoji(agentName);
-    const formattedTitle = `[${emojiPrefix}] ${agentName}: ${executionMode}`;
+    let taskTitle: string;
+
+    if (name) {
+      // User-provided name
+      taskTitle = `[${emojiPrefix}] ${name}`;
+    } else {
+      // Smart default: extract keywords from prompt
+      const smartName = this.generateSmartTaskName(prompt);
+      taskTitle = `[${emojiPrefix}] ${smartName}`;
+    }
 
     const requestBody = {
       task: {
         project_id: projectId,
-        title: formattedTitle,
+        title: taskTitle,
         description: prompt
       },
       executor_profile_id: this.mapExecutorToProfile(executorKey, executorVariant, model),
@@ -191,9 +201,22 @@ export class ForgeExecutor {
     }
 
     try {
-      const currentRepoPath = process.cwd();
+      // Use git root directory (works for both main workspace and worktrees)
+      // This prevents worktrees from creating duplicate projects
+      let repoRoot: string;
+      try {
+        repoRoot = execSync('git rev-parse --show-toplevel', {
+          encoding: 'utf8',
+          cwd: process.cwd(),
+          stdio: ['pipe', 'pipe', 'ignore']
+        }).trim();
+      } catch {
+        // Fallback to process.cwd() if not in git repo
+        repoRoot = process.cwd();
+      }
+
       const projects = await this.forge.listProjects();
-      const existingProject = projects.find((p: any) => p.git_repo_path === currentRepoPath);
+      const existingProject = projects.find((p: any) => p.git_repo_path === repoRoot);
 
       if (existingProject) {
         this.config.genieProjectId = existingProject.id;
@@ -206,7 +229,7 @@ export class ForgeExecutor {
         // Try git remote first
         const remoteUrl = execSync('git config --get remote.origin.url', {
           encoding: 'utf8',
-          cwd: currentRepoPath,
+          cwd: repoRoot,
           stdio: ['pipe', 'pipe', 'ignore']
         }).trim();
 
@@ -218,11 +241,7 @@ export class ForgeExecutor {
       } catch {
         // Fallback to directory name if git fails
         try {
-          const dirName = execSync('basename "$(pwd)"', {
-            encoding: 'utf8',
-            cwd: currentRepoPath,
-            stdio: ['pipe', 'pipe', 'ignore']
-          }).trim();
+          const dirName = path.basename(repoRoot);
           if (dirName) {
             projectName = dirName;
           }
@@ -233,7 +252,7 @@ export class ForgeExecutor {
 
       const newProject = await this.forge.createProject({
         name: projectName,
-        git_repo_path: currentRepoPath,
+        git_repo_path: repoRoot,
         use_existing_repo: true
       });
 
@@ -275,6 +294,38 @@ export class ForgeExecutor {
 
     const emojiMatch = title.match(/^\[[\p{Emoji}]\]\s+([^:]+)/u);
     return emojiMatch ? emojiMatch[1].trim() : title;
+  }
+
+  /**
+   * Generate a smart task name from the prompt by extracting keywords
+   * Examples:
+   *   "Fix authentication bug in login" → "fix-authentication-bug"
+   *   "Daily health check" → "daily-health-check"
+   *   "Analyze performance metrics" → "analyze-performance-metrics"
+   */
+  private generateSmartTaskName(prompt: string): string {
+    // Remove common filler words
+    const stopWords = new Set([
+      'a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+      'from', 'as', 'is', 'was', 'are', 'were', 'been', 'be', 'have', 'has',
+      'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may',
+      'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'we', 'they'
+    ]);
+
+    // Extract first ~6 meaningful words
+    const words = prompt
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ') // Remove special chars
+      .split(/\s+/)
+      .filter(w => w.length > 0 && !stopWords.has(w))
+      .slice(0, 6); // Take first 6 keywords
+
+    if (words.length === 0) {
+      // Fallback if no keywords found
+      return 'task-' + Date.now().toString().slice(-6);
+    }
+
+    return words.join('-');
   }
 
   private getAgentEmoji(agentName: string): string {
