@@ -56,6 +56,20 @@ export async function launchUpdateTask(
   console.log('');
 
   try {
+    // Check if Forge is running before attempting to create task
+    try {
+      const healthResponse = await fetch(`${FORGE_URL}/health`, {
+        signal: AbortSignal.timeout(2000) // 2 second timeout
+      });
+      if (!healthResponse.ok) {
+        throw new Error('Forge health check failed');
+      }
+    } catch (healthError) {
+      throw new Error(
+        `Forge backend is not running. Please start Genie first with 'genie run', then create the update task manually.`
+      );
+    }
+
     // Read diff content
     const diffContent = await fsp.readFile(diffPath, 'utf8');
 

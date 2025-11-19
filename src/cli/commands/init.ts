@@ -342,10 +342,25 @@ export async function runInit(
           console.log('   4. Generate a report of what was learned');
           console.log('');
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           console.log('');
           console.log('⚠️  Could not launch update agent automatically.');
-          console.log('   You can manually run: genie update');
-          console.log(`   With diff file: @${path.relative(cwd, diffPath)}`);
+
+          // Check if this is a Forge-not-running error
+          if (errorMsg.includes('Forge backend is not running')) {
+            console.log('   Reason: Forge backend needs to be running');
+            console.log('');
+            console.log('   Steps to apply this update:');
+            console.log('   1. Start Genie: genie run');
+            console.log('   2. The update diff is ready at:');
+            console.log(`      @${path.relative(cwd, diffPath)}`);
+            console.log('   3. Genie will automatically detect and offer to apply it');
+          } else {
+            console.log(`   Reason: ${errorMsg}`);
+            console.log('');
+            console.log('   You can manually run: genie update');
+            console.log(`   With diff file: @${path.relative(cwd, diffPath)}`);
+          }
           console.log('');
         }
 
@@ -454,8 +469,23 @@ export async function runInit(
       } catch (error) {
         // Non-blocking: update task creation is optional
         // If Forge is unavailable, user can still review diff manually
-        console.warn('⚠️  Could not create update task (Forge may be unavailable)');
-        console.warn('You can review the diff manually at: ' + path.relative(cwd, diffPath));
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        if (errorMsg.includes('Forge backend is not running')) {
+          console.log('');
+          console.log('⚠️  Could not create update task automatically.');
+          console.log('   Reason: Forge backend needs to be running');
+          console.log('');
+          console.log('   Steps to apply this update:');
+          console.log('   1. Start Genie: genie run');
+          console.log('   2. The update diff is ready at:');
+          console.log(`      @${path.relative(cwd, diffPath)}`);
+          console.log('   3. Genie will automatically detect and offer to apply it');
+        } else {
+          console.warn('⚠️  Could not create update task (Forge may be unavailable)');
+          console.warn(`   Reason: ${errorMsg}`);
+          console.warn('   You can review the diff manually at: ' + path.relative(cwd, diffPath));
+        }
         console.log('');
       }
     }
