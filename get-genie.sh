@@ -394,7 +394,31 @@ install_pnpm() {
     # Use corepack (built into Node.js 16.9+) - most efficient method
     if command_exists corepack; then
         echo -e "${CYAN}🔧 Enabling pnpm via corepack (built-in)...${NC}"
-        corepack enable pnpm
+
+        # Enable pnpm through corepack
+        if corepack enable pnpm 2>/dev/null; then
+            # Configure pnpm's global bin directory to avoid ERR_PNPM_NO_GLOBAL_BIN_DIR
+            echo -e "${CYAN}🔧 Configuring pnpm global bin directory...${NC}"
+
+            # Run pnpm setup non-interactively
+            if corepack pnpm setup --force 2>/dev/null; then
+                # Set PNPM_HOME for current session (pnpm setup adds it to shell profile)
+                if [ -d "$HOME/.local/share/pnpm" ]; then
+                    export PNPM_HOME="$HOME/.local/share/pnpm"
+                    export PATH="$PNPM_HOME:$PATH"
+                fi
+
+                # Source shell profile to load pnpm path updates
+                if [ -n "$BASH_VERSION" ]; then
+                    [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+                    [ -f "$HOME/.bash_profile" ] && source "$HOME/.bash_profile" 2>/dev/null || true
+                elif [ -n "$ZSH_VERSION" ]; then
+                    [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null || true
+                fi
+            else
+                echo -e "${YELLOW}⚠️  pnpm setup failed, continuing anyway...${NC}"
+            fi
+        fi
     else
         # Fallback: Use npm if corepack unavailable (older Node versions)
         echo -e "${CYAN}🔧 Installing pnpm via npm (corepack not available)...${NC}"
@@ -420,7 +444,12 @@ install_genie() {
     # Determine which package manager to use (pnpm if available, npm fallback)
     local PKG_MGR="npm"
     if command_exists pnpm; then
-        PKG_MGR="pnpm"
+        # Verify pnpm is actually working (can execute commands)
+        if pnpm --version &>/dev/null; then
+            PKG_MGR="pnpm"
+        else
+            echo -e "${YELLOW}⚠️  pnpm found but not working, using npm${NC}"
+        fi
     fi
 
     if command_exists genie; then
@@ -440,7 +469,16 @@ install_genie() {
             echo "Master Genie: $latest_version ⭐ NEW!"
             echo ""
             echo -e "${CYAN}⚡ Syncing new capabilities from the Master Genie...${NC}"
-            $PKG_MGR install -g automagik-genie@latest
+
+            # Try pnpm first, fallback to npm if it fails
+            if [ "$PKG_MGR" = "pnpm" ]; then
+                if ! $PKG_MGR install -g automagik-genie@latest 2>/dev/null; then
+                    echo -e "${YELLOW}⚠️  pnpm install failed, falling back to npm...${NC}"
+                    npm install -g automagik-genie@latest
+                fi
+            else
+                $PKG_MGR install -g automagik-genie@latest
+            fi
             echo ""
             echo -e "${GREEN}✅ You're now running v${latest_version}! ✨${NC}"
             echo "✓ All data stays local on your machine"
@@ -452,7 +490,17 @@ install_genie() {
     else
         # Not installed - install it globally
         echo -e "${CYAN}🎩 Pulling Genie from the lamp...${NC}"
-        $PKG_MGR install -g automagik-genie@latest
+
+        # Try pnpm first, fallback to npm if it fails
+        if [ "$PKG_MGR" = "pnpm" ]; then
+            if ! $PKG_MGR install -g automagik-genie@latest 2>/dev/null; then
+                echo -e "${YELLOW}⚠️  pnpm install failed, falling back to npm...${NC}"
+                npm install -g automagik-genie@latest
+            fi
+        else
+            $PKG_MGR install -g automagik-genie@latest
+        fi
+
         echo ""
         echo -e "${GREEN}✅ Genie is ready to grant your wishes! ✨${NC}"
         echo ""
