@@ -519,6 +519,21 @@ export async function runInit(
       console.log('🧞 Master Genie is orchestrating installation...');
       console.log(`📊 Monitor progress: ${dashboardUrl}`);
       console.log('');
+
+      // Open browser with installation dashboard
+      try {
+        const { getBrowserOpenCommand } = await import('../lib/cli-utils.js');
+        const openCommand = getBrowserOpenCommand();
+        execSync(`${openCommand} "${dashboardUrl}"`, { stdio: 'ignore' });
+
+        console.log('🌐 Opening browser with installation dashboard...');
+        console.log('');
+      } catch (browserError) {
+        // Non-fatal: browser opening failed, user can still access URL manually
+        console.log('⚠️  Could not open browser automatically');
+        console.log(`   Visit: ${dashboardUrl}`);
+        console.log('');
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

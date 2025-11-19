@@ -48,6 +48,9 @@ export class AgentRegistry {
   async scan(): Promise<void> {
     this.agents.clear();
 
+    // Scan base agents (universal agents, no collective assignment)
+    await this.scanBaseAgents();
+
     // Scan code collective agents
     await this.scanDirectory(path.join(this.workspaceRoot, '.genie/code/agents'), 'code', 'agent');
 
@@ -56,6 +59,66 @@ export class AgentRegistry {
 
     // Scan global neurons
     await this.scanNeurons();
+  }
+
+  /**
+   * Scan base agents directory (universal agents, no collective)
+   */
+  private async scanBaseAgents(): Promise<void> {
+    const baseAgentsDir = path.join(this.workspaceRoot, '.genie/agents');
+    if (!fs.existsSync(baseAgentsDir)) {
+      return;
+    }
+
+    const files = fs.readdirSync(baseAgentsDir).filter(f => f.endsWith('.md'));
+
+    for (const file of files) {
+      const filePath = path.join(baseAgentsDir, file);
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // Parse frontmatter
+        const frontmatterMatch = content.match(/^\s*---\s*\n([\s\S]*?)\n---\s*\n/);
+        if (!frontmatterMatch) {
+          if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+            console.warn(`Base agent file ${filePath} missing frontmatter`);
+          }
+          continue;
+        }
+
+        const frontmatter = parseYAML(frontmatterMatch[1]);
+
+        if (!frontmatter.name) {
+          if (process.env.MCP_DEBUG === '1' || process.env.DEBUG === '1') {
+            console.warn(`Base agent file ${filePath} missing 'name' in frontmatter`);
+          }
+          continue;
+        }
+
+        // Extract markdown body
+        const markdownBody = content.substring(frontmatterMatch[0].length);
+
+        const metadata: AgentMetadata = {
+          name: frontmatter.name,
+          description: frontmatter.description || '',
+          type: 'agent',
+          color: frontmatter.color,
+          emoji: frontmatter.emoji,
+          forge_profile_name: frontmatter.forge_profile_name,
+          genie: frontmatter.genie,
+          // No collective for base agents (universal)
+          collective: undefined,
+          filePath: filePath,
+          fullContent: markdownBody
+        };
+
+        // Use base/ prefix for namespacing
+        const namespacedKey = `base/${frontmatter.name.toLowerCase()}`;
+        this.agents.set(namespacedKey, metadata);
+      } catch (error: any) {
+        console.warn(`Failed to parse base agent file ${filePath}: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -218,15 +281,21 @@ export class AgentRegistry {
       return this.agents.get(`${collective}/${lowerName}`);
     }
 
-    // Otherwise, search across all collectives (backward compatibility)
-    // Try namespaced keys first
+    // Priority order when no collective specified:
+    // 1. Base agents (universal, no collective)
+    const baseAgent = this.agents.get(`base/${lowerName}`);
+    if (baseAgent) {
+      return baseAgent;
+    }
+
+    // 2. Search across all collectives (backward compatibility)
     for (const [key, agent] of this.agents.entries()) {
-      if (key.endsWith(`/${lowerName}`)) {
+      if (key.endsWith(`/${lowerName}`) && !key.startsWith('base/')) {
         return agent;
       }
     }
 
-    // Fallback: try non-namespaced key (legacy support)
+    // 3. Fallback: try non-namespaced key (legacy support)
     return this.agents.get(lowerName);
   }
 

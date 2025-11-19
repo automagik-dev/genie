@@ -100,7 +100,7 @@ export async function launchUpdateTask(
     }
 
     // Get update agent definition from registry
-    let updateVariant = 'UPDATE';
+    let updateVariant = 'DEFAULT';
     let updateExecutor = 'CLAUDE_CODE';
 
     try {
@@ -109,15 +109,22 @@ export async function launchUpdateTask(
       const updateAgentDef = registry.getAgent('update');
 
       if (updateAgentDef) {
-        updateVariant =
-          updateAgentDef.forge_profile_name ||
-          (updateAgentDef.type === 'neuron'
-            ? updateAgentDef.name.toUpperCase()
-            : 'UPDATE');
+        // Construct variant name following Forge convention:
+        // 1. Explicit override: forge_profile_name
+        // 2. Pattern: {COLLECTIVE}_{AGENT} (e.g., CODE_UPDATE) - only if collective exists
+        // 3. Fallback: DEFAULT (for base agents without collective)
+        if (updateAgentDef.forge_profile_name) {
+          updateVariant = updateAgentDef.forge_profile_name;
+        } else if (updateAgentDef.collective && updateAgentDef.name) {
+          updateVariant = `${updateAgentDef.collective.toUpperCase()}_${updateAgentDef.name.toUpperCase()}`;
+        } else {
+          // Base agent without collective - use DEFAULT variant
+          updateVariant = 'DEFAULT';
+        }
         updateExecutor = updateAgentDef.genie?.executor || updateExecutor;
       }
     } catch (error) {
-      // Use fallback UPDATE if registry unavailable
+      // Use fallback DEFAULT if registry unavailable
       console.warn(
         'Failed to load update agent definition, using fallback variant'
       );
@@ -125,6 +132,11 @@ export async function launchUpdateTask(
 
     // Create attempt with update variant
     console.log(gradient.pastel('Creating update attempt...'));
+
+    // Validate branch name - Forge API rejects certain patterns
+    const currentBranch = getCurrentBranch();
+    const baseBranch = getValidBaseBranch(currentBranch);
+
     const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -134,7 +146,7 @@ export async function launchUpdateTask(
           executor: updateExecutor,
           variant: updateVariant
         },
-        base_branch: getCurrentBranch()
+        base_branch: baseBranch
       })
     });
 
@@ -194,6 +206,30 @@ Process this knowledge diff:
     console.error('');
     throw error;
   }
+}
+
+/**
+ * Validates branch name and returns a valid base branch for Forge API.
+ * Forge API rejects certain branch name patterns (e.g., forge/*, worktree/*).
+ * Falls back to 'dev' for forbidden patterns.
+ */
+function getValidBaseBranch(branchName: string): string {
+  // Forbidden patterns that Forge API rejects
+  const forbiddenPatterns = [/^forge\//, /^worktree\//];
+
+  for (const pattern of forbiddenPatterns) {
+    if (pattern.test(branchName)) {
+      console.log(
+        gradient.pastel(
+          `⚠️  Branch '${branchName}' not suitable for base branch`
+        )
+      );
+      console.log(gradient.pastel('   Using fallback: dev'));
+      return 'dev';
+    }
+  }
+
+  return branchName;
 }
 
 /**
