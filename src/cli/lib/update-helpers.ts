@@ -13,10 +13,11 @@ import gradient from 'gradient-string';
 import path from 'path';
 import { promises as fsp } from 'fs';
 import { execSync } from 'child_process';
+import os from 'os';
 
 // Import ForgeExecutor for workspace project management
 import { createForgeExecutor } from './forge-executor.js';
-import { waitForForgeReady } from './forge-manager.js';
+import { waitForForgeReady, isForgeRunning, startForgeInBackground } from './forge-manager.js';
 
 const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
@@ -57,17 +58,41 @@ export async function launchUpdateTask(
   console.log('');
 
   try {
-    // Wait for Forge to be ready (with timeout)
-    console.log(gradient.pastel('⏳ Waiting for Forge backend to start...'));
-    const forgeReady = await waitForForgeReady(FORGE_URL, 30000, 500, false);
+    // Check if Forge is already running, if not start it
+    const isRunning = await isForgeRunning(FORGE_URL, 1);
 
-    if (!forgeReady) {
-      throw new Error(
-        `Forge backend did not start within 30 seconds. The update diff is ready at ${diffPath}. You can manually create the update task after Forge starts.`
-      );
+    if (!isRunning) {
+      console.log(gradient.pastel('🚀 Starting Forge backend...'));
+
+      // Start Forge in background
+      const logDir = path.join(os.tmpdir(), 'genie-forge');
+      const startResult = startForgeInBackground({
+        baseUrl: FORGE_URL,
+        logDir
+      });
+
+      if (!startResult.ok) {
+        const errorMsg = 'error' in startResult ? startResult.error.message : 'Unknown error';
+        throw new Error(
+          `Failed to start Forge: ${errorMsg}. The update diff is ready at ${diffPath}.`
+        );
+      }
+
+      // Wait for Forge to be ready (with timeout)
+      console.log(gradient.pastel('⏳ Waiting for Forge to be ready...'));
+      const forgeReady = await waitForForgeReady(FORGE_URL, 30000, 500, false);
+
+      if (!forgeReady) {
+        throw new Error(
+          `Forge did not start within 30 seconds. The update diff is ready at ${diffPath}. You can manually create the update task after Forge starts.`
+        );
+      }
+
+      console.log(gradient.pastel('✅ Forge backend is ready'));
+    } else {
+      console.log(gradient.pastel('✅ Forge backend is already running'));
     }
 
-    console.log(gradient.pastel('✅ Forge backend is ready'));
     console.log('');
 
     // Read diff content
