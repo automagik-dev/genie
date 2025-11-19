@@ -16,6 +16,7 @@ import { execSync } from 'child_process';
 
 // Import ForgeExecutor for workspace project management
 import { createForgeExecutor } from './forge-executor.js';
+import { waitForForgeReady } from './forge-manager.js';
 
 const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
@@ -56,19 +57,18 @@ export async function launchUpdateTask(
   console.log('');
 
   try {
-    // Check if Forge is running before attempting to create task
-    try {
-      const healthResponse = await fetch(`${FORGE_URL}/health`, {
-        signal: AbortSignal.timeout(2000) // 2 second timeout
-      });
-      if (!healthResponse.ok) {
-        throw new Error('Forge health check failed');
-      }
-    } catch (healthError) {
+    // Wait for Forge to be ready (with timeout)
+    console.log(gradient.pastel('⏳ Waiting for Forge backend to start...'));
+    const forgeReady = await waitForForgeReady(FORGE_URL, 30000, 500, false);
+
+    if (!forgeReady) {
       throw new Error(
-        `Forge backend is not running. Please start Genie first with 'genie run', then create the update task manually.`
+        `Forge backend did not start within 30 seconds. The update diff is ready at ${diffPath}. You can manually create the update task after Forge starts.`
       );
     }
+
+    console.log(gradient.pastel('✅ Forge backend is ready'));
+    console.log('');
 
     // Read diff content
     const diffContent = await fsp.readFile(diffPath, 'utf8');
