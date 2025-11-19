@@ -190,7 +190,8 @@ export async function launchUpdateTask(
     });
 
     if (!attemptResponse.ok) {
-      throw new Error(`Failed to create attempt: ${attemptResponse.status}`);
+      const errorBody = await attemptResponse.text();
+      throw new Error(`Failed to create attempt: ${attemptResponse.status} - ${errorBody}`);
     }
 
     const { data: attempt } = (await attemptResponse.json()) as any;
