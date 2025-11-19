@@ -160,7 +160,13 @@ export async function launchUpdateTask(
           // Base agent without collective - use DEFAULT variant
           updateVariant = 'DEFAULT';
         }
-        updateExecutor = updateAgentDef.genie?.executor || updateExecutor;
+        // Handle executor as array or string
+        const executorValue = updateAgentDef.genie?.executor;
+        if (Array.isArray(executorValue) && executorValue.length > 0) {
+          updateExecutor = executorValue[0];
+        } else if (typeof executorValue === 'string') {
+          updateExecutor = executorValue;
+        }
       }
     } catch (error) {
       // Use fallback DEFAULT if registry unavailable
