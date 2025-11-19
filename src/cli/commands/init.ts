@@ -488,25 +488,31 @@ export async function runInit(
     // Install git hooks if user opted in during wizard
     await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
 
-    // Auto-commit template files if git repo exists
-    await commitTemplateFiles(cwd);
+    // Auto-commit template files if git repo exists (MUST happen before install task)
+    const commitSucceeded = await commitTemplateFiles(cwd);
 
-    // Launch install orchestration via Forge (if available)
+    // Launch install orchestration via Forge (ONLY if commit succeeded)
     let dashboardUrl: string | undefined;
     let installOrchestrationStarted = false;
 
-    try {
-      const { runInstallFlow } = await import('../lib/install-helpers.js');
-      dashboardUrl = await runInstallFlow({
-        templates,
-        executor,
-        model
-      });
-      installOrchestrationStarted = true;
-    } catch (error) {
-      // Forge unavailable or install flow failed - non-fatal
-      console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
-      console.log(`   Run: genie run master "Run explorer to acquire context, when it ends run the install workflow. Templates: ${templates.join(', ')}"`);
+    if (commitSucceeded) {
+      try {
+        const { runInstallFlow } = await import('../lib/install-helpers.js');
+        dashboardUrl = await runInstallFlow({
+          templates,
+          executor,
+          model
+        });
+        installOrchestrationStarted = true;
+      } catch (error) {
+        // Forge unavailable or install flow failed - non-fatal
+        console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
+        console.log(`   Run: genie run master "Run explorer to acquire context, when it ends run the install workflow. Templates: ${templates.join(', ')}"`);
+        console.log('');
+      }
+    } else {
+      console.log('⚠️  Install task skipped - template files not committed');
+      console.log('   After committing files, run: genie run master "install"');
       console.log('');
     }
 
@@ -902,10 +908,13 @@ async function initializeProviderStatus(cwd: string): Promise<void> {
  * Creates checkpoint commit with all Genie template files
  * Non-fatal: skips if not a git repo or commit fails
  */
-async function commitTemplateFiles(cwd: string): Promise<void> {
+async function commitTemplateFiles(cwd: string): Promise<boolean> {
   // Only commit if git repo exists
   if (!await pathExists(path.join(cwd, '.git'))) {
-    return;
+    console.warn('⚠️  No git repository - template files not committed');
+    console.log('   Run: git init && git add .genie/ AGENTS.md CLAUDE.md && git commit -m "chore: init Genie"');
+    console.log('');
+    return false;
   }
 
   const { execSync } = await import('child_process');
@@ -919,8 +928,10 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
     });
 
     if (!status.trim()) {
-      // No changes to commit
-      return;
+      // No changes to commit - files already committed
+      console.log('✓ Template files already committed');
+      console.log('');
+      return true;
     }
 
     // Stage Genie template files
@@ -944,9 +955,13 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
 
     console.log('✓ Template files committed to git');
     console.log('');
+    return true;
   } catch (err) {
-    // Non-fatal: commit failed (maybe pre-commit hooks, dirty state, etc.)
-    // Don't block init process
+    console.error('❌ Failed to commit template files:', (err as Error).message);
+    console.log('   Install task may fail without committed files');
+    console.log('   Manually commit: git add .genie/ AGENTS.md CLAUDE.md && git commit -m "init"');
+    console.log('');
+    return false;
   }
 }
 
