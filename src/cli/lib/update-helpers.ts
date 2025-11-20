@@ -19,20 +19,6 @@ import { waitForForgeReady, isForgeRunning, startForgeInBackground } from './for
 
 const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
 
-// Import from compiled MCP dist (will be available after build)
-let shortenUrl: any;
-let getApiKeyFromEnv: any;
-
-try {
-  const urlShortener = require('../../mcp/dist/lib/url-shortener.js');
-  shortenUrl = urlShortener.shortenUrl;
-  getApiKeyFromEnv = urlShortener.getApiKeyFromEnv;
-} catch {
-  // Fallback if MCP not built yet
-  shortenUrl = async (url: string) => ({ success: false, fullUrl: url });
-  getApiKeyFromEnv = () => undefined;
-}
-
 export interface UpdateFlowConfig {
   diffPath: string;
   oldVersion: string;
@@ -41,8 +27,8 @@ export interface UpdateFlowConfig {
 }
 
 /**
- * Launch Forge update task for knowledge diff
- * Uses `genie run` CLI for proper Forge UI integration and task naming
+ * Launch Genie update task using genie CLI
+ * Reads diff file and delegates to update agent
  */
 export async function launchUpdateTask(
   config: UpdateFlowConfig
@@ -92,15 +78,14 @@ export async function launchUpdateTask(
     }
 
     console.log('');
-    console.log(gradient.pastel('✨ Genie orchestrating update...'));
-    console.log('');
+    console.log(gradient.pastel('Launching update orchestrator...'));
 
     // Build update prompt with agent path and diff file path
-    // Both paths are committed and available to the agent
+    const relativeDiffPath = path.relative(workspacePath, diffPath);
     const prompt = `Apply framework upgrade from ${oldVersion} to ${newVersion}.
 
 Agent: @.genie/code/agents/update.md
-Diff: ${path.relative(workspacePath, diffPath)}
+Diff: ${relativeDiffPath}
 
 Process this knowledge diff:
 1. Read the diff file to understand what changed
@@ -108,52 +93,29 @@ Process this knowledge diff:
 3. Assess user impact
 4. Generate clear update report`;
 
-    // Write prompt to temp file to avoid shell escaping issues
-    const tmpDir = os.tmpdir();
-    const promptFile = path.join(tmpDir, `genie-update-prompt-${Date.now()}.txt`);
-    await fsp.writeFile(promptFile, prompt, 'utf8');
+    // Use genie CLI to launch update orchestration
+    const genieBin = path.join(__dirname, '../genie-cli.js');
 
-    try {
-      // Use `genie run` CLI for proper task creation and Forge UI integration
-      // This ensures:
-      // - Proper [C] task naming prefix
-      // - Forge card/UI creation
-      // - Standard Genie orchestration
-      // - No orphan tasks
-      const genieRunCmd = `genie run update "$(cat '${promptFile}')"`;
+    // Use genie task (headless) for background orchestration
+    // Agent frontmatter specifies executor (CLAUDE_CODE, CODEX, or OPENCODE)
+    const result = execSync(`node "${genieBin}" task update "${prompt.replace(/"/g, '\\"')}"`, {
+      cwd: workspacePath,
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
 
-      // Run and capture the JSON output
-      const output = execSync(genieRunCmd, {
-        cwd: workspacePath,
-        encoding: 'utf8',
-        shell: '/bin/bash' // Use bash shell for command substitution
-      });
+    // Parse JSON output from genie task
+    // Expected format: { task_id, task_url, agent, executor, status, message }
+    const jsonOutput = JSON.parse(result.trim());
+    const taskUrl = jsonOutput.task_url;
 
-      // Parse JSON output from genie run to extract task URL
-      const result = JSON.parse(output.trim());
-      const taskUrl = result.task_url;
+    console.log('');
+    console.log(gradient.pastel('✨ Genie orchestrating update...'));
+    console.log('');
 
-      if (!taskUrl) {
-        throw new Error('Failed to get task URL from genie run output');
-      }
-
-      // Shorten URL
-      const { shortUrl: shortened } = (await shortenUrl(taskUrl, {
-        apiKey: getApiKeyFromEnv()
-      })) as any;
-
-      return shortened || taskUrl;
-    } finally {
-      // Cleanup temp prompt file
-      try {
-        await fsp.unlink(promptFile);
-      } catch {
-        // Non-fatal: temp file cleanup failed
-      }
-    }
+    return taskUrl;
   } catch (error) {
-    const errorMsg =
-      error instanceof Error ? error.message : String(error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('');
     console.error(gradient.pastel('❌ Failed to create update task:'));
     console.error(errorMsg);
@@ -161,4 +123,3 @@ Process this knowledge diff:
     throw error;
   }
 }
-
