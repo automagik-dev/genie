@@ -342,10 +342,25 @@ export async function runInit(
           console.log('   4. Generate a report of what was learned');
           console.log('');
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           console.log('');
           console.log('⚠️  Could not launch update agent automatically.');
-          console.log('   You can manually run: genie update');
-          console.log(`   With diff file: @${path.relative(cwd, diffPath)}`);
+
+          // Check if this is a Forge-not-running error
+          if (errorMsg.includes('Forge backend is not running')) {
+            console.log('   Reason: Forge backend needs to be running');
+            console.log('');
+            console.log('   Steps to apply this update:');
+            console.log('   1. Start Genie: genie run');
+            console.log('   2. The update diff is ready at:');
+            console.log(`      @${path.relative(cwd, diffPath)}`);
+            console.log('   3. Genie will automatically detect and offer to apply it');
+          } else {
+            console.log(`   Reason: ${errorMsg}`);
+            console.log('');
+            console.log('   You can manually run: genie update');
+            console.log(`   With diff file: @${path.relative(cwd, diffPath)}`);
+          }
           console.log('');
         }
 
@@ -454,8 +469,23 @@ export async function runInit(
       } catch (error) {
         // Non-blocking: update task creation is optional
         // If Forge is unavailable, user can still review diff manually
-        console.warn('⚠️  Could not create update task (Forge may be unavailable)');
-        console.warn('You can review the diff manually at: ' + path.relative(cwd, diffPath));
+        const errorMsg = error instanceof Error ? error.message : String(error);
+
+        if (errorMsg.includes('Forge backend is not running')) {
+          console.log('');
+          console.log('⚠️  Could not create update task automatically.');
+          console.log('   Reason: Forge backend needs to be running');
+          console.log('');
+          console.log('   Steps to apply this update:');
+          console.log('   1. Start Genie: genie run');
+          console.log('   2. The update diff is ready at:');
+          console.log(`      @${path.relative(cwd, diffPath)}`);
+          console.log('   3. Genie will automatically detect and offer to apply it');
+        } else {
+          console.warn('⚠️  Could not create update task (Forge may be unavailable)');
+          console.warn(`   Reason: ${errorMsg}`);
+          console.warn('   You can review the diff manually at: ' + path.relative(cwd, diffPath));
+        }
         console.log('');
       }
     }
@@ -488,25 +518,31 @@ export async function runInit(
     // Install git hooks if user opted in during wizard
     await installGitHooksIfRequested(packageRoot, shouldInstallHooks);
 
-    // Auto-commit template files if git repo exists
-    await commitTemplateFiles(cwd);
+    // Auto-commit template files if git repo exists (MUST happen before install task)
+    const commitSucceeded = await commitTemplateFiles(cwd);
 
-    // Launch install orchestration via Forge (if available)
+    // Launch install orchestration via Forge (ONLY if commit succeeded)
     let dashboardUrl: string | undefined;
     let installOrchestrationStarted = false;
 
-    try {
-      const { runInstallFlow } = await import('../lib/install-helpers.js');
-      dashboardUrl = await runInstallFlow({
-        templates,
-        executor,
-        model
-      });
-      installOrchestrationStarted = true;
-    } catch (error) {
-      // Forge unavailable or install flow failed - non-fatal
-      console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
-      console.log(`   Run: genie run master "Run explorer to acquire context, when it ends run the install workflow. Templates: ${templates.join(', ')}"`);
+    if (commitSucceeded) {
+      try {
+        const { runInstallFlow } = await import('../lib/install-helpers.js');
+        dashboardUrl = await runInstallFlow({
+          templates,
+          executor,
+          model
+        });
+        installOrchestrationStarted = true;
+      } catch (error) {
+        // Forge unavailable or install flow failed - non-fatal
+        console.warn('⚠️  Install orchestration skipped (Forge unavailable)');
+        console.log(`   Run: genie run master "Run explorer to acquire context, when it ends run the install workflow. Templates: ${templates.join(', ')}"`);
+        console.log('');
+      }
+    } else {
+      console.log('⚠️  Install task skipped - template files not committed');
+      console.log('   After committing files, run: genie run master "install"');
       console.log('');
     }
 
@@ -519,6 +555,21 @@ export async function runInit(
       console.log('🧞 Master Genie is orchestrating installation...');
       console.log(`📊 Monitor progress: ${dashboardUrl}`);
       console.log('');
+
+      // Open browser with installation dashboard
+      try {
+        const { getBrowserOpenCommand } = await import('../lib/cli-utils.js');
+        const openCommand = getBrowserOpenCommand();
+        execSync(`${openCommand} "${dashboardUrl}"`, { stdio: 'ignore' });
+
+        console.log('🌐 Opening browser with installation dashboard...');
+        console.log('');
+      } catch (browserError) {
+        // Non-fatal: browser opening failed, user can still access URL manually
+        console.log('⚠️  Could not open browser automatically');
+        console.log(`   Visit: ${dashboardUrl}`);
+        console.log('');
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -887,10 +938,13 @@ async function initializeProviderStatus(cwd: string): Promise<void> {
  * Creates checkpoint commit with all Genie template files
  * Non-fatal: skips if not a git repo or commit fails
  */
-async function commitTemplateFiles(cwd: string): Promise<void> {
+async function commitTemplateFiles(cwd: string): Promise<boolean> {
   // Only commit if git repo exists
   if (!await pathExists(path.join(cwd, '.git'))) {
-    return;
+    console.warn('⚠️  No git repository - template files not committed');
+    console.log('   Run: git init && git add .genie/ AGENTS.md CLAUDE.md && git commit -m "chore: init Genie"');
+    console.log('');
+    return false;
   }
 
   const { execSync } = await import('child_process');
@@ -904,8 +958,10 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
     });
 
     if (!status.trim()) {
-      // No changes to commit
-      return;
+      // No changes to commit - files already committed
+      console.log('✓ Template files already committed');
+      console.log('');
+      return true;
     }
 
     // Stage Genie template files
@@ -929,9 +985,13 @@ async function commitTemplateFiles(cwd: string): Promise<void> {
 
     console.log('✓ Template files committed to git');
     console.log('');
+    return true;
   } catch (err) {
-    // Non-fatal: commit failed (maybe pre-commit hooks, dirty state, etc.)
-    // Don't block init process
+    console.error('❌ Failed to commit template files:', (err as Error).message);
+    console.log('   Install task may fail without committed files');
+    console.log('   Manually commit: git add .genie/ AGENTS.md CLAUDE.md && git commit -m "init"');
+    console.log('');
+    return false;
   }
 }
 

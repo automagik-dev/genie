@@ -13,25 +13,11 @@ import gradient from 'gradient-string';
 import path from 'path';
 import { promises as fsp } from 'fs';
 import { execSync } from 'child_process';
+import os from 'os';
 
-// Import ForgeExecutor for workspace project management
-import { createForgeExecutor } from './forge-executor.js';
+import { waitForForgeReady, isForgeRunning, startForgeInBackground } from './forge-manager.js';
 
 const FORGE_URL = process.env.FORGE_BASE_URL || getForgeConfig().baseUrl;
-
-// Import from compiled MCP dist (will be available after build)
-let shortenUrl: any;
-let getApiKeyFromEnv: any;
-
-try {
-  const urlShortener = require('../../mcp/dist/lib/url-shortener.js');
-  shortenUrl = urlShortener.shortenUrl;
-  getApiKeyFromEnv = urlShortener.getApiKeyFromEnv;
-} catch {
-  // Fallback if MCP not built yet
-  shortenUrl = async (url: string) => ({ success: false, fullUrl: url });
-  getApiKeyFromEnv = () => undefined;
-}
 
 export interface UpdateFlowConfig {
   diffPath: string;
@@ -41,8 +27,8 @@ export interface UpdateFlowConfig {
 }
 
 /**
- * Launch Forge update task for knowledge diff
- * Reads diff file and creates task with update agent
+ * Launch Genie update task using genie CLI
+ * Reads diff file and delegates to update agent
  */
 export async function launchUpdateTask(
   config: UpdateFlowConfig
@@ -56,107 +42,50 @@ export async function launchUpdateTask(
   console.log('');
 
   try {
-    // Read diff content
-    const diffContent = await fsp.readFile(diffPath, 'utf8');
+    // Check if Forge is already running, if not start it
+    const isRunning = await isForgeRunning(FORGE_URL, 1);
 
-    // Get or create workspace-specific Forge project
-    const forgeExecutor = createForgeExecutor({ forgeBaseUrl: FORGE_URL });
-    const projectId = await forgeExecutor.getOrCreateGenieProject();
+    if (!isRunning) {
+      console.log(gradient.pastel('🚀 Starting Forge backend...'));
 
-    // Get or create update task template
-    const updateResponse = await fetch(
-      `${FORGE_URL}/api/forge/agents?project_id=${projectId}&agent_type=update`,
-      {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
-
-    if (!updateResponse.ok) {
-      throw new Error(`Failed to query update agent: ${updateResponse.status}`);
-    }
-
-    const { data: agents } = (await updateResponse.json()) as any;
-    let updateAgent = agents?.[0];
-
-    if (!updateAgent) {
-      // Create update agent if it doesn't exist
-      console.log(gradient.pastel('Creating update agent...'));
-      const createResponse = await fetch(`${FORGE_URL}/api/forge/agents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_id: projectId,
-          agent_type: 'update'
-        })
+      // Start Forge in background
+      const logDir = path.join(os.tmpdir(), 'genie-forge');
+      const startResult = startForgeInBackground({
+        baseUrl: FORGE_URL,
+        logDir
       });
 
-      if (!createResponse.ok) {
-        throw new Error(`Failed to create update agent: ${createResponse.status}`);
+      if (!startResult.ok) {
+        const errorMsg = 'error' in startResult ? startResult.error.message : 'Unknown error';
+        throw new Error(
+          `Failed to start Forge: ${errorMsg}. The update diff is ready at ${diffPath}.`
+        );
       }
 
-      const { data } = (await createResponse.json()) as any;
-      updateAgent = data;
-    }
+      // Wait for Forge to be ready (with timeout)
+      console.log(gradient.pastel('⏳ Waiting for Forge to be ready...'));
+      const forgeReady = await waitForForgeReady(FORGE_URL, 30000, 500, false);
 
-    // Get update agent definition from registry
-    let updateVariant = 'DEFAULT';
-    let updateExecutor = 'CLAUDE_CODE';
-
-    try {
-      const { getAgentRegistry } = await import('./agent-registry.js');
-      const registry = await getAgentRegistry();
-      const updateAgentDef = registry.getAgent('update');
-
-      if (updateAgentDef) {
-        // Construct variant name following Forge convention:
-        // 1. Explicit override: forge_profile_name
-        // 2. Pattern: {COLLECTIVE}_{AGENT} (e.g., CODE_UPDATE) - only if collective exists
-        // 3. Fallback: DEFAULT (for base agents without collective)
-        if (updateAgentDef.forge_profile_name) {
-          updateVariant = updateAgentDef.forge_profile_name;
-        } else if (updateAgentDef.collective && updateAgentDef.name) {
-          updateVariant = `${updateAgentDef.collective.toUpperCase()}_${updateAgentDef.name.toUpperCase()}`;
-        } else {
-          // Base agent without collective - use DEFAULT variant
-          updateVariant = 'DEFAULT';
-        }
-        updateExecutor = updateAgentDef.genie?.executor || updateExecutor;
+      if (!forgeReady) {
+        throw new Error(
+          `Forge did not start within 30 seconds. The update diff is ready at ${diffPath}. You can manually create the update task after Forge starts.`
+        );
       }
-    } catch (error) {
-      // Use fallback DEFAULT if registry unavailable
-      console.warn(
-        'Failed to load update agent definition, using fallback variant'
-      );
+
+      console.log(gradient.pastel('✅ Forge backend is ready'));
+    } else {
+      console.log(gradient.pastel('✅ Forge backend is already running'));
     }
 
-    // Create attempt with update variant
-    console.log(gradient.pastel('Creating update attempt...'));
-    const attemptResponse = await fetch(`${FORGE_URL}/api/task-attempts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task_id: updateAgent.task_id,
-        executor_profile_id: {
-          executor: updateExecutor,
-          variant: updateVariant
-        },
-        base_branch: getCurrentBranch()
-      })
-    });
-
-    if (!attemptResponse.ok) {
-      throw new Error(`Failed to create attempt: ${attemptResponse.status}`);
-    }
-
-    const { data: attempt } = (await attemptResponse.json()) as any;
+    console.log('');
+    console.log(gradient.pastel('Launching update orchestrator...'));
 
     // Build update prompt with agent path and diff file path
-    // Both paths are committed and available to the agent
+    const relativeDiffPath = path.relative(workspacePath, diffPath);
     const prompt = `Apply framework upgrade from ${oldVersion} to ${newVersion}.
 
 Agent: @.genie/code/agents/update.md
-Diff: ${path.relative(workspacePath, diffPath)}
+Diff: ${relativeDiffPath}
 
 Process this knowledge diff:
 1. Read the diff file to understand what changed
@@ -164,56 +93,33 @@ Process this knowledge diff:
 3. Assess user impact
 4. Generate clear update report`;
 
-    // Send update prompt as follow-up message
-    const followUpResponse = await fetch(
-      `${FORGE_URL}/api/task-attempts/${attempt.id}/follow-up`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
-      }
-    );
+    // Use genie CLI to launch update orchestration
+    const genieBin = path.join(__dirname, '../genie-cli.js');
 
-    if (!followUpResponse.ok) {
-      throw new Error(
-        `Failed to send update prompt: ${followUpResponse.status}`
-      );
-    }
+    // Use genie task (headless) for background orchestration
+    // Agent frontmatter specifies executor (CLAUDE_CODE, CODEX, or OPENCODE)
+    const result = execSync(`node "${genieBin}" task update "${prompt.replace(/"/g, '\\"')}"`, {
+      cwd: workspacePath,
+      encoding: 'utf8',
+      stdio: 'pipe'
+    });
+
+    // Parse JSON output from genie task
+    // Expected format: { task_id, task_url, agent, executor, status, message }
+    const jsonOutput = JSON.parse(result.trim());
+    const taskUrl = jsonOutput.task_url;
 
     console.log('');
     console.log(gradient.pastel('✨ Genie orchestrating update...'));
     console.log('');
 
-    const fullUrl = `${FORGE_URL}/projects/${projectId}/tasks/${updateAgent.task_id}/attempts/${attempt.id}?view=diffs`;
-
-    // Shorten URL
-    const { shortUrl: shortened } = (await shortenUrl(fullUrl, {
-      apiKey: getApiKeyFromEnv()
-    })) as any;
-
-    return shortened || fullUrl;
+    return taskUrl;
   } catch (error) {
-    const errorMsg =
-      error instanceof Error ? error.message : String(error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
     console.error('');
     console.error(gradient.pastel('❌ Failed to create update task:'));
     console.error(errorMsg);
     console.error('');
     throw error;
-  }
-}
-
-/**
- * Get current git branch (suppresses stderr to avoid scary errors in new repos)
- */
-function getCurrentBranch(): string {
-  try {
-    return execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'] // Suppress stderr
-    }).trim();
-  } catch {
-    // Return 'main' for brand new repos (no commits yet) or non-git directories
-    return 'main';
   }
 }
