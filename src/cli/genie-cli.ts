@@ -76,7 +76,7 @@ mcpCommand
 mcpCommand
   .command('http')
   .description('Start MCP server in HTTP mode (headless, non-interactive)')
-  .option('-p, --port <port>', 'Port to listen on', '8885')
+  .option('-p, --port <port>', 'Port to listen on (defaults to MCP_PORT env or 8885)')
   .option('-d, --debug', 'Enable debug mode (verbose logging)')
   .action((options: { port?: string; debug?: boolean }) => {
     startMCPHttp({
