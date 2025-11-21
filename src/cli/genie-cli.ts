@@ -16,6 +16,7 @@ import { execGenie } from './lib/cli-utils';
 import { smartRouter } from './lib/router';
 import { startGenieServer } from './lib/server-manager';
 import { startMCPStdio } from './lib/mcp-stdio';
+import { startMCPHttp } from './lib/mcp-http';
 import { getLearnedSpells, formatSpellChangelog, getTagForVersion } from './lib/spell-changelog';
 
 const program = new Command();
@@ -60,11 +61,29 @@ program
     execGenie(args);
   });
 
-// MCP command (stdio only - for Claude Desktop integration)
-program
+// MCP command group (stdio and http modes)
+const mcpCommand = program
   .command('mcp')
+  .description('MCP server management (stdio for Claude Desktop, http for headless deployment)');
+
+// MCP stdio subcommand (default behavior for backward compatibility)
+mcpCommand
+  .command('stdio', { isDefault: true })
   .description('Start MCP server in stdio mode (for Claude Desktop). Requires Forge to be running.')
   .action(startMCPStdio);
+
+// MCP http subcommand (new headless mode)
+mcpCommand
+  .command('http')
+  .description('Start MCP server in HTTP mode (headless, non-interactive)')
+  .option('-p, --port <port>', 'Port to listen on', '8885')
+  .option('-d, --debug', 'Enable debug mode (verbose logging)')
+  .action((options: { port?: string; debug?: boolean }) => {
+    startMCPHttp({
+      port: options.port ? parseInt(options.port, 10) : undefined,
+      debug: options.debug
+    });
+  });
 
 // ==================== AGENT ORCHESTRATION ====================
 
