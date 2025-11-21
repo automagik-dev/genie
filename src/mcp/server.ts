@@ -1050,6 +1050,24 @@ process.on('unhandledRejection', (reason) => {
   gracefulShutdown('unhandledRejection');
 });
 
+// Parent process monitor (stdio mode only)
+// When Claude Code (parent) closes, stdin pipe closes and process should exit
+if (TRANSPORT === 'stdio') {
+  process.stdin.on('end', () => {
+    if (debugMode) {
+      console.error('📡 Parent closed stdin, shutting down...');
+    }
+    gracefulShutdown('stdin-end');
+  });
+
+  process.stdin.on('close', () => {
+    if (debugMode) {
+      console.error('📡 stdin closed, shutting down...');
+    }
+    gracefulShutdown('stdin-close');
+  });
+}
+
 // Start server with configured transport (only log in debug mode)
 if (debugMode) {
   // Verbose startup logs (debug mode only)
