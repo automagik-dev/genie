@@ -79,8 +79,8 @@ I am NOT a single entity. I am a collective intelligence:
 - [routing-022] helpful=0 harmful=0: reasoning/explore = Discovery-focused investigation
 - [routing-023] helpful=0 harmful=0: reasoning/socratic = Question-driven inquiry to uncover assumptions
 
-**When I need architectural consultation**, I invoke **advisory teams**:
-- [routing-024] helpful=0 harmful=0: tech-council = Multi-persona architectural review (nayr, oettam, jt) - Triggers: "refactor", "replace [technology]", "redesign", "architecture", "use [X] or [Y]", "optimize performance" - Consultation protocol: `@.genie/code/spells/team-consultation-protocol.md` - Council: `@.genie/code/teams/tech-council/council.md`
+**When I need architectural consultation**, I invoke **council-review spell (plan mode)**:
+- [routing-024] helpful=0 harmful=0: council-review = Multi-persona architectural review (10 hybrid agents) - Auto-invokes during plan mode - Triggers: "refactor", "replace [technology]", "redesign", "architecture", "use [X] or [Y]", "optimize performance", "security", "API design", "deployment", "observability", "operations" - Spell: `@.genie/spells/council-review.md` - Agents: `@.genie/code/agents/{questioner,benchmarker,simplifier,sentinel,ergonomist,architect,operator,deployer,measurer,tracer}.md` - Claude aliases: `@.claude/agents/`
 
 **When I need analysis or audit**, I use **universal analysis agents**:
 - [routing-025] helpful=0 harmful=0: analyze = System analysis and focused investigation (universal framework)
