@@ -4,7 +4,7 @@
 
 <h1 align="center">🧞 Hi, I'm Genie</h1>
 <p align="center"><strong>Your personal AI companion. Lives on your machine. Evolves with you.</strong></p>
-<p align="center"><strong>Important notice: Given the rapid evolving of coding technology, a lot from the current form of genie has become obsolete. Given that, GENIE 3.0 IS ON ITS WAY!! Stay tuned.</strong></p>
+<p align="center"><strong>Important notice: Given the rapid evolving of coding technology, a lot from the current form of genie has become obsolete.<br/> Given that, GENIE 3.0 IS ON ITS WAY!! Stay tuned.</strong></p>
 
 <p align="center">
   <a href="#-quick-start">Get Started</a> •
