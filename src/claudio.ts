@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from 'commander';
+import { VERSION } from './lib/version.js';
 import { setupCommand } from './commands/setup.js';
 import { launchProfile, launchDefaultProfile, type LaunchOptions } from './commands/launch.js';
 import {
@@ -17,7 +18,7 @@ const program = new Command();
 program
   .name('claudio')
   .description('Launch Claude Code with custom LLM router profiles')
-  .version('0.2.0')
+  .version(VERSION)
   .option('--hooks <presets>', 'Override hooks (comma-separated: collaborative,supervised,sandboxed,audited)')
   .option('--no-hooks', 'Disable all hooks');
 

@@ -17,6 +17,9 @@ The core idea: **tmux is the collaboration layer**. AI agents create and manage 
 ## Quick Start
 
 ```bash
+# 0. Install globally with bun
+bun install -g @automagik/genie
+
 # 1. Install prerequisites (tmux, bun)
 genie install
 
@@ -468,23 +471,13 @@ term read my-session -n 10 --json
 ## Installation
 
 ```bash
-# 1. Check prerequisites
-genie install
+# Install globally with bun
+bun install -g @automagik/genie
 
-# 2. Build
-bun install
-bun run build
-
-# 3. Symlink to PATH
-ln -s $(pwd)/dist/genie.js ~/.local/bin/genie
-ln -s $(pwd)/dist/term.js ~/.local/bin/term
-ln -s $(pwd)/dist/claudio.js ~/.local/bin/claudio
-
-# 4. Configure hooks
-genie setup
-
-# 5. Install hooks into Claude Code
-genie hooks install
+# Then run setup
+genie install   # Check/install prerequisites (tmux, bun)
+genie setup     # Configure hooks interactively
+genie hooks install  # Install hooks into Claude Code
 ```
 
 Requirements: Bun, tmux

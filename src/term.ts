@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from 'commander';
+import { VERSION } from './lib/version.js';
 import * as newCmd from './term-commands/new.js';
 import * as lsCmd from './term-commands/ls.js';
 import * as attachCmd from './term-commands/attach.js';
@@ -23,7 +24,7 @@ program
 
 Workflow: new → exec → read → rm
 Full control: window new/ls/rm, pane ls/rm, split, status`)
-  .version('0.2.0');
+  .version(VERSION);
 
 // Session management
 program

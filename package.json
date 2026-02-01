@@ -1,7 +1,7 @@
 {
   "name": "@automagik/genie",
   "version": "0.260201.2219",
-  "description": "Dual CLI: claudio (Claude profiles) + term (terminal orchestration)",
+  "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
     "claudio": "./dist/claudio.js",

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command } from 'commander';
+import { VERSION } from './lib/version.js';
 import { installCommand } from './genie-commands/install.js';
 import { setupCommand, quickSetupCommand } from './genie-commands/setup.js';
 import { updateCommand } from './genie-commands/update.js';
@@ -21,7 +22,7 @@ const program = new Command();
 program
   .name('genie')
   .description('Genie CLI - Setup and utilities for AI-assisted development')
-  .version('0.1.0');
+  .version(VERSION);
 
 // Install command - check/install prerequisites
 program
