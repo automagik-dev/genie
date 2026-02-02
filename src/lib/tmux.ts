@@ -240,6 +240,7 @@ export async function splitPane(
   workingDir?: string
 ): Promise<TmuxPane | null> {
   // Build the split-window command
+  // Order follows tmux convention: flags, -c, -p, -t, -F
   let splitCommand = 'split-window';
 
   // Add direction flag (-h for horizontal, -v for vertical)
@@ -249,18 +250,18 @@ export async function splitPane(
     splitCommand += ' -v';
   }
 
-  // Add target pane
-  splitCommand += ` -t '${targetPaneId}'`;
+  // Add working directory if specified (must come before -t)
+  if (workingDir) {
+    splitCommand += ` -c '${escapeShellPath(workingDir)}'`;
+  }
 
   // Add size if specified (as percentage)
   if (size !== undefined && size > 0 && size < 100) {
     splitCommand += ` -p ${size}`;
   }
 
-  // Add working directory if specified
-  if (workingDir) {
-    splitCommand += ` -c '${escapeShellPath(workingDir)}'`;
-  }
+  // Add target pane
+  splitCommand += ` -t '${targetPaneId}'`;
 
   // Add -P flag to print new pane info, with format to get pane ID
   splitCommand += ` -P -F '#{pane_id}'`;
