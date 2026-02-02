@@ -59,6 +59,7 @@ PLATFORM=""
 ARCH=""
 LIBC=""
 INSTALL_MODE="auto"
+INSTALL_METHOD=""
 TARGET_VERSION="stable"
 AUTO_YES=false
 CLEANUP_NEEDED=false
@@ -487,6 +488,67 @@ install_claude_if_needed() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Config Management
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Write install method to ~/.genie/config.json
+write_install_method() {
+    local method="$1"
+    local config_file="$GENIE_HOME/config.json"
+
+    mkdir -p "$GENIE_HOME"
+
+    if [[ -f "$config_file" ]]; then
+        # Update existing config
+        if check_command jq; then
+            jq --arg m "$method" '.installMethod = $m' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
+        else
+            # Fallback: read file, check if it has content
+            local content
+            content=$(cat "$config_file" 2>/dev/null || echo "{}")
+            if [[ "$content" == "{}" || -z "$content" ]]; then
+                echo "{\"installMethod\":\"$method\"}" > "$config_file"
+            else
+                # Simple sed to add installMethod before closing brace
+                # Remove existing installMethod if present, then add new one
+                content=$(echo "$content" | sed 's/,"installMethod":"[^"]*"//g' | sed 's/"installMethod":"[^"]*",//g' | sed 's/"installMethod":"[^"]*"//g')
+                # Add installMethod before final }
+                echo "$content" | sed 's/}$/,"installMethod":"'"$method"'"}/' > "$config_file"
+            fi
+        fi
+    else
+        echo "{\"installMethod\":\"$method\"}" > "$config_file"
+    fi
+
+    log "Install method '$method' saved to config"
+}
+
+# Prompt user for install method choice
+prompt_install_method() {
+    if [[ "$AUTO_YES" == true ]]; then
+        # Default to bun for auto mode
+        INSTALL_METHOD="bun"
+        return
+    fi
+
+    echo
+    echo -e "${BOLD}How would you like to install Genie CLI?${NC}"
+    echo
+    echo "  1) source  - Clone from GitHub (developer mode)"
+    echo "  2) npm     - Install via npm -g"
+    echo "  3) bun     - Install via bun -g (recommended)"
+    echo
+    echo -en "${YELLOW}?${NC} Choose [1-3] (default: 3): "
+    read -r choice
+
+    case "$choice" in
+        1) INSTALL_METHOD="source" ;;
+        2) INSTALL_METHOD="npm" ;;
+        *) INSTALL_METHOD="bun" ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Installation Methods
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -509,11 +571,17 @@ install_quick() {
         version_arg="@latest"
     fi
 
+    local used_method=""
     if check_command bun; then
         run bun install -g "${PACKAGE_NAME}${version_arg}"
+        used_method="bun"
     elif check_command npm; then
         run npm install -g "${PACKAGE_NAME}${version_arg}"
+        used_method="npm"
     fi
+
+    # Save install method to config
+    write_install_method "$used_method"
 
     success "Genie CLI installed via package manager"
 }
@@ -545,11 +613,17 @@ install_full() {
 
     log "Installing $PACKAGE_NAME globally..."
 
+    local used_method=""
     if check_command bun; then
         run bun install -g "${PACKAGE_NAME}${version_arg}"
+        used_method="bun"
     elif check_command npm; then
         run npm install -g "${PACKAGE_NAME}${version_arg}"
+        used_method="npm"
     fi
+
+    # Save install method to config
+    write_install_method "$used_method"
 
     CLEANUP_NEEDED=false
     success "Genie CLI installed"
@@ -601,6 +675,9 @@ install_source() {
     header "Installing binaries..."
 
     install_binaries
+
+    # Save install method to config
+    write_install_method "source"
 
     CLEANUP_NEEDED=false
     success "Genie CLI built and installed from source"
@@ -713,16 +790,89 @@ install_auto() {
         return
     fi
 
-    # Fresh install: determine best mode
-    if check_command bun || check_command npm; then
-        log "Package manager found, using quick install"
-        INSTALL_MODE="quick"
-        install_quick
-    else
-        log "No package manager found, using full install"
-        INSTALL_MODE="full"
-        install_full
+    # Fresh install: prompt user for install method
+    prompt_install_method
+
+    case "$INSTALL_METHOD" in
+        source)
+            INSTALL_MODE="source"
+            install_source
+            ;;
+        npm)
+            if check_command npm; then
+                INSTALL_MODE="quick"
+                install_quick_npm
+            else
+                log "npm not found, using full install"
+                INSTALL_MODE="full"
+                install_full
+            fi
+            ;;
+        bun)
+            if check_command bun; then
+                INSTALL_MODE="quick"
+                install_quick_bun
+            else
+                log "bun not found, using full install"
+                INSTALL_MODE="full"
+                install_full
+            fi
+            ;;
+    esac
+}
+
+# Quick install via bun only
+install_quick_bun() {
+    header "Quick Install (bun)"
+
+    if ! check_command bun; then
+        error "Bun is not installed."
+        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
+        exit 3
     fi
+
+    log "Installing $PACKAGE_NAME globally via bun..."
+
+    local version_arg=""
+    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
+        version_arg="@$TARGET_VERSION"
+    elif [[ "$TARGET_VERSION" == "latest" ]]; then
+        version_arg="@latest"
+    fi
+
+    run bun install -g "${PACKAGE_NAME}${version_arg}"
+
+    # Save install method to config
+    write_install_method "bun"
+
+    success "Genie CLI installed via bun"
+}
+
+# Quick install via npm only
+install_quick_npm() {
+    header "Quick Install (npm)"
+
+    if ! check_command npm; then
+        error "npm is not installed."
+        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
+        exit 3
+    fi
+
+    log "Installing $PACKAGE_NAME globally via npm..."
+
+    local version_arg=""
+    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
+        version_arg="@$TARGET_VERSION"
+    elif [[ "$TARGET_VERSION" == "latest" ]]; then
+        version_arg="@latest"
+    fi
+
+    run npm install -g "${PACKAGE_NAME}${version_arg}"
+
+    # Save install method to config
+    write_install_method "npm"
+
+    success "Genie CLI installed via npm"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -4,9 +4,6 @@ import { join } from 'path';
 import { loadConfig, getDefaultProfile, configExists } from '../lib/config.js';
 import { loadGenieConfig, genieConfigExists, getGenieDir, ensureGenieDir } from '../lib/genie-config.js';
 import { describeEnabledHooks, hasEnabledHooks, parseHookNames } from '../lib/hooks/index.js';
-import * as tmux from '../lib/tmux.js';
-
-const SESSION_NAME = 'genie';
 
 export interface LaunchOptions {
   hooks?: string;
@@ -33,19 +30,6 @@ function getClaudeArgs(): string[] {
     return ['--system-prompt', prompt];
   }
   return [];
-}
-
-/**
- * Get the Claude command string for shell execution
- */
-function getClaudeCommand(): string {
-  const prompt = getAgentsSystemPrompt();
-  if (prompt) {
-    // Escape for shell: replace single quotes with '\''
-    const escaped = prompt.replace(/'/g, "'\\''");
-    return `claude --system-prompt '${escaped}'`;
-  }
-  return 'claude';
 }
 
 /**
@@ -123,108 +107,33 @@ export async function launchProfile(profileName: string, options: LaunchOptions 
   await displayHookInfo(options);
 
   // Write hooks environment file
-  const hooksEnvFile = await writeHooksEnvFile();
+  await writeHooksEnvFile();
 
-  const isInsideTmux = !!process.env.TMUX;
+  console.log(`🚀 Launching "${profileName}"...`);
 
-  // Environment setup command
-  const envSetupParts = [
-    `export LC_ALL=C.UTF-8`,
-    `export LANG=C.UTF-8`,
-    `export ANTHROPIC_BASE_URL="${config.apiUrl}"`,
-    `export ANTHROPIC_AUTH_TOKEN="${config.apiKey}"`,
-    `export ANTHROPIC_DEFAULT_OPUS_MODEL="${profile.opus}"`,
-    `export ANTHROPIC_DEFAULT_SONNET_MODEL="${profile.sonnet}"`,
-    `export ANTHROPIC_DEFAULT_HAIKU_MODEL="${profile.haiku}"`,
-  ];
+  // Set environment variables
+  process.env.LC_ALL = 'C.UTF-8';
+  process.env.LANG = 'C.UTF-8';
+  process.env.ANTHROPIC_BASE_URL = config.apiUrl;
+  process.env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
+  process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = profile.opus;
+  process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = profile.sonnet;
+  process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haiku;
 
-  // Source hooks env file if it exists
-  if (hooksEnvFile) {
-    envSetupParts.push(`source "${hooksEnvFile}"`);
-  }
+  // Spawn claude with inherited stdio
+  const child = spawn('claude', getClaudeArgs(), {
+    stdio: 'inherit',
+    env: process.env,
+  });
 
-  envSetupParts.push(getClaudeCommand());
+  child.on('error', (error) => {
+    console.error(`❌ Failed to launch: ${error.message}`);
+    process.exit(1);
+  });
 
-  const envSetup = envSetupParts.join('; ');
-
-  if (isInsideTmux) {
-    // Already inside tmux - run directly in current terminal
-    console.log(`🚀 Launching "${profileName}"...`);
-
-    // Set environment variables
-    process.env.LC_ALL = 'C.UTF-8';
-    process.env.LANG = 'C.UTF-8';
-    process.env.ANTHROPIC_BASE_URL = config.apiUrl;
-    process.env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = profile.opus;
-    process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = profile.sonnet;
-    process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haiku;
-
-    // Spawn claude with inherited stdio (replaces this process)
-    const child = spawn('claude', getClaudeArgs(), {
-      stdio: 'inherit',
-      env: process.env,
-    });
-
-    child.on('error', (error) => {
-      console.error(`❌ Failed to launch: ${error.message}`);
-      process.exit(1);
-    });
-
-    child.on('exit', (code) => {
-      process.exit(code || 0);
-    });
-  } else {
-    // Outside tmux - create or reuse "genie" session
-    let session = await tmux.findSessionByName(SESSION_NAME);
-
-    if (session) {
-      // Session exists - add a new window
-      console.log(`🚀 Adding "${profileName}" to session "${SESSION_NAME}"...`);
-
-      const window = await tmux.createWindow(session.id, profileName);
-      if (!window) {
-        console.error('❌ Failed to create window');
-        process.exit(1);
-      }
-
-      const panes = await tmux.listPanes(window.id);
-      await tmux.executeCommand(panes[0].id, envSetup);
-    } else {
-      // No session - create it
-      console.log(`🚀 Creating session "${SESSION_NAME}" with "${profileName}"...`);
-
-      session = await tmux.createSession(SESSION_NAME);
-      if (!session) {
-        console.error('❌ Failed to create tmux session');
-        process.exit(1);
-      }
-
-      // Rename the default window to the profile name
-      const windows = await tmux.listWindows(session.id);
-      await tmux.renameWindow(windows[0].id, profileName);
-
-      const panes = await tmux.listPanes(windows[0].id);
-      await tmux.executeCommand(panes[0].id, envSetup);
-    }
-
-    console.log(`✅ Ready`);
-    console.log(`\nAttaching to session...`);
-
-    // Attach to session
-    const child = spawn('tmux', ['attach', '-t', SESSION_NAME], {
-      stdio: 'inherit',
-    });
-
-    child.on('error', (error) => {
-      console.error(`❌ Failed to attach: ${error.message}`);
-      process.exit(1);
-    });
-
-    child.on('exit', (code) => {
-      process.exit(code || 0);
-    });
-  }
+  child.on('exit', (code) => {
+    process.exit(code || 0);
+  });
 }
 
 export async function launchDefaultProfile(options: LaunchOptions = {}): Promise<void> {

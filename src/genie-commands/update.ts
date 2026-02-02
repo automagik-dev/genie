@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import { mkdir, copyFile, chmod } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import { loadGenieConfig, genieConfigExists } from '../lib/genie-config.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
@@ -104,37 +105,72 @@ async function runCommandSilent(command: string, args: string[], cwd?: string): 
   });
 }
 
-async function symlinkOrCopy(src: string, dest: string): Promise<void> {
-  const { symlink, unlink } = await import('fs/promises');
+type InstallationType = 'source' | 'npm' | 'bun' | 'unknown';
 
-  try {
-    // Remove existing symlink/file if present
-    if (existsSync(dest)) {
-      await unlink(dest);
+async function detectInstallationType(): Promise<InstallationType> {
+  // First, check if install method is stored in config
+  if (genieConfigExists()) {
+    try {
+      const config = await loadGenieConfig();
+      if (config.installMethod) {
+        return config.installMethod;
+      }
+    } catch {
+      // Ignore config errors, fall through to detection
     }
-    await symlink(src, dest);
-  } catch {
-    // Fallback to copy if symlink fails
-    await copyFile(src, dest);
   }
+
+  // Fallback: Check for source installation (has .git directory)
+  if (existsSync(join(GENIE_SRC, '.git'))) {
+    return 'source';
+  }
+
+  // Check where genie binary is located
+  const result = await runCommandSilent('which', ['genie']);
+  if (result.success) {
+    const path = result.output.trim();
+    // npm/bun global installs are in node_modules or .bun directories
+    if (path.includes('.bun')) {
+      return 'bun';
+    }
+    if (path.includes('node_modules')) {
+      return 'npm';
+    }
+    // Source installs use LOCAL_BIN or GENIE_BIN
+    if (path === join(LOCAL_BIN, 'genie') || path.startsWith(GENIE_BIN)) {
+      return 'source';
+    }
+    // Default to bun for other paths if bun is available
+    const hasBun = (await runCommandSilent('which', ['bun'])).success;
+    return hasBun ? 'bun' : 'npm';
+  }
+
+  return 'unknown';
 }
 
-export async function updateCommand(): Promise<void> {
-  console.log();
-  console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
-  console.log('\x1b[2m────────────────────────────────────\x1b[0m');
-  console.log();
-
-  // Check if installed via install.sh (has ~/.genie/src)
-  if (!existsSync(GENIE_SRC) || !existsSync(join(GENIE_SRC, '.git'))) {
-    error('Genie CLI was not installed via install.sh');
-    console.log();
-    console.log('To install Genie CLI properly, run:');
-    console.log('\x1b[36m  curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash\x1b[0m');
-    console.log();
+async function updateViaBun(): Promise<void> {
+  log('Updating via bun...');
+  const result = await runCommand('bun', ['install', '-g', '@automagik/genie@latest']);
+  if (!result.success) {
+    error('Failed to update via bun');
     process.exit(1);
   }
+  console.log();
+  success('Genie CLI updated!');
+}
 
+async function updateViaNpm(): Promise<void> {
+  log('Updating via npm...');
+  const result = await runCommand('npm', ['install', '-g', '@automagik/genie@latest']);
+  if (!result.success) {
+    error('Failed to update via npm');
+    process.exit(1);
+  }
+  console.log();
+  success('Genie CLI updated!');
+}
+
+async function updateSource(): Promise<void> {
   // Get current version info before update
   const beforeInfo = await getGitInfo(GENIE_SRC);
   if (beforeInfo) {
@@ -224,5 +260,52 @@ export async function updateCommand(): Promise<void> {
   if (afterInfo) {
     console.log(`Version: \x1b[36m${afterInfo.branch}@${afterInfo.commit}\x1b[0m (${afterInfo.commitDate})`);
     console.log();
+  }
+}
+
+async function symlinkOrCopy(src: string, dest: string): Promise<void> {
+  const { symlink, unlink } = await import('fs/promises');
+
+  try {
+    // Remove existing symlink/file if present
+    if (existsSync(dest)) {
+      await unlink(dest);
+    }
+    await symlink(src, dest);
+  } catch {
+    // Fallback to copy if symlink fails
+    await copyFile(src, dest);
+  }
+}
+
+export async function updateCommand(): Promise<void> {
+  console.log();
+  console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
+  console.log('\x1b[2m────────────────────────────────────\x1b[0m');
+  console.log();
+
+  const installType = await detectInstallationType();
+  log(`Detected installation: ${installType}`);
+  console.log();
+
+  if (installType === 'unknown') {
+    error('No Genie CLI installation found');
+    console.log();
+    console.log('Install method not configured. Please reinstall genie:');
+    console.log('\x1b[36m  curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash\x1b[0m');
+    console.log();
+    process.exit(1);
+  }
+
+  switch (installType) {
+    case 'source':
+      await updateSource();
+      break;
+    case 'bun':
+      await updateViaBun();
+      break;
+    case 'npm':
+      await updateViaNpm();
+      break;
   }
 }
