@@ -8,8 +8,7 @@ dist/
 build/
 *.js.map
 
-# Plugin built scripts (bundled CJS files)
-plugin/scripts/*.cjs
+# Plugin package.json (generated)
 plugin/package.json
 
 # Testing
