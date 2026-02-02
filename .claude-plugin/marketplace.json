@@ -12,7 +12,7 @@
       "name": "automagik-genie",
       "version": "2026.02.02",
       "source": "./plugin",
-      "description": "Genie workflow automation - brainstorm, wish, forge, review skills with terminal orchestration"
+      "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, wish them into plans, forge with parallel agents, ship as one team. A coding genie that grows with your project."
     }
   ]
 }

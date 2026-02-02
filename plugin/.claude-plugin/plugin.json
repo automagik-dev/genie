@@ -1,10 +1,18 @@
 {
   "name": "automagik-genie",
   "version": "2026.02.02",
-  "description": "Genie workflow automation plugin - brainstorm, wish, forge, review skills with full orchestrator support",
-  "skills": "../skills/",
-  "agents": "../agents/",
-  "hooks": "../hooks/",
-  "scripts": "../scripts/",
-  "references": "../references/"
+  "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, wish them into plans, forge with parallel agents, ship as one team. A coding genie that grows with your project.",
+  "author": {
+    "name": "Namastex Labs"
+  },
+  "repository": "https://github.com/namastexlabs/genie-cli",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "collaboration",
+    "claude-code",
+    "tmux",
+    "agents"
+  ]
 }
