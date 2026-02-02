@@ -468,55 +468,11 @@ term read my-session -n 10 --json
 
 ## Installation
 
-### One-Line Install (Recommended)
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash
 ```
 
-This auto-detects the best installation method based on your system.
-
-### Installation Modes
-
-```bash
-# Auto-detect best mode (default)
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash
-
-# Quick install (requires bun or npm already installed)
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- quick
-
-# Full install (installs all dependencies: node, bun, tmux, jq, ripgrep, claude)
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- full
-
-# Developer mode (clone repo and build from source)
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- source
-
-# Update existing installation
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- update
-
-# Install specific version
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- --version=0.260202.0002
-```
-
-### Manual Install
-
-```bash
-# With bun
-bun install -g @automagik/genie
-
-# With npm
-npm install -g @automagik/genie
-
-# Then run setup
-genie setup              # Configure hooks interactively
-genie hooks install      # Install hooks into Claude Code
-```
-
-### Requirements
-
-- **Node.js 20+** or **Bun** (for running genie)
-- **tmux** (for terminal orchestration)
-- **Claude Code** (optional, for AI integration)
+To update: `genie update`
 
 ---
 
