@@ -262,17 +262,21 @@ export async function splitPane(
     splitCommand += ` -c '${escapeShellPath(workingDir)}'`;
   }
 
-  // Execute the split command
-  await executeTmux(splitCommand);
+  // Add -P flag to print new pane info, with format to get pane ID
+  splitCommand += ` -P -F '#{pane_id}'`;
 
-  // Get the window ID from the target pane to list all panes
-  const windowInfo = await executeTmux(`display-message -p -t '${targetPaneId}' '#{window_id}'`);
+  // Execute the split command - returns the new pane ID
+  const newPaneId = (await executeTmux(splitCommand)).trim();
 
-  // List all panes in the window to find the newly created one
-  const panes = await listPanes(windowInfo);
+  // Get the window ID for the new pane
+  const windowId = await executeTmux(`display-message -p -t '${newPaneId}' '#{window_id}'`);
 
-  // The newest pane is typically the last one in the list
-  return panes.length > 0 ? panes[panes.length - 1] : null;
+  return {
+    id: newPaneId,
+    windowId: windowId.trim(),
+    active: false,
+    title: ''
+  };
 }
 
 // Map to track ongoing command executions

@@ -82,6 +82,12 @@ export async function splitSessionPane(
       process.exit(1);
     }
 
+    // Send cd command to new pane to ensure correct working directory
+    // (works around shell rc files that override the starting directory)
+    if (workingDir) {
+      await tmux.executeTmux(`send-keys -t '${newPane.id}' 'cd ${workingDir.replace(/'/g, "'\\''")} && clear' Enter`);
+    }
+
     console.log(`✅ Pane split ${splitDirection}ly in session "${sessionName}"`);
     if (workingDir) {
       console.log(`   Working directory: ${workingDir}`);
