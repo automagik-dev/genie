@@ -2,12 +2,9 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig, getDefaultProfile, configExists } from '../lib/config.js';
-import { loadGenieConfig, genieConfigExists } from '../lib/genie-config.js';
-import { describeEnabledHooks, hasEnabledHooks, parseHookNames } from '../lib/hooks/index.js';
 
 export interface LaunchOptions {
-  hooks?: string;
-  noHooks?: boolean;
+  claudeArgs?: string[];
 }
 
 /**
@@ -24,61 +21,14 @@ function getAgentsSystemPrompt(): string | null {
 /**
  * Get Claude CLI arguments including system prompt if AGENTS.md exists
  */
-function getClaudeArgs(): string[] {
+function getClaudeArgs(passthroughArgs: string[] = []): string[] {
+  const args: string[] = [];
   const prompt = getAgentsSystemPrompt();
   if (prompt) {
-    return ['--system-prompt', prompt];
+    args.push('--system-prompt', prompt);
   }
-  return [];
-}
-
-/**
- * Display hook information before launch
- */
-async function displayHookInfo(options: LaunchOptions): Promise<void> {
-  // Handle --no-hooks
-  if (options.noHooks) {
-    console.log('\x1b[33m⚠️  Hooks disabled via --no-hooks\x1b[0m');
-    return;
-  }
-
-  // Handle --hooks override
-  if (options.hooks) {
-    const presets = parseHookNames(options.hooks);
-    if (presets.length > 0) {
-      console.log(`\x1b[36m🪝 Using hooks: ${presets.join(', ')}\x1b[0m`);
-    }
-    return;
-  }
-
-  // Load from genie config
-  if (genieConfigExists()) {
-    const genieConfig = await loadGenieConfig();
-    if (hasEnabledHooks(genieConfig)) {
-      const descriptions = describeEnabledHooks(genieConfig);
-      console.log('\x1b[36m🪝 Active hooks:\x1b[0m');
-      for (const desc of descriptions) {
-        console.log(`   ${desc}`);
-      }
-    }
-  }
-}
-
-/**
- * Set hooks environment variables directly in process.env
- * This ensures Claude inherits the hooks configuration
- */
-async function setHooksEnvVars(): Promise<void> {
-  if (!genieConfigExists()) {
-    return;
-  }
-
-  const genieConfig = await loadGenieConfig();
-  if (!hasEnabledHooks(genieConfig)) {
-    return;
-  }
-
-  process.env.GENIE_HOOKS_ENABLED = genieConfig.hooks.enabled.join(',');
+  args.push(...passthroughArgs);
+  return args;
 }
 
 export async function launchProfile(profileName: string, options: LaunchOptions = {}): Promise<void> {
@@ -86,18 +36,12 @@ export async function launchProfile(profileName: string, options: LaunchOptions 
   const profile = config.profiles[profileName];
 
   if (!profile) {
-    console.error(`❌ Profile "${profileName}" not found`);
+    console.error(`Profile "${profileName}" not found`);
     console.log(`\nAvailable profiles: ${Object.keys(config.profiles).join(', ')}`);
     process.exit(1);
   }
 
-  // Display hook information
-  await displayHookInfo(options);
-
-  // Set hooks environment variables
-  await setHooksEnvVars();
-
-  console.log(`🚀 Launching "${profileName}"...`);
+  console.log(`Launching "${profileName}"...`);
 
   // Set environment variables
   process.env.LC_ALL = 'C.UTF-8';
@@ -109,13 +53,13 @@ export async function launchProfile(profileName: string, options: LaunchOptions 
   process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.haiku;
 
   // Spawn claude with inherited stdio
-  const child = spawn('claude', getClaudeArgs(), {
+  const child = spawn('claude', getClaudeArgs(options.claudeArgs || []), {
     stdio: 'inherit',
     env: process.env,
   });
 
   child.on('error', (error) => {
-    console.error(`❌ Failed to launch: ${error.message}`);
+    console.error(`Failed to launch: ${error.message}`);
     process.exit(1);
   });
 
@@ -126,14 +70,14 @@ export async function launchProfile(profileName: string, options: LaunchOptions 
 
 export async function launchDefaultProfile(options: LaunchOptions = {}): Promise<void> {
   if (!configExists()) {
-    console.error('❌ No config found. Run `claudio setup` first.');
+    console.error('No config found. Run `claudio setup` first.');
     process.exit(1);
   }
 
   const defaultProfile = await getDefaultProfile();
 
   if (!defaultProfile) {
-    console.error('❌ No default profile set.');
+    console.error('No default profile set.');
     console.log('\nRun `claudio setup` to configure, or use `claudio <profile>` to launch a specific profile.');
     process.exit(1);
   }

@@ -15,13 +15,13 @@ export function generateTmuxConfig(): string {
 # To use: add to ~/.tmux.conf or source this file
 
 # Ctrl+T: New window (tab) in current session
-bind-key -n C-t new-window
+bind-key -n C-t new-window -c "#{pane_current_path}"
 
 # Ctrl+S: Vertical split (requires stty -ixon in shell rc)
-bind-key -n C-s split-window -v
+bind-key -n C-s split-window -v -c "#{pane_current_path}"
 
-# Ctrl+H: Horizontal split
-bind-key -n C-h split-window -h
+# Ctrl+Shift+S: Horizontal split
+bind-key -n C-S split-window -h -c "#{pane_current_path}"
 `;
 }
 
@@ -49,7 +49,7 @@ genie-new-tab() {
   local session
   session=$(tmux display-message -p '#S' 2>/dev/null)
   if [ -n "$session" ]; then
-    tmux new-window
+    tmux new-window -c "#{pane_current_path}"
   else
     echo "Not in a tmux session"
   fi
@@ -57,7 +57,7 @@ genie-new-tab() {
 
 genie-vsplit() {
   if tmux display-message -p '#S' >/dev/null 2>&1; then
-    tmux split-window -v
+    tmux split-window -v -c "#{pane_current_path}"
   else
     echo "Not in a tmux session"
   fi
@@ -65,7 +65,7 @@ genie-vsplit() {
 
 genie-hsplit() {
   if tmux display-message -p '#S' >/dev/null 2>&1; then
-    tmux split-window -h
+    tmux split-window -h -c "#{pane_current_path}"
   else
     echo "Not in a tmux session"
   fi
@@ -83,13 +83,13 @@ export function displayShortcuts(): void {
   console.log(`
 Warp-like Terminal Shortcuts for tmux + Termux
 
-┌────────────┬────────────────────────────────────────┐
-│ Shortcut   │ Action                                 │
-├────────────┼────────────────────────────────────────┤
-│ Ctrl+T     │ New tab (window) in current session    │
-│ Ctrl+S     │ Vertical split in current session      │
-│ Ctrl+H     │ Horizontal split in current session    │
-└────────────┴────────────────────────────────────────┘
+┌──────────────────┬────────────────────────────────────────┐
+│ Shortcut         │ Action                                 │
+├──────────────────┼────────────────────────────────────────┤
+│ Ctrl+T           │ New tab (window) in current session    │
+│ Ctrl+S           │ Vertical split in current session      │
+│ Ctrl+Shift+S     │ Horizontal split in current session    │
+└──────────────────┴────────────────────────────────────────┘
 
 Termux Extra Keys (F1-F3):
   F1 → New tab       F2 → Vertical split

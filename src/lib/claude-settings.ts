@@ -5,7 +5,7 @@
  * Uses Zod with passthrough() to preserve unknown fields.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import { z } from 'zod';
@@ -43,7 +43,7 @@ const ClaudeSettingsSchema = z.object({
 
 export type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
 
-// Constants for the genie hook
+// Constants for the genie hook (used for migration/cleanup)
 export const GENIE_HOOK_SCRIPT_NAME = 'genie-bash-hook.sh';
 export const GENIE_HOOK_MATCHER = 'Bash';
 
@@ -69,7 +69,7 @@ export function getClaudeSettingsPath(): string {
 }
 
 /**
- * Get the path to the genie hook script
+ * Get the path to the genie hook script (for cleanup)
  */
 export function getGenieHookScriptPath(): string {
   return join(CLAUDE_HOOKS_DIR, GENIE_HOOK_SCRIPT_NAME);
@@ -88,16 +88,6 @@ export function claudeSettingsExists(): boolean {
 export function ensureClaudeDir(): void {
   if (!existsSync(CLAUDE_DIR)) {
     mkdirSync(CLAUDE_DIR, { recursive: true });
-  }
-}
-
-/**
- * Ensure the Claude hooks directory exists
- */
-export function ensureClaudeHooksDir(): void {
-  ensureClaudeDir();
-  if (!existsSync(CLAUDE_HOOKS_DIR)) {
-    mkdirSync(CLAUDE_HOOKS_DIR, { recursive: true });
   }
 }
 
@@ -136,23 +126,7 @@ export async function saveClaudeSettings(settings: ClaudeSettings): Promise<void
 }
 
 /**
- * Create the genie hook entry for Claude settings
- */
-function createGenieHookEntry(scriptPath: string): z.infer<typeof MatcherHooksSchema> {
-  return {
-    matcher: GENIE_HOOK_MATCHER,
-    hooks: [
-      {
-        type: 'command',
-        command: scriptPath,
-        timeout: 600,
-      },
-    ],
-  };
-}
-
-/**
- * Check if the genie hook is installed in the settings
+ * Check if the genie hook is installed in the settings (for migration cleanup)
  */
 export function isGenieHookInstalled(settings: ClaudeSettings): boolean {
   const preToolUse = settings.hooks?.PreToolUse;
@@ -170,40 +144,7 @@ export function isGenieHookInstalled(settings: ClaudeSettings): boolean {
 }
 
 /**
- * Add the genie hook to Claude settings
- * Returns the modified settings (does not save to disk)
- */
-export function addGenieHook(settings: ClaudeSettings): ClaudeSettings {
-  const scriptPath = getGenieHookScriptPath();
-  const hookEntry = createGenieHookEntry(scriptPath);
-
-  // Initialize hooks structure if needed
-  if (!settings.hooks) {
-    settings.hooks = {};
-  }
-  if (!settings.hooks.PreToolUse) {
-    settings.hooks.PreToolUse = [];
-  }
-
-  // Check if already installed
-  if (isGenieHookInstalled(settings)) {
-    return settings;
-  }
-
-  // Remove any existing Bash matcher entries that might conflict
-  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
-    (entry) => !(entry.matcher === GENIE_HOOK_MATCHER &&
-      entry.hooks?.some((h) => h.command?.includes('genie')))
-  );
-
-  // Add the new hook entry
-  settings.hooks.PreToolUse.push(hookEntry);
-
-  return settings;
-}
-
-/**
- * Remove the genie hook from Claude settings
+ * Remove the genie hook from Claude settings (for migration cleanup)
  * Returns the modified settings (does not save to disk)
  */
 export function removeGenieHook(settings: ClaudeSettings): ClaudeSettings {
@@ -235,6 +176,23 @@ export function removeGenieHook(settings: ClaudeSettings): ClaudeSettings {
   }
 
   return settings;
+}
+
+/**
+ * Check if hook script exists (for cleanup)
+ */
+export function hookScriptExists(): boolean {
+  return existsSync(getGenieHookScriptPath());
+}
+
+/**
+ * Remove the hook script file (for cleanup)
+ */
+export function removeHookScript(): void {
+  const scriptPath = getGenieHookScriptPath();
+  if (existsSync(scriptPath)) {
+    unlinkSync(scriptPath);
+  }
 }
 
 /**

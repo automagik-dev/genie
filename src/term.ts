@@ -22,6 +22,11 @@ program
   .name('term')
   .description(`AI-friendly terminal orchestration (tmux wrapper)
 
+Collaborative Usage:
+  AI runs:    term exec genie:shell '<command>'
+  Human watches: tmux attach -t genie
+  AI reads:   term read genie
+
 Workflow: new → exec → read → rm
 Full control: window new/ls/rm, pane ls/rm, split, status`)
   .version(VERSION);
@@ -81,8 +86,13 @@ program
 program
   .command('exec <session> <command...>')
   .description('Execute command in a tmux session')
-  .action(async (session: string, command: string[]) => {
-    await execCmd.executeInSession(session, command.join(' '));
+  .option('-q, --quiet', 'Suppress stdout output')
+  .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
+  .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
+    await execCmd.executeInSession(session, command.join(' '), {
+      quiet: options.quiet,
+      timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
+    });
   });
 
 program

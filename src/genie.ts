@@ -3,14 +3,10 @@
 import { Command } from 'commander';
 import { VERSION } from './lib/version.js';
 import { installCommand } from './genie-commands/install.js';
-import { setupCommand, quickSetupCommand } from './genie-commands/setup.js';
+import { setupCommand, type SetupOptions } from './genie-commands/setup.js';
 import { updateCommand } from './genie-commands/update.js';
-import {
-  showHooksCommand,
-  installHooksCommand,
-  uninstallHooksCommand,
-  testHooksCommand,
-} from './genie-commands/hooks.js';
+import { uninstallCommand } from './genie-commands/uninstall.js';
+import { doctorCommand } from './genie-commands/doctor.js';
 import {
   shortcutsShowCommand,
   shortcutsInstallCommand,
@@ -32,18 +28,26 @@ program
   .option('--yes', 'Auto-approve all installations')
   .action(installCommand);
 
-// Setup command - interactive hook configuration
+// Setup command - configure genie settings
 program
   .command('setup')
-  .description('Configure hooks and settings (interactive wizard)')
-  .option('--quick', 'Use recommended defaults without prompts')
-  .action(async (options) => {
-    if (options.quick) {
-      await quickSetupCommand();
-    } else {
-      await setupCommand();
-    }
+  .description('Configure genie settings')
+  .option('--quick', 'Accept all defaults')
+  .option('--shortcuts', 'Only configure keyboard shortcuts')
+  .option('--claudio', 'Only configure Claudio integration')
+  .option('--terminal', 'Only configure terminal defaults')
+  .option('--session', 'Only configure session settings')
+  .option('--reset', 'Reset configuration to defaults')
+  .option('--show', 'Show current configuration')
+  .action(async (options: SetupOptions) => {
+    await setupCommand(options);
   });
+
+// Doctor command - diagnostic checks
+program
+  .command('doctor')
+  .description('Run diagnostic checks on genie installation')
+  .action(doctorCommand);
 
 // Update command - pull latest and rebuild
 program
@@ -51,35 +55,11 @@ program
   .description('Update Genie CLI to the latest version')
   .action(updateCommand);
 
-// Hooks command group - manage Claude Code hooks
-const hooks = program
-  .command('hooks')
-  .description('Manage Claude Code hooks');
-
-// Make 'show' the default action for bare `genie hooks`
-hooks.action(showHooksCommand);
-
-hooks
-  .command('show')
-  .description('Show current hook configuration')
-  .action(showHooksCommand);
-
-hooks
-  .command('install')
-  .description('Install hooks into Claude Code')
-  .option('--force', 'Overwrite existing hooks')
-  .action(installHooksCommand);
-
-hooks
+// Uninstall command - remove genie CLI
+program
   .command('uninstall')
-  .description('Remove hooks from Claude Code')
-  .option('--keep-script', 'Keep the hook script file')
-  .action(uninstallHooksCommand);
-
-hooks
-  .command('test')
-  .description('Test the hook script')
-  .action(testHooksCommand);
+  .description('Remove Genie CLI and clean up hooks')
+  .action(uninstallCommand);
 
 // Shortcuts command group - manage tmux keyboard shortcuts
 const shortcuts = program

@@ -1,4 +1,5 @@
 import * as logReader from '../lib/log-reader.js';
+import { getTerminalConfig } from '../lib/genie-config.js';
 
 export interface ReadOptions {
   lines?: string;
@@ -15,9 +16,13 @@ export interface ReadOptions {
 
 export async function readSessionLogs(sessionName: string, options: ReadOptions): Promise<void> {
   try {
+    // Use config default if no lines specified
+    const termConfig = getTerminalConfig();
+    const defaultLines = termConfig.readLines;
+
     // Parse options
     const readOptions: logReader.ReadOptions = {
-      lines: options.lines ? parseInt(options.lines, 10) : 100,
+      lines: options.lines ? parseInt(options.lines, 10) : defaultLines,
       from: options.from ? parseInt(options.from, 10) : undefined,
       to: options.to ? parseInt(options.to, 10) : undefined,
       range: options.range,

@@ -903,13 +903,49 @@ ensure_path() {
 }
 
 run_setup() {
-    # Run genie setup if available
-    if check_command genie; then
-        log "Running genie setup..."
-        genie setup --quick 2>/dev/null || true
-    elif [[ -x "$GENIE_BIN/genie.js" ]]; then
-        log "Running genie setup..."
-        "$GENIE_BIN/genie.js" setup --quick 2>/dev/null || true
+    # Skip for updates
+    if [[ "$INSTALL_MODE" == "update" ]]; then
+        return 0
+    fi
+
+    # Check if already configured
+    if [[ -f "$GENIE_HOME/config.json" ]]; then
+        local complete
+        if check_command jq; then
+            complete=$(jq -r '.setupComplete // false' "$GENIE_HOME/config.json" 2>/dev/null)
+        else
+            # Fallback: simple grep check
+            if grep -q '"setupComplete"[[:space:]]*:[[:space:]]*true' "$GENIE_HOME/config.json" 2>/dev/null; then
+                complete="true"
+            else
+                complete="false"
+            fi
+        fi
+        if [[ "$complete" == "true" ]]; then
+            log "Setup already complete, skipping"
+            return 0
+        fi
+    fi
+
+    # Run setup
+    if [[ "$AUTO_YES" == true ]]; then
+        if check_command genie; then
+            log "Running genie setup (quick mode)..."
+            genie setup --quick 2>/dev/null || true
+        elif [[ -x "$GENIE_BIN/genie.js" ]]; then
+            log "Running genie setup (quick mode)..."
+            "$GENIE_BIN/genie.js" setup --quick 2>/dev/null || true
+        fi
+    else
+        if confirm "Run genie setup now?"; then
+            if check_command genie; then
+                genie setup
+            elif [[ -x "$GENIE_BIN/genie.js" ]]; then
+                "$GENIE_BIN/genie.js" setup
+            fi
+        else
+            info "Skipped. Run 'genie setup' later to configure."
+        fi
     fi
 }
 

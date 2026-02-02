@@ -1,6 +1,16 @@
 import * as tmux from '../lib/tmux.js';
+import { getTerminalConfig } from '../lib/genie-config.js';
 
-export async function executeInSession(target: string, command: string): Promise<void> {
+export interface ExecOptions {
+  quiet?: boolean;
+  timeout?: number;
+}
+
+export async function executeInSession(
+  target: string,
+  command: string,
+  options: ExecOptions = {}
+): Promise<void> {
   // Parse target: "session:window" or just "session"
   const [sessionName, windowName] = target.includes(':')
     ? target.split(':')
@@ -10,7 +20,9 @@ export async function executeInSession(target: string, command: string): Promise
     // Find or create session
     let session = await tmux.findSessionByName(sessionName);
     if (!session) {
-      console.error(`Session "${sessionName}" not found, creating...`);
+      if (!options.quiet) {
+        console.error(`Session "${sessionName}" not found, creating...`);
+      }
       session = await tmux.createSession(sessionName);
       if (!session) {
         console.error(`Failed to create session "${sessionName}"`);
@@ -22,7 +34,9 @@ export async function executeInSession(target: string, command: string): Promise
     let windows = await tmux.listWindows(session.id);
     let targetWindow = windows.find(w => w.name === windowName);
     if (!targetWindow) {
-      console.error(`Window "${windowName}" not found, creating...`);
+      if (!options.quiet) {
+        console.error(`Window "${windowName}" not found, creating...`);
+      }
       targetWindow = await tmux.createWindow(session.id, windowName);
       if (!targetWindow) {
         console.error(`Failed to create window "${windowName}"`);
@@ -37,11 +51,19 @@ export async function executeInSession(target: string, command: string): Promise
       process.exit(1);
     }
 
-    // Run command synchronously using wait-for (no polling, no ugly markers)
-    const { output, exitCode } = await tmux.runCommandSync(panes[0].id, command);
+    // Use config default if no timeout specified
+    const termConfig = getTerminalConfig();
+    const timeout = options.timeout ?? termConfig.execTimeout;
 
-    // Output the result
-    if (output) {
+    // Run command synchronously using wait-for (no polling, no ugly markers)
+    const { output, exitCode } = await tmux.runCommandSync(
+      panes[0].id,
+      command,
+      timeout
+    );
+
+    // Output the result (unless quiet mode)
+    if (output && !options.quiet) {
       console.log(output);
     }
 

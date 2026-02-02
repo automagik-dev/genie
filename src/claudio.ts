@@ -13,14 +13,29 @@ import {
 } from './commands/profiles.js';
 import { modelsCommand, configCommand } from './commands/models.js';
 
+// Extract Claude passthrough args (everything after --)
+// Must be done before Commander parses argv
+const separatorIndex = process.argv.indexOf('--');
+const claudePassthroughArgs: string[] = separatorIndex !== -1
+  ? process.argv.slice(separatorIndex + 1)
+  : [];
+const claudioArgs = separatorIndex !== -1
+  ? process.argv.slice(0, separatorIndex)
+  : process.argv;
+
+// Special case: "claudio -- <claude args>" with no claudio args
+// Launch default profile directly, bypassing Commander
+if (claudePassthroughArgs.length > 0 && claudioArgs.length === 2) {
+  // Only have [node, script] before --, so just launch with passthrough
+  await launchDefaultProfile({ claudeArgs: claudePassthroughArgs });
+} else {
+
 const program = new Command();
 
 program
   .name('claudio')
   .description('Launch Claude Code with custom LLM router profiles')
-  .version(VERSION)
-  .option('--hooks <presets>', 'Override hooks (comma-separated: collaborative,supervised,sandboxed,audited)')
-  .option('--no-hooks', 'Disable all hooks');
+  .version(VERSION);
 
 // Setup command
 program
@@ -33,13 +48,10 @@ program
 // Launch command (explicit)
 program
   .command('launch [profile]')
-  .description('Launch Claude Code with optional profile')
-  .option('--hooks <presets>', 'Override hooks (comma-separated)')
-  .option('--no-hooks', 'Disable all hooks')
-  .action(async (profile: string | undefined, cmdOptions) => {
+  .description('Launch Claude Code with optional profile (use -- to pass args to Claude)')
+  .action(async (profile: string | undefined) => {
     const options: LaunchOptions = {
-      hooks: cmdOptions.hooks,
-      noHooks: cmdOptions.noHooks,
+      claudeArgs: claudePassthroughArgs,
     };
 
     if (profile) {
@@ -107,23 +119,21 @@ program
 
 // Handle profile launch (no args = default, or named profile)
 // This is the default action when no command is specified
-program.action(async (options, command) => {
-  const args = command.args;
+program.action(async (_options, command) => {
+  const args = command.args as string[];
+  const profileName = args[0];
 
   const launchOptions: LaunchOptions = {
-    hooks: options.hooks,
-    noHooks: options.hooks === false, // --no-hooks sets hooks to false
+    claudeArgs: claudePassthroughArgs,
   };
 
-  if (args.length === 0) {
-    // No arguments - launch default profile
+  if (profileName) {
+    await launchProfile(profileName, launchOptions);
+  } else {
     await launchDefaultProfile(launchOptions);
-    return;
   }
-
-  // Profile name provided - launch named profile
-  const profileName = args[0];
-  await launchProfile(profileName, launchOptions);
 });
 
-program.parse();
+program.parse(claudioArgs);
+
+} // end else block for special case

@@ -1,282 +1,400 @@
 /**
  * Genie Setup Command
  *
- * Interactive wizard for configuring genie hooks and settings.
- * Teaches users about hooks and lets them choose which to enable.
+ * Interactive wizard for configuring genie settings.
+ * Supports full wizard, quick mode, and section-specific setup.
  */
 
-import { checkbox, confirm, input } from '@inquirer/prompts';
-import {
-  loadGenieConfig,
-  saveGenieConfig,
-  genieConfigExists,
-  getGenieConfigPath,
-} from '../lib/genie-config.js';
-import {
-  GenieConfig,
-  PresetName,
-  PRESET_DESCRIPTIONS,
-} from '../types/genie-config.js';
-import { describeEnabledHooks } from '../lib/hooks/index.js';
+import { confirm, input, select } from '@inquirer/prompts';
 import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import { homedir } from 'os';
 import { join } from 'path';
+import { checkCommand } from '../lib/system-detect.js';
+import {
+  loadGenieConfig,
+  saveGenieConfig,
+  markSetupComplete,
+  resetConfig,
+  getGenieConfigPath,
+  contractPath,
+  updateShortcutsConfig,
+} from '../lib/genie-config.js';
+import type { GenieConfig } from '../types/genie-config.js';
+
+export interface SetupOptions {
+  quick?: boolean;
+  shortcuts?: boolean;
+  claudio?: boolean;
+  terminal?: boolean;
+  session?: boolean;
+  reset?: boolean;
+  show?: boolean;
+}
 
 /**
  * Print the header banner
  */
 function printHeader(): void {
   console.log();
-  console.log('\x1b[1m\x1b[36m' + '╔' + '═'.repeat(62) + '╗' + '\x1b[0m');
-  console.log('\x1b[1m\x1b[36m' + '║  ' + '\x1b[0m\x1b[1m🧞 Genie Setup - Configure Your AI Assistant' + ' '.repeat(16) + '\x1b[36m║\x1b[0m');
-  console.log('\x1b[1m\x1b[36m' + '╚' + '═'.repeat(62) + '╝' + '\x1b[0m');
+  console.log('\x1b[1m\x1b[36m' + '=' .repeat(64) + '\x1b[0m');
+  console.log('\x1b[1m\x1b[36m  Genie Setup Wizard\x1b[0m');
+  console.log('\x1b[1m\x1b[36m' + '=' .repeat(64) + '\x1b[0m');
   console.log();
 }
 
 /**
- * Print the about hooks section
+ * Print a section header
  */
-function printAboutHooks(): void {
-  console.log('\x1b[1m📚 ABOUT HOOKS\x1b[0m');
-  console.log('\x1b[2mHooks let you control how the AI uses tools - without wasting\x1b[0m');
-  console.log('\x1b[2mtokens on prompts! Instead of telling the AI "please use term",\x1b[0m');
-  console.log('\x1b[2mhooks automatically enforce the behavior.\x1b[0m');
+function printSection(title: string, description?: string): void {
   console.log();
-  console.log('\x1b[2m' + '─'.repeat(64) + '\x1b[0m');
+  console.log('\x1b[1m' + title + '\x1b[0m');
+  if (description) {
+    console.log('\x1b[2m' + description + '\x1b[0m');
+  }
   console.log();
 }
 
-/**
- * Print available presets in a nice format
- */
-function printPresetDescriptions(): void {
-  console.log('\x1b[1m🔧 AVAILABLE HOOK PRESETS\x1b[0m');
-  console.log();
+// ============================================================================
+// Prerequisites Check (read-only)
+// ============================================================================
 
-  for (let i = 0; i < PRESET_DESCRIPTIONS.length; i++) {
-    const preset = PRESET_DESCRIPTIONS[i];
-    const num = i + 1;
-    const recommended = preset.recommended ? ' \x1b[32m(Recommended)\x1b[0m' : '';
+async function checkPrerequisites(): Promise<void> {
+  printSection('1. Prerequisites Check', 'Checking required tools...');
 
-    console.log(`\x1b[1m${num}. ${preset.title}\x1b[0m${recommended}`);
-    console.log(`   ├─ What: ${preset.what}`);
-    console.log(`   ├─ Why:  ${preset.why}`);
-    console.log(`   └─ How:  ${preset.how}`);
-    console.log();
+  const checks = [
+    { name: 'tmux', required: true },
+    { name: 'bun', required: true },
+    { name: 'claude', required: false, displayName: 'Claude Code CLI' },
+    { name: 'jq', required: false },
+  ];
+
+  for (const check of checks) {
+    const result = await checkCommand(check.name);
+    const displayName = check.displayName || check.name;
+    if (result.exists) {
+      console.log(`  \x1b[32m\u2713\x1b[0m ${displayName} ${result.version ? `(${result.version})` : ''}`);
+    } else if (check.required) {
+      console.log(`  \x1b[31m\u2717\x1b[0m ${displayName} \x1b[2m(required)\x1b[0m`);
+    } else {
+      console.log(`  \x1b[33m!\x1b[0m ${displayName} \x1b[2m(optional)\x1b[0m`);
+    }
+  }
+}
+
+// ============================================================================
+// Session Configuration
+// ============================================================================
+
+async function configureSession(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('2. Session Configuration', 'Configure tmux session settings');
+
+  if (quick) {
+    console.log(`  Using defaults: session="${config.session.name}", window="${config.session.defaultWindow}"`);
+    return config;
   }
 
-  console.log('\x1b[2m' + '─'.repeat(64) + '\x1b[0m');
-  console.log();
-}
+  const sessionName = await input({
+    message: 'Session name:',
+    default: config.session.name,
+  });
 
-/**
- * Format preset choice for checkbox
- */
-function formatPresetChoice(preset: typeof PRESET_DESCRIPTIONS[0], enabled: boolean): {
-  name: string;
-  value: PresetName;
-  checked: boolean;
-} {
-  const recommended = preset.recommended ? ' \x1b[32m(Recommended)\x1b[0m' : '';
-  return {
-    name: `${preset.title}${recommended} - ${preset.what}`,
-    value: preset.name,
-    checked: enabled,
+  const defaultWindow = await input({
+    message: 'Default window name:',
+    default: config.session.defaultWindow,
+  });
+
+  const autoCreate = await confirm({
+    message: 'Auto-create session on connect?',
+    default: config.session.autoCreate,
+  });
+
+  config.session = {
+    name: sessionName,
+    defaultWindow,
+    autoCreate,
   };
+
+  return config;
 }
 
-/**
- * Print success message
- */
-function printSuccess(configPath: string): void {
-  console.log();
-  console.log(`\x1b[32m✓ Configuration saved to ${configPath}\x1b[0m`);
-  console.log();
-  console.log('\x1b[1m💡 TIP:\x1b[0m Claudio will automatically use these hooks.');
-  console.log('   Run: \x1b[36mclaudio launch\x1b[0m');
-  console.log('   Watch: \x1b[36mtmux attach -t genie\x1b[0m');
-  console.log();
-}
+// ============================================================================
+// Terminal Configuration
+// ============================================================================
 
-/**
- * Print current configuration
- */
-function printCurrentConfig(config: GenieConfig): void {
-  const descriptions = describeEnabledHooks(config);
+async function configureTerminal(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('3. Terminal Defaults', 'Configure default values for term commands');
 
-  if (descriptions.length === 0) {
-    console.log('\x1b[33mNo hooks currently enabled.\x1b[0m');
-  } else {
-    console.log('\x1b[1mCurrently enabled hooks:\x1b[0m');
-    for (const desc of descriptions) {
-      console.log(`  • ${desc}`);
-    }
+  if (quick) {
+    console.log(`  Using defaults: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
+    return config;
   }
-  console.log();
-}
 
-/**
- * Configure sandboxed preset paths
- */
-async function configureSandbox(config: GenieConfig): Promise<void> {
-  const currentPaths = config.hooks.sandboxed?.allowedPaths || ['~/projects', '/tmp'];
-
-  console.log('\x1b[1mSandbox Configuration\x1b[0m');
-  console.log('\x1b[2mEnter paths where the AI can access files (comma-separated):\x1b[0m');
-
-  const pathsInput = await input({
-    message: 'Allowed paths:',
-    default: currentPaths.join(', '),
+  const timeoutStr = await input({
+    message: 'Exec timeout (milliseconds):',
+    default: String(config.terminal.execTimeout),
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n > 0 ? true : 'Must be a positive number';
+    },
   });
 
-  const allowedPaths = pathsInput
-    .split(',')
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  config.hooks.sandboxed = { allowedPaths };
-}
-
-/**
- * Configure audited preset log path
- */
-async function configureAudit(config: GenieConfig): Promise<void> {
-  const currentPath = config.hooks.audited?.logPath || '~/.genie/audit.log';
-
-  console.log('\x1b[1mAudit Configuration\x1b[0m');
-
-  const logPath = await input({
-    message: 'Audit log path:',
-    default: currentPath,
+  const linesStr = await input({
+    message: 'Read lines (default for term read):',
+    default: String(config.terminal.readLines),
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n > 0 ? true : 'Must be a positive number';
+    },
   });
 
-  config.hooks.audited = { logPath };
-}
-
-/**
- * Main setup wizard
- */
-export async function setupCommand(): Promise<void> {
-  printHeader();
-  printAboutHooks();
-  printPresetDescriptions();
-
-  // Load existing config or defaults
-  const config = await loadGenieConfig();
-  const existingPresets = new Set(config.hooks.enabled);
-
-  // If config exists, show current state
-  if (genieConfigExists()) {
-    console.log('\x1b[1m📋 CURRENT CONFIGURATION\x1b[0m');
-    printCurrentConfig(config);
-  }
-
-  // Build choices for checkbox
-  const choices = PRESET_DESCRIPTIONS.map((preset) =>
-    formatPresetChoice(preset, existingPresets.has(preset.name))
-  );
-
-  // Prompt for preset selection
-  const selectedPresets = await checkbox<PresetName>({
-    message: 'Select hooks to enable (space to toggle, enter to confirm):',
-    choices,
+  const worktreeBase = await input({
+    message: 'Worktree base directory:',
+    default: config.terminal.worktreeBase,
   });
 
-  // Update config with selections
-  config.hooks.enabled = selectedPresets;
+  config.terminal = {
+    execTimeout: parseInt(timeoutStr, 10),
+    readLines: parseInt(linesStr, 10),
+    worktreeBase,
+  };
 
-  // If sandboxed is enabled, configure it
-  if (selectedPresets.includes('sandboxed')) {
-    console.log();
-    await configureSandbox(config);
-  }
-
-  // If audited is enabled, optionally configure it
-  if (selectedPresets.includes('audited')) {
-    console.log();
-    const customAudit = await confirm({
-      message: 'Customize audit log path?',
-      default: false,
-    });
-    if (customAudit) {
-      await configureAudit(config);
-    }
-  }
-
-  // Save configuration
-  await saveGenieConfig(config);
-
-  printSuccess(getGenieConfigPath());
-
-  // Show what was configured
-  if (selectedPresets.length > 0) {
-    console.log('\x1b[1mEnabled hooks:\x1b[0m');
-    const descriptions = describeEnabledHooks(config);
-    for (const desc of descriptions) {
-      console.log(`  \x1b[32m✓\x1b[0m ${desc}`);
-    }
-    console.log();
-  }
-
-  // Offer to install tmux shortcuts
-  await offerShortcutsInstall();
+  return config;
 }
 
-/**
- * Offer to install tmux keyboard shortcuts
- */
-async function offerShortcutsInstall(): Promise<void> {
-  // Check if already installed
+// ============================================================================
+// Keyboard Shortcuts
+// ============================================================================
+
+async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('4. Keyboard Shortcuts', 'Warp-like tmux shortcuts for quick navigation');
+
   const home = homedir();
   const tmuxConf = join(home, '.tmux.conf');
+  const tmuxInstalled = isShortcutsInstalled(tmuxConf);
 
-  if (isShortcutsInstalled(tmuxConf)) {
-    console.log('\x1b[2m✓ Tmux shortcuts already installed\x1b[0m');
-    console.log();
-    return;
+  if (tmuxInstalled) {
+    console.log('  \x1b[32m\u2713\x1b[0m Tmux shortcuts already installed');
+    config.shortcuts.tmuxInstalled = true;
+    return config;
   }
 
-  console.log('\x1b[2m' + '─'.repeat(64) + '\x1b[0m');
-  console.log();
-  console.log('\x1b[1m⌨️  KEYBOARD SHORTCUTS\x1b[0m');
-  console.log('\x1b[2mOptional: Install Warp-like tmux shortcuts for quick navigation:\x1b[0m');
-  console.log('  • Ctrl+T → New tab (window)');
-  console.log('  • Ctrl+S → Vertical split');
-  console.log('  • Alt+S  → Horizontal split');
+  console.log('  Available shortcuts:');
+  console.log('    \x1b[36mCtrl+T\x1b[0m \u2192 New tab (window)');
+  console.log('    \x1b[36mCtrl+S\x1b[0m \u2192 Vertical split');
+  console.log('    \x1b[36mCtrl+H\x1b[0m \u2192 Horizontal split');
   console.log();
 
-  const installShortcutsChoice = await confirm({
+  if (quick) {
+    console.log('  Skipped in quick mode. Run \x1b[36mgenie setup --shortcuts\x1b[0m to install.');
+    return config;
+  }
+
+  const installChoice = await confirm({
     message: 'Install tmux keyboard shortcuts?',
     default: false,
   });
 
-  if (installShortcutsChoice) {
+  if (installChoice) {
     console.log();
     await installShortcuts();
+    config.shortcuts.tmuxInstalled = true;
+    await updateShortcutsConfig({ tmuxInstalled: true });
   } else {
-    console.log();
-    console.log('\x1b[2mSkipped. Run \x1b[0m\x1b[36mgenie shortcuts install\x1b[0m\x1b[2m later to add them.\x1b[0m');
-    console.log();
+    console.log('  Skipped. Run \x1b[36mgenie shortcuts install\x1b[0m later.');
   }
+
+  return config;
 }
 
-/**
- * Quick setup with recommended defaults
- */
-export async function quickSetupCommand(): Promise<void> {
-  console.log('\x1b[1m🧞 Quick Setup - Using recommended defaults\x1b[0m');
+// ============================================================================
+// Claudio Integration
+// ============================================================================
+
+async function configureClaudio(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('5. Claudio Integration', 'LLM router profile management');
+
+  const claudeCheck = await checkCommand('claude');
+
+  if (!claudeCheck.exists) {
+    console.log('  \x1b[33m!\x1b[0m Claude Code CLI not found. Skipping claudio integration.');
+    return config;
+  }
+
+  if (quick) {
+    console.log('  Skipped in quick mode. Run \x1b[36mclaudio setup\x1b[0m to configure.');
+    return config;
+  }
+
+  const enableClaudio = await confirm({
+    message: 'Configure Claudio API profiles?',
+    default: false,
+  });
+
+  if (enableClaudio) {
+    config.claudio = { enabled: true };
+    console.log();
+    console.log('  Run \x1b[36mclaudio setup\x1b[0m to configure API profiles.');
+  } else {
+    console.log('  Skipped. Run \x1b[36mclaudio setup\x1b[0m later.');
+  }
+
+  return config;
+}
+
+// ============================================================================
+// Debug Options
+// ============================================================================
+
+async function configureDebug(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('6. Debug Options', 'Logging and debugging settings');
+
+  if (quick) {
+    console.log('  Using defaults: tmuxDebug=false, verbose=false');
+    return config;
+  }
+
+  const tmuxDebug = await confirm({
+    message: 'Enable tmux debug logging?',
+    default: config.logging.tmuxDebug,
+  });
+
+  const verbose = await confirm({
+    message: 'Enable verbose mode?',
+    default: config.logging.verbose,
+  });
+
+  config.logging = {
+    tmuxDebug,
+    verbose,
+  };
+
+  return config;
+}
+
+// ============================================================================
+// Summary and Save
+// ============================================================================
+
+async function showSummaryAndSave(config: GenieConfig): Promise<void> {
+  printSection('Summary', 'Configuration will be saved to ' + contractPath(getGenieConfigPath()));
+
+  console.log(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
+  console.log(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
+  console.log(`  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`);
+  console.log(`  Claudio: ${config.claudio?.enabled ? '\x1b[32menabled\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
+  console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
   console.log();
 
-  const config = await loadGenieConfig();
-
-  // Enable recommended presets
-  config.hooks.enabled = ['collaborative', 'audited'];
-
+  // Save config
+  config.setupComplete = true;
+  config.lastSetupAt = new Date().toISOString();
   await saveGenieConfig(config);
 
-  console.log('\x1b[32m✓ Enabled:\x1b[0m collaborative, audited');
+  console.log('\x1b[32m\u2713 Configuration saved!\x1b[0m');
+}
+
+// ============================================================================
+// Show Current Config
+// ============================================================================
+
+async function showCurrentConfig(): Promise<void> {
+  const config = await loadGenieConfig();
+
   console.log();
-  console.log('Run \x1b[36mgenie setup\x1b[0m to customize further.');
+  console.log('\x1b[1mCurrent Genie Configuration\x1b[0m');
+  console.log('\x1b[2m' + contractPath(getGenieConfigPath()) + '\x1b[0m');
+  console.log();
+  console.log(JSON.stringify(config, null, 2));
   console.log();
 }
 
+// ============================================================================
+// Print Next Steps
+// ============================================================================
+
+function printNextSteps(): void {
+  console.log();
+  console.log('\x1b[1mNext Steps:\x1b[0m');
+  console.log();
+  console.log('  Start a session:  \x1b[36mclaudio launch\x1b[0m');
+  console.log('  Watch AI work:    \x1b[36mtmux attach -t genie\x1b[0m');
+  console.log('  Check health:     \x1b[36mgenie doctor\x1b[0m');
+  console.log();
+}
+
+// ============================================================================
+// Main Setup Command
+// ============================================================================
+
+export async function setupCommand(options: SetupOptions = {}): Promise<void> {
+  // Handle --show flag
+  if (options.show) {
+    await showCurrentConfig();
+    return;
+  }
+
+  // Handle --reset flag
+  if (options.reset) {
+    await resetConfig();
+    console.log('\x1b[32m\u2713 Configuration reset to defaults.\x1b[0m');
+    console.log();
+    return;
+  }
+
+  // Load existing config
+  let config = await loadGenieConfig();
+
+  // Handle section-specific flags
+  if (options.shortcuts) {
+    printHeader();
+    await configureShortcuts(config, false);
+    await markSetupComplete();
+    return;
+  }
+
+  if (options.terminal) {
+    printHeader();
+    config = await configureTerminal(config, false);
+    await saveGenieConfig(config);
+    console.log('\x1b[32m\u2713 Terminal configuration saved.\x1b[0m');
+    return;
+  }
+
+  if (options.session) {
+    printHeader();
+    config = await configureSession(config, false);
+    await saveGenieConfig(config);
+    console.log('\x1b[32m\u2713 Session configuration saved.\x1b[0m');
+    return;
+  }
+
+  if (options.claudio) {
+    printHeader();
+    await configureClaudio(config, false);
+    await markSetupComplete();
+    return;
+  }
+
+  // Full wizard
+  const quick = options.quick ?? false;
+
+  printHeader();
+
+  if (quick) {
+    console.log('\x1b[2mQuick mode: accepting all defaults\x1b[0m');
+  }
+
+  // Run all sections
+  await checkPrerequisites();
+  config = await configureSession(config, quick);
+  config = await configureTerminal(config, quick);
+  config = await configureShortcuts(config, quick);
+  config = await configureClaudio(config, quick);
+  config = await configureDebug(config, quick);
+
+  // Save and show summary
+  await showSummaryAndSave(config);
+
+  // Print next steps
+  printNextSteps();
+}
