@@ -345,7 +345,7 @@ If a worker keeps asking for the same permission:
 │         └────────────────┼────────────────┘                     │
 │                          ▼                                      │
 │                   ┌─────────────┐                               │
-│                   │   .beads/   │  ◀── Shared via redirect     │
+│                   │   .genie/   │  ◀── Shared via redirect     │
 │                   │ issues.jsonl│                               │
 │                   └──────┬──────┘                               │
 │                          │                                      │

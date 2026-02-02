@@ -169,10 +169,10 @@ async function createWorktree(taskId: string, repoPath: string): Promise<string 
 
     await $`git -C ${repoPath} worktree add ${worktreePath} ${branchName}`.quiet();
 
-    // Set up .beads redirect
-    const beadsRedirect = join(worktreePath, '.beads');
-    await fs.mkdir(beadsRedirect, { recursive: true });
-    await fs.writeFile(join(beadsRedirect, 'redirect'), join(repoPath, '.beads'));
+    // Set up .genie redirect so bd commands work in the worktree
+    const genieRedirect = join(worktreePath, '.genie');
+    await fs.mkdir(genieRedirect, { recursive: true });
+    await fs.writeFile(join(genieRedirect, 'redirect'), join(repoPath, '.genie'));
 
     return worktreePath;
   } catch (error: any) {
@@ -374,7 +374,7 @@ export async function spawnCommand(
   const escapedPrompt = prompt.replace(/'/g, "'\\''");
 
   // Set BEADS_DIR so bd commands work in worktrees
-  const beadsDir = join(repoPath, '.beads');
+  const beadsDir = join(repoPath, '.genie');
 
   // 8. Start Claude with prompt
   await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude '${escapedPrompt}'`, true, false);

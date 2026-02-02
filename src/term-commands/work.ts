@@ -144,7 +144,7 @@ async function getCurrentSession(): Promise<string | null> {
 
 /**
  * Create worktree for worker in .genie/worktrees/<taskId>
- * Creates a .beads redirect file so bd commands work in the worktree
+ * Creates a .genie redirect file so bd commands work in the worktree
  */
 async function createWorktree(
   taskId: string,
@@ -185,10 +185,10 @@ async function createWorktree(
     // Create worktree
     await $`git -C ${repoPath} worktree add ${worktreePath} ${branchName}`.quiet();
 
-    // Set up .beads redirect so bd commands work in the worktree
-    const beadsRedirect = join(worktreePath, '.beads');
-    await fs.mkdir(beadsRedirect, { recursive: true });
-    await fs.writeFile(join(beadsRedirect, 'redirect'), join(repoPath, '.beads'));
+    // Set up .genie redirect so bd commands work in the worktree
+    const genieRedirect = join(worktreePath, '.genie');
+    await fs.mkdir(genieRedirect, { recursive: true });
+    await fs.writeFile(join(genieRedirect, 'redirect'), join(repoPath, '.genie'));
 
     return worktreePath;
   } catch (error: any) {
@@ -531,7 +531,7 @@ When you're done, commit your changes and let me know.`;
     const escapedPrompt = prompt.replace(/'/g, "'\\''");
 
     // Set BEADS_DIR so bd commands work in the worktree
-    const beadsDir = join(repoPath, '.beads');
+    const beadsDir = join(repoPath, '.genie');
 
     // Start Claude with prompt as argument - no resume picker, straight to work
     await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude '${escapedPrompt}'`, true, false);
