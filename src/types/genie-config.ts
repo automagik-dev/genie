@@ -28,6 +28,11 @@ export const CollaborativeConfigSchema = z.object({
   windowName: z.string().default('shell'),
 });
 
+// Logging configuration
+export const LoggingConfigSchema = z.object({
+  tmuxDebug: z.boolean().default(false),
+});
+
 // Hook presets configuration
 export const HooksConfigSchema = z.object({
   enabled: z.array(z.enum(['collaborative', 'supervised', 'sandboxed', 'audited'])).default([]),
@@ -47,6 +52,7 @@ export const SessionConfigSchema = z.object({
 export const GenieConfigSchema = z.object({
   hooks: HooksConfigSchema.default({}),
   session: SessionConfigSchema.default({}),
+  logging: LoggingConfigSchema.default({}),
 });
 
 // Inferred types
@@ -56,6 +62,7 @@ export type SupervisedConfig = z.infer<typeof SupervisedConfigSchema>;
 export type CollaborativeConfig = z.infer<typeof CollaborativeConfigSchema>;
 export type HooksConfig = z.infer<typeof HooksConfigSchema>;
 export type SessionConfig = z.infer<typeof SessionConfigSchema>;
+export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;
 
 // Preset names type
