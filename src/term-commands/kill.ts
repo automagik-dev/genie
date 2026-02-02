@@ -9,6 +9,7 @@
  *   --keep-worktree        - Don't remove the worktree
  */
 
+import { $ } from 'bun';
 import { confirm } from '@inquirer/prompts';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
@@ -34,6 +35,8 @@ export interface KillOptions {
 // ============================================================================
 
 const WORKTREE_BASE = join(homedir(), '.local', 'share', 'term', 'worktrees');
+// Worktrees are created inside the project at .genie/worktrees/<taskId>
+const WORKTREE_DIR_NAME = '.genie/worktrees';
 
 // ============================================================================
 // Helper Functions
@@ -53,11 +56,19 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 
 /**
  * Remove worktree
- * Uses bd worktree when beads registry is enabled
- * Falls back to WorktreeManager otherwise
+ * Checks .genie/worktrees first, then bd worktree, then WorktreeManager
  */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
-  // Try bd worktree first when beads is enabled
+  // First, check .genie/worktrees location (new location)
+  const inProjectWorktree = join(repoPath, WORKTREE_DIR_NAME, taskId);
+  try {
+    await $`git -C ${repoPath} worktree remove ${inProjectWorktree} --force`.quiet();
+    return true;
+  } catch {
+    // Worktree may not exist at this location, continue checking
+  }
+
+  // Try bd worktree when beads is enabled
   if (useBeads) {
     try {
       const removed = await beadsRegistry.removeWorktree(taskId);
@@ -68,7 +79,7 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<boolean
     }
   }
 
-  // Fallback to WorktreeManager
+  // Fallback to WorktreeManager (legacy location)
   try {
     const manager = new WorktreeManager({
       baseDir: WORKTREE_BASE,

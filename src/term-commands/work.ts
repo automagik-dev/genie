@@ -16,10 +16,8 @@ import { $ } from 'bun';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
-import { WorktreeManager } from '../lib/worktree.js';
-import { EventMonitor, detectState } from '../lib/orchestrator/index.js';
+import { EventMonitor } from '../lib/orchestrator/index.js';
 import { join } from 'path';
-import { homedir } from 'os';
 
 // Use beads registry when enabled
 const useBeads = beadsRegistry.isBeadsRegistryEnabled();
@@ -39,6 +37,7 @@ interface BeadsIssue {
   id: string;
   title: string;
   status: string;
+  description?: string;
   blockedBy?: string[];
 }
 
@@ -46,7 +45,8 @@ interface BeadsIssue {
 // Configuration
 // ============================================================================
 
-const WORKTREE_BASE = join(homedir(), '.local', 'share', 'term', 'worktrees');
+// Worktrees are created inside the project at .genie/worktrees/<taskId>
+const WORKTREE_DIR_NAME = '.genie/worktrees';
 
 // ============================================================================
 // Helper Functions
@@ -72,11 +72,15 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
   if (exitCode !== 0 || !stdout) return null;
 
   try {
-    const issue = JSON.parse(stdout);
+    const parsed = JSON.parse(stdout);
+    // bd show --json returns an array with single element
+    const issue = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!issue) return null;
     return {
       id: issue.id,
       title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
       status: issue.status,
+      description: issue.description,
       blockedBy: issue.blockedBy || [],
     };
   } catch {
@@ -99,6 +103,7 @@ async function getNextReadyIssue(): Promise<BeadsIssue | null> {
         id: issue.id,
         title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
         status: issue.status,
+        description: issue.description,
         blockedBy: issue.blockedBy || [],
       };
     }
@@ -138,52 +143,54 @@ async function getCurrentSession(): Promise<string | null> {
 }
 
 /**
- * Create worktree for worker
- * Uses bd worktree when beads registry is enabled (auto .beads redirect)
- * Falls back to WorktreeManager otherwise
+ * Create worktree for worker in .genie/worktrees/<taskId>
+ * Creates a .beads redirect file so bd commands work in the worktree
  */
 async function createWorktree(
   taskId: string,
   repoPath: string
 ): Promise<string | null> {
-  // Try bd worktree first when beads is enabled
-  if (useBeads) {
-    try {
-      // Check if worktree exists via beads
-      const existing = await beadsRegistry.getWorktree(taskId);
-      if (existing) {
-        console.log(`ℹ️  Worktree for ${taskId} already exists`);
-        return existing.path;
-      }
+  const fs = await import('fs/promises');
+  const worktreeDir = join(repoPath, WORKTREE_DIR_NAME);
+  const worktreePath = join(worktreeDir, taskId);
 
-      // Create via bd worktree (includes .beads redirect)
-      const info = await beadsRegistry.createWorktree(taskId);
-      if (info) {
-        return info.path;
-      }
-      // Fall through to WorktreeManager if bd worktree fails
-      console.log(`⚠️  bd worktree failed, falling back to git worktree`);
-    } catch (error: any) {
-      console.log(`⚠️  bd worktree error: ${error.message}, falling back`);
-    }
+  // Ensure .genie/worktrees exists
+  try {
+    await fs.mkdir(worktreeDir, { recursive: true });
+  } catch {
+    // Directory may already exist
   }
 
-  // Fallback to WorktreeManager
+  // Check if worktree already exists
   try {
-    const manager = new WorktreeManager({
-      baseDir: WORKTREE_BASE,
-      repoPath,
-    });
-
-    // Check if worktree already exists
-    if (await manager.worktreeExists(taskId)) {
+    const stat = await fs.stat(worktreePath);
+    if (stat.isDirectory()) {
       console.log(`ℹ️  Worktree for ${taskId} already exists`);
-      return manager.getWorktreePath(taskId);
+      return worktreePath;
+    }
+  } catch {
+    // Doesn't exist, will create
+  }
+
+  // Create worktree using git directly (with branch)
+  const branchName = `work/${taskId}`;
+  try {
+    // Create branch if it doesn't exist (ignore error if it already exists)
+    try {
+      await $`git -C ${repoPath} branch ${branchName}`.quiet();
+    } catch {
+      // Branch may already exist, that's ok
     }
 
-    // Create new worktree with branch
-    const info = await manager.createWorktree(taskId, true);
-    return info.path;
+    // Create worktree
+    await $`git -C ${repoPath} worktree add ${worktreePath} ${branchName}`.quiet();
+
+    // Set up .beads redirect so bd commands work in the worktree
+    const beadsRedirect = join(worktreePath, '.beads');
+    await fs.mkdir(beadsRedirect, { recursive: true });
+    await fs.writeFile(join(beadsRedirect, 'redirect'), join(repoPath, '.beads'));
+
+    return worktreePath;
   } catch (error: any) {
     console.error(`⚠️  Failed to create worktree: ${error.message}`);
     return null;
@@ -191,14 +198,71 @@ async function createWorktree(
 }
 
 /**
- * Spawn Claude worker in new pane
+ * Remove worktree for a worker
+ */
+async function removeWorktree(taskId: string, repoPath: string): Promise<void> {
+  const worktreePath = join(repoPath, WORKTREE_DIR_NAME, taskId);
+
+  try {
+    // Remove worktree
+    await $`git -C ${repoPath} worktree remove ${worktreePath} --force`.quiet();
+  } catch {
+    // Ignore errors - worktree may already be removed
+  }
+}
+
+/**
+ * Wait for Claude CLI to be ready to accept input
+ * Polls pane content looking for Claude's input prompt indicator
+ */
+async function waitForClaudeReady(
+  paneId: string,
+  timeoutMs: number = 30000,
+  pollIntervalMs: number = 500
+): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const content = await tmux.capturePaneContent(paneId, 50);
+
+      // Claude CLI shows ">" prompt when ready for input
+      // Also check for the input area indicator
+      // The prompt appears at the end of output when Claude is waiting for input
+      const lines = content.split('\n').filter(l => l.trim());
+      if (lines.length > 0) {
+        const lastFewLines = lines.slice(-5).join('\n');
+        // Claude shows "❯" prompt when ready for input
+        // Also detect welcome messages or input hints
+        if (
+          lastFewLines.includes('❯') ||
+          lastFewLines.includes('? for shortcuts') ||
+          lastFewLines.includes('What would you like') ||
+          lastFewLines.includes('How can I help')
+        ) {
+          return true;
+        }
+      }
+    } catch {
+      // Pane may not exist yet, continue polling
+    }
+
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+  }
+
+  // Timeout - return false but don't fail (caller can decide)
+  return false;
+}
+
+/**
+ * Spawn Claude worker in new pane (splits the CURRENT active pane)
  */
 async function spawnWorkerPane(
   session: string,
   workingDir: string
 ): Promise<{ paneId: string } | null> {
   try {
-    // Find current window
+    // Find session
     const sessionObj = await tmux.findSessionByName(session);
     if (!sessionObj) {
       console.error(`❌ Session "${session}" not found`);
@@ -211,15 +275,21 @@ async function spawnWorkerPane(
       return null;
     }
 
-    const panes = await tmux.listPanes(windows[0].id);
+    // Find the ACTIVE window (not first window)
+    const activeWindow = windows.find(w => w.active) || windows[0];
+
+    const panes = await tmux.listPanes(activeWindow.id);
     if (!panes || panes.length === 0) {
-      console.error(`❌ No panes in session "${session}"`);
+      console.error(`❌ No panes in window "${activeWindow.name}"`);
       return null;
     }
 
+    // Find the ACTIVE pane (not first pane)
+    const activePane = panes.find(p => p.active) || panes[0];
+
     // Split current pane horizontally (side by side)
     const newPane = await tmux.splitPane(
-      panes[0].id,
+      activePane.id,
       'horizontal',
       50,
       workingDir
@@ -449,20 +519,22 @@ export async function workCommand(
     // Also register in JSON registry (parallel operation during transition)
     await registry.register(worker);
 
-    // 8. Start Claude in pane
-    await tmux.executeCommand(paneId, 'claude', false, false);
-
-    // Wait a bit for Claude to start
-    await new Promise(r => setTimeout(r, 2000));
-
-    // 9. Send initial prompt
+    // 8. Build prompt and start Claude with it as argument
     const prompt = options.prompt || `Work on beads issue ${taskId}: "${issue.title}"
 
-Read the issue details with: bd show ${taskId}
+## Description
+${issue.description || 'No description provided.'}
 
 When you're done, commit your changes and let me know.`;
 
-    await tmux.executeCommand(paneId, prompt, false, false);
+    // Escape the prompt for shell (single quotes)
+    const escapedPrompt = prompt.replace(/'/g, "'\\''");
+
+    // Set BEADS_DIR so bd commands work in the worktree
+    const beadsDir = join(repoPath, '.beads');
+
+    // Start Claude with prompt as argument - no resume picker, straight to work
+    await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude '${escapedPrompt}'`, true, false);
 
     // 10. Update state to working (both registries)
     if (useBeads) {

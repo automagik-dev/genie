@@ -37,3 +37,12 @@ yarn-error.log*
 # Misc
 .cache/
 .temp/
+
+# Worker worktrees
+.genie/worktrees/
+
+# bd worktree (legacy)
+genie-cli-e6q/
+genie-cli-z84/
+genie-cli-c2v/
+genie-cli-1c4/
