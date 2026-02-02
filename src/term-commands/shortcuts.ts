@@ -20,8 +20,8 @@ bind-key -n C-t new-window
 # Ctrl+S: Vertical split (requires stty -ixon in shell rc)
 bind-key -n C-s split-window -v
 
-# Alt+S: Horizontal split
-bind-key -n M-s split-window -h
+# Ctrl+H: Horizontal split
+bind-key -n C-h split-window -h
 `;
 }
 
@@ -88,7 +88,7 @@ Warp-like Terminal Shortcuts for tmux + Termux
 ├────────────┼────────────────────────────────────────┤
 │ Ctrl+T     │ New tab (window) in current session    │
 │ Ctrl+S     │ Vertical split in current session      │
-│ Alt+S      │ Horizontal split in current session    │
+│ Ctrl+H     │ Horizontal split in current session    │
 └────────────┴────────────────────────────────────────┘
 
 Termux Extra Keys (F1-F3):
