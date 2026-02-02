@@ -20,20 +20,25 @@ export async function splitSessionPane(
       process.exit(1);
     }
 
-    // Get first window and pane
+    // Get windows and find active one
     const windows = await tmux.listWindows(session.id);
     if (!windows || windows.length === 0) {
       console.error(`❌ No windows found in session "${sessionName}"`);
       process.exit(1);
     }
 
-    const panes = await tmux.listPanes(windows[0].id);
+    // Find active window (default to first if none marked active)
+    const activeWindow = windows.find(w => w.active) || windows[0];
+
+    const panes = await tmux.listPanes(activeWindow.id);
     if (!panes || panes.length === 0) {
       console.error(`❌ No panes found in session "${sessionName}"`);
       process.exit(1);
     }
 
-    const paneId = panes[0].id;
+    // Find active pane (default to first if none marked active)
+    const activePane = panes.find(p => p.active) || panes[0];
+    const paneId = activePane.id;
 
     // Determine direction
     const splitDirection = direction === 'h' ? 'horizontal' : 'vertical';
