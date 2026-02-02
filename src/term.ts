@@ -21,6 +21,8 @@ import * as workersCmd from './term-commands/workers.js';
 import * as closeCmd from './term-commands/close.js';
 import * as killCmd from './term-commands/kill.js';
 import * as daemonCmd from './term-commands/daemon.js';
+import * as spawnCmd from './term-commands/spawn.js';
+import * as createCmd from './term-commands/create.js';
 
 const program = new Command();
 
@@ -35,6 +37,12 @@ Collaborative Usage:
 
 Workflow: new → exec → read → rm
 Full control: window new/ls/rm, pane ls/rm, split, status
+
+Skill-Based Spawning:
+  term spawn          - Pick skill interactively
+  term spawn <skill>  - Spawn Claude with skill loaded
+  term skills         - List available skills
+  term create <title> - Create beads issue
 
 Worker Orchestration:
   term work <bd-id>   - Spawn worker bound to beads issue
@@ -212,6 +220,47 @@ program
   .option('--install', 'Install to config files (interactive)')
   .action(async (options: shortcutsCmd.ShortcutsOptions) => {
     await shortcutsCmd.handleShortcuts(options);
+  });
+
+// Skill-based spawning
+program
+  .command('spawn [skill]')
+  .description('Spawn Claude with a skill (interactive picker if no skill specified)')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--no-worktree', 'Skip worktree creation when taskId provided')
+  .option('--no-focus', 'Don\'t focus the new pane')
+  .option('-p, --prompt <message>', 'Additional context for the skill')
+  .option('-t, --task-id <id>', 'Bind to beads issue')
+  .action(async (skill: string | undefined, options: spawnCmd.SpawnOptions) => {
+    await spawnCmd.spawnCommand(skill, options);
+  });
+
+program
+  .command('skills')
+  .description('List available skills')
+  .action(async () => {
+    await spawnCmd.listSkillsCommand();
+  });
+
+program
+  .command('brainstorm')
+  .description('Spawn Claude with brainstorm skill (idea → design → spec)')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--no-focus', 'Don\'t focus the new pane')
+  .option('-p, --prompt <message>', 'Additional context')
+  .action(async (options: spawnCmd.SpawnOptions) => {
+    await spawnCmd.spawnCommand('brainstorm', options);
+  });
+
+// Create beads issue command
+program
+  .command('create <title>')
+  .description('Create a new beads issue')
+  .option('-d, --description <text>', 'Issue description')
+  .option('-p, --parent <id>', 'Parent issue ID (creates dependency)')
+  .option('--json', 'Output as JSON')
+  .action(async (title: string, options: createCmd.CreateOptions) => {
+    await createCmd.createCommand(title, options);
   });
 
 // Worker management commands (beads + Claude orchestration)
