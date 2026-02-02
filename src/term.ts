@@ -15,6 +15,11 @@ import * as windowCmd from './term-commands/window.js';
 import * as paneCmd from './term-commands/pane.js';
 import * as statusCmd from './term-commands/status.js';
 import * as shortcutsCmd from './term-commands/shortcuts.js';
+import * as orchestrateCmd from './term-commands/orchestrate.js';
+import * as workCmd from './term-commands/work.js';
+import * as workersCmd from './term-commands/workers.js';
+import * as closeCmd from './term-commands/close.js';
+import * as killCmd from './term-commands/kill.js';
 
 const program = new Command();
 
@@ -28,7 +33,14 @@ Collaborative Usage:
   AI reads:   term read genie
 
 Workflow: new → exec → read → rm
-Full control: window new/ls/rm, pane ls/rm, split, status`)
+Full control: window new/ls/rm, pane ls/rm, split, status
+
+Worker Orchestration:
+  term work <bd-id>   - Spawn worker bound to beads issue
+  term work next      - Work on next ready issue
+  term workers        - List all workers and states
+  term close <bd-id>  - Close issue, cleanup worker
+  term kill <worker>  - Force kill a stuck worker`)
   .version(VERSION);
 
 // Session management
@@ -198,6 +210,182 @@ program
   .option('--install', 'Install to config files (interactive)')
   .action(async (options: shortcutsCmd.ShortcutsOptions) => {
     await shortcutsCmd.handleShortcuts(options);
+  });
+
+// Worker management commands (beads + Claude orchestration)
+program
+  .command('work <target>')
+  .description('Spawn worker bound to beads issue (target: bd-id, "next", or "wish")')
+  .option('--no-worktree', 'Use shared repo instead of worktree')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--no-focus', 'Don\'t focus the worker pane')
+  .option('-p, --prompt <message>', 'Custom initial prompt')
+  .action(async (target: string, options: workCmd.WorkOptions) => {
+    await workCmd.workCommand(target, options);
+  });
+
+program
+  .command('workers')
+  .description('List all workers and their states')
+  .option('--json', 'Output as JSON')
+  .option('-w, --watch', 'Live updates (coming soon)')
+  .action(async (options: workersCmd.WorkersOptions) => {
+    if (options.watch) {
+      console.log('ℹ️  --watch mode coming in Phase 1.5');
+    }
+    await workersCmd.workersCommand(options);
+  });
+
+program
+  .command('close <task-id>')
+  .description('Close beads issue and cleanup worker')
+  .option('--no-sync', 'Skip bd sync')
+  .option('--keep-worktree', 'Don\'t remove the worktree')
+  .option('--merge', 'Merge worktree changes to main branch')
+  .option('-y, --yes', 'Skip confirmation')
+  .action(async (taskId: string, options: closeCmd.CloseOptions) => {
+    await closeCmd.closeCommand(taskId, options);
+  });
+
+program
+  .command('kill <worker>')
+  .description('Force kill a worker')
+  .option('-y, --yes', 'Skip confirmation')
+  .option('--keep-worktree', 'Don\'t remove the worktree')
+  .action(async (worker: string, options: killCmd.KillOptions) => {
+    await killCmd.killCommand(worker, options);
+  });
+
+// Approve command (shortcut to orc approve for worker use)
+program
+  .command('approve <worker>')
+  .description('Approve pending permission request for a worker')
+  .option('--deny', 'Deny instead of approve')
+  .action(async (worker: string, options: { deny?: boolean }) => {
+    // Find worker to get pane
+    const registry = await import('./lib/worker-registry.js');
+    let workerInfo = await registry.get(worker);
+    if (!workerInfo) {
+      workerInfo = await registry.findByTask(worker);
+    }
+    if (!workerInfo) {
+      console.error(`❌ Worker "${worker}" not found. Run \`term workers\` to see workers.`);
+      process.exit(1);
+    }
+    await orchestrateCmd.approvePermission(workerInfo.session, {
+      pane: workerInfo.paneId,
+      deny: options.deny,
+    });
+  });
+
+// Answer command (shortcut to orc answer for worker use)
+program
+  .command('answer <worker> <choice>')
+  .description('Answer a question for a worker (use "text:..." for text input)')
+  .action(async (worker: string, choice: string) => {
+    const registry = await import('./lib/worker-registry.js');
+    let workerInfo = await registry.get(worker);
+    if (!workerInfo) {
+      workerInfo = await registry.findByTask(worker);
+    }
+    if (!workerInfo) {
+      console.error(`❌ Worker "${worker}" not found. Run \`term workers\` to see workers.`);
+      process.exit(1);
+    }
+    await orchestrateCmd.answerQuestion(workerInfo.session, choice, {
+      pane: workerInfo.paneId,
+    });
+  });
+
+// Orchestration commands (Claude Code automation)
+const orcProgram = program.command('orc').description('Orchestrate Claude Code sessions');
+
+orcProgram
+  .command('start <session>')
+  .description('Start Claude Code in a session with optional monitoring')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('-m, --monitor', 'Enable real-time event monitoring')
+  .option('-c, --command <cmd>', 'Command to run instead of claude')
+  .option('--json', 'Output events as JSON')
+  .action(async (session: string, options: orchestrateCmd.StartOptions) => {
+    await orchestrateCmd.startSession(session, options);
+  });
+
+orcProgram
+  .command('send <session> <message>')
+  .description('Send message to Claude and track completion')
+  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--method <name>', 'Completion detection method')
+  .option('-t, --timeout <ms>', 'Timeout in milliseconds')
+  .option('--no-wait', 'Send without waiting for completion')
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, message: string, options: orchestrateCmd.SendOptions) => {
+    await orchestrateCmd.sendMessage(session, message, options);
+  });
+
+orcProgram
+  .command('status <session>')
+  .description('Show current Claude state and details')
+  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--json', 'Output as JSON')
+  .action(async (session: string, options: orchestrateCmd.StatusOptions) => {
+    await orchestrateCmd.showStatus(session, options);
+  });
+
+orcProgram
+  .command('watch <session>')
+  .description('Watch session events in real-time')
+  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--json', 'Output events as JSON')
+  .option('-p, --poll <ms>', 'Poll interval in milliseconds')
+  .action(async (session: string, options: orchestrateCmd.WatchOptions) => {
+    await orchestrateCmd.watchSession(session, options);
+  });
+
+orcProgram
+  .command('approve <session>')
+  .description('Approve pending permission request')
+  .option('-p, --pane <id>', 'Specific pane ID to target')
+  .option('--auto', 'Auto-approve all future permissions (dangerous!)')
+  .option('--deny', 'Deny instead of approve')
+  .action(async (session: string, options: orchestrateCmd.ApproveOptions) => {
+    await orchestrateCmd.approvePermission(session, options);
+  });
+
+orcProgram
+  .command('answer <session> <choice>')
+  .description('Answer a question with the given choice (use "text:..." to send feedback)')
+  .option('-p, --pane <id>', 'Specific pane ID to target')
+  .action(async (session: string, choice: string, options: { pane?: string }) => {
+    await orchestrateCmd.answerQuestion(session, choice, options);
+  });
+
+orcProgram
+  .command('experiment <method>')
+  .description('Test a completion detection method')
+  .option('-n, --runs <number>', 'Number of test runs')
+  .option('--task <command>', 'Test command to run')
+  .option('--json', 'Output as JSON')
+  .action(async (method: string, options: orchestrateCmd.ExperimentOptions) => {
+    await orchestrateCmd.runExperiment(method, options);
+  });
+
+orcProgram
+  .command('methods')
+  .description('List available completion detection methods')
+  .action(async () => {
+    await orchestrateCmd.listMethods();
+  });
+
+orcProgram
+  .command('run <session> <message>')
+  .description('Send task and auto-approve until idle (fire-and-forget)')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('-a, --auto-approve', 'Auto-approve permissions and plans')
+  .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 300000)')
+  .option('--json', 'Output final state as JSON')
+  .action(async (session: string, message: string, options: orchestrateCmd.RunOptions) => {
+    await orchestrateCmd.runTask(session, message, options);
   });
 
 program.parse();

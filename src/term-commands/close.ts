@@ -1,0 +1,221 @@
+/**
+ * Close command - Close beads issue and cleanup worker
+ *
+ * Usage:
+ *   term close <bd-id>     - Close issue, cleanup worktree, kill worker
+ *
+ * Options:
+ *   --no-sync              - Skip bd sync
+ *   --keep-worktree        - Don't remove the worktree
+ *   --merge                - Merge worktree changes to main branch
+ *   -y, --yes              - Skip confirmation
+ */
+
+import { $ } from 'bun';
+import { confirm } from '@inquirer/prompts';
+import * as tmux from '../lib/tmux.js';
+import * as registry from '../lib/worker-registry.js';
+import { WorktreeManager } from '../lib/worktree.js';
+import { join } from 'path';
+import { homedir } from 'os';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface CloseOptions {
+  noSync?: boolean;
+  keepWorktree?: boolean;
+  merge?: boolean;
+  yes?: boolean;
+}
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+const WORKTREE_BASE = join(homedir(), '.local', 'share', 'term', 'worktrees');
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Run bd command
+ */
+async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number }> {
+  try {
+    const result = await $`bd ${args}`.quiet();
+    return { stdout: result.stdout.toString().trim(), exitCode: 0 };
+  } catch (error: any) {
+    return { stdout: error.stdout?.toString().trim() || '', exitCode: error.exitCode || 1 };
+  }
+}
+
+/**
+ * Close beads issue
+ */
+async function closeBeadsIssue(taskId: string): Promise<boolean> {
+  const { exitCode } = await runBd(['close', taskId]);
+  return exitCode === 0;
+}
+
+/**
+ * Sync beads to git
+ */
+async function syncBeads(): Promise<boolean> {
+  const { exitCode } = await runBd(['sync']);
+  return exitCode === 0;
+}
+
+/**
+ * Merge worktree branch to main
+ */
+async function mergeToMain(
+  repoPath: string,
+  branchName: string
+): Promise<boolean> {
+  try {
+    // Get current branch
+    const currentResult = await $`git -C ${repoPath} branch --show-current`.quiet();
+    const currentBranch = currentResult.stdout.toString().trim();
+
+    if (currentBranch === branchName) {
+      console.log(`⚠️  Already on branch ${branchName}. Skipping merge.`);
+      return true;
+    }
+
+    // Checkout main and merge
+    console.log(`   Switching to ${currentBranch}...`);
+    await $`git -C ${repoPath} checkout ${currentBranch}`.quiet();
+
+    console.log(`   Merging ${branchName}...`);
+    await $`git -C ${repoPath} merge ${branchName} --no-edit`.quiet();
+
+    return true;
+  } catch (error: any) {
+    console.error(`⚠️  Merge failed: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * Remove worktree
+ */
+async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
+  try {
+    const manager = new WorktreeManager({
+      baseDir: WORKTREE_BASE,
+      repoPath,
+    });
+
+    if (await manager.worktreeExists(taskId)) {
+      await manager.removeWorktree(taskId);
+      return true;
+    }
+    return true; // Already doesn't exist
+  } catch (error: any) {
+    console.error(`⚠️  Failed to remove worktree: ${error.message}`);
+    return false;
+  }
+}
+
+/**
+ * Kill worker pane
+ */
+async function killWorkerPane(paneId: string): Promise<boolean> {
+  try {
+    await tmux.killPane(paneId);
+    return true;
+  } catch {
+    return false; // Pane may already be gone
+  }
+}
+
+// ============================================================================
+// Main Command
+// ============================================================================
+
+export async function closeCommand(
+  taskId: string,
+  options: CloseOptions = {}
+): Promise<void> {
+  try {
+    // Find worker in registry
+    const worker = await registry.findByTask(taskId);
+
+    if (!worker) {
+      console.log(`ℹ️  No active worker for ${taskId}. Closing issue only.`);
+    }
+
+    // Confirm with user
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Close ${taskId}${worker ? ` and kill worker (pane ${worker.paneId})` : ''}?`,
+        default: true,
+      });
+
+      if (!confirmed) {
+        console.log('Cancelled.');
+        return;
+      }
+    }
+
+    // 1. Close beads issue
+    console.log(`📝 Closing ${taskId}...`);
+    const closed = await closeBeadsIssue(taskId);
+    if (!closed) {
+      console.error(`❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
+      // Continue with cleanup anyway
+    } else {
+      console.log(`   ✅ Issue closed`);
+    }
+
+    // 2. Sync beads (unless --no-sync)
+    if (!options.noSync) {
+      console.log(`🔄 Syncing beads...`);
+      const synced = await syncBeads();
+      if (synced) {
+        console.log(`   ✅ Synced to git`);
+      } else {
+        console.log(`   ⚠️  Sync failed (non-fatal)`);
+      }
+    }
+
+    // 3. Handle worktree
+    if (worker?.worktree && !options.keepWorktree) {
+      // Merge if requested
+      if (options.merge) {
+        console.log(`🔀 Merging changes...`);
+        const merged = await mergeToMain(worker.repoPath, taskId);
+        if (merged) {
+          console.log(`   ✅ Merged to main`);
+        }
+      }
+
+      // Remove worktree
+      console.log(`🌳 Removing worktree...`);
+      const removed = await removeWorktree(taskId, worker.repoPath);
+      if (removed) {
+        console.log(`   ✅ Worktree removed`);
+      }
+    }
+
+    // 4. Kill worker pane
+    if (worker) {
+      console.log(`💀 Killing worker pane...`);
+      await killWorkerPane(worker.paneId);
+      console.log(`   ✅ Pane killed`);
+
+      // 5. Unregister worker
+      await registry.unregister(worker.id);
+      console.log(`   ✅ Worker unregistered`);
+    }
+
+    console.log(`\n✅ ${taskId} closed successfully`);
+
+  } catch (error: any) {
+    console.error(`❌ Error: ${error.message}`);
+    process.exit(1);
+  }
+}
