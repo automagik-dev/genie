@@ -512,8 +512,13 @@ write_install_method() {
                 # Simple sed to add installMethod before closing brace
                 # Remove existing installMethod if present, then add new one
                 content=$(echo "$content" | sed 's/,"installMethod":"[^"]*"//g' | sed 's/"installMethod":"[^"]*",//g' | sed 's/"installMethod":"[^"]*"//g')
-                # Add installMethod before final }
-                echo "$content" | sed 's/}$/,"installMethod":"'"$method"'"}/' > "$config_file"
+                # Handle empty object case after removal
+                if [[ "$content" == "{}" ]]; then
+                    echo "{\"installMethod\":\"$method\"}" > "$config_file"
+                else
+                    # Add installMethod before final }
+                    echo "$content" | sed 's/}$/,"installMethod":"'"$method"'"}/' > "$config_file"
+                fi
             fi
         fi
     else
@@ -552,18 +557,8 @@ prompt_install_method() {
 # Installation Methods
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Quick install: npm/bun global install (requires node/bun already installed)
-install_quick() {
-    header "Quick Install"
-
-    if ! check_command node && ! check_command bun; then
-        error "Quick install requires Node.js or Bun to be installed."
-        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
-        exit 3
-    fi
-
-    log "Installing $PACKAGE_NAME globally..."
-
+# Install via best available package manager
+install_via_pm() {
     local version_arg=""
     if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
         version_arg="@$TARGET_VERSION"
@@ -580,8 +575,21 @@ install_quick() {
         used_method="npm"
     fi
 
-    # Save install method to config
     write_install_method "$used_method"
+}
+
+# Quick install: npm/bun global install (requires node/bun already installed)
+install_quick() {
+    header "Quick Install"
+
+    if ! check_command node && ! check_command bun; then
+        error "Quick install requires Node.js or Bun to be installed."
+        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
+        exit 3
+    fi
+
+    log "Installing $PACKAGE_NAME globally..."
+    install_via_pm
 
     success "Genie CLI installed via package manager"
 }
@@ -604,26 +612,8 @@ install_full() {
 
     header "Installing Genie CLI..."
 
-    local version_arg=""
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        version_arg="@$TARGET_VERSION"
-    elif [[ "$TARGET_VERSION" == "latest" ]]; then
-        version_arg="@latest"
-    fi
-
     log "Installing $PACKAGE_NAME globally..."
-
-    local used_method=""
-    if check_command bun; then
-        run bun install -g "${PACKAGE_NAME}${version_arg}"
-        used_method="bun"
-    elif check_command npm; then
-        run npm install -g "${PACKAGE_NAME}${version_arg}"
-        used_method="npm"
-    fi
-
-    # Save install method to config
-    write_install_method "$used_method"
+    install_via_pm
 
     CLEANUP_NEEDED=false
     success "Genie CLI installed"
@@ -801,7 +791,7 @@ install_auto() {
         npm)
             if check_command npm; then
                 INSTALL_MODE="quick"
-                install_quick_npm
+                install_quick_pm "npm"
             else
                 log "npm not found, using full install"
                 INSTALL_MODE="full"
@@ -811,7 +801,7 @@ install_auto() {
         bun)
             if check_command bun; then
                 INSTALL_MODE="quick"
-                install_quick_bun
+                install_quick_pm "bun"
             else
                 log "bun not found, using full install"
                 INSTALL_MODE="full"
@@ -821,17 +811,18 @@ install_auto() {
     esac
 }
 
-# Quick install via bun only
-install_quick_bun() {
-    header "Quick Install (bun)"
+# Quick install via specific package manager
+install_quick_pm() {
+    local pm="$1"
+    header "Quick Install ($pm)"
 
-    if ! check_command bun; then
-        error "Bun is not installed."
+    if ! check_command "$pm"; then
+        error "$pm is not installed."
         info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
         exit 3
     fi
 
-    log "Installing $PACKAGE_NAME globally via bun..."
+    log "Installing $PACKAGE_NAME globally via $pm..."
 
     local version_arg=""
     if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
@@ -840,39 +831,9 @@ install_quick_bun() {
         version_arg="@latest"
     fi
 
-    run bun install -g "${PACKAGE_NAME}${version_arg}"
-
-    # Save install method to config
-    write_install_method "bun"
-
-    success "Genie CLI installed via bun"
-}
-
-# Quick install via npm only
-install_quick_npm() {
-    header "Quick Install (npm)"
-
-    if ! check_command npm; then
-        error "npm is not installed."
-        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
-        exit 3
-    fi
-
-    log "Installing $PACKAGE_NAME globally via npm..."
-
-    local version_arg=""
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        version_arg="@$TARGET_VERSION"
-    elif [[ "$TARGET_VERSION" == "latest" ]]; then
-        version_arg="@latest"
-    fi
-
-    run npm install -g "${PACKAGE_NAME}${version_arg}"
-
-    # Save install method to config
-    write_install_method "npm"
-
-    success "Genie CLI installed via npm"
+    run "$pm" install -g "${PACKAGE_NAME}${version_arg}"
+    write_install_method "$pm"
+    success "Genie CLI installed via $pm"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
