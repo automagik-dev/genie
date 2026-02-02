@@ -15,10 +15,14 @@
 import { $ } from 'bun';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
+import * as beadsRegistry from '../lib/beads-registry.js';
 import { WorktreeManager } from '../lib/worktree.js';
 import { EventMonitor, detectState } from '../lib/orchestrator/index.js';
 import { join } from 'path';
 import { homedir } from 'os';
+
+// Use beads registry when enabled
+const useBeads = beadsRegistry.isBeadsRegistryEnabled();
 
 // ============================================================================
 // Types
@@ -135,11 +139,36 @@ async function getCurrentSession(): Promise<string | null> {
 
 /**
  * Create worktree for worker
+ * Uses bd worktree when beads registry is enabled (auto .beads redirect)
+ * Falls back to WorktreeManager otherwise
  */
 async function createWorktree(
   taskId: string,
   repoPath: string
 ): Promise<string | null> {
+  // Try bd worktree first when beads is enabled
+  if (useBeads) {
+    try {
+      // Check if worktree exists via beads
+      const existing = await beadsRegistry.getWorktree(taskId);
+      if (existing) {
+        console.log(`ℹ️  Worktree for ${taskId} already exists`);
+        return existing.path;
+      }
+
+      // Create via bd worktree (includes .beads redirect)
+      const info = await beadsRegistry.createWorktree(taskId);
+      if (info) {
+        return info.path;
+      }
+      // Fall through to WorktreeManager if bd worktree fails
+      console.log(`⚠️  bd worktree failed, falling back to git worktree`);
+    } catch (error: any) {
+      console.log(`⚠️  bd worktree error: ${error.message}, falling back`);
+    }
+  }
+
+  // Fallback to WorktreeManager
   try {
     const manager = new WorktreeManager({
       baseDir: WORKTREE_BASE,
@@ -210,6 +239,7 @@ async function spawnWorkerPane(
 
 /**
  * Start monitoring worker state and update registry
+ * Updates both beads and JSON registry during transition
  */
 function startWorkerMonitoring(
   workerId: string,
@@ -250,6 +280,10 @@ function startWorkerMonitoring(
     }
 
     try {
+      // Update both registries during transition
+      if (useBeads) {
+        await beadsRegistry.updateState(workerId, newState);
+      }
       await registry.updateState(workerId, newState);
     } catch {
       // Ignore errors in background monitoring
@@ -258,6 +292,9 @@ function startWorkerMonitoring(
 
   monitor.on('poll_error', () => {
     // Pane may have been killed - unregister worker
+    if (useBeads) {
+      beadsRegistry.unregister(workerId).catch(() => {});
+    }
     registry.unregister(workerId).catch(() => {});
     monitor.stop();
   });
@@ -281,6 +318,20 @@ export async function workCommand(
   try {
     // Get current working directory as repo path
     const repoPath = process.cwd();
+
+    // Ensure beads daemon is running for auto-sync
+    if (useBeads) {
+      const daemonStatus = await beadsRegistry.checkDaemonStatus();
+      if (!daemonStatus.running) {
+        console.log('🔄 Starting beads daemon for auto-sync...');
+        const started = await beadsRegistry.startDaemon({ autoCommit: true });
+        if (started) {
+          console.log('   ✅ Daemon started');
+        } else {
+          console.log('   ⚠️  Daemon failed to start (non-fatal)');
+        }
+      }
+    }
 
     // 1. Resolve target
     let issue: BeadsIssue | null = null;
@@ -307,8 +358,13 @@ export async function workCommand(
 
     const taskId = issue.id;
 
-    // 2. Check not already assigned
-    const existingWorker = await registry.findByTask(taskId);
+    // 2. Check not already assigned (check both registries)
+    let existingWorker = useBeads
+      ? await beadsRegistry.findByTask(taskId)
+      : null;
+    if (!existingWorker) {
+      existingWorker = await registry.findByTask(taskId);
+    }
     if (existingWorker) {
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
       console.log(`   Run \`term kill ${existingWorker.id}\` first, or work on a different issue.`);
@@ -354,7 +410,7 @@ export async function workCommand(
 
     const { paneId } = paneResult;
 
-    // 7. Register worker
+    // 7. Register worker (write to both registries during transition)
     const worker: registry.Worker = {
       id: taskId,
       paneId,
@@ -368,6 +424,29 @@ export async function workCommand(
       repoPath,
     };
 
+    // Register in beads (creates agent bead)
+    if (useBeads) {
+      try {
+        const agentId = await beadsRegistry.ensureAgent(taskId, {
+          paneId,
+          session,
+          worktree: worktreePath,
+          repoPath,
+          taskId,
+          taskTitle: issue.title,
+        });
+
+        // Bind work to agent
+        await beadsRegistry.bindWork(taskId, taskId);
+
+        // Set initial state
+        await beadsRegistry.setAgentState(taskId, 'spawning');
+      } catch (error: any) {
+        console.log(`⚠️  Beads registration failed: ${error.message} (non-fatal)`);
+      }
+    }
+
+    // Also register in JSON registry (parallel operation during transition)
     await registry.register(worker);
 
     // 8. Start Claude in pane
@@ -385,7 +464,10 @@ When you're done, commit your changes and let me know.`;
 
     await tmux.executeCommand(paneId, prompt, false, false);
 
-    // 10. Update state to working
+    // 10. Update state to working (both registries)
+    if (useBeads) {
+      await beadsRegistry.setAgentState(taskId, 'working').catch(() => {});
+    }
     await registry.updateState(taskId, 'working');
 
     // 11. Start monitoring

@@ -223,12 +223,21 @@ export async function killPane(paneId: string): Promise<void> {
 }
 
 /**
+ * Escape a string for safe use in shell single quotes.
+ * Replaces ' with '\'' (end quote, escaped quote, start quote).
+ */
+function escapeShellPath(path: string): string {
+  return path.replace(/'/g, "'\\''");
+}
+
+/**
  * Split a tmux pane horizontally or vertically
  */
 export async function splitPane(
   targetPaneId: string,
   direction: 'horizontal' | 'vertical' = 'vertical',
-  size?: number
+  size?: number,
+  workingDir?: string
 ): Promise<TmuxPane | null> {
   // Build the split-window command
   let splitCommand = 'split-window';
@@ -246,6 +255,11 @@ export async function splitPane(
   // Add size if specified (as percentage)
   if (size !== undefined && size > 0 && size < 100) {
     splitCommand += ` -p ${size}`;
+  }
+
+  // Add working directory if specified
+  if (workingDir) {
+    splitCommand += ` -c '${escapeShellPath(workingDir)}'`;
   }
 
   // Execute the split command

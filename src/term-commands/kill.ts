@@ -12,9 +12,13 @@
 import { confirm } from '@inquirer/prompts';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
+import * as beadsRegistry from '../lib/beads-registry.js';
 import { WorktreeManager } from '../lib/worktree.js';
 import { join } from 'path';
 import { homedir } from 'os';
+
+// Use beads registry when enabled
+const useBeads = beadsRegistry.isBeadsRegistryEnabled();
 
 // ============================================================================
 // Types
@@ -49,8 +53,22 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 
 /**
  * Remove worktree
+ * Uses bd worktree when beads registry is enabled
+ * Falls back to WorktreeManager otherwise
  */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
+  // Try bd worktree first when beads is enabled
+  if (useBeads) {
+    try {
+      const removed = await beadsRegistry.removeWorktree(taskId);
+      if (removed) return true;
+      // Fall through to WorktreeManager if bd worktree fails
+    } catch {
+      // Fall through
+    }
+  }
+
+  // Fallback to WorktreeManager
   try {
     const manager = new WorktreeManager({
       baseDir: WORKTREE_BASE,
@@ -77,17 +95,30 @@ export async function killCommand(
   options: KillOptions = {}
 ): Promise<void> {
   try {
-    // Find worker by ID or pane
+    // Find worker by ID or pane (check both registries during transition)
     let worker = await registry.get(target);
+
+    if (!worker && useBeads) {
+      // Try beads registry
+      worker = await beadsRegistry.getWorker(target);
+    }
 
     if (!worker) {
       // Try finding by pane ID
       worker = await registry.findByPane(target);
     }
 
+    if (!worker && useBeads) {
+      worker = await beadsRegistry.findByPane(target);
+    }
+
     if (!worker) {
       // Try finding by task ID
       worker = await registry.findByTask(target);
+    }
+
+    if (!worker && useBeads) {
+      worker = await beadsRegistry.findByTask(target);
     }
 
     if (!worker) {
@@ -127,7 +158,19 @@ export async function killCommand(
       }
     }
 
-    // 3. Unregister worker
+    // 3. Unregister worker from both registries
+    if (useBeads) {
+      try {
+        // Unbind work from agent
+        await beadsRegistry.unbindWork(worker.id);
+        // Set agent state to error (killed, not done)
+        await beadsRegistry.setAgentState(worker.id, 'error');
+        // Delete agent bead
+        await beadsRegistry.deleteAgent(worker.id);
+      } catch {
+        // Non-fatal if beads cleanup fails
+      }
+    }
     await registry.unregister(worker.id);
     console.log(`   ✅ Worker unregistered`);
 

@@ -38,6 +38,9 @@ export async function splitSessionPane(
     // Determine direction
     const splitDirection = direction === 'h' ? 'horizontal' : 'vertical';
 
+    // Get source pane's current working directory
+    const sourcePath = await tmux.executeTmux(`display-message -p -t '${paneId}' '#{pane_current_path}'`);
+
     // Handle workspace and worktree options
     let workingDir: string | undefined;
 
@@ -62,18 +65,16 @@ export async function splitSessionPane(
       workingDir = manager.getWorktreePath(options.worktree);
     } else if (options.workspace) {
       workingDir = options.workspace;
+    } else {
+      // Default to source pane's current directory
+      workingDir = sourcePath.trim() || undefined;
     }
 
-    // Split pane
-    const newPane = await tmux.splitPane(paneId, splitDirection);
+    // Split pane with working directory (tmux -c flag handles this natively)
+    const newPane = await tmux.splitPane(paneId, splitDirection, undefined, workingDir);
     if (!newPane) {
       console.error('❌ Failed to split pane');
       process.exit(1);
-    }
-
-    // Change to working directory if specified
-    if (workingDir && newPane) {
-      await tmux.executeTmux(`send-keys -t '${newPane.id}' 'cd ${workingDir}' Enter`);
     }
 
     console.log(`✅ Pane split ${splitDirection}ly in session "${sessionName}"`);

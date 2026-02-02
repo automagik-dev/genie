@@ -20,6 +20,7 @@ import * as workCmd from './term-commands/work.js';
 import * as workersCmd from './term-commands/workers.js';
 import * as closeCmd from './term-commands/close.js';
 import * as killCmd from './term-commands/kill.js';
+import * as daemonCmd from './term-commands/daemon.js';
 
 const program = new Command();
 
@@ -40,7 +41,8 @@ Worker Orchestration:
   term work next      - Work on next ready issue
   term workers        - List all workers and states
   term close <bd-id>  - Close issue, cleanup worker
-  term kill <worker>  - Force kill a stuck worker`)
+  term kill <worker>  - Force kill a stuck worker
+  term daemon start   - Start beads daemon for auto-sync`)
   .version(VERSION);
 
 // Session management
@@ -295,6 +297,42 @@ program
     await orchestrateCmd.answerQuestion(workerInfo.session, choice, {
       pane: workerInfo.paneId,
     });
+  });
+
+// Daemon management (beads auto-sync)
+const daemonProgram = program.command('daemon').description('Manage beads daemon for auto-sync');
+
+daemonProgram
+  .command('start')
+  .description('Start beads daemon (auto-commit, auto-sync)')
+  .option('--no-auto-commit', 'Disable auto-commit')
+  .option('--auto-push', 'Enable auto-push to remote')
+  .action(async (options: daemonCmd.DaemonStartOptions) => {
+    await daemonCmd.startCommand(options);
+  });
+
+daemonProgram
+  .command('stop')
+  .description('Stop beads daemon')
+  .action(async () => {
+    await daemonCmd.stopCommand();
+  });
+
+daemonProgram
+  .command('status')
+  .description('Show daemon status')
+  .option('--json', 'Output as JSON')
+  .action(async (options: daemonCmd.DaemonStatusOptions) => {
+    await daemonCmd.statusCommand(options);
+  });
+
+daemonProgram
+  .command('restart')
+  .description('Restart beads daemon')
+  .option('--no-auto-commit', 'Disable auto-commit')
+  .option('--auto-push', 'Enable auto-push to remote')
+  .action(async (options: daemonCmd.DaemonStartOptions) => {
+    await daemonCmd.restartCommand(options);
   });
 
 // Orchestration commands (Claude Code automation)
