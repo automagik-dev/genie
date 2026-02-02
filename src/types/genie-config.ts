@@ -53,6 +53,7 @@ export const GenieConfigSchema = z.object({
   hooks: HooksConfigSchema.default({}),
   session: SessionConfigSchema.default({}),
   logging: LoggingConfigSchema.default({}),
+  installMethod: z.enum(['source', 'npm', 'bun']).optional(),
 });
 
 // Inferred types
