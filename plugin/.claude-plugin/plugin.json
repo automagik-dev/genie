@@ -1,0 +1,10 @@
+{
+  "name": "automagik-genie",
+  "version": "2026.02.02",
+  "description": "Genie workflow automation plugin - brainstorm, wish, forge, review skills with full orchestrator support",
+  "skills": "../skills/",
+  "agents": "../agents/",
+  "hooks": "../hooks/",
+  "scripts": "../scripts/",
+  "references": "../references/"
+}

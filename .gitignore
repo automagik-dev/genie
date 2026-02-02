@@ -8,6 +8,10 @@ dist/
 build/
 *.js.map
 
+# Plugin built scripts (bundled CJS files)
+plugin/scripts/*.cjs
+plugin/package.json
+
 # Testing
 coverage/
 

@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "0.260202.1648",
+  "version": "2026.02.02",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -14,6 +14,9 @@
     "version": "bun run scripts/version.ts",
     "prebuild": "bun run version",
     "build": "bun build src/claudio.ts src/term.ts src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
+    "build:plugin": "node scripts/build.js",
+    "sync": "node scripts/sync.js",
+    "build-and-sync": "npm run build:plugin && npm run sync",
     "prepack": "bun run build"
   },
   "dependencies": {
@@ -25,6 +28,7 @@
   "devDependencies": {
     "@types/bun": "^1.1.0",
     "@types/node": "^20.10.5",
+    "esbuild": "^0.27.2",
     "typescript": "^5.3.3"
   },
   "repository": {
