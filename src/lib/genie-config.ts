@@ -5,6 +5,7 @@ import {
   GenieConfig,
   GenieConfigSchema,
   HooksConfig,
+  LoggingConfig,
   PresetName,
 } from '../types/genie-config.js';
 
@@ -134,6 +135,42 @@ export async function updateHooksConfig(hooks: Partial<HooksConfig>): Promise<vo
   const config = await loadGenieConfig();
   config.hooks = { ...config.hooks, ...hooks };
   await saveGenieConfig(config);
+}
+
+/**
+ * Update logging configuration
+ */
+export async function updateLoggingConfig(logging: Partial<LoggingConfig>): Promise<void> {
+  const config = await loadGenieConfig();
+  config.logging = { ...config.logging, ...logging };
+  await saveGenieConfig(config);
+}
+
+/**
+ * Load genie config synchronously, returning defaults if not found
+ */
+export function loadGenieConfigSync(): GenieConfig {
+  if (!existsSync(GENIE_CONFIG_FILE)) {
+    return GenieConfigSchema.parse({});
+  }
+
+  try {
+    const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
+    const data = JSON.parse(content);
+    return GenieConfigSchema.parse(data);
+  } catch {
+    return GenieConfigSchema.parse({});
+  }
+}
+
+/**
+ * Check if tmux debug logging is enabled via environment or config
+ */
+export function isTmuxDebugEnabled(): boolean {
+  if (process.env.GENIE_TMUX_DEBUG === '1') return true;
+  if (!genieConfigExists()) return false;
+  const config = loadGenieConfigSync();
+  return config.logging?.tmuxDebug ?? false;
 }
 
 /**

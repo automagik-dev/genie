@@ -1,8 +1,5 @@
-import { exec as execCallback } from "child_process";
-import { promisify } from "util";
 import { v4 as uuidv4 } from 'uuid';
-
-const exec = promisify(execCallback);
+import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
 // Basic interfaces for tmux objects
 export interface TmuxSession {
@@ -57,8 +54,7 @@ export function setShellConfig(config: { type: string }): void {
  */
 export async function executeTmux(tmuxCommand: string): Promise<string> {
   try {
-    const { stdout } = await exec(`tmux ${tmuxCommand}`);
-    return stdout.trim();
+    return await wrapperExecuteTmux(tmuxCommand);
   } catch (error: any) {
     throw new Error(`Failed to execute tmux command: ${error.message}`);
   }
