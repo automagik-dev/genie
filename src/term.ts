@@ -271,6 +271,7 @@ program
   .option('-s, --session <name>', 'Target tmux session')
   .option('--no-focus', 'Don\'t focus the worker pane')
   .option('-p, --prompt <message>', 'Custom initial prompt')
+  .option('--no-resume', 'Start fresh session even if previous exists')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });

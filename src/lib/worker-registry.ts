@@ -47,6 +47,8 @@ export interface Worker {
   lastStateChange: string;
   /** Repository path where worker operates */
   repoPath: string;
+  /** Claude session ID for resume capability */
+  claudeSessionId?: string;
 }
 
 export interface WorkerRegistry {
@@ -174,6 +176,14 @@ export async function findByTask(taskId: string): Promise<Worker | null> {
 export async function findByWish(wishSlug: string): Promise<Worker[]> {
   const workers = await list();
   return workers.filter(w => w.wishSlug === wishSlug);
+}
+
+/**
+ * Find worker by Claude session ID
+ */
+export async function findBySessionId(sessionId: string): Promise<Worker | null> {
+  const workers = await list();
+  return workers.find(w => w.claudeSessionId === sessionId) || null;
 }
 
 /**

@@ -10,9 +10,12 @@
  *   --no-worktree         - Use shared repo instead of worktree
  *   -s, --session <name>  - Target tmux session
  *   --focus               - Focus the worker pane (default: true)
+ *   --resume              - Resume previous Claude session if available (default: true)
+ *   --no-resume           - Start fresh session even if previous exists
  */
 
 import { $ } from 'bun';
+import { randomUUID } from 'crypto';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
@@ -31,6 +34,8 @@ export interface WorkOptions {
   session?: string;
   focus?: boolean;
   prompt?: string;
+  /** Resume previous Claude session if available */
+  resume?: boolean;
 }
 
 interface BeadsIssue {
@@ -436,6 +441,78 @@ export async function workCommand(
       existingWorker = await registry.findByTask(taskId);
     }
     if (existingWorker) {
+      // If worker exists and has a session ID, offer to resume
+      if (existingWorker.claudeSessionId && options.resume !== false) {
+        console.log(`📋 Found existing worker for ${taskId} with resumable session`);
+        console.log(`   Session ID: ${existingWorker.claudeSessionId}`);
+        console.log(`   Resuming previous Claude session...`);
+
+        // Get session
+        const session = options.session || await getCurrentSession();
+        if (!session) {
+          console.error('❌ Not in a tmux session. Attach to a session first or use --session.');
+          process.exit(1);
+        }
+
+        // Spawn a new pane for the resumed session
+        const workingDir = existingWorker.worktree || existingWorker.repoPath;
+        console.log(`🚀 Spawning worker pane...`);
+        const paneResult = await spawnWorkerPane(session, workingDir);
+        if (!paneResult) {
+          process.exit(1);
+        }
+
+        const { paneId } = paneResult;
+
+        // Update worker with new pane ID
+        await registry.update(existingWorker.id, {
+          paneId,
+          session,
+          state: 'spawning',
+          lastStateChange: new Date().toISOString(),
+        });
+        if (useBeads) {
+          await beadsRegistry.setAgentState(existingWorker.id, 'spawning').catch(() => {});
+        }
+
+        // Set BEADS_DIR so bd commands work in the worktree
+        const beadsDir = join(existingWorker.repoPath, '.genie');
+        const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
+
+        // Resume Claude with the stored session ID
+        await tmux.executeCommand(
+          paneId,
+          `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --resume '${existingWorker.claudeSessionId}'`,
+          true,
+          false
+        );
+
+        // Update state to working
+        if (useBeads) {
+          await beadsRegistry.setAgentState(existingWorker.id, 'working').catch(() => {});
+        }
+        await registry.updateState(existingWorker.id, 'working');
+
+        // Start monitoring
+        startWorkerMonitoring(existingWorker.id, session, paneId);
+
+        // Focus pane (unless disabled)
+        if (options.focus !== false) {
+          await tmux.executeTmux(`select-pane -t '${paneId}'`);
+        }
+
+        console.log(`\n✅ Resumed worker for ${taskId}`);
+        console.log(`   Pane: ${paneId}`);
+        console.log(`   Session: ${session}`);
+        console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
+        console.log(`\nCommands:`);
+        console.log(`   term workers        - Check worker status`);
+        console.log(`   term approve ${taskId}  - Approve permissions`);
+        console.log(`   term close ${taskId}    - Close issue when done`);
+        console.log(`   term kill ${taskId}     - Force kill worker`);
+        return;
+      }
+
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
       console.log(`   Run \`term kill ${existingWorker.id}\` first, or work on a different issue.`);
       process.exit(1);
@@ -480,7 +557,10 @@ export async function workCommand(
 
     const { paneId } = paneResult;
 
-    // 7. Register worker (write to both registries during transition)
+    // 7. Generate Claude session ID for resume capability
+    const claudeSessionId = randomUUID();
+
+    // 8. Register worker (write to both registries during transition)
     const worker: registry.Worker = {
       id: taskId,
       paneId,
@@ -492,6 +572,7 @@ export async function workCommand(
       state: 'spawning',
       lastStateChange: new Date().toISOString(),
       repoPath,
+      claudeSessionId,
     };
 
     // Register in beads (creates agent bead)
@@ -504,6 +585,7 @@ export async function workCommand(
           repoPath,
           taskId,
           taskTitle: issue.title,
+          claudeSessionId,
         });
 
         // Bind work to agent
@@ -519,7 +601,7 @@ export async function workCommand(
     // Also register in JSON registry (parallel operation during transition)
     await registry.register(worker);
 
-    // 8. Build prompt and start Claude with it as argument
+    // 9. Build prompt and start Claude with it as argument
     const prompt = options.prompt || `Work on beads issue ${taskId}: "${issue.title}"
 
 ## Description
@@ -533,8 +615,14 @@ When you're done, commit your changes and let me know.`;
     // Set BEADS_DIR so bd commands work in the worktree
     const beadsDir = join(repoPath, '.genie');
 
-    // Start Claude with prompt as argument - no resume picker, straight to work
-    await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude '${escapedPrompt}'`, true, false);
+    // Escape workingDir for shell
+    const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
+
+    // Start Claude with session ID for resume capability
+    // First cd to correct directory (shell rc files may have overridden tmux -c)
+    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --session-id '${claudeSessionId}' '${escapedPrompt}'`, true, false);
+
+    console.log(`   Session ID: ${claudeSessionId}`);
 
     // 10. Update state to working (both registries)
     if (useBeads) {

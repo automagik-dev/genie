@@ -16,6 +16,7 @@
  */
 
 import { $ } from 'bun';
+import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { search } from '@inquirer/prompts';
 import * as tmux from '../lib/tmux.js';
@@ -335,7 +336,10 @@ export async function spawnCommand(
     }
   }
 
-  // 6. Register worker (if taskId provided)
+  // 6. Generate Claude session ID for resume capability (only if task-bound)
+  const claudeSessionId = options.taskId ? randomUUID() : undefined;
+
+  // 7. Register worker (if taskId provided)
   if (options.taskId && issue) {
     const worker: registry.Worker = {
       id: options.taskId,
@@ -348,6 +352,7 @@ export async function spawnCommand(
       state: 'spawning',
       lastStateChange: new Date().toISOString(),
       repoPath,
+      claudeSessionId,
     };
 
     if (useBeads) {
@@ -359,6 +364,7 @@ export async function spawnCommand(
           repoPath,
           taskId: options.taskId,
           taskTitle: issue.title,
+          claudeSessionId,
         });
         await beadsRegistry.bindWork(options.taskId, options.taskId);
         await beadsRegistry.setAgentState(options.taskId, 'spawning');
@@ -370,16 +376,17 @@ export async function spawnCommand(
     await registry.register(worker);
   }
 
-  // 7. Escape prompt for shell
+  // 8. Escape prompt for shell
   const escapedPrompt = prompt.replace(/'/g, "'\\''");
 
   // Set BEADS_DIR so bd commands work in worktrees
   const beadsDir = join(repoPath, '.genie');
 
-  // 8. Start Claude with prompt
-  await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude '${escapedPrompt}'`, true, false);
+  // 9. Start Claude with prompt (include session ID if task-bound)
+  const sessionIdArg = claudeSessionId ? `--session-id '${claudeSessionId}' ` : '';
+  await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude ${sessionIdArg}'${escapedPrompt}'`, true, false);
 
-  // 9. Update state if task-bound
+  // 10. Update state if task-bound
   if (options.taskId) {
     if (useBeads) {
       await beadsRegistry.setAgentState(options.taskId, 'working').catch(() => {});
@@ -387,12 +394,12 @@ export async function spawnCommand(
     await registry.updateState(options.taskId, 'working');
   }
 
-  // 10. Focus pane (unless disabled)
+  // 11. Focus pane (unless disabled)
   if (options.focus !== false) {
     await tmux.executeTmux(`select-pane -t '${paneId}'`);
   }
 
-  // 11. Output summary
+  // 12. Output summary
   console.log(`\nSpawned Claude with skill: ${skillName}`);
   console.log(`   Pane: ${paneId}`);
   console.log(`   Session: ${session}`);
@@ -401,6 +408,9 @@ export async function spawnCommand(
   }
   if (options.taskId) {
     console.log(`   Task: ${options.taskId}`);
+    if (claudeSessionId) {
+      console.log(`   Claude Session: ${claudeSessionId}`);
+    }
     console.log(`\nCommands:`);
     console.log(`   term workers        - Check worker status`);
     console.log(`   term approve ${options.taskId}  - Approve permissions`);

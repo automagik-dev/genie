@@ -85,6 +85,7 @@ export async function createAgent(
     repoPath: string;
     taskId: string;
     taskTitle?: string;
+    claudeSessionId?: string;
   }
 ): Promise<string> {
   // Create agent bead with metadata
@@ -115,6 +116,7 @@ export async function createAgent(
     repoPath: metadata.repoPath,
     taskId: metadata.taskId,
     taskTitle: metadata.taskTitle,
+    claudeSessionId: metadata.claudeSessionId,
     startedAt: new Date().toISOString(),
   });
 
@@ -135,6 +137,7 @@ export async function ensureAgent(
     repoPath: string;
     taskId: string;
     taskTitle?: string;
+    claudeSessionId?: string;
   }
 ): Promise<string> {
   // Check if agent already exists
@@ -302,6 +305,7 @@ interface AgentMetadata {
   startedAt: string;
   wishSlug?: string;
   groupNumber?: number;
+  claudeSessionId?: string;
 }
 
 /**
@@ -321,6 +325,7 @@ function agentToWorker(agent: AgentBead, metadata: AgentMetadata): Worker {
     state: mapFromBeadsState(agent.state || 'idle'),
     lastStateChange: new Date().toISOString(), // Would need to track this in beads
     repoPath: metadata.repoPath,
+    claudeSessionId: metadata.claudeSessionId,
   };
 }
 
@@ -389,6 +394,14 @@ export async function findByTask(taskId: string): Promise<Worker | null> {
 export async function hasWorkerForTask(taskId: string): Promise<boolean> {
   const worker = await findByTask(taskId);
   return worker !== null;
+}
+
+/**
+ * Find worker by Claude session ID
+ */
+export async function findBySessionId(sessionId: string): Promise<Worker | null> {
+  const workers = await listWorkers();
+  return workers.find(w => w.claudeSessionId === sessionId) || null;
 }
 
 // ============================================================================
@@ -524,6 +537,7 @@ export async function register(worker: Worker): Promise<void> {
     repoPath: worker.repoPath,
     taskId: worker.taskId,
     taskTitle: worker.taskTitle,
+    claudeSessionId: worker.claudeSessionId,
   });
 
   await setAgentState(worker.id, worker.state);
@@ -543,4 +557,39 @@ export async function unregister(workerId: string): Promise<void> {
 export async function updateState(workerId: string, state: WorkerState): Promise<void> {
   await setAgentState(workerId, state);
   await heartbeat(workerId);
+}
+
+/**
+ * Update Claude session ID for a worker
+ */
+export async function updateSessionId(workerId: string, sessionId: string): Promise<void> {
+  const agent = await findAgentByWorkerId(workerId);
+  if (!agent) {
+    throw new Error(`Agent not found for worker ${workerId}`);
+  }
+
+  // Get current metadata
+  const { stdout, exitCode } = await runBd(['show', agent.id, '--json']);
+  if (exitCode !== 0 || !stdout) {
+    throw new Error(`Failed to get agent metadata for ${workerId}`);
+  }
+
+  const fullAgent = parseJson<AgentBead & { metadata?: AgentMetadata }>(stdout);
+  if (!fullAgent?.metadata) {
+    throw new Error(`Agent ${workerId} has no metadata`);
+  }
+
+  // Update metadata with new session ID
+  const updatedMetadata = { ...fullAgent.metadata, claudeSessionId: sessionId };
+  const metadataJson = JSON.stringify(updatedMetadata);
+
+  const { exitCode: updateExitCode, stderr } = await runBd([
+    'update',
+    agent.id,
+    `--metadata=${metadataJson}`,
+  ]);
+
+  if (updateExitCode !== 0) {
+    throw new Error(`Failed to update session ID: ${stderr}`);
+  }
 }
