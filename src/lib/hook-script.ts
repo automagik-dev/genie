@@ -85,12 +85,19 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
+# Don't wrap commands that are already term exec calls (avoid infinite recursion)
+if [[ "$COMMAND" == *"term exec "* ]] || [[ "$COMMAND" == *"/term.js exec"* ]] || [[ "$COMMAND" == *".local/bin/term "* ]] || [[ "$COMMAND" == *".genie/bin/term"* ]]; then
+  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+  exit 0
+fi
+
 # Escape single quotes in the command for safe shell embedding
 # Replace ' with '\\'\\''
 ESCAPED_COMMAND=$(echo "$COMMAND" | sed "s/'/'\\\\'\\\\''/" )
 
 # Build the wrapped command that goes through term exec
-WRAPPED_COMMAND="term exec ${target} '\${ESCAPED_COMMAND}'"
+# Uses full path since Claude's subprocess may not have full PATH
+WRAPPED_COMMAND="\$HOME/.local/bin/term exec ${sessionName}:\\\${CLAUDIO_SESSION:-claude} '\${ESCAPED_COMMAND}'"
 
 # Extract other fields from the original input to preserve them
 TIMEOUT=$(echo "$INPUT" | jq -r '.tool_input.timeout // empty')

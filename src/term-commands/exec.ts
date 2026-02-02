@@ -13,7 +13,7 @@ export async function executeInSession(target: string, command: string): Promise
       console.error(`Session "${sessionName}" not found, creating...`);
       session = await tmux.createSession(sessionName);
       if (!session) {
-        console.error(`❌ Failed to create session "${sessionName}"`);
+        console.error(`Failed to create session "${sessionName}"`);
         process.exit(1);
       }
     }
@@ -25,22 +25,29 @@ export async function executeInSession(target: string, command: string): Promise
       console.error(`Window "${windowName}" not found, creating...`);
       targetWindow = await tmux.createWindow(session.id, windowName);
       if (!targetWindow) {
-        console.error(`❌ Failed to create window "${windowName}"`);
+        console.error(`Failed to create window "${windowName}"`);
         process.exit(1);
       }
     }
 
-    // Get pane and execute
+    // Get pane
     const panes = await tmux.listPanes(targetWindow.id);
     if (!panes || panes.length === 0) {
-      console.error(`❌ No panes found in window "${windowName}"`);
+      console.error(`No panes found in window "${windowName}"`);
       process.exit(1);
     }
 
-    await tmux.executeCommand(panes[0].id, command);
-    console.log(`✅ Command sent to ${sessionName}:${windowName}`);
+    // Run command synchronously using wait-for (no polling, no ugly markers)
+    const { output, exitCode } = await tmux.runCommandSync(panes[0].id, command);
+
+    // Output the result
+    if (output) {
+      console.log(output);
+    }
+
+    process.exit(exitCode);
   } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+    console.error(`Error: ${error.message}`);
     process.exit(1);
   }
 }

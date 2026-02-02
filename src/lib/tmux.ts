@@ -404,3 +404,77 @@ export async function renameWindow(windowId: string, newName: string): Promise<v
   await executeTmux(`rename-window -t '${windowId}' '${newName}'`);
 }
 
+/**
+ * Run a command synchronously in a tmux pane using wait-for.
+ *
+ * Uses tmux wait-for for proper synchronization (no polling).
+ * Output is captured via tee so it's visible in the pane AND returned.
+ *
+ * @returns {output: string, exitCode: number}
+ */
+export async function runCommandSync(
+  paneId: string,
+  command: string,
+  timeoutMs: number = 120000
+): Promise<{ output: string; exitCode: number }> {
+  const id = uuidv4().substring(0, 8);
+  const outFile = `/tmp/genie-${id}.out`;
+  const exitFile = `/tmp/genie-${id}.exit`;
+  const channel = `genie-${id}`;
+
+  // Escape single quotes in command for shell embedding
+  const escapedCommand = command.replace(/'/g, "'\\''");
+
+  // Wrap command using tee for output capture:
+  // - Run command, pipe through tee (visible in terminal AND saved to file)
+  // - Capture exit code via PIPESTATUS
+  // - Signal completion via wait-for
+  const fullCommand = `{ ${escapedCommand}; } 2>&1 | tee ${outFile}; echo \${PIPESTATUS[0]} > ${exitFile}; tmux wait-for -S ${channel}`;
+
+  // Send command to pane
+  await executeTmux(`send-keys -t '${paneId}' '${fullCommand.replace(/'/g, "'\\''")}' Enter`);
+
+  // Wait for completion (blocks until signaled, with timeout)
+  try {
+    await Promise.race([
+      executeTmux(`wait-for ${channel}`),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Command timed out')), timeoutMs)
+      ),
+    ]);
+  } catch (error: any) {
+    if (error.message === 'Command timed out') {
+      // Clean up on timeout
+      try {
+        await executeTmux(`wait-for -S ${channel}`); // Unblock any waiters
+      } catch {}
+      return { output: '', exitCode: 124 };
+    }
+    throw error;
+  }
+
+  // Read output and exit code from files
+  let output = '';
+  let exitCode = 0;
+
+  try {
+    const { readFile, unlink } = await import('fs/promises');
+
+    output = await readFile(outFile, 'utf-8');
+    // Clean up output
+    output = output.trim();
+
+    const exitStr = await readFile(exitFile, 'utf-8');
+    exitCode = parseInt(exitStr.trim(), 10) || 0;
+
+    // Clean up temp files
+    await unlink(outFile).catch(() => {});
+    await unlink(exitFile).catch(() => {});
+  } catch (err) {
+    // If files don't exist, command may have failed to start
+    console.error('Failed to read command output:', err);
+  }
+
+  return { output, exitCode };
+}
+
