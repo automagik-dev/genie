@@ -9,7 +9,7 @@
  * Options:
  *   --no-worktree         - Use shared repo instead of worktree
  *   -s, --session <name>  - Target tmux session
- *   --focus               - Focus the worker pane (default: true)
+ *   --focus               - Focus the worker pane (default: false)
  *   --resume              - Resume previous Claude session if available (default: true)
  *   --no-resume           - Start fresh session even if previous exists
  */
@@ -496,8 +496,8 @@ export async function workCommand(
         // Start monitoring
         startWorkerMonitoring(existingWorker.id, session, paneId);
 
-        // Focus pane (unless disabled)
-        if (options.focus !== false) {
+        // Focus pane (only if explicitly requested)
+        if (options.focus === true) {
           await tmux.executeTmux(`select-pane -t '${paneId}'`);
         }
 
@@ -633,8 +633,8 @@ When you're done, commit your changes and let me know.`;
     // 11. Start monitoring
     startWorkerMonitoring(taskId, session, paneId);
 
-    // 12. Focus pane (unless disabled)
-    if (options.focus !== false) {
+    // 12. Focus pane (only if explicitly requested)
+    if (options.focus === true) {
       await tmux.executeTmux(`select-pane -t '${paneId}'`);
     }
 

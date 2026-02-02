@@ -269,7 +269,7 @@ program
   .description('Spawn worker bound to beads issue (target: bd-id, "next", or "wish")')
   .option('--no-worktree', 'Use shared repo instead of worktree')
   .option('-s, --session <name>', 'Target tmux session')
-  .option('--no-focus', 'Don\'t focus the worker pane')
+  .option('--focus', 'Focus the worker pane after spawning')
   .option('-p, --prompt <message>', 'Custom initial prompt')
   .option('--no-resume', 'Start fresh session even if previous exists')
   .action(async (target: string, options: workCmd.WorkOptions) => {
