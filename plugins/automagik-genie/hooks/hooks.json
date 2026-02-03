@@ -1,3 +1,17 @@
 {
-  "hooks": []
+  "description": "Genie CLI setup and validation hooks",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
 }
