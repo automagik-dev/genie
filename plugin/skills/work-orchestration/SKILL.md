@@ -35,10 +35,11 @@ term create "Fix the thing" && term work next
 ### 3. Execute
 
 The worker spawns Claude in a pane. You can:
-- Watch: `tmux attach -t genie`
+- Watch: `tmux attach -t genie` or `term watch genie`
 - Approve: `term approve <worker>`
 - Answer: `term answer <worker> <choice>`
-- Check: `term orc status genie`
+- Check: `term orc status genie` (Claude state)
+- Send: `term send genie "msg"` (sends with Enter)
 
 ### 4. Close When Done
 
@@ -95,7 +96,12 @@ term workers               # See both
 | Split pane | `term split genie h` |
 | Approve | `term approve <worker>` |
 | Answer | `term answer <worker> 1` |
-| Check status | `term orc status genie` |
+| Send message | `term send genie "msg"` |
+| Send raw keys | `term send genie "q" --no-enter` |
+| Watch events | `term watch genie` |
+| Fire-and-forget | `term run genie "task"` |
+| Session info | `term info genie` |
+| Claude state | `term orc status genie` |
 | Close work | `term close <id>` |
 
 ---

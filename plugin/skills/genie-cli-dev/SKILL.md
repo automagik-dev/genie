@@ -230,6 +230,7 @@ term new test-session      # Create session
 term window ls test-session # List windows
 term pane ls test-session  # List panes
 term split test-session h  # Split horizontally
+term info test-session     # Session info (windows/panes)
 term rm test-session       # Cleanup
 ```
 
@@ -261,11 +262,13 @@ The `src/lib/orchestrator/` module automates Claude Code:
 
 ```bash
 term orc start genie       # Start Claude with monitoring
-term orc status genie      # Check Claude state
-term orc send genie "msg"  # Send message and wait
-term orc approve genie     # Approve permission
-term orc answer genie 1    # Answer question
-term orc run genie "task"  # Fire-and-forget with auto-approve
+term orc status genie      # Check Claude state (detailed)
+term send genie "msg"      # Send message with Enter
+term send genie "q" --no-enter  # Send raw key
+term watch genie           # Watch session events
+term run genie "task"      # Fire-and-forget with auto-approve
+term approve <worker>      # Approve permission (for workers)
+term answer <worker> 1     # Answer question (for workers)
 ```
 
 ---

@@ -217,9 +217,11 @@ term
 ├── rm <name>               Remove session (--keep-worktree)
 ├── read <session>          Read output (-n, --grep, --json, -f)
 ├── exec <session> <cmd>    Run command (async)
-├── send <session> <keys>   Send keystrokes
+├── send <session> <keys>   Send keys with Enter (--no-enter for raw)
 ├── split <session> <h|v>   Split pane (-d, -w)
-├── status <session>        Check state (--command <id>, --json)
+├── info <session>          Session info (--json)
+├── watch <session>         Watch events in real-time
+├── run <session> <msg>     Fire-and-forget with auto-approve
 ├── window
 │   ├── new <session> <name>
 │   ├── ls <session> (--json)
@@ -227,6 +229,9 @@ term
 ├── pane
 │   ├── ls <session> (--json)
 │   └── rm <pane-id>
+├── orc
+│   ├── start <session>     Start Claude with monitoring
+│   └── status <session>    Claude state (idle/busy/permission)
 └── hook
     ├── set <event> <cmd>
     ├── list
@@ -422,8 +427,8 @@ term ls --json
 term read khal-tests --json
 # → {"session":"khal-tests","lines":["$ npm test","PASS src/app.test.ts"]}
 
-# Check status
-term status khal-tests --json
+# Check session info
+term info khal-tests --json
 # → {"exists":true,"windows":1,"panes":1}
 ```
 
@@ -456,7 +461,7 @@ term exec project-work "npm test"  # runs in active pane
 
 Check if a command finished:
 ```bash
-term status my-session --json
+term info my-session --json
 ```
 
 Look for shell prompt in output to detect completion:

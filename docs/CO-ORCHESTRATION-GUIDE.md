@@ -142,7 +142,7 @@ term answer bd-1 "text:custom"  # Provide custom text answer
 **Send additional instructions:**
 ```bash
 # Focus the worker pane and type directly, or:
-term orc send <session> "Additional instructions here" --pane %16
+term send <session> "Additional instructions here" --pane %16
 ```
 
 ### Phase 5: Closing Issues
@@ -236,7 +236,7 @@ term workers
 ```bash
 # Worker completes, but needs revision
 # Don't close yet - send feedback
-term orc send genie "Please also add input validation" --pane %16
+term send genie "Please also add input validation" --pane %16
 
 # Or if already closed, reopen
 bd update bd-1 --status open
@@ -319,11 +319,18 @@ If a worker keeps asking for the same permission:
 | `term workers` | List all workers |
 | `term approve <id>` | Approve permission |
 | `term answer <id> <choice>` | Answer question |
+| `term send <id> <msg>` | Send message (with Enter) |
+| `term send <id> <keys> --no-enter` | Send raw keys |
+| `term watch <id>` | Watch session events in real-time |
+| `term run <id> <msg>` | Fire-and-forget with auto-approve |
+| `term info <id>` | Session info (windows/panes) |
 | `term close <id>` | Close issue and cleanup |
 | `term kill <id>` | Force kill worker |
 | `term daemon start` | Start beads daemon |
 | `term daemon stop` | Stop beads daemon |
 | `term daemon status` | Show daemon status |
+| `term orc status <id>` | Claude state (idle/busy/permission) |
+| `term orc start <id>` | Start Claude with monitoring |
 
 ## Architecture
 
