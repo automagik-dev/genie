@@ -120,7 +120,7 @@ confirm() {
         return 0
     fi
     echo -en "${YELLOW}?${NC} $prompt [y/N] "
-    read -r response
+    read -r response < /dev/tty
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
@@ -579,7 +579,7 @@ prompt_install_method() {
     echo "  3) bun     - Install via bun -g (recommended)"
     echo
     echo -en "${YELLOW}?${NC} Choose [1-3] (default: 3): "
-    read -r choice
+    read -r choice < /dev/tty
 
     case "$choice" in
         1) INSTALL_METHOD="source" ;;
@@ -604,7 +604,7 @@ prompt_optional_components() {
     echo "  5) jq                  - JSON processing"
     echo
     echo -en "${YELLOW}?${NC} Select components [1-5, all, none] (default: all): "
-    read -r choices
+    read -r choices < /dev/tty
 
     # Reset all to false if user makes selections
     if [[ -n "$choices" && "$choices" != "all" ]]; then
