@@ -440,10 +440,33 @@ export async function workCommand(
       console.error('❌ `term work wish` is not yet implemented. Coming in Phase 1.5.');
       process.exit(1);
     } else {
-      // Validate bd-id exists
-      issue = await getBeadsIssue(target);
+      // Check local backend first, then fall back to beads
+      const backend = getBackend(repoPath);
+      if (backend.kind === 'local') {
+        const localTask = await backend.get(target);
+        if (localTask) {
+          issue = {
+            id: localTask.id,
+            title: localTask.title,
+            status: localTask.status,
+            description: localTask.description,
+            blockedBy: localTask.blockedBy || [],
+          };
+        }
+      }
+      
+      // Fall back to beads if not found locally
       if (!issue) {
-        console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
+        issue = await getBeadsIssue(target);
+      }
+      
+      if (!issue) {
+        const backend = getBackend(repoPath);
+        if (backend.kind === 'local') {
+          console.error(`❌ Issue "${target}" not found. Check \`.genie/tasks.json\`.`);
+        } else {
+          console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
+        }
         process.exit(1);
       }
     }
