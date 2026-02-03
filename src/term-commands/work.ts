@@ -697,11 +697,19 @@ When you're done, commit your changes and let me know.`;
     // Escape workingDir for shell
     const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
-    // Start Claude with session ID for resume capability
+    // Start Claude with session ID for resume capability (without prompt)
     // First cd to correct directory (shell rc files may have overridden tmux -c)
-    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --session-id '${claudeSessionId}' '${escapedPrompt}'`, true, false);
+    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --session-id '${claudeSessionId}'`, true, false);
 
     console.log(`   Session ID: ${claudeSessionId}`);
+
+    // Wait for Claude to be ready, then send prompt via send-keys
+    // This avoids shell argument length limits and escaping issues
+    const ready = await waitForClaudeReady(paneId);
+    if (!ready) {
+      console.log('   (Claude startup timed out, sending prompt anyway)');
+    }
+    await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedPrompt}' Enter`);
 
     // 10. Update state to working (both registries)
     if (useBeads) {
