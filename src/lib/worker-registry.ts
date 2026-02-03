@@ -61,7 +61,25 @@ export interface WorkerRegistry {
 // ============================================================================
 
 const CONFIG_DIR = join(homedir(), '.config', 'term');
-const REGISTRY_FILE = join(CONFIG_DIR, 'workers.json');
+
+function getRegistryFilePath(): string {
+  // Prefer repo-local tracked .genie/ when present (macro repo like blanco)
+  const cwd = process.cwd();
+  const repoGenie = join(cwd, '.genie');
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { existsSync } = require('fs');
+    if (process.env.TERM_WORKER_REGISTRY === 'global') {
+      return join(CONFIG_DIR, 'workers.json');
+    }
+    if (existsSync(repoGenie)) {
+      return join(repoGenie, 'workers.json');
+    }
+  } catch {
+    // ignore
+  }
+  return join(CONFIG_DIR, 'workers.json');
+}
 
 // ============================================================================
 // Private Functions
@@ -73,7 +91,7 @@ async function ensureConfigDir(): Promise<void> {
 
 async function loadRegistry(): Promise<WorkerRegistry> {
   try {
-    const content = await readFile(REGISTRY_FILE, 'utf-8');
+    const content = await readFile(getRegistryFilePath(), 'utf-8');
     return JSON.parse(content);
   } catch {
     return { workers: {}, lastUpdated: new Date().toISOString() };
@@ -81,9 +99,10 @@ async function loadRegistry(): Promise<WorkerRegistry> {
 }
 
 async function saveRegistry(registry: WorkerRegistry): Promise<void> {
-  await ensureConfigDir();
+  const filePath = getRegistryFilePath();
+  await mkdir(dirname(filePath), { recursive: true });
   registry.lastUpdated = new Date().toISOString();
-  await writeFile(REGISTRY_FILE, JSON.stringify(registry, null, 2));
+  await writeFile(filePath, JSON.stringify(registry, null, 2));
 }
 
 // ============================================================================
@@ -235,5 +254,5 @@ export function getConfigDir(): string {
  * Get the registry file path
  */
 export function getRegistryPath(): string {
-  return REGISTRY_FILE;
+  return getRegistryFilePath();
 }

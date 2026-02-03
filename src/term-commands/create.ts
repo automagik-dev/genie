@@ -1,18 +1,11 @@
 /**
- * Create command - Simple bd create wrapper
+ * Create command - Create a task.
  *
- * Usage:
- *   term create "Task title"                    - Create beads issue
- *   term create "Task title" -d "Description"   - With description
- *   term create "Task title" -p bd-1            - With parent/dependency
- *
- * Options:
- *   -d, --description <text>  - Issue description
- *   -p, --parent <id>         - Parent issue ID (creates dependency)
- *   --json                    - Output as JSON
+ * - In repos with beads (bd), creates a beads issue (bd-123)
+ * - In repos with a tracked .genie/ (macro repo like blanco), creates a local wish task (wish-42)
  */
 
-import { $ } from 'bun';
+import { getBackend } from '../lib/task-backend.js';
 
 export interface CreateOptions {
   description?: string;
@@ -20,76 +13,39 @@ export interface CreateOptions {
   json?: boolean;
 }
 
-/**
- * Run bd command and return result
- */
-async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number }> {
-  try {
-    const result = await $`bd ${args}`.quiet();
-    return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error: any) {
-    return {
-      stdout: error.stdout?.toString().trim() || error.message,
-      exitCode: error.exitCode || 1
-    };
-  }
-}
-
 export async function createCommand(
   title: string,
   options: CreateOptions = {}
 ): Promise<void> {
-  // Build bd create command
-  const args = ['create', title];
+  const repoPath = process.cwd();
+  const backend = getBackend(repoPath);
 
-  if (options.description) {
-    args.push('--description', options.description);
-  }
+  try {
+    const task = await backend.create(title, {
+      description: options.description,
+      parent: options.parent,
+    });
 
-  // Run bd create
-  const { stdout, exitCode } = await runBd(args);
-
-  if (exitCode !== 0) {
-    console.error(`Failed to create issue: ${stdout}`);
-    process.exit(1);
-  }
-
-  // Extract issue ID from output
-  // bd create typically outputs something like "Created bd-123" or just the ID
-  const idMatch = stdout.match(/bd-\d+/);
-  const issueId = idMatch ? idMatch[0] : null;
-
-  if (!issueId) {
-    console.log(stdout);
-    return;
-  }
-
-  // If parent specified, add blockedBy relationship
-  if (options.parent) {
-    const { exitCode: updateExit } = await runBd([
-      'update',
-      issueId,
-      '--blocked-by',
-      options.parent,
-    ]);
-
-    if (updateExit !== 0) {
-      console.log(`Created ${issueId} (failed to set parent dependency)`);
+    if (options.json) {
+      const full = await backend.get(task.id);
+      console.log(JSON.stringify(full || task, null, 2));
+      return;
     }
-  }
 
-  if (options.json) {
-    // Fetch full issue details
-    const { stdout: showOutput } = await runBd(['show', issueId, '--json']);
-    console.log(showOutput);
-  } else {
-    console.log(`Created: ${issueId} - "${title}"`);
-    if (options.parent) {
-      console.log(`   Blocked by: ${options.parent}`);
-    }
+    console.log(`Created: ${task.id} - "${task.title}" (${backend.kind})`);
+    if (options.parent) console.log(`   Blocked by: ${options.parent}`);
+
     console.log(`\nNext steps:`);
-    console.log(`   term work ${issueId}           - Start working on it`);
-    console.log(`   term spawn genie:wish -t ${issueId}  - Plan with wish skill`);
-    console.log(`   bd show ${issueId}             - View details`);
+    console.log(`   term work ${task.id}           - Start working on it`);
+    console.log(`   term spawn brainstorm -t ${task.id}  - Plan with brainstorm skill`);
+
+    if (backend.kind === 'beads') {
+      console.log(`   bd show ${task.id}             - View details`);
+    } else {
+      console.log(`   (Local tasks live in .genie/tasks.json)`);
+    }
+  } catch (error: any) {
+    console.error(`Failed to create task: ${error.message || String(error)}`);
+    process.exit(1);
   }
 }

@@ -19,11 +19,14 @@ import { randomUUID } from 'crypto';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
+import { getBackend } from '../lib/task-backend.js';
 import { EventMonitor } from '../lib/orchestrator/index.js';
 import { join } from 'path';
 
-// Use beads registry when enabled
-const useBeads = beadsRegistry.isBeadsRegistryEnabled();
+// Use beads registry only when enabled AND bd exists on PATH
+// (macro repos like blanco may run without bd)
+// @ts-ignore
+const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -96,7 +99,25 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
 /**
  * Get next ready beads issue
  */
-async function getNextReadyIssue(): Promise<BeadsIssue | null> {
+async function getNextReadyIssue(repoPath: string): Promise<BeadsIssue | null> {
+  // If local backend is active, use its queue and synthesize a BeadsIssue-like object.
+  const backend = getBackend(repoPath);
+  if (backend.kind === 'local') {
+    const q = await backend.queue();
+    if (q.ready.length === 0) return null;
+    const id = q.ready[0];
+    const t = await backend.get(id);
+    if (!t) return null;
+    return {
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      description: t.description,
+      blockedBy: t.blockedBy || [],
+    };
+  }
+
+  // beads backend
   const { stdout, exitCode } = await runBd(['ready', '--json']);
   if (exitCode !== 0 || !stdout) return null;
 
@@ -114,14 +135,10 @@ async function getNextReadyIssue(): Promise<BeadsIssue | null> {
     }
     return null;
   } catch {
-    // Try parsing as single issue or line-based format
     const lines = stdout.split('\n').filter(l => l.trim());
     if (lines.length > 0) {
-      // Extract ID from first line (format: "bd-1: title" or just "bd-1")
       const match = lines[0].match(/^(bd-\d+)/);
-      if (match) {
-        return getBeadsIssue(match[1]);
-      }
+      if (match) return getBeadsIssue(match[1]);
     }
     return null;
   }
@@ -413,7 +430,7 @@ export async function workCommand(
 
     if (target === 'next') {
       console.log('🔍 Finding next ready issue...');
-      issue = await getNextReadyIssue();
+      issue = await getNextReadyIssue(repoPath);
       if (!issue) {
         console.log('ℹ️  No ready issues. Run `bd ready` to see the queue.');
         return;
@@ -525,11 +542,17 @@ export async function workCommand(
       process.exit(1);
     }
 
-    // 4. Claim in beads
+    // 4. Claim task (backend-dependent)
     console.log(`📝 Claiming ${taskId}...`);
-    const claimed = await claimIssue(taskId);
+    const backend = getBackend(repoPath);
+    const claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
     if (!claimed) {
-      console.error(`❌ Failed to claim ${taskId}. Check \`bd show ${taskId}\`.`);
+      console.error(`❌ Failed to claim ${taskId}.`);
+      if (backend.kind === 'beads') {
+        console.error(`   Check \`bd show ${taskId}\`.`);
+      } else {
+        console.error(`   Check .genie/tasks.json`);
+      }
       process.exit(1);
     }
 

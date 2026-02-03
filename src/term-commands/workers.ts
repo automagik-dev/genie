@@ -11,10 +11,12 @@ import { $ } from 'bun';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
+import { getBackend } from '../lib/task-backend.js';
 import { detectState, stripAnsi } from '../lib/orchestrator/index.js';
 
-// Use beads registry when enabled
-const useBeads = beadsRegistry.isBeadsRegistryEnabled();
+// Use beads registry only when enabled AND bd exists on PATH
+// @ts-ignore
+const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -82,56 +84,11 @@ async function getCurrentState(paneId: string): Promise<string> {
 }
 
 /**
- * Get beads queue status
+ * Get queue status from the active task backend.
  */
-async function getQueueStatus(): Promise<{ ready: string[]; blocked: string[] }> {
-  const ready: string[] = [];
-  const blocked: string[] = [];
-
-  try {
-    // Get ready issues
-    const readyResult = await $`bd ready --json`.quiet();
-    const readyOutput = readyResult.stdout.toString().trim();
-    if (readyOutput) {
-      try {
-        const issues = JSON.parse(readyOutput);
-        for (const issue of issues) {
-          ready.push(`${issue.id}`);
-        }
-      } catch {
-        // Parse line-based format
-        const lines = readyOutput.split('\n').filter(l => l.trim());
-        for (const line of lines) {
-          const match = line.match(/^(bd-\d+)/);
-          if (match) ready.push(match[1]);
-        }
-      }
-    }
-  } catch {
-    // Ignore bd errors
-  }
-
-  try {
-    // Get blocked issues
-    const listResult = await $`bd list --json`.quiet();
-    const listOutput = listResult.stdout.toString().trim();
-    if (listOutput) {
-      try {
-        const issues = JSON.parse(listOutput);
-        for (const issue of issues) {
-          if (issue.blockedBy && issue.blockedBy.length > 0) {
-            blocked.push(`${issue.id} (blocked by ${issue.blockedBy.join(', ')})`);
-          }
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-  } catch {
-    // Ignore bd errors
-  }
-
-  return { ready, blocked };
+async function getQueueStatus(repoPath: string): Promise<{ ready: string[]; blocked: string[] }> {
+  const backend = getBackend(repoPath);
+  return backend.queue();
 }
 
 /**
@@ -222,7 +179,7 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
     }
 
     // Get queue status
-    const queue = await getQueueStatus();
+    const queue = await getQueueStatus(process.cwd());
 
     // Filter out dead workers from ready count
     const activeTaskIds = workers.filter(w => displayData.find(d => d.name === w.id && d.alive)).map(w => w.taskId);
