@@ -108,11 +108,19 @@ confirm_no() {
 
 # Get installed genie-cli version
 get_installed_version() {
-    if check_command genie; then
-        genie --version 2>/dev/null | head -1 || echo ""
-    else
-        echo ""
+    local version=""
+
+    # Try bun first (check global packages)
+    if check_command bun; then
+        version=$(bun pm ls -g 2>/dev/null | grep "$PACKAGE_NAME" | grep -o '@[0-9][^[:space:]]*' | tr -d '@' || true)
     fi
+
+    # Fallback to npm
+    if [[ -z "$version" ]] && check_command npm; then
+        version=$(npm ls -g "$PACKAGE_NAME" --depth=0 2>/dev/null | grep "$PACKAGE_NAME" | grep -o '@[0-9][^[:space:]]*' | tr -d '@' || true)
+    fi
+
+    echo "$version"
 }
 
 # Get latest version from npm registry
@@ -447,12 +455,7 @@ run_claudio_setup() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_install() {
-    local installed_version latest_version
-
-    # Check current installation status
-    installed_version=$(get_installed_version)
-
-    # Required prerequisites (needed for version check)
+    # ─── Prerequisites ───
     header "Checking prerequisites..."
     install_git_if_needed
     install_node_if_needed
@@ -460,13 +463,16 @@ run_install() {
     install_tmux_if_needed
     install_jq_if_needed
     install_rg_if_needed
+    install_claude_if_needed
 
-    # Check versions
+    # ─── Genie CLI Install/Update ───
+    header "Checking Genie CLI..."
+    local installed_version latest_version
+    installed_version=$(get_installed_version)
     latest_version=$(get_latest_version)
 
     if [[ -n "$installed_version" ]]; then
         log "Genie CLI ${BOLD}$installed_version${NC} installed"
-
         if [[ -n "$latest_version" ]]; then
             if [[ "$installed_version" == "$latest_version" ]]; then
                 success "Genie CLI is up to date"
@@ -484,29 +490,23 @@ run_install() {
             warn "Could not check latest version"
         fi
     else
-        # Fresh install
-        header "Installing Genie CLI..."
         install_genie_cli
     fi
 
-    # Optional: Claude Code CLI
-    echo
-    info "AI-powered coding assistant from Anthropic"
-    if confirm "Install Claude Code CLI?"; then
-        install_claude_if_needed
+    # ─── Configuration Wizard ───
+    header "Configuration"
+    echo -e "${DIM}────────────────────────────────────${NC}"
 
-        # Optional: Genie Plugin (only if Claude installed)
-        if check_command claude; then
-            echo
-            info "Adds skills, agents, and hooks to Claude Code"
-            if confirm "Install Genie plugin for Claude Code?"; then
-                install_plugin_if_needed
-            fi
+    # Plugin for Claude Code
+    if check_command claude; then
+        info "Adds skills, agents, and hooks to Claude Code"
+        if confirm "Install Genie plugin for Claude Code?"; then
+            install_plugin_if_needed
         fi
+        echo
     fi
 
-    # Optional: Claudio setup
-    echo
+    # Claudio profiles
     info "Manage multiple Claude API configurations"
     if confirm "Configure Claudio profiles?"; then
         run_claudio_setup
