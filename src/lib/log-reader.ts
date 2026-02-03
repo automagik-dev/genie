@@ -67,18 +67,21 @@ export async function readSessionLogs(
     throw new Error(`Session "${sessionName}" not found`);
   }
 
-  // Get first window and pane
+  // Get active window and pane (never assume index 0)
   const windows = await tmux.listWindows(session.id);
   if (!windows || windows.length === 0) {
     throw new Error(`No windows found in session "${sessionName}"`);
   }
 
-  const panes = await tmux.listPanes(windows[0].id);
+  const activeWindow = windows.find(w => w.active) || windows[0];
+
+  const panes = await tmux.listPanes(activeWindow.id);
   if (!panes || panes.length === 0) {
     throw new Error(`No panes found in session "${sessionName}"`);
   }
 
-  const paneId = panes[0].id;
+  const activePane = panes.find(p => p.active) || panes[0];
+  const paneId = activePane.id;
 
   // Parse range if provided
   if (options.range) {
@@ -162,12 +165,15 @@ export async function followSessionLogs(
     throw new Error(`No windows found in session "${sessionName}"`);
   }
 
-  const panes = await tmux.listPanes(windows[0].id);
+  const activeWindow = windows.find(w => w.active) || windows[0];
+
+  const panes = await tmux.listPanes(activeWindow.id);
   if (!panes || panes.length === 0) {
     throw new Error(`No panes found in session "${sessionName}"`);
   }
 
-  const paneId = panes[0].id;
+  const activePane = panes.find(p => p.active) || panes[0];
+  const paneId = activePane.id;
   let lastContent = '';
   let following = true;
 

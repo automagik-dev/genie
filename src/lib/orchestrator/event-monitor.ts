@@ -81,12 +81,15 @@ export class EventMonitor extends EventEmitter {
         throw new Error(`No windows found in session "${this.sessionName}"`);
       }
 
-      const panes = await tmux.listPanes(windows[0].id);
+      const activeWindow = windows.find(w => w.active) || windows[0];
+
+      const panes = await tmux.listPanes(activeWindow.id);
       if (!panes || panes.length === 0) {
         throw new Error(`No panes found in session "${this.sessionName}"`);
       }
 
-      this.paneId = panes[0].id;
+      const activePane = panes.find(p => p.active) || panes[0];
+      this.paneId = activePane.id;
     }
 
     this.running = true;
