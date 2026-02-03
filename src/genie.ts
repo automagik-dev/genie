@@ -7,6 +7,7 @@ import { setupCommand, type SetupOptions } from './genie-commands/setup.js';
 import { updateCommand } from './genie-commands/update.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { doctorCommand } from './genie-commands/doctor.js';
+import { tuiCommand, type TuiOptions } from './genie-commands/tui.js';
 import {
   shortcutsShowCommand,
   shortcutsInstallCommand,
@@ -60,6 +61,15 @@ program
   .command('uninstall')
   .description('Remove Genie CLI and clean up hooks')
   .action(uninstallCommand);
+
+// TUI command - attach to master genie session
+program
+  .command('tui')
+  .description('Attach to master genie session in ~/workspace')
+  .option('-r, --reset', 'Kill existing session and start fresh')
+  .action(async (options: TuiOptions) => {
+    await tuiCommand(options);
+  });
 
 // Shortcuts command group - manage tmux keyboard shortcuts
 const shortcuts = program
