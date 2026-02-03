@@ -5,7 +5,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash
-#   curl ... | bash -s -- quick|full|source|update [--version=X] [--yes]
+#   curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- uninstall
 #
 # Exit codes:
 #   0 - Success
@@ -21,23 +21,17 @@ set -euo pipefail
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-readonly VERSION="1.0.0"
+readonly VERSION="2.0.0"
 readonly PACKAGE_NAME="@automagik/genie"
-readonly REPO_URL="https://github.com/namastexlabs/genie-cli.git"
 readonly RAW_REPO_URL="https://raw.githubusercontent.com/namastexlabs/genie-cli"
-readonly NPM_REGISTRY="https://registry.npmjs.org"
 
 readonly GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
-readonly GENIE_SRC="$GENIE_HOME/src"
-readonly GENIE_BIN="$GENIE_HOME/bin"
-readonly LOCAL_BIN="$HOME/.local/bin"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
     readonly RED='\033[0;31m'
     readonly GREEN='\033[0;32m'
     readonly YELLOW='\033[1;33m'
-    readonly CYAN='\033[0;36m'
     readonly BLUE='\033[0;34m'
     readonly BOLD='\033[1m'
     readonly DIM='\033[2m'
@@ -46,7 +40,6 @@ else
     readonly RED=''
     readonly GREEN=''
     readonly YELLOW=''
-    readonly CYAN=''
     readonly BLUE=''
     readonly BOLD=''
     readonly DIM=''
@@ -57,55 +50,35 @@ fi
 DOWNLOADER=""
 PLATFORM=""
 ARCH=""
-LIBC=""
-INSTALL_MODE="auto"
-INSTALL_METHOD=""
-TARGET_VERSION="stable"
-AUTO_YES=false
-CLEANUP_NEEDED=false
-TEMP_DIR=""
-
-# Optional component flags (default: install all)
-INSTALL_CLAUDE=true
-INSTALL_PLUGIN=true
-INSTALL_TMUX=true
-INSTALL_RG=true
-INSTALL_JQ=true
+INSTALL_MODE="install"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
 log() {
-    echo -e "${GREEN}▸${NC} $1"
+    echo -e "  ${GREEN}▸${NC} $1"
 }
 
 warn() {
-    echo -e "${YELLOW}⚠${NC} $1" >&2
+    echo -e "  ${YELLOW}⚠${NC} $1" >&2
 }
 
 error() {
-    echo -e "${RED}✖${NC} $1" >&2
+    echo -e "  ${RED}✖${NC} $1" >&2
 }
 
 success() {
-    echo -e "${GREEN}✔${NC} $1"
+    echo -e "  ${GREEN}✔${NC} $1"
 }
 
 info() {
-    echo -e "${BLUE}ℹ${NC} $1"
+    echo -e "  ${BLUE}ℹ${NC} $1"
 }
 
 header() {
     echo
     echo -e "${BOLD}$1${NC}"
-    echo
-}
-
-# Run a command with visible output
-run() {
-    echo -e "${DIM}$ $*${NC}"
-    "$@"
 }
 
 # Check if a command exists
@@ -113,46 +86,29 @@ check_command() {
     command -v "$1" &>/dev/null
 }
 
-# Prompt user for confirmation
+# Prompt user for confirmation (Y is default)
 confirm() {
     local prompt="$1"
-    if [[ "$AUTO_YES" == true ]]; then
-        return 0
-    fi
+    echo -en "${YELLOW}?${NC} $prompt [Y/n] "
+    read -r response < /dev/tty || response=""
+    [[ -z "$response" || "$response" =~ ^[Yy]$ ]]
+}
+
+# Prompt user for confirmation (N is default)
+confirm_no() {
+    local prompt="$1"
     echo -en "${YELLOW}?${NC} $prompt [y/N] "
-    read -r response < /dev/tty
+    read -r response < /dev/tty || response=""
     [[ "$response" =~ ^[Yy]$ ]]
 }
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Cleanup
-# ─────────────────────────────────────────────────────────────────────────────
-
-cleanup() {
-    local exit_code=$?
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
-    fi
-    if [[ "$CLEANUP_NEEDED" == true && $exit_code -ne 0 ]]; then
-        warn "Installation failed. Cleaning up..."
-        # Don't remove existing installations on update failure
-        if [[ "$INSTALL_MODE" != "update" && -d "$GENIE_SRC" ]]; then
-            rm -rf "$GENIE_SRC"
-        fi
-    fi
-    exit $exit_code
-}
-
-trap cleanup EXIT
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Platform Detection
 # ─────────────────────────────────────────────────────────────────────────────
 
 detect_platform() {
-    local os arch libc
+    local os arch
 
-    # Detect OS
     case "$(uname -s)" in
         Darwin)
             os="darwin"
@@ -169,7 +125,6 @@ detect_platform() {
             ;;
     esac
 
-    # Detect architecture
     case "$(uname -m)" in
         x86_64|amd64)
             arch="x64"
@@ -186,27 +141,10 @@ detect_platform() {
             ;;
     esac
 
-    # Detect libc (Linux only)
-    libc=""
-    if [[ "$os" == "linux" ]]; then
-        # Check for musl (Alpine, etc.)
-        if ldd --version 2>&1 | grep -qi musl; then
-            libc="musl"
-        elif [[ -f /etc/alpine-release ]]; then
-            libc="musl"
-        fi
-    fi
-
     PLATFORM="$os"
     ARCH="$arch"
-    LIBC="$libc"
 
-    local platform_str="$PLATFORM-$ARCH"
-    if [[ -n "$LIBC" ]]; then
-        platform_str="$platform_str-$LIBC"
-    fi
-
-    log "Detected platform: $platform_str"
+    log "Detected platform: ${BOLD}$PLATFORM-$ARCH${NC}"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,36 +173,6 @@ download() {
             wget -qO- "$url"
             ;;
     esac
-}
-
-# Download a file to a path
-download_file() {
-    local url="$1"
-    local dest="$2"
-    case "$DOWNLOADER" in
-        curl)
-            curl -fsSL -o "$dest" "$url"
-            ;;
-        wget)
-            wget -q -O "$dest" "$url"
-            ;;
-    esac
-}
-
-# Parse a JSON field (jq with bash fallback)
-parse_json_field() {
-    local json="$1"
-    local field="$2"
-
-    if check_command jq; then
-        echo "$json" | jq -r ".$field // empty"
-    else
-        # Bash regex fallback for simple cases
-        local pattern="\"$field\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
-        if [[ $json =~ $pattern ]]; then
-            echo "${BASH_REMATCH[1]}"
-        fi
-    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -297,8 +205,6 @@ install_package() {
     local pm
     pm=$(detect_package_manager)
 
-    log "Installing $package..."
-
     case "$pm" in
         brew)
             brew install "$package"
@@ -322,7 +228,6 @@ install_package() {
             sudo zypper install -y "$package"
             ;;
         *)
-            warn "Unknown package manager. Please install $package manually."
             return 1
             ;;
     esac
@@ -332,8 +237,22 @@ install_package() {
 # Prerequisite Installation
 # ─────────────────────────────────────────────────────────────────────────────
 
+install_git_if_needed() {
+    if check_command git; then
+        success "git found"
+        return 0
+    fi
+
+    log "Installing git..."
+    if install_package "git" && check_command git; then
+        success "git installed"
+    else
+        error "git is required but could not be installed"
+        exit 3
+    fi
+}
+
 install_node_if_needed() {
-    # Check if Node 20+ is already available
     if check_command node; then
         local node_version
         node_version=$(node --version 2>/dev/null | sed 's/v//' | cut -d. -f1)
@@ -343,22 +262,17 @@ install_node_if_needed() {
         fi
     fi
 
-    log "Node.js 20+ not found, installing..."
+    log "Installing Node.js..."
 
-    # Check if nvm is installed
     export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
     if [[ ! -d "$NVM_DIR" ]]; then
-        log "Installing nvm..."
         download "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh" | bash
     fi
 
-    # Source nvm
     # shellcheck source=/dev/null
     [[ -s "$NVM_DIR/nvm.sh" ]] && \. "$NVM_DIR/nvm.sh"
 
-    # Install Node 22
-    log "Installing Node.js 22 via nvm..."
     nvm install 22
     nvm use 22
     nvm alias default 22
@@ -375,7 +289,6 @@ install_bun_if_needed() {
     log "Installing Bun..."
     download "https://bun.sh/install" | bash
 
-    # Add bun to PATH for this session
     export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
     export PATH="$BUN_INSTALL/bin:$PATH"
 
@@ -389,100 +302,60 @@ install_bun_if_needed() {
 
 install_tmux_if_needed() {
     if check_command tmux; then
-        success "tmux $(tmux -V 2>/dev/null | cut -d' ' -f2) found"
+        success "tmux installed"
         return 0
     fi
 
-    local pm
-    pm=$(detect_package_manager)
-
-    # Map package name per package manager
-    local pkg="tmux"
-
-    if install_package "$pkg"; then
-        if check_command tmux; then
-            success "tmux installed"
-            return 0
-        fi
+    log "Installing tmux..."
+    if install_package "tmux" && check_command tmux; then
+        success "tmux installed"
+    else
+        warn "Could not install tmux automatically"
     fi
-
-    warn "Could not install tmux. Please install it manually."
-    warn "Visit: https://github.com/tmux/tmux/wiki/Installing"
-    return 1
 }
 
 install_jq_if_needed() {
     if check_command jq; then
-        success "jq found"
+        success "jq installed"
         return 0
     fi
 
-    if install_package "jq"; then
-        if check_command jq; then
-            success "jq installed"
-            return 0
-        fi
+    log "Installing jq..."
+    if install_package "jq" && check_command jq; then
+        success "jq installed"
+    else
+        warn "Could not install jq automatically"
     fi
-
-    warn "Could not install jq. JSON parsing will use fallback method."
-    return 1
 }
 
 install_rg_if_needed() {
     if check_command rg; then
-        success "ripgrep found"
+        success "ripgrep installed"
         return 0
     fi
 
-    local pm
-    pm=$(detect_package_manager)
-
-    # Package name varies
-    local pkg="ripgrep"
-
-    if install_package "$pkg"; then
-        if check_command rg; then
-            success "ripgrep installed"
-            return 0
-        fi
+    log "Installing ripgrep..."
+    if install_package "ripgrep" && check_command rg; then
+        success "ripgrep installed"
+    else
+        warn "Could not install ripgrep automatically"
     fi
-
-    warn "Could not install ripgrep. Some features may be limited."
-    return 1
-}
-
-install_git_if_needed() {
-    if check_command git; then
-        success "git found"
-        return 0
-    fi
-
-    if install_package "git"; then
-        if check_command git; then
-            success "git installed"
-            return 0
-        fi
-    fi
-
-    error "git is required but could not be installed"
-    exit 3
 }
 
 install_claude_if_needed() {
     if check_command claude; then
-        success "Claude Code CLI found"
+        success "Claude Code CLI installed"
         return 0
     fi
 
     log "Installing Claude Code CLI..."
 
-    # Prefer bun for installation
     if check_command bun; then
         bun install -g @anthropic-ai/claude-code
     elif check_command npm; then
         npm install -g @anthropic-ai/claude-code
     else
-        warn "Neither bun nor npm found. Please install Claude Code manually."
+        warn "Neither bun nor npm found"
         return 1
     fi
 
@@ -495,26 +368,14 @@ install_claude_if_needed() {
 }
 
 install_plugin_if_needed() {
-    if [[ "$INSTALL_PLUGIN" != true ]]; then
-        return 0
-    fi
-
-    # Check if already installed
     if claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
         success "automagik-genie plugin already installed"
         return 0
     fi
 
-    # Requires Claude CLI
-    if ! check_command claude; then
-        warn "Claude Code CLI required for plugin - installing first"
-        install_claude_if_needed || return 1
-    fi
-
     log "Installing automagik-genie plugin..."
     if claude plugin install namastexlabs/automagik-genie; then
         success "automagik-genie plugin installed"
-        info "Restart Claude Code to activate the plugin"
     else
         warn "Plugin installation failed"
         info "Try manually: claude plugin install namastexlabs/automagik-genie"
@@ -523,548 +384,135 @@ install_plugin_if_needed() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Config Management
+# Genie CLI Installation
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Write install method to ~/.genie/config.json
-write_install_method() {
-    local method="$1"
-    local config_file="$GENIE_HOME/config.json"
-
-    mkdir -p "$GENIE_HOME"
-
-    if [[ -f "$config_file" ]]; then
-        # Update existing config
-        if check_command jq; then
-            jq --arg m "$method" '.installMethod = $m' "$config_file" > "$config_file.tmp" && mv "$config_file.tmp" "$config_file"
-        else
-            # Fallback: read file, check if it has content
-            local content
-            content=$(cat "$config_file" 2>/dev/null || echo "{}")
-            if [[ "$content" == "{}" || -z "$content" ]]; then
-                echo "{\"installMethod\":\"$method\"}" > "$config_file"
-            else
-                # Simple sed to add installMethod before closing brace
-                # Remove existing installMethod if present, then add new one
-                content=$(echo "$content" | sed 's/,"installMethod":"[^"]*"//g' | sed 's/"installMethod":"[^"]*",//g' | sed 's/"installMethod":"[^"]*"//g')
-                # Handle empty object case after removal
-                if [[ "$content" == "{}" ]]; then
-                    echo "{\"installMethod\":\"$method\"}" > "$config_file"
-                else
-                    # Add installMethod before final }
-                    echo "$content" | sed 's/}$/,"installMethod":"'"$method"'"}/' > "$config_file"
-                fi
-            fi
-        fi
-    else
-        echo "{\"installMethod\":\"$method\"}" > "$config_file"
-    fi
-
-    log "Install method '$method' saved to config"
-}
-
-# Prompt user for install method choice
-prompt_install_method() {
-    if [[ "$AUTO_YES" == true ]]; then
-        # Default to bun for auto mode
-        INSTALL_METHOD="bun"
-        return
-    fi
-
-    echo
-    echo -e "${BOLD}How would you like to install Genie CLI?${NC}"
-    echo
-    echo "  1) source  - Clone from GitHub (developer mode)"
-    echo "  2) npm     - Install via npm -g"
-    echo "  3) bun     - Install via bun -g (recommended)"
-    echo
-    echo -en "${YELLOW}?${NC} Choose [1-3] (default: 3): "
-    read -r choice < /dev/tty
-
-    case "$choice" in
-        1) INSTALL_METHOD="source" ;;
-        2) INSTALL_METHOD="npm" ;;
-        *) INSTALL_METHOD="bun" ;;
-    esac
-}
-
-# Prompt user for optional components
-prompt_optional_components() {
-    if [[ "$AUTO_YES" == true ]]; then
-        return  # Install all by default
-    fi
-
-    echo
-    echo -e "${BOLD}Optional Components:${NC}"
-    echo
-    echo "  1) Claude Code CLI     - Required for plugin"
-    echo "  2) Claude Code Plugin  - automagik-genie (skills, agents, hooks)"
-    echo "  3) tmux                - Terminal multiplexing"
-    echo "  4) ripgrep             - Fast code search"
-    echo "  5) jq                  - JSON processing"
-    echo
-    echo -en "${YELLOW}?${NC} Select components [1-5, all, none] (default: all): "
-    read -r choices < /dev/tty
-
-    # Reset all to false if user makes selections
-    if [[ -n "$choices" && "$choices" != "all" ]]; then
-        INSTALL_CLAUDE=false
-        INSTALL_PLUGIN=false
-        INSTALL_TMUX=false
-        INSTALL_RG=false
-        INSTALL_JQ=false
-
-        if [[ "$choices" == "none" ]]; then
-            return
-        fi
-
-        # Parse selections (comma or space separated)
-        for choice in $(echo "$choices" | tr ',' ' '); do
-            case "$choice" in
-                1) INSTALL_CLAUDE=true ;;
-                2) INSTALL_PLUGIN=true; INSTALL_CLAUDE=true ;;  # Plugin requires Claude
-                3) INSTALL_TMUX=true ;;
-                4) INSTALL_RG=true ;;
-                5) INSTALL_JQ=true ;;
-            esac
-        done
-    fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Installation Methods
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Install via best available package manager
-install_via_pm() {
-    local version_arg=""
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        version_arg="@$TARGET_VERSION"
-    elif [[ "$TARGET_VERSION" == "latest" ]]; then
-        version_arg="@latest"
-    fi
-
-    local used_method=""
-    if check_command bun; then
-        run bun install -g "${PACKAGE_NAME}${version_arg}"
-        used_method="bun"
-    elif check_command npm; then
-        run npm install -g "${PACKAGE_NAME}${version_arg}"
-        used_method="npm"
-    fi
-
-    write_install_method "$used_method"
-}
-
-# Quick install: npm/bun global install (requires node/bun already installed)
-install_quick() {
-    header "Quick Install"
-
-    if ! check_command node && ! check_command bun; then
-        error "Quick install requires Node.js or Bun to be installed."
-        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
-        exit 3
-    fi
-
-    log "Installing $PACKAGE_NAME globally..."
-    install_via_pm
-
-    success "Genie CLI installed via package manager"
-}
-
-# Full install: install all dependencies first, then npm/bun global install
-install_full() {
-    header "Full Install (with dependencies)"
-
-    CLEANUP_NEEDED=true
-
-    header "Installing prerequisites..."
-
-    install_git_if_needed
-    install_node_if_needed
-    install_bun_if_needed
-
-    # Prompt for optional components
-    prompt_optional_components
-
-    # Install optional components based on selections
-    [[ "$INSTALL_TMUX" == true ]] && install_tmux_if_needed || true
-    [[ "$INSTALL_JQ" == true ]] && install_jq_if_needed || true
-    [[ "$INSTALL_RG" == true ]] && install_rg_if_needed || true
-    [[ "$INSTALL_CLAUDE" == true ]] && install_claude_if_needed || true
-
-    header "Installing Genie CLI..."
-
-    log "Installing $PACKAGE_NAME globally..."
-    install_via_pm
-
-    # Install plugin after genie-cli
-    install_plugin_if_needed || true
-
-    CLEANUP_NEEDED=false
-    success "Genie CLI installed"
-}
-
-# Source install: clone repo and build locally (developer mode)
-install_source() {
-    header "Source Install (developer mode)"
-
-    CLEANUP_NEEDED=true
-
-    header "Installing prerequisites..."
-
-    install_git_if_needed
-    install_node_if_needed
-    install_bun_if_needed
-
-    # Prompt for optional components
-    prompt_optional_components
-
-    # Install optional components based on selections
-    [[ "$INSTALL_TMUX" == true ]] && install_tmux_if_needed || true
-    [[ "$INSTALL_JQ" == true ]] && install_jq_if_needed || true
-    [[ "$INSTALL_RG" == true ]] && install_rg_if_needed || true
-    [[ "$INSTALL_CLAUDE" == true ]] && install_claude_if_needed || true
-
-    header "Cloning repository..."
-
-    if [[ -d "$GENIE_SRC" ]]; then
-        if confirm "Existing source installation found at $GENIE_SRC. Remove and reinstall?"; then
-            rm -rf "$GENIE_SRC"
-        else
-            error "Installation cancelled"
-            exit 1
-        fi
-    fi
-
-    mkdir -p "$GENIE_HOME"
-    log "Cloning $REPO_URL..."
-    run git clone "$REPO_URL" "$GENIE_SRC"
-
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        log "Checking out version $TARGET_VERSION..."
-        cd "$GENIE_SRC"
-        git checkout "v$TARGET_VERSION" 2>/dev/null || git checkout "$TARGET_VERSION"
-    fi
-
-    header "Building..."
-
-    cd "$GENIE_SRC"
-    run bun install
-    run bun run build
-
-    header "Installing binaries..."
-
-    install_binaries
-
-    # Save install method to config
-    write_install_method "source"
-
-    # Install plugin after source build
-    install_plugin_if_needed || true
-
-    CLEANUP_NEEDED=false
-    success "Genie CLI built and installed from source"
-}
-
-# Update existing installation
-install_update() {
-    header "Update"
-
-    # Detect installation type
-    local install_type=""
-
-    if [[ -d "$GENIE_SRC/.git" ]]; then
-        install_type="source"
-    elif check_command genie; then
-        # Check if installed via npm/bun
-        local genie_path
-        genie_path=$(which genie 2>/dev/null || true)
-        if [[ "$genie_path" == *"node_modules"* || "$genie_path" == *".bun"* ]]; then
-            install_type="npm"
-        elif [[ "$genie_path" == "$LOCAL_BIN/genie" || "$genie_path" == "$GENIE_BIN/"* ]]; then
-            install_type="source"
-        else
-            install_type="npm"
-        fi
-    else
-        error "No existing Genie CLI installation found"
-        info "Run without 'update' to perform a fresh install"
-        exit 1
-    fi
-
-    log "Detected installation type: $install_type"
-
-    case "$install_type" in
-        source)
-            update_source
-            ;;
-        npm)
-            update_npm
-            ;;
-    esac
-}
-
-update_source() {
-    log "Updating source installation..."
-
-    if [[ ! -d "$GENIE_SRC/.git" ]]; then
-        error "Source directory not found at $GENIE_SRC"
-        exit 1
-    fi
-
-    cd "$GENIE_SRC"
-
-    log "Pulling latest changes..."
-    run git fetch origin
-    run git reset --hard origin/main
-
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        log "Checking out version $TARGET_VERSION..."
-        git checkout "v$TARGET_VERSION" 2>/dev/null || git checkout "$TARGET_VERSION"
-    fi
-
-    log "Rebuilding..."
-    run bun install
-    run bun run build
-
-    install_binaries
-
-    success "Source installation updated"
-}
-
-update_npm() {
-    log "Updating npm/bun installation..."
-
-    local version_arg=""
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        version_arg="@$TARGET_VERSION"
-    elif [[ "$TARGET_VERSION" == "latest" ]]; then
-        version_arg="@latest"
-    fi
+install_genie_cli() {
+    log "Installing $PACKAGE_NAME..."
 
     if check_command bun; then
-        run bun install -g "${PACKAGE_NAME}${version_arg}"
+        bun install -g "$PACKAGE_NAME"
     elif check_command npm; then
-        run npm install -g "${PACKAGE_NAME}${version_arg}"
+        npm install -g "$PACKAGE_NAME"
     else
         error "Neither bun nor npm found"
         exit 3
     fi
 
-    success "Package installation updated"
-}
-
-# Auto-detect best installation mode
-install_auto() {
-    log "Auto-detecting best installation mode..."
-
-    # Check for existing installation
-    if [[ -d "$GENIE_SRC/.git" ]]; then
-        log "Found existing source installation"
-        INSTALL_MODE="update"
-        install_update
-        return
-    fi
-
-    if check_command genie; then
-        log "Found existing genie installation"
-        INSTALL_MODE="update"
-        install_update
-        return
-    fi
-
-    # Fresh install: prompt user for install method
-    prompt_install_method
-
-    case "$INSTALL_METHOD" in
-        source)
-            INSTALL_MODE="source"
-            install_source
-            ;;
-        npm)
-            if check_command npm; then
-                INSTALL_MODE="quick"
-                install_quick_pm "npm"
-            else
-                log "npm not found, using full install"
-                INSTALL_MODE="full"
-                install_full
-            fi
-            ;;
-        bun)
-            if check_command bun; then
-                INSTALL_MODE="quick"
-                install_quick_pm "bun"
-            else
-                log "bun not found, using full install"
-                INSTALL_MODE="full"
-                install_full
-            fi
-            ;;
-    esac
-}
-
-# Plugin-only install
-install_plugin_only() {
-    header "Plugin Install"
-
-    INSTALL_PLUGIN=true
-    install_plugin_if_needed
-}
-
-# Quick install via specific package manager
-install_quick_pm() {
-    local pm="$1"
-    header "Quick Install ($pm)"
-
-    if ! check_command "$pm"; then
-        error "$pm is not installed."
-        info "Use 'full' mode to install all dependencies: curl ... | bash -s -- full"
-        exit 3
-    fi
-
-    log "Installing $PACKAGE_NAME globally via $pm..."
-
-    local version_arg=""
-    if [[ "$TARGET_VERSION" != "stable" && "$TARGET_VERSION" != "latest" ]]; then
-        version_arg="@$TARGET_VERSION"
-    elif [[ "$TARGET_VERSION" == "latest" ]]; then
-        version_arg="@latest"
-    fi
-
-    run "$pm" install -g "${PACKAGE_NAME}${version_arg}"
-    write_install_method "$pm"
-    success "Genie CLI installed via $pm"
+    success "$PACKAGE_NAME installed"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Binary Installation (for source installs)
+# Claudio Setup
 # ─────────────────────────────────────────────────────────────────────────────
 
-install_binaries() {
-    log "Installing binaries..."
-
-    mkdir -p "$GENIE_BIN"
-    mkdir -p "$LOCAL_BIN"
-
-    # Copy built files
-    cp "$GENIE_SRC/dist/genie.js" "$GENIE_BIN/"
-    cp "$GENIE_SRC/dist/term.js" "$GENIE_BIN/"
-    cp "$GENIE_SRC/dist/claudio.js" "$GENIE_BIN/"
-    chmod +x "$GENIE_BIN"/*.js
-
-    # Create symlinks
-    ln -sf "$GENIE_BIN/genie.js" "$LOCAL_BIN/genie"
-    ln -sf "$GENIE_BIN/term.js" "$LOCAL_BIN/term"
-    ln -sf "$GENIE_BIN/claudio.js" "$LOCAL_BIN/claudio"
-
-    success "Binaries installed to $GENIE_BIN"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Post-Install
-# ─────────────────────────────────────────────────────────────────────────────
-
-ensure_path() {
-    local needs_path=false
-    local shell_profile=""
-
-    # Check various PATH locations
-    if [[ ":$PATH:" != *":$LOCAL_BIN:"* ]]; then
-        needs_path=true
-    fi
-
-    # Also check for bun path
-    if [[ -d "$HOME/.bun/bin" && ":$PATH:" != *":$HOME/.bun/bin:"* ]]; then
-        needs_path=true
-    fi
-
-    if [[ "$needs_path" == true ]]; then
-        # Detect shell profile
-        if [[ -n "${ZSH_VERSION:-}" ]] || [[ "$SHELL" == *"zsh"* ]]; then
-            shell_profile="$HOME/.zshrc"
-        elif [[ -n "${BASH_VERSION:-}" ]] || [[ "$SHELL" == *"bash"* ]]; then
-            if [[ -f "$HOME/.bashrc" ]]; then
-                shell_profile="$HOME/.bashrc"
-            else
-                shell_profile="$HOME/.bash_profile"
-            fi
-        fi
-
-        echo
-        warn "Some paths may not be in your PATH"
-        echo
-        echo "Add these to your shell profile ($shell_profile):"
-        echo -e "${CYAN}  export PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\"${NC}"
-        echo
-        echo "Then reload your shell:"
-        echo -e "${CYAN}  source $shell_profile${NC}"
-        echo
-    fi
-}
-
-run_setup() {
-    # Skip for updates
-    if [[ "$INSTALL_MODE" == "update" ]]; then
-        return 0
-    fi
-
-    # Check if already configured
-    if [[ -f "$GENIE_HOME/config.json" ]]; then
-        local complete
-        if check_command jq; then
-            complete=$(jq -r '.setupComplete // false' "$GENIE_HOME/config.json" 2>/dev/null)
-        else
-            # Fallback: simple grep check
-            if grep -q '"setupComplete"[[:space:]]*:[[:space:]]*true' "$GENIE_HOME/config.json" 2>/dev/null; then
-                complete="true"
-            else
-                complete="false"
-            fi
-        fi
-        if [[ "$complete" == "true" ]]; then
-            log "Setup already complete, skipping"
-            return 0
-        fi
-    fi
-
-    # Run setup
-    if [[ "$AUTO_YES" == true ]]; then
-        if check_command genie; then
-            log "Running genie setup (quick mode)..."
-            genie setup --quick 2>/dev/null || true
-        elif [[ -x "$GENIE_BIN/genie.js" ]]; then
-            log "Running genie setup (quick mode)..."
-            "$GENIE_BIN/genie.js" setup --quick 2>/dev/null || true
-        fi
+run_claudio_setup() {
+    log "Running claudio setup..."
+    if check_command claudio; then
+        claudio setup
     else
-        if confirm "Run genie setup now?"; then
-            if check_command genie; then
-                genie setup
-            elif [[ -x "$GENIE_BIN/genie.js" ]]; then
-                "$GENIE_BIN/genie.js" setup
-            fi
-        else
-            info "Skipped. Run 'genie setup' later to configure."
-        fi
+        warn "claudio command not found"
+        info "Run 'claudio setup' after restarting your shell"
     fi
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Install Flow
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_install() {
+    # Required prerequisites
+    header "Installing prerequisites..."
+    install_git_if_needed
+    install_node_if_needed
+    install_bun_if_needed
+    install_tmux_if_needed
+    install_jq_if_needed
+    install_rg_if_needed
+
+    # Genie CLI (required)
+    header "Installing Genie CLI..."
+    install_genie_cli
+
+    # Optional: Claude Code CLI
+    echo
+    info "AI-powered coding assistant from Anthropic"
+    if confirm "Install Claude Code CLI?"; then
+        install_claude_if_needed
+
+        # Optional: Genie Plugin (only if Claude installed)
+        if check_command claude; then
+            echo
+            info "Adds skills, agents, and hooks to Claude Code"
+            if confirm "Install Genie plugin for Claude Code?"; then
+                install_plugin_if_needed
+            fi
+        fi
+    fi
+
+    # Optional: Claudio setup
+    echo
+    info "Manage multiple Claude API configurations"
+    if confirm "Configure Claudio profiles?"; then
+        run_claudio_setup
+    fi
+
+    print_success
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main Uninstall Flow
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_uninstall() {
+    echo
+    echo -e "${BOLD}Genie CLI Uninstaller${NC}"
+    echo -e "${DIM}────────────────────────────────────${NC}"
+    echo
+
+    if ! confirm_no "Remove Genie CLI and all components?"; then
+        info "Cancelled"
+        exit 0
+    fi
+
+    echo
+    log "Removing..."
+
+    # Remove plugin
+    if check_command claude; then
+        if claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null; then
+            success "Claude Code plugin removed"
+        fi
+    fi
+
+    # Remove genie-cli
+    if check_command bun; then
+        bun remove -g "$PACKAGE_NAME" 2>/dev/null || true
+    fi
+    if check_command npm; then
+        npm uninstall -g "$PACKAGE_NAME" 2>/dev/null || true
+    fi
+    success "Genie CLI removed"
+
+    # Clean config
+    if [[ -d "$GENIE_HOME" ]]; then
+        rm -rf "$GENIE_HOME"
+        success "Configuration cleaned"
+    fi
+
+    echo
+    success "Done"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Success Message
+# ─────────────────────────────────────────────────────────────────────────────
 
 print_success() {
     echo
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo -e "${GREEN}${BOLD}Genie CLI installed successfully!${NC}"
     echo -e "${DIM}────────────────────────────────────${NC}"
-    echo
-    echo "Commands available:"
-    echo -e "  ${CYAN}genie${NC}   - Setup and utilities"
-    echo -e "  ${CYAN}term${NC}    - Terminal orchestration"
-    echo -e "  ${CYAN}claudio${NC} - Claude profile manager"
-    echo
-    echo "Get started:"
-    echo -e "  ${CYAN}genie --help${NC}"
-    echo -e "  ${CYAN}term --help${NC}"
     echo
 }
 
@@ -1074,73 +522,24 @@ print_success() {
 
 print_usage() {
     cat <<EOF
-Genie CLI Installer v$VERSION
+Genie CLI Installer
 
 Usage:
   curl -fsSL $RAW_REPO_URL/main/install.sh | bash
-  curl ... | bash -s -- [MODE] [OPTIONS]
+  curl -fsSL $RAW_REPO_URL/main/install.sh | bash -s -- uninstall
 
-Modes:
-  auto      Auto-detect best installation method (default)
-  quick     Use bun/npm global install (requires node/bun)
-  full      Install all dependencies first, then global install
-  source    Clone repo and build locally (developer mode)
-  update    Update existing installation
-
-Options:
-  --version=VERSION   Install specific version (stable, latest, or semver)
-  --yes, -y           Auto-approve all prompts
-  --plugin-only       Only install the automagik-genie Claude Code plugin
-  --no-plugin         Skip plugin installation
-  --help, -h          Show this help message
-
-Examples:
-  # Fresh install (auto-detect)
-  curl -fsSL $RAW_REPO_URL/main/install.sh | bash
-
-  # Quick install (requires bun/npm)
-  curl ... | bash -s -- quick
-
-  # Full install with all dependencies
-  curl ... | bash -s -- full
-
-  # Developer mode (source build)
-  curl ... | bash -s -- source
-
-  # Update existing installation
-  curl ... | bash -s -- update
-
-  # Install specific version
-  curl ... | bash -s -- --version=0.260202.0002
-
-  # Auto-approve prompts
-  curl ... | bash -s -- full --yes
-
-  # Skip plugin installation
-  curl ... | bash -s -- full --no-plugin
-
-  # Only install the Claude Code plugin
-  curl ... | bash -s -- --plugin-only
+Commands:
+  (default)   Interactive install
+  uninstall   Remove Genie CLI and components
+  --help      Show this help message
 EOF
 }
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            quick|full|source|update|auto)
-                INSTALL_MODE="$1"
-                ;;
-            --plugin-only)
-                INSTALL_MODE="plugin-only"
-                ;;
-            --no-plugin)
-                INSTALL_PLUGIN=false
-                ;;
-            --version=*)
-                TARGET_VERSION="${1#*=}"
-                ;;
-            --yes|-y)
-                AUTO_YES=true
+            uninstall)
+                INSTALL_MODE="uninstall"
                 ;;
             --help|-h)
                 print_usage
@@ -1169,46 +568,17 @@ main() {
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo
 
-    # Initialize
     init_downloader
     detect_platform
 
-    # Create temp directory
-    TEMP_DIR=$(mktemp -d)
-
-    # Route to appropriate installer
     case "$INSTALL_MODE" in
-        auto)
-            install_auto
+        install)
+            run_install
             ;;
-        quick)
-            install_quick
-            ;;
-        full)
-            install_full
-            ;;
-        source)
-            install_source
-            ;;
-        update)
-            install_update
-            ;;
-        plugin-only)
-            install_plugin_only
+        uninstall)
+            run_uninstall
             ;;
     esac
-
-    # Post-install steps
-    if [[ "$INSTALL_MODE" == "source" ]]; then
-        ensure_path
-    fi
-
-    # Run setup for non-update installs
-    if [[ "$INSTALL_MODE" != "update" ]]; then
-        run_setup
-    fi
-
-    print_success
 }
 
 main "$@"
