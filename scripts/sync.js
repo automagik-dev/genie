@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
-const pluginDir = path.join(rootDir, 'plugin');
+const pluginDir = path.join(rootDir, 'plugins', 'automagik-genie');
 const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'automagik-genie');
 const WORKER_PORT = 48888;
 
