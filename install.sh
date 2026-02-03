@@ -744,15 +744,137 @@ run_uninstall() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Installation Verification
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Detect the user's shell profile file
+get_shell_profile() {
+    local shell_name
+    shell_name=$(basename "${SHELL:-/bin/bash}")
+
+    case "$shell_name" in
+        zsh)
+            if [[ -f "$HOME/.zshrc" ]]; then
+                echo "$HOME/.zshrc"
+            else
+                echo "$HOME/.zprofile"
+            fi
+            ;;
+        bash)
+            if [[ -f "$HOME/.bashrc" ]]; then
+                echo "$HOME/.bashrc"
+            elif [[ -f "$HOME/.bash_profile" ]]; then
+                echo "$HOME/.bash_profile"
+            else
+                echo "$HOME/.profile"
+            fi
+            ;;
+        *)
+            echo "$HOME/.profile"
+            ;;
+    esac
+}
+
+# Get the bin directory where global packages are installed
+get_global_bin_dir() {
+    if check_command bun; then
+        echo "${BUN_INSTALL:-$HOME/.bun}/bin"
+    elif check_command npm; then
+        npm config get prefix 2>/dev/null | xargs -I{} echo "{}/bin"
+    else
+        echo ""
+    fi
+}
+
+# Verify that genie and term commands are accessible
+verify_installation() {
+    local commands_found=true
+    local bin_dir
+    bin_dir=$(get_global_bin_dir)
+
+    echo
+    header "Verifying installation..."
+
+    # Check genie command
+    if check_command genie; then
+        success "genie command is available"
+    else
+        if [[ -n "$bin_dir" && -x "$bin_dir/genie" ]]; then
+            warn "genie is installed at $bin_dir/genie but not in PATH"
+            commands_found=false
+        else
+            warn "genie command not found"
+            commands_found=false
+        fi
+    fi
+
+    # Check term command
+    if check_command term; then
+        success "term command is available"
+    else
+        if [[ -n "$bin_dir" && -x "$bin_dir/term" ]]; then
+            warn "term is installed at $bin_dir/term but not in PATH"
+            commands_found=false
+        else
+            warn "term command not found"
+            commands_found=false
+        fi
+    fi
+
+    if ! $commands_found; then
+        local profile
+        profile=$(get_shell_profile)
+
+        echo
+        warn "Commands are installed but not yet in your PATH"
+        echo
+        info "To use genie and term, do ONE of the following:"
+        echo
+        echo -e "  ${BOLD}Option 1:${NC} Restart your terminal"
+        echo
+        echo -e "  ${BOLD}Option 2:${NC} Source your shell profile:"
+        echo -e "    ${DIM}source $profile${NC}"
+        echo
+        if [[ -n "$bin_dir" ]]; then
+            echo -e "  ${BOLD}Option 3:${NC} Add to PATH manually (if not already there):"
+            echo -e "    ${DIM}export PATH=\"$bin_dir:\$PATH\"${NC}"
+            echo
+        fi
+        return 1
+    fi
+
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Success Message
 # ─────────────────────────────────────────────────────────────────────────────
 
 print_success() {
+    local verification_passed=true
+
+    # Run verification to check if commands are accessible
+    if ! verify_installation; then
+        verification_passed=false
+    fi
+
     echo
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo -e "${GREEN}${BOLD}Genie CLI installed successfully!${NC}"
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo
+
+    if $verification_passed; then
+        echo -e "  Get started:"
+        echo -e "    ${DIM}genie --help${NC}"
+        echo -e "    ${DIM}term --help${NC}"
+        echo
+    else
+        echo -e "  ${YELLOW}After restarting your terminal, verify with:${NC}"
+        echo -e "    ${DIM}genie --help${NC}"
+        echo -e "    ${DIM}term --help${NC}"
+        echo
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
