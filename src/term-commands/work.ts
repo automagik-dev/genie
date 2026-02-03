@@ -13,6 +13,7 @@
  *   --resume              - Resume previous Claude session if available (default: true)
  *   --no-resume           - Start fresh session even if previous exists
  *   --skill <name>        - Skill to invoke (e.g., 'forge'). Auto-detects 'forge' if wish.md exists.
+ *   --repo <path>         - Target a specific nested repo (e.g., 'code/genie-cli')
  */
 
 import { $ } from 'bun';
@@ -22,7 +23,8 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
 import { EventMonitor } from '../lib/orchestrator/index.js';
-import { join } from 'path';
+import { join, resolve, isAbsolute } from 'path';
+import { getWorktreeManager } from '../lib/worktree-manager.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // (macro repos like blanco may run without bd)
@@ -42,6 +44,19 @@ export interface WorkOptions {
   resume?: boolean;
   /** Skill to invoke (e.g., 'forge'). Auto-detected from wish.md if not specified. */
   skill?: string;
+  /** Target a specific nested repo (e.g., 'code/genie-cli') */
+  repo?: string;
+}
+
+/**
+ * Parsed wish metadata from wish.md
+ */
+interface WishMetadata {
+  title?: string;
+  status?: string;
+  slug?: string;
+  repo?: string;
+  description?: string;
 }
 
 interface BeadsIssue {
@@ -58,6 +73,18 @@ interface BeadsIssue {
 
 // Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
+
+/**
+ * Known nested repo patterns for heuristic detection
+ * Maps keywords in wish title/description to relative repo paths
+ */
+const KNOWN_NESTED_REPOS: Record<string, string> = {
+  'genie-cli': 'code/genie-cli',
+  'term-cli': 'code/genie-cli',
+  'term work': 'code/genie-cli',
+  'term ship': 'code/genie-cli',
+  'term push': 'code/genie-cli',
+};
 
 // ============================================================================
 // Helper Functions
@@ -156,6 +183,142 @@ async function claimIssue(id: string): Promise<boolean> {
 }
 
 /**
+ * Parse wish.md file for metadata including repo field
+ */
+async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
+  const fs = await import('fs/promises');
+  const metadata: WishMetadata = {};
+
+  try {
+    const content = await fs.readFile(wishPath, 'utf-8');
+    const lines = content.split('\n');
+
+    // Parse title from first heading
+    const titleMatch = lines[0]?.match(/^#\s+(?:Wish\s+\d+:\s+)?(.+)$/i);
+    if (titleMatch) {
+      metadata.title = titleMatch[1].trim();
+    }
+
+    // Parse metadata fields like **Status:**, **Slug:**, **repo:** etc.
+    for (const line of lines.slice(0, 20)) { // Only check first 20 lines
+      const statusMatch = line.match(/^\*\*Status:\*\*\s*(.+)$/i);
+      if (statusMatch) {
+        metadata.status = statusMatch[1].trim();
+        continue;
+      }
+
+      const slugMatch = line.match(/^\*\*Slug:\*\*\s*`?([^`]+)`?$/i);
+      if (slugMatch) {
+        metadata.slug = slugMatch[1].trim();
+        continue;
+      }
+
+      // Match repo: field (case insensitive)
+      const repoMatch = line.match(/^\*\*repo:\*\*\s*`?([^`]+)`?$/i);
+      if (repoMatch) {
+        metadata.repo = repoMatch[1].trim();
+        continue;
+      }
+    }
+
+    // Get description from Summary section if present
+    const summaryIndex = content.indexOf('## Summary');
+    if (summaryIndex !== -1) {
+      const afterSummary = content.slice(summaryIndex + 10);
+      const nextSection = afterSummary.indexOf('\n## ');
+      const summaryContent = nextSection !== -1
+        ? afterSummary.slice(0, nextSection)
+        : afterSummary.slice(0, 500);
+      metadata.description = summaryContent.trim();
+    }
+
+    return metadata;
+  } catch {
+    return metadata;
+  }
+}
+
+/**
+ * Detect target repo using heuristics from wish title and description
+ * Returns relative path to nested repo or null if no match
+ */
+async function detectRepoFromHeuristics(
+  title: string,
+  description: string | undefined,
+  repoPath: string
+): Promise<string | null> {
+  const fs = await import('fs/promises');
+  const searchText = `${title} ${description || ''}`.toLowerCase();
+
+  for (const [keyword, relativePath] of Object.entries(KNOWN_NESTED_REPOS)) {
+    if (searchText.includes(keyword.toLowerCase())) {
+      // Verify the path exists and is a git repo
+      const fullPath = join(repoPath, relativePath);
+      try {
+        const gitPath = join(fullPath, '.git');
+        await fs.access(gitPath);
+        return relativePath;
+      } catch {
+        // Path doesn't exist or isn't a git repo, continue checking
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detect the target repository for worktree creation
+ *
+ * Priority order:
+ * 1. Explicit --repo flag
+ * 2. repo: field in wish.md metadata
+ * 3. Heuristic detection from wish title/description
+ * 4. Default: use current repo (repoPath)
+ *
+ * @returns Absolute path to the target repository
+ */
+async function detectTargetRepo(
+  taskId: string,
+  repoPath: string,
+  explicitRepo?: string,
+  issueTitle?: string,
+  issueDescription?: string
+): Promise<{ targetRepo: string; detectionMethod: string }> {
+  // 1. Explicit --repo flag takes priority
+  if (explicitRepo) {
+    const targetPath = isAbsolute(explicitRepo)
+      ? explicitRepo
+      : resolve(repoPath, explicitRepo);
+    return { targetRepo: targetPath, detectionMethod: '--repo flag' };
+  }
+
+  // 2. Check wish.md for repo: field
+  const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
+  const metadata = await parseWishMetadata(wishPath);
+
+  if (metadata.repo) {
+    const targetPath = isAbsolute(metadata.repo)
+      ? metadata.repo
+      : resolve(repoPath, metadata.repo);
+    return { targetRepo: targetPath, detectionMethod: 'wish.md repo: field' };
+  }
+
+  // 3. Heuristic detection from title/description
+  const title = metadata.title || issueTitle || '';
+  const description = metadata.description || issueDescription || '';
+  const heuristicPath = await detectRepoFromHeuristics(title, description, repoPath);
+
+  if (heuristicPath) {
+    const targetPath = resolve(repoPath, heuristicPath);
+    return { targetRepo: targetPath, detectionMethod: `heuristic (matched "${heuristicPath}")` };
+  }
+
+  // 4. Default: use current repo
+  return { targetRepo: repoPath, detectionMethod: 'default (current repo)' };
+}
+
+/**
  * Get current tmux session name
  */
 async function getCurrentSession(): Promise<string | null> {
@@ -168,54 +331,17 @@ async function getCurrentSession(): Promise<string | null> {
 }
 
 /**
- * Create worktree for worker in .genie/worktrees/<taskId>
- * Creates a .genie redirect file so bd commands work in the worktree
+ * Create worktree for worker using WorktreeManager
+ * Creates worktree in .genie/worktrees/<taskId> with branch work/<taskId>
  */
-async function createWorktree(
+async function createWorktreeForTask(
   taskId: string,
   repoPath: string
 ): Promise<string | null> {
-  const fs = await import('fs/promises');
-  const worktreeDir = join(repoPath, WORKTREE_DIR_NAME);
-  const worktreePath = join(worktreeDir, taskId);
-
-  // Ensure .genie/worktrees exists
   try {
-    await fs.mkdir(worktreeDir, { recursive: true });
-  } catch {
-    // Directory may already exist
-  }
-
-  // Check if worktree already exists
-  try {
-    const stat = await fs.stat(worktreePath);
-    if (stat.isDirectory()) {
-      console.log(`ℹ️  Worktree for ${taskId} already exists`);
-      return worktreePath;
-    }
-  } catch {
-    // Doesn't exist, will create
-  }
-
-  // Create worktree using git directly (with branch)
-  const branchName = `work/${taskId}`;
-  try {
-    // Create branch if it doesn't exist (ignore error if it already exists)
-    try {
-      await $`git -C ${repoPath} branch ${branchName}`.quiet();
-    } catch {
-      // Branch may already exist, that's ok
-    }
-
-    // Create worktree
-    await $`git -C ${repoPath} worktree add ${worktreePath} ${branchName}`.quiet();
-
-    // Set up .genie redirect so bd commands work in the worktree
-    const genieRedirect = join(worktreePath, '.genie');
-    await fs.mkdir(genieRedirect, { recursive: true });
-    await fs.writeFile(join(genieRedirect, 'redirect'), join(repoPath, '.genie'));
-
-    return worktreePath;
+    const manager = await getWorktreeManager(repoPath);
+    const info = await manager.create(taskId, repoPath);
+    return info.path;
   } catch (error: any) {
     console.error(`⚠️  Failed to create worktree: ${error.message}`);
     return null;
@@ -596,22 +722,38 @@ export async function workCommand(
       process.exit(1);
     }
 
-    // 5. Create worktree (unless --no-worktree)
-    let workingDir = repoPath;
+    // 5. Detect target repo for worktree creation
+    const { targetRepo, detectionMethod } = await detectTargetRepo(
+      taskId,
+      repoPath,
+      options.repo,
+      issue.title,
+      issue.description
+    );
+
+    // Log if using a nested repo
+    if (targetRepo !== repoPath) {
+      console.log(`🎯 Detected nested repo: ${targetRepo}`);
+      console.log(`   Detection: ${detectionMethod}`);
+    }
+
+    // 6. Create worktree (unless --no-worktree)
+    let workingDir = targetRepo;
     let worktreePath: string | null = null;
 
     if (!options.noWorktree) {
-      console.log(`🌳 Creating worktree for ${taskId}...`);
-      worktreePath = await createWorktree(taskId, repoPath);
+      console.log(`🌳 Creating worktree for ${taskId} in ${targetRepo}...`);
+      worktreePath = await createWorktreeForTask(taskId, targetRepo);
       if (worktreePath) {
         workingDir = worktreePath;
         console.log(`   Created: ${worktreePath}`);
+        console.log(`   Branch: work/${taskId}`);
       } else {
         console.log(`⚠️  Worktree creation failed. Using shared repo.`);
       }
     }
 
-    // 6. Spawn Claude pane
+    // 7. Spawn Claude pane
     console.log(`🚀 Spawning worker pane...`);
     const paneResult = await spawnWorkerPane(session, workingDir);
     if (!paneResult) {
@@ -620,10 +762,10 @@ export async function workCommand(
 
     const { paneId } = paneResult;
 
-    // 7. Generate Claude session ID for resume capability
+    // 8. Generate Claude session ID for resume capability
     const claudeSessionId = randomUUID();
 
-    // 8. Register worker (write to both registries during transition)
+    // 9. Register worker (write to both registries during transition)
     const worker: registry.Worker = {
       id: taskId,
       paneId,
@@ -634,7 +776,7 @@ export async function workCommand(
       startedAt: new Date().toISOString(),
       state: 'spawning',
       lastStateChange: new Date().toISOString(),
-      repoPath,
+      repoPath: targetRepo, // Store the target repo, not the macro repo
       claudeSessionId,
     };
 
@@ -645,7 +787,7 @@ export async function workCommand(
           paneId,
           session,
           worktree: worktreePath,
-          repoPath,
+          repoPath: targetRepo,
           taskId,
           taskTitle: issue.title,
           claudeSessionId,
@@ -664,7 +806,7 @@ export async function workCommand(
     // Also register in JSON registry (parallel operation during transition)
     await registry.register(worker);
 
-    // 9. Detect skill and build prompt
+    // 10. Detect skill and build prompt
     // If --skill is explicitly set, use that. Otherwise check for wish.md to auto-detect forge.
     let skill = options.skill;
     if (!skill && !options.prompt) {
@@ -711,16 +853,16 @@ When you're done, commit your changes and let me know.`;
     }
     await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedPrompt}' Enter`);
 
-    // 10. Update state to working (both registries)
+    // 11. Update state to working (both registries)
     if (useBeads) {
       await beadsRegistry.setAgentState(taskId, 'working').catch(() => {});
     }
     await registry.updateState(taskId, 'working');
 
-    // 11. Start monitoring
+    // 12. Start monitoring
     startWorkerMonitoring(taskId, session, paneId);
 
-    // 12. Focus pane (only if explicitly requested)
+    // 13. Focus pane (only if explicitly requested)
     if (options.focus === true) {
       await tmux.executeTmux(`select-pane -t '${paneId}'`);
     }
@@ -730,6 +872,10 @@ When you're done, commit your changes and let me know.`;
     console.log(`   Session: ${session}`);
     if (worktreePath) {
       console.log(`   Worktree: ${worktreePath}`);
+      console.log(`   Branch: work/${taskId}`);
+    }
+    if (targetRepo !== repoPath) {
+      console.log(`   Target repo: ${targetRepo}`);
     }
     console.log(`\nCommands:`);
     console.log(`   term workers        - Check worker status`);

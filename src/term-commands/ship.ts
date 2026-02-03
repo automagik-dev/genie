@@ -44,6 +44,27 @@ const WORKTREE_DIR_NAME = '.genie/worktrees';
 // ============================================================================
 
 /**
+ * Get the current branch name
+ */
+export async function getCurrentBranch(repoPath: string): Promise<string> {
+  const result = await $`git -C ${repoPath} branch --show-current`.quiet();
+  return result.stdout.toString().trim();
+}
+
+/**
+ * Check if current branch is main/master and exit if so
+ * Used to prevent accidental pushes to protected branches
+ */
+export async function assertNotMainBranch(repoPath: string): Promise<void> {
+  const branch = await getCurrentBranch(repoPath);
+  if (branch === 'main' || branch === 'master') {
+    console.error('❌ Cannot push from main/master. Use a feature branch.');
+    console.error('   Run: git checkout -b work/<wish-id>');
+    process.exit(1);
+  }
+}
+
+/**
  * Merge worktree branch to main
  */
 async function mergeToMain(
@@ -119,6 +140,9 @@ export async function shipCommand(
   try {
     const repoPath = process.cwd();
     const backend = getBackend(repoPath);
+
+    // Branch protection: refuse to ship from main/master
+    await assertNotMainBranch(repoPath);
 
     // Find worker in registry
     let worker = useBeads

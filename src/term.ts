@@ -25,6 +25,7 @@ import * as spawnCmd from './term-commands/spawn.js';
 import * as createCmd from './term-commands/create.js';
 import * as updateCmd from './term-commands/update.js';
 import * as shipCmd from './term-commands/ship.js';
+import * as pushCmd from './term-commands/push.js';
 import * as syncCmd from './term-commands/sync.js';
 
 const program = new Command();
@@ -339,6 +340,15 @@ program
   .option('-y, --yes', 'Skip confirmation')
   .action(async (taskId: string, options: shipCmd.ShipOptions) => {
     await shipCmd.shipCommand(taskId, options);
+  });
+
+program
+  .command('push')
+  .description('Push current branch to remote (with branch protection)')
+  .option('-u, --set-upstream', 'Set upstream for new branches (default: true)')
+  .option('-f, --force', 'Force push with lease')
+  .action(async (options: pushCmd.PushOptions) => {
+    await pushCmd.pushCommand(options);
   });
 
 program
