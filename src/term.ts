@@ -25,6 +25,7 @@ import * as spawnCmd from './term-commands/spawn.js';
 import * as createCmd from './term-commands/create.js';
 import * as updateCmd from './term-commands/update.js';
 import * as shipCmd from './term-commands/ship.js';
+import * as syncCmd from './term-commands/sync.js';
 
 const program = new Command();
 
@@ -435,6 +436,16 @@ daemonProgram
   .option('--auto-push', 'Enable auto-push to remote')
   .action(async (options: daemonCmd.DaemonStartOptions) => {
     await daemonCmd.restartCommand(options);
+  });
+
+// Plugin sync command (development mode)
+program
+  .command('sync')
+  .description('Sync plugin to ~/.claude/plugins (creates symlink for dev mode)')
+  .option('-b, --build', 'Build plugin before syncing')
+  .option('-v, --verbose', 'Show detailed output')
+  .action(async (options: syncCmd.SyncOptions) => {
+    await syncCmd.syncCommand(options);
   });
 
 // Orchestration commands (Claude Code automation)

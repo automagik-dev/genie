@@ -220,6 +220,23 @@ function installDeps() {
 }
 
 /**
+ * Check if CLI symlinks already exist and point to correct targets
+ */
+function symlinksExist() {
+  const links = [
+    { name: 'genie', target: join(ROOT, 'scripts', 'genie.cjs') },
+    { name: 'term', target: join(ROOT, 'scripts', 'term.cjs') }
+  ];
+
+  for (const { name, target } of links) {
+    const linkPath = join(BIN_DIR, name);
+    if (!existsSync(target)) continue; // Target doesn't exist, skip check
+    if (!existsSync(linkPath)) return false;
+  }
+  return true;
+}
+
+/**
  * Create CLI symlinks for agent access
  */
 function createCliSymlinks() {
@@ -262,6 +279,11 @@ function createCliSymlinks() {
 
 // Main execution
 try {
+  // Quick check: if everything is already installed, exit silently
+  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && symlinksExist()) {
+    process.exit(0);
+  }
+
   // 1. Check/install Bun
   if (!isBunInstalled()) {
     installBun();
@@ -299,8 +321,10 @@ try {
     console.error('Dependencies installed');
   }
 
-  // 5. Create CLI symlinks
-  createCliSymlinks();
+  // 5. Create CLI symlinks if needed
+  if (!symlinksExist()) {
+    createCliSymlinks();
+  }
 
 } catch (e) {
   console.error('Installation failed:', e.message);

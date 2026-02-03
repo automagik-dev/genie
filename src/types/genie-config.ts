@@ -55,6 +55,8 @@ export const GenieConfigSchema = z.object({
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
   setupComplete: z.boolean().default(false),
   lastSetupAt: z.string().optional(),
+  // Path to genie-cli source directory (for dev mode sync)
+  sourcePath: z.string().optional(),
 });
 
 // Legacy v1 config schema (for migration)
