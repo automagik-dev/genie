@@ -119,9 +119,11 @@ program
 
 program
   .command('send <session> <keys>')
-  .description('Send raw keys to a tmux session')
-  .action(async (session: string, keys: string) => {
-    await sendCmd.sendKeysToSession(session, keys);
+  .description('Send keys to a tmux session (appends Enter by default)')
+  .option('--no-enter', 'Send raw keys without appending Enter')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .action(async (session: string, keys: string, options: { enter?: boolean; pane?: string }) => {
+    await sendCmd.sendKeysToSession(session, keys, options);
   });
 
 // Pane splitting
@@ -134,9 +136,9 @@ program
     await splitCmd.splitSessionPane(session, direction, options);
   });
 
-// Status command
+// Info command (renamed from status)
 program
-  .command('status <session>')
+  .command('info <session>')
   .description('Check session state (idle/busy, pane count)')
   .option('--command <id>', 'Check specific command status')
   .option('--json', 'Output as JSON')
@@ -250,6 +252,29 @@ program
   .option('-p, --prompt <message>', 'Additional context')
   .action(async (options: spawnCmd.SpawnOptions) => {
     await spawnCmd.spawnCommand('brainstorm', options);
+  });
+
+// Watch session events (promoted from orc watch)
+program
+  .command('watch <session>')
+  .description('Watch session events in real-time')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--json', 'Output events as JSON')
+  .option('--poll <ms>', 'Poll interval in milliseconds')
+  .action(async (session: string, options: orchestrateCmd.WatchOptions) => {
+    await orchestrateCmd.watchSession(session, options);
+  });
+
+// Run task with monitoring (promoted from orc run)
+program
+  .command('run <session> <message>')
+  .description('Send task and auto-approve until idle (fire-and-forget)')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('-a, --auto-approve', 'Auto-approve permissions and plans')
+  .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 300000)')
+  .option('--json', 'Output final state as JSON')
+  .action(async (session: string, message: string, options: orchestrateCmd.RunOptions) => {
+    await orchestrateCmd.runTask(session, message, options);
   });
 
 // Create beads issue command

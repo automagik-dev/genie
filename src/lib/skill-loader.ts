@@ -125,24 +125,29 @@ export async function readSkillContent(skillFile: string): Promise<string> {
 /**
  * Build a prompt that loads a skill
  *
- * Uses prompt injection approach - tells Claude to read and follow the skill.
+ * Reads the skill file and includes its content directly in the prompt.
  *
  * @param skill - SkillInfo from findSkill
  * @param additionalPrompt - Optional additional context/instructions
  * @returns Combined prompt string
  */
-export function buildSkillPrompt(
+export async function buildSkillPrompt(
   skill: SkillInfo,
   additionalPrompt?: string
-): string {
+): Promise<string> {
+  // Read the skill content
+  const skillContent = await readFile(skill.skillFile, 'utf-8');
+
   const parts = [
     `You are running skill: ${skill.name}`,
     '',
-    `Read and follow the skill instructions at: ${skill.skillFile}`,
+    '## Skill Instructions',
+    '',
+    skillContent,
   ];
 
   if (additionalPrompt) {
-    parts.push('', '---', '', additionalPrompt);
+    parts.push('', '---', '', '## Additional Context', '', additionalPrompt);
   }
 
   return parts.join('\n');

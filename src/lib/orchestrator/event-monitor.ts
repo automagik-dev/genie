@@ -96,7 +96,9 @@ export class EventMonitor extends EventEmitter {
     await this.poll();
 
     // Start polling
+    // Use unref() so the timer doesn't prevent process exit
     this.pollTimer = setInterval(() => this.poll(), this.options.pollIntervalMs);
+    this.pollTimer.unref();
 
     this.emit('started', { sessionName: this.sessionName, paneId: this.paneId });
   }

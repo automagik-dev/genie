@@ -326,7 +326,7 @@ export async function spawnCommand(
   const { paneId } = paneResult;
 
   // 5. Build prompt with skill
-  let prompt = skillLoader.buildSkillPrompt(skill, options.prompt);
+  let prompt = await skillLoader.buildSkillPrompt(skill, options.prompt);
 
   // Add issue context if bound to a task
   if (issue) {
@@ -382,9 +382,13 @@ export async function spawnCommand(
   // Set BEADS_DIR so bd commands work in worktrees
   const beadsDir = join(repoPath, '.genie');
 
+  // Escape workingDir for shell
+  const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
+
   // 9. Start Claude with prompt (include session ID if task-bound)
+  // First cd to correct directory (shell rc files may have overridden tmux -c)
   const sessionIdArg = claudeSessionId ? `--session-id '${claudeSessionId}' ` : '';
-  await tmux.executeCommand(paneId, `BEADS_DIR='${beadsDir}' claude ${sessionIdArg}'${escapedPrompt}'`, true, false);
+  await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude ${sessionIdArg}'${escapedPrompt}'`, true, false);
 
   // 10. Update state if task-bound
   if (options.taskId) {

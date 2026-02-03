@@ -243,8 +243,9 @@ export async function sendMessage(
   try {
     const { paneId } = await getSessionPane(sessionName, options.pane);
 
-    // Send the message
-    await tmux.executeCommand(paneId, message, false, false);
+    // Send the message cleanly (no TMUX_MCP markers)
+    const escapedMessage = message.replace(/'/g, "'\\''");
+    await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedMessage}' Enter`);
 
     if (options.noWait) {
       console.log(`✅ Message sent to session "${sessionName}"`);
