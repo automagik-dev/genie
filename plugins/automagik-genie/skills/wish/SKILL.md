@@ -9,7 +9,7 @@ description: "Use when starting non-trivial work that needs structured planning 
 
 Convert a validated design (from `/brainstorm`) or direct request into a structured wish document. Create native Claude Code tasks for execution.
 
-**Output:** `.genie/wishes/<slug>/wish.md` + native tasks ready for `/forge`
+**Output:** `.genie/wishes/<slug>/wish.md` + native tasks ready for `/make`
 
 ---
 
@@ -82,7 +82,7 @@ After writing the wish document:
 
 ### Phase 6: Handoff
 
-Output: **"Wish documented. Run `/plan-review` to validate, then `/forge` to begin execution."**
+Output: **"Wish documented. Run `/plan-review` to validate, then `/make` to begin execution."**
 
 ---
 

@@ -4,7 +4,7 @@ Company-standard Claude Code plugin that packages the Genie workflow automation 
 
 ## Features
 
-- **Workflow Skills**: brainstorm, wish, forge, review, plan-review
+- **Workflow Skills**: brainstorm, wish, make, review, plan-review
 - **Bootstrap Skills**: genie-base, genie-blank-init
 - **Validation Hooks**: Pre-write validation for wish documents
 - **Agent Definitions**: implementor, spec-reviewer, quality-reviewer
@@ -40,7 +40,7 @@ bash ~/.claude/plugins/automagik-genie/scripts/install-genie-cli.sh --global
 The Genie workflow follows this progression:
 
 ```
-/brainstorm → /wish → /plan-review → /forge → /review → SHIP
+/brainstorm → /wish → /plan-review → /make → /review → SHIP
 ```
 
 ### 1. Brainstorm (`/brainstorm`)
@@ -61,7 +61,7 @@ Creates `.genie/wishes/<slug>/wish.md`
 
 Fast structural validation of wish document. Catches missing sections before execution.
 
-### 4. Forge (`/forge`)
+### 4. Make (`/make`)
 
 Execute the plan by dispatching subagents:
 - **Implementor**: Executes tasks using TDD
@@ -74,7 +74,7 @@ Never implements directly - always dispatches agents.
 
 Final validation producing:
 - **SHIP**: Ready to deploy
-- **FIX-FIRST**: Return to forge with specific fixes
+- **FIX-FIRST**: Return to make with specific fixes
 - **BLOCKED**: Return to wish for scope changes
 
 ## Directory Structure
@@ -85,7 +85,7 @@ automagik-genie/
 ├── skills/
 │   ├── brainstorm/       # Idea exploration
 │   ├── wish/             # Plan creation
-│   ├── forge/            # Plan execution
+│   ├── make/            # Plan execution
 │   ├── review/           # Final validation
 │   ├── plan-review/      # Wish validation
 │   ├── genie-base/       # Workspace bootstrap
@@ -98,7 +98,7 @@ automagik-genie/
 │   └── hooks.json        # Validation hooks
 ├── scripts/
 │   ├── validate-wish.ts  # Wish validation
-│   ├── validate-completion.ts # Forge completion check
+│   ├── validate-completion.ts # Make completion check
 │   └── install-genie-cli.sh # CLI installer
 └── references/
     ├── wish-template.md  # Wish document template
@@ -116,5 +116,5 @@ ls ~/.claude/plugins/automagik-genie/plugin.json
 Test skills are invocable:
 - `/brainstorm` should enter exploration mode
 - `/wish` should create wish documents
-- `/forge` should dispatch implementor agents
+- `/make` should dispatch implementor agents
 - `/review` should produce SHIP/FIX-FIRST/BLOCKED verdict

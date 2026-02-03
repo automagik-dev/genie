@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: "Validate a wish document (structure, scope boundaries, acceptance criteria, validation commands). Use after creating or editing .genie/wishes/<slug>/wish.md to catch missing sections before forge."
+description: "Validate a wish document (structure, scope boundaries, acceptance criteria, validation commands). Use after creating or editing .genie/wishes/<slug>/wish.md to catch missing sections before make."
 ---
 
 # Plan Review - Validate Wish Documents
@@ -61,7 +61,7 @@ Fast structural/quality check on wish documents before execution. Catches missin
 ```
 Plan review: PASS
 
-Wish document is well-structured and ready for /forge.
+Wish document is well-structured and ready for /make.
 ```
 
 **If checks fail:**

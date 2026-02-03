@@ -61,7 +61,7 @@ For PASS criteria, evidence includes:
 ```
 /wish → creates plan
 /plan-review → validates plan structure
-/forge → executes plan
+/make → executes plan
 /review → final validation → SHIP / FIX-FIRST / BLOCKED
 ```
 

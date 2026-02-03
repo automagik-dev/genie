@@ -81,7 +81,7 @@
 
 ## Review Results
 
-_Populated by `/review` after forge execution completes._
+_Populated by `/review` after make execution completes._
 
 ---
 

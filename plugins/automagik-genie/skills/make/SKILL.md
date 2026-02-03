@@ -1,9 +1,9 @@
 ---
-name: forge
+name: make
 description: "Use when executing an approved wish plan - dispatches implementor subagents per task with two-stage review (spec + quality) and fix loops."
 ---
 
-# Forge - Execute the Plan
+# Make - Execute the Plan
 
 ## Overview
 
@@ -114,7 +114,7 @@ Return to step 2 until all tasks are complete.
 
 ```
 All tasks complete.
-Output: "All forge tasks complete. Run /review for final validation."
+Output: "All make tasks complete. Run /review for final validation."
 ```
 
 ---

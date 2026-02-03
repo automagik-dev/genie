@@ -1,13 +1,13 @@
 ---
 name: review
-description: "Use when all forge tasks are complete and work needs final validation - produces SHIP/FIX-FIRST/BLOCKED verdict with categorized gaps."
+description: "Use when all make tasks are complete and work needs final validation - produces SHIP/FIX-FIRST/BLOCKED verdict with categorized gaps."
 ---
 
 # Review - Final Validation
 
 ## Overview
 
-After forge completes all tasks, run comprehensive final review. Check every success criterion with evidence, run validation commands, do quality spot-check, and produce the ship decision.
+After make completes all tasks, run comprehensive final review. Check every success criterion with evidence, run validation commands, do quality spot-check, and produce the ship decision.
 
 **Three verdicts: SHIP / FIX-FIRST / BLOCKED**
 
@@ -23,14 +23,14 @@ Check TaskList for wish tasks
 Verify all tasks marked complete
 ```
 
-**If tasks incomplete:** Stop. Output: "Forge not complete. [N] tasks remaining. Run /forge to continue."
+**If tasks incomplete:** Stop. Output: "Make not complete. [N] tasks remaining. Run /make to continue."
 
 ### 2. Task Completion Audit
 
 For each execution group in the wish:
 - Check the task was completed
 - Verify acceptance criteria checkboxes are checked
-- Note any tasks that were BLOCKED during forge
+- Note any tasks that were BLOCKED during make
 
 **Output per group:**
 ```
@@ -108,14 +108,14 @@ Conditions:
   - MEDIUM/LOW gaps are advisory only
 ```
 
-**FIX-FIRST** - Fixable issues found. Return to forge.
+**FIX-FIRST** - Fixable issues found. Return to make.
 
 ```
 Conditions:
   - One or more HIGH gaps (fixable)
   - Or validation commands failing
   - Quality spot-check found significant concerns
-  - Provide specific fix list for /forge
+  - Provide specific fix list for /make
 ```
 
 **BLOCKED** - Fundamental issues. Return to wish.
@@ -123,8 +123,8 @@ Conditions:
 ```
 Conditions:
   - CRITICAL gaps that require scope changes
-  - Or architectural problems that can't be fixed in forge
-  - Any BLOCKED tasks from forge
+  - Or architectural problems that can't be fixed in make
+  - Any BLOCKED tasks from make
   - Provide specific issues requiring wish revision
 ```
 
@@ -181,7 +181,7 @@ Notes: [brief notes if any]
 
 **If FIX-FIRST:**
 ```
-"Review found fixable issues. Run /forge to address:
+"Review found fixable issues. Run /make to address:
 1. [gap 1]
 2. [gap 2]
 Then run /review again."
@@ -193,7 +193,7 @@ Then run /review again."
 Revise the wish document to address:
 1. [issue 1]
 2. [issue 2]
-Then run /forge and /review again."
+Then run /make and /review again."
 ```
 
 ---
@@ -214,8 +214,8 @@ Then run /forge and /review again."
 - Declare SHIP with CRITICAL or HIGH gaps
 - Skip validation commands
 - Mark criteria PASS without evidence
-- Re-implement fixes during review (that's forge's job)
+- Re-implement fixes during review (that's make's job)
 - Change scope during review (that's wish's job)
 - Block on MEDIUM or LOW gaps
-- Pass with BLOCKED tasks from forge
-- Forget to write results back to the wish document
+- Pass with BLOCKED tasks from make
+- Maket to write results back to the wish document

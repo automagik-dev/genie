@@ -69,7 +69,7 @@ Run the validation command from the wish document:
 
 ### 7. Report
 
-Report to forge:
+Report to make:
 - What was implemented (files changed)
 - Test results
 - Validation command output
