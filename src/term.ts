@@ -23,6 +23,8 @@ import * as killCmd from './term-commands/kill.js';
 import * as daemonCmd from './term-commands/daemon.js';
 import * as spawnCmd from './term-commands/spawn.js';
 import * as createCmd from './term-commands/create.js';
+import * as updateCmd from './term-commands/update.js';
+import * as shipCmd from './term-commands/ship.js';
 
 const program = new Command();
 
@@ -48,6 +50,8 @@ Worker Orchestration:
   term work <bd-id>   - Spawn worker bound to beads issue
   term work next      - Work on next ready issue
   term workers        - List all workers and states
+  term update <id>    - Update task (--status, --title, --blocked-by)
+  term ship <id>      - Mark done + cleanup worker (optional merge)
   term close <bd-id>  - Close issue, cleanup worker
   term kill <worker>  - Force kill a stuck worker
   term daemon start   - Start beads daemon for auto-sync`)
@@ -314,9 +318,31 @@ program
   });
 
 program
+  .command('update <task-id>')
+  .description('Update task properties (status, title, blocked-by)')
+  .option('--status <status>', 'New status (ready, in_progress, done, blocked)')
+  .option('--title <title>', 'New title')
+  .option('--blocked-by <ids>', 'Set blocked-by list (comma-separated task IDs)')
+  .option('--add-blocked-by <ids>', 'Add to blocked-by list (comma-separated task IDs)')
+  .option('--json', 'Output as JSON')
+  .action(async (taskId: string, options: updateCmd.UpdateOptions) => {
+    await updateCmd.updateCommand(taskId, options);
+  });
+
+program
+  .command('ship <task-id>')
+  .description('Mark task as done and cleanup worker')
+  .option('--keep-worktree', 'Don\'t remove the worktree')
+  .option('--merge', 'Merge worktree changes to main branch')
+  .option('-y, --yes', 'Skip confirmation')
+  .action(async (taskId: string, options: shipCmd.ShipOptions) => {
+    await shipCmd.shipCommand(taskId, options);
+  });
+
+program
   .command('close <task-id>')
-  .description('Close beads issue and cleanup worker')
-  .option('--no-sync', 'Skip bd sync')
+  .description('Close task/issue and cleanup worker')
+  .option('--no-sync', 'Skip bd sync (beads only)')
   .option('--keep-worktree', 'Don\'t remove the worktree')
   .option('--merge', 'Merge worktree changes to main branch')
   .option('-y, --yes', 'Skip confirmation')

@@ -21,12 +21,20 @@ export interface QueueStatus {
   blocked: string[];
 }
 
+export interface UpdateTaskOptions {
+  status?: string;
+  title?: string;
+  blockedBy?: string[];
+  addBlockedBy?: string[];
+}
+
 export interface TaskBackend {
   kind: 'beads' | 'local';
   create(title: string, options?: { description?: string; parent?: string }): Promise<TaskSummary>;
   get(id: string): Promise<TaskSummary | null>;
   claim(id: string): Promise<boolean>; // in_progress
   markDone(id: string): Promise<boolean>;
+  update(id: string, options: UpdateTaskOptions): Promise<TaskSummary | null>;
   queue(): Promise<QueueStatus>;
 }
 
@@ -70,6 +78,15 @@ export function getBackend(repoPath: string): TaskBackend {
       },
       async markDone(id) {
         return local.markDone(repoPath, id);
+      },
+      async update(id, options) {
+        const task = await local.updateTask(repoPath, id, {
+          status: options.status as local.LocalTaskStatus | undefined,
+          title: options.title,
+          blockedBy: options.blockedBy,
+          addBlockedBy: options.addBlockedBy,
+        });
+        return task ? { id: task.id, title: task.title, status: task.status, description: task.description, blockedBy: task.blockedBy } : null;
       },
       async queue() {
         return local.getQueue(repoPath);
@@ -120,6 +137,33 @@ export function getBackend(repoPath: string): TaskBackend {
       // close happens elsewhere; we can mark done if beads supports update status
       const { exitCode } = await runBd(['update', id, '--status', 'done']);
       return exitCode === 0;
+    },
+    async update(id, options) {
+      const args = ['update', id];
+      if (options.status) {
+        args.push('--status', options.status);
+      }
+      if (options.title) {
+        args.push('--title', options.title);
+      }
+      if (options.blockedBy && options.blockedBy.length > 0) {
+        // Replace blocked-by list
+        args.push('--blocked-by', options.blockedBy.join(','));
+      }
+      if (options.addBlockedBy && options.addBlockedBy.length > 0) {
+        // Add to blocked-by (bd may not support this directly, so we get current and merge)
+        const current = await this.get(id);
+        if (current) {
+          const existing = new Set(current.blockedBy || []);
+          for (const dep of options.addBlockedBy) {
+            existing.add(dep);
+          }
+          args.push('--blocked-by', Array.from(existing).join(','));
+        }
+      }
+      const { exitCode } = await runBd(args);
+      if (exitCode !== 0) return null;
+      return this.get(id);
     },
     async queue() {
       const ready: string[] = [];

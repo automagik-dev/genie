@@ -177,3 +177,55 @@ export async function markDone(repoPath: string, id: string): Promise<boolean> {
   await saveTasks(repoPath, file);
   return true;
 }
+
+export interface UpdateTaskOptions {
+  status?: LocalTaskStatus;
+  title?: string;
+  blockedBy?: string[];  // replaces existing blockedBy
+  addBlockedBy?: string[];  // appends to existing blockedBy
+}
+
+export async function updateTask(
+  repoPath: string,
+  id: string,
+  options: UpdateTaskOptions
+): Promise<LocalTask | null> {
+  const file = await loadTasks(repoPath);
+  const t = file.tasks[id];
+  if (!t) return null;
+
+  if (options.status !== undefined) {
+    t.status = options.status;
+  }
+
+  if (options.title !== undefined) {
+    t.title = options.title;
+  }
+
+  if (options.blockedBy !== undefined) {
+    // Replace blockedBy list
+    t.blockedBy = options.blockedBy;
+    // Auto-set status to blocked if there are dependencies
+    if (options.blockedBy.length > 0 && t.status === 'ready') {
+      t.status = 'blocked';
+    }
+  }
+
+  if (options.addBlockedBy !== undefined && options.addBlockedBy.length > 0) {
+    // Append to blockedBy list (deduplicate)
+    const existing = new Set(t.blockedBy || []);
+    for (const dep of options.addBlockedBy) {
+      existing.add(dep);
+    }
+    t.blockedBy = Array.from(existing);
+    // Auto-set status to blocked if there are dependencies
+    if (t.blockedBy.length > 0 && t.status === 'ready') {
+      t.status = 'blocked';
+    }
+  }
+
+  t.updatedAt = new Date().toISOString();
+  file.tasks[id] = t;
+  await saveTasks(repoPath, file);
+  return t;
+}
