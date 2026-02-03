@@ -12,6 +12,7 @@
  *   --focus               - Focus the worker pane (default: false)
  *   --resume              - Resume previous Claude session if available (default: true)
  *   --no-resume           - Start fresh session even if previous exists
+ *   --skill <name>        - Skill to invoke (e.g., 'forge'). Auto-detects 'forge' if wish.md exists.
  */
 
 import { $ } from 'bun';
@@ -39,6 +40,8 @@ export interface WorkOptions {
   prompt?: string;
   /** Resume previous Claude session if available */
   resume?: boolean;
+  /** Skill to invoke (e.g., 'forge'). Auto-detected from wish.md if not specified. */
+  skill?: string;
 }
 
 interface BeadsIssue {
@@ -230,6 +233,20 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<void> {
     await $`git -C ${repoPath} worktree remove ${worktreePath} --force`.quiet();
   } catch {
     // Ignore errors - worktree may already be removed
+  }
+}
+
+/**
+ * Check if a wish.md file exists for the given task
+ */
+async function wishFileExists(taskId: string, repoPath: string): Promise<boolean> {
+  const fs = await import('fs/promises');
+  const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
+  try {
+    await fs.access(wishPath);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -647,13 +664,29 @@ export async function workCommand(
     // Also register in JSON registry (parallel operation during transition)
     await registry.register(worker);
 
-    // 9. Build prompt and start Claude with it as argument
-    const prompt = options.prompt || `Work on beads issue ${taskId}: "${issue.title}"
+    // 9. Detect skill and build prompt
+    // If --skill is explicitly set, use that. Otherwise check for wish.md to auto-detect forge.
+    let skill = options.skill;
+    if (!skill && !options.prompt) {
+      const hasWish = await wishFileExists(taskId, repoPath);
+      if (hasWish) {
+        skill = 'forge';
+        console.log(`📋 Found wish.md - using /forge skill`);
+      }
+    }
+
+    // Build prompt: if skill is set, use /<skill>, otherwise use default or custom prompt
+    let prompt: string;
+    if (skill) {
+      prompt = `/${skill}`;
+    } else {
+      prompt = options.prompt || `Work on beads issue ${taskId}: "${issue.title}"
 
 ## Description
 ${issue.description || 'No description provided.'}
 
 When you're done, commit your changes and let me know.`;
+    }
 
     // Escape the prompt for shell (single quotes)
     const escapedPrompt = prompt.replace(/'/g, "'\\''");

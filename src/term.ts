@@ -301,6 +301,7 @@ program
   .option('--focus', 'Focus the worker pane after spawning')
   .option('-p, --prompt <message>', 'Custom initial prompt')
   .option('--no-resume', 'Start fresh session even if previous exists')
+  .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });
