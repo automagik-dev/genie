@@ -103,6 +103,32 @@ confirm_no() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Version Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Get installed genie-cli version
+get_installed_version() {
+    if check_command genie; then
+        genie --version 2>/dev/null | head -1 || echo ""
+    else
+        echo ""
+    fi
+}
+
+# Get latest version from npm registry
+get_latest_version() {
+    local url="https://registry.npmjs.org/$PACKAGE_NAME/latest"
+    case "$DOWNLOADER" in
+        curl)
+            curl -fsSL "$url" 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4
+            ;;
+        wget)
+            wget -qO- "$url" 2>/dev/null | grep -o '"version":"[^"]*"' | cut -d'"' -f4
+            ;;
+    esac
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Platform Detection
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -421,8 +447,13 @@ run_claudio_setup() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_install() {
-    # Required prerequisites
-    header "Installing prerequisites..."
+    local installed_version latest_version
+
+    # Check current installation status
+    installed_version=$(get_installed_version)
+
+    # Required prerequisites (needed for version check)
+    header "Checking prerequisites..."
     install_git_if_needed
     install_node_if_needed
     install_bun_if_needed
@@ -430,9 +461,33 @@ run_install() {
     install_jq_if_needed
     install_rg_if_needed
 
-    # Genie CLI (required)
-    header "Installing Genie CLI..."
-    install_genie_cli
+    # Check versions
+    latest_version=$(get_latest_version)
+
+    if [[ -n "$installed_version" ]]; then
+        log "Genie CLI ${BOLD}$installed_version${NC} installed"
+
+        if [[ -n "$latest_version" ]]; then
+            if [[ "$installed_version" == "$latest_version" ]]; then
+                success "Genie CLI is up to date"
+            else
+                log "Latest version: ${BOLD}$latest_version${NC}"
+                echo
+                if confirm "Update Genie CLI?"; then
+                    install_genie_cli
+                    success "Genie CLI updated to $latest_version"
+                else
+                    info "Skipping update"
+                fi
+            fi
+        else
+            warn "Could not check latest version"
+        fi
+    else
+        # Fresh install
+        header "Installing Genie CLI..."
+        install_genie_cli
+    fi
 
     # Optional: Claude Code CLI
     echo
