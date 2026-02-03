@@ -470,38 +470,51 @@ run_uninstall() {
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo
 
-    if ! confirm_no "Remove Genie CLI and all components?"; then
-        info "Cancelled"
-        exit 0
+    local removed_something=false
+
+    # 1. Genie CLI package (default: yes)
+    if confirm "Remove Genie CLI package?"; then
+        if check_command bun; then
+            bun remove -g "$PACKAGE_NAME" 2>/dev/null || true
+        fi
+        if check_command npm; then
+            npm uninstall -g "$PACKAGE_NAME" 2>/dev/null || true
+        fi
+        success "Genie CLI removed"
+        removed_something=true
+    else
+        info "Keeping Genie CLI"
     fi
 
-    echo
-    log "Removing..."
-
-    # Remove plugin
-    if check_command claude; then
-        if claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null; then
-            success "Claude Code plugin removed"
+    # 2. Claude plugin (default: yes)
+    if check_command claude && claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
+        if confirm "Remove Claude Code plugin?"; then
+            if claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null; then
+                success "Claude Code plugin removed"
+                removed_something=true
+            fi
+        else
+            info "Keeping Claude Code plugin"
         fi
     fi
 
-    # Remove genie-cli
-    if check_command bun; then
-        bun remove -g "$PACKAGE_NAME" 2>/dev/null || true
-    fi
-    if check_command npm; then
-        npm uninstall -g "$PACKAGE_NAME" 2>/dev/null || true
-    fi
-    success "Genie CLI removed"
-
-    # Clean config
+    # 3. Config directory (default: no - preserve settings)
     if [[ -d "$GENIE_HOME" ]]; then
-        rm -rf "$GENIE_HOME"
-        success "Configuration cleaned"
+        if confirm_no "Remove ~/.genie config directory?"; then
+            rm -rf "$GENIE_HOME"
+            success "Configuration removed"
+            removed_something=true
+        else
+            info "Keeping config (reinstall will preserve settings)"
+        fi
     fi
 
     echo
-    success "Done"
+    if $removed_something; then
+        success "Done"
+    else
+        info "Nothing removed"
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
