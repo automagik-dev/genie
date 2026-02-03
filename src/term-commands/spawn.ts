@@ -348,21 +348,10 @@ export async function spawnCommand(
 
   const { paneId } = paneResult;
 
-  // 5. Build prompt with skill
-  let prompt = await skillLoader.buildSkillPrompt(skill, options.prompt);
-
-  // Add issue context if bound to a task
-  if (issue) {
-    prompt += `\n\n---\n\nBound to beads issue ${issue.id}: "${issue.title}"`;
-    if (issue.description) {
-      prompt += `\n\n${issue.description}`;
-    }
-  }
-
-  // 6. Generate Claude session ID for resume capability (only if task-bound)
+  // 5. Generate Claude session ID for resume capability (only if task-bound)
   const claudeSessionId = options.taskId ? randomUUID() : undefined;
 
-  // 7. Register worker (if taskId provided)
+  // 6. Register worker (if taskId provided)
   if (options.taskId && issue) {
     const worker: registry.Worker = {
       id: options.taskId,
@@ -399,19 +388,35 @@ export async function spawnCommand(
     await registry.register(worker);
   }
 
-  // 8. Escape prompt for shell
-  const escapedPrompt = prompt.replace(/'/g, "'\\''");
-
-  // Set BEADS_DIR so bd commands work in worktrees
+  // 7. Set BEADS_DIR so bd commands work in worktrees
   const beadsDir = join(repoPath, '.genie');
 
   // Escape workingDir for shell
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
-  // 9. Start Claude with prompt (include session ID if task-bound)
-  // First cd to correct directory (shell rc files may have overridden tmux -c)
+  // 8. Start Claude without skill content (skills are loaded by automagik-genie plugin)
   const sessionIdArg = claudeSessionId ? `--session-id '${claudeSessionId}' ` : '';
-  await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude ${sessionIdArg}'${escapedPrompt}'`, true, false);
+  await tmux.executeCommand(
+    paneId,
+    `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude ${sessionIdArg}`,
+    true,
+    false
+  );
+
+  // 9. Wait for Claude to start, then send skill as slash command
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // Build slash command: /{skillName} [optional prompt]
+  // Include issue context if bound to a task
+  let slashArgs = options.prompt || '';
+  if (issue) {
+    const issueContext = `Bound to issue ${issue.id}: "${issue.title}"${issue.description ? `\n\n${issue.description}` : ''}`;
+    slashArgs = slashArgs ? `${slashArgs}\n\n${issueContext}` : issueContext;
+  }
+
+  const slashCommand = slashArgs ? `/${skill.name} ${slashArgs}` : `/${skill.name}`;
+  const escapedSlashCommand = slashCommand.replace(/'/g, "'\\''");
+  await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedSlashCommand}' Enter`);
 
   // 10. Update state if task-bound
   if (options.taskId) {

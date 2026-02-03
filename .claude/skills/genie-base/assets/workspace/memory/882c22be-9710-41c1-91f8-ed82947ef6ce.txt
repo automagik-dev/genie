@@ -1,1 +1,0 @@
-Então, como você pode ver, a tentativa de startar um cloud numa aba falhou, tem um problema aí que tá impedindo ele de startar, então eu gostaria que você divulgasse isso e descobrisse o motivo que isso aconteceu.
