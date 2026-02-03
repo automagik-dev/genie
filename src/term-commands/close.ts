@@ -1,11 +1,14 @@
 /**
- * Close command - Close beads issue and cleanup worker
+ * Close command - Close task/issue and cleanup worker
+ *
+ * Supports both local wishes (.genie/tasks.json) and beads issues.
+ * Backend is auto-detected based on whether .genie/ directory exists.
  *
  * Usage:
- *   term close <bd-id>     - Close issue, cleanup worktree, kill worker
+ *   term close <task-id>   - Close task, cleanup worktree, kill worker
  *
  * Options:
- *   --no-sync              - Skip bd sync
+ *   --no-sync              - Skip bd sync (beads only, no-op for local)
  *   --keep-worktree        - Don't remove the worktree
  *   --merge                - Merge worktree changes to main branch
  *   -y, --yes              - Skip confirmation
@@ -17,12 +20,13 @@ import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { WorktreeManager } from '../lib/worktree.js';
+import { getBackend, TaskBackend } from '../lib/task-backend.js';
 import { join } from 'path';
 import { homedir } from 'os';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
-const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+const useBeadsRegistry = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -60,11 +64,18 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
 }
 
 /**
- * Close beads issue
+ * Close beads issue via `bd close`
  */
 async function closeBeadsIssue(taskId: string): Promise<boolean> {
   const { exitCode } = await runBd(['close', taskId]);
   return exitCode === 0;
+}
+
+/**
+ * Close local wish by marking it as done
+ */
+async function closeLocalTask(backend: TaskBackend, taskId: string): Promise<boolean> {
+  return backend.markDone(taskId);
 }
 
 /**
@@ -120,8 +131,8 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<boolean
     // Worktree may not exist at this location, continue checking
   }
 
-  // Try bd worktree when beads is enabled
-  if (useBeads) {
+  // Try bd worktree when beads registry is enabled
+  if (useBeadsRegistry) {
     try {
       const removed = await beadsRegistry.removeWorktree(taskId);
       if (removed) return true;
@@ -170,8 +181,15 @@ export async function closeCommand(
   options: CloseOptions = {}
 ): Promise<void> {
   try {
+    // Detect repo path from cwd
+    const repoPath = process.cwd();
+
+    // Get backend (local vs beads)
+    const backend = getBackend(repoPath);
+    const isLocal = backend.kind === 'local';
+
     // Find worker in registry (check both during transition)
-    let worker = useBeads
+    let worker = useBeadsRegistry
       ? await beadsRegistry.findByTask(taskId)
       : null;
     if (!worker) {
@@ -179,7 +197,7 @@ export async function closeCommand(
     }
 
     if (!worker) {
-      console.log(`ℹ️  No active worker for ${taskId}. Closing issue only.`);
+      console.log(`ℹ️  No active worker for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
     }
 
     // Confirm with user
@@ -195,18 +213,31 @@ export async function closeCommand(
       }
     }
 
-    // 1. Close beads issue
+    // 1. Close task/issue based on backend
     console.log(`📝 Closing ${taskId}...`);
-    const closed = await closeBeadsIssue(taskId);
-    if (!closed) {
-      console.error(`❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
-      // Continue with cleanup anyway
+    let closed: boolean;
+    if (isLocal) {
+      // Local backend: mark task as done in tasks.json
+      closed = await closeLocalTask(backend, taskId);
+      if (!closed) {
+        console.error(`❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
+        // Continue with cleanup anyway
+      } else {
+        console.log(`   ✅ Task marked as done`);
+      }
     } else {
-      console.log(`   ✅ Issue closed`);
+      // Beads backend: use bd close
+      closed = await closeBeadsIssue(taskId);
+      if (!closed) {
+        console.error(`❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
+        // Continue with cleanup anyway
+      } else {
+        console.log(`   ✅ Issue closed`);
+      }
     }
 
-    // 2. Sync beads (unless --no-sync)
-    if (!options.noSync) {
+    // 2. Sync beads (unless --no-sync or using local backend)
+    if (!isLocal && !options.noSync) {
       console.log(`🔄 Syncing beads...`);
       const synced = await syncBeads();
       if (synced) {
@@ -242,7 +273,7 @@ export async function closeCommand(
       console.log(`   ✅ Pane killed`);
 
       // 5. Unregister worker from both registries
-      if (useBeads) {
+      if (useBeadsRegistry) {
         try {
           // Unbind work from agent
           await beadsRegistry.unbindWork(worker.id);
