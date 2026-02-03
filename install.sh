@@ -65,6 +65,13 @@ AUTO_YES=false
 CLEANUP_NEEDED=false
 TEMP_DIR=""
 
+# Optional component flags (default: install all)
+INSTALL_CLAUDE=true
+INSTALL_PLUGIN=true
+INSTALL_TMUX=true
+INSTALL_RG=true
+INSTALL_JQ=true
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
 # ─────────────────────────────────────────────────────────────────────────────
@@ -487,6 +494,34 @@ install_claude_if_needed() {
     fi
 }
 
+install_plugin_if_needed() {
+    if [[ "$INSTALL_PLUGIN" != true ]]; then
+        return 0
+    fi
+
+    # Check if already installed
+    if claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
+        success "automagik-genie plugin already installed"
+        return 0
+    fi
+
+    # Requires Claude CLI
+    if ! check_command claude; then
+        warn "Claude Code CLI required for plugin - installing first"
+        install_claude_if_needed || return 1
+    fi
+
+    log "Installing automagik-genie plugin..."
+    if claude plugin install namastexlabs/automagik-genie; then
+        success "automagik-genie plugin installed"
+        info "Restart Claude Code to activate the plugin"
+    else
+        warn "Plugin installation failed"
+        info "Try manually: claude plugin install namastexlabs/automagik-genie"
+        return 1
+    fi
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Config Management
 # ─────────────────────────────────────────────────────────────────────────────
@@ -553,6 +588,49 @@ prompt_install_method() {
     esac
 }
 
+# Prompt user for optional components
+prompt_optional_components() {
+    if [[ "$AUTO_YES" == true ]]; then
+        return  # Install all by default
+    fi
+
+    echo
+    echo -e "${BOLD}Optional Components:${NC}"
+    echo
+    echo "  1) Claude Code CLI     - Required for plugin"
+    echo "  2) Claude Code Plugin  - automagik-genie (skills, agents, hooks)"
+    echo "  3) tmux                - Terminal multiplexing"
+    echo "  4) ripgrep             - Fast code search"
+    echo "  5) jq                  - JSON processing"
+    echo
+    echo -en "${YELLOW}?${NC} Select components [1-5, all, none] (default: all): "
+    read -r choices
+
+    # Reset all to false if user makes selections
+    if [[ -n "$choices" && "$choices" != "all" ]]; then
+        INSTALL_CLAUDE=false
+        INSTALL_PLUGIN=false
+        INSTALL_TMUX=false
+        INSTALL_RG=false
+        INSTALL_JQ=false
+
+        if [[ "$choices" == "none" ]]; then
+            return
+        fi
+
+        # Parse selections (comma or space separated)
+        for choice in $(echo "$choices" | tr ',' ' '); do
+            case "$choice" in
+                1) INSTALL_CLAUDE=true ;;
+                2) INSTALL_PLUGIN=true; INSTALL_CLAUDE=true ;;  # Plugin requires Claude
+                3) INSTALL_TMUX=true ;;
+                4) INSTALL_RG=true ;;
+                5) INSTALL_JQ=true ;;
+            esac
+        done
+    fi
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Installation Methods
 # ─────────────────────────────────────────────────────────────────────────────
@@ -605,15 +683,23 @@ install_full() {
     install_git_if_needed
     install_node_if_needed
     install_bun_if_needed
-    install_tmux_if_needed || true
-    install_jq_if_needed || true
-    install_rg_if_needed || true
-    install_claude_if_needed || true
+
+    # Prompt for optional components
+    prompt_optional_components
+
+    # Install optional components based on selections
+    [[ "$INSTALL_TMUX" == true ]] && install_tmux_if_needed || true
+    [[ "$INSTALL_JQ" == true ]] && install_jq_if_needed || true
+    [[ "$INSTALL_RG" == true ]] && install_rg_if_needed || true
+    [[ "$INSTALL_CLAUDE" == true ]] && install_claude_if_needed || true
 
     header "Installing Genie CLI..."
 
     log "Installing $PACKAGE_NAME globally..."
     install_via_pm
+
+    # Install plugin after genie-cli
+    install_plugin_if_needed || true
 
     CLEANUP_NEEDED=false
     success "Genie CLI installed"
@@ -630,10 +716,15 @@ install_source() {
     install_git_if_needed
     install_node_if_needed
     install_bun_if_needed
-    install_tmux_if_needed || true
-    install_jq_if_needed || true
-    install_rg_if_needed || true
-    install_claude_if_needed || true
+
+    # Prompt for optional components
+    prompt_optional_components
+
+    # Install optional components based on selections
+    [[ "$INSTALL_TMUX" == true ]] && install_tmux_if_needed || true
+    [[ "$INSTALL_JQ" == true ]] && install_jq_if_needed || true
+    [[ "$INSTALL_RG" == true ]] && install_rg_if_needed || true
+    [[ "$INSTALL_CLAUDE" == true ]] && install_claude_if_needed || true
 
     header "Cloning repository..."
 
@@ -668,6 +759,9 @@ install_source() {
 
     # Save install method to config
     write_install_method "source"
+
+    # Install plugin after source build
+    install_plugin_if_needed || true
 
     CLEANUP_NEEDED=false
     success "Genie CLI built and installed from source"
@@ -809,6 +903,14 @@ install_auto() {
             fi
             ;;
     esac
+}
+
+# Plugin-only install
+install_plugin_only() {
+    header "Plugin Install"
+
+    INSTALL_PLUGIN=true
+    install_plugin_if_needed
 }
 
 # Quick install via specific package manager
@@ -988,6 +1090,8 @@ Modes:
 Options:
   --version=VERSION   Install specific version (stable, latest, or semver)
   --yes, -y           Auto-approve all prompts
+  --plugin-only       Only install the automagik-genie Claude Code plugin
+  --no-plugin         Skip plugin installation
   --help, -h          Show this help message
 
 Examples:
@@ -1011,6 +1115,12 @@ Examples:
 
   # Auto-approve prompts
   curl ... | bash -s -- full --yes
+
+  # Skip plugin installation
+  curl ... | bash -s -- full --no-plugin
+
+  # Only install the Claude Code plugin
+  curl ... | bash -s -- --plugin-only
 EOF
 }
 
@@ -1019,6 +1129,12 @@ parse_args() {
         case "$1" in
             quick|full|source|update|auto)
                 INSTALL_MODE="$1"
+                ;;
+            --plugin-only)
+                INSTALL_MODE="plugin-only"
+                ;;
+            --no-plugin)
+                INSTALL_PLUGIN=false
                 ;;
             --version=*)
                 TARGET_VERSION="${1#*=}"
@@ -1076,6 +1192,9 @@ main() {
             ;;
         update)
             install_update
+            ;;
+        plugin-only)
+            install_plugin_only
             ;;
     esac
 
