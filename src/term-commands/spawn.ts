@@ -23,6 +23,7 @@ import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import * as skillLoader from '../lib/skill-loader.js';
+import { getBackend } from '../lib/task-backend.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -288,10 +289,31 @@ export async function spawnCommand(
   let issue: { id: string; title: string; description?: string } | null = null;
 
   if (options.taskId) {
-    // Verify issue exists
-    issue = await getBeadsIssue(options.taskId);
+    // Verify issue exists - check local backend first, then fall back to beads
+    const backend = getBackend(repoPath);
+    if (backend.kind === 'local') {
+      const localTask = await backend.get(options.taskId);
+      if (localTask) {
+        issue = {
+          id: localTask.id,
+          title: localTask.title,
+          description: localTask.description,
+        };
+      }
+    }
+
+    // Fall back to beads if not found locally
     if (!issue) {
-      console.error(`Issue "${options.taskId}" not found. Run \`bd list\` to see issues.`);
+      issue = await getBeadsIssue(options.taskId);
+    }
+
+    if (!issue) {
+      const backendKind = getBackend(repoPath).kind;
+      if (backendKind === 'local') {
+        console.error(`Issue "${options.taskId}" not found. Check \`.genie/tasks.json\`.`);
+      } else {
+        console.error(`Issue "${options.taskId}" not found. Run \`bd list\` to see issues.`);
+      }
       process.exit(1);
     }
 
