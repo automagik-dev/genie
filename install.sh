@@ -26,6 +26,8 @@ readonly PACKAGE_NAME="@automagik/genie"
 readonly RAW_REPO_URL="https://raw.githubusercontent.com/namastexlabs/genie-cli"
 
 readonly GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
+readonly CLAUDE_PLUGINS_DIR="$HOME/.claude/plugins"
+readonly PLUGIN_SYMLINK="$CLAUDE_PLUGINS_DIR/automagik-genie"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -52,6 +54,7 @@ PLATFORM=""
 ARCH=""
 INSTALL_MODE="install"
 LOCAL_PATH=""  # If set, use local source instead of npm
+AUTO_LOCAL_DETECTED=false  # True if local mode was auto-detected
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
@@ -101,6 +104,109 @@ confirm_no() {
     echo -en "${YELLOW}?${NC} $prompt [y/N] "
     read -r response < /dev/tty || response=""
     [[ "$response" =~ ^[Yy]$ ]]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Symlink Detection and Repair
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Check if a path is a broken symlink
+is_broken_symlink() {
+    local path="$1"
+    # -L checks if it's a symlink, ! -e checks if target doesn't exist
+    [[ -L "$path" && ! -e "$path" ]]
+}
+
+# Check if a path is a valid symlink pointing to an existing directory
+is_valid_symlink() {
+    local path="$1"
+    [[ -L "$path" && -d "$path" ]]
+}
+
+# Check and repair broken plugin symlink
+check_and_repair_symlink() {
+    if is_broken_symlink "$PLUGIN_SYMLINK"; then
+        local target
+        target=$(readlink "$PLUGIN_SYMLINK" 2>/dev/null || echo "unknown")
+        warn "Broken symlink detected: $PLUGIN_SYMLINK -> $target"
+        warn "The symlink target no longer exists"
+        echo
+        if confirm "Repair broken symlink?"; then
+            rm -f "$PLUGIN_SYMLINK"
+            success "Broken symlink removed (will be recreated during install)"
+            return 0
+        else
+            warn "Keeping broken symlink (this may cause issues)"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Verify symlink was created successfully
+verify_symlink() {
+    local symlink_path="$1"
+    local expected_target="$2"
+
+    if [[ ! -L "$symlink_path" ]]; then
+        error "Symlink was not created: $symlink_path"
+        return 1
+    fi
+
+    if [[ ! -d "$symlink_path" ]]; then
+        error "Symlink points to non-existent directory: $(readlink "$symlink_path")"
+        return 1
+    fi
+
+    local actual_target
+    actual_target=$(readlink -f "$symlink_path" 2>/dev/null)
+    expected_target=$(cd "$expected_target" 2>/dev/null && pwd)
+
+    if [[ "$actual_target" != "$expected_target" ]]; then
+        warn "Symlink target mismatch"
+        warn "  Expected: $expected_target"
+        warn "  Actual:   $actual_target"
+        return 1
+    fi
+
+    success "Symlink verified: $symlink_path -> $actual_target"
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Source Directory Auto-Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Check if a directory is the genie-cli source directory
+is_genie_source_dir() {
+    local dir="$1"
+
+    # Must have package.json
+    if [[ ! -f "$dir/package.json" ]]; then
+        return 1
+    fi
+
+    # package.json must contain @automagik/genie
+    if grep -q '"name"[[:space:]]*:[[:space:]]*"@automagik/genie"' "$dir/package.json" 2>/dev/null; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Auto-detect if we're running from a genie-cli source directory
+auto_detect_source_dir() {
+    # Get the directory where install.sh is located
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if is_genie_source_dir "$script_dir"; then
+        LOCAL_PATH="$script_dir"
+        AUTO_LOCAL_DETECTED=true
+        return 0
+    fi
+
+    return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -436,14 +542,20 @@ install_genie_cli() {
 
     # Local installation mode - use source directly
     if [[ -n "$LOCAL_PATH" ]]; then
-        log "Using local source: $LOCAL_PATH"
+        if $AUTO_LOCAL_DETECTED; then
+            info "Using local source mode (auto-detected from source directory)"
+        else
+            info "Using local source mode"
+        fi
+        log "Source path: $LOCAL_PATH"
+
         if [[ ! -d "$LOCAL_PATH" ]]; then
             error "Local path does not exist: $LOCAL_PATH"
             exit 1
         fi
-        
+
         pushd "$LOCAL_PATH" > /dev/null
-        
+
         # Build
         log "Building from source..."
         if check_command bun; then
@@ -453,27 +565,29 @@ install_genie_cli() {
             npm install
             npm run build
         fi
-        
-        # Link globally
+
+        # Link globally (npm link creates proper global bin symlinks; bun link does not)
         log "Linking globally..."
-        if check_command bun; then
-            bun link
-            ensure_bun_in_path
-        else
-            npm link
-        fi
-        
+        npm link
+
         # Also set up Claude Code plugin to use local version
         local plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
-        local claude_plugins_dir="$HOME/.claude/plugins"
         if [[ -d "$plugin_dir" ]]; then
             log "Linking Claude Code plugin..."
-            mkdir -p "$claude_plugins_dir"
-            rm -f "$claude_plugins_dir/automagik-genie"
-            ln -sf "$plugin_dir" "$claude_plugins_dir/automagik-genie"
-            success "Claude Code plugin linked: $claude_plugins_dir/automagik-genie -> $plugin_dir"
+            mkdir -p "$CLAUDE_PLUGINS_DIR"
+            rm -f "$PLUGIN_SYMLINK"
+            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
+
+            # Verify the symlink was created correctly
+            if ! verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
+                error "Failed to create valid symlink for Claude Code plugin"
+                exit 1
+            fi
+        else
+            warn "Plugin directory not found: $plugin_dir"
+            warn "Claude Code plugin symlink was not created"
         fi
-        
+
         popd > /dev/null
         success "$PACKAGE_NAME installed from local source"
         return
@@ -705,6 +819,18 @@ main() {
 
     init_downloader
     detect_platform
+
+    # Auto-detect source directory if not explicitly set via --local
+    if [[ -z "$LOCAL_PATH" ]] && [[ "$INSTALL_MODE" == "install" ]]; then
+        if auto_detect_source_dir; then
+            log "Detected genie-cli source directory"
+        fi
+    fi
+
+    # Check for broken symlinks before installation
+    if [[ "$INSTALL_MODE" == "install" ]]; then
+        check_and_repair_symlink
+    fi
 
     case "$INSTALL_MODE" in
         install)

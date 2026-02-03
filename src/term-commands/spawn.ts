@@ -395,10 +395,11 @@ export async function spawnCommand(
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
   // 8. Start Claude without skill content (skills are loaded by automagik-genie plugin)
+  // --dangerously-skip-permissions enables autonomous operation for spawned workers
   const sessionIdArg = claudeSessionId ? `--session-id '${claudeSessionId}' ` : '';
   await tmux.executeCommand(
     paneId,
-    `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude ${sessionIdArg}`,
+    `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --dangerously-skip-permissions ${sessionIdArg}`,
     true,
     false
   );
