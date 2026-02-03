@@ -334,6 +334,15 @@ install_bun_if_needed() {
     fi
 }
 
+# Ensure bun's global bin directory is in PATH
+# This is needed after installing global packages via bun
+ensure_bun_in_path() {
+    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+    if [[ ":$PATH:" != *":$BUN_INSTALL/bin:"* ]]; then
+        export PATH="$BUN_INSTALL/bin:$PATH"
+    fi
+}
+
 install_tmux_if_needed() {
     if check_command tmux; then
         success "tmux installed"
@@ -426,6 +435,7 @@ install_genie_cli() {
 
     if check_command bun; then
         bun install -g "$PACKAGE_NAME"
+        ensure_bun_in_path
     elif check_command npm; then
         npm install -g "$PACKAGE_NAME"
     else
@@ -441,6 +451,7 @@ install_genie_cli() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_claudio_setup() {
+    ensure_bun_in_path
     log "Running claudio setup..."
     if check_command claudio; then
         claudio setup
