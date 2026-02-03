@@ -18,8 +18,9 @@ import { WorktreeManager } from '../lib/worktree.js';
 import { join } from 'path';
 import { homedir } from 'os';
 
-// Use beads registry when enabled
-const useBeads = beadsRegistry.isBeadsRegistryEnabled();
+// Use beads registry only when enabled AND bd exists on PATH
+// @ts-ignore
+const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types

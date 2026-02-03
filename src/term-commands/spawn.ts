@@ -24,8 +24,9 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import * as skillLoader from '../lib/skill-loader.js';
 
-// Use beads registry when enabled
-const useBeads = beadsRegistry.isBeadsRegistryEnabled();
+// Use beads registry only when enabled AND bd exists on PATH
+// @ts-ignore
+const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
