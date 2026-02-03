@@ -51,6 +51,7 @@ DOWNLOADER=""
 PLATFORM=""
 ARCH=""
 INSTALL_MODE="install"
+LOCAL_PATH=""  # If set, use local source instead of npm
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
@@ -433,6 +434,51 @@ install_plugin_if_needed() {
 install_genie_cli() {
     log "Installing $PACKAGE_NAME..."
 
+    # Local installation mode - use source directly
+    if [[ -n "$LOCAL_PATH" ]]; then
+        log "Using local source: $LOCAL_PATH"
+        if [[ ! -d "$LOCAL_PATH" ]]; then
+            error "Local path does not exist: $LOCAL_PATH"
+            exit 1
+        fi
+        
+        pushd "$LOCAL_PATH" > /dev/null
+        
+        # Build
+        log "Building from source..."
+        if check_command bun; then
+            bun install
+            bun run build
+        else
+            npm install
+            npm run build
+        fi
+        
+        # Link globally
+        log "Linking globally..."
+        if check_command bun; then
+            bun link
+            ensure_bun_in_path
+        else
+            npm link
+        fi
+        
+        # Also set up Claude Code plugin to use local version
+        local plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
+        local claude_plugins_dir="$HOME/.claude/plugins"
+        if [[ -d "$plugin_dir" ]]; then
+            log "Linking Claude Code plugin..."
+            mkdir -p "$claude_plugins_dir"
+            rm -f "$claude_plugins_dir/automagik-genie"
+            ln -sf "$plugin_dir" "$claude_plugins_dir/automagik-genie"
+            success "Claude Code plugin linked: $claude_plugins_dir/automagik-genie -> $plugin_dir"
+        fi
+        
+        popd > /dev/null
+        success "$PACKAGE_NAME installed from local source"
+        return
+    fi
+
     if check_command bun; then
         bun install -g "$PACKAGE_NAME"
         ensure_bun_in_path
@@ -606,11 +652,13 @@ Genie CLI Installer
 Usage:
   curl -fsSL $RAW_REPO_URL/main/install.sh | bash
   curl -fsSL $RAW_REPO_URL/main/install.sh | bash -s -- uninstall
+  ./install.sh --local /path/to/genie-cli
 
 Commands:
-  (default)   Interactive install
-  uninstall   Remove Genie CLI and components
-  --help      Show this help message
+  (default)       Interactive install from npm
+  uninstall       Remove Genie CLI and components
+  --local PATH    Install from local source directory (for development)
+  --help          Show this help message
 EOF
 }
 
@@ -619,6 +667,14 @@ parse_args() {
         case "$1" in
             uninstall)
                 INSTALL_MODE="uninstall"
+                ;;
+            --local)
+                shift
+                if [[ $# -eq 0 ]]; then
+                    error "--local requires a path argument"
+                    exit 2
+                fi
+                LOCAL_PATH="$(cd "$1" && pwd)"  # Resolve to absolute path
                 ;;
             --help|-h)
                 print_usage
