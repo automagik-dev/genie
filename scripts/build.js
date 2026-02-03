@@ -31,7 +31,7 @@ async function buildPlugin() {
     console.log(`Version: ${version}`);
 
     // Create output directory
-    const scriptsDir = path.join(rootDir, 'plugin/scripts');
+    const scriptsDir = path.join(rootDir, 'automagik-genie/scripts');
     if (!fs.existsSync(scriptsDir)) {
       fs.mkdirSync(scriptsDir, { recursive: true });
     }
@@ -51,10 +51,10 @@ async function buildPlugin() {
       }
     };
     fs.writeFileSync(
-      path.join(rootDir, 'plugin/package.json'),
+      path.join(rootDir, 'automagik-genie/package.json'),
       JSON.stringify(pluginPackageJson, null, 2) + '\n'
     );
-    console.log('plugin/package.json generated');
+    console.log('automagik-genie/package.json generated');
 
     // Build each target
     for (const target of TARGETS) {
@@ -108,7 +108,7 @@ async function buildPlugin() {
     }
 
     // Update plugin.json version
-    const pluginJsonPath = path.join(rootDir, 'plugin/.claude-plugin/plugin.json');
+    const pluginJsonPath = path.join(rootDir, 'automagik-genie/.claude-plugin/plugin.json');
     if (fs.existsSync(pluginJsonPath)) {
       const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf-8'));
       pluginJson.version = version;
@@ -117,7 +117,7 @@ async function buildPlugin() {
     }
 
     console.log('\nBuild complete!');
-    console.log(`Output: plugin/scripts/`);
+    console.log(`Output: automagik-genie/scripts/`);
 
   } catch (error) {
     console.error('\nBuild failed:', error.message);
