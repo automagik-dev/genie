@@ -28,6 +28,7 @@ import * as shipCmd from './term-commands/ship.js';
 import * as pushCmd from './term-commands/push.js';
 import * as syncCmd from './term-commands/sync.js';
 import * as eventsCmd from './term-commands/events.js';
+import * as approveCmd from './term-commands/approve.js';
 
 const program = new Command();
 
@@ -305,6 +306,7 @@ program
   .option('-p, --prompt <message>', 'Custom initial prompt')
   .option('--no-resume', 'Start fresh session even if previous exists')
   .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
+  .option('--no-auto-approve', 'Disable auto-approve for this worker')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });
@@ -567,6 +569,18 @@ orcProgram
   .option('--json', 'Output final state as JSON')
   .action(async (session: string, message: string, options: orchestrateCmd.RunOptions) => {
     await orchestrateCmd.runTask(session, message, options);
+  });
+
+// Auto-approve engine management
+program
+  .command('approve [request-id]')
+  .description('Auto-approve engine management and manual approval')
+  .option('--status', 'Show pending/approved/denied requests')
+  .option('--deny <request-id>', 'Manually deny a pending request')
+  .option('--start', 'Start the auto-approve engine')
+  .option('--stop', 'Stop the auto-approve engine')
+  .action(async (requestId: string | undefined, options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean }) => {
+    await approveCmd.approveCommand(requestId, options);
   });
 
 program.parse();

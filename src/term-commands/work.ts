@@ -47,6 +47,8 @@ export interface WorkOptions {
   skill?: string;
   /** Target a specific nested repo (e.g., 'code/genie-cli') */
   repo?: string;
+  /** Disable auto-approve for this worker */
+  noAutoApprove?: boolean;
 }
 
 /**
