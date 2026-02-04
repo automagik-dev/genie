@@ -30,6 +30,9 @@ import * as syncCmd from './term-commands/sync.js';
 import * as eventsCmd from './term-commands/events.js';
 import * as approveCmd from './term-commands/approve.js';
 import * as dashboardCmd from './term-commands/dashboard.js';
+import * as spawnParallelCmd from './term-commands/spawn-parallel.js';
+import * as batchCmd from './term-commands/batch.js';
+import { getRepoGenieDir } from './lib/genie-dir.js';
 
 const program = new Command();
 
@@ -575,6 +578,46 @@ program
   .option('--stop', 'Stop the auto-approve engine')
   .action(async (requestId: string | undefined, options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean }) => {
     await approveCmd.approveCommand(requestId, options);
+  });
+
+// Parallel spawn command
+program
+  .command('spawn-parallel [wish-ids...]')
+  .description('Spawn multiple Claude Code workers in parallel')
+  .option('--all-ready', 'Spawn all wishes with Status: READY')
+  .option('--skill <name>', 'Skill for all workers')
+  .option('--no-auto-approve', 'Disable auto-approve')
+  .option('--max <n>', 'Max concurrent workers', parseInt)
+  .option('-s, --session <name>', 'Target tmux session')
+  .action(async (wishIds: string[], options: spawnParallelCmd.SpawnParallelOptions) => {
+    await spawnParallelCmd.spawnParallelCommand(wishIds, options);
+  });
+
+// Batch management commands
+const batchProgram = program.command('batch').description('Manage parallel spawn batches');
+
+batchProgram
+  .command('status <batch-id>')
+  .description('Show aggregated status for a batch')
+  .action(async (batchId: string) => {
+    const genieDir = getRepoGenieDir(process.cwd());
+    await batchCmd.batchStatusCommand(genieDir, batchId);
+  });
+
+batchProgram
+  .command('list')
+  .description('List all batches')
+  .action(async () => {
+    const genieDir = getRepoGenieDir(process.cwd());
+    await batchCmd.batchListCommand(genieDir);
+  });
+
+batchProgram
+  .command('cancel <batch-id>')
+  .description('Cancel all active workers in a batch')
+  .action(async (batchId: string) => {
+    const genieDir = getRepoGenieDir(process.cwd());
+    await batchCmd.batchCancelCommand(genieDir, batchId);
   });
 
 program.parse();
