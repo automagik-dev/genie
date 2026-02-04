@@ -29,6 +29,7 @@ import * as pushCmd from './term-commands/push.js';
 import * as syncCmd from './term-commands/sync.js';
 import * as eventsCmd from './term-commands/events.js';
 import * as approveCmd from './term-commands/approve.js';
+import * as dashboardCmd from './term-commands/dashboard.js';
 
 const program = new Command();
 
@@ -54,6 +55,7 @@ Worker Orchestration:
   term work <bd-id>   - Spawn worker bound to beads issue
   term work next      - Work on next ready issue
   term workers        - List all workers and states
+  term dashboard      - Live worker status dashboard (--watch, -v, --json)
   term update <id>    - Update task (--status, --title, --blocked-by)
   term ship <id>      - Mark done + cleanup worker (optional merge)
   term close <bd-id>  - Close issue, cleanup worker
@@ -324,6 +326,20 @@ program
   });
 
 program
+  .command('dashboard')
+  .description('Show all active workers with current state')
+  .option('-w, --watch', 'Auto-refresh every 2 seconds')
+  .option('-v, --verbose', 'Show detailed worker info')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { watch?: boolean; verbose?: boolean; json?: boolean }) => {
+    await dashboardCmd.dashboardCommand({
+      json: options.json,
+      verbose: options.verbose,
+      watch: options.watch,
+    });
+  });
+
+program
   .command('update <task-id>')
   .description('Update task properties (status, title, blocked-by)')
   .option('--status <status>', 'New status (ready, in_progress, done, blocked)')
@@ -372,28 +388,6 @@ program
   .option('--keep-worktree', 'Don\'t remove the worktree')
   .action(async (worker: string, options: killCmd.KillOptions) => {
     await killCmd.killCommand(worker, options);
-  });
-
-// Approve command (shortcut to orc approve for worker use)
-program
-  .command('approve <worker>')
-  .description('Approve pending permission request for a worker')
-  .option('--deny', 'Deny instead of approve')
-  .action(async (worker: string, options: { deny?: boolean }) => {
-    // Find worker to get pane
-    const registry = await import('./lib/worker-registry.js');
-    let workerInfo = await registry.get(worker);
-    if (!workerInfo) {
-      workerInfo = await registry.findByTask(worker);
-    }
-    if (!workerInfo) {
-      console.error(`❌ Worker "${worker}" not found. Run \`term workers\` to see workers.`);
-      process.exit(1);
-    }
-    await orchestrateCmd.approvePermission(workerInfo.session, {
-      pane: workerInfo.paneId,
-      deny: options.deny,
-    });
   });
 
 // Answer command (shortcut to orc answer for worker use)
