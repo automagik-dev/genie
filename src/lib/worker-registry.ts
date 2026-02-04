@@ -49,6 +49,8 @@ export interface Worker {
   repoPath: string;
   /** Claude session ID for resume capability */
   claudeSessionId?: string;
+  /** tmux window name (matches taskId) — used for window cleanup */
+  windowName?: string;
 }
 
 export interface WorkerRegistry {

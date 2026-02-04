@@ -423,12 +423,14 @@ async function waitForClaudeReady(
 }
 
 /**
- * Spawn Claude worker in new pane (splits the CURRENT active pane)
+ * Ensure a dedicated tmux window exists for the task and return pane 0.
+ * Idempotent: if the window already exists, returns its first pane.
  */
-async function spawnWorkerPane(
+async function ensureWorkerWindow(
   session: string,
+  taskId: string,
   workingDir: string
-): Promise<{ paneId: string } | null> {
+): Promise<{ paneId: string; windowCreated: boolean } | null> {
   try {
     // Find session
     const sessionObj = await tmux.findSessionByName(session);
@@ -437,40 +439,35 @@ async function spawnWorkerPane(
       return null;
     }
 
-    const windows = await tmux.listWindows(sessionObj.id);
-    if (!windows || windows.length === 0) {
-      console.error(`❌ No windows in session "${session}"`);
+    // Check if window already exists for this task
+    const existingWindow = await tmux.findWindowByName(sessionObj.id, taskId);
+    if (existingWindow) {
+      // Window exists -- get pane 0
+      const panes = await tmux.listPanes(existingWindow.id);
+      if (!panes || panes.length === 0) {
+        console.error(`❌ No panes in existing window "${taskId}"`);
+        return null;
+      }
+      return { paneId: panes[0].id, windowCreated: false };
+    }
+
+    // Create new window named after the task
+    const newWindow = await tmux.createWindow(sessionObj.id, taskId, workingDir);
+    if (!newWindow) {
+      console.error(`❌ Failed to create window "${taskId}"`);
       return null;
     }
 
-    // Find the ACTIVE window (not first window)
-    const activeWindow = windows.find(w => w.active) || windows[0];
-
-    const panes = await tmux.listPanes(activeWindow.id);
+    // Get pane 0 of the new window
+    const panes = await tmux.listPanes(newWindow.id);
     if (!panes || panes.length === 0) {
-      console.error(`❌ No panes in window "${activeWindow.name}"`);
+      console.error(`❌ No panes in new window "${taskId}"`);
       return null;
     }
 
-    // Find the ACTIVE pane (not first pane)
-    const activePane = panes.find(p => p.active) || panes[0];
-
-    // Split current pane horizontally (side by side)
-    const newPane = await tmux.splitPane(
-      activePane.id,
-      'horizontal',
-      50,
-      workingDir
-    );
-
-    if (!newPane) {
-      console.error(`❌ Failed to create new pane`);
-      return null;
-    }
-
-    return { paneId: newPane.id };
+    return { paneId: panes[0].id, windowCreated: true };
   } catch (error: any) {
-    console.error(`❌ Error spawning worker pane: ${error.message}`);
+    console.error(`❌ Error ensuring worker window: ${error.message}`);
     return null;
   }
 }
@@ -642,20 +639,21 @@ export async function workCommand(
           process.exit(1);
         }
 
-        // Spawn a new pane for the resumed session
+        // Ensure dedicated window for the resumed session
         const workingDir = existingWorker.worktree || existingWorker.repoPath;
-        console.log(`🚀 Spawning worker pane...`);
-        const paneResult = await spawnWorkerPane(session, workingDir);
+        console.log(`🚀 Ensuring worker window...`);
+        const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
         if (!paneResult) {
           process.exit(1);
         }
 
         const { paneId } = paneResult;
 
-        // Update worker with new pane ID
+        // Update worker with new pane ID and window name
         await registry.update(existingWorker.id, {
           paneId,
           session,
+          windowName: taskId,
           state: 'spawning',
           lastStateChange: new Date().toISOString(),
         });
@@ -684,12 +682,13 @@ export async function workCommand(
         // Start monitoring
         startWorkerMonitoring(existingWorker.id, session, paneId);
 
-        // Focus pane (only if explicitly requested)
+        // Focus window (only if explicitly requested)
         if (options.focus === true) {
-          await tmux.executeTmux(`select-pane -t '${paneId}'`);
+          await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
         }
 
         console.log(`\n✅ Resumed worker for ${taskId}`);
+        console.log(`   Window: ${taskId}`);
         console.log(`   Pane: ${paneId}`);
         console.log(`   Session: ${session}`);
         console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
@@ -758,9 +757,9 @@ export async function workCommand(
       }
     }
 
-    // 7. Spawn Claude pane
-    console.log(`🚀 Spawning worker pane...`);
-    const paneResult = await spawnWorkerPane(session, workingDir);
+    // 7. Ensure dedicated window for worker
+    console.log(`🚀 Creating worker window "${taskId}"...`);
+    const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
     if (!paneResult) {
       process.exit(1);
     }
@@ -783,6 +782,7 @@ export async function workCommand(
       lastStateChange: new Date().toISOString(),
       repoPath: targetRepo, // Store the target repo, not the macro repo
       claudeSessionId,
+      windowName: taskId,
     };
 
     // Register in beads (creates agent bead)
@@ -867,12 +867,13 @@ When you're done, commit your changes and let me know.`;
     // 12. Start monitoring
     startWorkerMonitoring(taskId, session, paneId);
 
-    // 13. Focus pane (only if explicitly requested)
+    // 13. Focus window (only if explicitly requested)
     if (options.focus === true) {
-      await tmux.executeTmux(`select-pane -t '${paneId}'`);
+      await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
     }
 
     console.log(`\n✅ Worker started for ${taskId}`);
+    console.log(`   Window: ${taskId}`);
     console.log(`   Pane: ${paneId}`);
     console.log(`   Session: ${session}`);
     if (worktreePath) {

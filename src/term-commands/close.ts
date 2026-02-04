@@ -267,11 +267,21 @@ export async function closeCommand(
       }
     }
 
-    // 4. Kill worker pane
+    // 4. Kill worker window (or pane if no window name)
     if (worker) {
-      console.log(`💀 Killing worker pane...`);
-      await killWorkerPane(worker.paneId);
-      console.log(`   ✅ Pane killed`);
+      if (worker.windowName) {
+        console.log(`💀 Killing worker window "${worker.windowName}"...`);
+        try {
+          await tmux.killWindow(worker.windowName);
+          console.log(`   ✅ Window killed`);
+        } catch {
+          console.log(`   ℹ️  Window already gone`);
+        }
+      } else {
+        console.log(`💀 Killing worker pane...`);
+        await killWorkerPane(worker.paneId);
+        console.log(`   ✅ Pane killed`);
+      }
 
       // 5. Unregister worker from both registries
       if (useBeadsRegistry) {

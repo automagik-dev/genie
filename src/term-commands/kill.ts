@@ -153,13 +153,23 @@ export async function killCommand(
       }
     }
 
-    // 1. Kill worker pane
-    console.log(`💀 Killing worker pane ${worker.paneId}...`);
-    const killed = await killWorkerPane(worker.paneId);
-    if (killed) {
-      console.log(`   ✅ Pane killed`);
+    // 1. Kill worker window (or pane if no window name)
+    if (worker.windowName) {
+      console.log(`💀 Killing worker window "${worker.windowName}"...`);
+      try {
+        await tmux.killWindow(worker.windowName);
+        console.log(`   ✅ Window killed`);
+      } catch {
+        console.log(`   ℹ️  Window already gone`);
+      }
     } else {
-      console.log(`   ℹ️  Pane already gone`);
+      console.log(`💀 Killing worker pane ${worker.paneId}...`);
+      const killed = await killWorkerPane(worker.paneId);
+      if (killed) {
+        console.log(`   ✅ Pane killed`);
+      } else {
+        console.log(`   ℹ️  Pane already gone`);
+      }
     }
 
     // 2. Remove worktree (unless --keep-worktree)
