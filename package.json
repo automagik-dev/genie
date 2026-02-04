@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "0.260204.1518",
+  "version": "0.260204.1819",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -11,7 +11,7 @@
   "scripts": {
     "dev:claudio": "bun --watch src/claudio.ts",
     "dev:term": "bun --watch src/term.ts",
-    "version": "bun run scripts/version.ts",
+    "version": "0.260204.1819",
     "prebuild": "bun run version",
     "build": "bun build src/claudio.ts src/term.ts src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
     "build:plugin": "node scripts/build.js",
