@@ -186,8 +186,8 @@
 | 1. Inventory | ✅ DONE | Found duplicates |
 | 2. Deduplication | ✅ DONE | 5 items deleted |
 | 3. Verification | ✅ DONE | All commands work |
-| 4. Publishing | ✅ DONE | GitHub & npm accessible |
-| 5. Documentation | 🔄 IN PROGRESS | KB created |
+| 4. Publishing | ⚠️ BLOCKED | npm token expired |
+| 5. Documentation | ✅ DONE | KB + templates fixed |
 
 ---
 
