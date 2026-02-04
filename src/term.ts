@@ -27,6 +27,7 @@ import * as updateCmd from './term-commands/update.js';
 import * as shipCmd from './term-commands/ship.js';
 import * as pushCmd from './term-commands/push.js';
 import * as syncCmd from './term-commands/sync.js';
+import * as eventsCmd from './term-commands/events.js';
 
 const program = new Command();
 
@@ -456,6 +457,25 @@ program
   .option('-v, --verbose', 'Show detailed output')
   .action(async (options: syncCmd.SyncOptions) => {
     await syncCmd.syncCommand(options);
+  });
+
+// Events command - Stream Claude Code events from a pane
+program
+  .command('events [pane-id]')
+  .description('Stream Claude Code events from a pane or all workers')
+  .option('--json', 'Output events as JSON')
+  .option('-f, --follow', 'Continuous tailing (like tail -f)')
+  .option('-n, --lines <number>', 'Number of recent events to show (default: 20)', '20')
+  .option('--emit', 'Write events to .genie/events/<pane-id>.jsonl while tailing')
+  .option('--all', 'Aggregate events from all active workers')
+  .action(async (paneId: string | undefined, options: { json?: boolean; follow?: boolean; lines?: string; emit?: boolean; all?: boolean }) => {
+    await eventsCmd.eventsCommand(paneId, {
+      json: options.json,
+      follow: options.follow,
+      lines: options.lines ? parseInt(options.lines, 10) : undefined,
+      emit: options.emit,
+      all: options.all,
+    });
   });
 
 // Orchestration commands (Claude Code automation)

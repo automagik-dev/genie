@@ -16,6 +16,7 @@ import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
+import { cleanupEventFile } from './events.js';
 import { join } from 'path';
 
 // Use beads registry only when enabled AND bd exists on PATH
@@ -231,6 +232,8 @@ export async function shipCommand(
         }
       }
       await registry.unregister(worker.id);
+      // Cleanup event file
+      await cleanupEventFile(worker.paneId).catch(() => {});
       console.log(`   ✅ Worker unregistered`);
     }
 

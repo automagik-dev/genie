@@ -23,6 +23,7 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
 import { EventMonitor } from '../lib/orchestrator/index.js';
+import { cleanupEventFile } from './events.js';
 import { join, resolve, isAbsolute } from 'path';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
 
@@ -531,6 +532,8 @@ function startWorkerMonitoring(
       beadsRegistry.unregister(workerId).catch(() => {});
     }
     registry.unregister(workerId).catch(() => {});
+    // Cleanup event file
+    cleanupEventFile(paneId).catch(() => {});
     monitor.stop();
   });
 

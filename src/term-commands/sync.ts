@@ -19,6 +19,7 @@ import {
   contractPath,
   getStoredSourcePath,
 } from '../lib/genie-config.js';
+import { markPluginAsDevMode } from '../lib/plugin-registry.js';
 
 export interface SyncOptions {
   build?: boolean;
@@ -26,6 +27,7 @@ export interface SyncOptions {
 }
 
 const PLUGIN_NAME = 'automagik-genie';
+const PLUGIN_ID = 'automagik-genie@namastexlabs';
 const PLUGINS_DIR = join(homedir(), '.claude', 'plugins');
 const INSTALLED_PLUGIN_PATH = join(PLUGINS_DIR, PLUGIN_NAME);
 
@@ -167,7 +169,8 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
       if (isLink) {
         // Already a symlink
         if (currentTarget === pluginSourceDir) {
-          // Already correct
+          // Already correct - ensure registry shows devMode
+          markPluginAsDevMode(PLUGIN_ID, INSTALLED_PLUGIN_PATH, version || undefined);
           console.log(`Already synced: ${contractPath(INSTALLED_PLUGIN_PATH)} -> ${contractPath(pluginSourceDir)}`);
           if (version) {
             console.log(`Version: ${version}`);
@@ -187,6 +190,9 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
 
     // Create symlink
     symlinkSync(pluginSourceDir, INSTALLED_PLUGIN_PATH);
+
+    // Update plugin registry to mark as dev mode
+    markPluginAsDevMode(PLUGIN_ID, INSTALLED_PLUGIN_PATH, version || undefined);
 
     console.log(`Synced: ${contractPath(INSTALLED_PLUGIN_PATH)} -> ${contractPath(pluginSourceDir)}`);
     if (version) {

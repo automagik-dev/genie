@@ -2,6 +2,10 @@
 /**
  * Sync script for automagik-genie
  *
+ * @deprecated Use `term sync` instead. This script uses copy mode which is slower
+ * and doesn't update the plugin registry. `term sync` uses symlinks for instant
+ * feedback and marks the plugin with devMode in installed_plugins.json.
+ *
  * Deploys the built plugin to the install target:
  *   ~/.claude/plugins/automagik-genie/
  *
@@ -101,6 +105,8 @@ function triggerWorkerRestart() {
 }
 
 async function main() {
+  console.warn('\x1b[33mWarning: scripts/sync.js is deprecated. Use `term sync` instead for symlink-based sync with registry updates.\x1b[0m\n');
+
   const version = getPluginVersion();
   console.log(`Syncing automagik-genie ${version || 'unknown'} to ${INSTALLED_PATH}...`);
 

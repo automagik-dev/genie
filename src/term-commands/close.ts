@@ -21,6 +21,7 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { WorktreeManager } from '../lib/worktree.js';
 import { getBackend, TaskBackend } from '../lib/task-backend.js';
+import { cleanupEventFile } from './events.js';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -286,6 +287,8 @@ export async function closeCommand(
         }
       }
       await registry.unregister(worker.id);
+      // Cleanup event file
+      await cleanupEventFile(worker.paneId).catch(() => {});
       console.log(`   ✅ Worker unregistered`);
     }
 
