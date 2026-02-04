@@ -1,18 +1,18 @@
 # ENVIRONMENT.md
 
-Purpose: machine/VM-specific facts that should *not* live in personality/role.
+*Machine/VM-specific facts that should NOT live in personality/role.*
 
-## Canonical paths
+## Canonical Paths
 - Workspace root: `/home/genie/workspace`
-- Khal repo root: `/home/genie/workspace/khal`
+- Project repo root: <!-- /path/to/your/project -->
 
-## Collaboration / tmux conventions
+## Collaboration / tmux Conventions
 - Shared tmux session: `genie`
-- Khal work should use a window named: `khal`
+- Project work window: <!-- window name for your project -->
 
-## Legacy / migration notes
-- Legacy snapshot: `/home/genie/.genie/chief-of-khal/` (contains a `workspace -> /home/genie/workspace` symlink)
-- `context/` under workspace is archival.
-
-## Known local gotchas
-- ripgrep (`rg`) is not installed (use `grep -RIn` instead).
+## Local Tools
+<!-- Document machine-specific tools and gotchas -->
+<!-- Example:
+- ripgrep (`rg`) is not installed (use `grep -RIn` instead)
+- Node version: v24.13.0
+-->

@@ -1,13 +1,20 @@
-# USER.md - About Felipe
+# USER.md - About Your Human
 
-- **Name:** Felipe
-- **What to call them:** Felipe
-- **Pronouns:** *(unknown)*
-- **Timezone:** *(unknown; defaulting to UTC until you tell me otherwise)*
-- **Notes:** Coworker on the Khal project. Prefers casual talk. Wants the environment/configuration solid before starting coding.
-- **Rule:** Always work on Khal inside the shared tmux session `genie` (use a window named `khal`).
+*Information about the person you work with.*
+
+- **Name:** <!-- Their name -->
+- **What to call them:** <!-- How they prefer to be addressed -->
+- **Pronouns:** <!-- Their pronouns -->
+- **Timezone:** <!-- Their timezone -->
+- **Notes:** <!-- What you know about them -->
+
+## Preferences
+<!-- Add their preferences as you learn them -->
+<!-- Example:
+- Prefers casual talk
+- Wants confirmation before major actions
+- Likes concise responses
+-->
 
 ## Context
-- Felipe wants me (Genie) to treat this workspace as “home” and to keep a clear, tracked project folder for the Khal codebase.
-- Priority right now: configuration + project setup before feature work.
-
+<!-- Current context about your working relationship -->

@@ -1,25 +1,24 @@
-# TOOLS.md - Local Notes
+# TOOLS.md - Local Environment Notes
 
-Skills define *how* tools work. This file is for *your* specifics — the stuff that's unique to your setup.
+*Skills define how tools work. This file is for YOUR specifics — the stuff unique to your setup.*
 
-## Collaborative Terminal (Felipe ↔ Genie)
+## Collaborative Terminal
 
-- `term` (genie-cli) → `/home/genie/.local/bin/term`
-  - Backed by `tmux`
-  - Use for shared terminals Felipe can see/control
-- `genie-claudio` → `/home/genie/.local/bin/genie-claudio`
-  - Profile-based Claude wrapper (avoid clobbering any existing `claudio` unless explicitly desired)
+- `term` (genie-cli) — tmux orchestration for human/AI collaboration
+- `claudio` — Claude Code launcher with LLM routing profiles
+- `genie` — Setup wizard and prerequisites installer
 
 ## What Goes Here
 
 Things like:
-- Camera names and locations
 - SSH hosts and aliases  
 - Preferred voices for TTS
+- Camera names and locations
 - Speaker/room names
 - Device nicknames
+- API endpoints
 - Anything environment-specific
 
 ---
 
-Add whatever helps you do your job. This is your cheat sheet.
+*Add whatever helps you do your job. This is your cheat sheet.*
