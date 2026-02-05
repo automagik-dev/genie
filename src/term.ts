@@ -42,32 +42,49 @@ const program = new Command();
 
 program
   .name('term')
-  .description(`AI-friendly terminal orchestration (tmux wrapper)
+  .description(`AI-friendly terminal orchestration for Claude Code workflows
 
-Collaborative Usage:
-  AI runs:    term exec genie:shell '<command>'
-  Human watches: tmux attach -t genie
-  AI reads:   term read genie
+WORKERS (most common)
+  spawn [skill]       Spawn Claude worker (interactive picker if omitted)
+  work <id|next>      Spawn worker bound to beads task
+  workers             List all workers and states
+  dashboard           Live status of all workers
+  approve [id]        Approve pending permission
+  answer <w> <choice> Answer worker question
+  history <worker>    Compressed session summary
+  close <id>          Close task and cleanup worker
+  kill <worker>       Force kill a worker
 
-Workflow: new → exec → read → rm
-Full control: window new/ls/rm, pane ls/rm, split, status
+TASKS (beads integration)
+  task create         Create new beads issue
+  task update         Update task properties
+  task ship           Mark done + merge + cleanup
+  task ls             List ready tasks
 
-Skill-Based Spawning:
-  term spawn          - Pick skill interactively
-  term spawn <skill>  - Spawn Claude with skill loaded
-  term skills         - List available skills
-  term create <title> - Create beads issue
+SESSIONS (low-level tmux) - see: term session --help
+  session new/ls/attach/rm/exec/send/read/info/split
+  session window/pane/hook
 
-Worker Orchestration:
-  term work <bd-id>   - Spawn worker bound to beads issue
-  term work next      - Work on next ready issue
-  term workers        - List all workers and states
-  term dashboard      - Live worker status dashboard (--watch, -v, --json)
-  term update <id>    - Update task (--status, --title, --blocked-by)
-  term ship <id>      - Mark done + cleanup worker (optional merge)
-  term close <bd-id>  - Close issue, cleanup worker
-  term kill <worker>  - Force kill a stuck worker
-  term daemon start   - Start beads daemon for auto-sync`)
+MONITORING
+  watch <session>     Real-time event stream
+  events [pane-id]    Claude Code events
+
+POWER TOOLS
+  parallel            Spawn multiple workers
+  batch               Manage parallel batches
+  council             Dual-model deliberation
+  daemon              Beads sync daemon
+
+SHORT ALIASES
+  w    → work         s    → spawn
+  d    → dashboard    a    → approve
+  h    → history
+
+Examples:
+  term work bd-42              # Start working on task
+  term spawn review            # Spawn with review skill
+  term d                       # Show dashboard
+  term h bd-42                 # Session catch-up`)
   .version(VERSION);
 
 // Register session namespace (term session <subcommand>)
@@ -669,6 +686,73 @@ batchProgram
   .action(async (batchId: string) => {
     const genieDir = getRepoGenieDir(process.cwd());
     await batchCmd.batchCancelCommand(genieDir, batchId);
+  });
+
+// ============================================================================
+// Short Aliases (LLM-friendly)
+// ============================================================================
+
+// term w <id> -> term work <id>
+program
+  .command('w <target>')
+  .description('Alias for "term work" - spawn worker bound to task')
+  .option('--no-worktree', 'Use shared repo')
+  .option('-s, --session <name>', 'Target session')
+  .option('--skill <name>', 'Skill to invoke')
+  .option('--profile <name>', 'Worker profile')
+  .action(async (target: string, options: workCmd.WorkOptions) => {
+    await workCmd.workCommand(target, options);
+  });
+
+// term s [skill] -> term spawn [skill]
+program
+  .command('s [skill]')
+  .description('Alias for "term spawn" - spawn Claude with skill')
+  .option('-s, --session <name>', 'Target session')
+  .option('-p, --prompt <message>', 'Additional context')
+  .option('--profile <name>', 'Worker profile')
+  .action(async (skill: string | undefined, options: spawnCmd.SpawnOptions) => {
+    await spawnCmd.spawnCommand(skill, options);
+  });
+
+// term d -> term dashboard
+program
+  .command('d')
+  .description('Alias for "term dashboard" - show worker status')
+  .option('-w, --watch', 'Auto-refresh')
+  .option('-v, --verbose', 'Detailed info')
+  .option('--json', 'JSON output')
+  .action(async (options: { watch?: boolean; verbose?: boolean; json?: boolean }) => {
+    await dashboardCmd.dashboardCommand(options);
+  });
+
+// term a -> term approve
+program
+  .command('a [request-id]')
+  .description('Alias for "term approve" - approve pending permission')
+  .option('--status', 'Show pending requests')
+  .option('--start', 'Start auto-approve engine')
+  .option('--stop', 'Stop auto-approve engine')
+  .action(async (requestId: string | undefined, options: { status?: boolean; start?: boolean; stop?: boolean }) => {
+    await approveCmd.approveCommand(requestId, options);
+  });
+
+// Skill shortcuts
+program
+  .command('forge <id>')
+  .description('Shortcut for "term work <id> --skill forge"')
+  .option('-s, --session <name>', 'Target session')
+  .action(async (id: string, options: { session?: string }) => {
+    await workCmd.workCommand(id, { ...options, skill: 'forge' } as workCmd.WorkOptions);
+  });
+
+program
+  .command('review')
+  .description('Shortcut for "term spawn review"')
+  .option('-s, --session <name>', 'Target session')
+  .option('-p, --prompt <message>', 'Additional context')
+  .action(async (options: spawnCmd.SpawnOptions) => {
+    await spawnCmd.spawnCommand('review', options);
   });
 
 program.parse();
