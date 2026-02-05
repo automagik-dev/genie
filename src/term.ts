@@ -34,6 +34,8 @@ import * as spawnParallelCmd from './term-commands/spawn-parallel.js';
 import * as batchCmd from './term-commands/batch.js';
 import * as councilCmd from './term-commands/council.js';
 import * as historyCmd from './term-commands/history.js';
+import { registerSessionNamespace } from './term-commands/session/commands.js';
+import { registerTaskNamespace } from './term-commands/task/commands.js';
 import { getRepoGenieDir } from './lib/genie-dir.js';
 
 const program = new Command();
@@ -68,7 +70,13 @@ Worker Orchestration:
   term daemon start   - Start beads daemon for auto-sync`)
   .version(VERSION);
 
-// Session management
+// Register session namespace (term session <subcommand>)
+registerSessionNamespace(program);
+
+// Register task namespace (term task <subcommand>)
+registerTaskNamespace(program);
+
+// Session management (top-level aliases - kept for backwards compat)
 program
   .command('new <name>')
   .description('Create a new tmux session')
