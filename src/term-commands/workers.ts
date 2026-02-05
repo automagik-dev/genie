@@ -34,6 +34,7 @@ interface WorkerDisplay {
   state: string;
   time: string;
   alive: boolean;
+  role?: string;
 }
 
 // ============================================================================
@@ -175,6 +176,7 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
         state: currentState,
         time: formatElapsed(worker.startedAt),
         alive,
+        role: worker.role,
       });
     }
 

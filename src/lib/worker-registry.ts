@@ -51,6 +51,10 @@ export interface Worker {
   claudeSessionId?: string;
   /** tmux window name (matches taskId) — used for window cleanup */
   windowName?: string;
+  /** Worker role when multiple workers on same task (e.g., "main", "tests", "review") */
+  role?: string;
+  /** Custom worker name when multiple workers on same task */
+  customName?: string;
 }
 
 export interface WorkerRegistry {
@@ -184,11 +188,51 @@ export async function findByPane(paneId: string): Promise<Worker | null> {
 }
 
 /**
- * Find worker by beads task ID
+ * Find worker by beads task ID (returns first match for backwards compat)
  */
 export async function findByTask(taskId: string): Promise<Worker | null> {
   const workers = await list();
   return workers.find(w => w.taskId === taskId) || null;
+}
+
+/**
+ * Find ALL workers for a beads task ID (supports N workers per task)
+ */
+export async function findAllByTask(taskId: string): Promise<Worker[]> {
+  const workers = await list();
+  return workers.filter(w => w.taskId === taskId);
+}
+
+/**
+ * Count workers for a task
+ */
+export async function countByTask(taskId: string): Promise<number> {
+  const workers = await findAllByTask(taskId);
+  return workers.length;
+}
+
+/**
+ * Generate a unique worker ID for a task (handles N workers per task)
+ * Returns taskId for first worker, taskId-2 for second, etc.
+ */
+export async function generateWorkerId(taskId: string, customName?: string): Promise<string> {
+  if (customName) {
+    return customName;
+  }
+
+  const existingCount = await countByTask(taskId);
+  if (existingCount === 0) {
+    return taskId;
+  }
+
+  // Find next available suffix
+  const workers = await list();
+  let suffix = existingCount + 1;
+  while (workers.some(w => w.id === `${taskId}-${suffix}`)) {
+    suffix++;
+  }
+
+  return `${taskId}-${suffix}`;
 }
 
 /**

@@ -55,6 +55,12 @@ export interface WorkOptions {
   noAutoApprove?: boolean;
   /** Worker profile to use (from ~/.genie/config.json workerProfiles) */
   profile?: string;
+  /** Custom worker name (for N workers per task) */
+  name?: string;
+  /** Worker role (for N workers per task, e.g., "main", "tests", "review") */
+  role?: string;
+  /** Share worktree with existing worker on same task */
+  sharedWorktree?: boolean;
 }
 
 /**
@@ -800,9 +806,17 @@ export async function workCommand(
     // 8. Generate Claude session ID for resume capability
     const claudeSessionId = randomUUID();
 
+    // 8.5. Generate worker ID (supports N workers per task)
+    const workerId = await registry.generateWorkerId(taskId, options.name);
+    const existingCount = await registry.countByTask(taskId);
+
+    if (existingCount > 0) {
+      console.log(`   📌 Additional worker on task (${existingCount + 1} total)`);
+    }
+
     // 9. Register worker (write to both registries during transition)
     const worker: registry.Worker = {
-      id: taskId,
+      id: workerId,
       paneId,
       session,
       worktree: worktreePath,
@@ -814,6 +828,8 @@ export async function workCommand(
       repoPath: targetRepo, // Store the target repo, not the macro repo
       claudeSessionId,
       windowName: taskId,
+      role: options.role,
+      customName: options.name,
     };
 
     // Register in beads (creates agent bead)

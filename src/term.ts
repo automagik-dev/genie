@@ -343,6 +343,9 @@ program
   .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
   .option('--no-auto-approve', 'Disable auto-approve for this worker')
   .option('--profile <name>', 'Worker profile to use')
+  .option('-n, --name <name>', 'Custom worker name (for N workers per task)')
+  .option('-r, --role <role>', 'Worker role (e.g., "main", "tests", "review")')
+  .option('--shared-worktree', 'Share worktree with existing worker on same task')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });

@@ -189,22 +189,31 @@ export async function closeCommand(
     const backend = getBackend(repoPath);
     const isLocal = backend.kind === 'local';
 
-    // Find worker in registry (check both during transition)
+    // Find ALL workers for this task (supports N workers per task)
+    const allWorkers = await registry.findAllByTask(taskId);
+    const workerCount = allWorkers.length;
+
+    // Also check beads registry for backwards compat
     let worker = useBeadsRegistry
       ? await beadsRegistry.findByTask(taskId)
       : null;
-    if (!worker) {
-      worker = await registry.findByTask(taskId);
+    if (!worker && allWorkers.length > 0) {
+      worker = allWorkers[0];
     }
 
-    if (!worker) {
+    if (workerCount === 0) {
       console.log(`ℹ️  No active worker for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
+    } else if (workerCount > 1) {
+      console.log(`📌 Found ${workerCount} workers for ${taskId}`);
     }
 
     // Confirm with user
     if (!options.yes) {
+      const workerMsg = workerCount > 1
+        ? ` and kill ${workerCount} workers`
+        : worker ? ` and kill worker (pane ${worker.paneId})` : '';
       const confirmed = await confirm({
-        message: `Close ${taskId}${worker ? ` and kill worker (pane ${worker.paneId})` : ''}?`,
+        message: `Close ${taskId}${workerMsg}?`,
         default: true,
       });
 
@@ -267,19 +276,19 @@ export async function closeCommand(
       }
     }
 
-    // 4. Kill worker window (or pane if no window name)
-    if (worker) {
-      if (worker.windowName) {
-        console.log(`💀 Killing worker window "${worker.windowName}"...`);
+    // 4. Kill ALL worker windows/panes (supports N workers per task)
+    for (const w of allWorkers) {
+      if (w.windowName) {
+        console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
         try {
-          await tmux.killWindow(worker.windowName);
+          await tmux.killWindow(w.windowName);
           console.log(`   ✅ Window killed`);
         } catch {
           console.log(`   ℹ️  Window already gone`);
         }
       } else {
-        console.log(`💀 Killing worker pane...`);
-        await killWorkerPane(worker.paneId);
+        console.log(`💀 Killing worker pane (${w.id})...`);
+        await killWorkerPane(w.paneId);
         console.log(`   ✅ Pane killed`);
       }
 
@@ -287,19 +296,22 @@ export async function closeCommand(
       if (useBeadsRegistry) {
         try {
           // Unbind work from agent
-          await beadsRegistry.unbindWork(worker.id);
+          await beadsRegistry.unbindWork(w.id);
           // Set agent state to done
-          await beadsRegistry.setAgentState(worker.id, 'done');
+          await beadsRegistry.setAgentState(w.id, 'done');
           // Delete agent bead
-          await beadsRegistry.deleteAgent(worker.id);
+          await beadsRegistry.deleteAgent(w.id);
         } catch {
           // Non-fatal if beads cleanup fails
         }
       }
-      await registry.unregister(worker.id);
+      await registry.unregister(w.id);
       // Cleanup event file
-      await cleanupEventFile(worker.paneId).catch(() => {});
-      console.log(`   ✅ Worker unregistered`);
+      await cleanupEventFile(w.paneId).catch(() => {});
+    }
+
+    if (allWorkers.length > 0) {
+      console.log(`   ✅ ${allWorkers.length} worker(s) unregistered`);
     }
 
     console.log(`\n✅ ${taskId} closed successfully`);
