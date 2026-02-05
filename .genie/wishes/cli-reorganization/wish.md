@@ -1,8 +1,9 @@
 # Wish: CLI Reorganization - LLM-Friendly Command Structure
 
-**Status:** IN_PROGRESS
+**Status:** DONE
 **Slug:** cli-reorganization
 **Created:** 2026-02-05
+**Completed:** 2026-02-05
 **Priority:** HIGH
 **Beads:** genie-x0d
 
@@ -10,17 +11,100 @@
 
 ## Progress
 
-### Completed Groups ✅
+### All Groups Complete ✅
 - **Group 1: Session Namespace** - `term session <sub>` with all tmux primitives
 - **Group 2: Task Namespace** - `term task <sub>` with beads commands + `term task ls`
 - **Group 3: Term History** - `term history <worker>` with 3-50x compression
 - **Group 4: Fix Term Skills** - discovers local, user, and plugin skills
+- **Group 5: N Workers Per Task** - `--name` and `--role` flags, `findAllByTask()`
+- **Group 6: Wish-Task Linking** - `term task link`, `term wish status`, `--wish` flag
 - **Group 7: Aliases & Help** - `w`, `s`, `d`, `a`, `h` aliases + organized --help
+- **Group 8: Deprecation Warnings** - all old paths show deprecation message
 
-### Remaining Groups
-- **Group 5: N Workers Per Task** - `--name` and `--role` flags for term work
-- **Group 6: Wish-Task Linking** - `term task link` and `term wish status`
-- **Group 8: Cleanup & Deprecations** - deprecation warnings on old paths
+---
+
+## Review Results
+
+**Verdict:** SHIP
+**Date:** 2026-02-05
+**Reviewer:** Opus 4.5
+
+### Task Completion
+| Group | Status | Criteria |
+|-------|--------|----------|
+| 1: Session Namespace | COMPLETE | All tmux primitives under `term session` |
+| 2: Task Namespace | COMPLETE | All beads commands under `term task` |
+| 3: Term History | COMPLETE | Compression working (3-50x) |
+| 4: Fix Term Skills | COMPLETE | Discovers local/user/plugin skills |
+| 5: N Workers Per Task | COMPLETE | `--name`, `--role`, `findAllByTask()` |
+| 6: Wish-Task Linking | COMPLETE | `link`, `unlink`, `wish status` |
+| 7: Aliases & Help | COMPLETE | `w`, `s`, `d`, `a`, `h` aliases |
+| 8: Deprecation Warnings | COMPLETE | Warnings shown for old commands |
+
+### Criteria Check
+
+**Must Have:**
+- [x] `term session <sub>` contains all tmux primitives - PASS (new/ls/attach/rm/exec/send/read/info/split/window/pane/hook)
+- [x] `term task <sub>` contains all beads commands - PASS (create/update/ship/close/ls/link/unlink)
+- [x] Backwards-compat aliases with deprecation warnings - PASS (tested `term new` shows warning)
+- [x] `term --help` is readable and organized - PASS (grouped by category with examples)
+- [x] `term skills` discovers all skill sources - PASS (shows local/user/plugin skills with 🔌 icons)
+- [x] `term history <worker>` produces compressed summary - PASS (working with --full/--since/--json)
+
+**Should Have:**
+- [x] `term h`, `term w`, `term s`, `term d`, `term a` aliases - PASS (all registered and working)
+- [x] N workers per task support - PASS (`--name`, `--role`, `findAllByTask()` in worker-registry)
+- [x] `term task link <wish> <task>` for decomposition - PASS (links stored in tasks.json)
+- [x] `term wish status <wish>` shows linked tasks - PASS (shows task breakdown)
+
+**Nice to Have:**
+- [ ] Shell completions updated - NOT IMPLEMENTED (advisory)
+- [ ] Migration script for existing users - NOT IMPLEMENTED (advisory)
+- [ ] Animated help like modern CLIs - NOT IMPLEMENTED (advisory)
+
+### Validation Commands
+- [x] `bun run build` - PASS (no compile errors)
+- [x] `bun test` - PASS (418 tests, 0 failures)
+- [x] `term session new test && term session rm test` - PASS
+- [x] `term skills` - PASS (shows plugin skills)
+- [x] `term new deprecated-test` - PASS (shows deprecation warning)
+- [x] `term --help` - PASS (organized with categories)
+- [x] `term session --help` - PASS (shows all subcommands)
+- [x] `term task --help` - PASS (shows all subcommands)
+- [x] `term wish --help` - PASS (shows ls/status/show)
+- [x] `term work --help` - PASS (shows --name, --role flags)
+
+### Quality Spot-Check
+Verdict: OK
+
+Notes:
+- Code follows existing patterns and conventions
+- TypeScript types are correct
+- No security issues identified
+- Test coverage is comprehensive (418 tests passing)
+- Deprecation warnings are user-friendly
+
+### Browser Tests
+Skipped: Not applicable (CLI tool)
+
+### Gaps
+| # | Severity | Description | Impact |
+|---|----------|-------------|--------|
+| 1 | LOW | Nice-to-have features not implemented | Shell completions, migration script, animated help |
+| 2 | MEDIUM | Top-level command count still >12 | Many commands still at top-level due to backwards compat aliases |
+
+### Recommendation
+
+**SHIP** - All must-have and should-have criteria are met. The implementation successfully:
+1. Organizes commands into logical namespaces (`session`, `task`, `wish`)
+2. Adds session history with compression
+3. Fixes skill discovery to include plugin skills
+4. Supports N workers per task
+5. Enables wish-task linking
+6. Provides short aliases for common operations
+7. Shows deprecation warnings for old command paths
+
+The nice-to-have features (shell completions, migration script, animated help) can be addressed in future iterations.
 
 ---
 

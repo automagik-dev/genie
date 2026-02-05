@@ -36,6 +36,7 @@ import * as councilCmd from './term-commands/council.js';
 import * as historyCmd from './term-commands/history.js';
 import { registerSessionNamespace } from './term-commands/session/commands.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
+import { registerWishNamespace } from './term-commands/wish/commands.js';
 import { getRepoGenieDir } from './lib/genie-dir.js';
 
 const program = new Command();
@@ -60,6 +61,11 @@ TASKS (beads integration)
   task update         Update task properties
   task ship           Mark done + merge + cleanup
   task ls             List ready tasks
+  task link           Link task to wish
+
+WISHES (planning)
+  wish ls             List all wishes
+  wish status <slug>  Show wish with linked tasks
 
 SESSIONS (low-level tmux) - see: term session --help
   session new/ls/attach/rm/exec/send/read/info/split
@@ -93,43 +99,56 @@ registerSessionNamespace(program);
 // Register task namespace (term task <subcommand>)
 registerTaskNamespace(program);
 
-// Session management (top-level aliases - kept for backwards compat)
+// Register wish namespace (term wish <subcommand>)
+registerWishNamespace(program);
+
+// ============================================================================
+// Deprecation Helper
+// ============================================================================
+
+const DEPRECATION_SHOWN = new Set<string>();
+
+/**
+ * Show a deprecation warning once per command
+ */
+function showDeprecation(oldCmd: string, newCmd: string): void {
+  if (DEPRECATION_SHOWN.has(oldCmd)) return;
+  DEPRECATION_SHOWN.add(oldCmd);
+  console.error(`⚠️  DEPRECATED: "term ${oldCmd}" → use "term ${newCmd}" instead`);
+}
+
+// Session management (top-level aliases - DEPRECATED, kept for backwards compat)
 program
   .command('new <name>')
-  .description('Create a new tmux session')
+  .description('[DEPRECATED] Create a new tmux session → use "term session new"')
   .option('-d, --workspace <path>', 'Working directory for the session')
   .option('-w, --worktree', 'Create git worktree in .worktrees/<name>/')
   .action(async (name: string, options: { workspace?: string; worktree?: boolean }) => {
+    showDeprecation('new', 'session new');
     await newCmd.createNewSession(name, options);
   });
 
 program
-  .command('ls')
-  .description('List all tmux sessions')
-  .option('--json', 'Output as JSON')
-  .action(async (options: { json?: boolean }) => {
-    await lsCmd.listAllSessions(options);
-  });
-
-program
   .command('attach <name>')
-  .description('Attach to a tmux session')
+  .description('[DEPRECATED] Attach to a tmux session → use "term session attach"')
   .action(async (name: string) => {
+    showDeprecation('attach', 'session attach');
     await attachCmd.attachToSession(name);
   });
 
 program
   .command('rm <name>')
-  .description('Remove a tmux session')
+  .description('[DEPRECATED] Remove a tmux session → use "term session rm"')
   .option('--keep-worktree', 'Keep worktree folder when removing session')
   .action(async (name: string, options: { keepWorktree?: boolean }) => {
+    showDeprecation('rm', 'session rm');
     await rmCmd.removeSession(name, options);
   });
 
 // Log reading (CRITICAL for AI orchestration)
 program
   .command('read <session>')
-  .description('Read logs from a tmux session')
+  .description('[DEPRECATED] Read logs from a tmux session → use "term session read"')
   .option('-n, --lines <number>', 'Number of lines to read (default: 100)', '100')
   .option('--from <line>', 'Start line number')
   .option('--to <line>', 'End line number')
@@ -141,16 +160,18 @@ program
   .option('--reverse', 'Reverse chronological (newest first)')
   .option('--json', 'Output as JSON')
   .action(async (session: string, options: readCmd.ReadOptions) => {
+    showDeprecation('read', 'session read');
     await readCmd.readSessionLogs(session, options);
   });
 
 // Command execution
 program
   .command('exec <session> <command...>')
-  .description('Execute command in a tmux session')
+  .description('[DEPRECATED] Execute command in a tmux session → use "term session exec"')
   .option('-q, --quiet', 'Suppress stdout output')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
   .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
+    showDeprecation('exec', 'session exec');
     await execCmd.executeInSession(session, command.join(' '), {
       quiet: options.quiet,
       timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
@@ -159,97 +180,108 @@ program
 
 program
   .command('send <session> <keys>')
-  .description('Send keys to a tmux session (appends Enter by default)')
+  .description('[DEPRECATED] Send keys to a tmux session → use "term session send"')
   .option('--no-enter', 'Send raw keys without appending Enter')
   .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
   .action(async (session: string, keys: string, options: { enter?: boolean; pane?: string }) => {
+    showDeprecation('send', 'session send');
     await sendCmd.sendKeysToSession(session, keys, options);
   });
 
 // Pane splitting
 program
   .command('split <session> [direction]')
-  .description('Split pane in a tmux session (h=horizontal, v=vertical)')
+  .description('[DEPRECATED] Split pane in a tmux session → use "term session split"')
   .option('-d, --workspace <path>', 'Working directory for the new pane')
   .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
   .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+    showDeprecation('split', 'session split');
     await splitCmd.splitSessionPane(session, direction, options);
   });
 
 // Info command (renamed from status)
 program
   .command('info <session>')
-  .description('Check session state (idle/busy, pane count)')
+  .description('[DEPRECATED] Check session state → use "term session info"')
   .option('--command <id>', 'Check specific command status')
   .option('--json', 'Output as JSON')
   .action(async (session: string, options: statusCmd.StatusOptions) => {
+    showDeprecation('info', 'session info');
     await statusCmd.getStatus(session, options);
   });
 
-// Window management
-const windowProgram = program.command('window').description('Manage tmux windows');
+// Window management - DEPRECATED
+const windowProgram = program.command('window').description('[DEPRECATED] Manage tmux windows → use "term session window"');
 
 windowProgram
   .command('new <session> <name>')
-  .description('Create a new window in session')
+  .description('[DEPRECATED] Create a new window in session')
   .action(async (session: string, name: string) => {
+    showDeprecation('window new', 'session window new');
     await windowCmd.createWindow(session, name);
   });
 
 windowProgram
   .command('ls <session>')
-  .description('List windows in session')
+  .description('[DEPRECATED] List windows in session')
   .option('--json', 'Output as JSON')
   .action(async (session: string, options: { json?: boolean }) => {
+    showDeprecation('window ls', 'session window ls');
     await windowCmd.listWindows(session, options);
   });
 
 windowProgram
   .command('rm <window-id>')
-  .description('Remove window by ID')
+  .description('[DEPRECATED] Remove window by ID')
   .action(async (windowId: string) => {
+    showDeprecation('window rm', 'session window rm');
     await windowCmd.removeWindow(windowId);
   });
 
-// Pane management
-const paneProgram = program.command('pane').description('Manage tmux panes');
+// Pane management - DEPRECATED
+const paneProgram = program.command('pane').description('[DEPRECATED] Manage tmux panes → use "term session pane"');
 
 paneProgram
   .command('ls <session>')
-  .description('List all panes in session')
+  .description('[DEPRECATED] List all panes in session')
   .option('--json', 'Output as JSON')
   .action(async (session: string, options: { json?: boolean }) => {
+    showDeprecation('pane ls', 'session pane ls');
     await paneCmd.listPanes(session, options);
   });
 
 paneProgram
   .command('rm <pane-id>')
-  .description('Remove pane by ID')
+  .description('[DEPRECATED] Remove pane by ID')
   .action(async (paneId: string) => {
+    showDeprecation('pane rm', 'session pane rm');
     await paneCmd.removePane(paneId);
   });
 
-// Hook management
-const hookProgram = program.command('hook').description('Manage tmux hooks');
+// Hook management - DEPRECATED
+const hookProgram = program.command('hook').description('[DEPRECATED] Manage tmux hooks → use "term session hook"');
 
 hookProgram
   .command('set <event> <command>')
-  .description('Set a tmux hook')
+  .description('[DEPRECATED] Set a tmux hook')
   .action(async (event: string, command: string) => {
+    showDeprecation('hook set', 'session hook set');
     await hookCmd.setHook(event, command);
   });
 
 hookProgram
   .command('list')
-  .description('List all tmux hooks')
+  .description('[DEPRECATED] List all tmux hooks')
   .action(async () => {
+    showDeprecation('hook list', 'session hook list');
     await hookCmd.listHooks();
   });
 
 hookProgram
   .command('rm <event>')
-  .description('Remove a tmux hook')
+  .description('[DEPRECATED] Remove a tmux hook')
   .action(async (event: string) => {
+    showDeprecation('hook rm', 'session hook rm');
     await hookCmd.removeHook(event);
   });
 

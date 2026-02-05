@@ -99,4 +99,48 @@ export function registerTaskNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // task link <wish> <task-id> - Link a task to a wish
+  taskProgram
+    .command('link <wish-slug> <task-id>')
+    .description('Link a beads task to a wish document')
+    .action(async (wishSlug: string, taskId: string) => {
+      const { linkTask, wishExists } = await import('../../lib/wish-tasks.js');
+      const repoPath = process.cwd();
+
+      // Verify wish exists
+      if (!await wishExists(repoPath, wishSlug)) {
+        console.error(`❌ Wish "${wishSlug}" not found in .genie/wishes/`);
+        process.exit(1);
+      }
+
+      // Get task title from beads
+      let taskTitle = taskId;
+      try {
+        const { stdout } = await execAsync(`bd show ${taskId} --json 2>/dev/null`);
+        const issue = JSON.parse(stdout);
+        taskTitle = issue.title || taskId;
+      } catch {
+        // Use taskId as fallback title
+      }
+
+      await linkTask(repoPath, wishSlug, taskId, taskTitle);
+      console.log(`✅ Linked ${taskId} → ${wishSlug}`);
+    });
+
+  // task unlink <wish> <task-id> - Unlink a task from a wish
+  taskProgram
+    .command('unlink <wish-slug> <task-id>')
+    .description('Unlink a beads task from a wish document')
+    .action(async (wishSlug: string, taskId: string) => {
+      const { unlinkTask } = await import('../../lib/wish-tasks.js');
+      const repoPath = process.cwd();
+
+      const removed = await unlinkTask(repoPath, wishSlug, taskId);
+      if (removed) {
+        console.log(`✅ Unlinked ${taskId} from ${wishSlug}`);
+      } else {
+        console.log(`ℹ️  ${taskId} was not linked to ${wishSlug}`);
+      }
+    });
 }
