@@ -1,0 +1,23 @@
+{
+  "invoiceNumber": "INV-2024-001",
+  "date": "2024-01-15",
+  "dueDate": "2024-02-15",
+  "from": {
+    "name": "Genie Labs",
+    "address": "123 Innovation Street, São Paulo, SP",
+    "email": "billing@genielabs.com"
+  },
+  "to": {
+    "name": "Acme Corporation",
+    "address": "456 Business Avenue, Rio de Janeiro, RJ",
+    "email": "accounts@acme.com"
+  },
+  "items": [
+    { "description": "Software Development - Phase 1", "quantity": 40, "unitPrice": 150 },
+    { "description": "UI/UX Design", "quantity": 20, "unitPrice": 120 },
+    { "description": "Project Management", "quantity": 10, "unitPrice": 100 },
+    { "description": "Cloud Infrastructure Setup", "quantity": 1, "unitPrice": 500 }
+  ],
+  "currency": "R$",
+  "notes": "Payment via bank transfer. PIX: billing@genielabs.com"
+}

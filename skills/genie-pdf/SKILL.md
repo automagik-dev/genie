@@ -10,13 +10,13 @@ CLI tool for generating beautiful PDFs programmatically. Input markdown or JSON 
 ## Location
 
 ```
-/home/genie/workspace/guga/code/genie-pdf
+/home/genie/workspace/guga/code/genie-cli/packages/genie-pdf
 ```
 
 ## Quick Start
 
 ```bash
-cd /home/genie/workspace/guga/code/genie-pdf
+cd /home/genie/workspace/guga/code/genie-cli/packages/genie-pdf
 
 # Render markdown to PDF
 bun run src/index.ts render doc.md -o output.pdf
@@ -220,7 +220,7 @@ ls -la invoice.pdf
 ## Development
 
 ```bash
-cd /home/genie/workspace/guga/code/genie-pdf
+cd /home/genie/workspace/guga/code/genie-cli/packages/genie-pdf
 
 # Install deps
 bun install

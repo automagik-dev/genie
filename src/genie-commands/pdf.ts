@@ -1,8 +1,8 @@
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 
-// Path to genie-pdf relative to genie-cli
-const GENIE_PDF_PATH = resolve(import.meta.dirname, '../../../genie-pdf/src/index.ts');
+// Path to genie-pdf relative to genie-cli (now in packages/)
+const GENIE_PDF_PATH = resolve(import.meta.dirname, '../../packages/genie-pdf/src/index.ts');
 
 /**
  * Execute genie-pdf CLI with given arguments
