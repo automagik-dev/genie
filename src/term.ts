@@ -33,6 +33,7 @@ import * as dashboardCmd from './term-commands/dashboard.js';
 import * as spawnParallelCmd from './term-commands/spawn-parallel.js';
 import * as batchCmd from './term-commands/batch.js';
 import * as councilCmd from './term-commands/council.js';
+import * as historyCmd from './term-commands/history.js';
 import { getRepoGenieDir } from './lib/genie-dir.js';
 
 const program = new Command();
@@ -478,6 +479,31 @@ program
       emit: options.emit,
       all: options.all,
     });
+  });
+
+// History command - Session catch-up with compression
+program
+  .command('history <worker>')
+  .description('Show compressed session history for a worker (catch-up)')
+  .option('--full', 'Show full conversation without compression')
+  .option('--since <n>', 'Show last N user/assistant exchanges', parseInt)
+  .option('--json', 'Output as JSON')
+  .option('--raw', 'Output raw JSONL entries')
+  .option('--log-file <path>', 'Direct path to log file (for testing)')
+  .action(async (worker: string, options: historyCmd.HistoryOptions) => {
+    await historyCmd.historyCommand(worker, options);
+  });
+
+// Alias: term h <worker>
+program
+  .command('h <worker>')
+  .description('Alias for "term history"')
+  .option('--full', 'Show full conversation')
+  .option('--since <n>', 'Last N exchanges', parseInt)
+  .option('--json', 'JSON output')
+  .option('--log-file <path>', 'Direct log file path')
+  .action(async (worker: string, options: historyCmd.HistoryOptions) => {
+    await historyCmd.historyCommand(worker, options);
   });
 
 // Orchestration commands (Claude Code automation)
