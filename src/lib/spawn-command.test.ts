@@ -274,8 +274,9 @@ describe('shell injection prevention', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-123' });
     // The malicious payload should be safely escaped within single quotes
+    // Single quotes inside are escaped as '\'' (end quote, backslash-quote, start quote)
     expect(command).toBe(
-      "claude --dangerously-skip-permissions '--append-system-prompt' ''\\'''; rm -rf /; echo '\\''''' --session-id 'test-123'"
+      "claude '--dangerously-skip-permissions' '--append-system-prompt' ''\\''; rm -rf /; echo '\\''' --session-id 'test-123'"
     );
   });
 
@@ -286,9 +287,9 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--model', '$(whoami)'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-456' });
-    // Command substitution should be safely escaped
+    // Command substitution should be safely enclosed in single quotes (no interpretation)
     expect(command).toBe(
-      "claudio launch 'test-profile' -- '--model' ''\\''$(whoami)'\\''''' --session-id 'test-456'"
+      "claudio launch 'test-profile' -- '--model' '$(whoami)' --session-id 'test-456'"
     );
   });
 
@@ -300,8 +301,9 @@ describe('shell injection prevention', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-789' });
     // The profile name should be safely escaped
+    // Single quotes escaped as '\' (end-quote, backslash-quote, start-quote)
     expect(command).toBe(
-      "claudio launch 'profile'\\'''; rm -rf /; echo '\\''''' -- '--dangerously-skip-permissions' --session-id 'test-789'"
+      "claudio launch 'profile'\\''; rm -rf /; echo '\\''' -- '--dangerously-skip-permissions' --session-id 'test-789'"
     );
   });
 
@@ -311,8 +313,8 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--prompt', '`id`'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-abc' });
-    // Backticks should be safely enclosed in single quotes
-    expect(command).toBe("claude '--prompt' ''\\'''`id`'\\''''' --session-id 'test-abc'");
+    // Backticks should be safely enclosed in single quotes (no interpretation)
+    expect(command).toBe("claude '--prompt' '`id`' --session-id 'test-abc'");
   });
 
   test('escapes dollar signs in claudeArgs', () => {
@@ -321,8 +323,8 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--env', '$HOME'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-def' });
-    // Dollar signs should be safely enclosed in single quotes
-    expect(command).toBe("claude '--env' ''\\'''$HOME'\\''''' --session-id 'test-def'");
+    // Dollar signs should be safely enclosed in single quotes (no interpretation)
+    expect(command).toBe("claude '--env' '$HOME' --session-id 'test-def'");
   });
 
   test('escapes semicolons and pipes in claudioProfile', () => {
@@ -343,7 +345,7 @@ describe('shell injection prevention', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-jkl' });
     // Newlines should be safely enclosed in single quotes
-    expect(command).toBe("claude '--prompt' ''\\'''hello\nworld'\\''''' --session-id 'test-jkl'");
+    expect(command).toBe("claude '--prompt' 'hello\nworld' --session-id 'test-jkl'");
   });
 });
 
