@@ -1,10 +1,26 @@
 # Wish: CLI Reorganization - LLM-Friendly Command Structure
 
-**Status:** READY
+**Status:** IN_PROGRESS
 **Slug:** cli-reorganization
 **Created:** 2026-02-05
 **Priority:** HIGH
 **Beads:** genie-x0d
+
+---
+
+## Progress
+
+### Completed Groups ✅
+- **Group 1: Session Namespace** - `term session <sub>` with all tmux primitives
+- **Group 2: Task Namespace** - `term task <sub>` with beads commands + `term task ls`
+- **Group 3: Term History** - `term history <worker>` with 3-50x compression
+- **Group 4: Fix Term Skills** - discovers local, user, and plugin skills
+- **Group 7: Aliases & Help** - `w`, `s`, `d`, `a`, `h` aliases + organized --help
+
+### Remaining Groups
+- **Group 5: N Workers Per Task** - `--name` and `--role` flags for term work
+- **Group 6: Wish-Task Linking** - `term task link` and `term wish status`
+- **Group 8: Cleanup & Deprecations** - deprecation warnings on old paths
 
 ---
 
