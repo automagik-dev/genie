@@ -1,0 +1,16 @@
+{
+  "tasks": {
+    "wish-1": {
+      "id": "wish-1",
+      "title": "Cleanup: tmux-client-*.log files polluting workspace directories - add to .gitignore and/or configure tmux to write logs elsewhere",
+      "status": "ready",
+      "blockedBy": [],
+      "createdAt": "2026-02-05T06:18:43.585Z",
+      "updatedAt": "2026-02-05T06:18:43.585Z"
+    }
+  },
+  "order": [
+    "wish-1"
+  ],
+  "lastUpdated": "2026-02-05T06:18:43.588Z"
+}
