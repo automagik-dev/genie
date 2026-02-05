@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "0.260204.1523",
+  "version": "0.260204.2132",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -36,6 +36,11 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/namastexlabs/genie-cli.git"
+  },
+  "openclaw": {
+    "extensions": [
+      "./plugins/automagik-genie/index.ts"
+    ]
   },
   "publishConfig": {
     "access": "public"

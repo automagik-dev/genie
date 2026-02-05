@@ -1,0 +1,14 @@
+{
+  "id": "automagik-genie",
+  "name": "Automagik Genie",
+  "description": "Skills, agents, and hooks for the Genie CLI terminal orchestration toolkit",
+  "version": "0.260204.2039",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "skills": [
+    "./skills"
+  ]
+}
