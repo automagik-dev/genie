@@ -32,6 +32,7 @@ import * as approveCmd from './term-commands/approve.js';
 import * as dashboardCmd from './term-commands/dashboard.js';
 import * as spawnParallelCmd from './term-commands/spawn-parallel.js';
 import * as batchCmd from './term-commands/batch.js';
+import * as councilCmd from './term-commands/council.js';
 import { getRepoGenieDir } from './lib/genie-dir.js';
 
 const program = new Command();
@@ -593,6 +594,18 @@ program
   .option('-s, --session <name>', 'Target tmux session')
   .action(async (wishIds: string[], options: spawnParallelCmd.SpawnParallelOptions) => {
     await spawnParallelCmd.spawnParallelCommand(wishIds, options);
+  });
+
+// Council command - dual-model deliberation
+program
+  .command('council')
+  .description('Spawn dual Claude instances for multi-model deliberation')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--preset <name>', 'Council preset to use')
+  .option('--skill <skill>', 'Skill to load on both instances')
+  .option('--no-focus', "Don't focus the new window")
+  .action(async (options: councilCmd.CouncilOptions) => {
+    await councilCmd.councilCommand(options);
   });
 
 // Batch management commands

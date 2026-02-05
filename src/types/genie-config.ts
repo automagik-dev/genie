@@ -54,6 +54,17 @@ export const WorkerProfileSchema = z.object({
   claudeArgs: z.array(z.string()),
 });
 
+// Council preset configuration
+// Defines a pair of profiles for dual-model deliberation
+export const CouncilPresetSchema = z.object({
+  /** Worker profile name for left pane */
+  left: z.string(),
+  /** Worker profile name for right pane */
+  right: z.string(),
+  /** Skill to load on both instances */
+  skill: z.string().default('council'),
+});
+
 // Full genie configuration
 export const GenieConfigSchema = z.object({
   version: z.number().default(2),
@@ -72,6 +83,10 @@ export const GenieConfigSchema = z.object({
   workerProfiles: z.record(z.string(), WorkerProfileSchema).optional(),
   // Default worker profile name to use when --profile is not specified
   defaultWorkerProfile: z.string().optional(),
+  // Council presets for dual-model deliberation
+  councilPresets: z.record(z.string(), CouncilPresetSchema).optional(),
+  // Default council preset name
+  defaultCouncilPreset: z.string().optional(),
 });
 
 // Legacy v1 config schema (for migration)
@@ -94,5 +109,6 @@ export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
 export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
+export type CouncilPreset = z.infer<typeof CouncilPresetSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;
 export type GenieConfigV1 = z.infer<typeof GenieConfigV1Schema>;
