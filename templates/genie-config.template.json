@@ -1,0 +1,46 @@
+{
+  "version": 3,
+  "session": {
+    "name": "genie",
+    "defaultWindow": "shell",
+    "autoCreate": true
+  },
+  "terminal": {
+    "execTimeout": 120000,
+    "readLines": 100,
+    "worktreeBase": ".worktrees"
+  },
+  "logging": {
+    "tmuxDebug": false,
+    "verbose": false
+  },
+  "shell": {
+    "preference": "auto"
+  },
+  "shortcuts": {
+    "tmuxInstalled": false,
+    "shellInstalled": false
+  },
+  "workerProfiles": {
+    "coding-fast": {
+      "launcher": "claudio",
+      "claudioProfile": "coding-fast",
+      "claudeArgs": ["--dangerously-skip-permissions"]
+    },
+    "autonomous": {
+      "launcher": "claudio",
+      "claudioProfile": "coding-fast",
+      "claudeArgs": ["--dangerously-skip-permissions", "--model", "opus"]
+    },
+    "safe": {
+      "launcher": "claude",
+      "claudeArgs": ["--permission-mode", "default"]
+    },
+    "interactive": {
+      "launcher": "claude",
+      "claudeArgs": []
+    }
+  },
+  "defaultWorkerProfile": "coding-fast",
+  "setupComplete": false
+}

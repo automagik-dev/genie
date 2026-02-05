@@ -55,6 +55,7 @@ ARCH=""
 INSTALL_MODE="install"
 LOCAL_PATH=""  # If set, use local source instead of npm
 AUTO_LOCAL_DETECTED=false  # True if local mode was auto-detected
+DEV_MODE=false  # If true, link plugins instead of copying (for development)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
@@ -93,16 +94,34 @@ check_command() {
 # Prompt user for confirmation (Y is default)
 confirm() {
     local prompt="$1"
+    local response=""
     echo -en "${YELLOW}?${NC} $prompt [Y/n] "
-    read -r response < /dev/tty || response=""
+
+    # Prefer /dev/tty for interactive installs, but fall back to stdin (CI/heredoc).
+    # Some environments expose /dev/tty but make it unreadable; suppress that noise.
+    if [[ -e /dev/tty ]]; then
+        read -r response < /dev/tty 2>/dev/null || true
+    fi
+    if [[ -z "${response:-}" ]]; then
+        read -r response 2>/dev/null || response=""
+    fi
+
     [[ -z "$response" || "$response" =~ ^[Yy]$ ]]
 }
 
 # Prompt user for confirmation (N is default)
 confirm_no() {
     local prompt="$1"
+    local response=""
     echo -en "${YELLOW}?${NC} $prompt [y/N] "
-    read -r response < /dev/tty || response=""
+
+    if [[ -e /dev/tty ]]; then
+        read -r response < /dev/tty 2>/dev/null || true
+    fi
+    if [[ -z "${response:-}" ]]; then
+        read -r response 2>/dev/null || response=""
+    fi
+
     [[ "$response" =~ ^[Yy]$ ]]
 }
 
@@ -533,6 +552,72 @@ install_plugin_if_needed() {
     fi
 }
 
+# Install the OpenClaw plugin (skills become available globally)
+install_openclaw_plugin() {
+    if ! check_command openclaw; then
+        warn "openclaw command not found"
+        return 1
+    fi
+
+    if openclaw plugins list 2>/dev/null | grep -q "automagik-genie"; then
+        success "automagik-genie OpenClaw plugin already discovered"
+        return 0
+    fi
+
+    local pkg_dir plugin_dir
+
+    if [[ -n "$LOCAL_PATH" ]]; then
+        pkg_dir="$LOCAL_PATH"
+    else
+        # Locate global npm install directory
+        if check_command npm; then
+            local npm_root
+            npm_root=$(npm root -g 2>/dev/null || true)
+            if [[ -n "$npm_root" && -d "$npm_root/@automagik/genie" ]]; then
+                pkg_dir="$npm_root/@automagik/genie"
+            fi
+        fi
+
+        # Best-effort bun global path
+        if [[ -z "${pkg_dir:-}" && -n "${BUN_INSTALL:-}" ]]; then
+            if [[ -d "$BUN_INSTALL/install/global/node_modules/@automagik/genie" ]]; then
+                pkg_dir="$BUN_INSTALL/install/global/node_modules/@automagik/genie"
+            fi
+        fi
+    fi
+
+    if [[ -z "${pkg_dir:-}" ]]; then
+        warn "Could not locate installed Genie package directory"
+        warn "Tip: re-run with --local /path/to/genie-cli"
+        return 1
+    fi
+
+    plugin_dir="$pkg_dir/plugins/automagik-genie"
+    local plugin_file="$plugin_dir/automagik-genie.ts"
+
+    if [[ ! -f "$plugin_dir/openclaw.plugin.json" ]]; then
+        warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
+        return 1
+    fi
+
+    if [[ ! -f "$plugin_file" ]]; then
+        warn "OpenClaw plugin entrypoint not found: $plugin_file"
+        return 1
+    fi
+
+    if $DEV_MODE; then
+        log "Linking OpenClaw plugin (dev mode)..."
+        openclaw plugins install -l "$plugin_file" \
+            && success "OpenClaw plugin linked" \
+            || warn "OpenClaw plugin link failed"
+    else
+        log "Installing OpenClaw plugin (copy mode)..."
+        openclaw plugins install "$plugin_file" \
+            && success "OpenClaw plugin installed" \
+            || warn "OpenClaw plugin install failed"
+    fi
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Genie CLI Installation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -582,6 +667,26 @@ install_genie_cli() {
             if ! verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
                 error "Failed to create valid symlink for Claude Code plugin"
                 exit 1
+            fi
+
+            # Also register as OpenClaw plugin if available
+            if check_command openclaw; then
+                local openclaw_plugin_file="$plugin_dir/automagik-genie.ts"
+                if [[ -f "$openclaw_plugin_file" ]]; then
+                    if $DEV_MODE; then
+                        log "Linking OpenClaw plugin (dev mode)..."
+                        openclaw plugins install -l "$openclaw_plugin_file" 2>/dev/null \
+                            && success "OpenClaw plugin linked" \
+                            || warn "OpenClaw plugin link failed (may already be installed)"
+                    else
+                        log "Installing OpenClaw plugin (copy mode)..."
+                        openclaw plugins install "$openclaw_plugin_file" 2>/dev/null \
+                            && success "OpenClaw plugin installed" \
+                            || warn "OpenClaw plugin install failed (may already be installed)"
+                    fi
+                else
+                    warn "OpenClaw plugin entrypoint not found: $openclaw_plugin_file"
+                fi
             fi
         else
             warn "Plugin directory not found: $plugin_dir"
@@ -677,6 +782,15 @@ run_install() {
         echo
     fi
 
+    # Plugin for OpenClaw
+    if check_command openclaw; then
+        info "Adds skills (global /brainstorm, /wish, etc.) to OpenClaw"
+        if confirm "Install Genie plugin for OpenClaw?"; then
+            install_openclaw_plugin
+        fi
+        echo
+    fi
+
     # Claudio profiles
     info "Manage multiple Claude API configurations"
     if confirm "Configure Claudio profiles?"; then
@@ -724,7 +838,28 @@ run_uninstall() {
         fi
     fi
 
-    # 3. Config directory (default: no - preserve settings)
+    # 3. OpenClaw plugin (default: yes)
+    if check_command openclaw && openclaw plugins list 2>/dev/null | grep -q "automagik-genie"; then
+        if confirm "Remove OpenClaw plugin?"; then
+            # OpenClaw CLI currently has install/enable/disable but no uninstall.
+            # Installed plugins typically live under ~/.openclaw/extensions/<id>.
+            local ext_dir="$HOME/.openclaw/extensions/automagik-genie"
+
+            # Best effort: disable in config first (if present)
+            openclaw plugins disable automagik-genie 2>/dev/null || true
+
+            if [[ -e "$ext_dir" || -L "$ext_dir" ]]; then
+                rm -rf "$ext_dir"
+            fi
+
+            success "OpenClaw plugin removed"
+            removed_something=true
+        else
+            info "Keeping OpenClaw plugin"
+        fi
+    fi
+
+    # 4. Config directory (default: no - preserve settings)
     if [[ -d "$GENIE_HOME" ]]; then
         if confirm_no "Remove ~/.genie config directory?"; then
             rm -rf "$GENIE_HOME"
@@ -894,6 +1029,7 @@ Commands:
   (default)       Interactive install from npm
   uninstall       Remove Genie CLI and components
   --local PATH    Install from local source directory (for development)
+  --dev, -d       Dev mode: link OpenClaw plugin instead of copying
   --help          Show this help message
 EOF
 }
@@ -911,6 +1047,9 @@ parse_args() {
                     exit 2
                 fi
                 LOCAL_PATH="$(cd "$1" && pwd)"  # Resolve to absolute path
+                ;;
+            --dev|-d)
+                DEV_MODE=true
                 ;;
             --help|-h)
                 print_usage

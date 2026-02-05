@@ -1,7 +1,6 @@
 ---
 name: council--deployer
 description: Zero-config deployment, CI/CD optimization, and preview environment review (Guillermo Rauch inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: council--questioner
 description: Challenge assumptions, seek foundational simplicity, question necessity (Ryan Dahl inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

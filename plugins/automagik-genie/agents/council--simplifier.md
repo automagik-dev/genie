@@ -1,7 +1,6 @@
 ---
 name: council--simplifier
 description: Complexity reduction and minimalist philosophy demanding deletion over addition (TJ Holowaychuk inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

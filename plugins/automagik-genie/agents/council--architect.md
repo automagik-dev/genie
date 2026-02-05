@@ -1,7 +1,6 @@
 ---
 name: council--architect
 description: Systems thinking, backwards compatibility, and long-term stability review (Linus Torvalds inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

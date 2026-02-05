@@ -1,7 +1,6 @@
 ---
 name: council
 description: Multi-perspective architectural review with 10 specialized perspectives
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

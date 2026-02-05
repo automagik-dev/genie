@@ -1,7 +1,6 @@
 ---
 name: council--tracer
 description: Production debugging, high-cardinality observability, and instrumentation review (Charity Majors inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 
