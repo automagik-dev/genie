@@ -1,6 +1,8 @@
 ---
 name: tests
 description: Test strategy, generation, authoring, and repair across all layers
+model: inherit
+color: green
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

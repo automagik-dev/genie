@@ -1,6 +1,8 @@
 ---
 name: implementor
 description: "Task execution agent following TDD discipline. Reads wish from disk, implements deliverables, runs validation."
+model: inherit
+color: blue
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

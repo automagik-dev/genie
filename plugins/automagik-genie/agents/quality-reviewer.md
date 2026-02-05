@@ -1,6 +1,8 @@
 ---
 name: quality-reviewer
 description: "Reviews code quality after spec passes. Returns SHIP or FIX-FIRST with severity-tagged findings."
+model: haiku
+color: orange
 tools: ["Read", "Glob", "Grep", "Bash"]
 ---
 

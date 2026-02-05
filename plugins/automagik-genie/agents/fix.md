@@ -1,6 +1,8 @@
 ---
 name: fix
 description: Bug fix implementation with root cause analysis
+model: inherit
+color: red
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

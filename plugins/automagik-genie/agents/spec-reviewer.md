@@ -1,6 +1,8 @@
 ---
 name: spec-reviewer
 description: "Verifies implementation meets acceptance criteria. Returns PASS or FAIL with gap analysis."
+model: haiku
+color: yellow
 tools: ["Read", "Glob", "Grep", "Bash"]
 ---
 

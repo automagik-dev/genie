@@ -1,6 +1,8 @@
 ---
 name: git
 description: Core Git operations with atomic commit discipline
+model: inherit
+color: gray
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 

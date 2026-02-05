@@ -1,6 +1,8 @@
 ---
 name: refactor
 description: Design review and staged refactor planning with verification
+model: inherit
+color: purple
 tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"]
 ---
 
