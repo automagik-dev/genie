@@ -1,7 +1,6 @@
 ---
 name: council--sentinel
 description: Security oversight, blast radius assessment, and secrets management review (Troy Hunt inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

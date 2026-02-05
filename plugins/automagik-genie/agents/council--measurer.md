@@ -1,7 +1,6 @@
 ---
 name: council--measurer
 description: Observability, profiling, and metrics philosophy demanding measurement over guessing (Bryan Cantrill inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: council--benchmarker
 description: Performance-obsessed, benchmark-driven analysis demanding measured evidence (Matteo Collina inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 

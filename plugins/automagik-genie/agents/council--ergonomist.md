@@ -1,7 +1,6 @@
 ---
 name: council--ergonomist
 description: Developer experience, API usability, and error clarity review (Sindre Sorhus inspiration)
-team: clawd
 tools: ["Read", "Glob", "Grep"]
 ---
 
