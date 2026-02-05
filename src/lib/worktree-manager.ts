@@ -139,7 +139,7 @@ function getWorktreePath(repoPath: string, wishId: string): string {
 /**
  * Get branch name for a wish
  */
-function getBranchName(wishId: string): string {
+export function getBranchName(wishId: string): string {
   return `work/${wishId}`;
 }
 
@@ -356,6 +356,14 @@ export class BeadsWorktreeManager implements WorktreeManagerInterface {
       throw new Error('Failed to parse bd worktree create output');
     }
 
+    // FIX: Ensure branch uses work/ prefix
+    const expectedBranch = getBranchName(wishId);
+    if (info.branch !== expectedBranch) {
+      console.log(`🔧 Fixing branch name: ${info.branch} → ${expectedBranch}`);
+      await $`git -C ${info.path} branch -m ${expectedBranch}`.quiet();
+      info.branch = expectedBranch;
+    }
+
     return {
       path: info.path,
       branch: info.branch,
@@ -402,7 +410,9 @@ export class BeadsWorktreeManager implements WorktreeManagerInterface {
    */
   async get(wishId: string): Promise<WorktreeInfo | null> {
     const worktrees = await this.list();
-    return worktrees.find(wt => wt.wishId === wishId || wt.branch === wishId) || null;
+    return worktrees.find(
+      wt => wt.wishId === wishId || wt.branch === wishId || wt.branch === getBranchName(wishId)
+    ) || null;
   }
 }
 
