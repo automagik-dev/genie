@@ -4,21 +4,26 @@
  * Skills are stored in:
  *   1. .claude/skills/<skill-name>/SKILL.md (project local)
  *   2. ~/.claude/skills/<skill-name>/SKILL.md (user global)
+ *   3. ~/.claude/plugins/<plugin-name>/skills/<skill>/SKILL.md (plugins)
  *
  * Skill names are simple (wish, forge, review) and map to directories:
  *   - Direct match: wish -> wish/
  *   - Prefixed: wish -> genie-wish/
  */
 
-import { access, readFile } from 'fs/promises';
+import { access, readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+
+export type SkillSource = 'local' | 'user' | 'plugin';
 
 export interface SkillInfo {
   name: string;
   path: string;
   skillFile: string;
   description?: string;
+  source?: SkillSource;
+  pluginName?: string;
 }
 
 /**
@@ -182,34 +187,132 @@ async function parseSkillName(skillFile: string, dirName: string): Promise<strin
  * @returns Array of skill names found
  */
 export async function listSkills(projectRoot?: string): Promise<string[]> {
-  const { readdir } = await import('fs/promises');
+  const skills = await listSkillsDetailed(projectRoot);
+  return skills.map(s => s.name).sort();
+}
+
+/**
+ * Detailed skill info for listing
+ */
+export interface DetailedSkillInfo {
+  name: string;
+  source: SkillSource;
+  pluginName?: string;
+  path: string;
+  description?: string;
+}
+
+/**
+ * List all available skills with detailed info
+ *
+ * Searches:
+ * 1. Local: .claude/skills/
+ * 2. User: ~/.claude/skills/
+ * 3. Plugins: ~/.claude/plugins/<plugin>/skills/
+ *
+ * @param projectRoot - Project root directory (defaults to cwd)
+ * @returns Array of detailed skill info
+ */
+export async function listSkillsDetailed(projectRoot?: string): Promise<DetailedSkillInfo[]> {
   const cwd = projectRoot || process.cwd();
-  const skills: string[] = [];
+  const skills: DetailedSkillInfo[] = [];
+  const seenNames = new Set<string>();
 
-  const searchPaths = [
-    join(cwd, '.claude', 'skills'),
-    join(homedir(), '.claude', 'skills'),
-  ];
+  // Helper to add skill if not already seen
+  const addSkill = async (
+    skillFile: string,
+    dirName: string,
+    source: SkillSource,
+    pluginName?: string
+  ) => {
+    const skillName = await parseSkillName(skillFile, dirName);
+    const fullName = pluginName ? `${pluginName}:${skillName}` : skillName;
 
-  for (const searchPath of searchPaths) {
-    try {
-      const entries = await readdir(searchPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const skillFile = join(searchPath, entry.name, 'SKILL.md');
-          if (await pathExists(skillFile)) {
-            // Get skill name from frontmatter or convert directory name
-            const skillName = await parseSkillName(skillFile, entry.name);
-            if (!skills.includes(skillName)) {
-              skills.push(skillName);
-            }
-          }
-        }
-      }
-    } catch {
-      // Directory doesn't exist, skip
+    if (!seenNames.has(fullName)) {
+      seenNames.add(fullName);
+      const description = await parseSkillDescription(skillFile);
+      skills.push({
+        name: fullName,
+        source,
+        pluginName,
+        path: skillFile,
+        description,
+      });
     }
+  };
+
+  // 1. Local skills (.claude/skills/)
+  const localPath = join(cwd, '.claude', 'skills');
+  await scanSkillsDir(localPath, 'local', addSkill);
+
+  // 2. User skills (~/.claude/skills/)
+  const userPath = join(homedir(), '.claude', 'skills');
+  await scanSkillsDir(userPath, 'user', addSkill);
+
+  // 3. Plugin skills (~/.claude/plugins/<plugin>/skills/)
+  const pluginsPath = join(homedir(), '.claude', 'plugins');
+  try {
+    const pluginEntries = await readdir(pluginsPath, { withFileTypes: true });
+    for (const entry of pluginEntries) {
+      // Skip cache, marketplaces, and non-directories/symlinks
+      if (entry.name === 'cache' || entry.name === 'marketplaces') {
+        continue;
+      }
+      // Check for directory OR symlink (symlinks to plugin dirs are common)
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const pluginSkillsPath = join(pluginsPath, entry.name, 'skills');
+      await scanSkillsDir(pluginSkillsPath, 'plugin', addSkill, entry.name);
+    }
+  } catch {
+    // Plugins directory doesn't exist
   }
 
-  return skills.sort();
+  return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/**
+ * Parse description from skill file frontmatter
+ */
+async function parseSkillDescription(skillFile: string): Promise<string | undefined> {
+  try {
+    const content = await readFile(skillFile, 'utf-8');
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (frontmatterMatch) {
+      const descMatch = frontmatterMatch[1].match(/description:\s*["']?([^"'\n]+)["']?/);
+      if (descMatch) {
+        return descMatch[1];
+      }
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return undefined;
+}
+
+/**
+ * Scan a skills directory and call addSkill for each found skill
+ */
+async function scanSkillsDir(
+  dirPath: string,
+  source: SkillSource,
+  addSkill: (skillFile: string, dirName: string, source: SkillSource, pluginName?: string) => Promise<void>,
+  pluginName?: string
+): Promise<void> {
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillFile = join(dirPath, entry.name, 'SKILL.md');
+        if (await pathExists(skillFile)) {
+          await addSkill(skillFile, entry.name, source, pluginName);
+        }
+      }
+    }
+  } catch {
+    // Directory doesn't exist, skip
+  }
+}
+

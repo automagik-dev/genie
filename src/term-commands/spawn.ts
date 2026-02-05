@@ -480,24 +480,87 @@ export async function spawnCommand(
 }
 
 /**
- * List available skills
+ * Options for listing skills
  */
-export async function listSkillsCommand(): Promise<void> {
-  const skills = await skillLoader.listSkills();
+export interface SkillsOptions {
+  verbose?: boolean;
+  source?: boolean;
+}
+
+/**
+ * List available skills with improved plugin support
+ */
+export async function listSkillsCommand(options: SkillsOptions = {}): Promise<void> {
+  const skills = await skillLoader.listSkillsDetailed();
 
   if (skills.length === 0) {
-    console.log('No skills found in .claude/skills/ or ~/.claude/skills/');
+    console.log('No skills found.');
+    console.log('  Searched: .claude/skills/, ~/.claude/skills/, ~/.claude/plugins/*/skills/');
     return;
   }
 
-  console.log('Available skills:\n');
-  for (const skillName of skills) {
-    const skill = await skillLoader.findSkill(skillName);
-    if (skill?.description) {
-      console.log(`  ${skillName}`);
-      console.log(`    ${skill.description}\n`);
+  if (options.source) {
+    // Group by source
+    const bySource: Record<string, typeof skills> = {
+      local: [],
+      user: [],
+      plugin: [],
+    };
+
+    for (const skill of skills) {
+      bySource[skill.source].push(skill);
+    }
+
+    if (bySource.local.length > 0) {
+      console.log('\n📁 Local Skills (.claude/skills/):');
+      for (const skill of bySource.local) {
+        printSkill(skill, options.verbose);
+      }
+    }
+
+    if (bySource.user.length > 0) {
+      console.log('\n👤 User Skills (~/.claude/skills/):');
+      for (const skill of bySource.user) {
+        printSkill(skill, options.verbose);
+      }
+    }
+
+    if (bySource.plugin.length > 0) {
+      console.log('\n🔌 Plugin Skills:');
+      for (const skill of bySource.plugin) {
+        printSkill(skill, options.verbose);
+      }
+    }
+  } else {
+    // Simple list
+    console.log('\nAvailable skills:\n');
+    for (const skill of skills) {
+      printSkill(skill, options.verbose);
+    }
+  }
+
+  console.log(`\n${skills.length} skills found.`);
+}
+
+/**
+ * Print a single skill
+ */
+function printSkill(skill: skillLoader.DetailedSkillInfo, verbose?: boolean): void {
+  const sourceIcon = skill.source === 'local' ? '📁' : skill.source === 'user' ? '👤' : '🔌';
+
+  if (verbose) {
+    console.log(`  ${skill.name} (${skill.source})`);
+    console.log(`    Path: ${skill.path}`);
+    if (skill.description) {
+      console.log(`    ${skill.description}`);
+    }
+    console.log('');
+  } else {
+    if (skill.description) {
+      console.log(`  ${sourceIcon} ${skill.name}`);
+      console.log(`       ${skill.description}`);
     } else {
-      console.log(`  ${skillName}`);
+      console.log(`  ${sourceIcon} ${skill.name}`);
     }
   }
 }

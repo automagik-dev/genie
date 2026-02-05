@@ -255,9 +255,11 @@ program
 
 program
   .command('skills')
-  .description('List available skills')
-  .action(async () => {
-    await spawnCmd.listSkillsCommand();
+  .description('List available skills from all sources')
+  .option('-v, --verbose', 'Show detailed skill info (path, source)')
+  .option('-s, --source', 'Group skills by source (local, user, plugin)')
+  .action(async (options: spawnCmd.SkillsOptions) => {
+    await spawnCmd.listSkillsCommand(options);
   });
 
 program
