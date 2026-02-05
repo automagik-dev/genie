@@ -82,6 +82,13 @@ After writing the wish document:
 
 ### Phase 6: Handoff
 
+After creating tasks, link them to the wish for tracking:
+
+```bash
+term task link <task-id> <wish-slug>   # Link task to wish
+term wish status <slug>                 # Check wish progress
+```
+
 Output: **"Wish documented. Run `/plan-review` to validate, then `/make` to begin execution."**
 
 ---

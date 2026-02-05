@@ -12,39 +12,63 @@ description: "How to orchestrate real work with the human using term, claudio, a
 - **beads** - Task/issue tracking (bd CLI)
 - **worktrees** - Isolated git branches for parallel work
 
+For full CLI command reference, see the **term-pilot** skill.
+
 ## Start Working NOW
 
 ### 1. Check Current State
 
 ```bash
-term ls                    # What sessions exist?
+term session ls            # What sessions exist?
 term workers               # Any active workers?
-bd ls                      # What issues are ready?
+term task ls               # What tasks are ready? (replaces bd ready)
+term task ls --all         # All tasks including done/blocked
 ```
 
 ### 2. Pick or Create Work
 
 ```bash
-# Work on existing issue
+# Work on existing task
 term work <bd-id>
 
-# Or create new issue and work it
-term create "Fix the thing" && term work next
+# Or create new task and work it
+term task create "Fix the thing" && term work next
 ```
 
 ### 3. Execute
 
 The worker spawns Claude in a pane. You can:
 - Watch: `tmux attach -t genie` or `term watch genie`
-- Approve: `term approve <worker>`
+- Approve: `term approve <worker>` or `term a <worker>`
 - Answer: `term answer <worker> <choice>`
 - Check: `term orc status genie` (Claude state)
-- Send: `term send genie "msg"` (sends with Enter)
+- Send: `term session send genie "msg"` (sends with Enter)
 
-### 4. Close When Done
+### 4. Catching Up on Worker Context
+
+When switching between workers or checking what a worker has done, use `term history`:
 
 ```bash
-term close <bd-id>         # Closes issue, cleans worktree
+term history <worker>           # Compressed summary of session
+term h <worker>                 # Short alias
+
+# Options:
+term history bd-42 --full       # Full conversation, no compression
+term history bd-42 --since 5    # Last 5 user/assistant exchanges
+term history bd-42 --json       # Output as JSON
+```
+
+**When to use:**
+- Switching context to a worker you haven't looked at recently
+- Understanding what a worker accomplished
+- Debugging why a worker is stuck
+- Reviewing before approving permissions
+
+### 5. Close When Done
+
+```bash
+term task ship <bd-id>         # Mark done, merge, cleanup worktree
+term task close <bd-id>        # Close + cleanup (no merge)
 ```
 
 ---
@@ -55,8 +79,8 @@ Split work across multiple panes/workers:
 
 ```bash
 # In session "genie"
-term split genie h         # New pane (uses ACTIVE pane)
-term spawn forge           # Spawn Claude with skill
+term session split genie h     # New pane (uses ACTIVE pane)
+term spawn forge               # Spawn Claude with skill
 ```
 
 Or use workers for tracked work:
@@ -65,6 +89,19 @@ Or use workers for tracked work:
 term work bd-001           # Worker 1
 term work bd-002           # Worker 2 (parallel)
 term workers               # See both
+term dashboard             # Live dashboard (or term d)
+```
+
+---
+
+## Wish Management
+
+Track larger initiatives with wishes:
+
+```bash
+term wish ls                   # List all wishes with task status
+term wish status <slug>        # Show wish with linked tasks
+term task link <wish> <bd-id>  # Link a task to a wish
 ```
 
 ---
@@ -89,27 +126,32 @@ term workers               # See both
 
 | Action | Command |
 |--------|---------|
-| See sessions | `term ls` |
+| See sessions | `term session ls` |
 | See workers | `term workers` |
-| See issues | `bd ls` |
-| Start work | `term work <id>` |
-| Split pane | `term split genie h` |
-| Approve | `term approve <worker>` |
+| Live dashboard | `term dashboard` or `term d` |
+| See tasks | `term task ls` |
+| See wishes | `term wish ls` |
+| Wish status | `term wish status <slug>` |
+| Start work | `term work <id>` or `term w <id>` |
+| Split pane | `term session split genie h` |
+| Catch up | `term history <worker>` or `term h <worker>` |
+| Approve | `term approve <worker>` or `term a <worker>` |
 | Answer | `term answer <worker> 1` |
-| Send message | `term send genie "msg"` |
-| Send raw keys | `term send genie "q" --no-enter` |
+| Send message | `term session send genie "msg"` |
+| Send raw keys | `term session send genie "q" --no-enter` |
 | Watch events | `term watch genie` |
-| Fire-and-forget | `term run genie "task"` |
-| Session info | `term info genie` |
+| Fire-and-forget | `term orc run genie "task"` |
+| Session info | `term session info genie` |
 | Claude state | `term orc status genie` |
-| Close work | `term close <id>` |
+| Ship task | `term task ship <id>` |
+| Close task | `term task close <id>` |
 
 ---
 
 ## Stop Planning, Start Doing
 
 1. What needs to be done? (one thing)
-2. Is there an issue? Create one if not
+2. Is there a task? Create one if not: `term task create "..."`
 3. `term work <id>` or just start coding
 4. Ship it
 

@@ -13,11 +13,14 @@ description: "Activate work mode. Enter focused session with clear context loadi
    - Recent work on the topic (last 7 days)
    - Related decisions, patterns, preferences
    - Any ongoing work that might be affected
+   - Use `term history --since 7d` to load recent worker context
 
 2. **Environment Scan** — Quick sweep of:
    - Current workspace state
    - Any running processes relevant to the work
    - Existing files that may be touched
+   - Active workers: `term workers` or `term session ls`
+   - Recent activity: `term history` for session context
 
 3. **State Declaration** — Announce:
    ```

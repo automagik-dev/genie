@@ -119,6 +119,18 @@ Output: "All make tasks complete. Run /review for final validation."
 
 ---
 
+## Monitoring Progress
+
+Use `term task ls` to check task status at any time:
+
+```bash
+term task ls              # List all tasks and their status
+term task ls --pending    # Show only pending tasks
+term task ls --failed     # Show tasks that need attention
+```
+
+---
+
 ## Fix Loop Protocol
 
 ```

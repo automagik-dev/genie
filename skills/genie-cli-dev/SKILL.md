@@ -22,15 +22,22 @@ Genie-CLI (`tools/genie-cli/`) is an AI-friendly terminal orchestration system b
 tools/genie-cli/
 ├── src/
 │   ├── genie.ts          # genie CLI entry point
-│   ├── term.ts           # term CLI entry point
+│   ├── term.ts           # term CLI entry point (registers namespaces)
 │   ├── lib/
 │   │   ├── tmux.ts       # Core tmux wrapper (CRITICAL)
 │   │   ├── tmux-wrapper.ts
 │   │   ├── config.ts
 │   │   ├── worktree.ts   # Git worktree management
 │   │   ├── worker-registry.ts
+│   │   ├── wish-tasks.ts # Wish-task linking (NEW)
 │   │   └── orchestrator/ # Claude Code automation
 │   ├── term-commands/    # term subcommands
+│   │   ├── session/      # Session namespace (NEW)
+│   │   │   └── commands.ts  # registerSessionNamespace()
+│   │   ├── task/         # Task namespace (NEW)
+│   │   │   └── commands.ts  # registerTaskNamespace()
+│   │   ├── wish/         # Wish namespace (NEW)
+│   │   │   └── commands.ts  # registerWishNamespace()
 │   │   ├── split.ts
 │   │   ├── new.ts
 │   │   ├── ls.ts
@@ -40,6 +47,7 @@ tools/genie-cli/
 │   │   ├── pane.ts
 │   │   ├── spawn.ts      # Skill-based Claude spawning
 │   │   ├── work.ts       # Worker orchestration
+│   │   ├── history.ts    # Session catch-up with compression
 │   │   └── orchestrate.ts
 │   └── genie-commands/   # genie subcommands
 │       ├── install.ts
@@ -47,6 +55,42 @@ tools/genie-cli/
 │       └── doctor.ts
 └── plugin/               # Claude Code plugin
 ```
+
+### Namespace Pattern
+
+The CLI uses a namespace pattern for organizing commands. Each namespace has its own `commands.ts` that exports a `register*Namespace()` function:
+
+```typescript
+// src/term-commands/session/commands.ts
+export function registerSessionNamespace(program: Command): void {
+  const sessionProgram = program
+    .command('session')
+    .description('Tmux session management (low-level primitives)');
+
+  // session new
+  sessionProgram
+    .command('new <name>')
+    .description('Create a new tmux session')
+    .action(async (name: string, options) => {
+      await newCmd.createNewSession(name, options);
+    });
+  // ... more subcommands
+}
+```
+
+Namespaces are registered in `term.ts`:
+
+```typescript
+// Register namespaces
+registerSessionNamespace(program);
+registerTaskNamespace(program);
+registerWishNamespace(program);
+```
+
+This pattern provides:
+- **Grouped help**: `term session --help` shows only session commands
+- **Clear hierarchy**: `term task create` vs `term session new`
+- **Deprecation support**: Old top-level commands show warnings
 
 ---
 
@@ -139,17 +183,40 @@ export async function splitSessionPane(
 
 ### Registering Commands
 
-Commands are registered in `src/term.ts` using Commander.js:
+Commands are organized into namespaces. For namespace commands, edit the namespace's `commands.ts`:
+
+```typescript
+// src/term-commands/task/commands.ts
+export function registerTaskNamespace(program: Command): void {
+  const taskProgram = program
+    .command('task')
+    .description('Task/issue management (beads integration)');
+
+  taskProgram
+    .command('create <title>')
+    .description('Create a new beads issue')
+    .option('-d, --description <text>', 'Issue description')
+    .action(async (title: string, options) => {
+      await createCmd.createCommand(title, options);
+    });
+}
+```
+
+For top-level commands (like `term spawn`, `term work`), add directly in `src/term.ts`:
 
 ```typescript
 program
-  .command('split <session> [direction]')
-  .description('Split pane in a tmux session (h=horizontal, v=vertical)')
-  .option('-d, --workspace <path>', 'Working directory for the new pane')
-  .action(async (session, direction, options) => {
-    await splitCmd.splitSessionPane(session, direction, options);
+  .command('spawn [skill]')
+  .description('Spawn Claude with a skill')
+  .action(async (skill, options) => {
+    await spawnCmd.spawnCommand(skill, options);
   });
 ```
+
+**Namespace guidelines:**
+- `session/` - Low-level tmux primitives (new, ls, exec, read, split, etc.)
+- `task/` - Beads issue management (create, update, ship, close, link)
+- `wish/` - Wish document tracking (ls, status)
 
 ---
 
@@ -286,10 +353,18 @@ term answer <worker> 1     # Answer question (for workers)
 
 | File | Purpose |
 |------|---------|
+| `src/term.ts` | Main entry, namespace registration |
 | `src/lib/tmux.ts` | All tmux operations |
-| `src/term.ts` | Command registration |
-| `src/term-commands/split.ts` | Pane splitting |
-| `src/term-commands/spawn.ts` | Skill-based Claude spawning |
-| `src/term-commands/orchestrate.ts` | Claude automation |
-| `src/lib/orchestrator/state-detector.ts` | Claude state parsing |
+| `src/lib/wish-tasks.ts` | Wish-task linking CRUD |
 | `src/lib/worker-registry.ts` | Worker state tracking |
+| `src/lib/orchestrator/state-detector.ts` | Claude state parsing |
+| **Namespaces** | |
+| `src/term-commands/session/commands.ts` | `term session` namespace (tmux primitives) |
+| `src/term-commands/task/commands.ts` | `term task` namespace (beads integration) |
+| `src/term-commands/wish/commands.ts` | `term wish` namespace (wish tracking) |
+| **Individual Commands** | |
+| `src/term-commands/spawn.ts` | Skill-based Claude spawning |
+| `src/term-commands/work.ts` | Worker + beads orchestration |
+| `src/term-commands/history.ts` | Session catch-up with compression |
+| `src/term-commands/orchestrate.ts` | Claude automation (orc commands) |
+| `src/term-commands/split.ts` | Pane splitting |

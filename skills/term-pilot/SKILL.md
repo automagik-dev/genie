@@ -26,13 +26,49 @@ The human can `tmux attach -t <session>` to watch everything you do.
 
 ---
 
-## The 5 Commands You Actually Need
+## CLI Structure Overview
 
-### 1. `term ls` - See What Exists
+The CLI is organized into namespaces:
+
+| Namespace | Purpose | Example |
+|-----------|---------|---------|
+| `term session` | Low-level tmux operations | `term session exec genie 'ls'` |
+| `term task` | Beads task management | `term task create "Fix bug"` |
+| `term wish` | Wish document management | `term wish status my-wish` |
+| (top-level) | Worker control & shortcuts | `term workers`, `term spawn` |
+
+---
+
+## Short Aliases
+
+For quick terminal use:
+
+| Alias | Expands To | Description |
+|-------|------------|-------------|
+| `term w` | `term work` | Spawn worker bound to task |
+| `term s` | `term spawn` | Spawn Claude with skill |
+| `term d` | `term dashboard` | Show worker status |
+| `term a` | `term approve` | Approve pending permission |
+| `term h` | `term history` | Session catch-up |
+
+**Examples:**
+```bash
+term w bd-42        # Same as: term work bd-42
+term d              # Same as: term dashboard
+term h bd-42        # Same as: term history bd-42
+```
+
+---
+
+## Session Namespace (`term session`)
+
+Low-level tmux session operations. Use these for direct terminal control.
+
+### List Sessions
 
 ```bash
-term ls              # List all tmux sessions
-term ls --json       # Machine-readable
+term session ls              # List all tmux sessions
+term session ls --json       # Machine-readable output
 ```
 
 **Output example:**
@@ -41,10 +77,10 @@ genie (2 windows, attached)
 worker-bd-001 (1 window)
 ```
 
-### 2. `term exec` - Run a Command
+### Execute Commands
 
 ```bash
-term exec <session> <command>
+term session exec <session> <command>
 ```
 
 **This is the PRIMARY way to execute commands.** It:
@@ -54,9 +90,9 @@ term exec <session> <command>
 
 **Examples:**
 ```bash
-term exec genie 'ls -la'
-term exec genie 'npm test'
-term exec genie 'git status'
+term session exec genie 'ls -la'
+term session exec genie 'npm test'
+term session exec genie 'git status'
 ```
 
 **Options:**
@@ -65,30 +101,32 @@ term exec genie 'git status'
 
 **Warning:** Commands with quotes need careful escaping:
 ```bash
-term exec genie 'echo "hello world"'     # Single quotes outside
-term exec genie "echo 'hello world'"     # Double quotes outside
+term session exec genie 'echo "hello world"'     # Single quotes outside
+term session exec genie "echo 'hello world'"     # Double quotes outside
 ```
 
-### 3. `term read` - See What Happened
+### Read Output
 
 ```bash
-term read <session>              # Last 100 lines
-term read <session> -n 50        # Last 50 lines
-term read <session> --all        # Entire scrollback
-term read <session> --reverse    # Newest first
+term session read <session>              # Last 100 lines
+term session read <session> -n 50        # Last 50 lines
+term session read <session> --all        # Entire scrollback
+term session read <session> --reverse    # Newest first
+term session read <session> --search "ERROR"  # Search for pattern
+term session read <session> --grep "test.*fail"  # Regex search
 ```
 
 **When to use:**
-- After `term exec` if you need more context
+- After `term session exec` if you need more context
 - To see what's currently on screen
 - To check command output you missed
 
-### 4. `term send` - Send Keys (Interactive)
+### Send Keys (Interactive)
 
 ```bash
-term send <session> "text"           # Sends text + Enter
-term send <session> "text" --no-enter  # Sends text only (no Enter)
-term send <session> -p %42 "text"    # Send to specific pane
+term session send <session> "text"              # Sends text + Enter
+term session send <session> "text" --no-enter   # Sends text only (no Enter)
+term session send <session> -p %42 "text"       # Send to specific pane
 ```
 
 **When to use `send` vs `exec`:**
@@ -101,17 +139,93 @@ term send <session> -p %42 "text"    # Send to specific pane
 
 **Special keys:**
 ```bash
-term send genie "C-c" --no-enter     # Ctrl+C
-term send genie "q" --no-enter       # Just 'q' (for less/vim quit)
-term send genie "" --no-enter        # Just Enter
+term session send genie "C-c" --no-enter     # Ctrl+C
+term session send genie "q" --no-enter       # Just 'q' (for less/vim quit)
+term session send genie "" --no-enter        # Just Enter
 ```
 
-### 5. `term new` / `term rm` - Session Lifecycle
+### Session Lifecycle
 
 ```bash
-term new myproject                    # Create session
-term new myproject -d /path/to/dir    # With working directory
-term rm myproject                     # Kill session
+term session new myproject                    # Create session
+term session new myproject -d /path/to/dir    # With working directory
+term session rm myproject                     # Kill session
+term session attach myproject                 # Attach to session
+```
+
+### Session Info
+
+```bash
+term session info <session>     # Shows panes, their IDs, busy/idle state
+```
+
+### Split Panes
+
+```bash
+term session split <session> h   # Horizontal split
+term session split <session> v   # Vertical split
+```
+
+---
+
+## Task Namespace (`term task`)
+
+Manage beads tasks/issues.
+
+### Create Tasks
+
+```bash
+term task create "Fix the login bug"
+term task create "Add feature X" --status ready
+```
+
+### List Tasks
+
+```bash
+term task ls                    # List ready tasks
+term task ls --all              # List all tasks
+```
+
+### Update Tasks
+
+```bash
+term task update bd-42 --status in-progress
+term task update bd-42 --title "New title"
+term task update bd-42 --blocked-by bd-41
+```
+
+### Complete Tasks
+
+```bash
+term task ship bd-42            # Mark done + merge + cleanup worker
+term task close bd-42           # Close + cleanup (no merge)
+```
+
+### Link Tasks to Wishes
+
+```bash
+term task link my-wish bd-42    # Link task to wish document
+term task unlink my-wish bd-42  # Unlink task from wish
+```
+
+---
+
+## Wish Namespace (`term wish`)
+
+Manage wish documents (planning/specs).
+
+### List Wishes
+
+```bash
+term wish ls                    # List all wishes with task status
+term wish ls --json             # Machine-readable output
+```
+
+### Check Wish Status
+
+```bash
+term wish status my-wish        # Show wish with linked tasks
+term wish show my-wish          # Alias for status
 ```
 
 ---
@@ -123,12 +237,35 @@ When Claude Code is running in a pane, use these commands:
 ### Check Worker Status
 ```bash
 term workers           # List all active workers
-term dashboard         # Live dashboard (use -w for auto-refresh)
+term dashboard         # Live dashboard
+term d                 # Short alias
 ```
+
+### Session Catch-Up with History
+
+**This is essential for understanding what a worker has been doing:**
+
+```bash
+term history <worker>           # Compressed summary of session
+term h <worker>                 # Short alias
+
+# Options:
+term history bd-42 --full       # Full conversation, no compression
+term history bd-42 --since 5    # Last 5 user/assistant exchanges
+term history bd-42 --json       # Output as JSON
+term history bd-42 --raw        # Raw JSONL entries
+```
+
+**When to use:**
+- Switching context to a worker you haven't looked at recently
+- Understanding what a worker accomplished
+- Debugging why a worker is stuck
+- Reviewing before approving permissions
 
 ### Control Workers
 ```bash
 term approve <worker>              # Approve permission request
+term a <worker>                    # Short alias
 term answer <worker> 1             # Answer question (option 1)
 term answer <worker> "text:reply"  # Send text reply
 term kill <worker>                 # Force kill
@@ -137,7 +274,35 @@ term kill <worker>                 # Force kill
 ### Watch What's Happening
 ```bash
 term watch <session>               # Real-time state changes
-term events <pane> --follow        # Stream Claude Code events
+term events [pane-id]              # Stream Claude Code events
+term events --follow               # Follow all workers
+```
+
+---
+
+## The Worker Workflow (for beads tasks)
+
+```bash
+# 1. Create a task
+term task create "Fix the bug"     # Creates bd-XXX
+
+# 2. Start working on it
+term work bd-XXX                   # Spawns Claude in new pane
+term w bd-XXX                      # Short alias
+
+# 3. Monitor
+term workers                       # Check status
+term dashboard                     # Live dashboard
+term d                             # Short alias
+
+# 4. Catch up on progress
+term history bd-XXX                # See what worker did
+term h bd-XXX                      # Short alias
+
+# 5. Close when done
+term task ship bd-XXX              # Mark done + cleanup
+# or
+term task close bd-XXX             # Just close + cleanup
 ```
 
 ---
@@ -150,34 +315,13 @@ term events <pane> --follow        # Stream Claude Code events
 Most commands target sessions by default. To target a specific pane:
 
 ```bash
-term send genie -p %42 "message"
-term read genie -p %42
+term session send genie -p %42 "message"
+term session read genie -p %42
 ```
 
 To find pane IDs:
 ```bash
-term info genie          # Shows panes and their IDs
-```
-
----
-
-## The Worker Workflow (for beads tasks)
-
-```bash
-# 1. Create a task
-term create "Fix the bug"           # Creates bd-XXX
-
-# 2. Start working on it
-term work bd-XXX                    # Spawns Claude in new pane
-
-# 3. Monitor
-term workers                        # Check status
-term dashboard -w                   # Live dashboard
-
-# 4. Close when done
-term ship bd-XXX                    # Mark done + cleanup
-# or
-term close bd-XXX                   # Just close + cleanup
+term session info genie          # Shows panes and their IDs
 ```
 
 ---
@@ -189,9 +333,23 @@ term close bd-XXX                   # Just close + cleanup
 ls -la                              # This runs in YOUR context, not tmux
 ```
 
-### Right: Use term exec
+### Right: Use term session exec
 ```bash
-term exec genie 'ls -la'            # Runs in the tmux session
+term session exec genie 'ls -la'    # Runs in the tmux session
+```
+
+### Wrong: Using deprecated commands
+```bash
+term exec genie 'ls'                # DEPRECATED
+term new myproject                  # DEPRECATED
+term create "task"                  # DEPRECATED
+```
+
+### Right: Use namespaced commands
+```bash
+term session exec genie 'ls'        # Correct
+term session new myproject          # Correct
+term task create "task"             # Correct
 ```
 
 ### Wrong: Inventing commands that don't exist
@@ -203,22 +361,9 @@ term panes                          # DOES NOT EXIST
 
 ### Right: Use the actual commands
 ```bash
-term info genie                     # Session info
-term workers                        # Task/worker list
-term info genie                     # Pane info is in here
-```
-
-### Wrong: Using `term orc` for simple operations
-```bash
-term orc status genie               # Overcomplicated
-term orc send genie "msg"           # Just use term send
-```
-
-### Right: `orc` is only for advanced Claude Code control
-```bash
-# Only use orc for specific Claude Code operations:
-term orc status genie               # Only if you need Claude's internal state
-term orc run genie "task" -a        # Fire-and-forget with auto-approve
+term session info genie             # Session info
+term workers                        # Worker list
+term session info genie             # Pane info is in here
 ```
 
 ---
@@ -227,22 +372,59 @@ term orc run genie "task" -a        # Fire-and-forget with auto-approve
 
 | I want to... | Command |
 |--------------|---------|
-| See sessions | `term ls` |
-| Run a command | `term exec <session> '<cmd>'` |
-| See output | `term read <session>` |
-| Send text | `term send <session> "text"` |
-| Send without Enter | `term send <session> "x" --no-enter` |
-| Create session | `term new <name>` |
-| Delete session | `term rm <name>` |
-| Session info | `term info <session>` |
+| **Sessions** | |
+| See sessions | `term session ls` |
+| Run a command | `term session exec <session> '<cmd>'` |
+| See output | `term session read <session>` |
+| Send text | `term session send <session> "text"` |
+| Send without Enter | `term session send <session> "x" --no-enter` |
+| Create session | `term session new <name>` |
+| Delete session | `term session rm <name>` |
+| Session info | `term session info <session>` |
+| Split pane | `term session split <session> h` |
+| **Workers** | |
 | List workers | `term workers` |
-| Live dashboard | `term dashboard -w` |
-| Approve Claude | `term approve <worker>` |
+| Live dashboard | `term dashboard` or `term d` |
+| Session catch-up | `term history <worker>` or `term h <worker>` |
+| Approve Claude | `term approve <worker>` or `term a <worker>` |
 | Answer Claude | `term answer <worker> 1` |
-| Start task work | `term work <bd-id>` |
-| Close task | `term close <bd-id>` |
+| Kill worker | `term kill <worker>` |
 | Watch events | `term watch <session>` |
-| Split pane | `term split <session> h` |
+| **Tasks** | |
+| Create task | `term task create "title"` |
+| List tasks | `term task ls` |
+| Update task | `term task update <id> --status <status>` |
+| Start work | `term work <bd-id>` or `term w <bd-id>` |
+| Ship task | `term task ship <bd-id>` |
+| Close task | `term task close <bd-id>` |
+| Link to wish | `term task link <wish> <bd-id>` |
+| **Wishes** | |
+| List wishes | `term wish ls` |
+| Wish status | `term wish status <slug>` |
+| **Spawn** | |
+| Spawn with skill | `term spawn <skill>` or `term s <skill>` |
+| Interactive picker | `term spawn` |
+
+---
+
+## Deprecated Commands
+
+These still work but show warnings. Use the new equivalents:
+
+| Old (DEPRECATED) | New (USE THIS) |
+|------------------|----------------|
+| `term new <name>` | `term session new <name>` |
+| `term rm <name>` | `term session rm <name>` |
+| `term exec <sess> <cmd>` | `term session exec <sess> <cmd>` |
+| `term send <sess> <keys>` | `term session send <sess> <keys>` |
+| `term read <sess>` | `term session read <sess>` |
+| `term split <sess>` | `term session split <sess>` |
+| `term info <sess>` | `term session info <sess>` |
+| `term attach <name>` | `term session attach <name>` |
+| `term create <title>` | `term task create <title>` |
+| `term update <id>` | `term task update <id>` |
+| `term ship <id>` | `term task ship <id>` |
+| `term close <id>` | `term task close <id>` |
 
 ---
 
@@ -250,26 +432,33 @@ term orc run genie "task" -a        # Fire-and-forget with auto-approve
 
 ### "Session not found"
 ```bash
-term ls                             # Check if session exists
-term new genie                      # Create it if not
+term session ls                     # Check if session exists
+term session new genie              # Create it if not
 ```
 
 ### "Command seems to hang"
 ```bash
-term read genie                     # Check what's on screen
-term send genie "C-c" --no-enter   # Try Ctrl+C
-term info genie                     # Check if pane is busy
+term session read genie             # Check what's on screen
+term session send genie "C-c" --no-enter   # Try Ctrl+C
+term session info genie             # Check if pane is busy
 ```
 
 ### "I need to see the full output"
 ```bash
-term read genie --all              # Full scrollback
-term read genie -n 500             # Last 500 lines
+term session read genie --all       # Full scrollback
+term session read genie -n 500      # Last 500 lines
 ```
 
 ### "Which pane is which?"
 ```bash
-term info genie                    # Lists all panes with IDs
+term session info genie             # Lists all panes with IDs
+```
+
+### "What did the worker do?"
+```bash
+term history bd-42                  # Compressed summary
+term history bd-42 --full           # Full conversation
+term history bd-42 --since 10       # Last 10 exchanges
 ```
 
 ---
@@ -277,13 +466,16 @@ term info genie                    # Lists all panes with IDs
 ## Commands That DO NOT EXIST
 
 Do not hallucinate these:
-- ~~`term status`~~ -> use `term info`
-- ~~`term tasks`~~ -> use `term workers` or `bd ls`
-- ~~`term panes`~~ -> use `term info`
-- ~~`term run`~~ (at top level) -> use `term orc run` or `term exec`
+- ~~`term status`~~ -> use `term session info` or `term workers`
+- ~~`term tasks`~~ -> use `term task ls` or `term workers`
+- ~~`term panes`~~ -> use `term session info`
+- ~~`term run`~~ (at top level) -> use `term orc run` or `term session exec`
+- ~~`term ls`~~ (without namespace) -> use `term session ls`
 - ~~`claudio status`~~ -> doesn't exist
+
+**Note:** Old commands like `term exec`, `term new` still work but are deprecated. Always use the namespaced versions.
 
 ---
 
-*Last updated: 2026-02-04*
+*Last updated: 2026-02-05*
 *This is the single source of truth. When in doubt, check here.*
