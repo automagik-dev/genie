@@ -13,6 +13,7 @@
  *   --focus                     - Focus the new pane (default: true)
  *   -p, --prompt <message>      - Additional context for the skill
  *   -t, --task-id <id>          - Bind to beads issue
+ *   --profile <name>            - Worker profile to use
  */
 
 import { $ } from 'bun';
@@ -24,6 +25,9 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import * as skillLoader from '../lib/skill-loader.js';
 import { getBackend } from '../lib/task-backend.js';
+import { buildSpawnCommand } from '../lib/spawn-command.js';
+import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile } from '../lib/genie-config.js';
+import type { WorkerProfile } from '../types/genie-config.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -42,6 +46,7 @@ export interface SpawnOptions {
   focus?: boolean;
   prompt?: string;
   taskId?: string;
+  profile?: string;
 }
 
 // ============================================================================
@@ -283,6 +288,26 @@ export async function spawnCommand(
     process.exit(1);
   }
 
+  // 2.5. Load and validate worker profile (before creating pane)
+  const config = await loadGenieConfig();
+  let workerProfile: WorkerProfile | undefined;
+
+  if (options.profile) {
+    workerProfile = getWorkerProfile(config, options.profile);
+    if (!workerProfile) {
+      const available = Object.keys(config.workerProfiles || {});
+      console.error(`Profile '${options.profile}' not found.`);
+      if (available.length > 0) {
+        console.log(`Available profiles: ${available.join(', ')}`);
+      } else {
+        console.log('No profiles configured in ~/.genie/config.json');
+      }
+      process.exit(1);
+    }
+  } else {
+    workerProfile = getDefaultWorkerProfile(config);
+  }
+
   // 3. Handle taskId binding (optional)
   let workingDir = repoPath;
   let worktreePath: string | null = null;
@@ -394,12 +419,15 @@ export async function spawnCommand(
   // Escape workingDir for shell
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
-  // 8. Start Claude without skill content (skills are loaded by automagik-genie plugin)
-  // --dangerously-skip-permissions enables autonomous operation for spawned workers
-  const sessionIdArg = claudeSessionId ? `--session-id '${claudeSessionId}' ` : '';
+  // 8. Start Claude using profile or legacy fallback
+  // buildSpawnCommand handles BEADS_DIR, session-id, and all profile args
+  const spawnCmd = buildSpawnCommand(workerProfile, {
+    sessionId: claudeSessionId,
+    beadsDir,
+  });
   await tmux.executeCommand(
     paneId,
-    `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --dangerously-skip-permissions ${sessionIdArg}`,
+    `cd '${escapedWorkingDir}' && ${spawnCmd}`,
     true,
     false
   );

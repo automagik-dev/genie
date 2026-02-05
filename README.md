@@ -254,6 +254,50 @@ Example config:
 
 ---
 
+## Worker Profiles
+
+Worker profiles configure how genie-cli spawns Claude Code workers. Each profile bundles a launcher (`claude` or `claudio`) with CLI arguments.
+
+### Quick Commands
+
+```bash
+genie profiles list              # List all profiles (* = default)
+genie profiles add <name>        # Add new profile (interactive)
+genie profiles show <name>       # Show profile details
+genie profiles rm <name>         # Delete profile
+genie profiles default <name>    # Set default profile
+```
+
+### Using Profiles
+
+```bash
+term spawn implementor --profile coding-fast   # Use specific profile
+term work bd-123 --profile autonomous          # Complex task with opus
+```
+
+### Example Config
+
+```json
+{
+  "workerProfiles": {
+    "coding-fast": {
+      "launcher": "claudio",
+      "claudioProfile": "coding-fast",
+      "claudeArgs": ["--dangerously-skip-permissions"]
+    },
+    "safe": {
+      "launcher": "claude",
+      "claudeArgs": ["--permission-mode", "default"]
+    }
+  },
+  "defaultWorkerProfile": "coding-fast"
+}
+```
+
+For full documentation, see [docs/worker-profiles.md](docs/worker-profiles.md).
+
+---
+
 ## `term` reference
 
 ### Command tree

@@ -18,6 +18,8 @@ import {
   getGenieConfigPath,
   isSetupComplete,
 } from '../lib/genie-config.js';
+import { hasClaudioBinary } from '../lib/spawn-command.js';
+import { configExists as claudioConfigExists, getProfile as getClaudioProfile } from '../lib/config.js';
 import { $ } from 'bun';
 import { existsSync } from 'fs';
 
@@ -270,6 +272,167 @@ async function checkTmux(): Promise<CheckResult[]> {
 }
 
 /**
+ * Check worker profiles configuration
+ * Validates that profiles using claudio launcher have proper dependencies
+ */
+async function checkWorkerProfiles(): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+
+  // First check if genie config exists and has worker profiles
+  if (!genieConfigExists()) {
+    results.push({
+      name: 'Worker profiles',
+      status: 'warn',
+      message: 'no genie config',
+      suggestion: 'Run: genie setup',
+    });
+    return results;
+  }
+
+  const config = await loadGenieConfig();
+  const profiles = config.workerProfiles;
+
+  if (!profiles || Object.keys(profiles).length === 0) {
+    results.push({
+      name: 'Worker profiles',
+      status: 'pass',
+      message: 'none configured (using defaults)',
+    });
+    return results;
+  }
+
+  // Check for profiles using claudio launcher
+  const claudioProfiles: { name: string; claudioProfile?: string }[] = [];
+  const claudeProfiles: string[] = [];
+
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (profile.launcher === 'claudio') {
+      claudioProfiles.push({ name, claudioProfile: profile.claudioProfile });
+    } else {
+      claudeProfiles.push(name);
+    }
+  }
+
+  // Report profile count
+  const totalProfiles = Object.keys(profiles).length;
+  results.push({
+    name: 'Profiles configured',
+    status: 'pass',
+    message: `${totalProfiles} profile${totalProfiles === 1 ? '' : 's'}`,
+  });
+
+  // If there are claudio profiles, verify claudio binary and config
+  if (claudioProfiles.length > 0) {
+    // Check claudio binary
+    if (hasClaudioBinary()) {
+      results.push({
+        name: 'claudio binary',
+        status: 'pass',
+      });
+    } else {
+      results.push({
+        name: 'claudio binary',
+        status: 'warn',
+        message: 'not found',
+        suggestion: `${claudioProfiles.length} profile${claudioProfiles.length === 1 ? '' : 's'} use claudio. Install or switch to claude launcher.`,
+      });
+    }
+
+    // Check claudio config exists
+    if (claudioConfigExists()) {
+      results.push({
+        name: 'claudio config',
+        status: 'pass',
+        message: '~/.claudio/config.json',
+      });
+
+      // Validate each claudio profile reference
+      for (const { name, claudioProfile } of claudioProfiles) {
+        if (!claudioProfile) {
+          results.push({
+            name: `Profile '${name}'`,
+            status: 'warn',
+            message: 'no claudioProfile specified',
+            suggestion: 'Add claudioProfile to the profile config',
+          });
+          continue;
+        }
+
+        try {
+          const profile = await getClaudioProfile(claudioProfile);
+          if (profile) {
+            results.push({
+              name: `Profile '${name}'`,
+              status: 'pass',
+              message: `claudio:${claudioProfile}`,
+            });
+          } else {
+            results.push({
+              name: `Profile '${name}'`,
+              status: 'warn',
+              message: `claudio profile '${claudioProfile}' not found`,
+              suggestion: `Run: claudio profiles add ${claudioProfile}`,
+            });
+          }
+        } catch {
+          results.push({
+            name: `Profile '${name}'`,
+            status: 'warn',
+            message: `could not verify claudio profile '${claudioProfile}'`,
+          });
+        }
+      }
+    } else {
+      results.push({
+        name: 'claudio config',
+        status: 'warn',
+        message: 'not found',
+        suggestion: 'Run: claudio setup',
+      });
+
+      // Mark all claudio profiles as having issues
+      for (const { name, claudioProfile } of claudioProfiles) {
+        results.push({
+          name: `Profile '${name}'`,
+          status: 'warn',
+          message: `requires claudio profile '${claudioProfile || 'default'}'`,
+          suggestion: 'Set up claudio first',
+        });
+      }
+    }
+  }
+
+  // Report claude profiles (always valid)
+  for (const name of claudeProfiles) {
+    results.push({
+      name: `Profile '${name}'`,
+      status: 'pass',
+      message: 'claude (direct)',
+    });
+  }
+
+  // Check default profile
+  if (config.defaultWorkerProfile) {
+    if (profiles[config.defaultWorkerProfile]) {
+      results.push({
+        name: 'Default profile',
+        status: 'pass',
+        message: config.defaultWorkerProfile,
+      });
+    } else {
+      results.push({
+        name: 'Default profile',
+        status: 'warn',
+        message: `'${config.defaultWorkerProfile}' not found`,
+        suggestion: 'Run: genie profiles default <profile>',
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Main doctor command
  */
 export async function doctorCommand(): Promise<void> {
@@ -302,6 +465,15 @@ export async function doctorCommand(): Promise<void> {
   printSectionHeader('Tmux');
   const tmuxResults = await checkTmux();
   for (const result of tmuxResults) {
+    printCheckResult(result);
+    if (result.status === 'fail') hasErrors = true;
+    if (result.status === 'warn') hasWarnings = true;
+  }
+
+  // Worker Profiles
+  printSectionHeader('Worker Profiles');
+  const profileResults = await checkWorkerProfiles();
+  for (const result of profileResults) {
     printCheckResult(result);
     if (result.status === 'fail') hasErrors = true;
     if (result.status === 'warn') hasWarnings = true;

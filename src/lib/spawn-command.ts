@@ -73,12 +73,12 @@ export function hasClaudioBinary(): boolean {
  * @example
  * // Claude profile
  * buildSpawnCommand({ launcher: 'claude', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
- * // Returns: "claude --dangerously-skip-permissions --session-id 'abc'"
+ * // Returns: "claude '--dangerously-skip-permissions' --session-id 'abc'"
  *
  * @example
  * // Claudio profile
  * buildSpawnCommand({ launcher: 'claudio', claudioProfile: 'coding-fast', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
- * // Returns: "claudio launch coding-fast -- --dangerously-skip-permissions --session-id 'abc'"
+ * // Returns: "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'abc'"
  *
  * @example
  * // Legacy fallback (no profile)

@@ -43,6 +43,17 @@ export const ClaudioConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
 
+// Worker profile configuration
+// Defines how to launch a Claude worker
+export const WorkerProfileSchema = z.object({
+  /** Which binary to invoke: 'claude' (direct) or 'claudio' (via LLM router) */
+  launcher: z.enum(['claude', 'claudio']),
+  /** Claudio profile name (required if launcher is 'claudio') */
+  claudioProfile: z.string().optional(),
+  /** CLI arguments passed to Claude Code */
+  claudeArgs: z.array(z.string()),
+});
+
 // Full genie configuration
 export const GenieConfigSchema = z.object({
   version: z.number().default(2),
@@ -57,6 +68,10 @@ export const GenieConfigSchema = z.object({
   lastSetupAt: z.string().optional(),
   // Path to genie-cli source directory (for dev mode sync)
   sourcePath: z.string().optional(),
+  // Worker profiles for different spawn configurations
+  workerProfiles: z.record(z.string(), WorkerProfileSchema).optional(),
+  // Default worker profile name to use when --profile is not specified
+  defaultWorkerProfile: z.string().optional(),
 });
 
 // Legacy v1 config schema (for migration)
@@ -78,5 +93,6 @@ export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
+export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;
 export type GenieConfigV1 = z.infer<typeof GenieConfigV1Schema>;

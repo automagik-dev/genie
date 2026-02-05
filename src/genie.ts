@@ -13,6 +13,13 @@ import {
   shortcutsInstallCommand,
   shortcutsUninstallCommand,
 } from './genie-commands/shortcuts.js';
+import {
+  profilesListCommand,
+  profilesAddCommand,
+  profilesRmCommand,
+  profilesShowCommand,
+  profilesDefaultCommand,
+} from './genie-commands/profiles.js';
 
 const program = new Command();
 
@@ -93,5 +100,38 @@ shortcuts
   .command('uninstall')
   .description('Remove shortcuts from config files')
   .action(shortcutsUninstallCommand);
+
+// Profiles command group - manage worker profiles
+const profiles = program
+  .command('profiles')
+  .description('Manage worker profiles for Claude Code spawning');
+
+// Make 'list' the default action for bare `genie profiles`
+profiles.action(profilesListCommand);
+
+profiles
+  .command('list')
+  .description('List all configured worker profiles')
+  .action(profilesListCommand);
+
+profiles
+  .command('add <name>')
+  .description('Create a new worker profile interactively')
+  .action(profilesAddCommand);
+
+profiles
+  .command('rm <name>')
+  .description('Delete a worker profile')
+  .action(profilesRmCommand);
+
+profiles
+  .command('show <name>')
+  .description('Show details of a worker profile')
+  .action(profilesShowCommand);
+
+profiles
+  .command('default [name]')
+  .description('Get or set the default worker profile')
+  .action(profilesDefaultCommand);
 
 program.parse();

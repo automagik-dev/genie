@@ -246,6 +246,7 @@ program
   .option('--no-focus', 'Don\'t focus the new pane')
   .option('-p, --prompt <message>', 'Additional context for the skill')
   .option('-t, --task-id <id>', 'Bind to beads issue')
+  .option('--profile <name>', 'Worker profile to use')
   .action(async (skill: string | undefined, options: spawnCmd.SpawnOptions) => {
     await spawnCmd.spawnCommand(skill, options);
   });
@@ -312,6 +313,7 @@ program
   .option('--no-resume', 'Start fresh session even if previous exists')
   .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
   .option('--no-auto-approve', 'Disable auto-approve for this worker')
+  .option('--profile <name>', 'Worker profile to use')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });

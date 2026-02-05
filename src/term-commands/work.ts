@@ -14,6 +14,7 @@
  *   --no-resume           - Start fresh session even if previous exists
  *   --skill <name>        - Skill to invoke (e.g., 'forge'). Auto-detects 'forge' if wish.md exists.
  *   --repo <path>         - Target a specific nested repo (e.g., 'code/genie-cli')
+ *   --profile <name>      - Worker profile to use (from ~/.genie/config.json workerProfiles)
  */
 
 import { $ } from 'bun';
@@ -26,6 +27,9 @@ import { EventMonitor } from '../lib/orchestrator/index.js';
 import { cleanupEventFile } from './events.js';
 import { join, resolve, isAbsolute } from 'path';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
+import { buildSpawnCommand } from '../lib/spawn-command.js';
+import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile } from '../lib/genie-config.js';
+import type { WorkerProfile } from '../types/genie-config.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // (macro repos like blanco may run without bd)
@@ -49,6 +53,8 @@ export interface WorkOptions {
   repo?: string;
   /** Disable auto-approve for this worker */
   noAutoApprove?: boolean;
+  /** Worker profile to use (from ~/.genie/config.json workerProfiles) */
+  profile?: string;
 }
 
 /**
@@ -570,6 +576,26 @@ export async function workCommand(
       }
     }
 
+    // Load and validate worker profile (before creating pane)
+    const config = await loadGenieConfig();
+    let workerProfile: WorkerProfile | undefined;
+
+    if (options.profile) {
+      workerProfile = getWorkerProfile(config, options.profile);
+      if (!workerProfile) {
+        const available = Object.keys(config.workerProfiles || {});
+        console.error(`Profile '${options.profile}' not found.`);
+        if (available.length > 0) {
+          console.log(`Available profiles: ${available.join(', ')}`);
+        } else {
+          console.log('No profiles configured in ~/.genie/config.json');
+        }
+        process.exit(1);
+      }
+    } else {
+      workerProfile = getDefaultWorkerProfile(config);
+    }
+
     // 1. Resolve target
     let issue: BeadsIssue | null = null;
 
@@ -666,9 +692,14 @@ export async function workCommand(
         const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
         // Resume Claude with the stored session ID
+        // Uses profile configuration if available
+        const resumeCmd = buildSpawnCommand(workerProfile, {
+          resume: existingWorker.claudeSessionId,
+          beadsDir,
+        });
         await tmux.executeCommand(
           paneId,
-          `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --resume '${existingWorker.claudeSessionId}'`,
+          `cd '${escapedWorkingDir}' && ${resumeCmd}`,
           true,
           false
         );
@@ -846,7 +877,12 @@ When you're done, commit your changes and let me know.`;
 
     // Start Claude with session ID for resume capability (without prompt)
     // First cd to correct directory (shell rc files may have overridden tmux -c)
-    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && BEADS_DIR='${beadsDir}' claude --session-id '${claudeSessionId}'`, true, false);
+    // Uses profile configuration if available
+    const spawnCmd = buildSpawnCommand(workerProfile, {
+      sessionId: claudeSessionId,
+      beadsDir,
+    });
+    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnCmd}`, true, false);
 
     console.log(`   Session ID: ${claudeSessionId}`);
 
