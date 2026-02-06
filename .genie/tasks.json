@@ -7,10 +7,28 @@
       "blockedBy": [],
       "createdAt": "2026-02-05T06:18:43.585Z",
       "updatedAt": "2026-02-05T06:18:43.585Z"
+    },
+    "wish-2": {
+      "id": "wish-2",
+      "title": "Finish wish-23 auto-approve: wire automatic engine start on spawn, integrate wish-level overrides",
+      "status": "in_progress",
+      "blockedBy": [],
+      "createdAt": "2026-02-06T06:56:47.610Z",
+      "updatedAt": "2026-02-06T06:56:50.862Z"
+    },
+    "wish-3": {
+      "id": "wish-3",
+      "title": "Finish wish-25 parallel-spa: wire event-driven queue advancement, capture pane IDs, add completion notifications",
+      "status": "in_progress",
+      "blockedBy": [],
+      "createdAt": "2026-02-06T07:30:39.144Z",
+      "updatedAt": "2026-02-06T07:30:42.960Z"
     }
   },
   "order": [
-    "wish-1"
+    "wish-1",
+    "wish-2",
+    "wish-3"
   ],
-  "lastUpdated": "2026-02-05T06:18:43.588Z"
+  "lastUpdated": "2026-02-06T07:49:29.754Z"
 }
