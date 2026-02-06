@@ -44,6 +44,9 @@ yarn-error.log*
 # Worker worktrees
 .genie/worktrees/
 
+# Worker registry (contains session IDs)
+.genie/workers.json
+
 # bd worktree (legacy)
 genie-cli-e6q/
 genie-cli-z84/

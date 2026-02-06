@@ -22,8 +22,9 @@
 
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { createBatch, getBatch, updateBatch, type Batch, type BatchOptions } from '../lib/batch-manager.js';
+import { createBatch, getBatch, updateBatch, checkBatchCompletion, type Batch, type BatchOptions } from '../lib/batch-manager.js';
 import { getRepoGenieDir } from '../lib/genie-dir.js';
+import * as registry from '../lib/worker-registry.js';
 
 // ============================================================================
 // Types
@@ -333,6 +334,152 @@ export async function processQueue(
 }
 
 // ============================================================================
+// Batch monitoring - detect completion and advance queue
+// ============================================================================
+
+/**
+ * Monitor a batch for worker completion events.
+ *
+ * Polls the worker registry to detect when workers finish, then:
+ * - Updates batch worker status to match registry state
+ * - Calls processQueue to spawn next queued workers when slots open
+ * - Detects full batch completion and notifies
+ *
+ * Returns when the batch reaches a terminal state (complete/cancelled).
+ */
+export async function monitorBatch(
+  genieDir: string,
+  batchId: string,
+  options: SpawnParallelOptions,
+  pollIntervalMs: number = 2000,
+): Promise<void> {
+  const spawnFn = async (wishId: string) => {
+    const { workCommand } = await import('./work.js');
+    await workCommand(wishId, {
+      session: options.session,
+      skill: options.skill,
+      noAutoApprove: options.noAutoApprove,
+      _skipAutoApproveBlock: true,
+    });
+    // Capture paneId from worker registry and store in batch
+    const worker = await registry.findByTask(wishId);
+    if (worker?.paneId) {
+      const currentBatch = getBatch(genieDir, batchId);
+      if (currentBatch) {
+        const workers = { ...currentBatch.workers };
+        workers[wishId] = { ...workers[wishId], paneId: worker.paneId };
+        updateBatch(genieDir, batchId, { workers });
+      }
+    }
+  };
+
+  // Process any pending queue items immediately (handles initial spawn failures)
+  try {
+    const initialResult = await processQueue(genieDir, batchId, spawnFn);
+    if (initialResult.spawned > 0) {
+      console.log(`  → Spawned ${initialResult.spawned} queued worker(s)`);
+    }
+  } catch {
+    // Non-fatal - continue monitoring
+  }
+
+  while (true) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    const batch = getBatch(genieDir, batchId);
+    if (!batch || batch.status !== 'active') break;
+
+    // Sync batch worker states from worker registry
+    let stateChanged = false;
+    const workers = { ...batch.workers };
+
+    for (const wishId of batch.wishes) {
+      const batchWorker = workers[wishId];
+      if (!batchWorker) continue;
+
+      // Skip terminal, queued, and spawning workers (spawning workers may not be registered yet)
+      if (['complete', 'failed', 'cancelled', 'queued', 'spawning'].includes(batchWorker.status)) continue;
+
+      const registeredWorker = await registry.findByTask(wishId);
+
+      if (!registeredWorker) {
+        // Worker was unregistered - could be cleanup after completion or pane killed
+        // Only mark as failed if the worker was still running (not already complete)
+        // Check if worker has been running for at least 5 seconds to avoid race with registration
+        const startedAt = batchWorker.startedAt ? new Date(batchWorker.startedAt).getTime() : 0;
+        const runningLongEnough = Date.now() - startedAt > 5000;
+        
+        if (batchWorker.status === 'running' && runningLongEnough) {
+          workers[wishId] = {
+            ...batchWorker,
+            status: 'failed',
+            completedAt: new Date().toISOString(),
+          };
+          stateChanged = true;
+          console.log(`  ✖ ${wishId} worker lost`);
+        }
+        continue;
+      }
+
+      // Map registry states to batch statuses
+      if (registeredWorker.state === 'done' && batchWorker.status !== 'complete') {
+        workers[wishId] = {
+          ...batchWorker,
+          status: 'complete',
+          completedAt: new Date().toISOString(),
+        };
+        stateChanged = true;
+        console.log(`  ✓ ${wishId} completed`);
+      } else if (registeredWorker.state === 'error' && batchWorker.status !== 'failed') {
+        workers[wishId] = {
+          ...batchWorker,
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+        };
+        stateChanged = true;
+        console.log(`  ✖ ${wishId} failed`);
+      } else if (
+        (registeredWorker.state === 'permission' || registeredWorker.state === 'question') &&
+        batchWorker.status !== 'waiting'
+      ) {
+        workers[wishId] = { ...batchWorker, status: 'waiting' };
+        stateChanged = true;
+      } else if (
+        (registeredWorker.state === 'working' || registeredWorker.state === 'idle') &&
+        batchWorker.status === 'waiting'
+      ) {
+        // Worker resumed from waiting - back to running
+        workers[wishId] = { ...batchWorker, status: 'running' };
+        stateChanged = true;
+      }
+    }
+
+    if (stateChanged) {
+      updateBatch(genieDir, batchId, { workers });
+
+      // Process queue - spawn next workers if slots became available
+      try {
+        const queueResult = await processQueue(genieDir, batchId, spawnFn);
+        if (queueResult.spawned > 0) {
+          console.log(`  → Spawned ${queueResult.spawned} queued worker(s)`);
+        }
+      } catch {
+        // Non-fatal - will retry on next poll
+      }
+    }
+
+    // Check batch completion
+    const completion = checkBatchCompletion(genieDir, batchId);
+    if (completion.complete) {
+      const { summary } = completion;
+      console.log(`\n🎉 Batch ${batchId} complete!`);
+      console.log(`   ${summary.complete} succeeded, ${summary.failed} failed, ${summary.cancelled} cancelled`);
+      break;
+    }
+  }
+}
+
+// ============================================================================
 // Main command
 // ============================================================================
 
@@ -400,8 +547,12 @@ export async function spawnParallelCommand(
     try {
       console.log(`Spawning worker for ${wishId}...`);
 
+      // Re-read batch from disk for latest state (avoid stale-read overwrites)
+      const currentBatch = getBatch(genieDir, batch.id);
+      if (!currentBatch) break;
+
       // Update worker status to spawning
-      const workers = { ...batch.workers };
+      const workers = { ...currentBatch.workers };
       workers[wishId] = {
         ...workers[wishId],
         status: 'spawning',
@@ -417,19 +568,32 @@ export async function spawnParallelCommand(
         _skipAutoApproveBlock: true,
       });
 
-      // Update worker status to running
-      workers[wishId] = {
-        ...workers[wishId],
+      // Re-read batch after spawn for latest state
+      const afterSpawn = getBatch(genieDir, batch.id);
+      if (!afterSpawn) break;
+
+      // Capture paneId from worker registry
+      const registeredWorker = await registry.findByTask(wishId);
+
+      // Update worker status to running with captured paneId
+      const updatedWorkers = { ...afterSpawn.workers };
+      updatedWorkers[wishId] = {
+        ...updatedWorkers[wishId],
         status: 'running',
+        ...(registeredWorker?.paneId ? { paneId: registeredWorker.paneId } : {}),
       };
-      updateBatch(genieDir, batch.id, { workers });
+      updateBatch(genieDir, batch.id, { workers: updatedWorkers });
 
       spawned.push(wishId);
     } catch (error: any) {
       console.error(`Failed to spawn ${wishId}: ${error.message}`);
 
+      // Re-read batch from disk for latest state
+      const currentBatch = getBatch(genieDir, batch.id);
+      if (!currentBatch) break;
+
       // Update worker status to failed
-      const workers = { ...batch.workers };
+      const workers = { ...currentBatch.workers };
       workers[wishId] = {
         ...workers[wishId],
         status: 'failed',
@@ -451,15 +615,18 @@ export async function spawnParallelCommand(
     console.log(`  Failed: ${failed.length} (${failed.join(', ')})`);
   }
 
-  // 6. Block for auto-approve if any workers were spawned with auto-approve enabled
-  if (!options.noAutoApprove && spawned.length > 0) {
-    console.log(`\n🔒 Auto-approve active for ${spawned.length} worker(s). Press Ctrl+C to detach.`);
+  // 6. Monitor batch for queue processing and completion notification
+  if (spawned.length > 0 || queued.length > 0) {
+    console.log(`\n📡 Monitoring batch ${batch.id}. Press Ctrl+C to detach.`);
+
     await new Promise<void>((resolve) => {
       process.on('SIGINT', () => {
-        console.log('\n🔒 Auto-approve stopped.');
+        console.log(`\n📡 Detached from batch ${batch.id}. Workers continue in background.`);
         resolve();
         process.exit(0);
       });
+
+      monitorBatch(genieDir, batch.id, options).then(resolve);
     });
   }
 
