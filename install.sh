@@ -607,12 +607,12 @@ install_openclaw_plugin() {
 
     if $DEV_MODE; then
         log "Linking OpenClaw plugin (dev mode)..."
-        openclaw plugins install -l "$plugin_file" \
+        openclaw plugins install -l "$plugin_dir" \
             && success "OpenClaw plugin linked" \
             || warn "OpenClaw plugin link failed"
     else
         log "Installing OpenClaw plugin (copy mode)..."
-        openclaw plugins install "$plugin_file" \
+        openclaw plugins install "$plugin_dir" \
             && success "OpenClaw plugin installed" \
             || warn "OpenClaw plugin install failed"
     fi
@@ -671,21 +671,20 @@ install_genie_cli() {
 
             # Also register as OpenClaw plugin if available
             if check_command openclaw; then
-                local openclaw_plugin_file="$plugin_dir/automagik-genie.ts"
-                if [[ -f "$openclaw_plugin_file" ]]; then
+                if [[ -f "$plugin_dir/openclaw.plugin.json" ]]; then
                     if $DEV_MODE; then
                         log "Linking OpenClaw plugin (dev mode)..."
-                        openclaw plugins install -l "$openclaw_plugin_file" 2>/dev/null \
+                        openclaw plugins install -l "$plugin_dir" 2>/dev/null \
                             && success "OpenClaw plugin linked" \
                             || warn "OpenClaw plugin link failed (may already be installed)"
                     else
                         log "Installing OpenClaw plugin (copy mode)..."
-                        openclaw plugins install "$openclaw_plugin_file" 2>/dev/null \
+                        openclaw plugins install "$plugin_dir" 2>/dev/null \
                             && success "OpenClaw plugin installed" \
                             || warn "OpenClaw plugin install failed (may already be installed)"
                     fi
                 else
-                    warn "OpenClaw plugin entrypoint not found: $openclaw_plugin_file"
+                    warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
                 fi
             fi
         else
