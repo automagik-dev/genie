@@ -15,34 +15,53 @@ export function CodeBlock({
   theme,
   inline = false,
 }: CodeBlockProps) {
+  const isGlass = theme.name === "glass";
+  const isDark = theme.name === "dark";
+
   const styles = StyleSheet.create({
     codeBlock: {
-      backgroundColor: theme.colors.codeBg,
-      borderRadius: 4,
+      backgroundColor: isGlass 
+        ? "rgba(241, 245, 249, 0.8)" 
+        : isDark 
+          ? "#1f2937" 
+          : theme.colors.codeBg,
+      borderRadius: isGlass ? 8 : 4,
       padding: 12,
-      marginVertical: 8,
-      borderLeft: `3px solid ${theme.colors.border}`,
+      marginVertical: 10,
+      borderLeftWidth: isGlass ? 4 : 3,
+      borderLeftColor: isGlass 
+        ? "rgba(99, 102, 241, 0.4)" 
+        : theme.colors.border,
+      ...(isGlass && {
+        borderWidth: 1,
+        borderColor: "rgba(148, 163, 184, 0.2)",
+      }),
     },
     codeText: {
       fontFamily: theme.fonts.mono,
-      fontSize: 9,
-      color: theme.colors.code,
-      lineHeight: 1.5,
+      fontSize: 8,
+      color: isGlass ? "#475569" : theme.colors.code,
+      lineHeight: 1.6,
     },
     inlineCode: {
       fontFamily: theme.fonts.mono,
       fontSize: 9,
-      color: theme.colors.code,
-      backgroundColor: theme.colors.codeBg,
+      color: isGlass ? "#6366f1" : theme.colors.code,
+      backgroundColor: isGlass 
+        ? "rgba(99, 102, 241, 0.1)" 
+        : theme.colors.codeBg,
       paddingHorizontal: 4,
       paddingVertical: 1,
-      borderRadius: 2,
+      borderRadius: 3,
     },
     languageTag: {
-      fontSize: 8,
-      color: theme.colors.text,
-      opacity: 0.5,
-      marginBottom: 6,
+      fontSize: 7,
+      color: isGlass ? "#6366f1" : theme.colors.text,
+      opacity: isGlass ? 1 : 0.5,
+      marginBottom: 8,
+      fontFamily: theme.fonts.heading,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
     },
   });
 
@@ -52,7 +71,9 @@ export function CodeBlock({
 
   return (
     <View style={styles.codeBlock}>
-      {language && language.trim() !== '' && <Text style={styles.languageTag}>{language}</Text>}
+      {language && language.trim() !== '' && (
+        <Text style={styles.languageTag}>{language}</Text>
+      )}
       <Text style={styles.codeText}>{code || ' '}</Text>
     </View>
   );

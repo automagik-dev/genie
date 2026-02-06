@@ -2,6 +2,8 @@ import defaultTheme from "./default.js";
 import minimalTheme from "./minimal.js";
 import corporateTheme from "./corporate.js";
 import darkTheme from "./dark.js";
+import executiveTheme from "./executive.js";
+import glassTheme from "./glass.js";
 
 export type ThemeConfig = {
   name: string;
@@ -31,6 +33,8 @@ export const themes: Record<string, ThemeConfig> = {
   minimal: minimalTheme,
   corporate: corporateTheme,
   dark: darkTheme,
+  executive: executiveTheme,
+  glass: glassTheme,
 };
 
 export function getTheme(name: string): ThemeConfig {

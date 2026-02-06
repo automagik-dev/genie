@@ -4,6 +4,7 @@ import type { Token, Tokens } from "../markdown.js";
 import type { ThemeConfig } from "../themes/index.js";
 import { CodeBlock } from "./CodeBlock.js";
 import { Table } from "./Table.js";
+import { SimpleFlow } from "./Flowchart.js";
 
 interface MarkdownProps {
   tokens: Token[];
@@ -11,37 +12,50 @@ interface MarkdownProps {
 }
 
 export function Markdown({ tokens, theme }: MarkdownProps) {
+  const isGlass = theme.name === "glass";
+  const isExecutive = theme.name === "executive";
+  const isDark = theme.name === "dark";
+
   const styles = StyleSheet.create({
+    // Headings with glass styling
     h1: {
       fontFamily: theme.fonts.heading,
-      fontSize: 24,
-      color: theme.colors.heading,
-      marginTop: theme.spacing.heading,
-      marginBottom: 10,
+      fontSize: 22,
+      color: isGlass ? "#4338ca" : theme.colors.heading,
+      marginTop: theme.spacing.heading + 4,
+      marginBottom: 12,
+      paddingBottom: 8,
+      borderBottomWidth: isGlass ? 2 : 1,
+      borderBottomColor: isGlass 
+        ? "rgba(99, 102, 241, 0.3)" 
+        : theme.colors.border,
     },
     h2: {
       fontFamily: theme.fonts.heading,
-      fontSize: 18,
-      color: theme.colors.heading,
+      fontSize: 16,
+      color: isGlass ? "#6366f1" : theme.colors.heading,
       marginTop: theme.spacing.heading,
       marginBottom: 8,
+      paddingLeft: isGlass ? 10 : 0,
+      borderLeftWidth: isGlass ? 3 : 0,
+      borderLeftColor: "rgba(99, 102, 241, 0.5)",
     },
     h3: {
       fontFamily: theme.fonts.heading,
-      fontSize: 14,
-      color: theme.colors.heading,
+      fontSize: 13,
+      color: isGlass ? "#7c3aed" : theme.colors.heading,
       marginTop: theme.spacing.heading - 4,
       marginBottom: 6,
     },
     h4: {
       fontFamily: theme.fonts.heading,
-      fontSize: 12,
+      fontSize: 11,
       color: theme.colors.heading,
       marginTop: theme.spacing.heading - 6,
       marginBottom: 4,
     },
     paragraph: {
-      fontSize: 11,
+      fontSize: 10,
       color: theme.colors.text,
       marginBottom: theme.spacing.paragraph,
       lineHeight: 1.6,
@@ -58,40 +72,69 @@ export function Markdown({ tokens, theme }: MarkdownProps) {
     },
     list: {
       marginBottom: theme.spacing.paragraph,
-      marginLeft: 15,
+      marginLeft: 12,
     },
     listItem: {
       flexDirection: "row",
-      marginBottom: 4,
+      marginBottom: 3,
     },
     bullet: {
-      width: 15,
-      fontSize: 11,
-      color: theme.colors.text,
+      width: 14,
+      fontSize: 10,
+      color: isGlass ? "#6366f1" : theme.colors.text,
     },
     listItemContent: {
       flex: 1,
-      fontSize: 11,
+      fontSize: 10,
       color: theme.colors.text,
       lineHeight: 1.5,
     },
+    // Glass blockquote with card effect
     blockquote: {
-      borderLeftWidth: 3,
-      borderLeftColor: theme.colors.border,
-      paddingLeft: 12,
-      marginVertical: 10,
-      marginLeft: 10,
+      borderLeftWidth: isGlass ? 4 : 3,
+      borderLeftColor: isGlass 
+        ? "rgba(99, 102, 241, 0.6)" 
+        : theme.colors.border,
+      paddingLeft: 14,
+      paddingVertical: isGlass ? 10 : 4,
+      marginVertical: 12,
+      marginLeft: 0,
+      backgroundColor: isGlass 
+        ? "rgba(99, 102, 241, 0.06)" 
+        : "transparent",
+      borderRadius: isGlass ? 4 : 0,
     },
     blockquoteText: {
-      fontSize: 11,
-      color: theme.colors.text,
+      fontSize: 10,
+      color: isGlass ? "#4338ca" : theme.colors.text,
       fontStyle: "italic",
-      opacity: 0.8,
+      lineHeight: 1.5,
     },
+    // Horizontal rule
     hr: {
       borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border,
+      borderBottomColor: isGlass 
+        ? "rgba(148, 163, 184, 0.3)" 
+        : theme.colors.border,
+      marginVertical: 16,
+    },
+    // Separator with text (for ---) 
+    hrGlass: {
+      flexDirection: "row",
+      alignItems: "center",
       marginVertical: 20,
+    },
+    hrLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: "rgba(148, 163, 184, 0.3)",
+    },
+    hrDot: {
+      width: 6,
+      height: 6,
+      backgroundColor: "rgba(99, 102, 241, 0.3)",
+      borderRadius: 3,
+      marginHorizontal: 10,
     },
     image: {
       maxWidth: "100%",
@@ -184,6 +227,26 @@ export function Markdown({ tokens, theme }: MarkdownProps) {
 
       case "code": {
         const code = token as Tokens.Code;
+        const lang = code.lang?.toLowerCase() || '';
+        
+        // Render flowcharts specially
+        if (lang === 'flow' || lang === 'flowchart' || lang === 'steps') {
+          const steps = code.text
+            .split('\n')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+          const direction = lang === 'steps' ? 'vertical' : 
+            code.text.includes('-->') ? 'horizontal' : 'vertical';
+          return (
+            <SimpleFlow
+              key={index}
+              steps={steps}
+              theme={theme}
+              direction={direction as "vertical" | "horizontal"}
+            />
+          );
+        }
+        
         return (
           <CodeBlock
             key={index}
@@ -239,6 +302,15 @@ export function Markdown({ tokens, theme }: MarkdownProps) {
       }
 
       case "hr":
+        if (isGlass) {
+          return (
+            <View key={index} style={styles.hrGlass}>
+              <View style={styles.hrLine} />
+              <View style={styles.hrDot} />
+              <View style={styles.hrLine} />
+            </View>
+          );
+        }
         return <View key={index} style={styles.hr} />;
 
       case "image": {
@@ -251,9 +323,11 @@ export function Markdown({ tokens, theme }: MarkdownProps) {
 
       default:
         if ("text" in token && typeof (token as Record<string, unknown>).text === "string") {
+          const text = (token as Record<string, string>).text;
+          if (!text || text.trim() === '') return null;
           return (
             <Text key={index} style={styles.paragraph}>
-              {(token as Record<string, string>).text}
+              {text}
             </Text>
           );
         }

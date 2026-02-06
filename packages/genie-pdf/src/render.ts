@@ -51,7 +51,9 @@ export async function renderMarkdownToPDF(options: RenderOptions): Promise<void>
     Document,
     {
       title: parsed.frontmatter.title as string | undefined,
+      subtitle: parsed.frontmatter.subtitle as string | undefined,
       author: parsed.frontmatter.author as string | undefined,
+      date: parsed.frontmatter.date as string | undefined,
       theme,
       showPageNumbers,
       children,
