@@ -162,6 +162,123 @@ check_and_repair_symlink() {
     return 0
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenClaw Config Repair
+# ─────────────────────────────────────────────────────────────────────────────
+
+readonly OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
+
+# Check if OpenClaw config has stale automagik-genie paths
+check_openclaw_stale_paths() {
+    if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
+        return 1  # No config, nothing to repair
+    fi
+
+    if ! check_command jq; then
+        return 1  # Can't parse without jq
+    fi
+
+    # Get all plugin paths from config
+    local paths
+    paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
+
+    for path in $paths; do
+        if [[ "$path" == *"automagik-genie"* ]] && [[ ! -f "$path" ]]; then
+            return 0  # Found stale path
+        fi
+    done
+
+    return 1  # No stale paths
+}
+
+# Get the stale automagik-genie path from OpenClaw config
+get_openclaw_stale_path() {
+    if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
+        return
+    fi
+
+    local paths
+    paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
+
+    for path in $paths; do
+        if [[ "$path" == *"automagik-genie"* ]] && [[ ! -f "$path" ]]; then
+            echo "$path"
+            return
+        fi
+    done
+}
+
+# Repair stale OpenClaw plugin paths
+repair_openclaw_stale_paths() {
+    local stale_path new_path plugin_dir
+
+    stale_path=$(get_openclaw_stale_path)
+    if [[ -z "$stale_path" ]]; then
+        return 0  # Nothing to repair
+    fi
+
+    # Determine the new correct path
+    if [[ -n "$LOCAL_PATH" ]]; then
+        plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
+        new_path="$plugin_dir/automagik-genie.ts"
+    else
+        return 1  # Can't determine new path without LOCAL_PATH
+    fi
+
+    if [[ ! -f "$new_path" ]]; then
+        warn "New plugin path doesn't exist: $new_path"
+        return 1
+    fi
+
+    warn "Stale OpenClaw plugin path detected in config"
+    warn "  Old: $stale_path"
+    warn "  New: $new_path"
+    echo
+
+    if confirm "Update OpenClaw config with new path?"; then
+        # Use jq to update the path
+        local tmp_config
+        tmp_config=$(mktemp)
+
+        if jq --arg old "$stale_path" --arg new "$new_path" '
+            .plugins.load.paths = [.plugins.load.paths[]? | if . == $old then $new else . end]
+        ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
+            mv "$tmp_config" "$OPENCLAW_CONFIG"
+            success "OpenClaw config updated"
+            return 0
+        else
+            rm -f "$tmp_config"
+            error "Failed to update OpenClaw config"
+            return 1
+        fi
+    else
+        warn "Keeping stale path (OpenClaw plugin install may fail)"
+        return 1
+    fi
+}
+
+# Remove automagik-genie paths from OpenClaw config (for uninstall)
+remove_openclaw_plugin_paths() {
+    if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
+        return 0
+    fi
+
+    local tmp_config
+    tmp_config=$(mktemp)
+
+    # Remove any paths containing automagik-genie
+    if jq '
+        .plugins.load.paths = [.plugins.load.paths[]? | select(contains("automagik-genie") | not)] |
+        del(.plugins.entries["automagik-genie"])
+    ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
+        mv "$tmp_config" "$OPENCLAW_CONFIG"
+        return 0
+    else
+        rm -f "$tmp_config"
+        return 1
+    fi
+}
+
 # Verify symlink was created successfully
 verify_symlink() {
     local symlink_path="$1"
@@ -825,15 +942,25 @@ run_uninstall() {
         info "Keeping Genie CLI"
     fi
 
-    # 2. Claude plugin (default: yes)
-    if check_command claude && claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
-        if confirm "Remove Claude Code plugin?"; then
-            if claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null; then
-                success "Claude Code plugin removed"
-                removed_something=true
-            fi
+    # 2. Claude Code plugin symlink (default: yes)
+    if [[ -e "$PLUGIN_SYMLINK" || -L "$PLUGIN_SYMLINK" ]]; then
+        if confirm "Remove Claude Code plugin symlink?"; then
+            rm -rf "$PLUGIN_SYMLINK"
+            success "Claude Code plugin symlink removed"
+            removed_something=true
         else
-            info "Keeping Claude Code plugin"
+            info "Keeping Claude Code plugin symlink"
+        fi
+    fi
+
+    # Also try claude plugin uninstall for marketplace-installed plugins
+    if check_command claude && claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
+        if confirm "Unregister Claude Code plugin from marketplace?"; then
+            claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null || true
+            success "Claude Code plugin unregistered"
+            removed_something=true
+        else
+            info "Keeping Claude Code plugin registration"
         fi
     fi
 
@@ -850,6 +977,9 @@ run_uninstall() {
             if [[ -e "$ext_dir" || -L "$ext_dir" ]]; then
                 rm -rf "$ext_dir"
             fi
+
+            # Also remove paths from OpenClaw config
+            remove_openclaw_plugin_paths
 
             success "OpenClaw plugin removed"
             removed_something=true
@@ -1090,6 +1220,11 @@ main() {
     # Check for broken symlinks before installation
     if [[ "$INSTALL_MODE" == "install" ]]; then
         check_and_repair_symlink
+
+        # Check for stale OpenClaw plugin paths
+        if [[ -n "$LOCAL_PATH" ]] && check_openclaw_stale_paths; then
+            repair_openclaw_stale_paths
+        fi
     fi
 
     case "$INSTALL_MODE" in
