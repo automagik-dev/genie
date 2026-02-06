@@ -409,11 +409,12 @@ export async function spawnParallelCommand(
       };
       updateBatch(genieDir, batch.id, { workers });
 
-      // Call the existing work command
+      // Call the existing work command (skip per-worker blocking; we block once after all spawn)
       await workCommand(wishId, {
         session: options.session,
         skill: options.skill,
         noAutoApprove: options.noAutoApprove,
+        _skipAutoApproveBlock: true,
       });
 
       // Update worker status to running
@@ -448,6 +449,18 @@ export async function spawnParallelCommand(
   }
   if (failed.length > 0) {
     console.log(`  Failed: ${failed.length} (${failed.join(', ')})`);
+  }
+
+  // 6. Block for auto-approve if any workers were spawned with auto-approve enabled
+  if (!options.noAutoApprove && spawned.length > 0) {
+    console.log(`\n🔒 Auto-approve active for ${spawned.length} worker(s). Press Ctrl+C to detach.`);
+    await new Promise<void>((resolve) => {
+      process.on('SIGINT', () => {
+        console.log('\n🔒 Auto-approve stopped.');
+        resolve();
+        process.exit(0);
+      });
+    });
   }
 
   return {

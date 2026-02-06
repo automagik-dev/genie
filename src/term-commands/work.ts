@@ -30,6 +30,10 @@ import { getWorktreeManager } from '../lib/worktree-manager.js';
 import { buildSpawnCommand } from '../lib/spawn-command.js';
 import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile } from '../lib/genie-config.js';
 import type { WorkerProfile } from '../types/genie-config.js';
+import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
+import { createAutoApproveEngine, sendApprovalViaTmux, type AutoApproveEngine } from '../lib/auto-approve-engine.js';
+import { extractPermissionDetails } from '../lib/orchestrator/state-detector.js';
+import type { PermissionRequest } from '../lib/event-listener.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // (macro repos like blanco may run without bd)
@@ -61,6 +65,8 @@ export interface WorkOptions {
   role?: string;
   /** Share worktree with existing worker on same task */
   sharedWorktree?: boolean;
+  /** Internal: skip auto-approve blocking loop (used by spawn-parallel) */
+  _skipAutoApproveBlock?: boolean;
 }
 
 /**
@@ -392,6 +398,66 @@ async function wishFileExists(taskId: string, repoPath: string): Promise<boolean
 }
 
 /**
+ * Load wish.md content for auto-approve overrides
+ */
+async function loadWishContent(taskId: string, repoPath: string): Promise<string | undefined> {
+  const fs = await import('fs/promises');
+  const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
+  try {
+    return await fs.readFile(wishPath, 'utf-8');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Create and start an auto-approve engine for a task.
+ * Loads config hierarchy: global → repo → wish-level overrides.
+ */
+async function createEngineForTask(
+  taskId: string,
+  repoPath: string,
+  targetRepo: string,
+): Promise<AutoApproveEngine | undefined> {
+  try {
+    const wishContent = await loadWishContent(taskId, repoPath);
+    const config = await loadFullAutoApproveConfig(targetRepo, wishContent);
+    const engine = createAutoApproveEngine({
+      config,
+      auditDir: repoPath,
+      sendApproval: sendApprovalViaTmux,
+    });
+    engine.start();
+    return engine;
+  } catch (err: any) {
+    console.log(`⚠️  Auto-approve setup failed: ${err.message} (non-fatal)`);
+    return undefined;
+  }
+}
+
+/**
+ * Block the process to keep auto-approve monitoring alive.
+ * Resolves on SIGINT (Ctrl+C).
+ */
+async function blockForAutoApprove(engine: AutoApproveEngine): Promise<void> {
+  console.log(`\n🔒 Auto-approve active. Press Ctrl+C to detach.`);
+
+  return new Promise<void>((resolve) => {
+    const cleanup = () => {
+      engine.stop();
+      const stats = engine.getStats();
+      console.log(`\n🔒 Auto-approve stopped. (${stats.approved} approved, ${stats.denied} denied, ${stats.escalated} escalated)`);
+      resolve();
+    };
+
+    process.on('SIGINT', () => {
+      cleanup();
+      process.exit(0);
+    });
+  });
+}
+
+/**
  * Wait for Claude CLI to be ready to accept input
  * Polls pane content looking for Claude's input prompt indicator
  */
@@ -491,12 +557,70 @@ async function ensureWorkerWindow(
 function startWorkerMonitoring(
   workerId: string,
   session: string,
-  paneId: string
+  paneId: string,
+  engine?: AutoApproveEngine,
 ): void {
   const monitor = new EventMonitor(session, {
     pollIntervalMs: 1000,
     paneId,
   });
+
+  // Auto-approve: evaluate permission requests via the engine
+  if (engine) {
+    let lastApprovalTime = 0;
+
+    monitor.on('permission', async (event) => {
+      // Debounce: skip if we just approved within 2s
+      const now = Date.now();
+      if (now - lastApprovalTime < 2000) return;
+
+      const rawOutput = event.state?.rawOutput || '';
+      const details = extractPermissionDetails(rawOutput);
+
+      // Map terminal permission type to tool name
+      let toolName = 'unknown';
+      let toolInput: Record<string, unknown> | undefined;
+
+      if (details) {
+        switch (details.type) {
+          case 'bash':
+            toolName = 'Bash';
+            if (details.command) toolInput = { command: details.command };
+            break;
+          case 'file':
+            // Detect specific file tool from raw output
+            if (/Allow.*Edit/i.test(rawOutput)) toolName = 'Edit';
+            else if (/Allow.*Write/i.test(rawOutput)) toolName = 'Write';
+            else if (/Allow.*Read/i.test(rawOutput)) toolName = 'Read';
+            else toolName = 'Write'; // conservative default
+            if (details.file) toolInput = { file_path: details.file };
+            break;
+          default:
+            toolName = details.type;
+        }
+      }
+
+      const request: PermissionRequest = {
+        id: `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        toolName,
+        toolInput,
+        paneId,
+        wishId: workerId,
+        sessionId: '',
+        cwd: '',
+        timestamp: new Date().toISOString(),
+      };
+
+      const decision = await engine.processRequest(request);
+      if (decision.action === 'approve') {
+        lastApprovalTime = now;
+        console.log(`   ✅ Auto-approved: ${toolName}${details?.command ? ` (${details.command.substring(0, 50)})` : ''}`);
+      } else if (decision.action === 'deny') {
+        console.log(`   ❌ Auto-denied: ${toolName} - ${decision.reason}`);
+      }
+      // escalate = do nothing, human must decide
+    });
+  }
 
   monitor.on('state_change', async (event) => {
     if (!event.state) return;
@@ -716,8 +840,21 @@ export async function workCommand(
         }
         await registry.updateState(existingWorker.id, 'working');
 
+        // Create auto-approve engine (if enabled)
+        let resumeEngine: AutoApproveEngine | undefined;
+        if (!options.noAutoApprove) {
+          resumeEngine = await createEngineForTask(
+            taskId,
+            existingWorker.repoPath,
+            existingWorker.repoPath,
+          );
+          if (resumeEngine) {
+            console.log(`🔒 Auto-approve engine started`);
+          }
+        }
+
         // Start monitoring
-        startWorkerMonitoring(existingWorker.id, session, paneId);
+        startWorkerMonitoring(existingWorker.id, session, paneId, resumeEngine);
 
         // Focus window (only if explicitly requested)
         if (options.focus === true) {
@@ -734,6 +871,11 @@ export async function workCommand(
         console.log(`   term approve ${taskId}  - Approve permissions`);
         console.log(`   term close ${taskId}    - Close issue when done`);
         console.log(`   term kill ${taskId}     - Force kill worker`);
+
+        // Keep process alive for auto-approve monitoring
+        if (resumeEngine && !options._skipAutoApproveBlock) {
+          await blockForAutoApprove(resumeEngine);
+        }
         return;
       }
 
@@ -916,10 +1058,19 @@ When you're done, commit your changes and let me know.`;
     }
     await registry.updateState(taskId, 'working');
 
-    // 12. Start monitoring
-    startWorkerMonitoring(taskId, session, paneId);
+    // 12. Create auto-approve engine (if enabled)
+    let engine: AutoApproveEngine | undefined;
+    if (!options.noAutoApprove) {
+      engine = await createEngineForTask(taskId, repoPath, targetRepo);
+      if (engine) {
+        console.log(`🔒 Auto-approve engine started`);
+      }
+    }
 
-    // 13. Focus window (only if explicitly requested)
+    // 13. Start monitoring
+    startWorkerMonitoring(taskId, session, paneId, engine);
+
+    // 14. Focus window (only if explicitly requested)
     if (options.focus === true) {
       await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
     }
@@ -940,6 +1091,11 @@ When you're done, commit your changes and let me know.`;
     console.log(`   term approve ${taskId}  - Approve permissions`);
     console.log(`   term close ${taskId}    - Close issue when done`);
     console.log(`   term kill ${taskId}     - Force kill worker`);
+
+    // Keep process alive for auto-approve monitoring
+    if (engine && !options._skipAutoApproveBlock) {
+      await blockForAutoApprove(engine);
+    }
 
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
