@@ -38,6 +38,19 @@ export async function sendKeysToSession(
       }
 
       paneId = panes[0].id;
+
+      // Warn when defaulting to first pane in a multi-pane session
+      let totalPanes = panes.length;
+      for (let i = 1; i < windows.length; i++) {
+        const windowPanes = await tmux.listPanes(windows[i].id);
+        totalPanes += windowPanes.length;
+      }
+      if (totalPanes > 1) {
+        console.error(
+          `⚠️  No --pane specified. Defaulting to first pane (${paneId}) in session "${sessionName}" which has ${totalPanes} panes. ` +
+          `Use -p <paneId> to target a specific pane.`
+        );
+      }
     }
 
     // Default: enter is true (append Enter key)
