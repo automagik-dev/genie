@@ -94,10 +94,12 @@ export function registerSessionNamespace(program: Command): void {
     .description('Execute command in a tmux session')
     .option('-q, --quiet', 'Suppress stdout output')
     .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
-    .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
+    .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+    .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
       await execCmd.executeInSession(session, command.join(' '), {
         quiet: options.quiet,
         timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
+        pane: options.pane,
       });
     });
 
@@ -238,11 +240,13 @@ export function registerDeprecatedSessionAliases(program: Command): void {
     .description('[DEPRECATED] Use "term session exec"')
     .option('-q, --quiet', 'Suppress output')
     .option('-t, --timeout <ms>', 'Timeout')
-    .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
+    .option('-p, --pane <id>', 'Target pane')
+    .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
       deprecationWarning('term exec', 'term session exec');
       await execCmd.executeInSession(session, command.join(' '), {
         quiet: options.quiet,
         timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
+        pane: options.pane,
       });
     });
 
