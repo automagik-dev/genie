@@ -125,9 +125,10 @@ export function registerSessionNamespace(program: Command): void {
   sessionProgram
     .command('split <session> [direction]')
     .description('Split pane in a tmux session (h=horizontal, v=vertical)')
+    .option('-p, --pane <id>', 'Target pane ID to split (default: active pane)')
     .option('-d, --workspace <path>', 'Working directory for the new pane')
     .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
-    .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+    .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
       await splitCmd.splitSessionPane(session, direction, options);
     });
 
@@ -258,9 +259,10 @@ export function registerDeprecatedSessionAliases(program: Command): void {
   program
     .command('split <session> [direction]', { hidden: true })
     .description('[DEPRECATED] Use "term session split"')
+    .option('-p, --pane <id>', 'Target pane ID to split')
     .option('-d, --workspace <path>', 'Working directory')
     .option('-w, --worktree <branch>', 'Create worktree')
-    .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+    .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
       deprecationWarning('term split', 'term session split');
       await splitCmd.splitSessionPane(session, direction, options);
     });

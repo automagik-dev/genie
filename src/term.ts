@@ -170,11 +170,13 @@ program
   .description('[DEPRECATED] Execute command in a tmux session → use "term session exec"')
   .option('-q, --quiet', 'Suppress stdout output')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
-  .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
     showDeprecation('exec', 'session exec');
     await execCmd.executeInSession(session, command.join(' '), {
       quiet: options.quiet,
       timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
+      pane: options.pane,
     });
   });
 
@@ -192,9 +194,10 @@ program
 program
   .command('split <session> [direction]')
   .description('[DEPRECATED] Split pane in a tmux session → use "term session split"')
+  .option('-p, --pane <id>', 'Target pane ID to split (default: active pane)')
   .option('-d, --workspace <path>', 'Working directory for the new pane')
   .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
-  .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+  .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
     showDeprecation('split', 'session split');
     await splitCmd.splitSessionPane(session, direction, options);
   });

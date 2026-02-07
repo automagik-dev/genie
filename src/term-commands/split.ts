@@ -5,6 +5,7 @@ import { createWorktreeManager } from '../lib/worktree.js';
 export interface SplitOptions {
   workspace?: string;
   worktree?: string;
+  pane?: string;
 }
 
 export async function splitSessionPane(
@@ -20,25 +21,32 @@ export async function splitSessionPane(
       process.exit(1);
     }
 
-    // Get windows and find active one
-    const windows = await tmux.listWindows(session.id);
-    if (!windows || windows.length === 0) {
-      console.error(`❌ No windows found in session "${sessionName}"`);
-      process.exit(1);
+    let paneId: string;
+
+    if (options.pane) {
+      // Use explicitly specified pane
+      paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
+    } else {
+      // Get windows and find active one
+      const windows = await tmux.listWindows(session.id);
+      if (!windows || windows.length === 0) {
+        console.error(`❌ No windows found in session "${sessionName}"`);
+        process.exit(1);
+      }
+
+      // Find active window (default to first if none marked active)
+      const activeWindow = windows.find(w => w.active) || windows[0];
+
+      const panes = await tmux.listPanes(activeWindow.id);
+      if (!panes || panes.length === 0) {
+        console.error(`❌ No panes found in session "${sessionName}"`);
+        process.exit(1);
+      }
+
+      // Find active pane (default to first if none marked active)
+      const activePane = panes.find(p => p.active) || panes[0];
+      paneId = activePane.id;
     }
-
-    // Find active window (default to first if none marked active)
-    const activeWindow = windows.find(w => w.active) || windows[0];
-
-    const panes = await tmux.listPanes(activeWindow.id);
-    if (!panes || panes.length === 0) {
-      console.error(`❌ No panes found in session "${sessionName}"`);
-      process.exit(1);
-    }
-
-    // Find active pane (default to first if none marked active)
-    const activePane = panes.find(p => p.active) || panes[0];
-    const paneId = activePane.id;
 
     // Determine direction
     const splitDirection = direction === 'h' ? 'horizontal' : 'vertical';
