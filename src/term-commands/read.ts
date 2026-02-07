@@ -12,6 +12,7 @@ export interface ReadOptions {
   all?: boolean;
   reverse?: boolean;
   json?: boolean;
+  pane?: string;
 }
 
 export async function readSessionLogs(sessionName: string, options: ReadOptions): Promise<void> {
@@ -31,6 +32,7 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions)
       follow: options.follow,
       all: options.all,
       reverse: options.reverse,
+      pane: options.pane,
     };
 
     // Handle follow mode
@@ -40,7 +42,7 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions)
 
       const stopFollowing = await logReader.followSessionLogs(sessionName, (line) => {
         console.log(line);
-      });
+      }, { pane: options.pane });
 
       // Handle Ctrl+C
       process.on('SIGINT', () => {
