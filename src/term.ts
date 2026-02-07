@@ -159,6 +159,7 @@ program
   .option('--all', 'Export entire scrollback buffer')
   .option('--reverse', 'Reverse chronological (newest first)')
   .option('--json', 'Output as JSON')
+  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
   .action(async (session: string, options: readCmd.ReadOptions) => {
     showDeprecation('read', 'session read');
     await readCmd.readSessionLogs(session, options);
