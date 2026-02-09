@@ -14,11 +14,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
 
 const TARGETS = [
-  { name: 'genie', source: 'src/genie.ts' },
-  { name: 'term', source: 'src/term.ts' },
-  { name: 'worker-service', source: 'src/services/worker-service.ts' },
-  { name: 'validate-wish', source: '.claude-plugin/scripts/validate-wish.ts' },
-  { name: 'validate-completion', source: '.claude-plugin/scripts/validate-completion.ts' }
+  // CLI binaries (use bun runtime)
+  { name: 'genie', source: 'src/genie.ts', runtime: 'bun' },
+  { name: 'term', source: 'src/term.ts', runtime: 'bun' },
+  { name: 'worker-service', source: 'src/services/worker-service.ts', runtime: 'bun' },
+  // Hook scripts (pure Node.js - no bun dependency)
+  { name: 'validate-wish', source: 'plugins/automagik-genie/scripts/src/validate-wish.ts', runtime: 'node' },
+  { name: 'validate-completion', source: 'plugins/automagik-genie/scripts/src/validate-completion.ts', runtime: 'node' },
+  { name: 'session-context', source: 'plugins/automagik-genie/scripts/src/session-context.ts', runtime: 'node' },
 ];
 
 async function buildPlugin() {
@@ -85,9 +88,10 @@ async function buildPlugin() {
         }
       });
 
-      // Add shebang (esbuild banner can cause duplicates if source has shebang)
+      // Add shebang based on target runtime (esbuild banner can cause duplicates if source has shebang)
       const content = fs.readFileSync(outfile, 'utf-8');
-      const shebang = '#!/usr/bin/env bun\n';
+      const runtime = target.runtime || 'bun';
+      const shebang = `#!/usr/bin/env ${runtime}\n`;
       // Remove any existing shebangs and add fresh one
       const cleanContent = content.replace(/^#!.*\n/gm, '');
       fs.writeFileSync(outfile, shebang + cleanContent);

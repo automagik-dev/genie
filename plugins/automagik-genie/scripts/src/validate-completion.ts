@@ -1,42 +1,55 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
- * Validate forge completion before session ends.
- * Used by Stop hook to check if all tasks are complete.
+ * Check for incomplete work when a session ends.
+ * Used by Stop hook to warn about unfinished wishes.
  *
- * Usage: bun validate-completion.ts --session <session-id>
- *        bun validate-completion.ts --help
+ * Pure Node.js - no Bun dependency.
  *
- * This script is advisory-only (exits 0) but logs warnings if:
+ * Usage: node validate-completion.cjs
+ *        node validate-completion.cjs --help
+ *
+ * This script is advisory-only (always exits 0) but logs warnings if:
  * - Active wish exists with incomplete tasks
  * - Tasks are marked BLOCKED
  */
 
-import { parseArgs } from "util";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { parseArgs as _parseArgs } from "util";
 
-const { values } = parseArgs({
-  args: Bun.argv.slice(2),
-  options: {
-    session: { type: "string", short: "s" },
-    help: { type: "boolean", short: "h" },
-  },
-  strict: true,
-});
+// Parse CLI args - util.parseArgs requires Node 18.3+, fallback for older versions
+let values: Record<string, unknown> = {};
+try {
+  const result = _parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      help: { type: "boolean", short: "h" },
+    },
+    strict: false,
+  });
+  values = result.values;
+} catch {
+  // Fallback: manual arg parsing for Node < 18.3
+  const args = process.argv.slice(2);
+  for (const arg of args) {
+    if (arg === "--help" || arg === "-h") {
+      values.help = true;
+    }
+  }
+}
 
 if (values.help) {
   console.log(`
-validate-completion.ts - Check forge completion status
+validate-completion - Check forge completion status
 
 Usage:
-  bun validate-completion.ts --session <session-id>
-  bun validate-completion.ts --help
+  node validate-completion.cjs
+  node validate-completion.cjs --help
 
 Options:
-  -s, --session   Session ID (currently unused, for future integration)
-  -h, --help      Show this help message
+  -h, --help   Show this help message
 
-This script checks for incomplete work and logs warnings.
+This script checks for incomplete work and logs warnings to stderr.
 It always exits 0 (advisory only).
 `);
   process.exit(0);
@@ -47,7 +60,7 @@ interface WishStatus {
   status: string;
   incompleteTasks: number;
   blockedTasks: number;
-  totalTasks: number;
+  totalGroups: number;
 }
 
 function findWishes(baseDir: string): WishStatus[] {
@@ -78,11 +91,10 @@ function findWishes(baseDir: string): WishStatus[] {
 
       // Count execution group tasks
       const groupMatches = content.match(/^###\s+Group\s+[A-Z]:/gm) || [];
-      const totalTasks = groupMatches.length;
+      const totalGroups = groupMatches.length;
 
       // Count unchecked acceptance criteria (rough proxy for incomplete tasks)
       const uncheckedCriteria = (content.match(/^-\s+\[\s+\]/gm) || []).length;
-      const checkedCriteria = (content.match(/^-\s+\[x\]/gim) || []).length;
 
       // Check for BLOCKED mentions
       const blockedMentions = (content.match(/BLOCKED/gi) || []).length;
@@ -90,13 +102,14 @@ function findWishes(baseDir: string): WishStatus[] {
       results.push({
         slug,
         status,
-        incompleteTasks: uncheckedCriteria > 0 ? Math.ceil(uncheckedCriteria / 3) : 0, // Rough estimate
+        incompleteTasks:
+          uncheckedCriteria > 0 ? Math.ceil(uncheckedCriteria / 3) : 0,
         blockedTasks: blockedMentions > 0 ? 1 : 0,
-        totalTasks,
+        totalGroups,
       });
     }
   } catch (error) {
-    // Silent failure - don't block session end
+    console.error(`[validate-completion] Error finding wishes: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return results;
@@ -110,32 +123,33 @@ const wishes = findWishes(cwd);
 const activeWishes = wishes.filter((w) => w.status === "IN_PROGRESS");
 
 if (activeWishes.length === 0) {
-  // No active wishes, nothing to report
   process.exit(0);
 }
 
-// Log warnings for incomplete work
+// Log warnings for incomplete work (to stderr so Claude sees them)
 let hasWarnings = false;
 
 for (const wish of activeWishes) {
   if (wish.incompleteTasks > 0 || wish.blockedTasks > 0) {
     hasWarnings = true;
-    console.log(`\n⚠ Active wish "${wish.slug}" has incomplete work:`);
+    console.error(`\n\u26A0 Active wish "${wish.slug}" has incomplete work:`);
 
     if (wish.incompleteTasks > 0) {
-      console.log(`  - ~${wish.incompleteTasks} tasks with unchecked criteria`);
+      console.error(
+        `  - ~${wish.incompleteTasks} tasks with unchecked criteria`
+      );
     }
 
     if (wish.blockedTasks > 0) {
-      console.log(`  - ${wish.blockedTasks} BLOCKED task(s) need attention`);
+      console.error(`  - ${wish.blockedTasks} BLOCKED task(s) need attention`);
     }
 
-    console.log(`  Run /forge to continue or /review to validate.`);
+    console.error(`  Run /forge to continue or /review to validate.`);
   }
 }
 
 if (hasWarnings) {
-  console.log("");
+  console.error("");
 }
 
 // Always exit 0 (advisory only)

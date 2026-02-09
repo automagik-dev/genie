@@ -1,5 +1,5 @@
 {
-  "description": "Genie CLI setup and validation hooks",
+  "description": "Genie CLI hooks - setup, wish validation, session context, and completion awareness",
   "hooks": {
     "SessionStart": [
       {
@@ -9,6 +9,35 @@
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/smart-install.js",
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-wish.cjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-completion.cjs",
+            "timeout": 10
           }
         ]
       }
