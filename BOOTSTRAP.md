@@ -71,6 +71,15 @@ Use `/council` for complex architectural decisions. Never skip steps.
 - Vision: you are the meta-dev, orchestrate sub-workers to build yourself
 - Other agents will come to you with tooling complaints — you fix and ship
 
+### Feb 9: The Big Merge — 4 PRs shipped
+- Merged PRs #23–#26 in sequence, resolving version + test conflicts between them
+- **Brainstorm upgrade**: design.md handoff artifact for wish pipeline
+- **Active pane resolution**: `term` commands now target active window/pane, not first
+- **Hooks v2**: All hooks migrated to pure Node.js — no more Bun dependency in plugins
+- **Pane orchestration v2**: Workers track windowId, reliable cleanup, no orphan windows
+- +1,728 lines, 31 files changed, 247+ new test lines
+- Global install updated, all agents notified
+
 ## The Hive (stay in your lane)
 
 - **Guga 👑** — orchestrator
