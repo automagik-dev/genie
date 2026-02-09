@@ -1,5 +1,5 @@
 // Runtime version (baked in at build time)
-export const VERSION = '0.260207.1805';
+export const VERSION = '0.260209.0343';
 
 // Generate version string from current datetime
 // Format: 0.YYMMDD.HHMM (e.g., 0.260201.1430 = Feb 1, 2026 at 14:30)
