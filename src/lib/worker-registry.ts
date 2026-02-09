@@ -55,6 +55,8 @@ export interface Worker {
   role?: string;
   /** Custom worker name when multiple workers on same task */
   customName?: string;
+  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = bd-42:1, etc. */
+  subPanes?: string[];
 }
 
 export interface WorkerRegistry {
@@ -95,17 +97,19 @@ async function ensureConfigDir(): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
 }
 
-async function loadRegistry(): Promise<WorkerRegistry> {
+// INTENTIONAL: always fresh-read, never cache
+async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   try {
-    const content = await readFile(getRegistryFilePath(), 'utf-8');
+    const filePath = registryPath || getRegistryFilePath();
+    const content = await readFile(filePath, 'utf-8');
     return JSON.parse(content);
   } catch {
     return { workers: {}, lastUpdated: new Date().toISOString() };
   }
 }
 
-async function saveRegistry(registry: WorkerRegistry): Promise<void> {
-  const filePath = getRegistryFilePath();
+async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Promise<void> {
+  const filePath = registryPath || getRegistryFilePath();
   await mkdir(dirname(filePath), { recursive: true });
   registry.lastUpdated = new Date().toISOString();
   await writeFile(filePath, JSON.stringify(registry, null, 2));
@@ -301,4 +305,59 @@ export function getConfigDir(): string {
  */
 export function getRegistryPath(): string {
   return getRegistryFilePath();
+}
+
+// ============================================================================
+// Sub-Pane Helpers
+// ============================================================================
+
+/**
+ * Add a sub-pane to a worker's subPanes array.
+ * If the worker doesn't exist, this is a no-op.
+ */
+export async function addSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
+  const registry = await loadRegistry(registryPath);
+  const worker = registry.workers[workerId];
+  if (!worker) return;
+
+  if (!worker.subPanes) {
+    worker.subPanes = [];
+  }
+  worker.subPanes.push(paneId);
+  await saveRegistry(registry, registryPath);
+}
+
+/**
+ * Get a pane ID by worker ID and index.
+ * Index 0 = primary paneId, 1+ = subPanes[index - 1].
+ * Returns null if worker not found or index out of range.
+ */
+export async function getPane(workerId: string, index: number, registryPath?: string): Promise<string | null> {
+  const registry = await loadRegistry(registryPath);
+  const worker = registry.workers[workerId];
+  if (!worker) return null;
+
+  if (index === 0) {
+    return worker.paneId;
+  }
+
+  const subIndex = index - 1;
+  if (!worker.subPanes || subIndex >= worker.subPanes.length || subIndex < 0) {
+    return null;
+  }
+
+  return worker.subPanes[subIndex];
+}
+
+/**
+ * Remove a sub-pane from a worker's subPanes array (for dead pane cleanup).
+ * If the worker doesn't exist or has no subPanes, this is a no-op.
+ */
+export async function removeSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
+  const registry = await loadRegistry(registryPath);
+  const worker = registry.workers[workerId];
+  if (!worker || !worker.subPanes) return;
+
+  worker.subPanes = worker.subPanes.filter(p => p !== paneId);
+  await saveRegistry(registry, registryPath);
 }

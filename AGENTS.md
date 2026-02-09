@@ -73,3 +73,15 @@ See `docs/CO-ORCHESTRATION-GUIDE.md` for the full orchestration workflow.
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+
+
+## ⚠️ Worktree Policy (MANDATORY)
+
+**NEVER work on main for feature development.**
+
+Before ANY code work:
+1. Verify branch: `git branch --show-current` (must NOT be main)
+2. If on main → STOP → create worktree or cd to existing one
+3. THEN start editing
+
+Full policy: `/home/genie/workspace/docs/WORKTREE-RULES.md`

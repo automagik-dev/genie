@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "0.260206.1340",
+  "version": "0.260207.1805",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {

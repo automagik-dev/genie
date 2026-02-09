@@ -33,6 +33,7 @@ import * as dashboardCmd from './term-commands/dashboard.js';
 import * as spawnParallelCmd from './term-commands/spawn-parallel.js';
 import * as batchCmd from './term-commands/batch.js';
 import * as councilCmd from './term-commands/council.js';
+import * as resolveCmd from './term-commands/resolve.js';
 import * as historyCmd from './term-commands/history.js';
 import { registerSessionNamespace } from './term-commands/session/commands.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
@@ -147,8 +148,8 @@ program
 
 // Log reading (CRITICAL for AI orchestration)
 program
-  .command('read <session>')
-  .description('[DEPRECATED] Read logs from a tmux session → use "term session read"')
+  .command('read <target>')
+  .description('[DEPRECATED] Read logs from a target → use "term session read"')
   .option('-n, --lines <number>', 'Number of lines to read (default: 100)', '100')
   .option('--from <line>', 'Start line number')
   .option('--to <line>', 'End line number')
@@ -159,22 +160,22 @@ program
   .option('--all', 'Export entire scrollback buffer')
   .option('--reverse', 'Reverse chronological (newest first)')
   .option('--json', 'Output as JSON')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
-  .action(async (session: string, options: readCmd.ReadOptions) => {
+  .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
+  .action(async (target: string, options: readCmd.ReadOptions) => {
     showDeprecation('read', 'session read');
-    await readCmd.readSessionLogs(session, options);
+    await readCmd.readSessionLogs(target, options);
   });
 
 // Command execution
 program
-  .command('exec <session> <command...>')
-  .description('[DEPRECATED] Execute command in a tmux session → use "term session exec"')
+  .command('exec <target> <command...>')
+  .description('[DEPRECATED] Execute command in a target → use "term session exec"')
   .option('-q, --quiet', 'Suppress stdout output')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
-  .action(async (session: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
+  .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
+  .action(async (target: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
     showDeprecation('exec', 'session exec');
-    await execCmd.executeInSession(session, command.join(' '), {
+    await execCmd.executeInSession(target, command.join(' '), {
       quiet: options.quiet,
       timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
       pane: options.pane,
@@ -182,25 +183,25 @@ program
   });
 
 program
-  .command('send <session> <keys>')
-  .description('[DEPRECATED] Send keys to a tmux session → use "term session send"')
+  .command('send <target> <keys>')
+  .description('[DEPRECATED] Send keys to a target → use "term session send"')
   .option('--no-enter', 'Send raw keys without appending Enter')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
-  .action(async (session: string, keys: string, options: { enter?: boolean; pane?: string }) => {
+  .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
+  .action(async (target: string, keys: string, options: { enter?: boolean; pane?: string }) => {
     showDeprecation('send', 'session send');
-    await sendCmd.sendKeysToSession(session, keys, options);
+    await sendCmd.sendKeysToSession(target, keys, options);
   });
 
 // Pane splitting
 program
-  .command('split <session> [direction]')
-  .description('[DEPRECATED] Split pane in a tmux session → use "term session split"')
-  .option('-p, --pane <id>', 'Target pane ID to split (default: active pane)')
+  .command('split <target> [direction]')
+  .description('[DEPRECATED] Split pane for a target → use "term session split"')
+  .option('-p, --pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('-d, --workspace <path>', 'Working directory for the new pane')
   .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
-  .action(async (session: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
+  .action(async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
     showDeprecation('split', 'session split');
-    await splitCmd.splitSessionPane(session, direction, options);
+    await splitCmd.splitSessionPane(target, direction, options);
   });
 
 // Info command (renamed from status)
@@ -335,25 +336,25 @@ program
 
 // Watch session events (promoted from orc watch)
 program
-  .command('watch <session>')
-  .description('Watch session events in real-time')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .command('watch <target>')
+  .description('Watch target events in real-time')
+  .option('-p, --pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('--json', 'Output events as JSON')
   .option('--poll <ms>', 'Poll interval in milliseconds')
-  .action(async (session: string, options: orchestrateCmd.WatchOptions) => {
-    await orchestrateCmd.watchSession(session, options);
+  .action(async (target: string, options: orchestrateCmd.WatchOptions) => {
+    await orchestrateCmd.watchSession(target, options);
   });
 
 // Run task with monitoring (promoted from orc run)
 program
-  .command('run <session> <message>')
+  .command('run <target> <message>')
   .description('Send task and auto-approve until idle (fire-and-forget)')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('-p, --pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('-a, --auto-approve', 'Auto-approve permissions and plans')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 300000)')
   .option('--json', 'Output final state as JSON')
-  .action(async (session: string, message: string, options: orchestrateCmd.RunOptions) => {
-    await orchestrateCmd.runTask(session, message, options);
+  .action(async (target: string, message: string, options: orchestrateCmd.RunOptions) => {
+    await orchestrateCmd.runTask(target, message, options);
   });
 
 // Create beads issue command
@@ -572,6 +573,15 @@ program
     await historyCmd.historyCommand(worker, options);
   });
 
+// Target resolution diagnostic
+program
+  .command('resolve <target>')
+  .description('Resolve a target to its tmux pane (diagnostic, no side effects)')
+  .option('--json', 'Output as JSON')
+  .action(async (target: string, options: resolveCmd.ResolveOptions) => {
+    await resolveCmd.resolveCommand(target, options);
+  });
+
 // Orchestration commands (Claude Code automation)
 const orcProgram = program.command('orc').description('Orchestrate Claude Code sessions');
 
@@ -587,52 +597,52 @@ orcProgram
   });
 
 orcProgram
-  .command('send <session> <message>')
+  .command('send <target> <message>')
   .description('Send message to Claude and track completion')
-  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('--method <name>', 'Completion detection method')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds')
   .option('--no-wait', 'Send without waiting for completion')
   .option('--json', 'Output as JSON')
-  .action(async (session: string, message: string, options: orchestrateCmd.SendOptions) => {
-    await orchestrateCmd.sendMessage(session, message, options);
+  .action(async (target: string, message: string, options: orchestrateCmd.SendOptions) => {
+    await orchestrateCmd.sendMessage(target, message, options);
   });
 
 orcProgram
-  .command('status <session>')
+  .command('status <target>')
   .description('Show current Claude state and details')
-  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('--pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('--json', 'Output as JSON')
-  .action(async (session: string, options: orchestrateCmd.StatusOptions) => {
-    await orchestrateCmd.showStatus(session, options);
+  .action(async (target: string, options: orchestrateCmd.StatusOptions) => {
+    await orchestrateCmd.showStatus(target, options);
   });
 
 orcProgram
-  .command('watch <session>')
-  .description('Watch session events in real-time')
-  .option('--pane <id>', 'Target specific pane ID (e.g., %16)')
+  .command('watch <target>')
+  .description('Watch target events in real-time')
+  .option('--pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('--json', 'Output events as JSON')
   .option('-p, --poll <ms>', 'Poll interval in milliseconds')
-  .action(async (session: string, options: orchestrateCmd.WatchOptions) => {
-    await orchestrateCmd.watchSession(session, options);
+  .action(async (target: string, options: orchestrateCmd.WatchOptions) => {
+    await orchestrateCmd.watchSession(target, options);
   });
 
 orcProgram
-  .command('approve <session>')
+  .command('approve <target>')
   .description('Approve pending permission request')
-  .option('-p, --pane <id>', 'Specific pane ID to target')
+  .option('-p, --pane <id>', '[DEPRECATED] Pane ID - use target addressing instead')
   .option('--auto', 'Auto-approve all future permissions (dangerous!)')
   .option('--deny', 'Deny instead of approve')
-  .action(async (session: string, options: orchestrateCmd.ApproveOptions) => {
-    await orchestrateCmd.approvePermission(session, options);
+  .action(async (target: string, options: orchestrateCmd.ApproveOptions) => {
+    await orchestrateCmd.approvePermission(target, options);
   });
 
 orcProgram
-  .command('answer <session> <choice>')
+  .command('answer <target> <choice>')
   .description('Answer a question with the given choice (use "text:..." to send feedback)')
-  .option('-p, --pane <id>', 'Specific pane ID to target')
-  .action(async (session: string, choice: string, options: { pane?: string }) => {
-    await orchestrateCmd.answerQuestion(session, choice, options);
+  .option('-p, --pane <id>', '[DEPRECATED] Pane ID - use target addressing instead')
+  .action(async (target: string, choice: string, options: { pane?: string }) => {
+    await orchestrateCmd.answerQuestion(target, choice, options);
   });
 
 orcProgram
@@ -653,14 +663,14 @@ orcProgram
   });
 
 orcProgram
-  .command('run <session> <message>')
+  .command('run <target> <message>')
   .description('Send task and auto-approve until idle (fire-and-forget)')
-  .option('-p, --pane <id>', 'Target specific pane ID (e.g., %16)')
+  .option('-p, --pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
   .option('-a, --auto-approve', 'Auto-approve permissions and plans')
   .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 300000)')
   .option('--json', 'Output final state as JSON')
-  .action(async (session: string, message: string, options: orchestrateCmd.RunOptions) => {
-    await orchestrateCmd.runTask(session, message, options);
+  .action(async (target: string, message: string, options: orchestrateCmd.RunOptions) => {
+    await orchestrateCmd.runTask(target, message, options);
   });
 
 // Auto-approve engine management

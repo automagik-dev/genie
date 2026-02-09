@@ -1,17 +1,14 @@
 # USER.md - About Your Human
 
-*Learn about the person you're helping. Update this as you go.*
-
-- **Name:** 
-- **What to call them:** 
-- **Pronouns:** *(optional)*
-- **Timezone:** 
-- **Notes:** 
+- **Name:** Felipe
+- **What to call them:** Felipe
+- **Pronouns:** he/him
+- **Timezone:** GMT-3 (São Paulo)
+- **Notes:** CSO at Namastex Labs. Speaks Portuguese and English.
 
 ## Context
 
-*(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)*
-
----
-
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+- Building the Namastex agent ecosystem — multiple AI agents coordinated via OpenClaw
+- Works closely with Guga (orchestrator agent) and Eva (research agent)
+- We've been deep in genie-cli development together — term commands, pane support, Claude Code worker orchestration
+- Cares about things actually working, not just looking good in a demo

@@ -1,56 +1,49 @@
 import * as tmux from '../lib/tmux.js';
+import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 export interface SendOptions {
   enter?: boolean;
+  /** @deprecated Use target addressing instead: term send bd-42 'msg' */
   pane?: string;
 }
 
+/**
+ * Show deprecation warning when --pane flag is used alongside target addressing.
+ */
+function warnPaneDeprecation(target: string): void {
+  console.error(
+    `\x1b[33m` +
+    `Warning: --pane is deprecated. Use target addressing instead: term send ${target} 'msg'` +
+    `\x1b[0m`
+  );
+}
+
 export async function sendKeysToSession(
-  sessionName: string,
+  target: string,
   keys: string,
   options: SendOptions = {}
 ): Promise<void> {
   try {
-    // Find session
-    const session = await tmux.findSessionByName(sessionName);
-    if (!session) {
-      console.error(`❌ Session "${sessionName}" not found`);
-      process.exit(1);
-    }
-
     let paneId: string;
+    let resolvedLabel = target;
 
-    // Use specified pane or find first pane
     if (options.pane) {
+      // Deprecated --pane escape hatch: honor but warn
+      warnPaneDeprecation(target);
       paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
+
+      // Still need to verify target exists as a session for backwards compat
+      const session = await tmux.findSessionByName(target);
+      if (!session) {
+        console.error(`Session "${target}" not found`);
+        process.exit(1);
+      }
+      resolvedLabel = `${target} (pane ${paneId})`;
     } else {
-      // Get first window and pane
-      const windows = await tmux.listWindows(session.id);
-      if (!windows || windows.length === 0) {
-        console.error(`❌ No windows found in session "${sessionName}"`);
-        process.exit(1);
-      }
-
-      const panes = await tmux.listPanes(windows[0].id);
-      if (!panes || panes.length === 0) {
-        console.error(`❌ No panes found in session "${sessionName}"`);
-        process.exit(1);
-      }
-
-      paneId = panes[0].id;
-
-      // Warn when defaulting to first pane in a multi-pane session
-      let totalPanes = panes.length;
-      for (let i = 1; i < windows.length; i++) {
-        const windowPanes = await tmux.listPanes(windows[i].id);
-        totalPanes += windowPanes.length;
-      }
-      if (totalPanes > 1) {
-        console.error(
-          `⚠️  No --pane specified. Defaulting to first pane (${paneId}) in session "${sessionName}" which has ${totalPanes} panes. ` +
-          `Use -p <paneId> to target a specific pane.`
-        );
-      }
+      // Use target resolver (DEC-1 from wish-26)
+      const resolved = await resolveTarget(target);
+      paneId = resolved.paneId;
+      resolvedLabel = formatResolvedLabel(resolved, target);
     }
 
     // Default: enter is true (append Enter key)
@@ -60,16 +53,14 @@ export async function sendKeysToSession(
     const escapedKeys = keys.replace(/'/g, "'\\''");
 
     if (withEnter) {
-      // Send keys with Enter appended
       await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedKeys}' Enter`);
     } else {
-      // Send raw keys without Enter
       await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedKeys}'`);
     }
 
-    console.log(`✅ Keys sent to session "${sessionName}"${withEnter ? ' (with Enter)' : ''}`);
+    console.log(`Keys sent to ${resolvedLabel}${withEnter ? ' (with Enter)' : ''}`);
   } catch (error: any) {
-    console.error(`❌ Error sending keys: ${error.message}`);
+    console.error(`Error sending keys: ${error.message}`);
     process.exit(1);
   }
 }

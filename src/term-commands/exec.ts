@@ -1,10 +1,23 @@
 import * as tmux from '../lib/tmux.js';
 import { getTerminalConfig } from '../lib/genie-config.js';
+import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 export interface ExecOptions {
   quiet?: boolean;
   timeout?: number;
+  /** @deprecated Use target addressing instead: term exec bd-42 'cmd' */
   pane?: string;
+}
+
+/**
+ * Show deprecation warning when --pane flag is used.
+ */
+function warnPaneDeprecation(target: string): void {
+  console.error(
+    `\x1b[33m` +
+    `Warning: --pane is deprecated. Use target addressing instead: term exec ${target} 'cmd'` +
+    `\x1b[0m`
+  );
 }
 
 export async function executeInSession(
@@ -12,57 +25,28 @@ export async function executeInSession(
   command: string,
   options: ExecOptions = {}
 ): Promise<void> {
-  // Parse target: "session:window" or just "session"
-  const [sessionName, windowName] = target.includes(':')
-    ? target.split(':')
-    : [target, undefined];
-
   try {
     let paneId: string;
+    let resolvedLabel = target;
 
     if (options.pane) {
-      // Direct pane targeting (like term send --pane)
+      // Deprecated --pane escape hatch: honor but warn
+      warnPaneDeprecation(target);
       paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-      // Still validate session exists
+
+      // Parse target for session validation (backwards compat with old session:window syntax)
+      const [sessionName] = target.includes(':') ? target.split(':') : [target];
       const session = await tmux.findSessionByName(sessionName);
       if (!session) {
         console.error(`Session "${sessionName}" not found`);
         process.exit(1);
       }
+      resolvedLabel = `${target} (pane ${paneId})`;
     } else {
-      // Find session (don't create - exec should target existing sessions)
-      const session = await tmux.findSessionByName(sessionName);
-      if (!session) {
-        console.error(`Session "${sessionName}" not found`);
-        process.exit(1);
-      }
-
-      const windows = await tmux.listWindows(session.id);
-      if (!windows || windows.length === 0) {
-        console.error(`No windows found in session "${sessionName}"`);
-        process.exit(1);
-      }
-
-      let targetWindow;
-      if (windowName) {
-        // Specific window requested via "session:window" syntax
-        targetWindow = windows.find(w => w.name === windowName);
-        if (!targetWindow) {
-          console.error(`Window "${windowName}" not found in session "${sessionName}"`);
-          process.exit(1);
-        }
-      } else {
-        // Use first window (active window)
-        targetWindow = windows[0];
-      }
-
-      const panes = await tmux.listPanes(targetWindow.id);
-      if (!panes || panes.length === 0) {
-        console.error(`No panes found in window "${targetWindow.name}"`);
-        process.exit(1);
-      }
-
-      paneId = panes[0].id;
+      // Use target resolver (DEC-1 from wish-26)
+      const resolved = await resolveTarget(target);
+      paneId = resolved.paneId;
+      resolvedLabel = formatResolvedLabel(resolved, target);
     }
 
     // Use config default if no timeout specified
@@ -79,6 +63,11 @@ export async function executeInSession(
     // Output the result (unless quiet mode)
     if (output && !options.quiet) {
       console.log(output);
+    }
+
+    // Log resolution confirmation to stderr (so stdout stays clean for exec output)
+    if (!options.quiet) {
+      console.error(`Executed in ${resolvedLabel}`);
     }
 
     process.exit(exitCode);

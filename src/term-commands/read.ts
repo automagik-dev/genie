@@ -1,5 +1,6 @@
 import * as logReader from '../lib/log-reader.js';
 import { getTerminalConfig } from '../lib/genie-config.js';
+import { resolveTarget } from '../lib/target-resolver.js';
 
 export interface ReadOptions {
   lines?: string;
@@ -12,11 +13,40 @@ export interface ReadOptions {
   all?: boolean;
   reverse?: boolean;
   json?: boolean;
+  /** @deprecated Use target addressing instead: term read bd-42 */
   pane?: string;
 }
 
-export async function readSessionLogs(sessionName: string, options: ReadOptions): Promise<void> {
+/**
+ * Show deprecation warning when --pane flag is used.
+ */
+function warnPaneDeprecation(target: string): void {
+  console.error(
+    `\x1b[33m` +
+    `Warning: --pane is deprecated. Use target addressing instead: term read ${target}` +
+    `\x1b[0m`
+  );
+}
+
+export async function readSessionLogs(target: string, options: ReadOptions): Promise<void> {
   try {
+    let resolvedPaneId: string | undefined;
+    let sessionName = target;
+
+    if (options.pane) {
+      // Deprecated --pane escape hatch: honor but warn
+      warnPaneDeprecation(target);
+      resolvedPaneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
+      // sessionName stays as the target (session name) for log-reader
+    } else {
+      // Use target resolver (DEC-1 from wish-26)
+      const resolved = await resolveTarget(target);
+      resolvedPaneId = resolved.paneId;
+      // If resolved via worker or raw pane, we pass the paneId to the log reader
+      // The log reader needs a session name for follow mode, so use resolved.session if available
+      sessionName = resolved.session || target;
+    }
+
     // Use config default if no lines specified
     const termConfig = getTerminalConfig();
     const defaultLines = termConfig.readLines;
@@ -32,17 +62,17 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions)
       follow: options.follow,
       all: options.all,
       reverse: options.reverse,
-      pane: options.pane,
+      pane: resolvedPaneId,
     };
 
     // Handle follow mode
     if (options.follow) {
-      console.log(`Following session "${sessionName}" (Ctrl+C to stop)...`);
+      console.log(`Following "${target}" (Ctrl+C to stop)...`);
       console.log('');
 
       const stopFollowing = await logReader.followSessionLogs(sessionName, (line) => {
         console.log(line);
-      }, { pane: options.pane });
+      }, { pane: resolvedPaneId });
 
       // Handle Ctrl+C
       process.on('SIGINT', () => {
@@ -62,6 +92,7 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions)
     if (options.json) {
       const lines = content.split('\n');
       console.log(JSON.stringify({
+        target,
         session: sessionName,
         lineCount: lines.length,
         content: lines,
@@ -71,7 +102,7 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions)
 
     console.log(content);
   } catch (error: any) {
-    console.error(`Error reading session logs: ${error.message}`);
+    console.error(`Error reading logs: ${error.message}`);
     process.exit(1);
   }
 }
