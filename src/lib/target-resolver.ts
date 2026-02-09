@@ -188,6 +188,42 @@ export async function resolveTarget(
     };
   }
 
+  // ---- Level 1.5: Raw window ID (starts with @) -> worker lookup ----
+  if (target.startsWith('@')) {
+    debug(`"${target}" -> window ID lookup`);
+
+    const workers = await getWorkers(injectedWorkers, options.registryPath);
+    const normalizedId = target;
+    const matchingWorker = Object.values(workers).find(w => w.windowId === normalizedId);
+
+    if (matchingWorker) {
+      debug(`"${target}" -> found worker "${matchingWorker.id}" with pane ${matchingWorker.paneId}`);
+
+      if (checkLiveness) {
+        const live = await isPaneLive(matchingWorker.paneId);
+        if (!live) {
+          throw new Error(
+            `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. ` +
+            `Run 'term kill ${matchingWorker.id}' to clean up.`
+          );
+        }
+      }
+
+      return {
+        paneId: matchingWorker.paneId,
+        session: matchingWorker.session,
+        workerId: matchingWorker.id,
+        resolvedVia: 'worker',
+      };
+    }
+
+    // No worker owns this window
+    throw new Error(
+      `Window "${target}" not found in worker registry.\n` +
+      `Run 'term workers' to list workers or 'term session window ls <session>' to list windows.`
+    );
+  }
+
   // ---- Load workers (injected or from registry) ----
   const workers = await getWorkers(injectedWorkers, options.registryPath);
 

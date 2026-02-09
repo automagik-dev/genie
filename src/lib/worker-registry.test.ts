@@ -14,6 +14,7 @@ import {
   addSubPane,
   getPane,
   removeSubPane,
+  findByWindow,
   type Worker,
 } from './worker-registry.js';
 
@@ -305,6 +306,93 @@ describe('loadRegistry fresh-read guarantee', () => {
     // Next read should see the updated value
     const pane2 = await getPane('w1', 0, TEST_REGISTRY_PATH);
     expect(pane2).toBe('%99');
+  });
+});
+
+// ============================================================================
+// windowId field and findByWindow
+// ============================================================================
+
+describe('Worker type: windowId field', () => {
+  beforeEach(cleanTestDir);
+
+  test('Worker type includes optional windowId field', () => {
+    const worker: Worker = makeWorker({ windowId: '@4', windowName: 'bd-42' });
+    expect(worker.windowId).toBe('@4');
+    expect(worker.windowName).toBe('bd-42');
+  });
+
+  test('Worker without windowId has undefined windowId', () => {
+    const worker: Worker = makeWorker();
+    expect(worker.windowId).toBeUndefined();
+  });
+
+  test('windowId persists through register/read cycle', async () => {
+    const worker = makeWorker({ windowId: '@7', windowName: 'bd-42' });
+    const registry = {
+      workers: { [worker.id]: worker },
+      lastUpdated: new Date().toISOString(),
+    };
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(registry, null, 2));
+
+    const content = JSON.parse(readFileSync(TEST_REGISTRY_PATH, 'utf-8'));
+    const loaded = content.workers['bd-42'];
+    expect(loaded.windowId).toBe('@7');
+    expect(loaded.windowName).toBe('bd-42');
+  });
+});
+
+describe('findByWindow', () => {
+  beforeEach(() => {
+    cleanTestDir();
+    // We need to set cwd to test dir so the registry path resolves correctly
+    // Use global registry to avoid cwd dependency
+    process.env.TERM_WORKER_REGISTRY = 'global';
+  });
+
+  test('findByWindow returns worker with matching windowId', async () => {
+    const worker = makeWorker({ windowId: '@4', windowName: 'bd-42' });
+    const registry = {
+      workers: { [worker.id]: worker },
+      lastUpdated: new Date().toISOString(),
+    };
+    // Write to global registry location
+    const { mkdirSync: mkdirs } = await import('fs');
+    const { join: joinPath } = await import('path');
+    const { homedir: home } = await import('os');
+    const configDir = joinPath(home(), '.config', 'term');
+    mkdirs(configDir, { recursive: true });
+    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
+
+    const found = await findByWindow('@4');
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe('bd-42');
+    expect(found!.windowId).toBe('@4');
+
+    // Cleanup
+    const { unlinkSync } = await import('fs');
+    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
+  });
+
+  test('findByWindow returns null for unknown window', async () => {
+    const worker = makeWorker({ windowId: '@4' });
+    const registry = {
+      workers: { [worker.id]: worker },
+      lastUpdated: new Date().toISOString(),
+    };
+    const { mkdirSync: mkdirs } = await import('fs');
+    const { join: joinPath } = await import('path');
+    const { homedir: home } = await import('os');
+    const configDir = joinPath(home(), '.config', 'term');
+    mkdirs(configDir, { recursive: true });
+    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
+
+    const found = await findByWindow('@999');
+    expect(found).toBeNull();
+
+    // Cleanup
+    const { unlinkSync } = await import('fs');
+    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
   });
 });
 

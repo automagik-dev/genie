@@ -225,6 +225,17 @@ export async function killWindow(windowId: string): Promise<void> {
 }
 
 /**
+ * Kill a tmux window using session-qualified targeting.
+ * Uses `sessionId:windowId` format to avoid ambiguity across sessions.
+ */
+export async function killWindowQualified(
+  sessionId: string,
+  windowId: string
+): Promise<void> {
+  await executeTmux(`kill-window -t '${sessionId}:${windowId}'`);
+}
+
+/**
  * Kill a tmux pane by ID
  */
 export async function killPane(paneId: string): Promise<void> {

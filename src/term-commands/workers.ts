@@ -30,6 +30,8 @@ export interface WorkersOptions {
 interface WorkerDisplay {
   name: string;
   pane: string;
+  window?: string;
+  windowId?: string;
   task: string;
   state: string;
   time: string;
@@ -170,6 +172,8 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
       displayData.push({
         name: worker.id,
         pane: worker.paneId,
+        window: worker.windowName,
+        windowId: worker.windowId,
         task: worker.taskTitle
           ? `"${worker.taskTitle.substring(0, 25)}${worker.taskTitle.length > 25 ? '...' : ''}"`
           : worker.taskId,

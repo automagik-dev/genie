@@ -803,6 +803,91 @@ describe('Active pane resolution in defaultTmuxLookup', () => {
     expect(result.paneId).toBe('%55');
     expect(result.session).toBe('my-session');
     expect(result.resolvedVia).toBe('session:window');
+
+// Level 1.5: Window ID (starts with @)
+// ============================================================================
+
+describe('Level 1.5: Window ID', () => {
+  beforeEach(cleanTestDir);
+
+  test('resolveTarget("@4") resolves to worker owning that window', async () => {
+    const result = await resolveTarget('@4', {
+      checkLiveness: false,
+      workers: {
+        'bd-42': {
+          id: 'bd-42',
+          paneId: '%17',
+          session: 'genie',
+          worktree: null,
+          taskId: 'bd-42',
+          startedAt: new Date().toISOString(),
+          state: 'working' as const,
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          windowId: '@4',
+          windowName: 'bd-42',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%17');
+    expect(result.session).toBe('genie');
+    expect(result.workerId).toBe('bd-42');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('resolveTarget("@999") throws prescriptive error for unknown window', async () => {
+    await expect(
+      resolveTarget('@999', {
+        checkLiveness: false,
+        workers: {
+          'bd-42': {
+            id: 'bd-42',
+            paneId: '%17',
+            session: 'genie',
+            worktree: null,
+            taskId: 'bd-42',
+            startedAt: new Date().toISOString(),
+            state: 'working' as const,
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            windowId: '@4',
+          },
+        },
+      })
+    ).rejects.toThrow('Window "@999" not found in worker registry');
+  });
+
+  test('resolveTarget("@4") with dead pane throws error', async () => {
+    await expect(
+      resolveTarget('@4', {
+        checkLiveness: true,
+        isPaneLive: async () => false,
+        workers: {
+          'bd-42': {
+            id: 'bd-42',
+            paneId: '%17',
+            session: 'genie',
+            worktree: null,
+            taskId: 'bd-42',
+            startedAt: new Date().toISOString(),
+            state: 'working' as const,
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            windowId: '@4',
+          },
+        },
+      })
+    ).rejects.toThrow(/Window @4.*dead/);
+  });
+
+  test('resolveTarget("@4") with empty workers throws error', async () => {
+    await expect(
+      resolveTarget('@4', {
+        checkLiveness: false,
+        workers: {},
+      })
+    ).rejects.toThrow('Window "@4" not found');
   });
 });
 

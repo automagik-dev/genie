@@ -51,6 +51,8 @@ export interface Worker {
   claudeSessionId?: string;
   /** tmux window name (matches taskId) — used for window cleanup */
   windowName?: string;
+  /** tmux window ID (e.g., "@4") — used for session-qualified cleanup */
+  windowId?: string;
   /** Worker role when multiple workers on same task (e.g., "main", "tests", "review") */
   role?: string;
   /** Custom worker name when multiple workers on same task */
@@ -189,6 +191,16 @@ export async function findByPane(paneId: string): Promise<Worker | null> {
   // Normalize pane ID (with or without % prefix)
   const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
   return workers.find(w => w.paneId === normalizedPaneId) || null;
+}
+
+/**
+ * Find worker by tmux window ID (e.g., "@4")
+ */
+export async function findByWindow(windowId: string): Promise<Worker | null> {
+  const workers = await list();
+  // Normalize window ID (with or without @ prefix)
+  const normalizedId = windowId.startsWith('@') ? windowId : `@${windowId}`;
+  return workers.find(w => w.windowId === normalizedId) || null;
 }
 
 /**

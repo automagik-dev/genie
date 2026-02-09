@@ -508,7 +508,7 @@ async function ensureWorkerWindow(
   session: string,
   taskId: string,
   workingDir: string
-): Promise<{ paneId: string; windowCreated: boolean } | null> {
+): Promise<{ paneId: string; windowId: string; windowCreated: boolean } | null> {
   try {
     // Find session
     const sessionObj = await tmux.findSessionByName(session);
@@ -526,7 +526,7 @@ async function ensureWorkerWindow(
         console.error(`❌ No panes in existing window "${taskId}"`);
         return null;
       }
-      return { paneId: panes[0].id, windowCreated: false };
+      return { paneId: panes[0].id, windowId: existingWindow.id, windowCreated: false };
     }
 
     // Create new window named after the task
@@ -543,7 +543,7 @@ async function ensureWorkerWindow(
       return null;
     }
 
-    return { paneId: panes[0].id, windowCreated: true };
+    return { paneId: panes[0].id, windowId: newWindow.id, windowCreated: true };
   } catch (error: any) {
     console.error(`❌ Error ensuring worker window: ${error.message}`);
     return null;
@@ -803,13 +803,14 @@ export async function workCommand(
           process.exit(1);
         }
 
-        const { paneId } = paneResult;
+        const { paneId, windowId } = paneResult;
 
-        // Update worker with new pane ID and window name
+        // Update worker with new pane ID, window name, and window ID
         await registry.update(existingWorker.id, {
           paneId,
           session,
           windowName: taskId,
+          windowId,
           state: 'spawning',
           lastStateChange: new Date().toISOString(),
         });
@@ -943,7 +944,7 @@ export async function workCommand(
       process.exit(1);
     }
 
-    const { paneId } = paneResult;
+    const { paneId, windowId } = paneResult;
 
     // 8. Generate Claude session ID for resume capability
     const claudeSessionId = randomUUID();
@@ -970,6 +971,7 @@ export async function workCommand(
       repoPath: targetRepo, // Store the target repo, not the macro repo
       claudeSessionId,
       windowName: taskId,
+      windowId,
       role: options.role,
       customName: options.name,
     };

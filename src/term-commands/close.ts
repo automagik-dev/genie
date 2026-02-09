@@ -278,7 +278,28 @@ export async function closeCommand(
 
     // 4. Kill ALL worker windows/panes (supports N workers per task)
     for (const w of allWorkers) {
-      if (w.windowName) {
+      if (w.windowId && w.session) {
+        // Prefer session-qualified window ID for reliable cleanup (DEC-2)
+        console.log(`💀 Killing worker window "${w.windowName || w.windowId}" (${w.id})...`);
+        try {
+          const sessionObj = await tmux.findSessionByName(w.session);
+          if (sessionObj) {
+            try {
+              await tmux.killWindowQualified(sessionObj.id, w.windowId);
+            } catch {
+              // Session-qualified kill failed (window may have moved) — fallback to direct kill
+              await tmux.killWindow(w.windowId);
+            }
+          } else {
+            // Session gone — try direct window kill as fallback
+            await tmux.killWindow(w.windowId);
+          }
+          console.log(`   ✅ Window killed`);
+        } catch {
+          console.log(`   ℹ️  Window already gone`);
+        }
+      } else if (w.windowName) {
+        // Fallback: name-based kill for workers without windowId (backward compat)
         console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
         try {
           await tmux.killWindow(w.windowName);
