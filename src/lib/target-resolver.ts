@@ -90,13 +90,14 @@ async function defaultTmuxLookup(
       targetWindow = windows.find(w => w.name === windowName);
       if (!targetWindow) return null;
     } else {
-      targetWindow = windows[0];
+      targetWindow = windows.find(w => w.active) || windows[0];
     }
 
     const panes = await tmux.listPanes(targetWindow.id);
     if (!panes || panes.length === 0) return null;
 
-    return { paneId: panes[0].id, session: sessionName };
+    const targetPane = panes.find(p => p.active) || panes[0];
+    return { paneId: targetPane.id, session: sessionName };
   } catch {
     return null;
   }
