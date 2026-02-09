@@ -9,7 +9,7 @@ description: "Use when starting creative work - explore ideas through dialogue b
 
 Collaborative exploration phase: understand the idea, explore approaches, and validate a design. This is the creative space before structured planning.
 
-**Output:** Validated design ready for `/wish` to structure into executable tasks.
+**Output:** `.genie/brainstorms/<slug>/design.md` — validated design ready for `/wish` to structure into executable tasks.
 
 ---
 
@@ -65,21 +65,34 @@ Present the design in small sections (200-300 words each). Check after each sect
 - Key decisions with rationale
 - Risks and mitigations
 
----
+### 6. Finalize and Handoff
 
-## After Design Validation
+Once the user approves the design, choose one of the following options.
 
-Once the user approves the design:
-
-**Option A: Continue to structured planning**
+**Option A: Write Handoff & Plan with `/wish`**
+For most ideas, write the handoff artifact:
+1. **Choose a slug** — short, kebab-case name (e.g., `auth-redesign`, `pdf-export`)
+2. **Create the directory:** `.genie/brainstorms/<slug>/`
+3. **Write `design.md`** using the template at `references/design-template.md`
+4. **Fill all sections** — Problem, Solution, Scope IN/OUT, Key Decisions, Risks, Success Definition
+5. **Set status to `VALIDATED`**
+6. Respond with:
 ```
-"Design validated. Run /wish to create structured execution plan."
+"Design written to .genie/brainstorms/<slug>/design.md.
+Run /wish to create structured execution plan."
 ```
 
-**Option B: Quick implementation (small scope)**
-If the design is small enough to implement directly:
+**Option B: Write Handoff & Implement Directly**
+For small ideas that still warrant a document. Follow steps 1-5 from Option A, then respond:
 ```
-"Design validated. This is small enough to implement directly. Proceed?"
+"Design written to .genie/brainstorms/<slug>/design.md.
+This is small enough to implement directly. Proceed?"
+```
+
+**Option C: Skip Handoff**
+For trivial ideas or quick explorations that won't need `/wish`. No document needed:
+```
+"Design validated verbally. Too small for a formal handoff. Proceed directly?"
 ```
 
 ---
