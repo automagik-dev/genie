@@ -28,7 +28,7 @@ import { cleanupEventFile } from './events.js';
 import { join, resolve, isAbsolute } from 'path';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
 import { buildSpawnCommand } from '../lib/spawn-command.js';
-import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile } from '../lib/genie-config.js';
+import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile, getSessionName } from '../lib/genie-config.js';
 import type { WorkerProfile } from '../types/genie-config.js';
 import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
 import { createAutoApproveEngine, sendApprovalViaTmux, type AutoApproveEngine } from '../lib/auto-approve-engine.js';
@@ -370,6 +370,41 @@ async function getCurrentSession(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Get or create a tmux session.
+ * If already in a tmux session, returns the current session name.
+ * Otherwise, auto-creates a new detached session using the configured name.
+ */
+export async function getOrCreateSession(sessionOption?: string): Promise<string> {
+  // If session was explicitly provided via --session, use that
+  if (sessionOption) return sessionOption;
+
+  // Try to get the current session (works when inside tmux)
+  const current = await getCurrentSession();
+  if (current) return current;
+
+  // Not inside tmux — auto-create a detached session
+  const configName = getSessionName(); // defaults to "genie"
+  const sessionName = configName || 'genie-workers';
+
+  // Check if a session with this name already exists
+  const existing = await tmux.findSessionByName(sessionName);
+  if (existing) {
+    console.log(`📺 Found existing tmux session '${sessionName}'. Attach with: tmux attach -t ${sessionName}`);
+    return sessionName;
+  }
+
+  // Create a new detached session
+  const created = await tmux.createSession(sessionName);
+  if (!created) {
+    console.error('❌ Failed to create tmux session. Is tmux installed?');
+    process.exit(1);
+  }
+
+  console.log(`📺 Created tmux session '${sessionName}'. Attach with: tmux attach -t ${sessionName}`);
+  return sessionName;
 }
 
 /**
@@ -893,12 +928,8 @@ export async function workCommand(
         console.log(`   Session ID: ${existingWorker.claudeSessionId}`);
         console.log(`   Resuming previous Claude session...`);
 
-        // Get session
-        const session = options.session || await getCurrentSession();
-        if (!session) {
-          console.error('❌ Not in a tmux session. Attach to a session first or use --session.');
-          process.exit(1);
-        }
+        // Get session (auto-creates if not inside tmux)
+        const session = await getOrCreateSession(options.session);
 
         // Ensure dedicated window for the resumed session
         const workingDir = existingWorker.worktree || existingWorker.repoPath;
@@ -993,12 +1024,8 @@ export async function workCommand(
       process.exit(1);
     }
 
-    // 3. Get session
-    const session = options.session || await getCurrentSession();
-    if (!session) {
-      console.error('❌ Not in a tmux session. Attach to a session first or use --session.');
-      process.exit(1);
-    }
+    // 3. Get session (auto-creates if not inside tmux)
+    const session = await getOrCreateSession(options.session);
 
     // 4. Claim task (backend-dependent)
     console.log(`📝 Claiming ${taskId}...`);
