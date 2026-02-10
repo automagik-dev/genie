@@ -383,6 +383,7 @@ program
   .option('-n, --name <name>', 'Custom worker name (for N workers per task)')
   .option('-r, --role <role>', 'Worker role (e.g., "main", "tests", "review")')
   .option('--shared-worktree', 'Share worktree with existing worker on same task')
+  .option('--inline', 'Skip beads claim, create branch inline (fallback when beads is broken)')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
   });

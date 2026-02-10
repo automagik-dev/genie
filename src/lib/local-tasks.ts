@@ -154,16 +154,55 @@ export async function getQueue(repoPath: string): Promise<{ ready: string[]; blo
   return { ready, blocked };
 }
 
+/** Guard against prototype pollution — reject dangerous property names */
+function isSafeKey(key: string): boolean {
+  return key !== '__proto__' && key !== 'constructor' && key !== 'prototype';
+}
+
 export async function claimTask(repoPath: string, id: string): Promise<boolean> {
+  if (!isSafeKey(id)) return false;
   const file = await loadTasks(repoPath);
+  if (!Object.prototype.hasOwnProperty.call(file.tasks, id)) return false;
   const t = file.tasks[id];
   if (!t) return false;
+
+  if (t.status === 'in_progress') return false; // already claimed
+  if (t.status === 'done') return false; // already done
 
   t.status = 'in_progress';
   t.updatedAt = new Date().toISOString();
   file.tasks[id] = t;
   await saveTasks(repoPath, file);
   return true;
+}
+
+/**
+ * Ensure .genie directory and tasks.json exist.
+ * Safe to call multiple times — idempotent.
+ * Returns true if files were created, false if already existed.
+ */
+export async function ensureTasksFile(repoPath: string): Promise<boolean> {
+  const fp = tasksPath(repoPath);
+  try {
+    await readFile(fp, 'utf-8');
+    return false; // already exists
+  } catch {
+    try {
+      await ensureGenieDir(repoPath);
+      await saveTasks(repoPath, { tasks: {}, order: [], lastUpdated: new Date().toISOString() });
+      return true;
+    } catch (err: any) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EROFS') {
+        throw new Error(
+          `Cannot create .genie/tasks.json — directory is read-only (${code}).\n` +
+          `   Path: ${fp}\n` +
+          `   Fix: Check permissions on ${getRepoGenieDir(repoPath)}`
+        );
+      }
+      throw err;
+    }
+  }
 }
 
 export async function markDone(repoPath: string, id: string): Promise<boolean> {

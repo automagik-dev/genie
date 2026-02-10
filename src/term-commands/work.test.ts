@@ -702,7 +702,11 @@ Not the one we're looking for.
       await writeFile(join(wishesDir, 'special-wish.md'), `# Special\n**Beads:** ${taskId}`);
 
       expect(await findWishInDotWishes(taskId, tempDir)).toBeTruthy();
-=======
+    });
+  });
+});
+
+// ============================================================================
 // .env sourcing from root repo in worktrees
 // ============================================================================
 
