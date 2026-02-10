@@ -6,6 +6,7 @@
  * 4. Wish file search in .wishes/ directory
  * 2. Worktree creation in correct repository
  * 3. Branch naming conventions (work/<wish-id>)
+ * 4. .env sourcing from root repo in worktrees
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
@@ -82,6 +83,9 @@ async function pathExists(path: string): Promise<boolean> {
 // We re-implement minimal versions for testing since the actual function is not exported
 
 import { join as joinPath, resolve, isAbsolute } from 'path';
+
+// Import the env source prefix builder for unit testing
+import { buildEnvSourcePrefix } from './work.js';
 
 const KNOWN_NESTED_REPOS: Record<string, string> = {
   'genie-cli': 'code/genie-cli',
@@ -698,6 +702,82 @@ Not the one we're looking for.
       await writeFile(join(wishesDir, 'special-wish.md'), `# Special\n**Beads:** ${taskId}`);
 
       expect(await findWishInDotWishes(taskId, tempDir)).toBeTruthy();
+=======
+// .env sourcing from root repo in worktrees
+// ============================================================================
+
+describe('term work - .env sourcing in worktrees', () => {
+  describe('buildEnvSourcePrefix', () => {
+    it('should return empty string when workingDir equals repoPath (not a worktree)', () => {
+      const repoPath = '/home/user/project';
+      const workingDir = '/home/user/project';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      expect(result).toBe('');
+    });
+
+    it('should return source prefix when workingDir differs from repoPath (is a worktree)', () => {
+      const repoPath = '/home/user/project';
+      const workingDir = '/home/user/project/.genie/worktrees/task-1';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      expect(result).toBe(
+        `[ -f '/home/user/project/.env' ] && set -a && source '/home/user/project/.env' && set +a; `
+      );
+    });
+
+    it('should escape single quotes in repoPath', () => {
+      const repoPath = "/home/user/it's-a-project";
+      const workingDir = "/home/user/it's-a-project/.genie/worktrees/task-1";
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      expect(result).toContain("'\\''");
+      expect(result).toContain('set -a');
+      expect(result).toContain('set +a');
+    });
+
+    it('should use [ -f ] test to conditionally source', () => {
+      const repoPath = '/repo';
+      const workingDir = '/repo/.genie/worktrees/task';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      expect(result).toStartWith("[ -f '/repo/.env' ]");
+    });
+
+    it('should end with semicolon and space for command chaining', () => {
+      const repoPath = '/repo';
+      const workingDir = '/repo/.genie/worktrees/task';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      expect(result).toEndWith('; ');
+    });
+
+    it('should produce valid shell syntax with set -a/+a for export', () => {
+      const repoPath = '/my/repo';
+      const workingDir = '/my/repo/.genie/worktrees/issue-42';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      // Verify the full expected pattern
+      expect(result).toBe(
+        `[ -f '/my/repo/.env' ] && set -a && source '/my/repo/.env' && set +a; `
+      );
+    });
+
+    it('should handle paths with spaces', () => {
+      const repoPath = '/home/user/my project';
+      const workingDir = '/home/user/my project/.genie/worktrees/task';
+
+      const result = buildEnvSourcePrefix(workingDir, repoPath);
+      // Single-quoted paths handle spaces fine in shell
+      expect(result).toContain("'/home/user/my project/.env'");
+    });
+
+    it('should return empty string for identical paths even if they look like worktrees', () => {
+      // Edge case: path looks like a worktree but equals repoPath
+      const path = '/repo/.genie/worktrees/task';
+
+      const result = buildEnvSourcePrefix(path, path);
+      expect(result).toBe('');
     });
   });
 });

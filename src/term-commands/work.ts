@@ -108,6 +108,27 @@ const KNOWN_NESTED_REPOS: Record<string, string> = {
 };
 
 // ============================================================================
+// Env Loading Helpers
+// ============================================================================
+
+/**
+ * Build a shell prefix that sources .env from the root repo when running in a worktree.
+ * Returns empty string when workingDir === repoPath (not in a worktree).
+ *
+ * Pattern: [ -f '/root/.env' ] && set -a && source '/root/.env' && set +a;
+ * - `set -a` causes all subsequently defined variables to be exported
+ * - `source` reads the .env file
+ * - `set +a` disables auto-export
+ */
+export function buildEnvSourcePrefix(workingDir: string, repoPath: string): string {
+  if (workingDir === repoPath) {
+    return '';
+  }
+  const escapedRepoPath = repoPath.replace(/'/g, "'\\''");
+  return `[ -f '${escapedRepoPath}/.env' ] && set -a && source '${escapedRepoPath}/.env' && set +a; `;
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -912,9 +933,12 @@ export async function workCommand(
           resume: existingWorker.claudeSessionId,
           beadsDir,
         });
+
+        // Source .env from root repo when running in a worktree
+        const resumeEnvPrefix = buildEnvSourcePrefix(workingDir, existingWorker.repoPath);
         await tmux.executeCommand(
           paneId,
-          `cd '${escapedWorkingDir}' && ${resumeCmd}`,
+          `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`,
           true,
           false
         );
@@ -1126,7 +1150,10 @@ When you're done, commit your changes and let me know.`;
       sessionId: claudeSessionId,
       beadsDir,
     });
-    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnCmd}`, true, false);
+
+    // Source .env from root repo when running in a worktree
+    const spawnEnvPrefix = buildEnvSourcePrefix(workingDir, repoPath);
+    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnEnvPrefix}${spawnCmd}`, true, false);
 
     console.log(`   Session ID: ${claudeSessionId}`);
 
