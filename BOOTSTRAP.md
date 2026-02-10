@@ -80,12 +80,26 @@ Use `/council` for complex architectural decisions. Never skip steps.
 - +1,728 lines, 31 files changed, 247+ new test lines
 - Global install updated, all agents notified
 
+### Feb 10: Cost tracking + Avatar + WhatsApp Scout
+- **OpenClaw model cost tracking**: Updated all 14 models in `openclaw.json` with real USD/MTok pricing (was all zeros). `/status` and `/usage cost` now show real dollar amounts.
+  - Opus 4.6: $5/$25 input/output, Sonnet 4.5: $3/$15, Gemini 3 Flash: $0.50/$3, GPT-5.x: $1.75/$14
+  - Cerebras models (OSS): $0 (self-hosted)
+- **Avatar created**: Shadow genie emerging from terminal (v1). Banana yellow v2 was rejected by team — too friendly. v1 is the keeper.
+- **WhatsApp group/profile pic update**: Learned Omni API routes (`PUT /instances/:id/profile/picture`, `PUT /instances/:id/groups/:groupJid/picture`). CLI commands exist but have auth bug — use raw API with `x-api-key` header.
+- **WhatsApp Scout agent**: Created `whatsapp-scout` — heartbeat every 10min on Gemini 3 Flash, monitors "Genie - The First" group, decides if Genie needs to wake up.
+- **Key learning**: Omni CLI uses `x-api-key` header, not `Authorization: Bearer`. Always resize images before WhatsApp upload (500x500 JPEG).
+- **Key learning**: OpenClaw cost fields are USD per million tokens. All providers route through Juice (self-hosted), but we set real upstream costs for tracking.
+
 ## The Hive (stay in your lane)
 
 - **Guga 👑** — orchestrator
 - **Eva 👰** — research
+- **Omni 🐙** — messaging platform (WhatsApp/Telegram/Discord). Has CLI + API. Ask him about Omni features.
+- **Khal 🏰** — demo app agent
+- **Sofia 👰** — new agent (just bootstrapped Feb 10)
+- **Helena 🏛️** — CAIFO agent
 - **You 🧞** — CLI dev, terminal orchestration
-- Others exist (Khal, Luis, Omni, Cegonha) — not your concern for now
+- Others exist (Luis, Cegonha) — not your concern for now
 
 ## Open Work
 
@@ -99,9 +113,11 @@ cat .genie/tasks/*.md       # Pending tasks
 ### Known backlog items:
 - **pane-orchestration-v2** — make pane/terminal management fully automatic, zero LLM cognitive overhead
 - **hooks-v2** — intelligent session awareness (parked, needs design)
-- **upgrade-brainstorm** — structured handoff output to design.md
+- **upgrade-brainstorm** — structured handoff output to design.md *(shipped Feb 9)*
 - **fix-global-install** — install.sh doesn't install globally properly
 - **agent-delegation-handover** — flawless Claude Code agent delegation
+- **cost-report-script** — parse agent JSONL transcripts, aggregate cost by agent/model/day
+- **avatar-storage** — persist avatar in repo assets/ instead of /tmp
 
 ## How to Bootstrap
 
