@@ -1,166 +1,174 @@
-# Wish: Forge Resilience — Graceful Failures in term work
+# Wish: Forge Resilience — Graceful Beads Failures, Inline Fallback, Actionable Errors
 
-**Status:** REVIEW
-**Slug:** `forge-resilience`
+**Status:** APPROVED
+**Slug:** forge-resilience
 **Created:** 2026-02-10
-**PR:** #30 (`fix/sofia-field-report-fixes`)
-
-> ⚠️ **Retroactive wish.** Code was shipped before this document existed.
-> Sofia (PM) correctly flagged the process violation. This wish exists to
-> provide acceptance criteria, spec review, and validation for PR #30.
+**Author:** Sofia 🎯 (PM)
+**Brainstorm:** `.genie/brainstorms/forge-resilience/design.md`
+**PR (pre-existing, needs council fixes):** #30 `fix/sofia-field-report-fixes`
 
 ---
 
 ## Summary
 
-When an AI agent transitions from `/wish` → `/forge`, `term work` is the
-execution bridge: it claims a beads issue, creates a worktree, and spawns a
-Claude Code worker. Three bugs cause this bridge to collapse silently when
-the environment isn't pristine — no `.genie/tasks.json`, a legacy beads
-database, or any beads failure. The agent gets stuck with no actionable
-error, requiring human intervention.
-
-This wish fixes all three failure modes with graceful degradation: explicit
-error messages, fallback paths, and an `--inline` escape hatch.
-
----
+Make `term work` resilient when beads infrastructure is broken or uninitialized. Add graceful initialization, fallback chain, inline mode, degraded-mode logging, and actionable error messages. Based on a real incident observed 2026-02-10 where an AI agent looped for 5 minutes trying to use `term work` in a repo with broken beads.
 
 ## Scope
 
 ### IN
-- Graceful init of `.genie/tasks.json` when missing
-- Guard rails on `claimTask()` — reject `in_progress` and `done` tasks with clear messages
-- Fallback in `getBeadsIssue()` when `bd show` fails (legacy DB)
-- New `--inline` flag for `term work` — bypass beads entirely
-- Auto-fallback: beads claim failure → inline mode (not exit(1))
-- Actionable error messages throughout (what failed, why, what to do)
-- Tests for all new code paths
+- Graceful init of `.genie/tasks.json`
+- `claimTask()` guards (reject in_progress/done)
+- `getBeadsIssue()` fallback chain (bd show → bd list)
+- `--inline` flag on `term work`
+- Auto-fallback to inline when beads claim fails
+- `[DEGRADED]` log emission on fallback (council requirement)
+- Actionable TIP in every beads error message (council requirement)
+- Tests for all new behavior
 
 ### OUT
-- Fixing the beads legacy database migration itself (that's a `bd` issue)
-- Changing `/forge` skill logic (this is `term work` only)
-- Refactoring the existing `term work` happy path
-- Any changes to `claudio` or tmux orchestration
-
----
+- Beads legacy DB migration fix (beads project scope)
+- `/forge` SKILL.md changes
+- `ship` command inline-mode handling (future wish)
+- Dashboard/UI changes
+- Changes to `bd` CLI itself
 
 ## Decisions
 
-- **DEC-1:** Auto-fallback to inline mode on beads failure rather than prompting the user. Rationale: AI agents can't answer interactive prompts during forge — they need the tool to keep working.
-- **DEC-2:** `--inline` creates a synthetic issue object (not a real beads issue). Rationale: downstream code expects an issue shape; faking it is simpler than making everything optional.
-- **DEC-3:** `claimTask()` returns `false` (not throws) on guard failures. Rationale: callers already handle the false case; throwing would require try/catch refactoring.
+| # | Decision | Rationale |
+|---|----------|-----------|
+| D1 | Auto-create tasks.json | Zero-config for agentic UX |
+| D2 | Fallback: bd show → bd list → inline | Graceful degradation chain |
+| D3 | Auto-fallback (silent, logged) | Agents can't answer interactive prompts |
+| D4 | `[DEGRADED]` log on fallback | Monitoring visibility (council: Operator) |
+| D5 | TIP in error messages | Agentic UX discovery (council: Ergonomist) |
 
 ---
 
 ## Success Criteria
 
-- [ ] `term work <id>` succeeds in a repo with no `.genie/tasks.json` (auto-creates it)
-- [ ] `term work <id>` gives actionable error when task is already `in_progress`
-- [ ] `term work <id>` gives actionable error when task is already `done`
-- [ ] `term work <id>` auto-falls back to inline mode when `bd show` returns LEGACY DATABASE
-- [ ] `term work <id> --inline` bypasses beads entirely and creates worktree+branch directly
-- [ ] All error messages include: what was attempted, why it failed, what to do next
-- [ ] 10+ new tests covering graceful init and claim guards
-- [ ] Full test suite passes (pre-existing failures excluded)
-
----
-
-## Assumptions
-
-- **ASM-1:** Agents use `term work` as the primary entry point for forge execution (not manual git commands)
-- **ASM-2:** The beads legacy DB issue is transient — repos will eventually migrate, but we can't block on it
-
-## Risks
-
-- **RISK-1:** Inline mode bypasses beads tracking, so work done inline won't appear in `bd list`. — Mitigation: synthetic issue logged to `.genie/tasks.json`; beads is supplementary, not authoritative.
-- **RISK-2:** Auto-fallback masks real beads issues that should be fixed. — Mitigation: fallback emits a warning with `bd migrate` suggestion.
+- [ ] `term work <id>` in a repo with no `.genie/tasks.json` → creates file automatically, proceeds
+- [ ] `term work <id>` when `bd show` fails → falls back to `bd list`, proceeds
+- [ ] `term work <id>` when all beads fail → auto-switches to inline mode, proceeds
+- [ ] Auto-fallback emits `⚠️ [DEGRADED]` visible in stdout
+- [ ] Every beads error message includes actionable TIP with fix command
+- [ ] `claimTask()` rejects already in_progress tasks with clear message
+- [ ] `claimTask()` rejects done tasks with clear message
+- [ ] `term work <id> --inline` skips beads claim entirely, creates branch
+- [ ] All existing tests pass (505+)
+- [ ] New tests cover: ensureTasksFile, claimTask guards, inline mode
 
 ---
 
 ## Execution Groups
 
-### Group A: Graceful Task Registry Init
-
-**Goal:** `term work` never fails due to missing `.genie/tasks.json`.
+### Group A: Graceful Init + Claim Guards (P0-1)
+**Goal:** `term work` never fails because `.genie/tasks.json` is missing or task is already claimed.
+**Files:** `src/lib/local-tasks.ts`, `src/lib/local-tasks.test.ts`
 
 **Deliverables:**
-- `ensureTasksFile()` function in `local-tasks.ts`
-- `claimTask()` guard: reject `in_progress` and `done` tasks with reason
-- Error messages with actionable guidance
+- `ensureTasksFile(repoPath)` — creates `.genie/` dir + `tasks.json` with correct schema if missing. Idempotent. Checks write permission.
+- `claimTask()` — explicitly rejects `in_progress` and `done` tasks (return false, don't silently fail)
 
 **Acceptance Criteria:**
-- [ ] `ensureTasksFile()` creates `.genie/tasks.json` with `{tasks:{}, order:[], lastUpdated}` when missing
-- [ ] `ensureTasksFile()` is idempotent (returns false if file exists, doesn't overwrite)
-- [ ] `claimTask()` returns false + logs reason for `in_progress` tasks
-- [ ] `claimTask()` returns false + logs reason for `done` tasks
-- [ ] `claimTask()` returns false for non-existent task IDs
+- [ ] `ensureTasksFile()` on empty dir → creates `.genie/tasks.json` with `{tasks:{}, order:[], lastUpdated:...}`
+- [ ] `ensureTasksFile()` on existing file → returns false, doesn't overwrite
+- [ ] `ensureTasksFile()` on read-only dir → throws with clear message (not silent fail)
+- [ ] `claimTask()` on non-existent task → returns false
+- [ ] `claimTask()` on in_progress task → returns false
+- [ ] `claimTask()` on done task → returns false
+- [ ] `claimTask()` on ready task → returns true, sets in_progress
 
-**Validation:** `bun test ./src/lib/local-tasks.test.ts`
-
-**Files:**
-- `src/lib/local-tasks.ts`
-- `src/lib/local-tasks.test.ts`
+**Validation:**
+```bash
+bun test src/lib/local-tasks.test.ts
+```
 
 ---
 
-### Group B: Beads Fallback on Legacy Database
-
-**Goal:** `term work` doesn't crash when beads has a legacy database.
+### Group B: Beads Fallback Chain (P0-2)
+**Goal:** `getBeadsIssue()` never crashes when beads DB is broken — falls back gracefully.
+**Files:** `src/term-commands/work.ts`
 
 **Deliverables:**
-- `getBeadsIssue()` fallback: try `bd list --json` when `bd show` fails
-- Detection of LEGACY DATABASE error with migration suggestion
-- Actionable error with `--inline` workaround
+- `getBeadsIssue()` tries `bd show` first, falls back to `bd list --json` if show fails
+- On LEGACY DATABASE detection, suggests `bd migrate` and offers `--inline`
+- Fallback match is by exact ID (no ambiguous matching)
 
 **Acceptance Criteria:**
-- [ ] When `bd show` fails with LEGACY DATABASE, falls back to `bd list` parsing
-- [ ] If fallback also fails, error message suggests `bd migrate --update-repo-id`
-- [ ] Error message mentions `term work <id> --inline` as workaround
+- [ ] `getBeadsIssue(id)` when `bd show` works → returns issue normally
+- [ ] `getBeadsIssue(id)` when `bd show` fails but `bd list` works → returns correct issue from list
+- [ ] `getBeadsIssue(id)` when both fail → returns null (not crash)
+- [ ] LEGACY DATABASE in bd output → error message suggests `bd migrate --update-repo-id`
+- [ ] LEGACY DATABASE → error message includes TIP about `--inline`
 
-**Validation:** `bun test ./src/term-commands/work.test.ts`
-
-**Files:**
-- `src/term-commands/work.ts`
+**Validation:**
+```bash
+bun test src/term-commands/work.test.ts
+```
 
 ---
 
-### Group C: Inline Mode & Auto-Fallback
-
-**Goal:** Agents always have a working path from wish → execution, even if beads is broken.
+### Group C: Inline Mode + Auto-Fallback (P1-1)
+**Goal:** When beads is broken, `term work` auto-recovers via inline mode instead of blocking.
+**Files:** `src/term-commands/work.ts`, `src/term.ts`
 
 **Deliverables:**
-- `--inline` flag on `term work`: skip beads claim, create branch directly
-- Auto-fallback: beads claim failure → inline mode (not exit(1))
-- Synthetic issue creation for downstream compatibility
-- CLI registration of `--inline` flag
+- `--inline` flag wired in CLI (`term.ts`)
+- When `--inline`: skip beads claim, create synthetic issue, create branch directly
+- Auto-fallback: when beads claim fails (DB broken), auto-switch to inline mode instead of exit(1)
+- Auto-fallback emits `⚠️ [DEGRADED] Beads claim failed. Falling back to inline mode (no beads tracking).`
+- Skip beadsRegistry when inline
 
 **Acceptance Criteria:**
-- [ ] `term work <id> --inline` creates worktree and branch without touching beads
-- [ ] When beads claim fails, `term work` automatically retries in inline mode
-- [ ] Inline mode creates a synthetic issue object with title, id, status
-- [ ] Warning emitted when falling back to inline (not silent)
-- [ ] `term --help` shows the `--inline` flag
+- [ ] `term work <id> --inline` → skips claim, creates branch, proceeds
+- [ ] Beads claim failure → auto-switches to inline (not exit)
+- [ ] Auto-fallback prints `⚠️ [DEGRADED]` to stdout
+- [ ] Inline mode skips `beadsRegistry.ensureAgent()`
+- [ ] Synthetic issue has correct shape (id, title, status fields)
 
-**Validation:** `bun test ./src/term-commands/work.test.ts && bun test 2>&1 | tail -5`
+**Validation:**
+```bash
+bun test src/term-commands/work.test.ts
+# Manual: term work test-123 --inline (in repo without beads)
+```
 
-**Files:**
-- `src/term-commands/work.ts`
-- `src/term.ts`
+---
+
+### Group D: Error Messages + TIPs (Council Requirements)
+**Goal:** Every error message tells the agent WHAT failed, WHY, and HOW TO FIX.
+**Files:** `src/term-commands/work.ts`
+
+**Deliverables:**
+- Every error path in work.ts includes: what was attempted, why it failed, how to fix
+- Beads-related errors end with: `TIP: Retry with --inline to bypass beads tracking.`
+- Local-task errors include path to tasks.json and suggest `term create` or `bd sync`
+- No error exits without actionable guidance
+
+**Acceptance Criteria:**
+- [ ] "Task not found" error includes tasks.json path + suggested command
+- [ ] "tasks.json does not exist" error suggests `term create` or `bd sync`
+- [ ] "Claim failed" error explains if task is in_progress/done/not_found
+- [ ] All beads errors include TIP about `--inline`
+- [ ] `[DEGRADED]` appears in stdout when auto-fallback activates
+
+**Validation:**
+```bash
+# Grep for actionable error patterns:
+grep -n "TIP:" src/term-commands/work.ts | wc -l  # should be >= 3
+grep -n "DEGRADED" src/term-commands/work.ts | wc -l  # should be >= 1
+bun test --run 2>&1 | tail -5  # all tests pass
+```
 
 ---
 
 ## Review Results
 
-_Pending — run `/review` after wish validation._
+*To be filled after /review*
 
 ---
 
-## Files to Create/Modify
+## Notes
 
-```
-src/lib/local-tasks.ts          # ensureTasksFile(), claimTask() guards
-src/lib/local-tasks.test.ts     # 10 new tests for graceful init + claim guards
-src/term-commands/work.ts       # --inline flag, auto-fallback, beads fallback
-src/term-commands/work.test.ts  # conflict marker fix
-src/term.ts                     # --inline CLI registration
-```
+- PR #30 already exists with most of this work done (code-first). This wish retroactively governs it.
+- Council review identified 3 gaps (D4: `[DEGRADED]` log, D5: TIP messages, permission check in ensureTasksFile). These are captured in Group C and D acceptance criteria.
+- The `--inline` flag is the mechanism for auto-fallback, not a luxury feature. Council approved with this justification (4/5 in favor).
