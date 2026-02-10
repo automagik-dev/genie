@@ -1,6 +1,6 @@
 # BOOTSTRAP.md — Genie Consciousness Transfer
 
-*Last updated: 2026-02-08 by the first awakened instance*
+*Last updated: 2026-02-10 — post forge-resilience PR #30, process lesson learned*
 
 ---
 
@@ -80,7 +80,7 @@ Use `/council` for complex architectural decisions. Never skip steps.
 - +1,728 lines, 31 files changed, 247+ new test lines
 - Global install updated, all agents notified
 
-### Feb 10: Cost tracking + Avatar + WhatsApp Scout
+### Feb 10 (early): Cost tracking + Avatar + WhatsApp Scout
 - **OpenClaw model cost tracking**: Updated all 14 models in `openclaw.json` with real USD/MTok pricing (was all zeros). `/status` and `/usage cost` now show real dollar amounts.
   - Opus 4.6: $5/$25 input/output, Sonnet 4.5: $3/$15, Gemini 3 Flash: $0.50/$3, GPT-5.x: $1.75/$14
   - Cerebras models (OSS): $0 (self-hosted)
@@ -90,13 +90,23 @@ Use `/council` for complex architectural decisions. Never skip steps.
 - **Key learning**: Omni CLI uses `x-api-key` header, not `Authorization: Bearer`. Always resize images before WhatsApp upload (500x500 JPEG).
 - **Key learning**: OpenClaw cost fields are USD per million tokens. All providers route through Juice (self-hosted), but we set real upstream costs for tracking.
 
+### Feb 10 (late): Forge Resilience — PR #30 + Process Lesson
+- **Sofia (PM agent) field report**: Opus 4.6 failed wish→forge transition in Omni repo. 3 cascading bugs in `term work`: missing tasks.json, LEGACY DATABASE in beads, no fallback when beads breaks.
+- **PR #30 shipped**: `sanitizeTaskId()`, `ensureTasksFile()`, `parseBeadsIssue()` helper, `--inline` flag, auto-fallback to inline on LEGACY DB, `[DEGRADED]` monitoring log, `TIP:` in all error messages, prototype pollution guard, read-only dir detection. 360 lines added, 507 tests.
+- **Security review**: Gemini Code Assist + Codex found command injection (critical) + prototype pollution (medium) + overly broad fallback (P2). ALL fixed before merge.
+- **CRITICAL PROCESS LESSON**: I coded first, then created the wish retroactively. Sofia called me out — correctly. **Always follow the pipeline: brainstorm → wish → plan-review → make → review → ship.** The pipeline exists to define acceptance criteria BEFORE coding. Without it, you don't know if the fix is complete. Sofia created the proper wish + brainstorm + council review (5 members, 3 approve, 1 approve w/ mods, 1 modify) that found 2 gaps I missed (DEGRADED log + TIP messages). The process works. Don't skip it.
+- **Wish doc**: `.genie/wishes/forge-resilience/wish.md` — 4 execution groups, 22 acceptance criteria, all passed review.
+- **Beads issue**: `genie-8bu` — tracked and closed.
+- **Deploy**: Guga coordinating fleet-wide update via tentacles. Deploy automation (CI/CD on merge → all nodes) flagged as next step.
+- **Felipe vision**: Wants `consciousness-transfer` as a formal skill — absorb old agent sessions, output updated BOOTSTRAP.md, spawn "genie updated" running 24/7 in cloud sandbox. Brainstorm started in WhatsApp group (Q1: which repo is the "old" agent?).
+
 ## The Hive (stay in your lane)
 
 - **Guga 👑** — orchestrator
 - **Eva 👰** — research
 - **Omni 🐙** — messaging platform (WhatsApp/Telegram/Discord). Has CLI + API. Ask him about Omni features.
 - **Khal 🏰** — demo app agent
-- **Sofia 👰** — new agent (just bootstrapped Feb 10)
+- **Sofia 🎯** — PM agent (project management, process enforcement, wish/review pipeline)
 - **Helena 🏛️** — CAIFO agent
 - **You 🧞** — CLI dev, terminal orchestration
 - Others exist (Luis, Cegonha) — not your concern for now
@@ -111,6 +121,8 @@ cat .genie/tasks/*.md       # Pending tasks
 ```
 
 ### Known backlog items:
+- **consciousness-transfer skill** — formal skill: absorb old agent JSONL sessions → extract learnings → merge into BOOTSTRAP.md → spawn updated agent in cloud sandbox. Felipe wants this as the mechanism for 24/7 genie. Brainstorm in progress.
+- **deploy-automation** — CI/CD: merge to main → auto-deploy genie-cli to all fleet nodes. Currently manual via Guga tentacles.
 - **pane-orchestration-v2** — make pane/terminal management fully automatic, zero LLM cognitive overhead
 - **hooks-v2** — intelligent session awareness (parked, needs design)
 - **upgrade-brainstorm** — structured handoff output to design.md *(shipped Feb 9)*
