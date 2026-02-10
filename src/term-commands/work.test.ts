@@ -3,6 +3,7 @@
  *
  * Tests:
  * 1. Nested repo detection (--repo flag, wish.md repo field, heuristics)
+ * 4. Wish file search in .wishes/ directory
  * 2. Worktree creation in correct repository
  * 3. Branch naming conventions (work/<wish-id>)
  */
@@ -502,5 +503,201 @@ describe('term work - branch naming convention', () => {
       // Cleanup for next iteration
       await $`git -C ${testRepo} worktree remove ${worktreePath} --force`.quiet();
     }
+  });
+});
+
+// ============================================================================
+// Wish file search in .wishes/ directory
+// ============================================================================
+
+import { wishFileExists, loadWishContent, findWishInDotWishes } from './work.js';
+
+describe('term work - wish file search in .wishes/ directory', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = join('/tmp', `wish-search-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await mkdir(tempDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  describe('wishFileExists()', () => {
+    it('should return true when wish.md exists in .genie/wishes/<taskId>/ (fast path)', async () => {
+      const taskId = 'bd-42';
+      const wishDir = join(tempDir, '.genie', 'wishes', taskId);
+      await mkdir(wishDir, { recursive: true });
+      await writeFile(join(wishDir, 'wish.md'), '# Test wish');
+
+      expect(await wishFileExists(taskId, tempDir)).toBe(true);
+    });
+
+    it('should return true when a *-wish.md file in .wishes/ references the taskId via **Beads:**', async () => {
+      const taskId = 'bd-99';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'my-feature-wish.md'), `# My Feature Wish
+
+**Beads:** ${taskId}
+
+## Summary
+
+Do something cool.
+`);
+
+      expect(await wishFileExists(taskId, tempDir)).toBe(true);
+    });
+
+    it('should return true when a *-wish.md file in .wishes/ references the taskId via Beads:', async () => {
+      const taskId = 'bd-77';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'another-wish.md'), `# Another Wish
+
+Beads: ${taskId}
+
+## Summary
+
+Do something else.
+`);
+
+      expect(await wishFileExists(taskId, tempDir)).toBe(true);
+    });
+
+    it('should return true when *-wish.md is in a nested subdirectory of .wishes/', async () => {
+      const taskId = 'bd-123';
+      const nestedDir = join(tempDir, '.wishes', 'features', 'phase-1');
+      await mkdir(nestedDir, { recursive: true });
+      await writeFile(join(nestedDir, 'deep-feature-wish.md'), `# Deep Feature
+
+**Beads:** ${taskId}
+`);
+
+      expect(await wishFileExists(taskId, tempDir)).toBe(true);
+    });
+
+    it('should return false when no wish file exists anywhere', async () => {
+      expect(await wishFileExists('bd-nonexistent', tempDir)).toBe(false);
+    });
+
+    it('should return false when .wishes/ dir does not exist', async () => {
+      // tempDir has no .wishes/ or .genie/ dirs
+      expect(await wishFileExists('bd-1', tempDir)).toBe(false);
+    });
+
+    it('should return false when .wishes/ files exist but none reference the taskId', async () => {
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'unrelated-wish.md'), `# Unrelated Wish
+
+**Beads:** bd-other-id
+
+## Summary
+
+Not the one we're looking for.
+`);
+
+      expect(await wishFileExists('bd-999', tempDir)).toBe(false);
+    });
+
+    it('should prefer .genie/wishes/ fast path over .wishes/ search', async () => {
+      const taskId = 'bd-50';
+      // Create in both locations
+      const genieWishDir = join(tempDir, '.genie', 'wishes', taskId);
+      await mkdir(genieWishDir, { recursive: true });
+      await writeFile(join(genieWishDir, 'wish.md'), '# Genie wish');
+
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'alt-wish.md'), `# Alt wish\n**Beads:** ${taskId}`);
+
+      // Should still return true (fast path hits)
+      expect(await wishFileExists(taskId, tempDir)).toBe(true);
+    });
+
+    it('should not match files that do not end with -wish.md', async () => {
+      const taskId = 'bd-55';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      // File named notes.md (not *-wish.md)
+      await writeFile(join(wishesDir, 'notes.md'), `# Notes\n**Beads:** ${taskId}`);
+
+      expect(await wishFileExists(taskId, tempDir)).toBe(false);
+    });
+  });
+
+  describe('loadWishContent()', () => {
+    it('should load content from .genie/wishes/<taskId>/wish.md (fast path)', async () => {
+      const taskId = 'bd-42';
+      const wishDir = join(tempDir, '.genie', 'wishes', taskId);
+      await mkdir(wishDir, { recursive: true });
+      const content = '# Test wish\n\nSome content here.';
+      await writeFile(join(wishDir, 'wish.md'), content);
+
+      expect(await loadWishContent(taskId, tempDir)).toBe(content);
+    });
+
+    it('should load content from .wishes/ when not in .genie/wishes/', async () => {
+      const taskId = 'bd-88';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      const content = `# Feature Wish\n\n**Beads:** ${taskId}\n\n## Details\n\nBuild something.`;
+      await writeFile(join(wishesDir, 'feature-wish.md'), content);
+
+      expect(await loadWishContent(taskId, tempDir)).toBe(content);
+    });
+
+    it('should return undefined when no wish file exists anywhere', async () => {
+      expect(await loadWishContent('bd-nonexistent', tempDir)).toBeUndefined();
+    });
+
+    it('should prefer .genie/wishes/ content over .wishes/ content', async () => {
+      const taskId = 'bd-60';
+      const genieContent = '# Genie wish content';
+      const genieWishDir = join(tempDir, '.genie', 'wishes', taskId);
+      await mkdir(genieWishDir, { recursive: true });
+      await writeFile(join(genieWishDir, 'wish.md'), genieContent);
+
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'alt-wish.md'), `# Alt wish\n**Beads:** ${taskId}`);
+
+      expect(await loadWishContent(taskId, tempDir)).toBe(genieContent);
+    });
+  });
+
+  describe('findWishInDotWishes()', () => {
+    it('should return file path when match found', async () => {
+      const taskId = 'bd-101';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      const filePath = join(wishesDir, 'cool-wish.md');
+      await writeFile(filePath, `# Cool\n**Beads:** ${taskId}`);
+
+      expect(await findWishInDotWishes(taskId, tempDir)).toBe(filePath);
+    });
+
+    it('should return undefined when no match found', async () => {
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'other-wish.md'), '# Other\n**Beads:** bd-different');
+
+      expect(await findWishInDotWishes('bd-nomatch', tempDir)).toBeUndefined();
+    });
+
+    it('should return undefined when .wishes/ directory does not exist', async () => {
+      expect(await findWishInDotWishes('bd-1', tempDir)).toBeUndefined();
+    });
+
+    it('should handle taskIds with special regex characters', async () => {
+      const taskId = 'bd-1.2+3';
+      const wishesDir = join(tempDir, '.wishes');
+      await mkdir(wishesDir, { recursive: true });
+      await writeFile(join(wishesDir, 'special-wish.md'), `# Special\n**Beads:** ${taskId}`);
+
+      expect(await findWishInDotWishes(taskId, tempDir)).toBeTruthy();
+    });
   });
 });

@@ -384,30 +384,114 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<void> {
 }
 
 /**
- * Check if a wish.md file exists for the given task
+ * Search .wishes/ directory recursively for a *-wish.md file
+ * whose content references the given taskId in a Beads field.
+ * Returns the file path if found, undefined otherwise.
  */
-async function wishFileExists(taskId: string, repoPath: string): Promise<boolean> {
+export async function findWishInDotWishes(taskId: string, repoPath: string): Promise<string | undefined> {
   const fs = await import('fs/promises');
+  const wishesDir = join(repoPath, '.wishes');
+  try {
+    await fs.access(wishesDir);
+  } catch {
+    return undefined;
+  }
+
+  // Recursively find all *-wish.md files
+  async function findWishFiles(dir: string): Promise<string[]> {
+    const results: string[] = [];
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return results;
+    }
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        results.push(...await findWishFiles(fullPath));
+      } else if (entry.isFile() && entry.name.endsWith('-wish.md')) {
+        results.push(fullPath);
+      }
+    }
+    return results;
+  }
+
+  const wishFiles = await findWishFiles(wishesDir);
+  // Patterns to match: **Beads:** <taskId> or Beads: <taskId>
+  const patterns = [
+    new RegExp(`\\*\\*Beads:\\*\\*\\s*${escapeRegExp(taskId)}`),
+    new RegExp(`^Beads:\\s*${escapeRegExp(taskId)}`, 'm'),
+  ];
+
+  for (const filePath of wishFiles) {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      for (const pattern of patterns) {
+        if (pattern.test(content)) {
+          return filePath;
+        }
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Escape special regex characters in a string
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Check if a wish.md file exists for the given task.
+ * First checks .genie/wishes/<taskId>/wish.md (fast path),
+ * then searches .wishes/ directory for *-wish.md files referencing the taskId.
+ */
+export async function wishFileExists(taskId: string, repoPath: string): Promise<boolean> {
+  const fs = await import('fs/promises');
+  // Fast path: check .genie/wishes/<taskId>/wish.md
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
   try {
     await fs.access(wishPath);
     return true;
   } catch {
-    return false;
+    // Not found in primary location, search .wishes/ directory
   }
+
+  // Fallback: search .wishes/ directory
+  const found = await findWishInDotWishes(taskId, repoPath);
+  return found !== undefined;
 }
 
 /**
- * Load wish.md content for auto-approve overrides
+ * Load wish.md content for auto-approve overrides.
+ * First checks .genie/wishes/<taskId>/wish.md (fast path),
+ * then searches .wishes/ directory for *-wish.md files referencing the taskId.
  */
-async function loadWishContent(taskId: string, repoPath: string): Promise<string | undefined> {
+export async function loadWishContent(taskId: string, repoPath: string): Promise<string | undefined> {
   const fs = await import('fs/promises');
+  // Fast path: check .genie/wishes/<taskId>/wish.md
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
   try {
     return await fs.readFile(wishPath, 'utf-8');
   } catch {
-    return undefined;
+    // Not found in primary location, search .wishes/ directory
   }
+
+  // Fallback: search .wishes/ directory
+  const foundPath = await findWishInDotWishes(taskId, repoPath);
+  if (foundPath) {
+    try {
+      return await fs.readFile(foundPath, 'utf-8');
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
