@@ -6,12 +6,15 @@
  * Commands:
  *   term wish ls               - List all wishes
  *   term wish status <slug>    - Show wish with linked tasks status
+ *   term wish read <slug>      - Read wish content (full or section)
+ *   term wish sections <slug>  - List sections in a wish
  */
 
 import { Command } from 'commander';
 import { readdir, readFile, access } from 'fs/promises';
 import { join } from 'path';
 import { getWishTasks, getWishStatus, LinkedTask } from '../../lib/wish-tasks.js';
+import { readWish, findSection, listSections } from '../../lib/wish-editor.js';
 
 // ============================================================================
 // Types
@@ -34,15 +37,12 @@ interface WishSummary {
 // Helper Functions
 // ============================================================================
 
-/**
- * Get the wishes directory path
- */
 function getWishesDir(repoPath: string): string {
   return join(repoPath, '.genie', 'wishes');
 }
 
 /**
- * Parse wish.md frontmatter to get status and title
+ * Parse wish.md metadata from either frontmatter or markdown fields.
  */
 async function parseWishFrontmatter(wishPath: string): Promise<{ title: string; status: string }> {
   try {
@@ -67,12 +67,16 @@ async function parseWishFrontmatter(wishPath: string): Promise<{ title: string; 
       }
     }
 
+    // Fallback: wish.md style field
+    if (status === 'DRAFT') {
+      const statusMatch = content.match(/\*\*Status:\*\*\s*(.+)/i);
+      if (statusMatch) status = statusMatch[1].trim().toUpperCase();
+    }
+
     // Fallback: look for # heading
     if (!title) {
       const heading = lines.find(l => l.startsWith('# '));
-      if (heading) {
-        title = heading.substring(2).trim();
-      }
+      if (heading) title = heading.substring(2).trim();
     }
 
     return { title: title || '(untitled)', status };
@@ -81,9 +85,6 @@ async function parseWishFrontmatter(wishPath: string): Promise<{ title: string; 
   }
 }
 
-/**
- * List all wishes in the repository
- */
 async function listWishes(repoPath: string): Promise<WishSummary[]> {
   const wishesDir = getWishesDir(repoPath);
   const wishes: WishSummary[] = [];
@@ -99,12 +100,7 @@ async function listWishes(repoPath: string): Promise<WishSummary[]> {
           const { title, status } = await parseWishFrontmatter(wishPath);
           const tasks = await getWishStatus(repoPath, entry.name);
 
-          wishes.push({
-            slug: entry.name,
-            title,
-            status,
-            tasks,
-          });
+          wishes.push({ slug: entry.name, title, status, tasks });
         } catch {
           // Skip if wish.md doesn't exist
         }
@@ -117,9 +113,6 @@ async function listWishes(repoPath: string): Promise<WishSummary[]> {
   return wishes;
 }
 
-/**
- * Format task status with emoji
- */
 function formatTaskStatus(status: LinkedTask['status']): string {
   switch (status) {
     case 'done': return '✅';
@@ -130,12 +123,10 @@ function formatTaskStatus(status: LinkedTask['status']): string {
   }
 }
 
-/**
- * Format wish status with emoji
- */
 function formatWishStatus(status: string): string {
   switch (status.toUpperCase()) {
     case 'READY': return '🟢 READY';
+    case 'APPROVED': return '🟢 APPROVED';
     case 'IN_PROGRESS': return '🔄 IN_PROGRESS';
     case 'BLOCKED': return '🔴 BLOCKED';
     case 'DONE': return '✅ DONE';
@@ -148,13 +139,21 @@ function formatWishStatus(status: string): string {
 // Register Namespace
 // ============================================================================
 
-/**
- * Register the `term wish` namespace with all subcommands
- */
 export function registerWishNamespace(program: Command): void {
   const wishProgram = program
     .command('wish')
-    .description('Wish document management');
+    .description('Wish document management')
+    .addHelpText('after', `
+
+Browse
+  wish ls                         List all wishes
+  wish status <slug>              Wish status with linked tasks
+  wish show <slug>                Alias for status
+
+Read / inspect
+  wish read <slug>                Read wish document (full)
+  wish read <slug> --section <s>  Read specific section (partial match)
+  wish sections <slug>            List headings in a wish`);
 
   // wish ls - List all wishes
   wishProgram
@@ -204,7 +203,6 @@ export function registerWishNamespace(program: Command): void {
       const repoPath = process.cwd();
       const wishPath = join(getWishesDir(repoPath), slug, 'wish.md');
 
-      // Check if wish exists
       try {
         await access(wishPath);
       } catch {
@@ -217,23 +215,15 @@ export function registerWishNamespace(program: Command): void {
       const taskStatus = await getWishStatus(repoPath, slug);
 
       if (options.json) {
-        console.log(JSON.stringify({
-          slug,
-          title,
-          status,
-          tasks,
-          summary: taskStatus,
-        }, null, 2));
+        console.log(JSON.stringify({ slug, title, status, tasks, summary: taskStatus }, null, 2));
         return;
       }
 
-      // Display wish info
       console.log(`\n📋 ${title}`);
       console.log(`   Slug: ${slug}`);
       console.log(`   Status: ${formatWishStatus(status)}`);
       console.log('');
 
-      // Display task breakdown
       if (tasks.length === 0) {
         console.log('   No linked tasks. Use "term task link <wish-slug> <task-id>" to link.');
       } else {
@@ -266,10 +256,83 @@ export function registerWishNamespace(program: Command): void {
     .description('Alias for "wish status"')
     .option('--json', 'Output as JSON')
     .action(async (slug: string, options: { json?: boolean }) => {
-      // Delegate to status command
       const statusCmd = wishProgram.commands.find(c => c.name() === 'status');
       if (statusCmd) {
         await statusCmd.parseAsync([slug, ...(options.json ? ['--json'] : [])], { from: 'user' });
       }
+    });
+
+  // wish read <slug>
+  wishProgram
+    .command('read <slug>')
+    .description('Read wish document content (full or specific section)')
+    .option('-s, --section <name>', 'Read only a specific section (partial match)')
+    .option('--json', 'Output as JSON')
+    .action(async (slug: string, options: { section?: string; json?: boolean }) => {
+      const repoPath = process.cwd();
+      const doc = await readWish(repoPath, slug);
+
+      if (!doc) {
+        console.error(`❌ Wish "${slug}" not found in .genie/wishes/`);
+        process.exit(1);
+      }
+
+      if (options.section) {
+        const section = findSection(doc, options.section);
+        if (!section) {
+          console.error(`❌ Section "${options.section}" not found in wish "${slug}".`);
+          console.error(`Available sections: ${doc.sections.map(s => s.heading).join(', ')}`);
+          process.exit(1);
+        }
+
+        if (options.json) {
+          console.log(JSON.stringify({ slug, section }, null, 2));
+          return;
+        }
+
+        console.log(section.content);
+        return;
+      }
+
+      if (options.json) {
+        console.log(JSON.stringify({ slug, path: doc.path, mtime: doc.mtime, sectionCount: doc.sections.length, content: doc.raw }, null, 2));
+        return;
+      }
+
+      console.log(doc.raw);
+    });
+
+  // wish sections <slug>
+  wishProgram
+    .command('sections <slug>')
+    .description('List all sections in a wish document')
+    .option('--json', 'Output as JSON')
+    .action(async (slug: string, options: { json?: boolean }) => {
+      const repoPath = process.cwd();
+      const doc = await readWish(repoPath, slug);
+
+      if (!doc) {
+        console.error(`❌ Wish "${slug}" not found in .genie/wishes/`);
+        process.exit(1);
+      }
+
+      const sections = listSections(doc);
+
+      if (options.json) {
+        console.log(JSON.stringify({ slug, sections }, null, 2));
+        return;
+      }
+
+      if (sections.length === 0) {
+        console.log(`No sections found in wish "${slug}".`);
+        return;
+      }
+
+      console.log(`\nSections in ${slug}:\n`);
+      for (const s of sections) {
+        const indent = '  '.repeat(Math.max(0, s.level - 1));
+        console.log(`${indent}- ${s.heading} (${s.lineCount} lines)`);
+      }
+      console.log('');
     });
 }

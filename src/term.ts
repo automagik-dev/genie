@@ -64,9 +64,11 @@ TASKS (beads integration)
   task ls             List ready tasks
   task link           Link task to wish
 
-WISHES (planning)
+WISHES (planning + inspection)
   wish ls             List all wishes
   wish status <slug>  Show wish with linked tasks
+  wish read <slug>    Read wish content (or section)
+  wish sections <slug> List headings in a wish
 
 SESSIONS (low-level tmux) - see: term session --help
   session new/ls/attach/rm/exec/send/read/info/split
