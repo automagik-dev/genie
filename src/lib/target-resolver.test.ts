@@ -803,6 +803,8 @@ describe('Active pane resolution in defaultTmuxLookup', () => {
     expect(result.paneId).toBe('%55');
     expect(result.session).toBe('my-session');
     expect(result.resolvedVia).toBe('session:window');
+  });
+});
 
 // Level 1.5: Window ID (starts with @)
 // ============================================================================
