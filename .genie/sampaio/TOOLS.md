@@ -98,7 +98,7 @@ omni send --instance 07a5178e-fb07-4d93-885b-1d361fbd5d6b \
 
 # Check recent messages
 curl -s "https://felipe.omni.namastex.io/api/v2/events?instanceId=07a5178e-fb07-4d93-885b-1d361fbd5d6b&limit=5" \
-  -H "x-api-key: omni_sk_LLalOAzvhNy56q6HvsBygpCBRRuNTKuK"
+  -H "x-api-key: omni_sk_LGQ2nO7BNmC2X49mWSjSKEg2n9vDVmWg"
 ```
 
 ## Agent Communication
