@@ -23,6 +23,10 @@ fi
 
 cd "${REPO_DIR}"
 
+# Nuke any local state that could block checkout
+git reset --hard HEAD 2>/dev/null || true
+git clean -fd 2>/dev/null || true
+
 git remote set-url origin https://github.com/namastexlabs/genie-cli.git
 git fetch origin +refs/heads/main:refs/remotes/origin/main
 git checkout -B main refs/remotes/origin/main
