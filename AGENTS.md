@@ -75,6 +75,34 @@ See `docs/CO-ORCHESTRATION-GUIDE.md` for the full orchestration workflow.
 
 
 
+## ⚠️ Development vs Production Install (MANDATORY)
+
+genie-cli has **two locations** on every fleet host. Know the difference:
+
+| Path | Role | Managed by |
+|------|------|-----------|
+| `~/workspace/repos/automagik/genie-cli` | **Dev workspace** — branches, worktrees, experiments | You (the developer) |
+| `~/.local/share/genie-cli/repo` | **Production binary** — what `genie` and `term` commands actually run | Jenkins automation (`genie-cli-fleet-update`) |
+
+### Rules
+
+1. **NEVER run `bun link` from the dev workspace.** The production binary is managed by Jenkins. If you `bun link` from dev, you hijack the fleet binary with your local branch — bad.
+2. **When developing**, use the full path to test your changes:
+   ```bash
+   # From your dev worktree:
+   bun run src/index.ts <args>          # run directly
+   node dist/index.js <args>            # after bun run build
+   ```
+3. **To deploy your changes to production**: merge your PR to `main`. Jenkins webhook fires automatically, builds from `~/.local/share/genie-cli/repo`, and runs `bun link` there.
+4. **The dev workspace `main` branch may be behind** — that's fine. It's for branching, not for running.
+
+### How it works
+
+- Push to `main` on `namastexlabs/genie-cli` → GitHub webhook → Jenkins `genie-cli-fleet-update` job
+- Jenkins SSHs to all 8 fleet hosts in parallel
+- Each host: `git fetch + reset` in `~/.local/share/genie-cli/repo`, `bun install`, `bun run build`, `bun link`
+- `genie` and `term` commands fleet-wide now point to the new build
+
 ## ⚠️ Worktree Policy (MANDATORY)
 
 **NEVER work on main for feature development.**
