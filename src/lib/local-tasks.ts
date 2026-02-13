@@ -260,6 +260,8 @@ export interface UpdateTaskOptions {
   title?: string;
   blockedBy?: string[];  // replaces existing blockedBy
   addBlockedBy?: string[];  // appends to existing blockedBy
+  priorityScores?: PriorityScores;
+  issueType?: 'task' | 'epic';
 }
 
 export async function updateTask(
@@ -286,6 +288,14 @@ export async function updateTask(
     if (options.blockedBy.length > 0 && t.status === 'ready') {
       t.status = 'blocked';
     }
+  }
+
+  if (options.priorityScores !== undefined) {
+    t.priorityScores = options.priorityScores;
+  }
+
+  if (options.issueType !== undefined) {
+    t.issueType = options.issueType;
   }
 
   if (options.addBlockedBy !== undefined && options.addBlockedBy.length > 0) {
