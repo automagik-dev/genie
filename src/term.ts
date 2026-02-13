@@ -35,6 +35,7 @@ import * as batchCmd from './term-commands/batch.js';
 import * as councilCmd from './term-commands/council.js';
 import * as resolveCmd from './term-commands/resolve.js';
 import * as historyCmd from './term-commands/history.js';
+import * as feedCmd from './term-commands/feed.js';
 import { registerSessionNamespace } from './term-commands/session/commands.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 import { registerWishNamespace } from './term-commands/wish/commands.js';
@@ -56,6 +57,10 @@ WORKERS (most common)
   history <worker>    Compressed session summary
   close <id>          Close task and cleanup worker
   kill <worker>       Force kill a worker
+
+PRIORITY QUEUE
+  feed "<title>"      Add epic to priority queue with scoring
+  feed "<title>" -l   Link epic to wish/brainstorm file
 
 TASKS (beads integration)
   task create         Create new beads issue
@@ -87,7 +92,7 @@ POWER TOOLS
 SHORT ALIASES
   w    → work         s    → spawn
   d    → dashboard    a    → approve
-  h    → history
+  h    → history      f    → feed
 
 Examples:
   term work bd-42              # Start working on task
@@ -357,6 +362,16 @@ program
   .option('--json', 'Output final state as JSON')
   .action(async (target: string, message: string, options: orchestrateCmd.RunOptions) => {
     await orchestrateCmd.runTask(target, message, options);
+  });
+
+// Feed epic into priority queue
+program
+  .command('feed <title>')
+  .description('Add epic to priority queue with scoring (term feed "title" [--link path])')
+  .option('-l, --link <path>', 'Link to wish/brainstorm file on disk')
+  .option('--json', 'Output as JSON')
+  .action(async (title: string, options: feedCmd.FeedOptions) => {
+    await feedCmd.feedCommand(title, options);
   });
 
 // Create beads issue command
@@ -765,6 +780,16 @@ program
   .option('--profile <name>', 'Worker profile')
   .action(async (skill: string | undefined, options: spawnCmd.SpawnOptions) => {
     await spawnCmd.spawnCommand(skill, options);
+  });
+
+// term f <title> -> term feed <title>
+program
+  .command('f <title>')
+  .description('Alias for "term feed" - add epic to priority queue')
+  .option('-l, --link <path>', 'Link to file on disk')
+  .option('--json', 'Output as JSON')
+  .action(async (title: string, options: feedCmd.FeedOptions) => {
+    await feedCmd.feedCommand(title, options);
   });
 
 // term d -> term dashboard
