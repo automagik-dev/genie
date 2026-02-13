@@ -102,7 +102,7 @@ export function Markdown({ tokens, theme }: MarkdownProps) {
       backgroundColor: isGlass 
         ? "rgba(99, 102, 241, 0.06)" 
         : "transparent",
-      borderRadius: isGlass ? 4 : 0,
+      ...(isGlass && { borderRadius: 4 }),
     },
     blockquoteText: {
       fontSize: 10,

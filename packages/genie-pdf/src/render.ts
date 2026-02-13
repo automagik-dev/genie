@@ -12,6 +12,19 @@ export interface RenderOptions {
   showPageNumbers?: boolean;
 }
 
+function toOptionalString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  const text = String(value).trim();
+  return text.length > 0 ? text : undefined;
+}
+
 export async function renderMarkdownToPDF(options: RenderOptions): Promise<void> {
   const { input, output, theme: themeName = "default", showPageNumbers = true } = options;
 
@@ -50,10 +63,10 @@ export async function renderMarkdownToPDF(options: RenderOptions): Promise<void>
   const doc = React.createElement(
     Document,
     {
-      title: parsed.frontmatter.title as string | undefined,
-      subtitle: parsed.frontmatter.subtitle as string | undefined,
-      author: parsed.frontmatter.author as string | undefined,
-      date: parsed.frontmatter.date as string | undefined,
+      title: toOptionalString(parsed.frontmatter.title),
+      subtitle: toOptionalString(parsed.frontmatter.subtitle),
+      author: toOptionalString(parsed.frontmatter.author),
+      date: toOptionalString(parsed.frontmatter.date),
       theme,
       showPageNumbers,
       children,
