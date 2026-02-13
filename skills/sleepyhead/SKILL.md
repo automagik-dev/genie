@@ -1,6 +1,6 @@
 ---
 name: sleepyhead
-description: "Overnight batch execution — human defines tasks before sleep, agent executes the full pipeline (wish → forge → reveal → PR) autonomously. Wake up to reviewed PRs. Use when the user says 'sleepyhead', 'overnight', 'batch run', 'kill the backlog', 'run while I sleep', or hands off a task list for autonomous execution."
+description: "Overnight batch execution — human defines tasks before sleep, agent executes the full pipeline (brainstorm → wish → work → review → PR) autonomously. Wake up to reviewed PRs. Use when the user says 'sleepyhead', 'overnight', 'batch run', 'kill the backlog', 'run while I sleep', or hands off a task list for autonomous execution."
 ---
 
 # Sleepyhead — Overnight Batch Execution
@@ -9,7 +9,7 @@ Plan before sleep. Wake up to reviewed PRs.
 
 ## Overview
 
-The human provides a task list. The agent runs the full skill pipeline per task — **brainstorm → wish → plan-review → forge → review → PR** — with no human interaction. Output: N reviewed PRs + a wake-up summary.
+The human provides a task list. The agent runs the full skill pipeline per task — **brainstorm → wish → work → review → PR** — with no human interaction. Output: N reviewed PRs + a wake-up summary.
 
 Each task becomes one PR (up to ~2k lines). Use git worktrees for parallel work.
 
@@ -56,15 +56,9 @@ Run `/wish` to create `.genie/wishes/<task-slug>/wish.md`:
 - Execution groups with validation commands
 - Definition of Done for the PR
 
-### C) Plan-Review
+### C) Work
 
-Run `/plan-review` on the wish:
-- Structure, scope boundaries, acceptance criteria, validation commands
-- Fix any issues found. Do not proceed with a bad plan.
-
-### D) Forge
-
-Run `/make` (dispatches implementor subagents per execution group):
+Run `/work` (dispatches implementor subagents per execution group):
 1. Create worktree: `git worktree add ../repo-<task-slug> -b <convention>/<task-slug>`
 2. Implement in the worktree (isolates parallel work)
 3. Spec review + quality review per group (with fix loops)
@@ -79,7 +73,7 @@ Run `/review` for final validation:
 - Quality spot-check (security, edge cases, performance)
 - Verdict: SHIP / FIX-FIRST / BLOCKED
 
-**If FIX-FIRST:** return to forge, fix, re-review (max 2 loops).
+**If FIX-FIRST:** return to /work, fix, re-review (max 2 loops).
 **If BLOCKED:** mark task blocked, note why, move to next.
 
 ### F) PR
@@ -172,7 +166,7 @@ When all tasks are done, deliver to the human's channel:
 ## Key Principles
 
 - **Zero interaction after start** — ask everything upfront
-- **Full skill pipeline** — brainstorm → wish → plan-review → forge → review → PR
+- **Full skill pipeline** — brainstorm → wish → work → review → PR
 - **One task = one PR** — up to ~2k lines, atomic and reviewable
 - **Worktrees for parallelism** — no branch pollution between tasks
 - **Gemini reviews are real** — read comments, fix genuine issues, ignore noise
