@@ -35,6 +35,9 @@ import * as batchCmd from './term-commands/batch.js';
 import * as councilCmd from './term-commands/council.js';
 import * as resolveCmd from './term-commands/resolve.js';
 import * as historyCmd from './term-commands/history.js';
+import * as feedCmd from './term-commands/feed.js';
+import * as nextCmd from './term-commands/next.js';
+import * as scoreCmd from './term-commands/score.js';
 import { registerSessionNamespace } from './term-commands/session/commands.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 import { registerWishNamespace } from './term-commands/wish/commands.js';
@@ -368,6 +371,36 @@ program
   .option('--json', 'Output as JSON')
   .action(async (title: string, options: createCmd.CreateOptions) => {
     await createCmd.createCommand(title, options);
+  });
+
+// Feed backlog item as scored epic
+program
+  .command('feed <title>')
+  .description('Ingest a backlog item as a scored epic')
+  .option('--scores <json>', 'Override scoring dimensions (JSON)')
+  .option('--slug <slug>', 'Custom slug (default: slugified title)')
+  .action(async (title: string, options: feedCmd.FeedOptions) => {
+    await feedCmd.feedCommand(title, options);
+  });
+
+// Auto-pick next priority item
+program
+  .command('next [target]')
+  .description('Auto-pick highest priority unblocked epic and suggest next action')
+  .option('--json', 'Output as JSON')
+  .action(async (target: string | undefined, options: nextCmd.NextOptions) => {
+    await nextCmd.nextCommand(target, options);
+  });
+
+// View and update priority scores
+program
+  .command('score <task-id>')
+  .description('View and update priority scores for a task')
+  .option('--set <dims>', 'Set dimensions (e.g., blocking=5,quickWin=1)')
+  .option('--sofia', 'Trigger Sofia validation')
+  .option('--json', 'Output as JSON')
+  .action(async (taskId: string, options: scoreCmd.ScoreOptions) => {
+    await scoreCmd.scoreCommand(taskId, options);
   });
 
 // Worker management commands (beads + Claude orchestration)
