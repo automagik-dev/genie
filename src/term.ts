@@ -367,6 +367,7 @@ program
 // Feed epic into priority queue
 program
   .command('feed <title>')
+  .alias('f')
   .description('Add epic to priority queue with scoring (term feed "title" [--link path])')
   .option('-l, --link <path>', 'Link to wish/brainstorm file on disk')
   .option('--json', 'Output as JSON')
@@ -780,16 +781,6 @@ program
   .option('--profile <name>', 'Worker profile')
   .action(async (skill: string | undefined, options: spawnCmd.SpawnOptions) => {
     await spawnCmd.spawnCommand(skill, options);
-  });
-
-// term f <title> -> term feed <title>
-program
-  .command('f <title>')
-  .description('Alias for "term feed" - add epic to priority queue')
-  .option('-l, --link <path>', 'Link to file on disk')
-  .option('--json', 'Output as JSON')
-  .action(async (title: string, options: feedCmd.FeedOptions) => {
-    await feedCmd.feedCommand(title, options);
   });
 
 // term d -> term dashboard

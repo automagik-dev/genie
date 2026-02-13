@@ -16,10 +16,14 @@
  *   complexityInverse (0.10) - Simple = higher score
  */
 
-import { readFile, writeFile, access, mkdir } from 'fs/promises';
+import { readFile, appendFile, access, mkdir } from 'fs/promises';
 import { join, resolve, dirname } from 'path';
 import { randomBytes } from 'crypto';
 import { execSync } from 'child_process';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(execCb);
 
 // ============================================================================
 // Types
@@ -103,11 +107,10 @@ function computePriorityScore(scores: PriorityScores): number {
  * Get the issue prefix from the beads config or repo name.
  * Reads .beads/config.yaml for issue-prefix, falls back to repo directory name.
  */
-function getIssuePrefix(beadsDir: string): string {
+async function getIssuePrefix(beadsDir: string): Promise<string> {
   try {
     const configPath = join(beadsDir, 'config.yaml');
-    const config = require('fs').readFileSync(configPath, 'utf-8');
-    // Look for uncommented issue-prefix line
+    const config = await readFile(configPath, 'utf-8');
     const match = config.match(/^issue-prefix:\s*["']?([^"'\n]+)["']?\s*$/m);
     if (match?.[1]?.trim()) {
       return match[1].trim();
@@ -119,7 +122,7 @@ function getIssuePrefix(beadsDir: string): string {
   // Detect from existing issues
   try {
     const issuesPath = join(beadsDir, 'issues.jsonl');
-    const content = require('fs').readFileSync(issuesPath, 'utf-8');
+    const content = await readFile(issuesPath, 'utf-8');
     const firstLine = content.split('\n').find((l: string) => l.trim());
     if (firstLine) {
       const issue = JSON.parse(firstLine);
@@ -134,11 +137,8 @@ function getIssuePrefix(beadsDir: string): string {
 
   // Fallback: derive from git repo name
   try {
-    const toplevel = execSync('git rev-parse --show-toplevel', {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    return require('path').basename(toplevel).replace(/[^a-zA-Z0-9-]/g, '');
+    const { stdout } = await execAsync('git rev-parse --show-toplevel');
+    return require('path').basename(stdout.trim()).replace(/[^a-zA-Z0-9-]/g, '');
   } catch {
     return 'bd';
   }
@@ -170,14 +170,11 @@ function generateShortId(existingIds: Set<string>, prefix: string): string {
  * Find the .beads directory, searching up from cwd.
  * If inside a worktree, look in the main repo.
  */
-function findBeadsDir(startPath: string): string | null {
+async function findBeadsDir(startPath: string): Promise<string | null> {
   // Try git common dir first (for worktrees)
   try {
-    const commonDir = execSync('git rev-parse --git-common-dir', {
-      cwd: startPath,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
+    const { stdout } = await execAsync('git rev-parse --git-common-dir', { cwd: startPath });
+    const commonDir = stdout.trim();
 
     let mainRepo: string;
     if (commonDir === '.git') {
@@ -190,7 +187,7 @@ function findBeadsDir(startPath: string): string | null {
 
     const beadsPath = join(mainRepo, '.beads');
     try {
-      require('fs').accessSync(beadsPath);
+      await access(beadsPath);
       return beadsPath;
     } catch {
       // Fall through
@@ -204,7 +201,7 @@ function findBeadsDir(startPath: string): string | null {
   for (let i = 0; i < 10; i++) {
     const candidate = join(current, '.beads');
     try {
-      require('fs').accessSync(candidate);
+      await access(candidate);
       return candidate;
     } catch {
       const parent = dirname(current);
@@ -237,30 +234,34 @@ async function loadExistingIds(issuesPath: string): Promise<Set<string>> {
 
 async function appendIssue(issuesPath: string, issue: BeadIssue): Promise<void> {
   const line = JSON.stringify(issue) + '\n';
-  // Ensure the file exists
-  try {
-    await access(issuesPath);
-  } catch {
-    await mkdir(dirname(issuesPath), { recursive: true });
-  }
-  // Append atomically
-  const existing = await readFile(issuesPath, 'utf-8').catch(() => '');
-  const needsNewline = existing.length > 0 && !existing.endsWith('\n');
-  await writeFile(issuesPath, existing + (needsNewline ? '\n' : '') + line);
+  // Ensure directory exists
+  await mkdir(dirname(issuesPath), { recursive: true });
+  // Atomic append — no read-modify-write race
+  await appendFile(issuesPath, line);
 }
 
 // ============================================================================
 // Feed Command
 // ============================================================================
 
+function sanitizeTitle(raw: string): string {
+  // Strip control characters, limit length
+  return raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
+}
+
 export async function feedCommand(
   title: string,
   options: FeedOptions = {}
 ): Promise<void> {
+  title = sanitizeTitle(title);
+  if (!title) {
+    console.error('❌ Title cannot be empty.');
+    process.exit(1);
+  }
   const cwd = process.cwd();
 
   // Find .beads directory
-  const beadsDir = findBeadsDir(cwd);
+  const beadsDir = await findBeadsDir(cwd);
   if (!beadsDir) {
     console.error('❌ No .beads directory found. Run `bd init` or create .beads/ manually.');
     process.exit(1);
@@ -272,7 +273,7 @@ export async function feedCommand(
   const existingIds = await loadExistingIds(issuesPath);
 
   // Generate ID
-  const prefix = getIssuePrefix(beadsDir);
+  const prefix = await getIssuePrefix(beadsDir);
   const id = generateShortId(existingIds, prefix);
 
   // Compute scores
@@ -320,7 +321,6 @@ export async function feedCommand(
   }
   console.log('');
   console.log('Next steps:');
-  console.log(`   term feed score ${id}        — Adjust priority scores`);
-  console.log(`   term feed ls                 — List all epics by priority`);
   console.log(`   term work ${id}              — Start working on it`);
+  console.log(`   term task ls                 — List all tasks and epics`);
 }
