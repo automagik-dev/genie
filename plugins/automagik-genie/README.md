@@ -1,120 +1,55 @@
 # automagik-genie Plugin
 
-Company-standard Claude Code plugin that packages the Genie workflow automation system.
+Company-standard Claude Code/OpenClaw plugin for the Genie workflow.
 
 ## Features
 
-- **Workflow Skills**: brainstorm, wish, make, review, plan-review
-- **Bootstrap Skills**: genie-base, genie-blank-init
-- **Validation Hooks**: Pre-write validation for wish documents
-- **Agent Definitions**: implementor, spec-reviewer, quality-reviewer
-- **Reference Documents**: wish-template, review-criteria
-
-## Installation
-
-### Global Install (Recommended)
-
-Copy the plugin to your Claude Code plugins directory:
-
-```bash
-mkdir -p ~/.claude/plugins
-cp -r tools/genie-cli/.claude-plugin ~/.claude/plugins/automagik-genie
-```
-
-Or create a symlink for development:
-
-```bash
-ln -s $(pwd)/tools/genie-cli/.claude-plugin ~/.claude/plugins/automagik-genie
-```
-
-### Install genie-cli (Optional)
-
-The plugin includes an installation script for the genie-cli companion tool:
-
-```bash
-bash ~/.claude/plugins/automagik-genie/scripts/install-genie-cli.sh --global
-```
+- **Core workflow skills**: `/brainstorm`, `/wish`, `/work`, `/review`
+- **Bootstrap skills**: `genie-base`, `genie-blank-init`
+- **Shared skill source**: `plugins/automagik-genie/skills -> ../../skills`
+- **Agents + hooks + references** for wish execution and validation
 
 ## Workflow
 
-The Genie workflow follows this progression:
-
-```
-/brainstorm → /wish → /plan-review → /make → /review → SHIP
+```text
+/brainstorm → /wish → /work → /review → SHIP
 ```
 
-### 1. Brainstorm (`/brainstorm`)
+### 1) `/brainstorm`
+Explore options, validate direction, and produce a design handoff.
 
-Explore ideas through dialogue. One question at a time. Outputs validated design.
+### 2) `/wish`
+Turn a validated idea into `.genie/wishes/<slug>/wish.md` with scope, criteria, and validation commands.
 
-### 2. Wish (`/wish`)
+### 3) `/work`
+Execute wish tasks with bounded fix loops and per-group validation evidence.
 
-Convert design into structured plan with:
-- Scope (IN/OUT)
-- Success criteria
-- Execution groups with acceptance criteria
-- Validation commands
-
-Creates `.genie/wishes/<slug>/wish.md`
-
-### 3. Plan Review (`/plan-review`)
-
-Fast structural validation of wish document. Catches missing sections before execution.
-
-### 4. Make (`/make`)
-
-Execute the plan by dispatching subagents:
-- **Implementor**: Executes tasks using TDD
-- **Spec Reviewer**: Verifies acceptance criteria (3 loop max)
-- **Quality Reviewer**: Checks security/maintainability (2 loop max)
-
-Never implements directly - always dispatches agents.
-
-### 5. Review (`/review`)
-
-Final validation producing:
-- **SHIP**: Ready to deploy
-- **FIX-FIRST**: Return to make with specific fixes
-- **BLOCKED**: Return to wish for scope changes
+### 4) `/review`
+Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `BLOCKED`.
 
 ## Directory Structure
 
-```
+```text
 automagik-genie/
-├── plugin.json           # Plugin manifest
-├── skills/
-│   ├── brainstorm/       # Idea exploration
-│   ├── wish/             # Plan creation
-│   ├── make/            # Plan execution
-│   ├── review/           # Final validation
-│   ├── plan-review/      # Wish validation
-│   ├── genie-base/       # Workspace bootstrap
-│   └── genie-blank-init/ # First activation
+├── .claude-plugin/plugin.json
+├── openclaw.plugin.json
+├── automagik-genie.ts
+├── skills -> ../../skills
 ├── agents/
-│   ├── implementor.md    # Task executor
-│   ├── spec-reviewer.md  # Criteria verifier
-│   └── quality-reviewer.md # Quality checker
 ├── hooks/
-│   └── hooks.json        # Validation hooks
 ├── scripts/
-│   ├── validate-wish.ts  # Wish validation
-│   ├── validate-completion.ts # Make completion check
-│   └── install-genie-cli.sh # CLI installer
 └── references/
-    ├── wish-template.md  # Wish document template
-    └── review-criteria.md # Review severity guide
 ```
 
 ## Verification
 
-After installation, verify the plugin is discovered:
-
 ```bash
 ls ~/.claude/plugins/automagik-genie/plugin.json
+openclaw plugins list | rg automagik
 ```
 
-Test skills are invocable:
-- `/brainstorm` should enter exploration mode
-- `/wish` should create wish documents
-- `/make` should dispatch implementor agents
-- `/review` should produce SHIP/FIX-FIRST/BLOCKED verdict
+Smoke-test the core commands:
+- `/brainstorm`
+- `/wish`
+- `/work`
+- `/review`

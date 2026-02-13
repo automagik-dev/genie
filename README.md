@@ -15,7 +15,11 @@ Genie CLI ships three CLIs:
 ## What you get (features)
 
 ### Workflow skills (shared across tools)
-Genie provides a set of **skills** (slash commands like `/brainstorm`, `/wish`, etc.) that can be loaded in:
+Genie provides a set of **skills** (slash commands) centered on a 4-command workflow:
+
+`/brainstorm → /wish → /work → /review`
+
+These skills can be loaded in:
 
 - **Claude Code** via the `automagik-genie` Claude plugin
 - **OpenClaw** via the `automagik-genie` OpenClaw plugin
