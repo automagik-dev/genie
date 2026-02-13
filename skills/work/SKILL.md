@@ -10,13 +10,24 @@ Execute an approved wish from `.genie/wishes/<slug>/wish.md`.
 ## Flow
 1. **Load wish + status:** confirm scope and current progress.
 2. **Pick next task:** select next unblocked pending execution group.
-3. **Dispatch implementor:** implement from wish + criteria (prefer TDD).
+3. **Dispatch implementor:** pick a route from the Dispatch table below.
 4. **Spec review:** check acceptance criteria; if fail, fix (max 3 loops).
 5. **Quality review:** security/maintainability/perf check; if fail, fix (max 2 loops).
 6. **Validate:** run the group validation command and record evidence.
 7. **Mark complete:** update task state and wish checkboxes.
 8. **Repeat** until all groups are done.
 9. **Handoff:** `All work tasks complete. Run /review.`
+
+## Dispatch
+
+Pick the route that fits the task. When unsure, start cheap (exec) and escalate.
+
+| Task needs… | Route | Example | Don't use for |
+|-------------|-------|---------|---------------|
+| File edits, multi-step coding | `term work <bead>` | CC worker via claudio — state detection, auto-approve | Simple validation, reasoning-only |
+| Thinking, research, analysis | `sessions_spawn(task:"…")` | Fresh sub-agent, announces result back | File edits (no workspace access) |
+| Quick validation, grep, git | `exec("command")` | Direct shell, immediate result | Complex multi-file refactors |
+| Another agent's expertise | `sessions_send(agentId, msg)` | ClawNet cross-agent delegation | Tasks you can do locally |
 
 ## Escalation
 If loop limit is exceeded:
