@@ -13,8 +13,8 @@ Universal review gate. Always run as a subagent — never review your own work i
 3. Run listed validation commands and capture pass/fail output.
 4. Classify gaps: CRITICAL / HIGH / MEDIUM / LOW.
 5. Return verdict:
-   - **SHIP:** no CRITICAL/HIGH gaps, validations pass.
-   - **FIX-FIRST:** fixable gaps or failing validations → hand off to `/fix`.
+   - **SHIP:** no CRITICAL/HIGH gaps, validations pass. MEDIUM/LOW gaps are noted but don't block.
+   - **FIX-FIRST:** CRITICAL or HIGH gaps, or failing validations → hand off to `/fix`.
    - **BLOCKED:** scope/architecture issue requiring wish revision.
 6. Write actionable next steps (exact fixes, files, commands).
 
@@ -38,6 +38,7 @@ Run after `/work`. Checks implementation against wish criteria.
 - [ ] Validation commands run and passing
 - [ ] No scope creep — only wish-scoped changes made
 - [ ] Work is auditable — commands and outcomes captured
+- [ ] Quality pass: security, maintainability, correctness
 - [ ] No regressions introduced
 
 ### PR Review (pre-merge)

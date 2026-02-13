@@ -14,10 +14,11 @@ Execute an approved wish from `.genie/wishes/<slug>/wish.md`.
 2. **Pick next task:** select next unblocked pending execution group.
 3. **Dispatch subagent:** send the task to a fresh session (see Dispatch below).
 4. **Spec review:** dispatch reviewer subagent to check acceptance criteria; if fail, dispatch `/fix` (max 2 loops).
-5. **Validate:** run the group validation command and record evidence.
-6. **Mark complete:** update task state and wish checkboxes.
-7. **Repeat** until all groups are done.
-8. **Handoff:** `All work tasks complete. Run /review.`
+5. **Quality review:** dispatch reviewer subagent for quality pass (security, maintainability, perf); if fail, dispatch `/fix` (max 1 loop).
+6. **Validate:** run the group validation command and record evidence.
+7. **Mark complete:** update task state and wish checkboxes.
+8. **Repeat** until all groups are done.
+9. **Handoff:** `All work tasks complete. Run /review.`
 
 ## Dispatch
 

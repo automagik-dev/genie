@@ -15,9 +15,10 @@ Handle a FIX-FIRST verdict from `/review`. Dispatch fixes via subagent, then re-
 3. **Re-review:** dispatch `/review` subagent to validate the fix.
 4. **Check verdict:**
    - **SHIP** → done, return to orchestrator.
-   - **FIX-FIRST** → increment loop counter, go to step 2 (if loop ≤ 2).
+   - **FIX-FIRST** + loop < 2 → increment loop counter, go to step 2.
+   - **FIX-FIRST** + loop = 2 → escalate (max reached).
    - **BLOCKED** → escalate immediately.
-5. **Loop exceeded (> 2):** mark task BLOCKED, report to orchestrator with remaining gaps.
+5. **Escalation (loop = 2 or BLOCKED):** mark task BLOCKED, report to orchestrator with remaining gaps.
 
 ## Subagent Dispatch
 
@@ -30,11 +31,11 @@ sessions_send(
   timeoutSeconds: 120
 )
 
-# Re-review subagent
+# Re-review subagent (use same pipeline as original review)
 sessions_send(
   agentId: "<self>",
   sessionKey: "agent:<self>:reviewer-<slug>-loop<N>",
-  message: "Review fix for wish <slug>. Pipeline: execution. Check: <gap list resolved?>",
+  message: "Review fix for wish <slug>. Pipeline: <original_pipeline>. Check: <gap list resolved?>",
   timeoutSeconds: 120
 )
 ```
