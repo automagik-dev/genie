@@ -34,3 +34,5 @@ Use for early-stage or ambiguous ideas.
 ## Handoff Message
 
 `Design validated. Run /wish to turn this into an executable plan.`
+
+Note any cross-repo or cross-agent dependencies discovered during brainstorm — these become `depends-on`/`blocks` fields in the wish.

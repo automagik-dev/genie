@@ -23,6 +23,7 @@ If no prior brainstorm/design context exists, ask first:
 ## Required Wish Sections
 - Status, slug, date
 - Problem/summary
+- Dependencies: `depends-on` / `blocks` (optional — use `slug` or `repo/slug` for cross-repo)
 - Scope IN / OUT
 - Key decisions + rationale
 - Success criteria (checkboxes)
@@ -33,3 +34,4 @@ If no prior brainstorm/design context exists, ask first:
 - No vague tasks ("do everything").
 - Every task must be testable.
 - Keep tasks bite-sized and shippable.
+- Tag dependencies early — if a wish depends on another, declare it.
