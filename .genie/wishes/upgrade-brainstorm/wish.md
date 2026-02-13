@@ -1,6 +1,6 @@
 # Wish: Upgrade Brainstorm Skill with Handoff Output
 
-**Status:** REVIEW
+**Status:** COMPLETE
 **Slug:** `upgrade-brainstorm`
 **Created:** 2026-02-09
 
