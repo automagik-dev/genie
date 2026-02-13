@@ -1,5 +1,5 @@
 // Jenkinsfile.fleet-cli — Update genie-cli on all fleet hosts
-// Triggered by webhook token with ref/repo filters
+// Triggered by webhook on push to main of namastexlabs/genie-cli
 pipeline {
     agent any
     options {
@@ -7,16 +7,51 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '30'))
     }
     stages {
+        stage('Prepare update script') {
+            steps {
+                writeFile file: 'update-genie-cli.sh', text: '''\
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="${HOME}/.local/share/genie-cli/repo"
+mkdir -p "$(dirname "${REPO_DIR}")"
+
+if [ ! -d "${REPO_DIR}/.git" ]; then
+    rm -rf "${REPO_DIR}"
+    git clone --branch main --depth 1 https://github.com/namastexlabs/genie-cli.git "${REPO_DIR}"
+fi
+
+cd "${REPO_DIR}"
+
+git remote set-url origin https://github.com/namastexlabs/genie-cli.git
+git fetch origin +refs/heads/main:refs/remotes/origin/main
+git checkout -B main refs/remotes/origin/main
+git reset --hard refs/remotes/origin/main
+
+export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:/usr/local/bin:${PATH}"
+command -v bun >/dev/null || { echo "ERROR: bun not found"; exit 3; }
+
+bun install --frozen-lockfile 2>/dev/null || bun install
+bun run build
+bun link
+
+command -v genie >/dev/null 2>&1 && genie --version || true
+command -v term  >/dev/null 2>&1 && term --version  || true
+
+echo "GENIE_OK: ${1:-unknown}"
+'''
+            }
+        }
         stage('Update genie-cli on Fleet') {
             parallel {
-                stage('genie-os')  { steps { updateGenieCLI('genie@10.114.1.111', 'genie-os') } }
-                stage('cegonha')   { steps { updateGenieCLI('genie@10.114.1.121', 'cegonha') } }
-                stage('stefani')   { steps { updateGenieCLI('genie@10.114.1.124', 'stefani') } }
-                stage('gus')       { steps { updateGenieCLI('genie@10.114.1.126', 'gus') } }
-                stage('luis')      { steps { updateGenieCLI('genie@10.114.1.131', 'luis') } }
-                stage('sampaio')   { steps { updateGenieCLI('genie@10.114.1.154', 'sampaio') } }
-                stage('juice')     { steps { updateGenieCLI('openclaw@10.114.1.119', 'juice') } }
-                stage('omni-prod') { steps { updateGenieCLI('omni@10.114.1.140', 'omni-prod') } }
+                stage('genie-os')  { steps { updateHost('genie@10.114.1.111', 'genie-os') } }
+                stage('cegonha')   { steps { updateHost('genie@10.114.1.121', 'cegonha') } }
+                stage('stefani')   { steps { updateHost('genie@10.114.1.124', 'stefani') } }
+                stage('gus')       { steps { updateHost('genie@10.114.1.126', 'gus') } }
+                stage('luis')      { steps { updateHost('genie@10.114.1.131', 'luis') } }
+                stage('sampaio')   { steps { updateHost('genie@10.114.1.154', 'sampaio') } }
+                stage('juice')     { steps { updateHost('openclaw@10.114.1.119', 'juice') } }
+                stage('omni-prod') { steps { updateHost('omni@10.114.1.140', 'omni-prod') } }
             }
         }
     }
@@ -26,47 +61,6 @@ pipeline {
     }
 }
 
-def updateGenieCLI(String sshTarget, String hostLabel) {
-    sh """
-        echo "Updating genie-cli on ${hostLabel} (${sshTarget})..."
-        ssh -o BatchMode=yes -o ConnectTimeout=20 ${sshTarget} 'bash -s' << 'REMOTE_SCRIPT'
-            set -euo pipefail
-
-            REPO_DIR="\${HOME}/.local/share/genie-cli/repo"
-            mkdir -p "$(dirname "\${REPO_DIR}")"
-
-            # Clone if missing, else update
-            if [ ! -d "\${REPO_DIR}/.git" ]; then
-                rm -rf "\${REPO_DIR}"
-                git clone --branch main --depth 1 https://github.com/namastexlabs/genie-cli.git "\${REPO_DIR}"
-            fi
-
-            cd "\${REPO_DIR}"
-
-            # Robust sync to main
-            git remote set-url origin https://github.com/namastexlabs/genie-cli.git
-            git fetch origin +refs/heads/main:refs/remotes/origin/main
-            git checkout -B main refs/remotes/origin/main
-            git reset --hard refs/remotes/origin/main
-
-            # Ensure bun in PATH
-            export PATH="\${HOME}/.bun/bin:\${HOME}/.local/bin:/usr/local/bin:\${PATH}"
-            command -v bun >/dev/null || { echo "ERROR: bun not found on ${hostLabel}"; exit 3; }
-
-            # Build + link
-            bun install --frozen-lockfile 2>/dev/null || bun install
-            bun run build
-            bun link
-
-            # Verify
-            if command -v genie >/dev/null 2>&1; then
-                genie --version || true
-            fi
-            if command -v term >/dev/null 2>&1; then
-                term --version || true
-            fi
-
-            echo "GENIE_OK: ${hostLabel}"
-REMOTE_SCRIPT
-    """
+def updateHost(String sshTarget, String hostLabel) {
+    sh "echo 'Updating genie-cli on ${hostLabel} (${sshTarget})...' && cat update-genie-cli.sh | ssh -o BatchMode=yes -o ConnectTimeout=20 ${sshTarget} 'bash -s -- ${hostLabel}'"
 }
