@@ -60,6 +60,10 @@ WORKERS (most common)
   close <id>          Close task and cleanup worker
   kill <worker>       Force kill a worker
 
+PRIORITY QUEUE
+  feed "<title>"      Add epic to priority queue with scoring
+  feed "<title>" -l   Link epic to wish/brainstorm file
+
 TASKS (beads integration)
   task create         Create new beads issue
   task update         Update task properties
@@ -90,7 +94,7 @@ POWER TOOLS
 SHORT ALIASES
   w    → work         s    → spawn
   d    → dashboard    a    → approve
-  h    → history
+  h    → history      f    → feed
 
 Examples:
   term work bd-42              # Start working on task
@@ -362,6 +366,17 @@ program
     await orchestrateCmd.runTask(target, message, options);
   });
 
+// Feed epic into priority queue
+program
+  .command('feed <title>')
+  .alias('f')
+  .description('Add epic to priority queue with scoring (term feed "title" [--link path])')
+  .option('-l, --link <path>', 'Link to wish/brainstorm file on disk')
+  .option('--json', 'Output as JSON')
+  .action(async (title: string, options: feedCmd.FeedOptions) => {
+    await feedCmd.feedCommand(title, options);
+  });
+
 // Create beads issue command
 program
   .command('create <title>')
@@ -371,16 +386,6 @@ program
   .option('--json', 'Output as JSON')
   .action(async (title: string, options: createCmd.CreateOptions) => {
     await createCmd.createCommand(title, options);
-  });
-
-// Feed backlog item as scored epic
-program
-  .command('feed <title>')
-  .description('Ingest a backlog item as a scored epic')
-  .option('--scores <json>', 'Override scoring dimensions (JSON)')
-  .option('--slug <slug>', 'Custom slug (default: slugified title)')
-  .action(async (title: string, options: feedCmd.FeedOptions) => {
-    await feedCmd.feedCommand(title, options);
   });
 
 // Auto-pick next priority item

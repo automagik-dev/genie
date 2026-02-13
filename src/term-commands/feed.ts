@@ -1,126 +1,326 @@
 /**
- * Feed command - Ingest a new backlog item as a scored epic
+ * Feed command - Add epic-type beads to the priority queue.
+ *
+ * Creates a bead with issue_type="epic" and priority scoring metadata.
+ * Epics represent high-level work items that can be broken down into tasks.
  *
  * Usage:
- *   term feed "<title>"                             - Create epic with default scores (all 3/5)
- *   term feed "<title>" --scores '{"blocking":5}'   - Override specific dimensions
- *   term feed "<title>" --slug <slug>               - Custom slug (default: slugified title)
+ *   term feed "emoji rlhf"                     # Create epic with default scores
+ *   term feed "emoji rlhf" --link path/to/wish  # Create epic linked to a file
+ *
+ * Priority scoring (all default to 3/5):
+ *   blocking         (0.30) - How many things does this unblock?
+ *   stability        (0.25) - Does the current state cause failures?
+ *   crossImpact      (0.20) - How many repos/agents benefit?
+ *   quickWin         (0.15) - Can it ship in one session?
+ *   complexityInverse (0.10) - Simple = higher score
  */
 
-import { existsSync } from 'fs';
-import { join } from 'path';
-import {
-  createWishTask,
-  ensureTasksFile,
-  updateTask,
-  computePriorityScore,
-  type PriorityScores,
-} from '../lib/local-tasks.js';
-import { getRepoGenieDir } from '../lib/genie-dir.js';
+import { readFile, appendFile, access, mkdir } from 'fs/promises';
+import { join, resolve, dirname } from 'path';
+import { randomBytes } from 'crypto';
+import { execSync } from 'child_process';
+import { exec as execCb } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(execCb);
+
+// ============================================================================
+// Types
+// ============================================================================
 
 export interface FeedOptions {
-  scores?: string;
-  slug?: string;
+  link?: string;
+  json?: boolean;
 }
 
-/** Convert a title to a URL-safe slug: lowercase, hyphens, no special chars */
-function slugify(title: string): string {
-  return title
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')  // strip special chars
-    .replace(/[\s_]+/g, '-')        // spaces/underscores → hyphens
-    .replace(/-+/g, '-')            // collapse multiple hyphens
-    .replace(/^-|-$/g, '');         // trim leading/trailing hyphens
+interface PriorityScores {
+  blocking: number;
+  stability: number;
+  crossImpact: number;
+  quickWin: number;
+  complexityInverse: number;
 }
 
-const DEFAULT_SCORES: PriorityScores = {
-  blocking: 3,
-  stability: 3,
-  crossImpact: 3,
-  quickWin: 3,
-  complexityInverse: 3,
-};
+interface EpicMetadata {
+  scores: PriorityScores;
+  priorityScore: number;
+}
 
-export async function feedCommand(
-  title: string,
-  options: FeedOptions = {},
-): Promise<void> {
-  const repoPath = process.cwd();
-  const slug = options.slug || slugify(title);
+interface BeadIssue {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  priority: number;
+  issue_type: string;
+  owner?: string;
+  created_at: string;
+  created_by: string;
+  updated_at: string;
+  metadata?: EpicMetadata;
+  external_ref?: string;
+  labels?: string[];
+}
 
-  // Parse --scores JSON override
-  let overrides: Partial<PriorityScores> = {};
-  if (options.scores) {
+// ============================================================================
+// Scoring
+// ============================================================================
+
+const WEIGHTS = {
+  blocking: 0.30,
+  stability: 0.25,
+  crossImpact: 0.20,
+  quickWin: 0.15,
+  complexityInverse: 0.10,
+} as const;
+
+const DEFAULT_SCORE = 3;
+
+function defaultScores(): PriorityScores {
+  return {
+    blocking: DEFAULT_SCORE,
+    stability: DEFAULT_SCORE,
+    crossImpact: DEFAULT_SCORE,
+    quickWin: DEFAULT_SCORE,
+    complexityInverse: DEFAULT_SCORE,
+  };
+}
+
+function computePriorityScore(scores: PriorityScores): number {
+  const raw =
+    scores.blocking * WEIGHTS.blocking +
+    scores.stability * WEIGHTS.stability +
+    scores.crossImpact * WEIGHTS.crossImpact +
+    scores.quickWin * WEIGHTS.quickWin +
+    scores.complexityInverse * WEIGHTS.complexityInverse;
+
+  // Round to 2 decimal places
+  return Math.round(raw * 100) / 100;
+}
+
+// ============================================================================
+// ID Generation
+// ============================================================================
+
+/**
+ * Get the issue prefix from the beads config or repo name.
+ * Reads .beads/config.yaml for issue-prefix, falls back to repo directory name.
+ */
+async function getIssuePrefix(beadsDir: string): Promise<string> {
+  try {
+    const configPath = join(beadsDir, 'config.yaml');
+    const config = await readFile(configPath, 'utf-8');
+    const match = config.match(/^issue-prefix:\s*["']?([^"'\n]+)["']?\s*$/m);
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  } catch {
+    // Fall through to repo name detection
+  }
+
+  // Detect from existing issues
+  try {
+    const issuesPath = join(beadsDir, 'issues.jsonl');
+    const content = await readFile(issuesPath, 'utf-8');
+    const firstLine = content.split('\n').find((l: string) => l.trim());
+    if (firstLine) {
+      const issue = JSON.parse(firstLine);
+      const dashIdx = issue.id.lastIndexOf('-');
+      if (dashIdx > 0) {
+        return issue.id.substring(0, dashIdx);
+      }
+    }
+  } catch {
+    // Fall through
+  }
+
+  // Fallback: derive from git repo name
+  try {
+    const { stdout } = await execAsync('git rev-parse --show-toplevel');
+    return require('path').basename(stdout.trim()).replace(/[^a-zA-Z0-9-]/g, '');
+  } catch {
+    return 'bd';
+  }
+}
+
+/**
+ * Generate a unique short ID suffix (3 chars, base36).
+ * Checks existing IDs to avoid collisions.
+ */
+function generateShortId(existingIds: Set<string>, prefix: string): string {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const bytes = randomBytes(2);
+    const suffix = ((bytes[0] << 8) | bytes[1]).toString(36).slice(0, 3).padStart(3, '0');
+    const candidate = `${prefix}-${suffix}`;
+    if (!existingIds.has(candidate)) {
+      return candidate;
+    }
+  }
+  // Fallback: use more bytes
+  const suffix = randomBytes(4).toString('hex').slice(0, 4);
+  return `${prefix}-${suffix}`;
+}
+
+// ============================================================================
+// JSONL Operations
+// ============================================================================
+
+/**
+ * Find the .beads directory, searching up from cwd.
+ * If inside a worktree, look in the main repo.
+ */
+async function findBeadsDir(startPath: string): Promise<string | null> {
+  // Try git common dir first (for worktrees)
+  try {
+    const { stdout } = await execAsync('git rev-parse --git-common-dir', { cwd: startPath });
+    const commonDir = stdout.trim();
+
+    let mainRepo: string;
+    if (commonDir === '.git') {
+      mainRepo = startPath;
+    } else if (commonDir.endsWith('/.git') || commonDir.endsWith('\\.git')) {
+      mainRepo = commonDir.slice(0, -5);
+    } else {
+      mainRepo = dirname(commonDir);
+    }
+
+    const beadsPath = join(mainRepo, '.beads');
     try {
-      overrides = JSON.parse(options.scores);
-      // Validate keys
-      const validKeys = new Set<string>([
-        'blocking', 'stability', 'crossImpact', 'quickWin', 'complexityInverse',
-      ]);
-      for (const key of Object.keys(overrides)) {
-        if (!validKeys.has(key)) {
-          console.error(`❌ Unknown score dimension: "${key}"`);
-          console.error(`   Valid: ${[...validKeys].join(', ')}`);
-          process.exit(1);
-        }
-        const val = (overrides as Record<string, unknown>)[key];
-        if (typeof val !== 'number' || val < 0 || val > 5) {
-          console.error(`❌ Score "${key}" must be a number 0-5, got: ${val}`);
-          process.exit(1);
-        }
-      }
-    } catch (err: any) {
-      if (err.message?.includes('Unknown score') || err.message?.includes('must be a number')) {
-        throw err; // re-throw our own validation errors
-      }
-      console.error(`❌ Invalid --scores JSON: ${err.message}`);
-      process.exit(1);
+      await access(beadsPath);
+      return beadsPath;
+    } catch {
+      // Fall through
+    }
+  } catch {
+    // Not in a git repo, search manually
+  }
+
+  // Walk up looking for .beads/
+  let current = startPath;
+  for (let i = 0; i < 10; i++) {
+    const candidate = join(current, '.beads');
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
     }
   }
 
-  const scores: PriorityScores = { ...DEFAULT_SCORES, ...overrides };
+  return null;
+}
 
-  // Ensure tasks file exists
-  await ensureTasksFile(repoPath);
+async function loadExistingIds(issuesPath: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    const content = await readFile(issuesPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const issue = JSON.parse(line);
+        if (issue.id) ids.add(issue.id);
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  } catch {
+    // File doesn't exist yet
+  }
+  return ids;
+}
 
-  // Create the task
-  const task = await createWishTask(repoPath, title);
+async function appendIssue(issuesPath: string, issue: BeadIssue): Promise<void> {
+  const line = JSON.stringify(issue) + '\n';
+  // Ensure directory exists
+  await mkdir(dirname(issuesPath), { recursive: true });
+  // Atomic append — no read-modify-write race
+  await appendFile(issuesPath, line);
+}
 
-  // Update with priority scores and epic type
-  const updated = await updateTask(repoPath, task.id, {
-    priorityScores: scores,
-    issueType: 'epic',
-  });
+// ============================================================================
+// Feed Command
+// ============================================================================
 
-  if (!updated) {
-    console.error(`❌ Failed to update task ${task.id} with scores`);
+function sanitizeTitle(raw: string): string {
+  // Strip control characters, limit length
+  return raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
+}
+
+export async function feedCommand(
+  title: string,
+  options: FeedOptions = {}
+): Promise<void> {
+  title = sanitizeTitle(title);
+  if (!title) {
+    console.error('❌ Title cannot be empty.');
+    process.exit(1);
+  }
+  const cwd = process.cwd();
+
+  // Find .beads directory
+  const beadsDir = await findBeadsDir(cwd);
+  if (!beadsDir) {
+    console.error('❌ No .beads directory found. Run `bd init` or create .beads/ manually.');
     process.exit(1);
   }
 
-  // Compute priority
-  const priority = computePriorityScore(scores);
+  const issuesPath = join(beadsDir, 'issues.jsonl');
 
-  // Check for existing brainstorm/wish artifacts
-  const genieDir = getRepoGenieDir(repoPath);
-  const designPath = join(genieDir, 'brainstorms', slug, 'design.md');
-  const wishPath = join(genieDir, 'wishes', slug, 'wish.md');
-  const hasDesign = existsSync(designPath);
-  const hasWish = existsSync(wishPath);
+  // Load existing IDs for collision avoidance
+  const existingIds = await loadExistingIds(issuesPath);
+
+  // Generate ID
+  const prefix = await getIssuePrefix(beadsDir);
+  const id = generateShortId(existingIds, prefix);
+
+  // Compute scores
+  const scores = defaultScores();
+  const priorityScore = computePriorityScore(scores);
+
+  // Build metadata
+  const metadata: EpicMetadata = { scores, priorityScore };
+
+  // Build the issue
+  const now = new Date().toISOString();
+  const issue: BeadIssue = {
+    id,
+    title,
+    status: 'open',
+    priority: 1,
+    issue_type: 'epic',
+    created_at: now,
+    created_by: 'genie-cli',
+    updated_at: now,
+    metadata,
+  };
+
+  // Handle --link
+  if (options.link) {
+    const linkPath = resolve(cwd, options.link);
+    issue.external_ref = linkPath;
+  }
+
+  // Write to JSONL
+  await appendIssue(issuesPath, issue);
 
   // Output
-  console.log(`🍽️  Fed: ${updated.id} — "${title}"`);
-  console.log(`   Type:     epic`);
-  console.log(`   Slug:     ${slug}`);
-  console.log(`   Priority: ${priority.toFixed(2)} / 5.00`);
-  console.log(`   Scores:   blocking=${scores.blocking} stability=${scores.stability} cross=${scores.crossImpact} quick=${scores.quickWin} complexity⁻¹=${scores.complexityInverse}`);
+  if (options.json) {
+    console.log(JSON.stringify(issue, null, 2));
+    return;
+  }
 
-  if (hasDesign) console.log(`   📋 Design: .genie/brainstorms/${slug}/design.md`);
-  if (hasWish) console.log(`   📝 Wish:   .genie/wishes/${slug}/wish.md`);
-  if (!hasDesign && !hasWish) console.log(`   💡 No design or wish yet — run: term brainstorm -p "${slug}"`);
-
+  console.log(`🎯 Epic created: ${id}`);
+  console.log(`   Title: "${title}"`);
+  console.log(`   Priority Score: ${priorityScore}`);
+  console.log(`   Scores: blocking=${scores.blocking} stability=${scores.stability} crossImpact=${scores.crossImpact} quickWin=${scores.quickWin} complexity⁻¹=${scores.complexityInverse}`);
+  if (issue.external_ref) {
+    console.log(`   Linked: ${issue.external_ref}`);
+  }
   console.log('');
-  console.log(`Next steps:`);
-  console.log(`   term task ls                 - See priority queue`);
-  console.log(`   term work ${updated.id}           - Start working on it`);
+  console.log('Next steps:');
+  console.log(`   term work ${id}              — Start working on it`);
+  console.log(`   term task ls                 — List all tasks and epics`);
 }
