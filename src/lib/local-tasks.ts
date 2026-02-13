@@ -11,6 +11,24 @@ import { getRepoGenieDir } from './genie-dir.js';
 
 export type LocalTaskStatus = 'ready' | 'in_progress' | 'done' | 'blocked';
 
+export interface PriorityScores {
+  blocking: number;            // 0-5: How many other items depend on this
+  stability: number;           // 0-5: Foundation/infra impact
+  crossImpact: number;         // 0-5: Affects multiple agents/repos
+  quickWin: number;            // 0-5: Effort-to-value ratio
+  complexityInverse: number;   // 0-5: Simplicity (5=trivial, 0=massive)
+}
+
+export function computePriorityScore(scores: PriorityScores): number {
+  return (
+    scores.blocking * 0.30 +
+    scores.stability * 0.25 +
+    scores.crossImpact * 0.20 +
+    scores.quickWin * 0.15 +
+    scores.complexityInverse * 0.10
+  );
+}
+
 export interface LocalTask {
   id: string;           // wish-<n>
   title: string;
@@ -19,6 +37,8 @@ export interface LocalTask {
   blockedBy: string[];
   createdAt: string;
   updatedAt: string;
+  priorityScores?: PriorityScores;
+  issueType?: 'task' | 'epic';
 }
 
 interface LocalTasksFile {
@@ -123,7 +143,16 @@ export async function getTask(repoPath: string, id: string): Promise<LocalTask |
 
 export async function listTasks(repoPath: string): Promise<LocalTask[]> {
   const file = await loadTasks(repoPath);
-  return file.order.map(id => file.tasks[id]).filter(Boolean);
+  const tasks = file.order.map(id => file.tasks[id]).filter(Boolean);
+
+  // Sort by priority score (descending). Tasks with scores above tasks without.
+  tasks.sort((a, b) => {
+    const scoreA = a.priorityScores ? computePriorityScore(a.priorityScores) : -1;
+    const scoreB = b.priorityScores ? computePriorityScore(b.priorityScores) : -1;
+    return scoreB - scoreA;
+  });
+
+  return tasks;
 }
 
 export async function getQueue(repoPath: string): Promise<{ ready: string[]; blocked: string[] }> {
@@ -150,6 +179,15 @@ export async function getQueue(repoPath: string): Promise<{ ready: string[]; blo
     // If deps are done, task can be ready
     ready.push(t.id);
   }
+
+  // Sort ready tasks by priority score (descending). Tasks with scores above tasks without.
+  ready.sort((a, b) => {
+    const taskA = file.tasks[a];
+    const taskB = file.tasks[b];
+    const scoreA = taskA?.priorityScores ? computePriorityScore(taskA.priorityScores) : -1;
+    const scoreB = taskB?.priorityScores ? computePriorityScore(taskB.priorityScores) : -1;
+    return scoreB - scoreA;
+  });
 
   return { ready, blocked };
 }
