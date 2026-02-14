@@ -10,11 +10,13 @@ Use for early-stage or ambiguous ideas. Track wish-readiness as you go.
 ## Flow
 
 1. Read context quickly (current code/docs/conventions).
-2. Clarify intent with **one question at a time** (prefer multiple-choice).
-3. After each exchange, update the **WRS bar** (see below).
-4. Propose 2-3 approaches with trade-offs. Recommend one.
-5. When WRS ≥ 60: offer to crystallize → hand off to `/wish`.
-6. When WRS = 100: auto-crystallize → `design.md` → hand off.
+2. Initialize persistence immediately (see **Persistence**): create/maintain `.genie/brainstorms/<slug>/draft.md` from the start.
+3. Clarify intent with **one question at a time** (prefer multiple-choice).
+4. After each exchange, update the **WRS bar** (see below).
+5. Persist the draft **when WRS changes OR every 2 minutes** (whichever comes first).
+6. Propose 2-3 approaches with trade-offs. Recommend one.
+7. When WRS ≥ 60: offer to crystallize → hand off to `/wish`.
+8. When WRS = 100: auto-crystallize (see **Crystallize**) → `design.md` → hand off.
 
 ## WRS — Wish Readiness Score
 
@@ -44,7 +46,20 @@ WRS: ██████░░░░ 60/100
 - **< 40**: Keep exploring. Don't rush.
 - **40-59**: Getting close. Focus questions on unfilled dimensions.
 - **≥ 60**: Offer: `"WRS hit 60. Ready to pour into /wish, or keep refining?"`
-- **100**: Auto-crystallize: write `design.md`, hand off to `/wish`.
+- **100**: Auto-crystallize (see **Crystallize**): write `design.md`, hand off to `/wish`.
+
+## Persistence
+
+- **Draft-first**: maintain `.genie/brainstorms/<slug>/draft.md` from the start of the brainstorm.
+- **Cadence**: write/refresh `draft.md` **when WRS changes OR every 2 minutes**, whichever comes first.
+  - This is to survive freezes/restarts; do not wait until the end.
+
+## Crystallize
+
+- **Trigger**: when **WRS = 100**, crystallize automatically.
+- **Semantics**:
+  - Write/update `.genie/brainstorms/<slug>/design.md` **from** `.genie/brainstorms/<slug>/draft.md`.
+  - Trigger Beads upsert via: `genie brainstorm crystallize`.
 
 ## Output Options
 
