@@ -27,9 +27,20 @@ export interface BeadsIssueRecord {
   [k: string]: unknown;
 }
 
+let _lastUtcNowMs = 0;
+
+/**
+ * RFC3339/ISO8601 UTC timestamp with a monotonic guarantee.
+ *
+ * Note: Date() only has millisecond resolution. When we write multiple records
+ * in the same tick (common in tests and fast CLIs), we still want updated_at
+ * to advance so downstream consumers can rely on it.
+ */
 export function utcNowRfc3339(): string {
-  // JS Date.toISOString() is RFC3339 UTC
-  return new Date().toISOString();
+  const ms = Date.now();
+  const next = ms <= _lastUtcNowMs ? _lastUtcNowMs + 1 : ms;
+  _lastUtcNowMs = next;
+  return new Date(next).toISOString();
 }
 
 export async function ensureBeadsIssuesPath(repoPath: string): Promise<string> {
