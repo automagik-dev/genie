@@ -356,6 +356,38 @@ claudio launches Claude Code with custom LLM routing profiles.
 
 ### Commands
 
+### Brainstorm
+
+- `genie brainstorm crystallize --slug <slug> [--file <path>]`
+  - Reads draft markdown (default: `.genie/brainstorms/<slug>/draft.md`)
+  - Writes/overwrites: `.genie/brainstorms/<slug>/design.md`
+  - Upserts: `.beads/issues.jsonl` (default depends_on: `["hq-roadmap"]`)
+  - Prints the written paths
+
+### Ledger
+
+- `genie ledger validate [--repo <path>] [--json]`
+  - Validates `.beads/issues.jsonl` JSONL structure (scriptable)
+
+### `term beads-validate` (deprecated)
+
+Deprecated in favor of **`genie ledger validate`**.
+
+Validate the local Beads JSONL ledger file:
+
+- Path: `.beads/issues.jsonl`
+- Checks: file exists, each non-empty line is valid JSON, and `id` is present/unique.
+
+```bash
+# preferred
+genie ledger validate --repo .
+genie ledger validate --repo . --json
+
+# deprecated
+term beads-validate --repo .
+term beads-validate --repo . --json
+```
+
 ```
 claudio                     Launch with default profile
 claudio <profile>           Launch with named profile

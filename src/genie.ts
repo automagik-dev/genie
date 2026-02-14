@@ -26,6 +26,8 @@ import {
   pdfThemesCommand,
   pdfTemplatesCommand,
 } from './genie-commands/pdf.js';
+import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
+import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
 
 const program = new Command();
 
@@ -171,5 +173,33 @@ pdf
   .command('templates')
   .description('List available templates')
   .action(pdfTemplatesCommand);
+
+// Brainstorm command group
+const brainstorm = program
+  .command('brainstorm')
+  .description('Brainstorm utilities (file-based helpers)');
+
+brainstorm
+  .command('crystallize')
+  .description('Crystallize a brainstorm draft into design.md and upsert .beads/issues.jsonl')
+  .requiredOption('--slug <slug>', 'Brainstorm slug (kebab-case)')
+  .option('--file <path>', 'Input draft markdown path (default: .genie/brainstorms/<slug>/draft.md)')
+  .option('-r, --repo <path>', 'Repo path (default: cwd)')
+  .option('--title <title>', 'Issue title (default: slug)')
+  .option('--depends-on <ids>', 'Comma-separated dependency IDs (default: hq-roadmap)')
+  .option('--status <status>', 'Issue status (open|closed)', 'open')
+  .action(brainstormCrystallizeCommand);
+
+// Ledger command group
+const ledger = program
+  .command('ledger')
+  .description('Ledger utilities (beads JSONL validation)');
+
+ledger
+  .command('validate')
+  .description('Validate local .beads/issues.jsonl JSONL structure (scriptable)')
+  .option('-r, --repo <path>', 'Repo path (default: cwd)')
+  .option('--json', 'Output JSON')
+  .action(ledgerValidateCommand);
 
 program.parse();

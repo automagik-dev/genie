@@ -343,6 +343,17 @@ program
     await spawnCmd.spawnCommand('brainstorm', options);
   });
 
+program
+  .command('beads-validate')
+  .description('[DEPRECATED] Validate local .beads/issues.jsonl JSONL structure → use `genie ledger validate`')
+  .option('-r, --repo <path>', 'Repo path (default: cwd)')
+  .option('--json', 'Output JSON')
+  .action(async (options: any) => {
+    showDeprecation('beads-validate', 'ledger validate');
+    const cmd = await import('./term-commands/beads-validate.js');
+    await cmd.beadsValidateCommand(options);
+  });
+
 // Watch session events (promoted from orc watch)
 program
   .command('watch <target>')
