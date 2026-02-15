@@ -141,18 +141,9 @@ echo "BROADCAST_OK: ${HOST_LABEL}"
                 stage('omni-prod') { steps { updateHost('omni@10.114.1.140', 'omni-prod') } }
             }
         }
-                stage('cegonha notify')   { steps { broadcastUpdate('genie@10.114.1.121', 'cegonha') } }
-                stage('stefani notify')   { steps { broadcastUpdate('genie@10.114.1.124', 'stefani') } }
-                stage('gus notify')       { steps { broadcastUpdate('genie@10.114.1.126', 'gus') } }
-                stage('luis notify')      { steps { broadcastUpdate('genie@10.114.1.131', 'luis') } }
-                stage('sampaio notify')   { steps { broadcastUpdate('genie@10.114.1.154', 'sampaio') } }
-                stage('juice notify')     { steps { broadcastUpdate('openclaw@10.114.1.119', 'juice') } }
-                stage('omni-prod notify') { steps { broadcastUpdate('omni@10.114.1.140', 'omni-prod') } }
-            }
-        }
     }
     post {
-        success { echo 'genie-cli fleet update complete — all hosts updated, gateways restarted, agents notified' }
+        success { echo 'genie-cli fleet update complete — all hosts updated' }
         failure { echo 'genie-cli fleet update had failures — check stage logs' }
     }
 }
