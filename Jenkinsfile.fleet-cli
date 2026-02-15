@@ -47,6 +47,12 @@ git reset --hard refs/remotes/origin/main
 export PATH="${HOME}/.bun/bin:${BIN_DIR}:/usr/local/bin:${PATH}"
 
 # Use yes to avoid hanging on prompts in non-interactive Jenkins runs.
+
+# Preflight: fail fast if required baseline tools are missing (avoid sudo prompts/hangs).
+for bin in git jq rg tmux; do
+  command -v "" >/dev/null 2>&1 || { echo "ERROR: missing prerequisite: "; exit 3; }
+done
+
 # If a host requires sudo for prereqs, the installer will fail fast.
 yes | bash "${REPO_DIR}/install.sh" --local "${REPO_DIR}" || { echo "ERROR: install.sh failed"; exit 5; }
 
