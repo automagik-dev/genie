@@ -39,28 +39,16 @@ git fetch origin +refs/heads/main:refs/remotes/origin/main
 git checkout -B main refs/remotes/origin/main
 git reset --hard refs/remotes/origin/main
 
+# Run official installer in local mode (source-of-truth)
+# This also repairs stale OpenClaw plugin paths in ~/.openclaw/openclaw.json
+# and ensures prerequisites like jq/rg are installed (best-effort).
+#
+# NOTE: install.sh is interactive; in CI we default answers to yes.
 export PATH="${HOME}/.bun/bin:${BIN_DIR}:/usr/local/bin:${PATH}"
-command -v bun >/dev/null || { echo "ERROR: bun not found"; exit 3; }
 
-bun install --frozen-lockfile 2>/dev/null || bun install
-bun run build
-
-# ── Create bash wrappers (NOT symlinks, NOT bun link) ──
-# bun link creates fragile global symlinks that break across hosts.
-# Bash wrappers are durable and resolve the correct bun + dist path.
-for cmd in genie term; do
-    DIST_FILE="${REPO_DIR}/dist/${cmd}.js"
-    WRAPPER="${BIN_DIR}/${cmd}"
-    if [ -f "${DIST_FILE}" ]; then
-        # Remove any existing symlink or stale wrapper
-        rm -f "${WRAPPER}"
-        cat > "${WRAPPER}" << WRAP
-#!/usr/bin/env bash
-exec "${HOME}/.bun/bin/bun" "${DIST_FILE}" "\$@"
-WRAP
-        chmod +x "${WRAPPER}"
-    fi
-done
+# Use yes to avoid hanging on prompts in non-interactive Jenkins runs.
+# If a host requires sudo for prereqs, the installer will fail fast.
+yes | bash "${REPO_DIR}/install.sh" --local "${REPO_DIR}" || { echo "ERROR: install.sh failed"; exit 5; }
 
 GENIE_VER="$(genie --version 2>/dev/null || echo 'unknown')"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
