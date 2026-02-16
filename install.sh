@@ -654,18 +654,26 @@ install_claude_if_needed() {
 }
 
 install_plugin_if_needed() {
-    if claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
-        success "automagik-genie plugin already installed"
-        return 0
-    fi
-
-    log "Installing automagik-genie plugin..."
-    if claude plugin install namastexlabs/automagik-genie; then
-        success "automagik-genie plugin installed"
-    else
-        warn "Plugin installation failed"
-        info "Try manually: claude plugin install namastexlabs/automagik-genie"
-        return 1
+    # In local source mode (--local), do not rely on Claude marketplaces.
+    # Link the local plugin directory into ~/.claude/plugins instead.
+    if [[ -n "$LOCAL_PATH" ]]; then
+        local plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
+        if [[ -d "$plugin_dir" ]]; then
+            log "Linking automagik-genie Claude Code plugin from local source..."
+            mkdir -p "$CLAUDE_PLUGINS_DIR"
+            rm -f "$PLUGIN_SYMLINK"
+            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
+            if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
+                success "automagik-genie Claude Code plugin linked"
+                return 0
+            else
+                warn "Failed to create valid symlink for Claude Code plugin"
+                return 1
+            fi
+        else
+            warn "Local plugin directory not found: $plugin_dir"
+            return 1
+        fi
     fi
 }
 
