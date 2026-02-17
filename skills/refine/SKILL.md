@@ -28,6 +28,50 @@ Spawning mechanism by environment:
 
 ## File Mode
 
+Invocation:
+- `/refine @path/to/file.md`
+
+Input behavior:
+- Treat any argument starting with `@` as file mode.
+- Parse the path after `@` as the target file path (example: `@.genie/wishes/my-wish/WISH.md`).
+- Read the current contents of that file as the refiner input.
+
+Processing behavior:
+- Send the file contents to the refiner subagent.
+- Receive optimized prompt body from the refiner.
+
+Output behavior:
+- Rewrite the same target file in place.
+- Final file contents must be the optimized prompt body only (no wrapper text, no status text).
+- Return/print the same file path that was updated.
+
+Example:
+- `/refine @.genie/wishes/my-wish/WISH.md`
+
 ## Text Mode
+
+Invocation:
+- `/refine <text>`
+
+Input behavior:
+- Treat non-`@` input as raw text mode.
+- Accept any brief, prompt draft, or one-liner as direct text input.
+
+Setup before writing:
+- Run `mkdir -p /tmp/prompts/`.
+
+Output file behavior:
+- Write output to `/tmp/prompts/<slug>.md`.
+- Build `<slug>` as `<unix-timestamp>-<word1>-<word2>-<word3>`.
+- `word1..word3` are the first 3 words of the input text, lowercased and hyphenated.
+- Example slug: `1708190400-fix-auth-bug`.
+
+Processing behavior:
+- Send the raw text input to the refiner subagent.
+- Receive optimized prompt body from the refiner.
+- Write that optimized prompt body to the generated `/tmp/prompts/<slug>.md` file.
+
+Return behavior:
+- Return/print the created output file path.
 
 ## Worker Integration
