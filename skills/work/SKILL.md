@@ -46,6 +46,20 @@ The subagent executes, replies with results. Orchestrator collects and moves to 
 
 **Default: `sessions_send` to fresh key.** Use `term work` for heavy coding. Use `exec` only for validation commands.
 
+### CC via term work
+
+For heavy multi-file coding tasks, spawn a Claude Code worker:
+
+```bash
+bd create "task title" --type task   # get a bead ID
+term work <bead-id>                  # spawns CC in tmux worktree
+# if no beads: term work <bead-id> --inline
+term workers                         # monitor running workers
+term session read <session>          # read worker output
+```
+
+Worker runs autonomously. Returns via bead status update or session output.
+
 ## Escalation
 If a subagent fails or loop limit (2) is exceeded:
 - mark task BLOCKED,
