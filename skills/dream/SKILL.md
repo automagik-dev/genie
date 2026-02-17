@@ -37,6 +37,41 @@ Replaces /sleepyhead
 
 ## DREAM.md Generation
 
+1. **Input (from Picker output)**
+   - Receive the ordered selected wish list produced by Picker as:
+     - `- <slug>: .genie/wishes/<slug>/WISH.md`
+   - This gives both the ordered slug list and each `WISH.md` path.
+
+2. **Build merge order (topological dependency layering)**
+   - For each selected wish, read its `depends_on` field from the referenced `WISH.md`.
+   - Compute a **topological** sort/layering across selected wishes.
+   - Assign `merge_order` as integer layers `1..N`:
+     - `merge_order: 1` for wishes with no selected dependencies.
+     - Increment layer when dependencies require later merge.
+     - Wishes in the same dependency level are parallel and share the same `merge_order` number.
+
+3. **Generate per-wish DREAM entry fields**
+   - `slug` — wish identifier.
+   - `branch` — `feat/<slug>`.
+   - `worktree_path` — e.g. `/tmp/dream-worktrees/<slug>`.
+   - `wish_path` — path to `WISH.md` from Picker output.
+   - `worker_prompt` — self-contained worker instructions including:
+     - `wish_path`
+     - `branch`
+     - `worktree_path`
+     - CI command to run
+     - reporting format to return
+   - `depends_on` — list of upstream slugs from `WISH.md`.
+   - `merge_order` — integer produced by the topological layering step.
+
+4. **Write orchestrator file**
+   - Output path is `.genie/DREAM.md`.
+   - Write this file in the target agent repository (not in the skills repository).
+
+5. **Human review before run**
+   - Present `.genie/DREAM.md` for confirmation.
+   - Human may edit DREAM.md before triggering execution.
+
 ## Phase 1: Execute Team
 
 ## Phase 2: Review Team
