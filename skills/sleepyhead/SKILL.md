@@ -1,3 +1,5 @@
+> ⚠️ DEPRECATED: This skill has been replaced by `/dream`. See `dream/SKILL.md`.
+
 ---
 name: sleepyhead
 description: "Overnight batch execution — human defines tasks before sleep, agent executes the full pipeline (brainstorm → wish → work → review → PR) autonomously. Wake up to reviewed PRs. Use when the user says 'sleepyhead', 'overnight', 'batch run', 'kill the backlog', 'run while I sleep', or hands off a task list for autonomous execution."

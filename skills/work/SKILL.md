@@ -5,7 +5,7 @@ description: "Execute an approved wish plan - dispatches implementor subagents p
 
 # /work
 
-Execute an approved wish from `.genie/wishes/<slug>/wish.md`.
+Execute an approved wish from `.genie/wishes/<slug>/WISH.md`.
 
 **Core principle: the orchestrator never executes directly. Always dispatch via subagent.**
 
@@ -59,6 +59,19 @@ term session read <session>          # read worker output
 ```
 
 Worker runs autonomously. Returns via bead status update or session output.
+
+## Worker Self-Refinement
+
+Before executing any task, workers self-refine their task prompt using `/refine`:
+
+1. Call `/refine <task-prompt>` (text mode) — pass the task description as input
+2. Also pass WISH.md path as context anchor: include it in the refine call to prevent scope invention
+3. Read the output from `/tmp/prompts/<slug>.md`
+4. Execute against the optimized prompt
+
+**Fallback:** if the refiner fails or times out → proceed with original prompt (non-blocking, log warning)
+
+**Important:** Workers NEVER overwrite WISH.md — the refined prompt is runtime context only.
 
 ## Escalation
 If a subagent fails or loop limit (2) is exceeded:
