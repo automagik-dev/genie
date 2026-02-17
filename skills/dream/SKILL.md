@@ -109,6 +109,19 @@ Replaces /sleepyhead
    - Aggregate all worker messages (`DONE:` / `BLOCKED:`) into run status.
    - Preserve per-wish result, including BLOCKED reasons, for Phase 2 review handoff.
 
+## Worker Self-Refinement
+
+Before executing any task, workers self-refine their task prompt using `/refine`:
+
+1. Call `/refine <task-prompt>` (text mode) — pass the task description as input
+2. Also pass WISH.md path as context anchor: include it in the refine call to prevent scope invention
+3. Read the output from `/tmp/prompts/<slug>.md`
+4. Execute against the optimized prompt
+
+**Fallback:** if the refiner fails or times out → proceed with original prompt (non-blocking, log warning)
+
+**Important:** Workers NEVER overwrite WISH.md — the refined prompt is runtime context only.
+
 ## Phase 2: Review Team
 
 1. **Trigger:** Spawn the review team only after **all** execute workers have reported a terminal state (`DONE` or `BLOCKED`).
