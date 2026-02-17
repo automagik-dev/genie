@@ -111,4 +111,36 @@ Replaces /sleepyhead
 
 ## Phase 2: Review Team
 
+1. **Trigger:** Spawn the review team only after **all** execute workers have reported a terminal state (`DONE` or `BLOCKED`).
+
+2. **Reviewer assignment:** Create exactly one reviewer worker per open PR from Phase 1 results.
+   - Skip wishes that ended `BLOCKED` (no PR to review).
+
+3. **Reviewer loop (acceptance-criteria driven):**
+   - Run `/review` against the wish acceptance criteria defined in that wish's `WISH.md`.
+   - If verdict is `FIX-FIRST`: dispatch a fix task, then re-run `/review`.
+   - Maximum re-review loop is exactly **2 loops** total per PR.
+   - If an **architectural** issue is found, escalate immediately (**no fix attempt**) and record the escalation in the report.
+   - If verdict is `SHIP`, mark the wish review-complete.
+
+4. **Cleanup after review phase:**
+   - Remove all per-wish worktrees:
+     - `git worktree remove <worktree_path>`
+   - Tear down the team context:
+     - `TeamDelete`
+
 ## DREAM-REPORT.md
+
+Write the wake-up artifact to:
+- `.genie/DREAM-REPORT.md`
+
+Required report structure:
+
+1. **Reviewed PR table** (one row per reviewed PR), with exactly these columns:
+   - `merge_order` | `slug` | `PR link` | `CI status` | `review verdict`
+
+2. **Blocked wishes section**
+   - List each blocked wish as: `slug` + blocking reason.
+
+3. **Follow-ups section**
+   - Action items requiring human intervention (escalations, manual decisions, cross-PR sequencing notes).
