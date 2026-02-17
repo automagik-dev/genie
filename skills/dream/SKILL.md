@@ -74,6 +74,41 @@ Replaces /sleepyhead
 
 ## Phase 1: Execute Team
 
+1. **Create lead team context**
+   - Attempt: `TeamCreate("dream-<date>")`.
+   - Team name should include the run date (for traceability), e.g. `dream-2026-02-17`.
+
+2. **Fallback if team creation fails**
+   - If `TeamCreate` fails, fall back to `sessions_spawn`.
+   - In fallback mode, execute wishes sequentially (one-by-one), still using each wish's `worker_prompt`.
+
+3. **Lead execution loop (never early-stop)**
+   - Read `.genie/DREAM.md` in listed order.
+   - For each wish entry:
+     - Create isolated workspace: `git worktree add <worktree_path> <branch>`.
+     - Spawn exactly one worker for that wish using `Task`, passing the wish `worker_prompt` from DREAM.md.
+   - Collect worker outcomes via `SendMessage`.
+   - Anti-stop rule: if any wish returns `BLOCKED`, record the reason and continue with remaining wishes. Never stop before all wishes are attempted.
+
+4. **Worker contract (self-contained, per wish)**
+   - Read `WISH.md` from `wish_path`.
+   - Prepare branch in worktree:
+     - `cd <worktree_path> && git checkout -b <branch>`.
+   - Implement all execution groups required by that `WISH.md`.
+   - Run CI fix loop with max 3 retries:
+     - Run CI command.
+     - If CI fails, fix issues, `sleep 5`, retry.
+     - Retry limit is exactly 3 retries; if still failing after limit, mark wish BLOCKED.
+   - Only after CI is green, open PR:
+     - `gh pr create --base <base_branch>`.
+   - Report result back to lead in exact format:
+     - Success: `DONE: PR at <url>. CI: green. Groups: N/N.`
+     - Failure: `BLOCKED: <reason>. Groups: N/N.`
+
+5. **Lead result handling**
+   - Aggregate all worker messages (`DONE:` / `BLOCKED:`) into run status.
+   - Preserve per-wish result, including BLOCKED reasons, for Phase 2 review handoff.
+
 ## Phase 2: Review Team
 
 ## DREAM-REPORT.md
