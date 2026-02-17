@@ -15,7 +15,7 @@ If no prior brainstorm/design context exists, ask first:
 1. **Align intent:** one question at a time; confirm success criteria.
 2. **Define boundaries:** explicit IN and OUT scope (OUT cannot be empty).
 3. **Design into tasks:** split into small execution groups with minimal coupling.
-4. **Write wish:** create `.genie/wishes/<slug>/wish.md` from `references/wish-template.md`.
+4. **Write wish:** create `.genie/wishes/<slug>/WISH.md` from `references/wish-template.md`.
 5. **Add verification:** each group must include acceptance criteria + validation command.
 6. **Create task tracking:** create linked tasks and dependencies as needed.
 7. **Handoff:** reply: `Wish documented. Run /work to execute.`

@@ -5,7 +5,7 @@ description: "Execute an approved wish plan - dispatches implementor subagents p
 
 # /work
 
-Execute an approved wish from `.genie/wishes/<slug>/wish.md`.
+Execute an approved wish from `.genie/wishes/<slug>/WISH.md`.
 
 **Core principle: the orchestrator never executes directly. Always dispatch via subagent.**
 
