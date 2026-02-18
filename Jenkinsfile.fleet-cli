@@ -60,7 +60,21 @@ yes | bash "${REPO_DIR}/install.sh" --local "${REPO_DIR}" || { echo "ERROR: inst
 GENIE_VER="$(genie --version 2>/dev/null || echo 'unknown')"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
 
-echo "GENIE_OK: ${HOST_LABEL} | version=${GENIE_VER} | commit=${COMMIT}"
+# ── Install codex via npm-global (nodesource node 24 pattern — no nvm) ────
+NPM_GLOBAL="${HOME}/.npm-global"
+mkdir -p "${NPM_GLOBAL}"
+npm config set prefix "${NPM_GLOBAL}" 2>/dev/null || true
+export PATH="${NPM_GLOBAL}/bin:${PATH}"
+
+if ! command -v codex >/dev/null 2>&1; then
+    echo "Installing codex..."
+    npm install -g @openai/codex 2>&1 | tail -3
+else
+    echo "codex already installed: $(codex --version 2>/dev/null)"
+fi
+
+CODEX_VER="$(codex --version 2>/dev/null || echo 'unknown')"
+echo "GENIE_OK: ${HOST_LABEL} | genie=${GENIE_VER} | codex=${CODEX_VER} | commit=${COMMIT}"
 '''
 
                 // ── Restart gateway script ─────────────────────────
@@ -140,6 +154,7 @@ echo "BROADCAST_OK: ${HOST_LABEL}"
                 stage('sampaio')   { steps { updateHost('genie@10.114.1.154', 'sampaio') } }
                 stage('juice')     { steps { updateHost('openclaw@10.114.1.119', 'juice') } }
                 stage('omni-prod') { steps { updateHost('omni@10.114.1.140', 'omni-prod') } }
+                stage('felipe')    { steps { updateHost('genie@10.114.1.128', 'felipe') } }
             }
         }
     }
