@@ -55,9 +55,17 @@ WRS: ██████░░░░ 60/100
 
 The agent-level brainstorm jar lives at `.genie/brainstorm.md`. It tracks all brainstorm topics across sessions.
 
-- **On start**: create `.genie/brainstorm.md` if it doesn't exist (use the template in `templates/brainstorm.md` if available).
-- **On check**: look up the current slug/topic in the jar — if found, use it as seed context (load current WRS + notes).
-- **On WRS change**: update the entry in the jar to reflect the current section (Raw/Simmering/Ready/Poured).
+- **On start**: create `.genie/brainstorm.md` if it doesn't exist.
+  - Prefer `templates/brainstorm.md` when available.
+  - Otherwise auto-create with this 4-section layout:
+    - `# Brainstorm Jar`
+    - `## 🫙 Raw`
+    - `## 🍲 Simmering`
+    - `## ✅ Ready`
+    - `## ✅ Poured`
+- **On check**: look up the current slug/topic in the jar (fuzzy match by slug or title) — if found, use it as seed context (current WRS + notes).
+- **On WRS change**: update the entry in the jar to reflect the current section (Raw/Simmering/Ready).
+- **On crystallize (WRS = 100)**: move the item to `✅ Poured` and attach/link the resulting wish.
 
 ## Crystallize
 
