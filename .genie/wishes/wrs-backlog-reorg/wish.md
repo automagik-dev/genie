@@ -1,8 +1,9 @@
 # Wish: WRS Backlog Reorganization and Sofia Co-Triage
 
-**Status:** APPROVED
+**Status:** COMPLETE
 **Slug:** wrs-backlog-reorg
 **Created:** 2026-02-13
+**Completed:** 2026-02-19
 **Author:** Genie 🧞
 **Brainstorm:** `.genie/brainstorms/wrs-backlog-reorg/design.md`
 
@@ -150,14 +151,14 @@ Rationale tags: impacto|bloqueio|quick win|estabilidade
 
 ## Success Criteria
 
-- [ ] Scoring framework is documented and reusable for future backlog refreshes
-- [ ] Triage method is documented with unambiguous ordering rules
-- [ ] Current item inventory is captured with source labels
-- [ ] First-pass prioritized list exists with concise rationale per item
-- [ ] `Now/Next/Later` buckets are published and consistent with scoring
-- [ ] Epics are flagged with decomposition gate (not directly queued for implementation)
-- [ ] Shipped/residual items are labeled (close/monitor/defer) to reduce noise
-- [ ] Sofia + Genie review cadence is defined (owner, frequency, output artifact)
+- [x] Scoring framework is documented and reusable for future backlog refreshes
+- [x] Triage method is documented with unambiguous ordering rules
+- [x] Current item inventory is captured with source labels
+- [x] First-pass prioritized list exists with concise rationale per item
+- [x] `Now/Next/Later` buckets are published and consistent with scoring
+- [x] Epics are flagged with decomposition gate (not directly queued for implementation)
+- [x] Shipped/residual items are labeled (close/monitor/defer) to reduce noise
+- [x] Sofia + Genie review cadence is defined (owner, frequency, output artifact)
 
 ---
 
