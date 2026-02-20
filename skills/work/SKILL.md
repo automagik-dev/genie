@@ -19,6 +19,7 @@ Execute an approved wish from `.genie/wishes/<slug>/WISH.md`.
 7. **Mark complete:** update task state and wish checkboxes.
 8. **Repeat** until all groups are done.
 9. **Handoff:** `All work tasks complete. Run /review.`
+10. **Close:** set `**Status:** SHIPPED` in the wish file (replace existing Status line). Call `bd close <slug>` (if bd unavailable or fails, log warning and continue — non-blocking).
 
 ## Dispatch
 

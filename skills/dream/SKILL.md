@@ -135,6 +135,8 @@ Before executing any task, workers self-refine their task prompt using `/refine`
    - Maximum re-review loop is exactly **2 loops** total per PR.
    - If an **architectural** issue is found, escalate immediately (**no fix attempt**) and record the escalation in the report.
    - If verdict is `SHIP`, mark the wish review-complete.
+     - Update wish file: set `**Status:** SHIPPED` in `.genie/wishes/<slug>/WISH.md` (replace existing Status line).
+     - Close bead: `bd close <slug>` (if bd unavailable or fails, log warning and continue — non-blocking).
 
 4. **Cleanup after review phase:**
    - Remove all per-wish worktrees:
