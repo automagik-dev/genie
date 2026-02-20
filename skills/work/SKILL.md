@@ -48,11 +48,9 @@ The subagent executes, replies with results. Orchestrator collects and moves to 
 
 ### CC via term work
 For heavy multi-file coding, use this 3-step pattern:
-```bash
-bd create "task title" --type task    # 1) create bead
-term work <bead-id>                     # 2) start worker in tmux/worktree
-term workers                            # 3) monitor workers
-```
+1) `bd create "task title" --type task` (create bead)
+2) `term work <bead-id>` (start worker in tmux/worktree)
+3) `term workers` (monitor workers)
 Fallback when beads are unavailable: `term work <task-name> --inline`.
 
 ## Worker Self-Refinement
