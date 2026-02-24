@@ -15,12 +15,12 @@ Convert a validated idea into an executable wish document at `.genie/wishes/<slu
 ## Flow
 1. **Gate check:** if no prior brainstorm/design context, ask: "Run /brainstorm first, or draft the wish directly?"
 2. **Align intent:** ask one question at a time until success criteria are clear.
-2. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
-3. **Decompose into groups:** split into small, loosely coupled execution groups.
-4. **Write wish:** create `.genie/wishes/<slug>/WISH.md` from `references/wish-template.md`.
-5. **Add verification:** every group gets acceptance criteria + a validation command.
-6. **Link tasks:** create linked tasks and declare dependencies.
-7. **Handoff:** reply `Wish documented. Run /work to execute.`
+3. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
+4. **Decompose into groups:** split into small, loosely coupled execution groups.
+5. **Write wish:** create `.genie/wishes/<slug>/WISH.md` from `references/wish-template.md`.
+6. **Add verification:** every group gets acceptance criteria + a validation command.
+7. **Link tasks:** create linked tasks and declare dependencies.
+8. **Handoff:** reply `Wish documented. Run /work to execute.`
 
 ## Wish Document Sections
 
