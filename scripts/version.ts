@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 
 /**
- * Pre-build script: generates datetime-based version and updates ALL version files
- * Format: 0.YYMMDD.HHMM (e.g., 0.260201.1430 = Feb 1, 2026 at 14:30)
- * 
+ * Pre-build script: generates date-based version and updates ALL version files
+ * Format: 3.YYMMDD.N (e.g., 3.260201.1 = Feb 1, 2026, first publish of the day)
+ * N increments per day: .1, .2, .3, etc.
+ *
  * Syncs versions across:
  * - package.json (root)
  * - src/lib/version.ts
@@ -14,17 +15,37 @@
 import { readFile, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { execSync } from 'child_process';
 
-// Generate version from current datetime
+// Query npm registry for existing versions published today
+function getTodayPublishCount(datePrefix: string): number {
+  try {
+    const output = execSync('npm view @automagik/genie versions --json', {
+      encoding: 'utf-8',
+      timeout: 15000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const versions: string[] = JSON.parse(output);
+    // Count versions matching 3.YYMMDD.* for today's date
+    return versions.filter(v => v.startsWith(`3.${datePrefix}.`)).length;
+  } catch {
+    // Registry unreachable or package not found — start at 0
+    return 0;
+  }
+}
+
+// Generate version: 3.YYMMDD.N where N = daily publish counter
 function generateVersion(): string {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2);
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getHours()).padStart(2, '0');
-  const min = String(now.getMinutes()).padStart(2, '0');
+  const datePrefix = `${yy}${mm}${dd}`;
 
-  return `0.${yy}${mm}${dd}.${hh}${min}`;
+  const existing = getTodayPublishCount(datePrefix);
+  const n = existing + 1;
+
+  return `3.${datePrefix}.${n}`;
 }
 
 async function updateJsonVersion(filePath: string, version: string): Promise<boolean> {
