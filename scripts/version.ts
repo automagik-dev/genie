@@ -20,9 +20,10 @@ import { execSync } from 'child_process';
 // Query npm registry for existing versions published today
 function getTodayPublishCount(datePrefix: string): number {
   try {
-    const output = execSync('npm view @automagik/genie versions --json 2>/dev/null', {
+    const output = execSync('npm view @automagik/genie versions --json', {
       encoding: 'utf-8',
       timeout: 15000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     const versions: string[] = JSON.parse(output);
     // Count versions matching 3.YYMMDD.* for today's date
