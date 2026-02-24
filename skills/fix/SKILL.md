@@ -1,54 +1,54 @@
 ---
 name: fix
-description: "Handle FIX-FIRST verdicts from /review — dispatch fix subagent, re-review, escalate after 2 loops."
+description: "Dispatch fix subagent for FIX-FIRST gaps from /review, re-review, and escalate after 2 failed loops."
 ---
 
-# /fix
+# /fix — Fix-Review Loop
 
-Handle a FIX-FIRST verdict from `/review`. Dispatch fixes via subagent, then re-review.
+Resolve FIX-FIRST gaps from `/review`. Dispatch a fix subagent, re-review, repeat up to 2 loops, then escalate.
 
-**Max 2 loops. After that → BLOCKED → escalate to human.**
+## When to Use
+- `/review` returned a **FIX-FIRST** verdict with CRITICAL or HIGH gaps
+- Orchestrator hands off unresolved gaps after execution review
 
 ## Flow
-1. **Load gaps:** parse the FIX-FIRST verdict — extract gap list with severity and files.
-2. **Dispatch fixer:** send gaps + original wish context to a fix subagent.
-3. **Re-review:** dispatch `/review` subagent to validate the fix.
-4. **Check verdict:**
-   - **SHIP** → done, return to orchestrator.
-   - **FIX-FIRST** + loop < 2 → increment loop counter, go to step 2.
-   - **FIX-FIRST** + loop = 2 → escalate (max reached).
-   - **BLOCKED** → escalate immediately.
-5. **Escalation (loop = 2 or BLOCKED):** mark task BLOCKED, report to orchestrator with remaining gaps.
+1. **Parse gaps:** extract gap list from FIX-FIRST verdict — severity, files, failing checks.
+2. **Dispatch fixer:** send gaps + original wish criteria to fix subagent.
+3. **Re-review:** dispatch `/review` to validate the fix against the same pipeline.
+4. **Evaluate verdict:**
 
-## Subagent Dispatch
+| Verdict | Condition | Action |
+|---------|-----------|--------|
+| SHIP | — | Done. Return to orchestrator. |
+| FIX-FIRST | loop < 2 | Increment loop, go to step 2. |
+| FIX-FIRST | loop = 2 | Escalate — max loops reached. |
+| BLOCKED | — | Escalate immediately. |
+
+5. **Escalate (if needed):** mark task BLOCKED, report remaining gaps with exact files and failing checks.
+
+## Escalation Format
 
 ```
-# Fix subagent
-sessions_send(
-  agentId: "<self>",
-  sessionKey: "agent:<self>:fixer-<slug>-loop<N>",
-  message: "Fix these gaps from /review of wish <slug>:\n<gap list>\nOriginal criteria: <criteria>",
-  timeoutSeconds: 120
-)
-
-# Re-review subagent (use same pipeline as original review)
-sessions_send(
-  agentId: "<self>",
-  sessionKey: "agent:<self>:reviewer-<slug>-loop<N>",
-  message: "Review fix for wish <slug>. Pipeline: <original_pipeline>. Check: <gap list resolved?>",
-  timeoutSeconds: 120
-)
+Fix loop exceeded (2/2). Escalating to human.
+Remaining gaps:
+- [CRITICAL] <gap description> — <file>
+- [HIGH] <gap description> — <file>
 ```
 
-## Escalation
+## Dispatch
 
-When loop limit (2) is exceeded:
-- Mark task **BLOCKED** in wish.
-- Report remaining gaps with exact files and failing checks.
-- Message: `"Fix loop exceeded (2/2). Escalating to human. Remaining gaps: ..."`
+Fix and re-review must be **separate dispatches** — never combine them in one subagent.
+
+| Runtime | Detection | Fix dispatch | Re-review dispatch |
+|---------|-----------|-------------|-------------------|
+| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<fix prompt>")` | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
+| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<fix prompt>", sandbox: true)` | `codex_subagent(task: "<review prompt>", sandbox: true)` |
+| OpenClaw | `term` CLI available | `term spawn --name "fixer-<slug>" --model sonnet` | `term spawn --name "reviewer-<slug>" --model sonnet` |
+
+Default to **Claude Code** when detection is ambiguous.
 
 ## Rules
 - Never fix and review in the same session — always separate subagents.
 - Never exceed 2 fix loops — escalate, don't spin.
-- Include original wish criteria in every fix dispatch for context.
-- Each loop must show progress — if same gaps persist, escalate immediately.
+- Include original wish criteria in every fix dispatch.
+- If identical gaps persist across loops, escalate immediately — no progress means BLOCKED.

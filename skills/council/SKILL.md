@@ -1,23 +1,32 @@
 ---
 name: council
-description: "Multi-perspective brainstorming and critique with 10 specialized council members. Use during architecture decisions, wish planning, or reviews to get diverse viewpoints."
+description: "Brainstorm and critique with 10 specialist viewpoints. Use for architecture, plan reviews, or tradeoffs."
 ---
 
-# /council - Multi-Perspective Review
+# /council — Multi-Perspective Review
 
-Use the council (a crew of specialist subagents) to brainstorm, critique, or vote.
+Convene a panel of 10 specialist perspectives to brainstorm, critique, and vote on a decision.
 
 ## When to Use
 
-- During `/wish`: Generate 2-3 approaches with tradeoffs
-- During `/review`: Find risks and gaps
-- During architecture decisions: Get independent perspectives
-- When stuck: Fresh viewpoints break deadlocks
+- Architecture decisions needing diverse viewpoints
+- During `/wish` to generate approaches with tradeoffs
+- During `/review` to surface risks and blind spots
+- Deadlocked discussions needing fresh angles
+
+## Flow
+
+1. Identify the topic from user context (architecture, performance, security, API design, operations, or general)
+2. Route to the relevant council members (see Smart Routing below). Default: core trio
+3. Generate each member's perspective — distinct, opinionated, non-overlapping
+4. Collect votes: APPROVE, REJECT, or MODIFY from each member
+5. Synthesize a collective recommendation with the vote tally
+6. Present the advisory and ask the user to decide
 
 ## Council Members
 
-| Member | Focus | Philosophy |
-|--------|-------|------------|
+| Member | Focus | Lens |
+|--------|-------|------|
 | **questioner** | Challenge assumptions | "Why? Is there a simpler way?" |
 | **benchmarker** | Performance evidence | "Show me the benchmarks." |
 | **simplifier** | Complexity reduction | "Delete code. Ship features." |
@@ -31,8 +40,6 @@ Use the council (a crew of specialist subagents) to brainstorm, critique, or vot
 
 ## Smart Routing
 
-Not every decision needs all 10 perspectives:
-
 | Topic | Members |
 |-------|---------|
 | Architecture | questioner, benchmarker, simplifier, architect |
@@ -40,9 +47,10 @@ Not every decision needs all 10 perspectives:
 | Security | questioner, simplifier, sentinel |
 | API Design | questioner, simplifier, ergonomist, deployer |
 | Operations | operator, tracer, measurer |
+| Observability | tracer, measurer, benchmarker |
 | Full Review | all 10 |
 
-**Default:** Core trio (questioner, benchmarker, simplifier)
+**Default:** Core trio — questioner, benchmarker, simplifier.
 
 ## Output Format
 
@@ -62,7 +70,7 @@ Not every decision needs all 10 perspectives:
 - [Key point]
 - Vote: [APPROVE/REJECT/MODIFY]
 
-...
+[... other members ...]
 
 ### Vote Summary
 - Approve: X
@@ -71,10 +79,15 @@ Not every decision needs all 10 perspectives:
 
 ### Synthesized Recommendation
 [Council's collective advisory]
+
+### User Decision Required
+The council advises [recommendation]. Proceed?
 ```
 
-## Philosophy
+## Rules
 
-**The council advises, the user decides.**
-
-Value is in diverse perspective, not gatekeeping. Each member surfaces blind spots and challenges assumptions.
+- Advisory only — never block progress based on council vote
+- Never invoke all 10 for simple decisions; route to the relevant subset
+- Each perspective must be distinct — no rubber-stamping or echoing other members
+- Always synthesize votes into a recommendation; never present raw votes without interpretation
+- The council advises, the user decides

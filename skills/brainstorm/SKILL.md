@@ -1,28 +1,32 @@
 ---
 name: brainstorm
-description: "Explore ideas collaboratively, validate direction, and hand off a clear design for /wish."
+description: "Explore ambiguous or early-stage ideas interactively — tracks wish-readiness and crystallizes into a design for /wish."
 ---
 
 # /brainstorm — Explore Before Planning
 
-Use for early-stage or ambiguous ideas. Track wish-readiness as you go.
+Collaborate on fuzzy ideas until they are concrete enough for `/wish`.
+
+## When to Use
+- User has an idea but unclear scope or approach
+- Requirements are ambiguous and need interactive refinement
+- User explicitly invokes `/brainstorm`
 
 ## Flow
-
-1. Read context quickly (current code/docs/conventions). Check `.genie/brainstorm.md` for an existing entry matching this slug/topic — if found, use it as seed context.
-2. Initialize persistence immediately (see **Persistence**): create/maintain `.genie/brainstorms/<slug>/DRAFT.md` from the start. Also create `.genie/brainstorm.md` if missing (see **Jar**).
-3. Clarify intent with **one question at a time** (prefer multiple-choice).
-4. After each exchange, update the **WRS bar** (see below).
-5. Persist the draft **when WRS changes OR every 2 minutes** (whichever comes first).
-6. Propose 2-3 approaches with trade-offs. Recommend one.
-7. When WRS = 100: auto-crystallize (see **Crystallize**) → `DESIGN.md` → hand off.
+1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` for an existing entry matching this slug/topic — use as seed if found.
+2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately. Create `.genie/brainstorm.md` if missing (see Jar).
+3. **Clarify intent:** one question at a time, prefer multiple-choice.
+4. **Show WRS bar** after every exchange (see WRS).
+5. **Persist draft** when WRS changes OR every 2 minutes — whichever comes first.
+6. **Propose approaches:** 2-3 options with trade-offs. Recommend one.
+7. **Crystallize** when WRS = 100: write `DESIGN.md`, update jar, hand off.
 
 ## WRS — Wish Readiness Score
 
-Track these dimensions. Each is worth 20 points. Show the bar after every exchange.
+Five dimensions, 20 points each. Show the bar after every exchange.
 
-| Dimension | What it means |
-|-----------|--------------|
+| Dimension | Filled when… |
+|-----------|-------------|
 | **Problem** | One-sentence problem statement is clear |
 | **Scope** | IN and OUT boundaries defined |
 | **Decisions** | Key technical/design choices made with rationale |
@@ -38,59 +42,57 @@ WRS: ██████░░░░ 60/100
 
 - ✅ = filled (20 pts) — enough info to write that section of a wish
 - ░ = unfilled (0 pts) — still needs discussion
-- Show after EVERY exchange, even if unchanged
-
-### Thresholds
-
-- **< 100**: Keep refining.
-- **100**: Auto-crystallize (see **Crystallize**): write `DESIGN.md`, hand off to `/wish`.
-
-## Persistence
-
-- **Draft-first**: maintain `.genie/brainstorms/<slug>/DRAFT.md` from the start of the brainstorm.
-- **Cadence**: write/refresh `DRAFT.md` **when WRS changes OR every 2 minutes**, whichever comes first.
-  - This is to survive freezes/restarts; do not wait until the end.
+- **< 100:** keep refining
+- **= 100:** auto-crystallize
 
 ## Jar
 
-The agent-level brainstorm jar lives at `.genie/brainstorm.md`. It tracks all brainstorm topics across sessions.
+Brainstorm index at `.genie/brainstorm.md`. Tracks all topics across sessions.
 
-- **On start**: create `.genie/brainstorm.md` if it doesn't exist.
-  - Prefer `templates/brainstorm.md` when available.
-  - Otherwise auto-create with this 4-section layout:
-    - `# Brainstorm Jar`
-    - `## 🫙 Raw`
-    - `## 🍲 Simmering`
-    - `## ✅ Ready`
-    - `## ✅ Poured`
-- **On check**: look up the current slug/topic in the jar (fuzzy match by slug or title) — if found, use it as seed context (current WRS + notes).
-- **On WRS change**: update the entry in the jar to reflect the current section (Raw/Simmering/Ready).
-- **On crystallize (WRS = 100)**: move the item to `✅ Poured` and attach/link the resulting wish.
+**On start:** create if missing. Prefer `templates/brainstorm.md`; otherwise auto-create with sections:
+
+```markdown
+# Brainstorm Jar
+## Raw
+## Simmering
+## Ready
+## Poured
+```
+
+| Event | Action |
+|-------|--------|
+| Start | Look up slug/topic (fuzzy match) — use as seed context |
+| WRS change | Update entry to reflect current section (Raw/Simmering/Ready) |
+| Crystallize | Move entry to Poured, link resulting wish |
 
 ## Crystallize
 
-- **Trigger**: when **WRS = 100**, crystallize automatically.
-- **Semantics**:
-  - Write/update `.genie/brainstorms/<slug>/DESIGN.md` **from** `.genie/brainstorms/<slug>/DRAFT.md`.
-  - Update `.genie/brainstorm.md` — move the item from its current section to `✅ Poured` with a link to the wish.
-  - Trigger Beads upsert via: `genie brainstorm crystallize`.
+Triggered automatically when WRS = 100.
+
+1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` (use `references/design-template.md`).
+2. Update `.genie/brainstorm.md` — move item to Poured with wish link.
+3. Run `genie brainstorm crystallize`.
 
 ## Output Options
 
-- **Standard**: write `.genie/brainstorms/<slug>/DESIGN.md` and hand off to `/wish`.
-- **Small but non-trivial**: write the design, then ask whether to implement directly.
-- **Trivial**: verbal validation only; no file required.
+| Complexity | Output |
+|-----------|--------|
+| Standard | Write `DESIGN.md`, hand off to `/wish` |
+| Small but non-trivial | Write design, ask whether to implement directly |
+| Trivial | Verbal validation only — no file needed |
 
-## Principles
+## Handoff
 
-- One question per message
-- YAGNI and simplicity first
-- Never skip alternatives
-- Never assume requirements without confirmation
-- No implementation during brainstorm
+```
+Design validated (WRS {score}/100). Run /wish to turn this into an executable plan.
+```
 
-## Handoff Message
+Note any cross-repo or cross-agent dependencies — these become `depends-on`/`blocks` fields in the wish.
 
-`Design validated (WRS {score}/100). Run /wish to turn this into an executable plan.`
-
-Note any cross-repo or cross-agent dependencies discovered — these become `depends-on`/`blocks` fields in the wish.
+## Rules
+- One question per message. Never batch questions.
+- YAGNI and simplicity first.
+- Always propose alternatives before recommending.
+- Never assume requirements without confirmation.
+- No implementation during brainstorm.
+- Persist early and often — do not wait until the end.

@@ -1,77 +1,64 @@
 ---
 name: refine
-description: "Transform any brief or prompt into a production-ready structured prompt. Standalone and embedded in workers."
+description: "Transform a brief or prompt into a structured, production-ready prompt via prompt-optimizer. File or text mode."
 ---
 
-## Refiner Subagent
+# /refine — Prompt Optimizer
 
-The refiner is a dedicated subagent spawned for each `/refine` invocation. Its system prompt is set to the full contents of `references/prompt-optimizer.md`, and its only job is to convert the provided input into an optimized prompt.
+Transform any brief, draft, or one-liner into a production-ready structured prompt.
 
-Behavior contract:
-- Single-turn execution: receive input, produce optimized prompt, terminate.
-- No follow-up turns, no clarification loop, no multi-step dialog.
+## When to Use
+- User wants to improve a prompt or brief
+- User references `/refine` with text or a file path
+- A worker needs to optimize a prompt before dispatching it
 
-Output contract:
-- Return the prompt body ONLY.
-- Do not prepend labels such as "Here’s the prompt:".
-- Do not add meta-commentary, rationale, or explanation.
+## Flow
+1. **Detect mode:** argument starts with `@` -> file mode; otherwise -> text mode.
+2. **Read input:** file mode reads the target file; text mode uses the raw argument.
+3. **Spawn refiner subagent:** system prompt = contents of `references/prompt-optimizer.md`. Send input as the user message.
+4. **Receive output:** the subagent returns the optimized prompt body only.
+5. **Write output:** file mode overwrites the source file in place; text mode writes to `/tmp/prompts/<slug>.md`.
+6. **Report:** print the path of the written file.
 
-Portability / model-agnostic contract:
-- Use pure text input/output.
-- Perform no tool calls.
-- This keeps behavior consistent across OpenClaw, Claude Code, and Codex.
+## Modes
 
-Spawning mechanism by environment:
-- OpenClaw: use `sessions_spawn` with system prompt = contents of `references/prompt-optimizer.md`.
-- Claude Code: use the `Task` tool with system prompt = contents of `references/prompt-optimizer.md`.
-- Codex: use `sessions_spawn` (or equivalent) with a system prompt override set to `references/prompt-optimizer.md` contents.
+### File Mode
 
-## File Mode
+Invocation: `/refine @path/to/file.md`
 
-Invocation:
-- `/refine @path/to/file.md`
+| Step | Action |
+|------|--------|
+| Parse | Strip `@` prefix to get target file path |
+| Read | Load file contents as refiner input |
+| Write | Overwrite the same file with optimized output |
+| Return | Print the file path that was updated |
 
-Input behavior:
-- Treat any argument starting with `@` as file mode.
-- Parse the path after `@` as the target file path (example: `@.genie/wishes/my-wish/WISH.md`).
-- Read the current contents of that file as the refiner input.
+### Text Mode
 
-Processing behavior:
-- Send the file contents to the refiner subagent.
-- Receive optimized prompt body from the refiner.
+Invocation: `/refine <text>`
 
-Output behavior:
-- Rewrite the same target file in place.
-- Final file contents must be the optimized prompt body only (no wrapper text, no status text).
-- Return/print the same file path that was updated.
+| Step | Action |
+|------|--------|
+| Setup | `mkdir -p /tmp/prompts/` |
+| Slug | `<unix-timestamp>-<word1>-<word2>-<word3>` (first 3 words, lowercased, hyphenated) |
+| Write | Save optimized output to `/tmp/prompts/<slug>.md` |
+| Return | Print the created file path |
 
-Example:
-- `/refine @.genie/wishes/my-wish/WISH.md`
+Example slug: `1708190400-fix-auth-bug`
 
-## Text Mode
+## Subagent Contract
 
-Invocation:
-- `/refine <text>`
+The refiner is a single-turn subagent. Spawn it with system prompt set to `references/prompt-optimizer.md` contents.
 
-Input behavior:
-- Treat non-`@` input as raw text mode.
-- Accept any brief, prompt draft, or one-liner as direct text input.
+- **Input:** the raw text or file contents.
+- **Output:** optimized prompt body only.
+- No tool calls. Pure text in, text out.
+- No labels, meta-commentary, rationale, or follow-up questions.
+- Single turn: receive input, produce output, terminate.
 
-Setup before writing:
-- Run `mkdir -p /tmp/prompts/`.
-
-Output file behavior:
-- Write output to `/tmp/prompts/<slug>.md`.
-- Build `<slug>` as `<unix-timestamp>-<word1>-<word2>-<word3>`.
-- `word1..word3` are the first 3 words of the input text, lowercased and hyphenated.
-- Example slug: `1708190400-fix-auth-bug`.
-
-Processing behavior:
-- Send the raw text input to the refiner subagent.
-- Receive optimized prompt body from the refiner.
-- Write that optimized prompt body to the generated `/tmp/prompts/<slug>.md` file.
-
-Return behavior:
-- Return/print the created output file path.
-
-## Worker Integration
+## Rules
+- Never add wrapper text, status messages, or commentary to the output file.
+- Never execute the prompt — only rewrite it.
+- Never enter a clarification loop — single-turn execution only.
+- File mode overwrites in place. Do not create a new file.
+- Text mode always writes to `/tmp/prompts/`. Do not write elsewhere.

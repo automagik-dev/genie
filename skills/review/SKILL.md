@@ -1,48 +1,48 @@
 ---
 name: review
-description: "Universal reviewer for plans and execution - validates readiness and returns SHIP/FIX-FIRST/BLOCKED with actionable gaps."
+description: "Validate plans, execution, or PRs against wish criteria — returns SHIP / FIX-FIRST / BLOCKED with severity-tagged gaps."
 ---
 
-# /review
+# /review — Universal Review Gate
 
-Universal review gate. Always run as a subagent — never review your own work inline.
+Validate any artifact against its wish criteria. Dispatch as a subagent — never review your own work inline.
+
+## When to Use
+- Before `/work` — validate a wish plan is ready for execution
+- After `/work` — verify implementation meets acceptance criteria
+- Before merge — check a PR diff against wish scope
 
 ## Flow
-1. Detect review target → select pipeline (Plan, Execution, or PR).
-2. Run the pipeline checklist below.
-3. Run listed validation commands and capture pass/fail output.
-4. Classify gaps: CRITICAL / HIGH / MEDIUM / LOW.
-5. Return verdict:
-   - **SHIP:** no CRITICAL/HIGH gaps, validations pass. MEDIUM/LOW gaps are noted but don't block.
-   - **FIX-FIRST:** CRITICAL or HIGH gaps, or failing validations → hand off to `/fix`.
-   - **BLOCKED:** scope/architecture issue requiring wish revision.
-6. Write actionable next steps (exact fixes, files, commands).
+1. **Detect target** — determine what is being reviewed (wish draft, completed work, or PR diff).
+2. **Select pipeline** — match target to Plan, Execution, or PR checklist below.
+3. **Run checklist** — evaluate each criterion, collecting evidence.
+4. **Run validations** — execute any validation commands; capture pass/fail output.
+5. **Tag gaps** — classify every unmet criterion by severity.
+6. **Return verdict** — one of SHIP, FIX-FIRST, or BLOCKED (see Verdicts).
+7. **Write next steps** — exact fixes, files, and commands for each gap.
 
 ## Pipelines
 
-### Plan Review (wish draft)
-Run before `/work`. Checks the wish document quality.
+### Plan Review (before `/work`)
 
-- [ ] Problem statement is one sentence, testable
+- [ ] Problem statement is one sentence and testable
 - [ ] Scope IN has concrete deliverables
-- [ ] Scope OUT is not empty — boundaries explicit
-- [ ] Every task has acceptance criteria that are testable
+- [ ] Scope OUT is explicit — boundaries stated
+- [ ] Every task has testable acceptance criteria
 - [ ] Tasks are bite-sized and independently shippable
 - [ ] Dependencies tagged (`depends-on` / `blocks`)
 - [ ] Validation commands exist for each execution group
 
-### Execution Review (completed /work)
-Run after `/work`. Checks implementation against wish criteria.
+### Execution Review (after `/work`)
 
 - [ ] All acceptance criteria met with evidence
 - [ ] Validation commands run and passing
-- [ ] No scope creep — only wish-scoped changes made
+- [ ] No scope creep — only wish-scoped changes
 - [ ] Work is auditable — commands and outcomes captured
 - [ ] Quality pass: security, maintainability, correctness
 - [ ] No regressions introduced
 
-### PR Review (pre-merge)
-Run before merge. Checks the diff against the wish.
+### PR Review (before merge)
 
 - [ ] Diff matches wish scope — no unrelated changes
 - [ ] File list matches wish's "Files to Create/Modify"
@@ -50,21 +50,36 @@ Run before merge. Checks the diff against the wish.
 - [ ] Tests pass (if applicable)
 - [ ] Commit messages reference wish slug
 
-## Subagent Rule
+## Severity & Verdicts
 
-**Always dispatch review as a subagent.** The reviewer must not be the implementor.
+| Severity | Meaning | Blocks? |
+|----------|---------|---------|
+| CRITICAL | Security flaw, data loss, crash | Yes |
+| HIGH | Bug, major perf issue | Yes |
+| MEDIUM | Code smell, minor issue | No |
+| LOW | Style, naming preference | No |
 
-```
-sessions_send(
-  agentId: "<self>",
-  sessionKey: "agent:<self>:reviewer-<slug>-<timestamp>",
-  message: "Review <target> against wish <slug>. Pipeline: <plan|execution|pr>.",
-  timeoutSeconds: 120
-)
-```
+| Verdict | Condition | Next step |
+|---------|-----------|-----------|
+| **SHIP** | Zero CRITICAL/HIGH gaps, validations pass | Proceed |
+| **FIX-FIRST** | Any CRITICAL/HIGH gap or failing validation | Hand off to `/fix` |
+| **BLOCKED** | Scope or architecture issue requiring wish revision | Escalate to human |
+
+## Dispatch
+
+**The reviewer must not be the implementor.** Always dispatch review as a separate subagent.
+
+| Runtime | Detection | Pattern |
+|---------|-----------|---------|
+| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
+| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<review prompt>", sandbox: true)` |
+| OpenClaw | `term` CLI available | `term spawn --name "reviewer-<slug>" --model sonnet` |
+
+Default to **Claude Code** when detection is ambiguous.
 
 ## Rules
-- Never mark PASS without evidence.
-- Never ship with CRITICAL/HIGH gaps.
-- Never implement fixes during /review — hand off to `/fix`.
-- Keep review output concise, prioritized, and executable.
+- Never mark PASS without evidence — verify, don't assume.
+- Never ship with CRITICAL or HIGH gaps.
+- Never implement fixes during review — hand off to `/fix`.
+- Every FAIL includes actionable fix (file, command, what to change).
+- Keep output concise, severity-ordered, and executable.
