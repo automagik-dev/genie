@@ -13,15 +13,6 @@
       "version": "2026.02.02",
       "source": "./plugins/automagik-genie",
       "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, wish them into plans, make with parallel agents, ship as one team. A coding genie that grows with your project."
-    },
-    {
-      "name": "claude-mem",
-      "version": "9.0.12",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/thedotmack/claude-mem.git"
-      },
-      "description": "Persistent memory system for Claude Code - seamlessly preserve context across sessions."
     }
   ]
 }

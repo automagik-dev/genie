@@ -1,81 +1,97 @@
 ---
 name: work
-description: "Execute an approved wish plan - dispatches implementor subagents per task with bounded fix loops and verification until done."
+description: "Execute an approved wish plan — orchestrate subagents per task group with fix loops, validation, and review handoff."
 ---
 
-# /work
+# /work — Execute Wish Plan
 
-Execute an approved wish from `.genie/wishes/<slug>/WISH.md`.
-
-**Core principle: the orchestrator never executes directly. Always dispatch via subagent.**
+Orchestrate execution of an approved wish from `.genie/wishes/<slug>/WISH.md`. The orchestrator never executes directly — always dispatch via subagent.
 
 ## Flow
-1. **Load wish + status:** confirm scope and current progress.
+1. **Load wish + status:** read `.genie/wishes/<slug>/WISH.md`, confirm scope and current progress.
 2. **Pick next task:** select next unblocked pending execution group.
-3. **Dispatch subagent:** send the task to a fresh session (see Dispatch below).
-4. **Spec review:** dispatch reviewer subagent to check acceptance criteria; if fail, dispatch `/fix` (max 2 loops).
-5. **Quality review:** dispatch reviewer subagent for quality pass (security, maintainability, perf); if fail, dispatch `/fix` (max 1 loop).
-6. **Validate:** run the group validation command and record evidence.
-7. **Mark complete:** update task state and wish checkboxes.
-8. **Repeat** until all groups are done.
-9. **Handoff:** `All work tasks complete. Run /review.`
-10. **Close:** set `**Status:** SHIPPED` in the wish file (replace existing Status line). Call `bd close <slug>` (if bd unavailable or fails, log warning and continue — non-blocking).
+3. **Self-refine:** dispatch `/refine` on the task prompt (text mode) with WISH.md as context anchor. Read output from `/tmp/prompts/<slug>.md`. Fallback: proceed with original prompt if refiner fails (non-blocking).
+4. **Dispatch worker:** send the task to a fresh subagent session (see Dispatch).
+5. **Spec review:** dispatch `/review` subagent to check acceptance criteria. On FIX-FIRST, dispatch `/fix` (max 2 loops).
+6. **Quality review:** dispatch `/review` subagent for quality pass (security, maintainability, perf). On FIX-FIRST, dispatch `/fix` (max 1 loop).
+7. **Validate:** run the group validation command, record evidence.
+8. **Mark complete:** update task state and wish checkboxes.
+9. **Repeat** steps 2-8 until all groups done.
+10. **Handoff:** `All work tasks complete. Run /review.`
+11. **Close:** set `**Status:** SHIPPED` in wish file (replace existing Status line). Call `bd close <slug>` (log warning and continue if unavailable).
+
+## When to Use
+- An approved wish exists and is ready for execution
+- Orchestrator needs to dispatch implementation tasks to subagents
+- After `/review` returns SHIP on the plan
 
 ## Dispatch
 
-The orchestrator dispatches work via `sessions_send` to fresh session keys. This creates an isolated subagent with clean context.
+Detect runtime: `Task` tool with `isolation: "worktree"` → Claude Code. `CODEX_ENV` set → Codex. Otherwise → OpenClaw. Default to Claude Code if ambiguous.
+
+### Claude Code (primary)
 
 ```
-sessions_send(
-  agentId: "<self>",
-  sessionKey: "agent:<self>:worker-<group>-<timestamp>",
-  message: "Implement Group A from wish <slug>: <goal>. Acceptance criteria: ...",
-  timeoutSeconds: 120
+TeamCreate("work-<slug>")
+
+Task(
+  model: "sonnet",
+  isolation: "worktree",
+  prompt: "<task prompt with acceptance criteria>",
+  run_in_background: true
 )
 ```
 
-The subagent executes, replies with results. Orchestrator collects and moves to next group.
+| Need | Method |
+|------|--------|
+| Implementation task | `Task` with `isolation: "worktree"`, `model: "sonnet"` |
+| Review task | Separate `Task` subagent (never same agent as implementor) |
+| Parallel tasks | Multiple `Task` calls with `run_in_background: true` |
+| Quick validation | `Bash` tool directly — no subagent needed |
 
-### Route Selection
+Coordinate via `SendMessage`. Clean up via `TeamDelete` after all workers report.
 
-| Task needs… | Route | Example | Don't use for |
-|-------------|-------|---------|---------------|
-| Any implementation task | `sessions_send` to fresh key | Subagent with clean context | — |
-| Multi-file coding (heavy) | `term work <bead>` | CC worker via claudio | Simple edits, reasoning-only |
-| Quick validation only | `exec("command")` | Direct shell, immediate result | Complex multi-step work |
-| Another agent's expertise | `sessions_send(agentId, msg)` | Cross-agent delegation via ClawNet | Tasks you can do locally |
+### Codex
 
-**Default: `sessions_send` to fresh key.** Use `term work` for heavy coding. Use `exec` only for validation commands.
+```
+codex_subagent(
+  task: "<task prompt>",
+  sandbox: true
+)
+```
 
-### CC via term work
-For heavy multi-file coding, use this 3-step pattern:
-1) `bd create "task title" --type task` (create bead)
-2) `term work <bead-id>` (start worker in tmux/worktree)
-3) `term workers` (monitor workers)
-Fallback when beads are unavailable: `term work <task-name> --inline`.
+Isolation and model managed by Codex runtime. Collect responses via native API.
 
-## Worker Self-Refinement
+### OpenClaw (via `term`)
 
-Before executing any task, workers self-refine their task prompt using `/refine`:
+Three-layer chain: OpenClaw → `term` → Claude Code → Teams.
 
-1. Call `/refine <task-prompt>` (text mode) — pass the task description as input
-2. Also pass WISH.md path as context anchor: include it in the refine call to prevent scope invention
-3. Read the output from `/tmp/prompts/<slug>.md`
-4. Execute against the optimized prompt
+```bash
+# Heavy multi-file work with bead tracking
+bd create "<task title>" --type task
+term work <bead-id>
 
-**Fallback:** if the refiner fails or times out → proceed with original prompt (non-blocking, log warning)
+# Or spawn directly
+term spawn --name "worker-<slug>" --model sonnet
 
-**Important:** Workers NEVER overwrite WISH.md — the refined prompt is runtime context only.
+# Monitor
+term workers
+term session read <session>
+```
+
+Fallback: `term work <task-name> --inline` when beads unavailable. Use timeouts — 3 layers of indirection can stall.
 
 ## Escalation
-If a subagent fails or loop limit (2) is exceeded:
-- mark task BLOCKED,
-- create follow-up task with concrete gaps,
-- continue with next unblocked task,
-- include blocked items in handoff.
+
+When a subagent fails or fix loop limit (2) is exceeded:
+- Mark task **BLOCKED** in wish.
+- Create follow-up task with concrete gaps.
+- Continue with next unblocked task.
+- Include blocked items in final handoff.
 
 ## Rules
-- Orchestrator never executes directly — always dispatch subagents.
-- Do not expand scope during execution.
-- Do not skip validation commands.
+- Never execute directly — always dispatch subagents.
+- Never expand scope during execution.
+- Never skip validation commands.
+- Never overwrite WISH.md from workers — refined prompts are runtime context only.
 - Keep work auditable: capture commands + outcomes.
