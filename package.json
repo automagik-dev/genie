@@ -17,7 +17,9 @@
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
-    "prepack": "bun run build"
+    "prepack": "bun run build",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",

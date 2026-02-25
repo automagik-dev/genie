@@ -1,0 +1,11 @@
+{
+  "name": "work",
+  "blueprint": "work",
+  "roles": [
+    { "name": "implementor", "description": "Implements features and fixes bugs" },
+    { "name": "tester", "description": "Writes and runs tests" },
+    { "name": "reviewer", "description": "Reviews code and provides feedback" }
+  ],
+  "createdAt": "2026-02-24T00:00:00.000Z",
+  "updatedAt": "2026-02-24T00:00:00.000Z"
+}

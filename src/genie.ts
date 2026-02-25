@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
 
+/**
+ * genie — Single entrypoint CLI with namespaces:
+ *   team, task, worker, msg, term
+ *
+ * DEC-1: One entrypoint (`genie`), with `genie term` as namespaced
+ * low-level tmux operations. No split command surface.
+ */
+
 import { Command } from 'commander';
 import { VERSION } from './lib/version.js';
 import { installCommand } from './genie-commands/install.js';
@@ -28,6 +36,13 @@ import {
 } from './genie-commands/pdf.js';
 import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
+
+// Provider-selectable orchestration namespaces (genie-cli-teams)
+import { registerTeamNamespace } from './term-commands/team.js';
+import { registerWorkerNamespace } from './term-commands/workers.js';
+import { registerMsgNamespace } from './term-commands/msg.js';
+import { registerTaskNamespace } from './term-commands/task/commands.js';
+import { registerTermNamespace } from './term-commands/term.js';
 
 const program = new Command();
 
@@ -201,5 +216,15 @@ ledger
   .option('-r, --repo <path>', 'Repo path (default: cwd)')
   .option('--json', 'Output JSON')
   .action(ledgerValidateCommand);
+
+// ============================================================================
+// Provider-selectable orchestration namespaces (genie-cli-teams)
+// ============================================================================
+
+registerTeamNamespace(program);
+registerWorkerNamespace(program);
+registerMsgNamespace(program);
+registerTaskNamespace(program);
+registerTermNamespace(program);
 
 program.parse();

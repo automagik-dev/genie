@@ -1,5 +1,12 @@
 #!/usr/bin/env bun
 
+/**
+ * term — Low-level tmux operations and full CLI surface.
+ *
+ * This is the original comprehensive term command surface. It can also
+ * be accessed as a namespace under `genie term` for backward compatibility.
+ */
+
 import { Command } from 'commander';
 import { VERSION } from './lib/version.js';
 import * as newCmd from './term-commands/new.js';

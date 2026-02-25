@@ -1,0 +1,10 @@
+{
+  "name": "review",
+  "blueprint": "review",
+  "roles": [
+    { "name": "reviewer", "description": "Deep code review" },
+    { "name": "security", "description": "Security-focused review" }
+  ],
+  "createdAt": "2026-02-24T00:00:00.000Z",
+  "updatedAt": "2026-02-24T00:00:00.000Z"
+}
