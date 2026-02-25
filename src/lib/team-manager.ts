@@ -8,7 +8,7 @@
 
 import { mkdir, readFile, writeFile, readdir, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import path, { join } from 'path';
 import type { ProviderName } from './provider-adapters.js';
 
 // ============================================================================
@@ -99,7 +99,8 @@ function teamsDir(repoPath: string): string {
 }
 
 function teamFilePath(repoPath: string, name: string): string {
-  return join(teamsDir(repoPath), `${name}.json`);
+  const safeName = path.basename(name);
+  return join(teamsDir(repoPath), `${safeName}.json`);
 }
 
 // ============================================================================

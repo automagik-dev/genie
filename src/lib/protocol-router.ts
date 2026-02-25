@@ -46,9 +46,20 @@ export async function sendMessage(
   if (!worker) {
     // Try finding by fuzzy match (team:role pattern)
     const allWorkers = await registry.list();
-    const match = allWorkers.find(w =>
+    const matches = allWorkers.filter(w =>
       w.id === to || w.role === to || `${w.team}:${w.role}` === to
     );
+
+    if (matches.length > 1) {
+      return {
+        messageId: '',
+        workerId: to,
+        delivered: false,
+        reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map(m => m.id).join(', ')}. Please use a unique worker ID.`,
+      };
+    }
+
+    const match = matches[0];
 
     if (!match) {
       return {

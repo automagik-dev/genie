@@ -67,7 +67,7 @@ Build a `genie`-first orchestration stack (`team/task/worker/msg/term`) where Ge
 - [ ] Claude launches through public role routing (`--agent implementor`) with no hidden teammate flags
 - [ ] `genie worker spawn --provider codex --team work --skill work --role tester` launches worker and records provider metadata
 - [ ] Codex workers receive `$skill` instructions at spawn and do not depend on agent-name routing
-- [ ] Worker registry stores `provider`, `transport`, `session`, `window`, and `paneId`
+- [ ] Worker registry stores `provider`, `transport`, `session`, `window`, `paneId`, `role`, and `skill`
 - [ ] `genie msg send --to <worker>` writes mailbox entries and pushes delivery for both provider-backed workers
 - [ ] Default worker layout is mosaic/tiled; vertical layout only applies when explicitly requested
 - [ ] Invalid provider or invalid provider-specific argument combinations fail fast with actionable errors

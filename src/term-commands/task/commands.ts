@@ -85,10 +85,8 @@ async function saveTasks(repoPath: string, data: TasksFile): Promise<void> {
 // Task Logic (dependency resolution)
 // ============================================================================
 
-function resolveStatus(task: Task, allTasks: Record<string, Task>): 'ready' | 'blocked' {
-  if (task.status === 'done' || task.status === 'in_progress') {
-    return task.status as any;
-  }
+function resolveStatus(task: Task, allTasks: Record<string, Task>): TaskStatus {
+  if (task.status === 'done' || task.status === 'in_progress') return task.status;
   if (task.blockedBy.length === 0) return 'ready';
   const allDone = task.blockedBy.every(id => allTasks[id]?.status === 'done');
   return allDone ? 'ready' : 'blocked';
@@ -342,7 +340,8 @@ export function registerTaskNamespace(program: Command): void {
 
         const ready = tasks.filter(t => t.effectiveStatus === 'ready');
         const blocked = tasks.filter(t => t.effectiveStatus === 'blocked');
-        const inProgress = tasks.filter(t => t.status === 'in_progress');
+        const inProgress = tasks.filter(t => t.effectiveStatus === 'in_progress');
+        const done = tasks.filter(t => t.effectiveStatus === 'done');
 
         console.log('');
         console.log('TASKS');
@@ -366,6 +365,13 @@ export function registerTaskNamespace(program: Command): void {
           console.log('\nBlocked:');
           for (const t of blocked) {
             console.log(`  ${t.id}: ${t.title} (blocked by: ${t.blockedBy.join(', ')})`);
+          }
+        }
+
+        if (options.all && done.length > 0) {
+          console.log('\nDone:');
+          for (const t of done) {
+            console.log(`  ${t.id}: ${t.title}`);
           }
         }
 

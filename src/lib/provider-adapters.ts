@@ -94,10 +94,12 @@ export function hasBinary(name: string): boolean {
     if (typeof (Bun as any).which === 'function') {
       return Boolean((Bun as any).which(name));
     }
+    const { execSync } = require('child_process');
+    execSync(`which ${name}`, { stdio: 'ignore' });
+    return true;
   } catch {
-    // fallback: assume available
+    return false;
   }
-  return true;
 }
 
 /**

@@ -36,9 +36,11 @@ export function registerTermNamespace(program: Command): void {
     .option('-d, --detached', 'Create in detached mode')
     .action(async (name: string, options: { detached?: boolean }) => {
       try {
-        const { execSync } = require('child_process');
-        const flag = options.detached ? '-d' : '';
-        execSync(`tmux new-session ${flag} -s '${name}'`, { stdio: 'inherit' });
+        const { execFileSync } = require('child_process');
+        const args = ['new-session'];
+        if (options.detached) args.push('-d');
+        args.push('-s', name);
+        execFileSync('tmux', args, { stdio: 'inherit' });
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
         process.exit(1);

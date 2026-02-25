@@ -9,7 +9,8 @@
  */
 
 import { mkdir, readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
+import path, { join } from 'path';
+import { v4 as uuidv4 } from 'uuid';
 
 // ============================================================================
 // Types
@@ -47,7 +48,8 @@ function mailboxDir(repoPath: string): string {
 }
 
 function mailboxFilePath(repoPath: string, workerId: string): string {
-  return join(mailboxDir(repoPath), `${workerId}.json`);
+  const safeId = path.basename(workerId);
+  return join(mailboxDir(repoPath), `${safeId}.json`);
 }
 
 // ============================================================================
@@ -77,11 +79,8 @@ async function saveMailbox(repoPath: string, mailbox: WorkerMailbox): Promise<vo
 // Public API
 // ============================================================================
 
-let _messageCounter = 0;
-
 function generateMessageId(): string {
-  _messageCounter += 1;
-  return `msg-${Date.now()}-${_messageCounter}`;
+  return `msg-${uuidv4()}`;
 }
 
 /**

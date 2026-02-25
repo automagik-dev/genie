@@ -276,10 +276,8 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
   const existing = await registry.list();
   if (!existing.some(w => w.id === base)) return base;
 
-  let suffix = 2;
-  while (existing.some(w => w.id === `${base}-${suffix}`)) {
-    suffix++;
-  }
+  // Use crypto.randomUUID() for the suffix to avoid race conditions
+  const suffix = crypto.randomUUID().slice(0, 8);
   return `${base}-${suffix}`;
 }
 
@@ -331,11 +329,32 @@ export function registerWorkerNamespace(program: Command): void {
         // 4. Generate worker ID
         const workerId = await generateWorkerId(validated.team, validated.role);
 
-        // 5. Register worker (Group D — would normally create tmux pane here)
+        // 5. Launch tmux pane with the provider command
+        const { execSync } = require('child_process');
+        let paneId: string;
+        try {
+          // Split a new pane in the current window running the launch command
+          execSync(`tmux split-window -d ${launch.command.split(' ').map(a => `'${a}'`).join(' ')}`, { stdio: 'ignore' });
+          // Capture the pane ID of the newly created pane
+          paneId = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
+        } catch {
+          // If tmux is not available, fall back to a placeholder
+          paneId = '%0';
+          console.log('  (tmux not available — pane not created)');
+        }
+
+        // 6. Apply layout
+        try {
+          execSync(`tmux ${buildLayoutCommand('genie:0', layoutMode)}`, { stdio: 'ignore' });
+        } catch {
+          // Layout application is best-effort
+        }
+
+        // 7. Register worker with real pane ID
         const now = new Date().toISOString();
         const workerEntry: registry.Worker = {
           id: workerId,
-          paneId: '%0', // placeholder — real paneId comes from tmux split
+          paneId,
           session: 'genie',
           provider: validated.provider,
           transport: 'tmux',
@@ -351,23 +370,15 @@ export function registerWorkerNamespace(program: Command): void {
 
         await registry.register(workerEntry);
 
-        // 6. Output result
+        // 8. Output result
         console.log(`Worker "${workerId}" spawned.`);
         console.log(`  Provider: ${launch.provider}`);
         console.log(`  Command:  ${launch.command}`);
         console.log(`  Team:     ${validated.team}`);
+        console.log(`  Pane:     ${paneId}`);
         if (validated.role) console.log(`  Role:     ${validated.role}`);
         if (validated.skill) console.log(`  Skill:    ${validated.skill}`);
         console.log(`  Layout:   ${layoutMode}`);
-
-        // In a full implementation, we would:
-        // a) Create/find the tmux session
-        // b) Split a new pane with the launch command
-        // c) Apply the layout via buildLayoutCommand()
-        // d) Update the registry with the real paneId
-
-        console.log('');
-        console.log(`Layout command: tmux ${buildLayoutCommand('genie:0', layoutMode)}`);
 
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
@@ -450,7 +461,12 @@ export function registerWorkerNamespace(program: Command): void {
           process.exit(1);
         }
 
-        // In full implementation: kill tmux pane, cleanup
+        // Kill the tmux pane before removing from registry
+        try {
+          const { execSync } = require('child_process');
+          execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+        } catch { /* pane may already be gone */ }
+
         await registry.unregister(id);
         console.log(`Worker "${id}" killed and unregistered.`);
       } catch (error: any) {
