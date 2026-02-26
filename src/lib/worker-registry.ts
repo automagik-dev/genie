@@ -1,13 +1,15 @@
 /**
- * Worker Registry - Manages worker state persistence
+ * Worker Registry — Tracks worker state with provider metadata.
  *
- * Tracks Claude workers bound to beads issues, storing state in
- * ~/.config/term/workers.json
+ * Stores provider, transport, session, window, paneId, role, and skill
+ * metadata for every spawned worker. Registry is persisted to
+ * `.genie/workers.json` (repo-local) or `~/.config/genie/workers.json`.
  */
 
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
+import type { ProviderName } from './provider-adapters.js';
 
 // ============================================================================
 // Types
@@ -22,43 +24,55 @@ export type WorkerState =
   | 'done'        // Task completed, ready for close
   | 'error';      // Encountered error
 
+export type TransportType = 'tmux';
+
 export interface Worker {
-  /** Unique worker ID (usually matches taskId, e.g., "bd-42") */
+  /** Unique worker ID (usually matches taskId, e.g., "bd-42"). */
   id: string;
-  /** tmux pane ID (e.g., "%16") */
+  /** tmux pane ID (e.g., "%16"). */
   paneId: string;
-  /** tmux session name */
+  /** tmux session name. */
   session: string;
-  /** Path to git worktree, null if using shared repo */
+  /** Path to git worktree, null if using shared repo. */
   worktree: string | null;
-  /** Beads issue ID this worker is bound to */
-  taskId: string;
-  /** Task title from beads */
+  /** Beads or local task ID this worker is bound to. */
+  taskId?: string;
+  /** Task title from beads. */
   taskTitle?: string;
-  /** Associated wish slug (if from decompose) */
+  /** Associated wish slug (if from decompose). */
   wishSlug?: string;
-  /** Execution group number within wish */
+  /** Execution group number within wish. */
   groupNumber?: number;
-  /** ISO timestamp when worker was started */
+  /** ISO timestamp when worker was started. */
   startedAt: string;
-  /** Current worker state */
+  /** Current worker state. */
   state: WorkerState;
-  /** Last state change timestamp */
+  /** Last state change timestamp. */
   lastStateChange: string;
-  /** Repository path where worker operates */
+  /** Repository path where worker operates. */
   repoPath: string;
-  /** Claude session ID for resume capability */
+  /** Claude session ID for resume capability. */
   claudeSessionId?: string;
-  /** tmux window name (matches taskId) — used for window cleanup */
+  /** tmux window name (matches taskId) — used for window cleanup. */
   windowName?: string;
-  /** tmux window ID (e.g., "@4") — used for session-qualified cleanup */
+  /** tmux window ID (e.g., "@4") — used for session-qualified cleanup. */
   windowId?: string;
-  /** Worker role when multiple workers on same task (e.g., "main", "tests", "review") */
+  /** Worker role (e.g., "implementor", "tester", "main", "tests", "review"). */
   role?: string;
-  /** Custom worker name when multiple workers on same task */
+  /** Custom worker name when multiple workers on same task. */
   customName?: string;
   /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = bd-42:1, etc. */
   subPanes?: string[];
+  /** Provider used to launch this worker. */
+  provider?: ProviderName;
+  /** Transport type (always "tmux" for now). */
+  transport?: TransportType;
+  /** Skill loaded at spawn (codex workers). */
+  skill?: string;
+  /** Team this worker belongs to. */
+  team?: string;
+  /** tmux window name (alias for windowName, used by teams surface). */
+  window?: string;
 }
 
 export interface WorkerRegistry {
@@ -70,16 +84,14 @@ export interface WorkerRegistry {
 // Configuration
 // ============================================================================
 
-const CONFIG_DIR = join(homedir(), '.config', 'term');
+const CONFIG_DIR = join(homedir(), '.config', 'genie');
 
 function getRegistryFilePath(): string {
-  // Prefer repo-local tracked .genie/ when present (macro repo like blanco)
   const cwd = process.cwd();
   const repoGenie = join(cwd, '.genie');
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { existsSync } = require('fs');
-    if (process.env.TERM_WORKER_REGISTRY === 'global') {
+    if (process.env.GENIE_WORKER_REGISTRY === 'global') {
       return join(CONFIG_DIR, 'workers.json');
     }
     if (existsSync(repoGenie)) {
@@ -92,17 +104,16 @@ function getRegistryFilePath(): string {
 }
 
 // ============================================================================
-// Private Functions
+// Internal
 // ============================================================================
 
 async function ensureConfigDir(): Promise<void> {
   await mkdir(CONFIG_DIR, { recursive: true });
 }
 
-// INTENTIONAL: always fresh-read, never cache
 async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   try {
-    const filePath = registryPath || getRegistryFilePath();
+    const filePath = registryPath ?? getRegistryFilePath();
     const content = await readFile(filePath, 'utf-8');
     return JSON.parse(content);
   } catch {
@@ -111,7 +122,7 @@ async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
 }
 
 async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Promise<void> {
-  const filePath = registryPath || getRegistryFilePath();
+  const filePath = registryPath ?? getRegistryFilePath();
   await mkdir(dirname(filePath), { recursive: true });
   registry.lastUpdated = new Date().toISOString();
   await writeFile(filePath, JSON.stringify(registry, null, 2));
@@ -121,43 +132,33 @@ async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Pr
 // Public API
 // ============================================================================
 
-/**
- * Register a new worker in the registry
- */
+/** Register a new worker. */
 export async function register(worker: Worker): Promise<void> {
   const registry = await loadRegistry();
   registry.workers[worker.id] = worker;
   await saveRegistry(registry);
 }
 
-/**
- * Unregister (remove) a worker from the registry
- */
+/** Unregister (remove) a worker. */
 export async function unregister(id: string): Promise<void> {
   const registry = await loadRegistry();
   delete registry.workers[id];
   await saveRegistry(registry);
 }
 
-/**
- * Get a worker by ID
- */
+/** Get a worker by ID. */
 export async function get(id: string): Promise<Worker | null> {
   const registry = await loadRegistry();
-  return registry.workers[id] || null;
+  return registry.workers[id] ?? null;
 }
 
-/**
- * List all workers
- */
+/** List all workers. */
 export async function list(): Promise<Worker[]> {
   const registry = await loadRegistry();
   return Object.values(registry.workers);
 }
 
-/**
- * Update a worker's state
- */
+/** Update a worker's state. */
 export async function updateState(id: string, state: WorkerState): Promise<void> {
   const registry = await loadRegistry();
   const worker = registry.workers[id];
@@ -168,9 +169,7 @@ export async function updateState(id: string, state: WorkerState): Promise<void>
   }
 }
 
-/**
- * Update multiple worker fields
- */
+/** Update multiple worker fields. */
 export async function update(id: string, updates: Partial<Worker>): Promise<void> {
   const registry = await loadRegistry();
   const worker = registry.workers[id];
@@ -183,52 +182,40 @@ export async function update(id: string, updates: Partial<Worker>): Promise<void
   }
 }
 
-/**
- * Find worker by tmux pane ID
- */
+/** Find worker by tmux pane ID. */
 export async function findByPane(paneId: string): Promise<Worker | null> {
   const workers = await list();
-  // Normalize pane ID (with or without % prefix)
-  const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return workers.find(w => w.paneId === normalizedPaneId) || null;
+  const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
+  return workers.find(w => w.paneId === normalized) ?? null;
 }
 
-/**
- * Find worker by tmux window ID (e.g., "@4")
- */
+/** Find worker by tmux window ID (e.g., "@4"). */
 export async function findByWindow(windowId: string): Promise<Worker | null> {
   const workers = await list();
-  // Normalize window ID (with or without @ prefix)
   const normalizedId = windowId.startsWith('@') ? windowId : `@${windowId}`;
-  return workers.find(w => w.windowId === normalizedId) || null;
+  return workers.find(w => w.windowId === normalizedId) ?? null;
 }
 
-/**
- * Find worker by beads task ID (returns first match for backwards compat)
- */
+/** Find worker by beads task ID (returns first match for backwards compat). */
 export async function findByTask(taskId: string): Promise<Worker | null> {
   const workers = await list();
-  return workers.find(w => w.taskId === taskId) || null;
+  return workers.find(w => w.taskId === taskId) ?? null;
 }
 
-/**
- * Find ALL workers for a beads task ID (supports N workers per task)
- */
+/** Find ALL workers for a beads task ID (supports N workers per task). */
 export async function findAllByTask(taskId: string): Promise<Worker[]> {
   const workers = await list();
   return workers.filter(w => w.taskId === taskId);
 }
 
-/**
- * Count workers for a task
- */
+/** Count workers for a task. */
 export async function countByTask(taskId: string): Promise<number> {
   const workers = await findAllByTask(taskId);
   return workers.length;
 }
 
 /**
- * Generate a unique worker ID for a task (handles N workers per task)
+ * Generate a unique worker ID for a task (handles N workers per task).
  * Returns taskId for first worker, taskId-2 for second, etc.
  */
 export async function generateWorkerId(taskId: string, customName?: string): Promise<string> {
@@ -251,41 +238,43 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
   return `${taskId}-${suffix}`;
 }
 
-/**
- * Find workers by wish slug
- */
+/** Find workers by wish slug. */
 export async function findByWish(wishSlug: string): Promise<Worker[]> {
   const workers = await list();
   return workers.filter(w => w.wishSlug === wishSlug);
 }
 
-/**
- * Find worker by Claude session ID
- */
+/** Find worker by Claude session ID. */
 export async function findBySessionId(sessionId: string): Promise<Worker | null> {
   const workers = await list();
-  return workers.find(w => w.claudeSessionId === sessionId) || null;
+  return workers.find(w => w.claudeSessionId === sessionId) ?? null;
 }
 
-/**
- * Check if a worker exists for a given task
- */
+/** Check if a worker exists for a given task. */
 export async function hasWorkerForTask(taskId: string): Promise<boolean> {
   const worker = await findByTask(taskId);
   return worker !== null;
 }
 
-/**
- * Get workers in a specific state
- */
+/** Find workers by team name. */
+export async function findByTeam(team: string): Promise<Worker[]> {
+  const workers = await list();
+  return workers.filter(w => w.team === team);
+}
+
+/** Find workers by provider. */
+export async function findByProvider(provider: ProviderName): Promise<Worker[]> {
+  const workers = await list();
+  return workers.filter(w => w.provider === provider);
+}
+
+/** Get workers in a specific state. */
 export async function getByState(state: WorkerState): Promise<Worker[]> {
   const workers = await list();
   return workers.filter(w => w.state === state);
 }
 
-/**
- * Calculate elapsed time for a worker
- */
+/** Calculate elapsed time for a worker. */
 export function getElapsedTime(worker: Worker): { ms: number; formatted: string } {
   const startTime = new Date(worker.startedAt).getTime();
   const ms = Date.now() - startTime;
@@ -305,16 +294,12 @@ export function getElapsedTime(worker: Worker): { ms: number; formatted: string 
   return { ms, formatted };
 }
 
-/**
- * Get the config directory path
- */
+/** Get the config directory path. */
 export function getConfigDir(): string {
   return CONFIG_DIR;
 }
 
-/**
- * Get the registry file path
- */
+/** Get the registry file path. */
 export function getRegistryPath(): string {
   return getRegistryFilePath();
 }
