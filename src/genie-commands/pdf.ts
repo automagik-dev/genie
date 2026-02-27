@@ -1,15 +1,35 @@
 import { spawn } from 'child_process';
-import { resolve } from 'path';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
-// Path to genie-pdf relative to genie-cli (now in packages/)
-const GENIE_PDF_PATH = resolve(import.meta.dirname, '../../packages/genie-pdf/src/index.ts');
+/**
+ * Resolve genie-pdf path lazily to avoid crashing at module load time.
+ * In CJS bundles (esbuild), import.meta is replaced with {} so import.meta.url
+ * is undefined. This function handles both ESM (dev) and CJS (bundled) contexts.
+ */
+function getGeniePdfPath(): string {
+  // In CJS bundles, __filename is available natively
+  const base = typeof __filename !== 'undefined'
+    ? dirname(__filename)
+    : dirname(fileURLToPath(import.meta.url));
+  return resolve(base, '../../packages/genie-pdf/src/index.ts');
+}
 
 /**
  * Execute genie-pdf CLI with given arguments
  */
 function runGeniePdf(args: string[]): Promise<number> {
+  let pdfPath: string;
+  try {
+    pdfPath = getGeniePdfPath();
+  } catch {
+    console.error('❌ genie-pdf is not available in this context (bundled plugin mode).');
+    console.error('   Install genie-cli from source to use PDF commands.');
+    return Promise.resolve(1);
+  }
+
   return new Promise((resolve) => {
-    const child = spawn('bun', ['run', GENIE_PDF_PATH, ...args], {
+    const child = spawn('bun', ['run', pdfPath, ...args], {
       stdio: 'inherit',
       cwd: process.cwd(),
     });
