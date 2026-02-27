@@ -154,14 +154,14 @@ function isBeadsInstalled() {
 function installBeads() {
   console.error('Installing beads (bd)...');
   try {
-    execSync('npm install -g @beads/bd', { stdio: 'inherit', shell: true });
+    execSync('npm install -g @anthropic-ai/bd', { stdio: 'inherit', shell: true });
     if (!isBeadsInstalled()) {
       throw new Error('beads installation completed but bd not found.');
     }
     console.error('beads installed');
   } catch (error) {
     console.error('Failed to install beads. Please install manually:');
-    console.error('  npm install -g @beads/bd');
+    console.error('  npm install -g @anthropic-ai/bd');
     throw error;
   }
 }
@@ -280,7 +280,7 @@ function createCliSymlinks() {
 // Main execution
 try {
   // Quick check: if everything is already installed, exit silently
-  if (isBunInstalled() && isTmuxInstalled() && !needsInstall() && symlinksExist()) {
+  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && symlinksExist()) {
     process.exit(0);
   }
 
@@ -310,13 +310,9 @@ try {
     process.exit(2); // Exit code 2 = blocking error for Claude to process
   }
 
-  // 3. Check/install beads (optional — don't crash if unavailable)
+  // 3. Check/install beads
   if (!isBeadsInstalled()) {
-    try {
-      installBeads();
-    } catch {
-      console.error('Warning: beads (bd) not available — skipping (optional dependency)');
-    }
+    installBeads();
   }
 
   // 4. Install dependencies if needed

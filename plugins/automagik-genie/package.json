@@ -1,6 +1,6 @@
 {
   "name": "automagik-genie-plugin",
-  "version": "0.260209.1458",
+  "version": "3.260224.1",
   "private": true,
   "description": "Runtime dependencies for automagik-genie bundled CLIs",
   "type": "module",
