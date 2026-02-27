@@ -41,7 +41,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./plugins/automagik-genie/index.ts"
+      "./plugins/genie/index.ts"
     ]
   },
   "publishConfig": {

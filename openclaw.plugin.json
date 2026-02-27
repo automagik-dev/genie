@@ -1,6 +1,6 @@
 {
-  "id": "automagik-genie",
-  "name": "Automagik Genie",
+  "id": "genie",
+  "name": "Genie",
   "description": "Skills, agents, and hooks for the Genie CLI terminal orchestration toolkit",
   "version": "3.260227.3",
   "configSchema": {
@@ -9,6 +9,6 @@
     "properties": {}
   },
   "skills": [
-    "./skills"
+    "./plugins/genie/skills"
   ]
 }

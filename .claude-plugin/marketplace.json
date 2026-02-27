@@ -9,9 +9,9 @@
   },
   "plugins": [
     {
-      "name": "automagik-genie",
+      "name": "genie",
       "version": "2026.02.02",
-      "source": "./plugins/automagik-genie",
+      "source": "./plugins/genie",
       "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, wish them into plans, make with parallel agents, ship as one team. A coding genie that grows with your project."
     }
   ]

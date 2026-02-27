@@ -21,17 +21,17 @@ Genie provides a set of **skills** (slash commands) centered on a 4-command work
 
 These skills can be loaded in:
 
-- **Claude Code** via the `automagik-genie` Claude plugin
-- **OpenClaw** via the `automagik-genie` OpenClaw plugin
+- **Claude Code** via the `genie` Claude plugin
+- **OpenClaw** via the `genie` OpenClaw plugin
 
 ✅ **Single source of truth:** all skills live in **`./skills/`** at the repo root.
 
 ### Claude Code integration (plugin)
-- Installs/links the Claude plugin at `~/.claude/plugins/automagik-genie`
+- Installs/links the Claude plugin at `~/.claude/plugins/genie`
 - Ships skills + agents + hooks
 
 ### OpenClaw integration (plugin)
-- Installs/links an OpenClaw plugin with the **same id**: `automagik-genie`
+- Installs/links an OpenClaw plugin with the **same id**: `genie`
 - The plugin exposes the same skills to OpenClaw so they can appear as global slash commands (depending on your OpenClaw config)
 
 > Note: after installing an OpenClaw plugin you typically need to **restart the OpenClaw Gateway** to load it.
@@ -42,10 +42,10 @@ These skills can be loaded in:
 
 ```
 ./skills/                          # ✅ canonical skills directory
-./plugins/automagik-genie/         # Claude Code + OpenClaw plugin wrapper
+./plugins/genie/         # Claude Code + OpenClaw plugin wrapper
   ├── .claude-plugin/              # Claude Code plugin manifest
   ├── openclaw.plugin.json         # OpenClaw plugin manifest
-  ├── automagik-genie.ts           # OpenClaw standalone extension entrypoint
+  ├── genie.ts           # OpenClaw standalone extension entrypoint
   └── skills -> ../../skills       # symlink to canonical skills
 ```
 
@@ -87,12 +87,12 @@ uninstall       Remove Genie CLI and components
 During install, you can choose to install the Claude Code plugin.
 
 - If using a local clone, the installer creates a symlink:
-  - `~/.claude/plugins/automagik-genie -> <repo>/plugins/automagik-genie`
+  - `~/.claude/plugins/genie -> <repo>/plugins/genie`
 
 Verify:
 
 ```bash
-claude plugin list | rg automagik-genie
+claude plugin list | rg genie
 ```
 
 ---
@@ -103,7 +103,7 @@ During install, you can choose to install the OpenClaw plugin.
 
 Under the hood, OpenClaw installs the standalone extension entrypoint:
 
-- `plugins/automagik-genie/automagik-genie.ts`
+- `plugins/genie/genie.ts`
 
 Verify:
 

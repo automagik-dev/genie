@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Worker Service for automagik-genie
+ * Worker Service for genie
  *
  * Background HTTP service for workflow state management.
  * Port: 48888 (avoids collision with claude-mem's 37777)
@@ -88,7 +88,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   if (path === '/health' || path === '/') {
     json(res, {
       status: 'ok',
-      service: 'automagik-genie',
+      service: 'genie',
       version: process.env.GENIE_VERSION || 'dev',
       port: PORT,
       uptime: process.uptime()
@@ -266,7 +266,7 @@ if (command === 'start') {
 
   server.listen(PORT, '127.0.0.1', () => {
     writePidFile();
-    console.log(`automagik-genie worker listening on http://127.0.0.1:${PORT}`);
+    console.log(`genie worker listening on http://127.0.0.1:${PORT}`);
   });
 
   // Graceful shutdown
@@ -329,7 +329,7 @@ if (command === 'start') {
 
 } else {
   console.log(`
-automagik-genie worker service
+genie worker service
 
 Usage:
   worker-service start     Start the worker (daemonized)

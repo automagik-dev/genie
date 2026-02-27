@@ -8,9 +8,9 @@
  * Syncs versions across:
  * - package.json (root)
  * - src/lib/version.ts
- * - plugins/automagik-genie/.claude-plugin/plugin.json (Claude Code)
- * - plugins/automagik-genie/openclaw.plugin.json (OpenClaw)
- * - plugins/automagik-genie/package.json (smart-install version checks)
+ * - plugins/genie/.claude-plugin/plugin.json (Claude Code)
+ * - openclaw.plugin.json (OpenClaw — root level)
+ * - plugins/genie/package.json (smart-install version checks)
  */
 
 import { readFile, writeFile } from 'fs/promises';
@@ -90,19 +90,19 @@ async function main() {
 
   // 3. Update Claude Code plugin manifest
   await updateJsonVersion(
-    join(rootDir, 'plugins/automagik-genie/.claude-plugin/plugin.json'),
+    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
     version
   );
 
-  // 4. Update OpenClaw plugin manifest
+  // 4. Update OpenClaw plugin manifest (root level)
   await updateJsonVersion(
-    join(rootDir, 'plugins/automagik-genie/openclaw.plugin.json'),
+    join(rootDir, 'openclaw.plugin.json'),
     version
   );
 
   // 5. Update plugin package.json (used by smart-install.js for version checks)
   await updateJsonVersion(
-    join(rootDir, 'plugins/automagik-genie/package.json'),
+    join(rootDir, 'plugins/genie/package.json'),
     version
   );
 

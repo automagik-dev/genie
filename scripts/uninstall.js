@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Uninstall Script for automagik-genie
+ * Uninstall Script for genie
  *
  * Removes all installed components:
  * - CLI symlinks (genie, term)
@@ -86,9 +86,9 @@ function removePluginEntry() {
     const content = readFileSync(INSTALLED_PLUGINS, 'utf-8');
     const plugins = JSON.parse(content);
 
-    // Find and remove automagik-genie entry
+    // Find and remove genie entry
     const key = Object.keys(plugins).find(k =>
-      k.includes('automagik-genie') || plugins[k]?.name === 'automagik-genie'
+      k.includes('genie') || plugins[k]?.name === 'genie'
     );
 
     if (!key) {
@@ -113,7 +113,7 @@ function removePluginEntry() {
 
 // Main
 log('');
-log(DRY_RUN ? 'Uninstall (dry run) - no changes will be made' : 'Uninstalling automagik-genie...');
+log(DRY_RUN ? 'Uninstall (dry run) - no changes will be made' : 'Uninstalling genie...');
 log('');
 
 log('CLI symlinks:');
@@ -137,6 +137,6 @@ if (DRY_RUN) {
   log('Dry run complete. Run without --dry-run to actually remove files.');
 } else {
   log('Uninstall complete. Restart Claude Code and run:');
-  log('  /plugin install namastexlabs/automagik-genie');
+  log('  /plugin install namastexlabs/genie');
 }
 log('');
