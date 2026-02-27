@@ -31,7 +31,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json src/lib/version.ts plugins/automagik-genie/
+          git add package.json src/lib/version.ts plugins/genie/ openclaw.plugin.json .claude-plugin/marketplace.json
           git diff --staged --quiet && echo "No version changes to commit" || \
             git commit -m "chore(version): bump to $(node -p 'require(\"./package.json\").version') [skip ci]" && \
             git push origin main
