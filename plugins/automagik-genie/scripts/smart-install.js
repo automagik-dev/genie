@@ -31,6 +31,10 @@ const BEADS_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), 'AppData', 'Roaming', 'npm', 'bd.cmd')]
   : [join(homedir(), '.local', 'bin', 'bd'), '/usr/local/bin/bd', '/opt/homebrew/bin/bd'];
 
+const GENIE_COMMON_PATHS = IS_WINDOWS
+  ? [join(homedir(), '.bun', 'bin', 'genie.exe')]
+  : [join(homedir(), '.bun', 'bin', 'genie'), '/usr/local/bin/genie', '/opt/homebrew/bin/genie'];
+
 /**
  * Get the Bun executable path
  */
@@ -75,7 +79,7 @@ function installBun() {
   console.error('Installing Bun runtime...');
   try {
     if (IS_WINDOWS) {
-      execSync('powershell -c "irm bun.sh/install.ps1 | iex"', { stdio: 'inherit', shell: true });
+      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: 'inherit', shell: true });
     } else {
       execSync('curl -fsSL https://bun.com/install | bash', { stdio: 'inherit', shell: true });
     }
@@ -219,11 +223,31 @@ function installDeps() {
 }
 
 /**
+ * Get the genie executable path
+ */
+function getGeniePath() {
+  // Try PATH first
+  try {
+    const result = spawnSync('genie', ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS
+    });
+    if (result.status === 0) return 'genie';
+  } catch {
+    // Not in PATH
+  }
+  return GENIE_COMMON_PATHS.find(existsSync) || null;
+}
+
+/**
  * Get installed genie CLI version (via bun global)
  */
 function getGenieVersion() {
+  const geniePath = getGeniePath();
+  if (!geniePath) return null;
   try {
-    const result = spawnSync('genie', ['--version'], {
+    const result = spawnSync(geniePath, ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: IS_WINDOWS
@@ -276,7 +300,8 @@ function installGenieCli() {
   }
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  execSync(`${bunCmd} install -g @automagik/genie`, { stdio: 'inherit', shell: IS_WINDOWS });
+  const versionSuffix = pluginVersion ? `@${pluginVersion}` : '';
+  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: 'inherit', shell: IS_WINDOWS });
 
   const newVersion = getGenieVersion();
   if (!newVersion) {
