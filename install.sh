@@ -27,7 +27,15 @@ readonly RAW_REPO_URL="https://raw.githubusercontent.com/namastexlabs/genie-cli"
 
 readonly GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 readonly CLAUDE_PLUGINS_DIR="$HOME/.claude/plugins"
-readonly PLUGIN_SYMLINK="$CLAUDE_PLUGINS_DIR/automagik-genie"
+readonly PLUGIN_SYMLINK="$CLAUDE_PLUGINS_DIR/genie"
+readonly CODEX_SKILLS_DIR="$HOME/.agents/skills"
+
+# TTY detection for dual-mode (interactive vs agent)
+if [[ -t 0 ]]; then
+    INTERACTIVE=true
+else
+    INTERACTIVE=false
+fi
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -56,6 +64,7 @@ INSTALL_MODE="install"
 LOCAL_PATH=""  # If set, use local source instead of npm
 AUTO_LOCAL_DETECTED=false  # True if local mode was auto-detected
 DEV_MODE=false  # If true, link plugins instead of copying (for development)
+PKG_DIR=""  # Set by locate_package_dir after install
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility Functions
@@ -144,6 +153,7 @@ is_valid_symlink() {
 
 # Check and repair broken plugin symlink
 check_and_repair_symlink() {
+    # Check new path
     if is_broken_symlink "$PLUGIN_SYMLINK"; then
         local target
         target=$(readlink "$PLUGIN_SYMLINK" 2>/dev/null || echo "unknown")
@@ -159,6 +169,7 @@ check_and_repair_symlink() {
             return 1
         fi
     fi
+
     return 0
 }
 
@@ -168,7 +179,7 @@ check_and_repair_symlink() {
 
 readonly OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 
-# Check if OpenClaw config has stale automagik-genie paths
+# Check if OpenClaw config has stale genie plugin paths
 check_openclaw_stale_paths() {
     if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
         return 1  # No config, nothing to repair
@@ -183,7 +194,7 @@ check_openclaw_stale_paths() {
     paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
 
     for path in $paths; do
-        if [[ "$path" == *"automagik-genie"* ]] && [[ ! -f "$path" ]]; then
+        if [[ "$path" == *"plugins/genie"* ]] && [[ ! -f "$path" ]]; then
             return 0  # Found stale path
         fi
     done
@@ -191,7 +202,7 @@ check_openclaw_stale_paths() {
     return 1  # No stale paths
 }
 
-# Get the stale automagik-genie path from OpenClaw config
+# Get the stale genie plugin path from OpenClaw config
 get_openclaw_stale_path() {
     if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
         return
@@ -201,7 +212,7 @@ get_openclaw_stale_path() {
     paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
 
     for path in $paths; do
-        if [[ "$path" == *"automagik-genie"* ]] && [[ ! -f "$path" ]]; then
+        if [[ "$path" == *"plugins/genie"* ]] && [[ ! -f "$path" ]]; then
             echo "$path"
             return
         fi
@@ -219,8 +230,8 @@ repair_openclaw_stale_paths() {
 
     # Determine the new correct path
     if [[ -n "$LOCAL_PATH" ]]; then
-        plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
-        new_path="$plugin_dir/automagik-genie.ts"
+        plugin_dir="$LOCAL_PATH/plugins/genie"
+        new_path="$plugin_dir/genie.ts"
     else
         return 1  # Can't determine new path without LOCAL_PATH
     fi
@@ -257,7 +268,7 @@ repair_openclaw_stale_paths() {
     fi
 }
 
-# Remove automagik-genie paths from OpenClaw config (for uninstall)
+# Remove genie paths from OpenClaw config (for uninstall)
 remove_openclaw_plugin_paths() {
     if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
         return 0
@@ -266,10 +277,10 @@ remove_openclaw_plugin_paths() {
     local tmp_config
     tmp_config=$(mktemp)
 
-    # Remove any paths containing automagik-genie
+    # Remove paths containing plugins/genie
     if jq '
-        .plugins.load.paths = [.plugins.load.paths[]? | select(contains("automagik-genie") | not)] |
-        del(.plugins.entries["automagik-genie"])
+        .plugins.load.paths = [.plugins.load.paths[]? | select(contains("plugins/genie") | not)] |
+        del(.plugins.entries["genie"])
     ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
         mv "$tmp_config" "$OPENCLAW_CONFIG"
         return 0
@@ -529,34 +540,6 @@ install_git_if_needed() {
     fi
 }
 
-install_node_if_needed() {
-    if check_command node; then
-        local node_version
-        node_version=$(node --version 2>/dev/null | sed 's/v//' | cut -d. -f1)
-        if [[ "$node_version" -ge 20 ]]; then
-            success "Node.js v$(node --version | sed 's/v//') found"
-            return 0
-        fi
-    fi
-
-    log "Installing Node.js..."
-
-    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-
-    if [[ ! -d "$NVM_DIR" ]]; then
-        download "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh" | bash
-    fi
-
-    # shellcheck source=/dev/null
-    [[ -s "$NVM_DIR/nvm.sh" ]] && \. "$NVM_DIR/nvm.sh"
-
-    nvm install 22
-    nvm use 22
-    nvm alias default 22
-
-    success "Node.js $(node --version) installed"
-}
-
 install_bun_if_needed() {
     if check_command bun; then
         success "Bun $(bun --version) found"
@@ -586,161 +569,35 @@ ensure_bun_in_path() {
     fi
 }
 
-install_tmux_if_needed() {
-    if check_command tmux; then
-        success "tmux installed"
-        return 0
-    fi
+# ─────────────────────────────────────────────────────────────────────────────
+# Package Directory Location
+# ─────────────────────────────────────────────────────────────────────────────
 
-    log "Installing tmux..."
-    if install_package "tmux" && check_command tmux; then
-        success "tmux installed"
-    else
-        warn "Could not install tmux automatically"
-    fi
-}
-
-install_jq_if_needed() {
-    if check_command jq; then
-        success "jq installed"
-        return 0
-    fi
-
-    log "Installing jq..."
-    if install_package "jq" && check_command jq; then
-        success "jq installed"
-    else
-        warn "Could not install jq automatically"
-    fi
-}
-
-install_rg_if_needed() {
-    if check_command rg; then
-        success "ripgrep installed"
-        return 0
-    fi
-
-    log "Installing ripgrep..."
-    if install_package "ripgrep" && check_command rg; then
-        success "ripgrep installed"
-    else
-        warn "Could not install ripgrep automatically"
-    fi
-}
-
-install_claude_if_needed() {
-    if check_command claude; then
-        success "Claude Code CLI installed"
-        return 0
-    fi
-
-    log "Installing Claude Code CLI..."
-
-    if check_command bun; then
-        bun install -g @anthropic-ai/claude-code
-    elif check_command npm; then
-        npm install -g @anthropic-ai/claude-code
-    else
-        warn "Neither bun nor npm found"
-        return 1
-    fi
-
-    if check_command claude; then
-        success "Claude Code CLI installed"
-    else
-        warn "Claude Code installed but not in PATH yet"
-        warn "You may need to restart your shell"
-    fi
-}
-
-install_plugin_if_needed() {
-    # In local source mode (--local), do not rely on Claude marketplaces.
-    # Link the local plugin directory into ~/.claude/plugins instead.
+locate_package_dir() {
     if [[ -n "$LOCAL_PATH" ]]; then
-        local plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
-        if [[ -d "$plugin_dir" ]]; then
-            log "Linking automagik-genie Claude Code plugin from local source..."
-            mkdir -p "$CLAUDE_PLUGINS_DIR"
-            rm -f "$PLUGIN_SYMLINK"
-            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
-            if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
-                success "automagik-genie Claude Code plugin linked"
-                return 0
-            else
-                warn "Failed to create valid symlink for Claude Code plugin"
-                return 1
-            fi
-        else
-            warn "Local plugin directory not found: $plugin_dir"
-            return 1
-        fi
-    fi
-}
-
-# Install the OpenClaw plugin (skills become available globally)
-install_openclaw_plugin() {
-    if ! check_command openclaw; then
-        warn "openclaw command not found"
-        return 1
-    fi
-
-    if openclaw plugins list 2>/dev/null | grep -q "automagik-genie"; then
-        success "automagik-genie OpenClaw plugin already discovered"
+        PKG_DIR="$LOCAL_PATH"
         return 0
     fi
 
-    local pkg_dir plugin_dir
+    # Try bun global
+    local bun_global="${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules/@automagik/genie"
+    if [[ -d "$bun_global" ]]; then
+        PKG_DIR="$bun_global"
+        return 0
+    fi
 
-    if [[ -n "$LOCAL_PATH" ]]; then
-        pkg_dir="$LOCAL_PATH"
-    else
-        # Locate global npm install directory
-        if check_command npm; then
-            local npm_root
-            npm_root=$(npm root -g 2>/dev/null || true)
-            if [[ -n "$npm_root" && -d "$npm_root/@automagik/genie" ]]; then
-                pkg_dir="$npm_root/@automagik/genie"
-            fi
-        fi
-
-        # Best-effort bun global path
-        if [[ -z "${pkg_dir:-}" && -n "${BUN_INSTALL:-}" ]]; then
-            if [[ -d "$BUN_INSTALL/install/global/node_modules/@automagik/genie" ]]; then
-                pkg_dir="$BUN_INSTALL/install/global/node_modules/@automagik/genie"
-            fi
+    # Try npm global
+    if check_command npm; then
+        local npm_root
+        npm_root=$(npm root -g 2>/dev/null || true)
+        if [[ -n "$npm_root" && -d "$npm_root/@automagik/genie" ]]; then
+            PKG_DIR="$npm_root/@automagik/genie"
+            return 0
         fi
     fi
 
-    if [[ -z "${pkg_dir:-}" ]]; then
-        warn "Could not locate installed Genie package directory"
-        warn "Tip: re-run with --local /path/to/genie-cli"
-        return 1
-    fi
-
-    plugin_dir="$pkg_dir/plugins/automagik-genie"
-    local plugin_file="$plugin_dir/automagik-genie.ts"
-
-    if [[ ! -f "$plugin_dir/openclaw.plugin.json" ]]; then
-        warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
-        return 1
-    fi
-
-    if [[ ! -f "$plugin_file" ]]; then
-        warn "OpenClaw plugin entrypoint not found: $plugin_file"
-        return 1
-    fi
-
-    if $DEV_MODE; then
-        log "Linking OpenClaw plugin (dev mode)..."
-        openclaw plugins install -l "$plugin_dir" \
-            && success "OpenClaw plugin linked" \
-            || warn "OpenClaw plugin link failed"
-    else
-        log "Installing OpenClaw plugin (copy mode)..."
-        openclaw plugins install "$plugin_dir" \
-            && success "OpenClaw plugin installed" \
-            || warn "OpenClaw plugin install failed"
-    fi
+    PKG_DIR=""
+    return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -780,43 +637,6 @@ install_genie_cli() {
         log "Linking globally..."
         npm link
 
-        # Also set up Claude Code plugin to use local version
-        local plugin_dir="$LOCAL_PATH/plugins/automagik-genie"
-        if [[ -d "$plugin_dir" ]]; then
-            log "Linking Claude Code plugin..."
-            mkdir -p "$CLAUDE_PLUGINS_DIR"
-            rm -f "$PLUGIN_SYMLINK"
-            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
-
-            # Verify the symlink was created correctly
-            if ! verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
-                error "Failed to create valid symlink for Claude Code plugin"
-                exit 1
-            fi
-
-            # Also register as OpenClaw plugin if available
-            if check_command openclaw; then
-                if [[ -f "$plugin_dir/openclaw.plugin.json" ]]; then
-                    if $DEV_MODE; then
-                        log "Linking OpenClaw plugin (dev mode)..."
-                        openclaw plugins install -l "$plugin_dir" 2>/dev/null \
-                            && success "OpenClaw plugin linked" \
-                            || warn "OpenClaw plugin link failed (may already be installed)"
-                    else
-                        log "Installing OpenClaw plugin (copy mode)..."
-                        openclaw plugins install "$plugin_dir" 2>/dev/null \
-                            && success "OpenClaw plugin installed" \
-                            || warn "OpenClaw plugin install failed (may already be installed)"
-                    fi
-                else
-                    warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
-                fi
-            fi
-        else
-            warn "Plugin directory not found: $plugin_dir"
-            warn "Claude Code plugin symlink was not created"
-        fi
-
         popd > /dev/null
         success "$PACKAGE_NAME installed from local source"
         return
@@ -836,18 +656,132 @@ install_genie_cli() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Claudio Setup
+# Plugin Integration Offers
 # ─────────────────────────────────────────────────────────────────────────────
 
-run_claudio_setup() {
-    ensure_bun_in_path
-    log "Running claudio setup..."
-    if check_command claudio; then
-        claudio setup
-    else
-        warn "claudio command not found"
-        info "Run 'claudio setup' after restarting your shell"
+offer_claude_plugin() {
+    if ! check_command claude; then
+        info "Claude Code not found — skipping plugin install"
+        return 0
     fi
+
+    info "Adds skills, agents, and hooks to Claude Code"
+    if confirm "Install Genie plugin for Claude Code?"; then
+        if [[ -n "$LOCAL_PATH" ]]; then
+            # Local mode: symlink the plugin directory
+            local plugin_dir="$PKG_DIR/plugins/genie"
+            if [[ -d "$plugin_dir" ]]; then
+                mkdir -p "$CLAUDE_PLUGINS_DIR"
+                rm -f "$PLUGIN_SYMLINK"
+                ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
+                if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
+                    success "Genie Claude Code plugin linked"
+                else
+                    warn "Failed to create valid symlink for Claude Code plugin"
+                fi
+            else
+                warn "Plugin directory not found: $plugin_dir"
+            fi
+        else
+            # Marketplace mode
+            claude plugin marketplace add namastexlabs/genie-cli 2>/dev/null || true
+            claude plugin install genie@namastexlabs 2>/dev/null \
+                && success "Genie Claude Code plugin installed" \
+                || warn "Plugin install failed — try: /plugin install genie@namastexlabs"
+        fi
+    fi
+}
+
+offer_openclaw_plugin() {
+    if ! check_command openclaw; then
+        info "OpenClaw not found — skipping plugin install"
+        return 0
+    fi
+
+    if openclaw plugins list 2>/dev/null | grep -q "genie"; then
+        success "Genie OpenClaw plugin already discovered"
+        return 0
+    fi
+
+    if [[ -z "$PKG_DIR" ]]; then
+        warn "Could not locate installed Genie package directory"
+        return 1
+    fi
+
+    local plugin_dir="$PKG_DIR/plugins/genie"
+    local plugin_file="$plugin_dir/genie.ts"
+
+    if [[ ! -f "$plugin_dir/openclaw.plugin.json" ]]; then
+        warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
+        return 1
+    fi
+
+    if [[ ! -f "$plugin_file" ]]; then
+        warn "OpenClaw plugin entrypoint not found: $plugin_file"
+        return 1
+    fi
+
+    info "Adds skills globally to OpenClaw"
+    if confirm "Install Genie plugin for OpenClaw?"; then
+        if $DEV_MODE; then
+            log "Linking OpenClaw plugin (dev mode)..."
+            openclaw plugins install -l "$plugin_dir" \
+                && success "OpenClaw plugin linked" \
+                || warn "OpenClaw plugin link failed"
+        else
+            log "Installing OpenClaw plugin (copy mode)..."
+            openclaw plugins install "$plugin_dir" \
+                && success "OpenClaw plugin installed" \
+                || warn "OpenClaw plugin install failed"
+        fi
+    fi
+}
+
+offer_codex_skills() {
+    local skills_source="$PKG_DIR/skills"
+    if [[ ! -d "$skills_source" ]]; then
+        warn "Skills directory not found in package"
+        return 1
+    fi
+
+    info "Adds genie skills (/brainstorm, /wish, /work, etc.) to Codex/OpenCode"
+    if confirm "Install Genie skills for Codex?"; then
+        mkdir -p "$CODEX_SKILLS_DIR"
+        local target="$CODEX_SKILLS_DIR/genie"
+        if [[ -L "$target" ]]; then
+            rm -f "$target"
+        fi
+        ln -sf "$skills_source" "$target"
+        success "Codex skills linked: $target -> $skills_source"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent Mode Output
+# ─────────────────────────────────────────────────────────────────────────────
+
+output_agent_prompt() {
+    cat <<AGENT_EOF
+GENIE_INSTALL_COMPLETE
+package_dir=$PKG_DIR
+
+To complete Genie setup, ask the user which integrations to enable:
+
+1. **Claude Code Plugin** — Adds skills, agents, and hooks to Claude Code
+   Commands:
+   claude plugin marketplace add namastexlabs/genie-cli
+   claude plugin install genie@namastexlabs
+
+2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
+   Command:
+   openclaw plugins install $PKG_DIR/plugins/genie
+
+3. **Codex/OpenCode Skills** — Adds skills to ~/.agents/skills/genie
+   Command:
+   mkdir -p $HOME/.agents/skills && ln -sf $PKG_DIR/skills $HOME/.agents/skills/genie
+
+Ask the user which integrations they want, then run the corresponding commands.
+AGENT_EOF
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -857,71 +791,42 @@ run_claudio_setup() {
 run_install() {
     # ─── Prerequisites ───
     header "Checking prerequisites..."
-    install_git_if_needed
-    install_node_if_needed
+
+    # Git only needed for local mode
+    if [[ -n "$LOCAL_PATH" ]]; then
+        install_git_if_needed
+    fi
+
     install_bun_if_needed
-    install_tmux_if_needed
-    install_jq_if_needed
-    install_rg_if_needed
-    install_claude_if_needed
 
     # ─── Genie CLI Install/Update ───
-    header "Checking Genie CLI..."
-    local installed_version latest_version
-    installed_version=$(get_installed_version)
-    latest_version=$(get_latest_version)
+    header "Installing Genie CLI..."
+    install_genie_cli
 
-    if [[ -n "$installed_version" ]]; then
-        log "Genie CLI ${BOLD}$installed_version${NC} installed"
-        if [[ -n "$latest_version" ]]; then
-            if [[ "$installed_version" == "$latest_version" ]]; then
-                success "Genie CLI is up to date"
-            else
-                log "Latest version: ${BOLD}$latest_version${NC}"
-                echo
-                if confirm "Update Genie CLI?"; then
-                    install_genie_cli
-                    success "Genie CLI updated to $latest_version"
-                else
-                    info "Skipping update"
-                fi
-            fi
-        else
-            warn "Could not check latest version"
-        fi
+    # ─── Locate package directory ───
+    if ! locate_package_dir; then
+        error "Could not locate Genie package directory"
+        exit 1
+    fi
+    log "Package directory: $PKG_DIR"
+
+    # ─── Plugin Integrations ───
+    if $INTERACTIVE; then
+        header "Plugin Integrations"
+        echo -e "${DIM}────────────────────────────────────${NC}"
+
+        offer_claude_plugin
+        echo
+
+        offer_openclaw_plugin
+        echo
+
+        offer_codex_skills
+
+        print_success
     else
-        install_genie_cli
+        output_agent_prompt
     fi
-
-    # ─── Configuration Wizard ───
-    header "Configuration"
-    echo -e "${DIM}────────────────────────────────────${NC}"
-
-    # Plugin for Claude Code
-    if check_command claude; then
-        info "Adds skills, agents, and hooks to Claude Code"
-        if confirm "Install Genie plugin for Claude Code?"; then
-            install_plugin_if_needed
-        fi
-        echo
-    fi
-
-    # Plugin for OpenClaw
-    if check_command openclaw; then
-        info "Adds skills (global /brainstorm, /wish, etc.) to OpenClaw"
-        if confirm "Install Genie plugin for OpenClaw?"; then
-            install_openclaw_plugin
-        fi
-        echo
-    fi
-
-    # Claudio profiles
-    info "Manage multiple Claude API configurations"
-    if confirm "Configure Claudio profiles?"; then
-        run_claudio_setup
-    fi
-
-    print_success
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -961,10 +866,10 @@ run_uninstall() {
         fi
     fi
 
-    # Also try claude plugin uninstall for marketplace-installed plugins
-    if check_command claude && claude plugin list 2>/dev/null | grep -q "automagik-genie"; then
+    # Try claude plugin uninstall for marketplace-installed plugins
+    if check_command claude && claude plugin list 2>/dev/null | grep -q "genie"; then
         if confirm "Unregister Claude Code plugin from marketplace?"; then
-            claude plugin uninstall namastexlabs/automagik-genie 2>/dev/null || true
+            claude plugin uninstall genie@namastexlabs 2>/dev/null || true
             success "Claude Code plugin unregistered"
             removed_something=true
         else
@@ -973,14 +878,12 @@ run_uninstall() {
     fi
 
     # 3. OpenClaw plugin (default: yes)
-    if check_command openclaw && openclaw plugins list 2>/dev/null | grep -q "automagik-genie"; then
+    if check_command openclaw && openclaw plugins list 2>/dev/null | grep -q "genie"; then
         if confirm "Remove OpenClaw plugin?"; then
-            # OpenClaw CLI currently has install/enable/disable but no uninstall.
-            # Installed plugins typically live under ~/.openclaw/extensions/<id>.
-            local ext_dir="$HOME/.openclaw/extensions/automagik-genie"
+            local ext_dir="$HOME/.openclaw/extensions/genie"
 
             # Best effort: disable in config first (if present)
-            openclaw plugins disable automagik-genie 2>/dev/null || true
+            openclaw plugins disable genie 2>/dev/null || true
 
             if [[ -e "$ext_dir" || -L "$ext_dir" ]]; then
                 rm -rf "$ext_dir"
@@ -996,7 +899,19 @@ run_uninstall() {
         fi
     fi
 
-    # 4. Config directory (default: no - preserve settings)
+    # 4. Codex/OpenCode skills (default: yes)
+    local codex_link="$CODEX_SKILLS_DIR/genie"
+    if [[ -e "$codex_link" || -L "$codex_link" ]]; then
+        if confirm "Remove Codex/OpenCode skills?"; then
+            rm -f "$codex_link"
+            success "Codex skills removed"
+            removed_something=true
+        else
+            info "Keeping Codex skills"
+        fi
+    fi
+
+    # 5. Config directory (default: no - preserve settings)
     if [[ -d "$GENIE_HOME" ]]; then
         if confirm_no "Remove ~/.genie config directory?"; then
             rm -rf "$GENIE_HOME"
