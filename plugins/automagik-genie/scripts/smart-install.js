@@ -6,13 +6,13 @@
  * - Bun runtime (auto-installs if missing)
  * - tmux (guides user if missing - can't auto-install)
  * - beads (auto-installs if missing via npm)
+ * - genie CLI (installed globally via bun)
  *
  * Also handles:
  * - Dependency installation when version changes
- * - CLI symlink creation for agent access
  * - Version marker management
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { execSync, spawnSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -20,7 +20,6 @@ import { homedir } from 'os';
 const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'automagik-genie');
 const GENIE_DIR = join(homedir(), '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
-const BIN_DIR = join(homedir(), '.local', 'bin');
 const IS_WINDOWS = process.platform === 'win32';
 
 // Common installation paths (handles fresh installs before PATH reload)
@@ -31,6 +30,10 @@ const BUN_COMMON_PATHS = IS_WINDOWS
 const BEADS_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), 'AppData', 'Roaming', 'npm', 'bd.cmd')]
   : [join(homedir(), '.local', 'bin', 'bd'), '/usr/local/bin/bd', '/opt/homebrew/bin/bd'];
+
+const GENIE_COMMON_PATHS = IS_WINDOWS
+  ? [join(homedir(), '.bun', 'bin', 'genie.exe')]
+  : [join(homedir(), '.bun', 'bin', 'genie'), '/usr/local/bin/genie', '/opt/homebrew/bin/genie'];
 
 /**
  * Get the Bun executable path
@@ -76,9 +79,9 @@ function installBun() {
   console.error('Installing Bun runtime...');
   try {
     if (IS_WINDOWS) {
-      execSync('powershell -c "irm bun.sh/install.ps1 | iex"', { stdio: 'inherit', shell: true });
+      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: 'inherit', shell: true });
     } else {
-      execSync('curl -fsSL https://bun.sh/install | bash', { stdio: 'inherit', shell: true });
+      execSync('curl -fsSL https://bun.com/install | bash', { stdio: 'inherit', shell: true });
     }
     if (!isBunInstalled()) {
       throw new Error('Bun installation completed but binary not found. Please restart your terminal.');
@@ -89,7 +92,7 @@ function installBun() {
     if (IS_WINDOWS) {
       console.error('  winget install Oven-sh.Bun');
     } else {
-      console.error('  curl -fsSL https://bun.sh/install | bash');
+      console.error('  curl -fsSL https://bun.com/install | bash');
     }
     throw error;
   }
@@ -220,67 +223,97 @@ function installDeps() {
 }
 
 /**
- * Check if CLI symlinks already exist and point to correct targets
+ * Get the genie executable path
  */
-function symlinksExist() {
-  const links = [
-    { name: 'genie', target: join(ROOT, 'scripts', 'genie.cjs') },
-    { name: 'term', target: join(ROOT, 'scripts', 'term.cjs') }
-  ];
-
-  for (const { name, target } of links) {
-    const linkPath = join(BIN_DIR, name);
-    if (!existsSync(target)) continue; // Target doesn't exist, skip check
-    if (!existsSync(linkPath)) return false;
+function getGeniePath() {
+  // Try PATH first
+  try {
+    const result = spawnSync('genie', ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS
+    });
+    if (result.status === 0) return 'genie';
+  } catch {
+    // Not in PATH
   }
-  return true;
+  return GENIE_COMMON_PATHS.find(existsSync) || null;
 }
 
 /**
- * Create CLI symlinks for agent access
+ * Get installed genie CLI version (via bun global)
  */
-function createCliSymlinks() {
-  // Ensure bin directory exists
-  if (!existsSync(BIN_DIR)) {
-    mkdirSync(BIN_DIR, { recursive: true });
+function getGenieVersion() {
+  const geniePath = getGeniePath();
+  if (!geniePath) return null;
+  try {
+    const result = spawnSync(geniePath, ['--version'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: IS_WINDOWS
+    });
+    return result.status === 0 ? result.stdout.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the plugin's package version
+ */
+function getPluginVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
+    return pkg.version || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if genie CLI needs install or upgrade via bun global
+ */
+function genieCliNeedsInstall() {
+  const installed = getGenieVersion();
+  if (!installed) return true;
+  const pluginVersion = getPluginVersion();
+  if (!pluginVersion) return false;
+  return installed !== pluginVersion;
+}
+
+/**
+ * Install or upgrade genie CLI globally via bun
+ */
+function installGenieCli() {
+  const bunPath = getBunPath();
+  if (!bunPath) {
+    throw new Error('Bun executable not found — cannot install genie CLI');
   }
 
-  const links = [
-    { name: 'genie', target: join(ROOT, 'scripts', 'genie.cjs') },
-    { name: 'term', target: join(ROOT, 'scripts', 'term.cjs') }
-  ];
+  const pluginVersion = getPluginVersion();
+  const installed = getGenieVersion();
 
-  for (const { name, target } of links) {
-    const linkPath = join(BIN_DIR, name);
-
-    // Skip if target doesn't exist
-    if (!existsSync(target)) {
-      continue;
-    }
-
-    // Remove existing symlink if it exists
-    try {
-      if (existsSync(linkPath)) {
-        unlinkSync(linkPath);
-      }
-    } catch {
-      // Ignore errors
-    }
-
-    // Create symlink
-    try {
-      symlinkSync(target, linkPath);
-      console.error(`Created symlink: ${linkPath} -> ${target}`);
-    } catch (error) {
-      console.error(`Warning: Could not create symlink for ${name}: ${error.message}`);
-    }
+  if (installed) {
+    console.error(`Upgrading genie CLI: ${installed} → ${pluginVersion}...`);
+  } else {
+    console.error('Installing genie CLI globally via bun...');
   }
+
+  const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
+  const versionSuffix = pluginVersion ? `@${pluginVersion}` : '';
+  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: 'inherit', shell: IS_WINDOWS });
+
+  const newVersion = getGenieVersion();
+  if (!newVersion) {
+    throw new Error('genie CLI installation completed but binary not found. Restart your terminal.');
+  }
+  console.error(`genie CLI ${newVersion} installed`);
 }
 
 // Main execution
 try {
   // Quick check: if everything is already installed, exit silently
-  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && symlinksExist()) {
+  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
     process.exit(0);
   }
 
@@ -315,15 +348,15 @@ try {
     installBeads();
   }
 
-  // 4. Install dependencies if needed
+  // 4. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
     console.error('Dependencies installed');
   }
 
-  // 5. Create CLI symlinks if needed
-  if (!symlinksExist()) {
-    createCliSymlinks();
+  // 5. Install or upgrade genie CLI via bun global
+  if (genieCliNeedsInstall()) {
+    installGenieCli();
   }
 
 } catch (e) {
