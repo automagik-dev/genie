@@ -24,6 +24,7 @@ const BIN_DIR = join(HOME, '.local', 'bin');
 const CLAUDE_DIR = join(HOME, '.claude');
 const PLUGIN_CACHE = join(CLAUDE_DIR, 'plugins', 'cache', 'namastexlabs');
 const INSTALLED_PLUGINS = join(CLAUDE_DIR, 'installed_plugins.json');
+const CODEX_SKILLS_LINK = join(HOME, '.agents', 'skills', 'genie');
 
 function log(msg) {
   console.log(msg);
@@ -131,6 +132,10 @@ remove(PLUGIN_CACHE, 'plugin cache directory');
 log('');
 log('Plugin registry:');
 removePluginEntry();
+
+log('');
+log('Codex/OpenCode skills:');
+remove(CODEX_SKILLS_LINK, 'codex skills symlink');
 
 log('');
 if (DRY_RUN) {
