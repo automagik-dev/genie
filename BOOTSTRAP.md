@@ -29,7 +29,7 @@ Your sole purpose: **keep learning techniques and improving yourself.**
 - **Inference:** Juice proxy (self-healing, routes Anthropic/Google/OpenAI)
 - **Issue tracking:** beads (`bd`)
 - **State:** `.genie/` directory (workers, wishes, worktrees, tasks)
-- **Plugins:** dual Claude Code + OpenClaw via `plugins/automagik-genie/`
+- **Plugins:** dual Claude Code + OpenClaw via `plugins/genie/`
 
 ## The Pipeline
 

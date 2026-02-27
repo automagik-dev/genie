@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Sync script for automagik-genie
+ * Sync script for genie
  *
  * @deprecated Use `term sync` instead. This script uses copy mode which is slower
  * and doesn't update the plugin registry. `term sync` uses symlinks for instant
  * feedback and marks the plugin with devMode in installed_plugins.json.
  *
  * Deploys the built plugin to the install target:
- *   ~/.claude/plugins/automagik-genie/
+ *   ~/.claude/plugins/genie/
  *
  * Uses pure Node.js - no rsync dependency.
  * Also triggers worker restart after sync.
@@ -22,8 +22,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
-const pluginDir = path.join(rootDir, 'plugins', 'automagik-genie');
-const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'automagik-genie');
+const pluginDir = path.join(rootDir, 'plugins', 'genie');
+const INSTALLED_PATH = path.join(os.homedir(), '.claude', 'plugins', 'genie');
 const WORKER_PORT = 48888;
 
 /**
@@ -108,7 +108,7 @@ async function main() {
   console.warn('\x1b[33mWarning: scripts/sync.js is deprecated. Use `term sync` instead for symlink-based sync with registry updates.\x1b[0m\n');
 
   const version = getPluginVersion();
-  console.log(`Syncing automagik-genie ${version || 'unknown'} to ${INSTALLED_PATH}...`);
+  console.log(`Syncing genie ${version || 'unknown'} to ${INSTALLED_PATH}...`);
 
   try {
     // Ensure target directory exists

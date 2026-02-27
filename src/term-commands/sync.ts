@@ -2,7 +2,7 @@
  * Sync command - Sync plugin to ~/.claude/plugins using symlink
  *
  * Auto-detects genie-cli source location and creates a symlink
- * from ~/.claude/plugins/automagik-genie to the source plugin directory.
+ * from ~/.claude/plugins/genie to the source plugin directory.
  *
  * Usage:
  *   term sync          - Auto-detect source and sync
@@ -26,8 +26,8 @@ export interface SyncOptions {
   verbose?: boolean;
 }
 
-const PLUGIN_NAME = 'automagik-genie';
-const PLUGIN_ID = 'automagik-genie@namastexlabs';
+const PLUGIN_NAME = 'genie';
+const PLUGIN_ID = 'genie@namastexlabs';
 const PLUGINS_DIR = join(homedir(), '.claude', 'plugins');
 const INSTALLED_PLUGIN_PATH = join(PLUGINS_DIR, PLUGIN_NAME);
 
@@ -134,7 +134,7 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
     if (!existsSync(pluginSourceDir)) {
       console.error(`Plugin source not found at ${contractPath(pluginSourceDir)}`);
       console.error('');
-      console.error('The plugin directory should be at: plugins/automagik-genie/');
+      console.error('The plugin directory should be at: plugins/genie/');
       console.error('Make sure you have the complete genie-cli repository.');
       process.exit(1);
     }

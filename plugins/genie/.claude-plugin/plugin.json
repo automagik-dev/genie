@@ -1,5 +1,5 @@
 {
-  "name": "automagik-genie",
+  "name": "genie",
   "version": "3.260227.3",
   "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, turn them into wishes, execute with /work, validate with /review, and ship as one team.",
   "author": {

@@ -106,7 +106,7 @@ term work <bead-id>
 
 Three-layer chain: OpenClaw -> term -> Claude Code -> Teams. Use timeouts; fall back to sequential on failure. Documented for future validation.
 
-Full reference: `plugins/automagik-genie/references/dispatch-contract.md`.
+Full reference: `plugins/genie/references/dispatch-contract.md`.
 
 ## Phase 1: Execute
 

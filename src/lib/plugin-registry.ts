@@ -85,7 +85,7 @@ export function savePluginRegistry(registry: PluginRegistry): void {
 
 /**
  * Get a plugin's installation entries by ID
- * Plugin ID format: "plugin-name@org" (e.g., "automagik-genie@namastexlabs")
+ * Plugin ID format: "plugin-name@org" (e.g., "genie@namastexlabs")
  */
 export function getPluginEntries(pluginId: string): PluginInstallEntry[] {
   const registry = loadPluginRegistry();

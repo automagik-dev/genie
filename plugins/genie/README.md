@@ -1,4 +1,4 @@
-# automagik-genie Plugin
+# Genie Plugin
 
 Company-standard Claude Code/OpenClaw plugin for the Genie workflow.
 
@@ -6,7 +6,7 @@ Company-standard Claude Code/OpenClaw plugin for the Genie workflow.
 
 - **Core workflow skills**: `/brainstorm`, `/wish`, `/work`, `/review`
 - **Bootstrap skills**: `genie-base`, `genie-blank-init`
-- **Shared skill source**: `plugins/automagik-genie/skills -> ../../skills`
+- **Shared skill source**: `plugins/genie/skills -> ../../skills`
 - **Agents + hooks + references** for wish execution and validation
 
 ## Workflow
@@ -30,10 +30,10 @@ Universal review gate (plan, execution, PR) returning `SHIP`, `FIX-FIRST`, or `B
 ## Directory Structure
 
 ```text
-automagik-genie/
+genie/
 ├── .claude-plugin/plugin.json
 ├── openclaw.plugin.json
-├── automagik-genie.ts
+├── genie.ts
 ├── skills -> ../../skills
 ├── agents/
 ├── hooks/
@@ -44,8 +44,8 @@ automagik-genie/
 ## Verification
 
 ```bash
-ls ~/.claude/plugins/automagik-genie/plugin.json
-openclaw plugins list | rg automagik
+ls ~/.claude/plugins/genie/plugin.json
+openclaw plugins list | rg genie
 ```
 
 Smoke-test the core commands:

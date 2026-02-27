@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Smart Install Script for automagik-genie
+ * Smart Install Script for genie
  *
  * Ensures required dependencies are installed:
  * - Bun runtime (auto-installs if missing)
@@ -17,7 +17,7 @@ import { execSync, spawnSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'automagik-genie');
+const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'genie');
 const GENIE_DIR = join(homedir(), '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
 const IS_WINDOWS = process.platform === 'win32';

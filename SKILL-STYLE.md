@@ -1,6 +1,6 @@
 # SKILL.md Style Guide
 
-Standard structure and conventions for all automagik-genie skills.
+Standard structure and conventions for all genie skills.
 
 ## YAML Frontmatter
 

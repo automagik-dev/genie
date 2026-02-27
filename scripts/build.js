@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Build script for automagik-genie plugin
+ * Build script for genie plugin
  * Bundles TypeScript CLIs into standalone CJS executables using esbuild
  */
 
@@ -19,13 +19,13 @@ const TARGETS = [
   { name: 'term', source: 'src/term.ts', runtime: 'bun' },
   { name: 'worker-service', source: 'src/services/worker-service.ts', runtime: 'bun' },
   // Hook scripts (pure Node.js - no bun dependency)
-  { name: 'validate-wish', source: 'plugins/automagik-genie/scripts/src/validate-wish.ts', runtime: 'node' },
-  { name: 'validate-completion', source: 'plugins/automagik-genie/scripts/src/validate-completion.ts', runtime: 'node' },
-  { name: 'session-context', source: 'plugins/automagik-genie/scripts/src/session-context.ts', runtime: 'node' },
+  { name: 'validate-wish', source: 'plugins/genie/scripts/src/validate-wish.ts', runtime: 'node' },
+  { name: 'validate-completion', source: 'plugins/genie/scripts/src/validate-completion.ts', runtime: 'node' },
+  { name: 'session-context', source: 'plugins/genie/scripts/src/session-context.ts', runtime: 'node' },
 ];
 
 async function buildPlugin() {
-  console.log('Building automagik-genie plugin...\n');
+  console.log('Building genie plugin...\n');
 
   try {
     // Read version from package.json
@@ -34,7 +34,7 @@ async function buildPlugin() {
     console.log(`Version: ${version}`);
 
     // Create output directory
-    const scriptsDir = path.join(rootDir, 'plugins/automagik-genie/scripts');
+    const scriptsDir = path.join(rootDir, 'plugins/genie/scripts');
     if (!fs.existsSync(scriptsDir)) {
       fs.mkdirSync(scriptsDir, { recursive: true });
     }
@@ -42,10 +42,10 @@ async function buildPlugin() {
     // Generate plugin/package.json for dependency installation
     console.log('\nGenerating plugin package.json...');
     const pluginPackageJson = {
-      name: 'automagik-genie-plugin',
+      name: 'genie-plugin',
       version: version,
       private: true,
-      description: 'Runtime dependencies for automagik-genie bundled CLIs',
+      description: 'Runtime dependencies for genie bundled CLIs',
       type: 'module',
       dependencies: {},
       engines: {
@@ -54,10 +54,10 @@ async function buildPlugin() {
       }
     };
     fs.writeFileSync(
-      path.join(rootDir, 'plugins/automagik-genie/package.json'),
+      path.join(rootDir, 'plugins/genie/package.json'),
       JSON.stringify(pluginPackageJson, null, 2) + '\n'
     );
-    console.log('plugins/automagik-genie/package.json generated');
+    console.log('plugins/genie/package.json generated');
 
     // Build each target
     for (const target of TARGETS) {
@@ -112,7 +112,7 @@ async function buildPlugin() {
     }
 
     // Update plugin.json version
-    const pluginJsonPath = path.join(rootDir, 'plugins/automagik-genie/.claude-plugin/plugin.json');
+    const pluginJsonPath = path.join(rootDir, 'plugins/genie/.claude-plugin/plugin.json');
     if (fs.existsSync(pluginJsonPath)) {
       const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf-8'));
       pluginJson.version = version;
@@ -121,7 +121,7 @@ async function buildPlugin() {
     }
 
     console.log('\nBuild complete!');
-    console.log(`Output: plugins/automagik-genie/scripts/`);
+    console.log(`Output: plugins/genie/scripts/`);
 
   } catch (error) {
     console.error('\nBuild failed:', error.message);
