@@ -10,6 +10,7 @@
  * - src/lib/version.ts
  * - plugins/automagik-genie/.claude-plugin/plugin.json (Claude Code)
  * - plugins/automagik-genie/openclaw.plugin.json (OpenClaw)
+ * - plugins/automagik-genie/package.json (smart-install version checks)
  */
 
 import { readFile, writeFile } from 'fs/promises';
@@ -96,6 +97,12 @@ async function main() {
   // 4. Update OpenClaw plugin manifest
   await updateJsonVersion(
     join(rootDir, 'plugins/automagik-genie/openclaw.plugin.json'),
+    version
+  );
+
+  // 5. Update plugin package.json (used by smart-install.js for version checks)
+  await updateJsonVersion(
+    join(rootDir, 'plugins/automagik-genie/package.json'),
     version
   );
 
