@@ -685,9 +685,11 @@ offer_claude_plugin() {
         else
             # Marketplace mode
             claude plugin marketplace add namastexlabs/genie-cli 2>/dev/null || true
-            claude plugin install genie@namastexlabs 2>/dev/null \
-                && success "Genie Claude Code plugin installed" \
-                || warn "Plugin install failed — try: /plugin install genie@namastexlabs"
+            if claude plugin install genie@namastexlabs 2>/dev/null; then
+                success "Genie Claude Code plugin installed"
+            else
+                warn "Plugin install failed — try: /plugin install genie@namastexlabs"
+            fi
         fi
     fi
 }
@@ -725,14 +727,18 @@ offer_openclaw_plugin() {
     if confirm "Install Genie plugin for OpenClaw?"; then
         if $DEV_MODE; then
             log "Linking OpenClaw plugin (dev mode)..."
-            openclaw plugins install -l "$plugin_dir" \
-                && success "OpenClaw plugin linked" \
-                || warn "OpenClaw plugin link failed"
+            if openclaw plugins install -l "$plugin_dir"; then
+                success "OpenClaw plugin linked"
+            else
+                warn "OpenClaw plugin link failed"
+            fi
         else
             log "Installing OpenClaw plugin (copy mode)..."
-            openclaw plugins install "$plugin_dir" \
-                && success "OpenClaw plugin installed" \
-                || warn "OpenClaw plugin install failed"
+            if openclaw plugins install "$plugin_dir"; then
+                success "OpenClaw plugin installed"
+            else
+                warn "OpenClaw plugin install failed"
+            fi
         fi
     fi
 }
@@ -748,9 +754,6 @@ offer_codex_skills() {
     if confirm "Install Genie skills for Codex?"; then
         mkdir -p "$CODEX_SKILLS_DIR"
         local target="$CODEX_SKILLS_DIR/genie"
-        if [[ -L "$target" ]]; then
-            rm -f "$target"
-        fi
         ln -sf "$skills_source" "$target"
         success "Codex skills linked: $target -> $skills_source"
     fi
@@ -761,9 +764,9 @@ offer_codex_skills() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 output_agent_prompt() {
-    cat <<AGENT_EOF
-GENIE_INSTALL_COMPLETE
-package_dir=$PKG_DIR
+    printf 'GENIE_INSTALL_COMPLETE\n'
+    printf 'package_dir=%s\n' "$PKG_DIR"
+    cat <<'AGENT_EOF'
 
 To complete Genie setup, ask the user which integrations to enable:
 
@@ -774,11 +777,15 @@ To complete Genie setup, ask the user which integrations to enable:
 
 2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
    Command:
-   openclaw plugins install $PKG_DIR/plugins/genie
+AGENT_EOF
+    printf '   openclaw plugins install %s/plugins/genie\n' "$PKG_DIR"
+    cat <<'AGENT_EOF'
 
 3. **Codex/OpenCode Skills** — Adds skills to ~/.agents/skills/genie
    Command:
-   mkdir -p $HOME/.agents/skills && ln -sf $PKG_DIR/skills $HOME/.agents/skills/genie
+AGENT_EOF
+    printf '   mkdir -p %s && ln -sf %s/skills %s/genie\n' "$CODEX_SKILLS_DIR" "$PKG_DIR" "$CODEX_SKILLS_DIR"
+    cat <<'AGENT_EOF'
 
 Ask the user which integrations they want, then run the corresponding commands.
 AGENT_EOF
