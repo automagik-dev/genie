@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "genie",
-      "version": "3.260227.6",
+      "version": "3.260228.1",
       "source": "./plugins/genie",
       "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, wish them into plans, make with parallel agents, ship as one team. A coding genie that grows with your project."
     }
