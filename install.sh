@@ -710,16 +710,8 @@ offer_openclaw_plugin() {
         return 1
     fi
 
-    local plugin_dir="$PKG_DIR/plugins/genie"
-    local plugin_file="$plugin_dir/genie.ts"
-
-    if [[ ! -f "$plugin_dir/openclaw.plugin.json" ]]; then
-        warn "OpenClaw plugin manifest not found: $plugin_dir/openclaw.plugin.json"
-        return 1
-    fi
-
-    if [[ ! -f "$plugin_file" ]]; then
-        warn "OpenClaw plugin entrypoint not found: $plugin_file"
+    if [[ ! -f "$PKG_DIR/openclaw.plugin.json" ]]; then
+        warn "OpenClaw plugin manifest not found: $PKG_DIR/openclaw.plugin.json"
         return 1
     fi
 
@@ -727,14 +719,14 @@ offer_openclaw_plugin() {
     if confirm "Install Genie plugin for OpenClaw?"; then
         if $DEV_MODE; then
             log "Linking OpenClaw plugin (dev mode)..."
-            if openclaw plugins install -l "$plugin_dir"; then
+            if openclaw plugins install -l "$PKG_DIR"; then
                 success "OpenClaw plugin linked"
             else
                 warn "OpenClaw plugin link failed"
             fi
         else
             log "Installing OpenClaw plugin (copy mode)..."
-            if openclaw plugins install "$plugin_dir"; then
+            if openclaw plugins install "$PKG_DIR"; then
                 success "OpenClaw plugin installed"
             else
                 warn "OpenClaw plugin install failed"
@@ -778,7 +770,7 @@ To complete Genie setup, ask the user which integrations to enable:
 2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
    Command:
 AGENT_EOF
-    printf '   openclaw plugins install %s/plugins/genie\n' "$PKG_DIR"
+    printf '   openclaw plugins install %s\n' "$PKG_DIR"
     cat <<'AGENT_EOF'
 
 3. **Codex/OpenCode Skills** — Adds skills to ~/.agents/skills/genie
