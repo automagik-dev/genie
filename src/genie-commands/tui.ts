@@ -115,9 +115,13 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
       console.log(`Session "${name}" already exists`);
     }
 
-    // Attach to session (replaces current process)
+    // Attach to session — switch-client if already inside tmux, attach otherwise
     console.log(`Attaching...`);
-    spawnSync('tmux', ['attach', '-t', name], { stdio: 'inherit' });
+    if (process.env.TMUX) {
+      spawnSync('tmux', ['switch-client', '-t', name], { stdio: 'inherit' });
+    } else {
+      spawnSync('tmux', ['attach', '-t', name], { stdio: 'inherit' });
+    }
   } catch (error: any) {
     console.error(`Error: ${error.message}`);
     process.exit(1);
