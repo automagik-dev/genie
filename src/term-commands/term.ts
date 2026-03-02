@@ -310,18 +310,7 @@ Examples:
     .command('answer <worker> <choice>')
     .description('Answer a question for a worker (use "text:..." for text input)')
     .action(async (worker: string, choice: string) => {
-      const registry = await import('../lib/worker-registry.js');
-      let workerInfo = await registry.get(worker);
-      if (!workerInfo) {
-        workerInfo = await registry.findByTask(worker);
-      }
-      if (!workerInfo) {
-        console.error(`Worker "${worker}" not found. Run \`genie term workers\` to see workers.`);
-        process.exit(1);
-      }
-      await orchestrateCmd.answerQuestion(workerInfo.session, choice, {
-        pane: workerInfo.paneId,
-      });
+      await orchestrateCmd.answerQuestion(worker, choice);
     });
 
   // Daemon management (beads auto-sync)
@@ -477,7 +466,7 @@ Examples:
     .command('answer <target> <choice>')
     .description('Answer a question with the given choice (use "text:..." to send feedback)')
     .action(async (target: string, choice: string) => {
-      await orchestrateCmd.answerQuestion(target, choice, {});
+      await orchestrateCmd.answerQuestion(target, choice);
     });
 
   orcProgram

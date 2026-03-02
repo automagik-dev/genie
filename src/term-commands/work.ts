@@ -947,10 +947,10 @@ export async function workCommand(
           const fs = await import('fs');
           if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
             console.error(`   ⚠️  tasks.json does not exist. This is likely a fresh repo.`);
-            console.error(`   Fix: Run \`term create "Your task title"\` to create the first task,`);
+            console.error(`   Fix: Run \`genie term create "Your task title"\` to create the first task,`);
             console.error(`         or \`bd sync\` if using beads.`);
           } else {
-            console.error(`   Task "${target}" is not in tasks.json. Run \`term list\` to see available tasks.`);
+            console.error(`   Task "${target}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
           }
         } else {
           console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
