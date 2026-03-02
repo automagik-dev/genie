@@ -124,29 +124,12 @@ function formatElapsed(startedAt: string): string {
 
 export async function workersCommand(options: WorkersOptions = {}): Promise<void> {
   try {
-    // Get workers from beads or JSON registry
-    // During transition, merge results from both
     let workers: registry.Worker[] = [];
 
     if (useBeads) {
-      try {
-        const beadsWorkers = await beadsRegistry.listWorkers();
-        workers = beadsWorkers;
-      } catch {
-        // Fallback to JSON registry
-        workers = await registry.list();
-      }
+      workers = await beadsRegistry.listWorkers();
     } else {
       workers = await registry.list();
-    }
-
-    // Also check JSON registry for any workers not in beads
-    const jsonWorkers = await registry.list();
-    const beadsIds = new Set(workers.map(w => w.id));
-    for (const jw of jsonWorkers) {
-      if (!beadsIds.has(jw.id)) {
-        workers.push(jw);
-      }
     }
 
     // Gather display data for each worker
@@ -160,14 +143,14 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
         // Get live state from pane
         currentState = await getCurrentState(worker.paneId);
 
-        // Update both registries if state differs
+        // Update registry if state differs
         const mappedState = mapDisplayStateToRegistry(currentState);
         if (mappedState && mappedState !== worker.state) {
           if (useBeads) {
-            // Update beads and send heartbeat
             await beadsRegistry.updateState(worker.id, mappedState).catch(() => {});
+          } else {
+            await registry.updateState(worker.id, mappedState);
           }
-          await registry.updateState(worker.id, mappedState);
         } else if (useBeads) {
           // Just send heartbeat even if state unchanged
           await beadsRegistry.heartbeat(worker.id).catch(() => {});

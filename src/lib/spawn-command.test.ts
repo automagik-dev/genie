@@ -172,27 +172,13 @@ describe('buildSpawnCommand with claudio launcher', () => {
 });
 
 // ============================================================================
-// buildSpawnCommand - No profile (legacy fallback)
+// buildSpawnCommand - No profile (throws error)
 // ============================================================================
 
-describe('buildSpawnCommand with undefined profile (legacy fallback)', () => {
-  test('returns legacy claude command with skip-permissions', () => {
-    const command = buildSpawnCommand(undefined, { sessionId: 'legacy-123' });
-    expect(command).toBe("claude --dangerously-skip-permissions --session-id 'legacy-123'");
-  });
-
-  test('returns legacy claude command with resume', () => {
-    const command = buildSpawnCommand(undefined, { resume: 'legacy-resume' });
-    expect(command).toBe("claude --dangerously-skip-permissions --resume 'legacy-resume'");
-  });
-
-  test('includes BEADS_DIR with legacy fallback', () => {
-    const command = buildSpawnCommand(undefined, {
-      sessionId: 'legacy-456',
-      beadsDir: '/legacy/.genie',
-    });
-    expect(command).toBe(
-      "BEADS_DIR='/legacy/.genie' claude --dangerously-skip-permissions --session-id 'legacy-456'"
+describe('buildSpawnCommand with undefined profile', () => {
+  test('throws error when no profile is provided', () => {
+    expect(() => buildSpawnCommand(undefined, { sessionId: 'test-123' })).toThrow(
+      /No worker profile configured/
     );
   });
 });

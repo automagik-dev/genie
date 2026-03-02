@@ -5,19 +5,6 @@ import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 export interface ExecOptions {
   quiet?: boolean;
   timeout?: number;
-  /** @deprecated Use target addressing instead: term exec bd-42 'cmd' */
-  pane?: string;
-}
-
-/**
- * Show deprecation warning when --pane flag is used.
- */
-function warnPaneDeprecation(target: string): void {
-  console.error(
-    `\x1b[33m` +
-    `Warning: --pane is deprecated. Use target addressing instead: term exec ${target} 'cmd'` +
-    `\x1b[0m`
-  );
 }
 
 export async function executeInSession(
@@ -26,28 +13,10 @@ export async function executeInSession(
   options: ExecOptions = {}
 ): Promise<void> {
   try {
-    let paneId: string;
-    let resolvedLabel = target;
-
-    if (options.pane) {
-      // Deprecated --pane escape hatch: honor but warn
-      warnPaneDeprecation(target);
-      paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-
-      // Parse target for session validation (backwards compat with old session:window syntax)
-      const [sessionName] = target.includes(':') ? target.split(':') : [target];
-      const session = await tmux.findSessionByName(sessionName);
-      if (!session) {
-        console.error(`Session "${sessionName}" not found`);
-        process.exit(1);
-      }
-      resolvedLabel = `${target} (pane ${paneId})`;
-    } else {
-      // Use target resolver (DEC-1 from wish-26)
-      const resolved = await resolveTarget(target);
-      paneId = resolved.paneId;
-      resolvedLabel = formatResolvedLabel(resolved, target);
-    }
+    // Use target resolver (DEC-1 from wish-26)
+    const resolved = await resolveTarget(target);
+    const paneId = resolved.paneId;
+    const resolvedLabel = formatResolvedLabel(resolved, target);
 
     // Use config default if no timeout specified
     const termConfig = getTerminalConfig();

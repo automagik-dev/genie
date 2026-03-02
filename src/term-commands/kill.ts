@@ -14,10 +14,8 @@ import { confirm } from '@inquirer/prompts';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
-import { WorktreeManager } from '../lib/worktree.js';
 import { cleanupEventFile } from './events.js';
 import { join } from 'path';
-import { homedir } from 'os';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -36,7 +34,6 @@ export interface KillOptions {
 // Configuration
 // ============================================================================
 
-const WORKTREE_BASE = join(homedir(), '.local', 'share', 'term', 'worktrees');
 // Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
 
@@ -58,10 +55,10 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 
 /**
  * Remove worktree
- * Checks .genie/worktrees first, then bd worktree, then WorktreeManager
+ * Checks .genie/worktrees first, then bd worktree
  */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
-  // First, check .genie/worktrees location (new location)
+  // First, check .genie/worktrees location
   const inProjectWorktree = join(repoPath, WORKTREE_DIR_NAME, taskId);
   try {
     await $`git -C ${repoPath} worktree remove ${inProjectWorktree} --force`.quiet();
@@ -75,28 +72,12 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<boolean
     try {
       const removed = await beadsRegistry.removeWorktree(taskId);
       if (removed) return true;
-      // Fall through to WorktreeManager if bd worktree fails
     } catch {
       // Fall through
     }
   }
 
-  // Fallback to WorktreeManager (legacy location)
-  try {
-    const manager = new WorktreeManager({
-      baseDir: WORKTREE_BASE,
-      repoPath,
-    });
-
-    if (await manager.worktreeExists(taskId)) {
-      await manager.removeWorktree(taskId);
-      return true;
-    }
-    return true; // Already doesn't exist
-  } catch (error: any) {
-    console.error(`⚠️  Failed to remove worktree: ${error.message}`);
-    return false;
-  }
+  return true; // Already doesn't exist
 }
 
 // ============================================================================
@@ -108,35 +89,22 @@ export async function killCommand(
   options: KillOptions = {}
 ): Promise<void> {
   try {
-    // Find worker by ID or pane (check both registries during transition)
-    let worker = await registry.get(target);
+    // Find worker by ID, pane, or task
+    let worker: registry.Worker | null = null;
 
-    if (!worker && useBeads) {
-      // Try beads registry
+    if (useBeads) {
       worker = await beadsRegistry.getWorker(target);
-    }
-
-    if (!worker) {
-      // Try finding by pane ID
-      worker = await registry.findByPane(target);
-    }
-
-    if (!worker && useBeads) {
-      worker = await beadsRegistry.findByPane(target);
-    }
-
-    if (!worker) {
-      // Try finding by task ID
-      worker = await registry.findByTask(target);
-    }
-
-    if (!worker && useBeads) {
-      worker = await beadsRegistry.findByTask(target);
+      if (!worker) worker = await beadsRegistry.findByPane(target);
+      if (!worker) worker = await beadsRegistry.findByTask(target);
+    } else {
+      worker = await registry.get(target);
+      if (!worker) worker = await registry.findByPane(target);
+      if (!worker) worker = await registry.findByTask(target);
     }
 
     if (!worker) {
       console.error(`❌ Worker "${target}" not found.`);
-      console.log(`   Run \`term workers\` to see active workers.`);
+      console.log(`   Run \`genie workers\` to see active workers.`);
       process.exit(1);
     }
 

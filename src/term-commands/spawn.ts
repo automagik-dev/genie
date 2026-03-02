@@ -419,7 +419,7 @@ export async function spawnCommand(
   // Escape workingDir for shell
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
 
-  // 8. Start Claude using profile or legacy fallback
+  // 8. Start Claude using worker profile
   // buildSpawnCommand handles BEADS_DIR, session-id, and all profile args
   const spawnCmd = buildSpawnCommand(workerProfile, {
     sessionId: claudeSessionId,

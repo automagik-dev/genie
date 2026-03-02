@@ -2,7 +2,6 @@
  * Session Commands Registration
  *
  * Registers all session-related commands under `term session` namespace.
- * Also provides deprecated top-level aliases for backwards compatibility.
  */
 
 import { Command } from 'commander';
@@ -18,13 +17,6 @@ import * as splitCmd from '../split.js';
 import * as windowCmd from '../window.js';
 import * as paneCmd from '../pane.js';
 import * as hookCmd from '../hook.js';
-
-/**
- * Show deprecation warning for old command usage
- */
-function deprecationWarning(oldCmd: string, newCmd: string): void {
-  console.warn(`\x1b[33m⚠️  '${oldCmd}' is deprecated. Use '${newCmd}' instead.\x1b[0m\n`);
-}
 
 /**
  * Register the `term session` namespace with all subcommands
@@ -84,7 +76,6 @@ export function registerSessionNamespace(program: Command): void {
     .option('--all', 'Export entire scrollback buffer')
     .option('--reverse', 'Reverse chronological (newest first)')
     .option('--json', 'Output as JSON')
-    .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
     .action(async (target: string, options: readCmd.ReadOptions) => {
       await readCmd.readSessionLogs(target, options);
     });
@@ -95,12 +86,10 @@ export function registerSessionNamespace(program: Command): void {
     .description('Execute command in a target (worker, session, pane ID)')
     .option('-q, --quiet', 'Suppress stdout output')
     .option('-t, --timeout <ms>', 'Timeout in milliseconds (default: 120000)')
-    .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
-    .action(async (target: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
+    .action(async (target: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
       await execCmd.executeInSession(target, command.join(' '), {
         quiet: options.quiet,
         timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
-        pane: options.pane,
       });
     });
 
@@ -109,8 +98,7 @@ export function registerSessionNamespace(program: Command): void {
     .command('send <target> <keys>')
     .description('Send keys to a target (worker, session, pane ID)')
     .option('--no-enter', 'Send raw keys without appending Enter')
-    .option('-p, --pane <id>', '[DEPRECATED] Target specific pane ID - use target addressing instead')
-    .action(async (target: string, keys: string, options: { enter?: boolean; pane?: string }) => {
+    .action(async (target: string, keys: string, options: { enter?: boolean }) => {
       await sendCmd.sendKeysToSession(target, keys, options);
     });
 
@@ -128,10 +116,9 @@ export function registerSessionNamespace(program: Command): void {
   sessionProgram
     .command('split <target> [direction]')
     .description('Split pane for a target (worker, session, pane ID)')
-    .option('-p, --pane <id>', '[DEPRECATED] Target pane ID - use target addressing instead')
     .option('-d, --workspace <path>', 'Working directory for the new pane')
     .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
-    .action(async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
+    .action(async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
       await splitCmd.splitSessionPane(target, direction, options);
     });
 
@@ -200,85 +187,5 @@ export function registerSessionNamespace(program: Command): void {
     .description('Remove a tmux hook')
     .action(async (event: string) => {
       await hookCmd.removeHook(event);
-    });
-}
-
-/**
- * Register deprecated top-level aliases for backwards compatibility
- */
-export function registerDeprecatedSessionAliases(program: Command): void {
-  // These are hidden from help but still work with deprecation warnings
-
-  program
-    .command('new <name>', { hidden: true })
-    .description('[DEPRECATED] Use "term session new"')
-    .option('-d, --workspace <path>', 'Working directory')
-    .option('-w, --worktree', 'Create git worktree')
-    .action(async (name: string, options: { workspace?: string; worktree?: boolean }) => {
-      deprecationWarning('term new', 'term session new');
-      await newCmd.createNewSession(name, options);
-    });
-
-  program
-    .command('attach <name>', { hidden: true })
-    .description('[DEPRECATED] Use "term session attach"')
-    .action(async (name: string) => {
-      deprecationWarning('term attach', 'term session attach');
-      await attachCmd.attachToSession(name);
-    });
-
-  program
-    .command('rm <name>', { hidden: true })
-    .description('[DEPRECATED] Use "term session rm"')
-    .option('--keep-worktree', 'Keep worktree folder')
-    .action(async (name: string, options: { keepWorktree?: boolean }) => {
-      deprecationWarning('term rm', 'term session rm');
-      await rmCmd.removeSession(name, options);
-    });
-
-  program
-    .command('exec <target> <command...>', { hidden: true })
-    .description('[DEPRECATED] Use "term session exec"')
-    .option('-q, --quiet', 'Suppress output')
-    .option('-t, --timeout <ms>', 'Timeout')
-    .option('-p, --pane <id>', '[DEPRECATED] Target pane')
-    .action(async (target: string, command: string[], options: { quiet?: boolean; timeout?: string; pane?: string }) => {
-      deprecationWarning('term exec', 'term session exec');
-      await execCmd.executeInSession(target, command.join(' '), {
-        quiet: options.quiet,
-        timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
-        pane: options.pane,
-      });
-    });
-
-  program
-    .command('send <target> <keys>', { hidden: true })
-    .description('[DEPRECATED] Use "term session send"')
-    .option('--no-enter', 'No enter key')
-    .option('-p, --pane <id>', '[DEPRECATED] Target pane')
-    .action(async (target: string, keys: string, options: { enter?: boolean; pane?: string }) => {
-      deprecationWarning('term send', 'term session send');
-      await sendCmd.sendKeysToSession(target, keys, options);
-    });
-
-  program
-    .command('split <target> [direction]', { hidden: true })
-    .description('[DEPRECATED] Use "term session split"')
-    .option('-p, --pane <id>', '[DEPRECATED] Target pane ID')
-    .option('-d, --workspace <path>', 'Working directory')
-    .option('-w, --worktree <branch>', 'Create worktree')
-    .action(async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string; pane?: string }) => {
-      deprecationWarning('term split', 'term session split');
-      await splitCmd.splitSessionPane(target, direction, options);
-    });
-
-  program
-    .command('info <session>', { hidden: true })
-    .description('[DEPRECATED] Use "term session info"')
-    .option('--command <id>', 'Command status')
-    .option('--json', 'JSON output')
-    .action(async (session: string, options: statusCmd.StatusOptions) => {
-      deprecationWarning('term info', 'term session info');
-      await statusCmd.getStatus(session, options);
     });
 }

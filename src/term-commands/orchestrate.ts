@@ -57,14 +57,12 @@ import {
 // ============================================================================
 
 export interface StartOptions {
-  pane?: string;
   monitor?: boolean;
   command?: string;
   json?: boolean;
 }
 
 export interface RunOptions {
-  pane?: string;
   autoApprove?: boolean;
   timeout?: number;
   json?: boolean;
@@ -75,22 +73,18 @@ export interface SendOptions {
   timeout?: number;
   json?: boolean;
   noWait?: boolean;
-  pane?: string;
 }
 
 export interface StatusOptions {
   json?: boolean;
-  pane?: string;
 }
 
 export interface WatchOptions {
   json?: boolean;
   poll?: number;
-  pane?: string;
 }
 
 export interface ApproveOptions {
-  pane?: string;
   auto?: boolean;
   deny?: boolean;
 }
@@ -106,56 +100,12 @@ export interface ExperimentOptions {
 // ============================================================================
 
 /**
- * Legacy getSessionPane - preserved ONLY for startSession which needs session-creation behavior.
- * All other commands use resolveTarget() instead.
- */
-async function getSessionPaneForStart(
-  sessionName: string,
-  targetPaneId?: string
-): Promise<{ session: tmux.TmuxSession; paneId: string }> {
-  const session = await tmux.findSessionByName(sessionName);
-  if (!session) {
-    console.error(`Session "${sessionName}" not found`);
-    process.exit(1);
-  }
-
-  // If specific pane ID provided, validate and use it
-  if (targetPaneId) {
-    // Normalize pane ID (add % prefix if missing)
-    const paneId = targetPaneId.startsWith('%') ? targetPaneId : `%${targetPaneId}`;
-    return { session, paneId };
-  }
-
-  const paneId = await findActivePane(session.id, sessionName);
-  return { session, paneId };
-}
-
-/**
  * Resolve a target to paneId + session using the target resolver.
  * Used by all orchestrate commands except startSession.
  */
 async function resolveOrcTarget(
-  target: string,
-  paneOverride?: string
+  target: string
 ): Promise<{ paneId: string; session: string; label: string }> {
-  if (paneOverride) {
-    // Deprecated --pane escape hatch: honor but warn
-    console.error(
-      `\x1b[33m` +
-      `Warning: --pane is deprecated. Use target addressing instead: term orc <cmd> ${target}` +
-      `\x1b[0m`
-    );
-    const paneId = paneOverride.startsWith('%') ? paneOverride : `%${paneOverride}`;
-
-    // Try to resolve target as session for backwards compat
-    const tmuxSession = await tmux.findSessionByName(target);
-    return {
-      paneId,
-      session: tmuxSession ? target : target,
-      label: `${target} (pane ${paneId})`,
-    };
-  }
-
   const resolved = await resolveTarget(target);
 
   return {
@@ -232,13 +182,8 @@ export async function startSession(
       console.log(`Session "${sessionName}" already exists`);
     }
 
-    // Get pane (use specified pane or default to active pane)
-    let paneId: string;
-    if (options.pane) {
-      paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-    } else {
-      paneId = await findActivePane(session.id, sessionName);
-    }
+    // Get active pane
+    const paneId = await findActivePane(session.id, sessionName);
 
     // Start Claude Code (or custom command)
     const command = options.command || 'claude';
@@ -251,7 +196,7 @@ export async function startSession(
 
       const monitor = new EventMonitor(sessionName, {
         pollIntervalMs: 500,
-        paneId: options.pane,
+        paneId,
       });
 
       monitor.on('event', (event: ClaudeEvent) => {
@@ -294,7 +239,7 @@ export async function sendMessage(
   options: SendOptions = {}
 ): Promise<void> {
   try {
-    const { paneId, session, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, session, label } = await resolveOrcTarget(target);
 
     // Send the message cleanly (no TMUX_MCP markers)
     const escapedMessage = message.replace(/'/g, "'\\''");
@@ -356,7 +301,7 @@ export async function showStatus(
   options: StatusOptions = {}
 ): Promise<void> {
   try {
-    const { paneId, session, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, session, label } = await resolveOrcTarget(target);
 
     // Capture current output
     const output = await tmux.capturePaneContent(paneId, 100);
@@ -447,7 +392,7 @@ export async function watchSession(
   options: WatchOptions = {}
 ): Promise<void> {
   try {
-    const { paneId, session, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, session, label } = await resolveOrcTarget(target);
 
     const monitor = new EventMonitor(session, {
       pollIntervalMs: options.poll || 500,
@@ -498,7 +443,7 @@ export async function approvePermission(
   options: ApproveOptions = {}
 ): Promise<void> {
   try {
-    const { paneId, session, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, session, label } = await resolveOrcTarget(target);
 
     // Check current state
     const output = await tmux.capturePaneContent(paneId, 50);
@@ -567,11 +512,10 @@ export async function approvePermission(
  */
 export async function answerQuestion(
   target: string,
-  choice: string,
-  options: { pane?: string } = {}
+  choice: string
 ): Promise<void> {
   try {
-    const { paneId, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, label } = await resolveOrcTarget(target);
 
     // Check current state
     const output = await tmux.capturePaneContent(paneId, 50);
@@ -787,7 +731,7 @@ export async function runTask(
   options: RunOptions = {}
 ): Promise<void> {
   try {
-    const { paneId, session, label } = await resolveOrcTarget(target, options.pane);
+    const { paneId, session, label } = await resolveOrcTarget(target);
     const timeoutMs = options.timeout || 300000; // 5 minute default
 
     // Send the message

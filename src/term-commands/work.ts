@@ -65,8 +65,6 @@ export interface WorkOptions {
   role?: string;
   /** Share worktree with existing worker on same task */
   sharedWorktree?: boolean;
-  /** Skip beads claim and work inline (fallback mode) */
-  inline?: boolean;
   /** Internal: skip auto-approve blocking loop (used by spawn-parallel) */
   _skipAutoApproveBlock?: boolean;
 }
@@ -181,7 +179,6 @@ function parseBeadsIssue(data: any): BeadsIssue | null {
 
 /**
  * Get a beads issue by ID.
- * If bd show fails (LEGACY DATABASE, etc.), tries bd list as fallback.
  */
 async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
   const { stdout, exitCode } = await runBd(['show', id, '--json']);
@@ -190,26 +187,10 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
     try {
       const parsed = JSON.parse(stdout);
       const issue = Array.isArray(parsed) ? parsed[0] : parsed;
-      const result = parseBeadsIssue(issue);
-      if (result) return result;
+      return parseBeadsIssue(issue);
     } catch {
-      // JSON parse failed — fall through to fallback
+      // JSON parse failed
     }
-  }
-
-  // Fallback: try bd list --json and find the issue there
-  // This handles the case where bd show is broken but bd list works
-  try {
-    const { stdout: listOut, exitCode: listExit } = await runBd(['list', '--json']);
-    if (listExit === 0 && listOut) {
-      const issues = JSON.parse(listOut);
-      const match = (Array.isArray(issues) ? issues : []).find(
-        (i: any) => i.id === id || String(i.id) === id
-      );
-      if (match) return parseBeadsIssue(match);
-    }
-  } catch {
-    // Both show and list failed
   }
 
   return null;
@@ -959,47 +940,22 @@ export async function workCommand(
       }
       
       if (!issue) {
-        // In inline mode, create a synthetic issue so work can proceed
-        if (options.inline) {
-          console.log(`⚠️  Issue "${target}" not found in any backend. Using inline mode with synthetic task.`);
-          issue = {
-            id: target,
-            title: `Inline task: ${target}`,
-            status: 'in_progress',
-            description: undefined,
-            blockedBy: [],
-          };
-        } else {
-          const backend = getBackend(repoPath);
-          if (backend.kind === 'local') {
-            console.error(`❌ Issue "${target}" not found in local task registry.`);
-            console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
-            const fs = await import('fs');
-            if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
-              console.error(`   ⚠️  tasks.json does not exist. This is likely a fresh repo.`);
-              console.error(`   Fix: Run \`term create "Your task title"\` to create the first task,`);
-              console.error(`         or \`bd sync\` if using beads.`);
-            } else {
-              console.error(`   Task "${target}" is not in tasks.json. Run \`term list\` to see available tasks.`);
-            }
+        const backend = getBackend(repoPath);
+        if (backend.kind === 'local') {
+          console.error(`❌ Issue "${target}" not found in local task registry.`);
+          console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
+          const fs = await import('fs');
+          if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
+            console.error(`   ⚠️  tasks.json does not exist. This is likely a fresh repo.`);
+            console.error(`   Fix: Run \`genie term create "Your task title"\` to create the first task,`);
+            console.error(`         or \`bd sync\` if using beads.`);
           } else {
-            // Beads backend — check for common bd errors
-            const { stdout: bdDiag, exitCode: bdDiagExit } = await runBd(['show', target]);
-            if (bdDiagExit !== 0 && bdDiag && bdDiag.includes('LEGACY')) {
-              console.error(`❌ Issue "${target}" lookup failed — beads database needs migration.`);
-              console.error(`   Error: ${bdDiag.split('\n')[0]}`);
-              console.error(`   Fix: Run \`bd migrate --update-repo-id\``);
-              console.error(`   TIP: Retry with \`term work ${target} --inline\` to bypass beads tracking.`);
-            } else {
-              console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
-              if (bdDiagExit !== 0 && bdDiag) {
-                console.error(`   bd error: ${bdDiag.split('\n')[0]}`);
-                console.error(`   TIP: Retry with \`term work ${target} --inline\` to bypass beads tracking.`);
-              }
-            }
+            console.error(`   Task "${target}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
           }
-          process.exit(1);
+        } else {
+          console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
         }
+        process.exit(1);
       }
     }
 
@@ -1119,63 +1075,36 @@ export async function workCommand(
     const session = await getOrCreateSession(options.session);
 
     // 4. Claim task (backend-dependent)
-    // In --inline mode, skip claiming entirely (just create branch)
-    if (!options.inline) {
-      console.log(`📝 Claiming ${taskId}...`);
-      const backend = getBackend(repoPath);
-      let claimed = false;
-      let claimError: string | undefined;
+    console.log(`📝 Claiming ${taskId}...`);
+    const backend = getBackend(repoPath);
+    let claimed = false;
+    let claimError: string | undefined;
 
-      try {
-        claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
-      } catch (err: any) {
-        claimError = err.message || String(err);
-      }
+    try {
+      claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
+    } catch (err: any) {
+      claimError = err.message || String(err);
+    }
 
-      if (!claimed) {
-        if (backend.kind === 'beads') {
-          // Check if bd itself is broken — only auto-fallback on known migration errors
-          const { stdout: bdCheck, exitCode: bdExit } = await runBd(['show', taskId]);
-          const isLegacyDb = bdCheck && (bdCheck.includes('LEGACY') || bdCheck.includes('legacy database'));
-          if (bdExit !== 0 && isLegacyDb) {
-            // Known migration issue — safe to auto-fallback
-            console.error(`⚠️  Failed to claim ${taskId} via beads:`);
-            console.error(`   ${bdCheck.split('\n')[0]}`);
-            console.error(`\n   Possible fixes:`);
-            console.error(`   • Run \`bd migrate\` to update the database`);
-            console.error(`   • Run \`bd sync\` to re-sync`);
-            console.error(`\n⚠️ [DEGRADED] Beads claim failed. Falling back to inline mode (no beads tracking).`);
-            // Auto-fallback: continue without beads claim
-            options.inline = true;
-          } else if (bdExit !== 0 && bdCheck) {
-            // Unknown bd error — do NOT auto-fallback (could create untracked duplicates)
-            console.error(`❌ Failed to claim ${taskId} via beads:`);
-            console.error(`   ${bdCheck.split('\n')[0]}`);
-            console.error(`   TIP: Retry with \`term work ${taskId} --inline\` to bypass beads tracking.`);
-            process.exit(1);
-          } else {
-            console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
-            console.error(`   The issue may not exist or is already claimed.`);
-            console.error(`   Run \`bd show ${taskId}\` to check status.`);
-            console.error(`   TIP: Retry with \`term work ${taskId} --inline\` to bypass beads tracking.`);
-            process.exit(1);
-          }
+    if (!claimed) {
+      if (backend.kind === 'beads') {
+        console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
+        console.error(`   The issue may not exist or is already claimed.`);
+        console.error(`   Run \`bd show ${taskId}\` to check status.`);
+        process.exit(1);
+      } else {
+        // Local backend
+        const task = await backend.get(taskId);
+        if (!task) {
+          console.error(`❌ Task "${taskId}" not found in .genie/tasks.json.`);
+          console.error(`   Available tasks: run \`cat .genie/tasks.json | jq '.order'\``);
+          console.error(`   Or create one: \`term create "${taskId} title"\``);
         } else {
-          // Local backend
-          const task = await backend.get(taskId);
-          if (!task) {
-            console.error(`❌ Task "${taskId}" not found in .genie/tasks.json.`);
-            console.error(`   Available tasks: run \`cat .genie/tasks.json | jq '.order'\``);
-            console.error(`   Or create one: \`term create "${taskId} title"\``);
-          } else {
-            console.error(`❌ Failed to claim ${taskId} (status: ${task.status}).`);
-            console.error(`   Task may already be in_progress or done.`);
-          }
-          process.exit(1);
+          console.error(`❌ Failed to claim ${taskId} (status: ${task.status}).`);
+          console.error(`   Task may already be in_progress or done.`);
         }
+        process.exit(1);
       }
-    } else {
-      console.log(`📝 Inline mode — skipping beads claim for ${taskId}`);
     }
 
     // 5. Detect target repo for worktree creation
@@ -1248,8 +1177,8 @@ export async function workCommand(
       customName: options.name,
     };
 
-    // Register in beads (creates agent bead) — skip if inline mode (beads is broken)
-    if (useBeads && !options.inline) {
+    // Register in beads (creates agent bead)
+    if (useBeads) {
       try {
         const agentId = await beadsRegistry.ensureAgent(taskId, {
           paneId,

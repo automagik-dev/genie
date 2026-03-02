@@ -65,9 +65,10 @@ export function hasClaudioBinary(): boolean {
 /**
  * Build a spawn command string based on profile and options
  *
- * @param profile - WorkerProfile defining launcher and args, or undefined for legacy fallback
+ * @param profile - WorkerProfile defining launcher and args
  * @param options - SpawnOptions with sessionId, resume, and beadsDir
  * @returns Command string ready to be passed to tmux.executeCommand()
+ * @throws Error if no profile is provided
  * @throws Error if claudio launcher is specified but claudio binary is not found
  *
  * @example
@@ -79,16 +80,17 @@ export function hasClaudioBinary(): boolean {
  * // Claudio profile
  * buildSpawnCommand({ launcher: 'claudio', claudioProfile: 'coding-fast', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
  * // Returns: "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'abc'"
- *
- * @example
- * // Legacy fallback (no profile)
- * buildSpawnCommand(undefined, { sessionId: 'abc' })
- * // Returns: "claude --dangerously-skip-permissions --session-id 'abc'"
  */
 export function buildSpawnCommand(
   profile: WorkerProfile | undefined,
   options: SpawnOptions
 ): string {
+  if (!profile) {
+    throw new Error(
+      'No worker profile configured. Please configure a worker profile in ~/.genie/config.json under "workerProfiles".'
+    );
+  }
+
   const parts: string[] = [];
 
   // 1. Add BEADS_DIR env prefix if provided
@@ -96,11 +98,8 @@ export function buildSpawnCommand(
     parts.push(`BEADS_DIR='${escapeForShell(options.beadsDir)}'`);
   }
 
-  // 2. Handle legacy fallback (no profile)
-  if (!profile) {
-    parts.push('claude');
-    parts.push('--dangerously-skip-permissions');
-  } else if (profile.launcher === 'claudio') {
+  // 2. Build command based on launcher type
+  if (profile.launcher === 'claudio') {
     // 3. Claudio launcher: claudio launch <profile> -- <args>
     // Verify claudio binary is available
     if (!hasClaudioBinary()) {

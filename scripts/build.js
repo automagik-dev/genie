@@ -16,7 +16,6 @@ const rootDir = path.join(__dirname, '..');
 const TARGETS = [
   // CLI binaries (use bun runtime)
   { name: 'genie', source: 'src/genie.ts', runtime: 'bun' },
-  { name: 'term', source: 'src/term.ts', runtime: 'bun' },
   { name: 'worker-service', source: 'src/services/worker-service.ts', runtime: 'bun' },
   // Hook scripts (pure Node.js - no bun dependency)
   { name: 'validate-wish', source: 'plugins/genie/scripts/src/validate-wish.ts', runtime: 'node' },

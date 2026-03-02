@@ -2,7 +2,7 @@
  * Genie Uninstall Command
  *
  * Removes Genie CLI entirely:
- * - Remove hooks from Claude Code (migration cleanup)
+ * - Remove hook script from ~/.claude/hooks
  * - Delete ~/.genie directory
  * - Remove symlinks from ~/.local/bin
  */
@@ -12,10 +12,6 @@ import { existsSync, rmSync, unlinkSync, lstatSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import {
-  loadClaudeSettings,
-  saveClaudeSettings,
-  isGenieHookInstalled,
-  removeGenieHook,
   hookScriptExists,
   removeHookScript,
 } from '../lib/claude-settings.js';
@@ -24,7 +20,7 @@ import { getGenieDir, contractPath } from '../lib/genie-config.js';
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 
 // Symlinks that may have been created by source install
-const SYMLINKS = ['genie', 'term', 'claudio'];
+const SYMLINKS = ['genie', 'claudio', 'term'];
 
 /**
  * Check if a path is a symlink pointing to genie bin
@@ -74,10 +70,6 @@ export async function uninstallCommand(): Promise<void> {
   const hasGenieDir = existsSync(genieDir);
   const hasHookScript = hookScriptExists();
 
-  // Check what will be removed
-  const settings = await loadClaudeSettings();
-  const hasHookRegistered = isGenieHookInstalled(settings);
-
   // Count symlinks
   const existingSymlinks = SYMLINKS.filter((name) =>
     isGenieSymlink(join(LOCAL_BIN, name))
@@ -85,9 +77,6 @@ export async function uninstallCommand(): Promise<void> {
 
   // Show what will be removed
   console.log('\x1b[2mThis will remove:\x1b[0m');
-  if (hasHookRegistered) {
-    console.log('  \x1b[31m-\x1b[0m Hook registration from Claude Code');
-  }
   if (hasHookScript) {
     console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
   }
@@ -99,7 +88,7 @@ export async function uninstallCommand(): Promise<void> {
   }
   console.log();
 
-  if (!hasGenieDir && !hasHookScript && !hasHookRegistered && existingSymlinks.length === 0) {
+  if (!hasGenieDir && !hasHookScript && existingSymlinks.length === 0) {
     console.log('\x1b[33mNothing to uninstall.\x1b[0m');
     console.log();
     return;
@@ -120,19 +109,7 @@ export async function uninstallCommand(): Promise<void> {
 
   console.log();
 
-  // 1. Remove hooks from Claude Code
-  if (hasHookRegistered) {
-    console.log('\x1b[2mRemoving hook from Claude Code...\x1b[0m');
-    try {
-      const updatedSettings = removeGenieHook(settings);
-      await saveClaudeSettings(updatedSettings);
-      console.log('  \x1b[32m+\x1b[0m Hook unregistered');
-    } catch (error: any) {
-      console.log('  \x1b[33m!\x1b[0m Could not unregister hook: ' + error.message);
-    }
-  }
-
-  // 2. Remove hook script
+  // 1. Remove hook script
   if (hasHookScript) {
     console.log('\x1b[2mRemoving hook script...\x1b[0m');
     try {
@@ -143,7 +120,7 @@ export async function uninstallCommand(): Promise<void> {
     }
   }
 
-  // 3. Remove symlinks
+  // 2. Remove symlinks
   if (existingSymlinks.length > 0) {
     console.log('\x1b[2mRemoving symlinks...\x1b[0m');
     const removed = removeSymlinks();
@@ -152,7 +129,7 @@ export async function uninstallCommand(): Promise<void> {
     }
   }
 
-  // 4. Delete ~/.genie directory
+  // 3. Delete ~/.genie directory
   if (hasGenieDir) {
     console.log('\x1b[2mRemoving genie directory...\x1b[0m');
     try {
