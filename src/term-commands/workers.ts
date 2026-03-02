@@ -316,30 +316,34 @@ export function registerWorkerNamespace(program: Command): void {
           extraArgs: options.extraArgs,
         };
 
-        // 2. Auto-enable native teams for Claude provider
+        // 2. Ensure native team infrastructure exists (all providers).
+        //    The team-lead is always Claude Code, so the native team
+        //    directory + inbox must exist for join notifications to land.
+        const repoPath = process.cwd();
+        const teamConfig = await teamManager.getTeam(repoPath, team);
+
+        let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+        if (!parentSessionId) {
+          parentSessionId = await nativeTeams.discoverClaudeSessionId() ?? crypto.randomUUID();
+        }
+
+        await nativeTeams.ensureNativeTeam(
+          team,
+          `Genie team: ${team}`,
+          parentSessionId,
+        );
+
+        const spawnColor = (options.color as ClaudeTeamColor)
+          ?? await nativeTeams.assignColor(team);
+
+        // 2b. Enable native teammate CLI flags for Claude only.
+        //     Codex doesn't speak the native IPC protocol, but still
+        //     gets registered in the team config for visibility.
         if (options.provider === 'claude') {
-          const repoPath = process.cwd();
-          const teamConfig = await teamManager.getTeam(repoPath, team);
-
-          // Discover the leader's session ID (from team config or live discovery)
-          let parentSessionId = teamConfig?.nativeTeamParentSessionId;
-          if (!parentSessionId) {
-            parentSessionId = await nativeTeams.discoverClaudeSessionId() ?? crypto.randomUUID();
-          }
-
-          await nativeTeams.ensureNativeTeam(
-            team,
-            `Genie team: ${team}`,
-            parentSessionId,
-          );
-
-          const color = (options.color as ClaudeTeamColor)
-            ?? await nativeTeams.assignColor(team);
-
           params.nativeTeam = {
             enabled: true,
             parentSessionId,
-            color,
+            color: spawnColor,
             agentType: options.role ?? 'general-purpose',
             planModeRequired: options.planMode,
             permissionMode: options.permissionMode,
@@ -377,9 +381,7 @@ export function registerWorkerNamespace(program: Command): void {
 
         // 6. Register worker + native team BEFORE launching
         //    (inline mode execs into claude, so post-launch code won't run)
-        const agentName = nt?.enabled
-          ? (nt.agentName ?? validated.role ?? 'worker')
-          : undefined;
+        const agentName = nt?.agentName ?? validated.role ?? 'worker';
 
         const registerWorker = async (paneId: string) => {
           const workerEntry: registry.Worker = {
@@ -397,32 +399,32 @@ export function registerWorkerNamespace(program: Command): void {
             lastStateChange: now,
             repoPath: process.cwd(),
             nativeTeamEnabled: nt?.enabled ?? false,
-            nativeAgentId: nt?.enabled
-              ? `${agentName}@${validated.team}`
-              : undefined,
-            nativeColor: nt?.color,
-            parentSessionId: nt?.parentSessionId,
+            nativeAgentId: `${agentName}@${validated.team}`,
+            nativeColor: nt?.color ?? spawnColor,
+            parentSessionId: nt?.parentSessionId ?? parentSessionId,
           };
           await registry.register(workerEntry);
           return workerEntry;
         };
 
+        // Register in native team config + send join notification.
+        // Runs for ALL providers — the team-lead is always Claude Code
+        // and polls its native inbox, so the notification always lands.
         const registerNative = async (paneId: string) => {
-          if (!nt?.enabled || !agentName) return;
           await nativeTeams.registerNativeMember(validated.team, {
             agentName,
-            agentType: nt.agentType,
-            color: nt.color ?? 'blue',
+            agentType: nt?.agentType ?? validated.role ?? 'general-purpose',
+            color: nt?.color ?? spawnColor ?? 'blue',
             tmuxPaneId: paneId,
             cwd: process.cwd(),
-            planModeRequired: nt.planModeRequired,
+            planModeRequired: nt?.planModeRequired,
           });
           await nativeTeams.writeNativeInbox(validated.team, 'team-lead', {
             from: agentName,
             text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${process.cwd()}. Ready for tasks.`,
             summary: `${agentName} (${validated.provider}) joined`,
             timestamp: new Date().toISOString(),
-            color: nt.color ?? 'blue',
+            color: nt?.color ?? spawnColor ?? 'blue',
             read: false,
           });
         };
@@ -583,10 +585,10 @@ export function registerWorkerNamespace(program: Command): void {
           }
         } catch { /* pane may already be gone */ }
 
-        // Clean up native team: clear inbox + unregister member
-        // Use nativeAgentId (e.g. "implementor@genie") to extract the real agent name,
-        // since w.role may differ from the registered agentName.
-        if (w.nativeTeamEnabled && w.team && w.nativeAgentId) {
+        // Clean up native team: clear inbox + unregister member.
+        // All providers register in native team now (not just Claude),
+        // so clean up based on nativeAgentId presence, not nativeTeamEnabled.
+        if (w.team && w.nativeAgentId) {
           try {
             const agentName = w.nativeAgentId.split('@')[0];
             await nativeTeams.clearNativeInbox(w.team, agentName);

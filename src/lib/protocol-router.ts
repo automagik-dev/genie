@@ -10,6 +10,7 @@
 import * as mailbox from './mailbox.js';
 import * as registry from './worker-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import { executeTmux } from './tmux.js';
 
 // ============================================================================
 // Types
@@ -74,9 +75,11 @@ export async function sendMessage(
     // Use the matched worker
     const message = await mailbox.send(repoPath, from, match.id, body);
 
-    // Dual-write to native inbox if worker uses native teams
+    // Deliver based on worker type
     if (match.nativeTeamEnabled && match.team && match.role) {
       await writeToNativeInbox(match, message);
+    } else {
+      await injectToTmuxPane(match, message);
     }
 
     return {
@@ -89,9 +92,11 @@ export async function sendMessage(
   // 2. Persist to mailbox first (DEC-7)
   const message = await mailbox.send(repoPath, from, to, body);
 
-  // 3. Dual-write to native inbox if worker uses native teams
+  // 3. Deliver based on worker type
   if (worker.nativeTeamEnabled && worker.team && worker.role) {
     await writeToNativeInbox(worker, message);
+  } else {
+    await injectToTmuxPane(worker, message);
   }
 
   return {
@@ -122,21 +127,49 @@ async function writeToNativeInbox(
 }
 
 /**
+ * Inject a message into a worker's tmux pane via send-keys.
+ * Used for non-native workers (e.g., Codex) that don't have
+ * Claude Code's inbox polling. Best-effort — failures are non-fatal.
+ */
+async function injectToTmuxPane(
+  worker: registry.Worker,
+  message: mailbox.MailboxMessage,
+): Promise<void> {
+  if (!worker.paneId) return;
+
+  try {
+    // Escape single quotes for shell embedding
+    const escaped = message.body.replace(/'/g, "'\\''");
+    // Send text first, then Enter after a short delay so the pane can process the input
+    await executeTmux(`send-keys -t '${worker.paneId}' '${escaped}'`);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await executeTmux(`send-keys -t '${worker.paneId}' Enter`);
+  } catch {
+    // Best-effort — pane may be dead or busy
+  }
+}
+
+/**
  * Attempt to push pending messages to a worker's tmux pane.
  * Called when a worker transitions to idle state.
- *
- * This is a no-op placeholder — actual tmux injection would require
- * the tmux library. The delivery attempt is recorded in the mailbox.
+ * For non-native workers, injects via tmux send-keys.
  */
 export async function flushPending(
   repoPath: string,
   workerId: string,
 ): Promise<DeliveryResult[]> {
   const messages = await mailbox.pending(repoPath, workerId);
+  if (messages.length === 0) return [];
+
+  const worker = await registry.get(workerId);
   const results: DeliveryResult[] = [];
 
   for (const msg of messages) {
-    // Mark as delivered (actual tmux injection would happen here)
+    // Inject into tmux pane for non-native workers
+    if (worker && !worker.nativeTeamEnabled && worker.paneId) {
+      await injectToTmuxPane(worker, msg);
+    }
+
     await mailbox.markDelivered(repoPath, workerId, msg.id);
     results.push({
       messageId: msg.id,

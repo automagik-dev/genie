@@ -256,16 +256,22 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
 
   const parts: string[] = ['codex'];
 
-  // Skill-driven instructions (DEC-4)
-  const instructions = `Genie worker. Team: ${params.team}. Skill: ${params.skill}.${params.role ? ` Role: ${params.role} (advisory).` : ''} Execute the ${params.skill} skill instructions.`;
-  parts.push('--instructions', escapeShellArg(instructions));
+  // Automated execution for worker panes (sandbox + approval policy)
+  parts.push('--full-auto');
 
-  // Forward extra args
+  // Inline mode for tmux compatibility (no alternate screen)
+  parts.push('--no-alt-screen');
+
+  // Forward extra args before the positional prompt
   if (params.extraArgs) {
     for (const arg of params.extraArgs) {
       parts.push(escapeShellArg(arg));
     }
   }
+
+  // Skill-driven instructions as positional [PROMPT] argument (must be last)
+  const prompt = `Genie worker. Team: ${params.team}. Skill: ${params.skill}.${params.role ? ` Role: ${params.role} (advisory).` : ''} Execute the ${params.skill} skill instructions.`;
+  parts.push(escapeShellArg(prompt));
 
   return {
     command: parts.join(' '),
