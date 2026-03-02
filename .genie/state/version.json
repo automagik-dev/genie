@@ -1,0 +1,16 @@
+{
+  "version": "2.5.16",
+  "installedAt": "2026-03-02T15:19:24.435Z",
+  "updatedAt": "2026-03-02T15:19:24.435Z",
+  "commit": "23c77f3",
+  "packageName": "automagik-genie",
+  "customizedFiles": [],
+  "deletedFiles": [],
+  "lastUpgrade": null,
+  "previousVersion": null,
+  "upgradeHistory": [],
+  "migrationInfo": {
+    "backupId": "2026-03-02T15-19-24-343Z",
+    "claudeBackedUp": false
+  }
+}
