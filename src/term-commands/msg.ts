@@ -20,7 +20,7 @@ export function registerMsgNamespace(program: Command): void {
     .command('send <body>')
     .description('Send a message to a worker')
     .requiredOption('--to <worker>', 'Recipient worker ID')
-    .option('--from <sender>', 'Sender ID (default: operator)', 'operator')
+    .option('--from <sender>', 'Sender ID (default: genie)', 'genie')
     .action(async (body: string, options: { to: string; from: string }) => {
       try {
         const repoPath = process.cwd();

@@ -9,6 +9,7 @@
 
 import * as mailbox from './mailbox.js';
 import * as registry from './worker-registry.js';
+import * as nativeTeams from './claude-native-teams.js';
 
 // ============================================================================
 // Types
@@ -72,6 +73,12 @@ export async function sendMessage(
 
     // Use the matched worker
     const message = await mailbox.send(repoPath, from, match.id, body);
+
+    // Dual-write to native inbox if worker uses native teams
+    if (match.nativeTeamEnabled && match.team && match.role) {
+      await writeToNativeInbox(match, message);
+    }
+
     return {
       messageId: message.id,
       workerId: match.id,
@@ -82,11 +89,36 @@ export async function sendMessage(
   // 2. Persist to mailbox first (DEC-7)
   const message = await mailbox.send(repoPath, from, to, body);
 
+  // 3. Dual-write to native inbox if worker uses native teams
+  if (worker.nativeTeamEnabled && worker.team && worker.role) {
+    await writeToNativeInbox(worker, message);
+  }
+
   return {
     messageId: message.id,
     workerId: to,
     delivered: true,
   };
+}
+
+/**
+ * Write a Genie mailbox message to the Claude Code native inbox.
+ * Best-effort — failures here don't block the Genie mailbox write.
+ */
+async function writeToNativeInbox(
+  worker: registry.Worker,
+  message: mailbox.MailboxMessage,
+): Promise<void> {
+  try {
+    const nativeMsg = mailbox.toNativeInboxMessage(
+      message,
+      worker.nativeColor ?? 'blue',
+    );
+    const agentName = worker.role ?? worker.id;
+    await nativeTeams.writeNativeInbox(worker.team!, agentName, nativeMsg);
+  } catch {
+    // Best-effort — native inbox write failure is non-fatal
+  }
 }
 
 /**

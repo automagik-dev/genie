@@ -18,8 +18,10 @@ import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
 import { detectState, stripAnsi } from '../lib/orchestrator/index.js';
-import { buildLaunchCommand, validateSpawnParams, type ProviderName, type SpawnParams } from '../lib/provider-adapters.js';
+import { buildLaunchCommand, validateSpawnParams, type ProviderName, type SpawnParams, type ClaudeTeamColor } from '../lib/provider-adapters.js';
 import { resolveLayoutMode, buildLayoutCommand } from '../lib/mosaic-layout.js';
+import * as nativeTeams from '../lib/claude-native-teams.js';
+import * as teamManager from '../lib/team-manager.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -278,10 +280,13 @@ export function registerWorkerNamespace(program: Command): void {
     .command('spawn')
     .description('Spawn a new worker with provider selection')
     .requiredOption('--provider <provider>', 'Provider: claude or codex')
-    .requiredOption('--team <team>', 'Team name')
+    .option('--team <team>', 'Team name (default: $GENIE_TEAM)', process.env.GENIE_TEAM)
     .option('--role <role>', 'Worker role (e.g., implementor, tester)')
     .option('--skill <skill>', 'Skill to load (required for codex)')
     .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
+    .option('--color <color>', 'Teammate pane border color')
+    .option('--plan-mode', 'Start teammate in plan mode')
+    .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
     .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
     .action(async (options: {
       provider: string;
@@ -289,17 +294,58 @@ export function registerWorkerNamespace(program: Command): void {
       role?: string;
       skill?: string;
       layout?: string;
+      color?: string;
+      planMode?: boolean;
+      permissionMode?: string;
       extraArgs?: string[];
     }) => {
       try {
-        // 1. Validate spawn parameters (Group A contract)
+        // 1. Resolve team name from flag, env, or session discovery
+        const team = options.team ?? await nativeTeams.discoverTeamName();
+        if (!team) {
+          console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
+          process.exit(1);
+        }
+
+        // 1b. Validate spawn parameters (Group A contract)
         const params: SpawnParams = {
           provider: options.provider as ProviderName,
-          team: options.team,
+          team,
           role: options.role,
           skill: options.skill,
           extraArgs: options.extraArgs,
         };
+
+        // 2. Auto-enable native teams for Claude provider
+        if (options.provider === 'claude') {
+          const repoPath = process.cwd();
+          const teamConfig = await teamManager.getTeam(repoPath, team);
+
+          // Discover the leader's session ID (from team config or live discovery)
+          let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+          if (!parentSessionId) {
+            parentSessionId = await nativeTeams.discoverClaudeSessionId() ?? crypto.randomUUID();
+          }
+
+          await nativeTeams.ensureNativeTeam(
+            team,
+            `Genie team: ${team}`,
+            parentSessionId,
+          );
+
+          const color = (options.color as ClaudeTeamColor)
+            ?? await nativeTeams.assignColor(team);
+
+          params.nativeTeam = {
+            enabled: true,
+            parentSessionId,
+            color,
+            agentType: options.role ?? 'general-purpose',
+            planModeRequired: options.planMode,
+            permissionMode: options.permissionMode,
+            agentName: options.role,
+          };
+        }
 
         const validated = validateSpawnParams(params);
 
@@ -314,12 +360,23 @@ export function registerWorkerNamespace(program: Command): void {
 
         // 5. Launch tmux pane with the provider command
         const { execSync } = require('child_process');
+
+        // Prepend env vars via `env` command (tmux exec's directly, no shell)
+        let fullCommand = launch.command;
+        if (launch.env && Object.keys(launch.env).length > 0) {
+          const envArgs = Object.entries(launch.env)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ');
+          fullCommand = `env ${envArgs} ${launch.command}`;
+        }
+
         let paneId: string;
         try {
-          // Split a new pane in the current window running the launch command
-          execSync(`tmux split-window -d ${launch.command.split(' ').map(a => `'${a}'`).join(' ')}`, { stdio: 'ignore' });
-          // Capture the pane ID of the newly created pane
-          paneId = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
+          // split-window -P -F prints the new pane ID; capture it directly
+          paneId = execSync(
+            `tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`,
+            { encoding: 'utf-8' },
+          ).trim();
         } catch {
           // If tmux is not available, fall back to a placeholder
           paneId = '%0';
@@ -335,6 +392,7 @@ export function registerWorkerNamespace(program: Command): void {
 
         // 7. Register worker with real pane ID
         const now = new Date().toISOString();
+        const nt = validated.nativeTeam;
         const workerEntry: registry.Worker = {
           id: workerId,
           paneId,
@@ -349,19 +407,55 @@ export function registerWorkerNamespace(program: Command): void {
           state: 'spawning',
           lastStateChange: now,
           repoPath: process.cwd(),
+          // Native team metadata
+          nativeTeamEnabled: nt?.enabled ?? false,
+          nativeAgentId: nt?.enabled
+            ? `${nt.agentName ?? validated.role ?? 'worker'}@${validated.team}`
+            : undefined,
+          nativeColor: nt?.color,
+          parentSessionId: nt?.parentSessionId,
         };
 
         await registry.register(workerEntry);
 
+        // 7b. Register in native team config + notify team lead
+        if (nt?.enabled) {
+          const agentName = nt.agentName ?? validated.role ?? 'worker';
+          await nativeTeams.registerNativeMember(validated.team, {
+            agentName,
+            agentType: nt.agentType,
+            color: nt.color ?? 'blue',
+            tmuxPaneId: paneId,
+            cwd: process.cwd(),
+            planModeRequired: nt.planModeRequired,
+          });
+
+          // Notify team lead that a new worker joined
+          const cwd = process.cwd();
+          await nativeTeams.writeNativeInbox(validated.team, 'genie', {
+            from: agentName,
+            text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${cwd}. Ready for tasks.`,
+            summary: `${agentName} (${validated.provider}) joined`,
+            timestamp: new Date().toISOString(),
+            color: nt.color ?? 'blue',
+            read: false,
+          });
+        }
+
         // 8. Output result
         console.log(`Worker "${workerId}" spawned.`);
         console.log(`  Provider: ${launch.provider}`);
-        console.log(`  Command:  ${launch.command}`);
+        console.log(`  Command:  ${fullCommand}`);
         console.log(`  Team:     ${validated.team}`);
         console.log(`  Pane:     ${paneId}`);
         if (validated.role) console.log(`  Role:     ${validated.role}`);
         if (validated.skill) console.log(`  Skill:    ${validated.skill}`);
         console.log(`  Layout:   ${layoutMode}`);
+        if (nt?.enabled) {
+          console.log(`  Native:   enabled`);
+          console.log(`  AgentID:  ${workerEntry.nativeAgentId}`);
+          console.log(`  Color:    ${nt.color}`);
+        }
 
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
@@ -444,11 +538,27 @@ export function registerWorkerNamespace(program: Command): void {
           process.exit(1);
         }
 
-        // Kill the tmux pane before removing from registry
+        // Kill the tmux pane
         try {
           const { execSync } = require('child_process');
-          execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+          const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
+          if (w.paneId && w.paneId !== currentPane) {
+            execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+          } else if (w.paneId === currentPane) {
+            console.log('  (skipped pane kill — would kill current session)');
+          }
         } catch { /* pane may already be gone */ }
+
+        // Clean up native team: clear inbox + unregister member
+        // Use nativeAgentId (e.g. "implementor@genie") to extract the real agent name,
+        // since w.role may differ from the registered agentName.
+        if (w.nativeTeamEnabled && w.team && w.nativeAgentId) {
+          try {
+            const agentName = w.nativeAgentId.split('@')[0];
+            await nativeTeams.clearNativeInbox(w.team, agentName);
+            await nativeTeams.unregisterNativeMember(w.team, agentName);
+          } catch { /* best-effort */ }
+        }
 
         await registry.unregister(id);
         console.log(`Worker "${id}" killed and unregistered.`);

@@ -19,6 +19,35 @@ import { z } from 'zod';
 
 export type ProviderName = 'claude' | 'codex';
 
+/** Colors available for Claude Code native teammate UI. */
+export type ClaudeTeamColor =
+  | 'blue' | 'green' | 'yellow' | 'red' | 'magenta' | 'cyan'
+  | 'orange' | 'purple' | 'pink' | 'teal';
+
+/** Rotating palette for auto-assigning teammate colors. */
+export const CLAUDE_TEAM_COLORS: ClaudeTeamColor[] = [
+  'blue', 'green', 'yellow', 'red', 'magenta',
+  'cyan', 'orange', 'purple', 'pink', 'teal',
+];
+
+/** Parameters for Claude Code native teammate integration. */
+export interface NativeTeamParams {
+  /** Enable native teammate flags (--agent-id, --team-name, etc.). */
+  enabled: boolean;
+  /** Parent session UUID (team lead's session ID). */
+  parentSessionId?: string;
+  /** UI color for the teammate pane border. */
+  color?: ClaudeTeamColor;
+  /** Agent type string (e.g., "general-purpose"). */
+  agentType?: string;
+  /** Start the teammate in plan mode. */
+  planModeRequired?: boolean;
+  /** Permission mode (e.g., "acceptEdits", "bypassPermissions"). */
+  permissionMode?: string;
+  /** Display name for the agent. */
+  agentName?: string;
+}
+
 /** Common spawn parameters accepted by both providers. */
 export interface SpawnParams {
   provider: ProviderName;
@@ -27,6 +56,8 @@ export interface SpawnParams {
   skill?: string;
   /** Extra CLI flags forwarded verbatim to the provider binary. */
   extraArgs?: string[];
+  /** Claude Code native teammate integration. */
+  nativeTeam?: NativeTeamParams;
 }
 
 /** Result of a successful launch-command build. */
@@ -35,6 +66,8 @@ export interface LaunchCommand {
   command: string;
   /** The provider that was used. */
   provider: ProviderName;
+  /** Environment variables to prepend to the command. */
+  env?: Record<string, string>;
   /** Metadata recorded in the worker registry. */
   meta: {
     role?: string;
@@ -52,6 +85,15 @@ export const spawnParamsSchema = z.object({
   role: z.string().optional(),
   skill: z.string().optional(),
   extraArgs: z.array(z.string()).optional(),
+  nativeTeam: z.object({
+    enabled: z.boolean(),
+    parentSessionId: z.string().optional(),
+    color: z.string().optional(),
+    agentType: z.string().optional(),
+    planModeRequired: z.boolean().optional(),
+    permissionMode: z.string().optional(),
+    agentName: z.string().optional(),
+  }).optional(),
 });
 
 /**
@@ -122,15 +164,54 @@ export function preflightCheck(provider: ProviderName): void {
 /**
  * Build the launch command for a Claude worker.
  *
- * Uses `claude --agent <role>` for role-specific behavior.
- * No hidden teammate flags — public CLI surface only.
+ * When nativeTeam is enabled, emits Claude Code's internal teammate
+ * flags (--agent-id, --team-name, etc.) and env vars so the worker
+ * auto-polls its inbox and participates in the native IPC protocol.
+ *
+ * When nativeTeam is NOT enabled, uses `claude --agent <role>` only.
  */
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
   const parts: string[] = ['claude'];
+  const env: Record<string, string> = {};
+  const nt = params.nativeTeam;
 
-  // Role routing via --agent (DEC-3)
+  if (nt?.enabled) {
+    // Native teammate env vars
+    env['CLAUDECODE'] = '1';
+    env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'] = '1';
+
+    const agentName = nt.agentName ?? params.role ?? 'worker';
+    const teamName = params.team;
+    const agentId = `${agentName}@${teamName}`;
+
+    parts.push('--agent-id', escapeShellArg(agentId));
+    parts.push('--agent-name', escapeShellArg(agentName));
+    parts.push('--team-name', escapeShellArg(teamName));
+
+    if (nt.color) {
+      parts.push('--agent-color', escapeShellArg(nt.color));
+    }
+
+    if (nt.parentSessionId) {
+      parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
+    }
+
+    if (nt.agentType) {
+      parts.push('--agent-type', escapeShellArg(nt.agentType));
+    }
+
+    if (nt.planModeRequired) {
+      parts.push('--plan-mode-required');
+    }
+
+    if (nt.permissionMode) {
+      parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
+    }
+  }
+
+  // Role routing via --agent (loads agent .md file — coexists with --agent-id)
   if (params.role) {
     parts.push('--agent', escapeShellArg(params.role));
   }
@@ -145,6 +226,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   return {
     command: parts.join(' '),
     provider: 'claude',
+    env: Object.keys(env).length > 0 ? env : undefined,
     meta: {
       role: params.role,
       skill: params.skill,

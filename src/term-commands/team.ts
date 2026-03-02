@@ -31,6 +31,10 @@ export function registerTeamNamespace(program: Command): void {
         if (config.roles.length > 0) {
           console.log(`  Roles: ${config.roles.map(r => r.name).join(', ')}`);
         }
+        if (config.nativeTeamsEnabled) {
+          console.log(`  Native teams: enabled (CC detected)`);
+          console.log(`  Session: ${config.nativeTeamParentSessionId}`);
+        }
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
         process.exit(1);
