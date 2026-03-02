@@ -11,6 +11,7 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path, { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import type { NativeInboxMessage } from './claude-native-teams.js';
 
 // ============================================================================
 // Types
@@ -175,4 +176,25 @@ export async function pending(
 ): Promise<MailboxMessage[]> {
   const mailbox = await loadMailbox(repoPath, workerId);
   return mailbox.messages.filter(m => m.deliveredAt === null);
+}
+
+/**
+ * Convert a Genie mailbox message to Claude Code's native inbox format.
+ */
+export function toNativeInboxMessage(
+  msg: MailboxMessage,
+  color: string = 'blue',
+): NativeInboxMessage {
+  // Truncate body to create a summary (5-10 words)
+  const words = msg.body.split(/\s+/);
+  const summary = words.slice(0, 8).join(' ') + (words.length > 8 ? '...' : '');
+
+  return {
+    from: msg.from,
+    text: msg.body,
+    summary,
+    timestamp: msg.createdAt,
+    color,
+    read: false,
+  };
 }

@@ -94,10 +94,12 @@ program
 
 // TUI command - attach to master genie session
 program
-  .command('tui')
-  .description('Attach to master genie session in ~/workspace')
+  .command('tui [name]')
+  .description('Start Claude Code as native team-lead (default: "genie" in ~/workspace)')
   .option('-r, --reset', 'Kill existing session and start fresh')
-  .action(async (options: TuiOptions) => {
+  .option('-d, --dir <path>', 'Working directory (default: ~/workspace)')
+  .action(async (name: string | undefined, options: TuiOptions) => {
+    if (name) options.name = name;
     await tuiCommand(options);
   });
 

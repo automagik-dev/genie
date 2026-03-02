@@ -73,6 +73,14 @@ export interface Worker {
   team?: string;
   /** tmux window name (alias for windowName, used by teams surface). */
   window?: string;
+  /** Claude Code native agent ID (e.g., "role@team"). */
+  nativeAgentId?: string;
+  /** Claude Code native teammate color. */
+  nativeColor?: string;
+  /** Whether this worker uses Claude Code native teams. */
+  nativeTeamEnabled?: boolean;
+  /** Parent session UUID for native team IPC. */
+  parentSessionId?: string;
 }
 
 export interface WorkerRegistry {

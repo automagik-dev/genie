@@ -10,6 +10,7 @@ import { mkdir, readFile, writeFile, readdir, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import path, { join } from 'path';
 import type { ProviderName } from './provider-adapters.js';
+import * as nativeTeamsManager from './claude-native-teams.js';
 
 // ============================================================================
 // Types
@@ -45,6 +46,10 @@ export interface TeamConfig {
   createdAt: string;
   /** ISO timestamp of last update. */
   updatedAt: string;
+  /** Parent session UUID for Claude Code native team IPC. */
+  nativeTeamParentSessionId?: string;
+  /** Whether this team uses Claude Code native teams. */
+  nativeTeamsEnabled?: boolean;
 }
 
 // ============================================================================
@@ -117,7 +122,7 @@ export function listBlueprints(): string[] {
   return Object.keys(BLUEPRINTS);
 }
 
-/** Create a new team from a blueprint. */
+/** Create a new team from a blueprint. Auto-enables native teams when inside CC. */
 export async function createTeam(
   repoPath: string,
   name: string,
@@ -145,6 +150,14 @@ export async function createTeam(
     createdAt: now,
     updatedAt: now,
   };
+
+  // Auto-enable native teams when running inside Claude Code
+  if (nativeTeamsManager.isInsideClaudeCode()) {
+    config.nativeTeamsEnabled = true;
+
+    const result = await nativeTeamsManager.registerAsTeamLead(name);
+    config.nativeTeamParentSessionId = result.sessionId;
+  }
 
   await writeFile(filePath, JSON.stringify(config, null, 2));
   return config;
@@ -184,6 +197,13 @@ export async function listTeams(repoPath: string): Promise<TeamConfig[]> {
 /** Delete a team. Returns true if deleted, false if not found. */
 export async function deleteTeam(repoPath: string, name: string): Promise<boolean> {
   const filePath = teamFilePath(repoPath, name);
+
+  // Check if native teams were enabled and clean up
+  const config = await getTeam(repoPath, name);
+  if (config?.nativeTeamsEnabled) {
+    await nativeTeamsManager.deleteNativeTeam(name);
+  }
+
   try {
     await unlink(filePath);
     return true;
