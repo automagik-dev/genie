@@ -5,7 +5,6 @@
  *   1. Raw pane ID (starts with %) -> passthrough
  *   2. Worker[:index] (left side is registered worker) -> registry lookup + subpane index
  *   3. Session:window (contains :, left side is tmux session) -> tmux lookup
- *   4. Session name (fallback) -> legacy behavior
  *
  * Returns { paneId, session, workerId?, paneIndex?, resolvedVia }
  */
@@ -16,7 +15,7 @@ import type { Worker } from './worker-registry.js';
 // Types
 // ============================================================================
 
-export type ResolutionMethod = 'raw' | 'worker' | 'session:window' | 'session';
+export type ResolutionMethod = 'raw' | 'worker' | 'session:window';
 
 export interface ResolvedTarget {
   /** The resolved tmux pane ID (e.g., "%17") */
@@ -141,9 +140,9 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
 // ============================================================================
 
 /**
- * Resolve a target string to a tmux pane ID using a 4-level resolution chain.
+ * Resolve a target string to a tmux pane ID using a 3-level resolution chain.
  *
- * @param target - The target string (e.g., "%17", "bd-42", "bd-42:1", "genie:OMNI", "genie")
+ * @param target - The target string (e.g., "%17", "bd-42", "bd-42:1", "genie:OMNI")
  * @param options - Optional overrides for testing
  * @returns ResolvedTarget with paneId and metadata
  * @throws Error with prescriptive message if target cannot be resolved
@@ -330,32 +329,10 @@ export async function resolveTarget(
     };
   }
 
-  // ---- Level 4: Session name fallback ----
-  debug(`"${target}" not in worker registry, trying session fallback`);
-  const sessionResult = await tmuxLookup(target);
-  if (sessionResult) {
-    debug(`"${target}" -> session fallback -> pane ${sessionResult.paneId}`);
-
-    if (checkLiveness) {
-      const live = await isPaneLive(sessionResult.paneId);
-      if (!live) {
-        throw new Error(
-          `Session "${target}": pane ${sessionResult.paneId} is dead.`
-        );
-      }
-    }
-
-    return {
-      paneId: sessionResult.paneId,
-      session: sessionResult.session,
-      resolvedVia: 'session',
-    };
-  }
-
   // ---- Nothing found ----
   throw new Error(
-    `Target "${target}" not found. Not a worker, tmux session, or pane ID.\n` +
-    `Run 'term workers' to list workers or 'term session ls' to list sessions.`
+    `Target "${target}" not found. Not a worker or pane ID.\n` +
+    `Run 'term workers' to list workers.`
   );
 }
 
@@ -369,7 +346,6 @@ export async function resolveTarget(
  * Examples:
  *   worker "bd-42" pane %17, session "genie"  -> "bd-42 (pane %17, session genie)"
  *   worker "bd-42:1" pane %22, session "genie" -> "bd-42:1 (pane %22, session genie)"
- *   session fallback "genie" pane %3           -> "genie (pane %3, session genie)"
  *   raw pane "%17"                             -> "%17 (pane %17)"
  */
 export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: string): string {

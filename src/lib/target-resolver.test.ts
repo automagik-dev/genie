@@ -284,40 +284,15 @@ describe('Level 3: Session:window', () => {
 // Level 4: Session name fallback
 // ============================================================================
 
-describe('Level 4: Session name fallback', () => {
-  test('resolveTarget("genie") falls back to session lookup', async () => {
-    const result = await resolveTarget('genie', {
-      checkLiveness: false,
-      workers: {}, // no worker named "genie"
-      tmuxLookup: async (sessionName: string, windowName?: string) => {
-        if (sessionName === 'genie' && !windowName) {
-          return { paneId: '%3', session: 'genie' };
-        }
-        return null;
-      },
-    });
-
-    expect(result.paneId).toBe('%3');
-    expect(result.session).toBe('genie');
-    expect(result.resolvedVia).toBe('session');
-    expect(result.workerId).toBeUndefined();
-  });
-
-  test('resolveTarget("nonexistent") falls back to session lookup', async () => {
-    const result = await resolveTarget('nonexistent', {
-      checkLiveness: false,
-      workers: {},
-      tmuxLookup: async (sessionName: string) => {
-        if (sessionName === 'nonexistent') {
-          return { paneId: '%99', session: 'nonexistent' };
-        }
-        return null;
-      },
-    });
-
-    expect(result.paneId).toBe('%99');
-    expect(result.session).toBe('nonexistent');
-    expect(result.resolvedVia).toBe('session');
+describe('Level 4 removed: bare name without worker match throws', () => {
+  test('resolveTarget("genie") throws when no worker matches', async () => {
+    await expect(
+      resolveTarget('genie', {
+        checkLiveness: false,
+        workers: {},
+        tmuxLookup: async () => null,
+      })
+    ).rejects.toThrow(/not found/i);
   });
 });
 
@@ -660,15 +635,6 @@ describe('formatResolvedLabel', () => {
     expect(formatResolvedLabel(resolved, 'bd-42:0')).toBe('bd-42 (pane %17, session genie)');
   });
 
-  test('formats session fallback target', () => {
-    const resolved: ResolvedTarget = {
-      paneId: '%3',
-      session: 'genie',
-      resolvedVia: 'session',
-    };
-    expect(formatResolvedLabel(resolved, 'genie')).toBe('genie (pane %3, session genie)');
-  });
-
   test('formats raw pane target without session', () => {
     const resolved: ResolvedTarget = {
       paneId: '%17',
@@ -746,45 +712,6 @@ describe('Active pane resolution in defaultTmuxLookup', () => {
    * These tests verify the pattern exists in the source and that the
    * tmuxLookup contract works with active-pane-aware implementations.
    */
-
-  test('tmuxLookup fallback to first pane when no active pane exists', async () => {
-    // When tmuxLookup returns the first pane (fallback behavior), resolveTarget still works
-    const result = await resolveTarget('fallback-session', {
-      checkLiveness: false,
-      workers: {},
-      tmuxLookup: async (sessionName: string, windowName?: string) => {
-        if (sessionName === 'fallback-session' && !windowName) {
-          // Simulates fallback: no active flag set, returns windows[0]/panes[0]
-          return { paneId: '%0', session: 'fallback-session' };
-        }
-        return null;
-      },
-    });
-
-    expect(result.paneId).toBe('%0');
-    expect(result.session).toBe('fallback-session');
-    expect(result.resolvedVia).toBe('session');
-  });
-
-  test('tmuxLookup returning active pane ID is used by resolveTarget', async () => {
-    // Simulate an active-pane-aware tmuxLookup that returns the active pane
-    const result = await resolveTarget('my-session', {
-      checkLiveness: false,
-      workers: {},
-      tmuxLookup: async (sessionName: string, windowName?: string) => {
-        if (sessionName === 'my-session' && !windowName) {
-          // This simulates what defaultTmuxLookup does after the fix:
-          // it finds the active window, then the active pane
-          return { paneId: '%42', session: 'my-session' };
-        }
-        return null;
-      },
-    });
-
-    expect(result.paneId).toBe('%42');
-    expect(result.session).toBe('my-session');
-    expect(result.resolvedVia).toBe('session');
-  });
 
   test('session:window tmuxLookup with active pane is used', async () => {
     // When session:window is specified, the active pane within that window should be selected

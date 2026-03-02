@@ -522,29 +522,11 @@ export async function getWorktree(name: string): Promise<BeadsWorktreeInfo | nul
 }
 
 // ============================================================================
-// Migration/Compatibility
+// Convenience Functions
 // ============================================================================
 
 /**
- * Register a worker (compatibility with worker-registry interface)
- * Writes to both beads and JSON registry during migration
- */
-export async function register(worker: Worker): Promise<void> {
-  await ensureAgent(worker.id, {
-    paneId: worker.paneId,
-    session: worker.session,
-    worktree: worker.worktree,
-    repoPath: worker.repoPath,
-    taskId: worker.taskId,
-    taskTitle: worker.taskTitle,
-    claudeSessionId: worker.claudeSessionId,
-  });
-
-  await setAgentState(worker.id, worker.state);
-}
-
-/**
- * Unregister a worker (compatibility with worker-registry interface)
+ * Unregister a worker — unbinds work and deletes the agent bead.
  */
 export async function unregister(workerId: string): Promise<void> {
   await unbindWork(workerId);
@@ -552,7 +534,7 @@ export async function unregister(workerId: string): Promise<void> {
 }
 
 /**
- * Update worker state (compatibility with worker-registry interface)
+ * Update worker state and send heartbeat.
  */
 export async function updateState(workerId: string, state: WorkerState): Promise<void> {
   await setAgentState(workerId, state);

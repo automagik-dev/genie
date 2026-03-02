@@ -173,100 +173,7 @@ check_and_repair_symlink() {
     return 0
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# OpenClaw Config Repair
-# ─────────────────────────────────────────────────────────────────────────────
-
 readonly OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
-
-# Check if OpenClaw config has stale genie plugin paths
-check_openclaw_stale_paths() {
-    if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
-        return 1  # No config, nothing to repair
-    fi
-
-    if ! check_command jq; then
-        return 1  # Can't parse without jq
-    fi
-
-    # Get all plugin paths from config
-    local paths
-    paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
-
-    for path in $paths; do
-        if [[ "$path" == *"plugins/genie"* ]] && [[ ! -f "$path" ]]; then
-            return 0  # Found stale path
-        fi
-    done
-
-    return 1  # No stale paths
-}
-
-# Get the stale genie plugin path from OpenClaw config
-get_openclaw_stale_path() {
-    if [[ ! -f "$OPENCLAW_CONFIG" ]] || ! check_command jq; then
-        return
-    fi
-
-    local paths
-    paths=$(jq -r '.plugins.load.paths[]? // empty' "$OPENCLAW_CONFIG" 2>/dev/null || true)
-
-    for path in $paths; do
-        if [[ "$path" == *"plugins/genie"* ]] && [[ ! -f "$path" ]]; then
-            echo "$path"
-            return
-        fi
-    done
-}
-
-# Repair stale OpenClaw plugin paths
-repair_openclaw_stale_paths() {
-    local stale_path new_path plugin_dir
-
-    stale_path=$(get_openclaw_stale_path)
-    if [[ -z "$stale_path" ]]; then
-        return 0  # Nothing to repair
-    fi
-
-    # Determine the new correct path
-    if [[ -n "$LOCAL_PATH" ]]; then
-        plugin_dir="$LOCAL_PATH/plugins/genie"
-        new_path="$plugin_dir/genie.ts"
-    else
-        return 1  # Can't determine new path without LOCAL_PATH
-    fi
-
-    if [[ ! -f "$new_path" ]]; then
-        warn "New plugin path doesn't exist: $new_path"
-        return 1
-    fi
-
-    warn "Stale OpenClaw plugin path detected in config"
-    warn "  Old: $stale_path"
-    warn "  New: $new_path"
-    echo
-
-    if confirm "Update OpenClaw config with new path?"; then
-        # Use jq to update the path
-        local tmp_config
-        tmp_config=$(mktemp)
-
-        if jq --arg old "$stale_path" --arg new "$new_path" '
-            .plugins.load.paths = [.plugins.load.paths[]? | if . == $old then $new else . end]
-        ' "$OPENCLAW_CONFIG" > "$tmp_config" 2>/dev/null; then
-            mv "$tmp_config" "$OPENCLAW_CONFIG"
-            success "OpenClaw config updated"
-            return 0
-        else
-            rm -f "$tmp_config"
-            error "Failed to update OpenClaw config"
-            return 1
-        fi
-    else
-        warn "Keeping stale path (OpenClaw plugin install may fail)"
-        return 1
-    fi
-}
 
 # Remove genie paths from OpenClaw config (for uninstall)
 remove_openclaw_plugin_paths() {
@@ -972,7 +879,7 @@ get_global_bin_dir() {
     fi
 }
 
-# Verify that genie and term commands are accessible
+# Verify that genie command is accessible
 verify_installation() {
     local commands_found=true
     local bin_dir
@@ -994,19 +901,6 @@ verify_installation() {
         fi
     fi
 
-    # Check term command
-    if check_command term; then
-        success "term command is available"
-    else
-        if [[ -n "$bin_dir" && -x "$bin_dir/term" ]]; then
-            warn "term is installed at $bin_dir/term but not in PATH"
-            commands_found=false
-        else
-            warn "term command not found"
-            commands_found=false
-        fi
-    fi
-
     if ! $commands_found; then
         local profile
         profile=$(get_shell_profile)
@@ -1014,7 +908,7 @@ verify_installation() {
         echo
         warn "Commands are installed but not yet in your PATH"
         echo
-        info "To use genie and term, do ONE of the following:"
+        info "To use genie, do ONE of the following:"
         echo
         echo -e "  ${BOLD}Option 1:${NC} Restart your terminal"
         echo
@@ -1053,12 +947,10 @@ print_success() {
     if $verification_passed; then
         echo -e "  Get started:"
         echo -e "    ${DIM}genie --help${NC}"
-        echo -e "    ${DIM}term --help${NC}"
         echo
     else
         echo -e "  ${YELLOW}After restarting your terminal, verify with:${NC}"
         echo -e "    ${DIM}genie --help${NC}"
-        echo -e "    ${DIM}term --help${NC}"
         echo
     fi
 }
@@ -1142,11 +1034,6 @@ main() {
     # Check for broken symlinks before installation
     if [[ "$INSTALL_MODE" == "install" ]]; then
         check_and_repair_symlink
-
-        # Check for stale OpenClaw plugin paths
-        if [[ -n "$LOCAL_PATH" ]] && check_openclaw_stale_paths; then
-            repair_openclaw_stale_paths
-        fi
     fi
 
     case "$INSTALL_MODE" in

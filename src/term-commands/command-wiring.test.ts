@@ -10,8 +10,6 @@
 import { describe, test, expect } from 'bun:test';
 import type { SendOptions } from './send.js';
 import type { ExecOptions } from './exec.js';
-import type { ReadOptions } from './read.js';
-import type { SplitOptions } from './split.js';
 import { resolveTarget } from '../lib/target-resolver.js';
 
 // ============================================================================
@@ -22,11 +20,6 @@ describe('send.ts: target resolution wiring', () => {
   test('sendKeysToSession function is exported', async () => {
     const sendModule = await import('./send.js');
     expect(typeof sendModule.sendKeysToSession).toBe('function');
-  });
-
-  test('SendOptions includes deprecated pane field for backwards compat', () => {
-    const options: SendOptions = { pane: '%17' };
-    expect(options.pane).toBe('%17');
   });
 
   test('SendOptions accepts enter flag', () => {
@@ -43,11 +36,6 @@ describe('exec.ts: target resolution wiring', () => {
   test('executeInSession function is exported', async () => {
     const execModule = await import('./exec.js');
     expect(typeof execModule.executeInSession).toBe('function');
-  });
-
-  test('ExecOptions includes deprecated pane field for backwards compat', () => {
-    const options: ExecOptions = { pane: '%17' };
-    expect(options.pane).toBe('%17');
   });
 
   test('ExecOptions accepts quiet and timeout', () => {
@@ -67,10 +55,6 @@ describe('read.ts: target resolution wiring', () => {
     expect(typeof readModule.readSessionLogs).toBe('function');
   });
 
-  test('ReadOptions includes deprecated pane field', () => {
-    const options: ReadOptions = { pane: '%17' };
-    expect(options.pane).toBe('%17');
-  });
 });
 
 // ============================================================================
@@ -83,10 +67,6 @@ describe('split.ts: target resolution wiring', () => {
     expect(typeof splitModule.splitSessionPane).toBe('function');
   });
 
-  test('SplitOptions includes deprecated pane field', () => {
-    const options: SplitOptions = { pane: '%17' };
-    expect(options.pane).toBe('%17');
-  });
 });
 
 // ============================================================================
@@ -206,18 +186,13 @@ describe('resolveTarget integration', () => {
     expect(result.resolvedVia).toBe('session:window');
   });
 
-  test('resolveTarget handles session name fallback', async () => {
-    const result = await resolveTarget('genie', {
-      checkLiveness: false,
-      workers: {},
-      tmuxLookup: async (sessionName: string, windowName?: string) => {
-        if (sessionName === 'genie' && !windowName) {
-          return { paneId: '%3', session: 'genie' };
-        }
-        return null;
-      },
-    });
-    expect(result.paneId).toBe('%3');
-    expect(result.resolvedVia).toBe('session');
+  test('resolveTarget throws for bare name without worker match', async () => {
+    await expect(
+      resolveTarget('genie', {
+        checkLiveness: false,
+        workers: {},
+        tmuxLookup: async () => null,
+      })
+    ).rejects.toThrow(/not found/i);
   });
 });
