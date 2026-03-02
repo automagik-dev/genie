@@ -94,21 +94,31 @@ describe('buildClaudeCommand', () => {
 // ============================================================================
 
 describe('buildCodexCommand', () => {
-  it('builds command with --instructions for skill', () => {
+  it('builds command with positional prompt for skill', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work', role: 'tester' });
     expect(result.command).toContain('codex');
-    expect(result.command).toContain('--instructions');
+    expect(result.command).not.toContain('--instructions');
     expect(result.command).toContain('work');
     expect(result.provider).toBe('codex');
     expect(result.meta.skill).toBe('work');
     expect(result.meta.role).toBe('tester');
   });
 
+  it('includes --full-auto for automated execution', () => {
+    const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work' });
+    expect(result.command).toContain('--full-auto');
+  });
+
+  it('includes --no-alt-screen for tmux compatibility', () => {
+    const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work' });
+    expect(result.command).toContain('--no-alt-screen');
+  });
+
   it('throws when skill is missing', () => {
     expect(() => buildCodexCommand({ provider: 'codex', team: 'work' })).toThrow(/requires --skill/);
   });
 
-  it('includes role as advisory metadata in instructions', () => {
+  it('includes role as advisory metadata in prompt', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work', role: 'tester' });
     expect(result.command).toContain('Role: tester');
     expect(result.command).toContain('advisory');
@@ -117,6 +127,21 @@ describe('buildCodexCommand', () => {
   it('does not depend on agent-name routing', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work' });
     expect(result.command).not.toContain('--agent');
+  });
+
+  it('places prompt as last argument', () => {
+    const result = buildCodexCommand({
+      provider: 'codex',
+      team: 'work',
+      skill: 'work',
+      extraArgs: ['--model', 'o3'],
+    });
+    // Prompt (containing "Genie worker") should come after extra args
+    const fullAutoIdx = result.command.indexOf('--full-auto');
+    const modelIdx = result.command.indexOf('--model');
+    const promptIdx = result.command.indexOf('Genie worker');
+    expect(fullAutoIdx).toBeLessThan(modelIdx);
+    expect(modelIdx).toBeLessThan(promptIdx);
   });
 
   it('forwards extra args', () => {
