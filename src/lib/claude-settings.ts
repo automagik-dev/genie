@@ -43,9 +43,8 @@ const ClaudeSettingsSchema = z.object({
 
 export type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
 
-// Constants for the genie hook (used for migration/cleanup)
+// Constants for the genie hook script (used for cleanup)
 export const GENIE_HOOK_SCRIPT_NAME = 'genie-bash-hook.sh';
-export const GENIE_HOOK_MATCHER = 'Bash';
 
 /**
  * Get the path to the Claude directory (~/.claude)
@@ -123,59 +122,6 @@ export async function saveClaudeSettings(settings: ClaudeSettings): Promise<void
   } catch (error: any) {
     throw new Error(`Failed to save Claude settings: ${error.message}`);
   }
-}
-
-/**
- * Check if the genie hook is installed in the settings (for migration cleanup)
- */
-export function isGenieHookInstalled(settings: ClaudeSettings): boolean {
-  const preToolUse = settings.hooks?.PreToolUse;
-  if (!preToolUse || !Array.isArray(preToolUse)) {
-    return false;
-  }
-
-  return preToolUse.some((entry) => {
-    if (entry.matcher !== GENIE_HOOK_MATCHER) return false;
-    if (!Array.isArray(entry.hooks)) return false;
-    return entry.hooks.some((hook) =>
-      hook.type === 'command' && hook.command?.includes(GENIE_HOOK_SCRIPT_NAME)
-    );
-  });
-}
-
-/**
- * Remove the genie hook from Claude settings (for migration cleanup)
- * Returns the modified settings (does not save to disk)
- */
-export function removeGenieHook(settings: ClaudeSettings): ClaudeSettings {
-  if (!settings.hooks?.PreToolUse) {
-    return settings;
-  }
-
-  // Filter out genie hook entries
-  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((entry) => {
-    // Keep entries that don't match our hook
-    if (entry.matcher !== GENIE_HOOK_MATCHER) return true;
-    if (!Array.isArray(entry.hooks)) return true;
-
-    // Remove entries that have genie hook commands
-    const hasGenieHook = entry.hooks.some((hook) =>
-      hook.type === 'command' && hook.command?.includes(GENIE_HOOK_SCRIPT_NAME)
-    );
-    return !hasGenieHook;
-  });
-
-  // Clean up empty PreToolUse array
-  if (settings.hooks.PreToolUse.length === 0) {
-    delete settings.hooks.PreToolUse;
-  }
-
-  // Clean up empty hooks object
-  if (settings.hooks && Object.keys(settings.hooks).length === 0) {
-    delete settings.hooks;
-  }
-
-  return settings;
 }
 
 /**

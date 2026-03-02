@@ -46,9 +46,3 @@ export function registerSessionCommands(program: Command): Command {
   return sessionProgram;
 }
 
-/**
- * Deprecation warning helper
- */
-export function showDeprecationWarning(oldCmd: string, newCmd: string): void {
-  console.warn(`⚠️  '${oldCmd}' is deprecated. Use '${newCmd}' instead.`);
-}

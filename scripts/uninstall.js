@@ -3,7 +3,7 @@
  * Uninstall Script for genie
  *
  * Removes all installed components:
- * - CLI symlinks (genie, term)
+ * - CLI symlinks (genie)
  * - Version marker
  * - Plugin cache
  * - Plugin entry from installed_plugins.json
@@ -119,7 +119,6 @@ log('');
 
 log('CLI symlinks:');
 removeSymlink('genie');
-removeSymlink('term');
 
 log('');
 log('Version marker:');

@@ -58,7 +58,7 @@ describe('Worker type: subPanes field', () => {
   beforeEach(() => {
     cleanTestDir();
     // Point registry to test dir by setting cwd
-    process.env.TERM_WORKER_REGISTRY = 'global';
+    process.env.GENIE_WORKER_REGISTRY = 'global';
   });
 
   test('Worker type includes optional subPanes field', () => {
@@ -347,7 +347,7 @@ describe('findByWindow', () => {
     cleanTestDir();
     // We need to set cwd to test dir so the registry path resolves correctly
     // Use global registry to avoid cwd dependency
-    process.env.TERM_WORKER_REGISTRY = 'global';
+    process.env.GENIE_WORKER_REGISTRY = 'global';
   });
 
   test('findByWindow returns worker with matching windowId', async () => {
@@ -360,7 +360,7 @@ describe('findByWindow', () => {
     const { mkdirSync: mkdirs } = await import('fs');
     const { join: joinPath } = await import('path');
     const { homedir: home } = await import('os');
-    const configDir = joinPath(home(), '.config', 'term');
+    const configDir = joinPath(home(), '.config', 'genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
 
@@ -383,7 +383,7 @@ describe('findByWindow', () => {
     const { mkdirSync: mkdirs } = await import('fs');
     const { join: joinPath } = await import('path');
     const { homedir: home } = await import('os');
-    const configDir = joinPath(home(), '.config', 'term');
+    const configDir = joinPath(home(), '.config', 'genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
 
@@ -406,5 +406,5 @@ afterAll(() => {
   } catch {
     // Ignore
   }
-  delete process.env.TERM_WORKER_REGISTRY;
+  delete process.env.GENIE_WORKER_REGISTRY;
 });

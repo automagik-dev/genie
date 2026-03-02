@@ -245,29 +245,6 @@ async function checkTmux(): Promise<CheckResult[]> {
     });
   }
 
-  // Check if term exec works
-  try {
-    const termCheck = await checkCommand('term');
-    if (termCheck.exists) {
-      results.push({
-        name: 'term command available',
-        status: 'pass',
-      });
-    } else {
-      results.push({
-        name: 'term command available',
-        status: 'fail',
-        suggestion: 'Ensure genie-cli is properly installed',
-      });
-    }
-  } catch {
-    results.push({
-      name: 'term command available',
-      status: 'warn',
-      message: 'could not check',
-    });
-  }
-
   return results;
 }
 

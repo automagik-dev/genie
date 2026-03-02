@@ -89,18 +89,6 @@ export const GenieConfigSchema = z.object({
   defaultCouncilPreset: z.string().optional(),
 });
 
-// Legacy v1 config schema (for migration)
-export const GenieConfigV1Schema = z.object({
-  session: z.object({
-    name: z.string().default('genie'),
-    defaultWindow: z.string().default('shell'),
-  }).default({}),
-  logging: z.object({
-    tmuxDebug: z.boolean().default(false),
-  }).default({}),
-  installMethod: z.enum(['source', 'npm', 'bun']).optional(),
-});
-
 // Inferred types
 export type SessionConfig = z.infer<typeof SessionConfigSchema>;
 export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;
@@ -111,4 +99,3 @@ export type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
 export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
 export type CouncilPreset = z.infer<typeof CouncilPresetSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;
-export type GenieConfigV1 = z.infer<typeof GenieConfigV1Schema>;

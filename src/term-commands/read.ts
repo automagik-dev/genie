@@ -13,39 +13,16 @@ export interface ReadOptions {
   all?: boolean;
   reverse?: boolean;
   json?: boolean;
-  /** @deprecated Use target addressing instead: term read bd-42 */
-  pane?: string;
-}
-
-/**
- * Show deprecation warning when --pane flag is used.
- */
-function warnPaneDeprecation(target: string): void {
-  console.error(
-    `\x1b[33m` +
-    `Warning: --pane is deprecated. Use target addressing instead: term read ${target}` +
-    `\x1b[0m`
-  );
 }
 
 export async function readSessionLogs(target: string, options: ReadOptions): Promise<void> {
   try {
-    let resolvedPaneId: string | undefined;
-    let sessionName = target;
-
-    if (options.pane) {
-      // Deprecated --pane escape hatch: honor but warn
-      warnPaneDeprecation(target);
-      resolvedPaneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-      // sessionName stays as the target (session name) for log-reader
-    } else {
-      // Use target resolver (DEC-1 from wish-26)
-      const resolved = await resolveTarget(target);
-      resolvedPaneId = resolved.paneId;
-      // If resolved via worker or raw pane, we pass the paneId to the log reader
-      // The log reader needs a session name for follow mode, so use resolved.session if available
-      sessionName = resolved.session || target;
-    }
+    // Use target resolver (DEC-1 from wish-26)
+    const resolved = await resolveTarget(target);
+    const resolvedPaneId = resolved.paneId;
+    // If resolved via worker or raw pane, we pass the paneId to the log reader
+    // The log reader needs a session name for follow mode, so use resolved.session if available
+    const sessionName = resolved.session || target;
 
     // Use config default if no lines specified
     const termConfig = getTerminalConfig();

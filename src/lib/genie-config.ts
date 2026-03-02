@@ -4,7 +4,6 @@ import { join } from 'path';
 import {
   GenieConfig,
   GenieConfigSchema,
-  GenieConfigV1Schema,
   LoggingConfig,
   TerminalConfig,
   SessionConfig,
@@ -15,7 +14,6 @@ import {
 
 const GENIE_DIR = join(homedir(), '.genie');
 const GENIE_CONFIG_FILE = join(GENIE_DIR, 'config.json');
-const CONFIG_VERSION = 2;
 
 /**
  * Get the path to the genie config directory
@@ -48,49 +46,7 @@ export function ensureGenieDir(): void {
 }
 
 /**
- * Migrate v1 config to v2 format
- */
-export function migrateConfig(oldConfig: unknown): GenieConfig {
-  // Try parsing as v1 config
-  const v1Result = GenieConfigV1Schema.safeParse(oldConfig);
-
-  if (v1Result.success) {
-    const v1 = v1Result.data;
-    return GenieConfigSchema.parse({
-      version: CONFIG_VERSION,
-      session: {
-        name: v1.session.name,
-        defaultWindow: v1.session.defaultWindow,
-        autoCreate: true,
-      },
-      terminal: {
-        execTimeout: 120000,
-        readLines: 100,
-        worktreeBase: '.worktrees',
-      },
-      logging: {
-        tmuxDebug: v1.logging.tmuxDebug,
-        verbose: false,
-      },
-      shell: {
-        preference: 'auto',
-      },
-      shortcuts: {
-        tmuxInstalled: false,
-        shellInstalled: false,
-      },
-      installMethod: v1.installMethod,
-      setupComplete: false,
-    });
-  }
-
-  // If not valid v1, return default config
-  return GenieConfigSchema.parse({});
-}
-
-/**
  * Load genie config, returning defaults if not found
- * Automatically migrates v1 configs to v2
  */
 export async function loadGenieConfig(): Promise<GenieConfig> {
   if (!existsSync(GENIE_CONFIG_FILE)) {
@@ -100,15 +56,6 @@ export async function loadGenieConfig(): Promise<GenieConfig> {
   try {
     const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
     const data = JSON.parse(content);
-
-    // Check if migration is needed (no version or version < 2)
-    if (!data.version || data.version < CONFIG_VERSION) {
-      const migrated = migrateConfig(data);
-      // Save migrated config
-      await saveGenieConfig(migrated);
-      return migrated;
-    }
-
     return GenieConfigSchema.parse(data);
   } catch (error: any) {
     console.warn(`Warning: Invalid genie config, using defaults: ${error.message}`);
@@ -158,12 +105,6 @@ export function loadGenieConfigSync(): GenieConfig {
   try {
     const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
     const data = JSON.parse(content);
-
-    // Check if migration is needed
-    if (!data.version || data.version < CONFIG_VERSION) {
-      return migrateConfig(data);
-    }
-
     return GenieConfigSchema.parse(data);
   } catch {
     return GenieConfigSchema.parse({});

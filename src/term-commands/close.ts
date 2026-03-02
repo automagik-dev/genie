@@ -19,11 +19,9 @@ import { confirm } from '@inquirer/prompts';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
-import { WorktreeManager } from '../lib/worktree.js';
 import { getBackend, TaskBackend } from '../lib/task-backend.js';
 import { cleanupEventFile } from './events.js';
 import { join } from 'path';
-import { homedir } from 'os';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -44,7 +42,6 @@ export interface CloseOptions {
 // Configuration
 // ============================================================================
 
-const WORKTREE_BASE = join(homedir(), '.local', 'share', 'term', 'worktrees');
 // Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
 
@@ -120,10 +117,10 @@ async function mergeToMain(
 
 /**
  * Remove worktree
- * Checks .genie/worktrees first, then bd worktree, then WorktreeManager
+ * Checks .genie/worktrees first, then bd worktree
  */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
-  // First, check .genie/worktrees location (new location)
+  // First, check .genie/worktrees location
   const inProjectWorktree = join(repoPath, WORKTREE_DIR_NAME, taskId);
   try {
     await $`git -C ${repoPath} worktree remove ${inProjectWorktree} --force`.quiet();
@@ -137,28 +134,12 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<boolean
     try {
       const removed = await beadsRegistry.removeWorktree(taskId);
       if (removed) return true;
-      // Fall through to WorktreeManager if bd worktree fails
     } catch {
       // Fall through
     }
   }
 
-  // Fallback to WorktreeManager (legacy location)
-  try {
-    const manager = new WorktreeManager({
-      baseDir: WORKTREE_BASE,
-      repoPath,
-    });
-
-    if (await manager.worktreeExists(taskId)) {
-      await manager.removeWorktree(taskId);
-      return true;
-    }
-    return true; // Already doesn't exist
-  } catch (error: any) {
-    console.error(`⚠️  Failed to remove worktree: ${error.message}`);
-    return false;
-  }
+  return true; // Already doesn't exist
 }
 
 /**
@@ -193,10 +174,11 @@ export async function closeCommand(
     const allWorkers = await registry.findAllByTask(taskId);
     const workerCount = allWorkers.length;
 
-    // Also check beads registry for backwards compat
-    let worker = useBeadsRegistry
-      ? await beadsRegistry.findByTask(taskId)
-      : null;
+    // Find a representative worker for worktree operations
+    let worker: registry.Worker | null = null;
+    if (useBeadsRegistry) {
+      worker = await beadsRegistry.findByTask(taskId);
+    }
     if (!worker && allWorkers.length > 0) {
       worker = allWorkers[0];
     }

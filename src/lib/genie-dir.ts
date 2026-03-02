@@ -5,7 +5,7 @@
  * .genie/ folder to hold living state.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 
@@ -50,25 +50,11 @@ function getGitCommonDir(repoPath: string): string | null {
 /**
  * Returns repo-local .genie directory path.
  * If inside a worktree, returns the main repo's .genie directory for shared state.
- * Also follows redirect files for backwards compatibility.
  */
 export function getRepoGenieDir(repoPath: string): string {
   const localDir = join(repoPath, GENIE_DIR_NAME);
 
-  // 1. Check for explicit redirect file (legacy/manual worktree setup)
-  const redirectPath = join(localDir, 'redirect');
-  if (existsSync(redirectPath)) {
-    try {
-      const target = readFileSync(redirectPath, 'utf-8').trim();
-      if (target && existsSync(target)) {
-        return target;
-      }
-    } catch {
-      // Fall through to next check
-    }
-  }
-
-  // 2. Check if we're in a git worktree and use main repo's .genie
+  // Check if we're in a git worktree and use main repo's .genie
   const mainRepoDir = getGitCommonDir(repoPath);
   if (mainRepoDir) {
     const mainGenieDir = join(mainRepoDir, GENIE_DIR_NAME);

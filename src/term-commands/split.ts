@@ -7,19 +7,6 @@ import { addSubPane } from '../lib/worker-registry.js';
 export interface SplitOptions {
   workspace?: string;
   worktree?: string;
-  /** @deprecated Use target addressing instead: term split bd-42 h */
-  pane?: string;
-}
-
-/**
- * Show deprecation warning when --pane flag is used.
- */
-function warnPaneDeprecation(target: string): void {
-  console.error(
-    `\x1b[33m` +
-    `Warning: --pane is deprecated. Use target addressing instead: term split ${target}` +
-    `\x1b[0m`
-  );
 }
 
 export async function splitSessionPane(
@@ -28,29 +15,11 @@ export async function splitSessionPane(
   options: SplitOptions = {}
 ): Promise<void> {
   try {
-    let paneId: string;
-    let resolvedWorkerId: string | undefined;
-    let resolvedSession: string | undefined;
-
-    if (options.pane) {
-      // Deprecated --pane escape hatch: honor but warn
-      warnPaneDeprecation(target);
-      paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-
-      // Validate session exists for backwards compat
-      const session = await tmux.findSessionByName(target);
-      if (!session) {
-        console.error(`Session "${target}" not found`);
-        process.exit(1);
-      }
-      resolvedSession = target;
-    } else {
-      // Use target resolver (DEC-1 from wish-26)
-      const resolved = await resolveTarget(target);
-      paneId = resolved.paneId;
-      resolvedWorkerId = resolved.workerId;
-      resolvedSession = resolved.session;
-    }
+    // Use target resolver (DEC-1 from wish-26)
+    const resolved = await resolveTarget(target);
+    const paneId = resolved.paneId;
+    const resolvedWorkerId = resolved.workerId;
+    const resolvedSession = resolved.session;
 
     // Determine direction
     const splitDirection = direction === 'h' ? 'horizontal' : 'vertical';
