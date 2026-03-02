@@ -432,7 +432,7 @@ export function registerWorkerNamespace(program: Command): void {
 
           // Notify team lead that a new worker joined
           const cwd = process.cwd();
-          await nativeTeams.writeNativeInbox(validated.team, 'genie', {
+          await nativeTeams.writeNativeInbox(validated.team, 'team-lead', {
             from: agentName,
             text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${cwd}. Ready for tasks.`,
             summary: `${agentName} (${validated.provider}) joined`,

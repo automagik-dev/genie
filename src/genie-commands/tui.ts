@@ -43,7 +43,7 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
   );
 
   await registerNativeMember(teamName, {
-    agentName: 'genie',
+    agentName: 'team-lead',
     agentType: 'general-purpose',
     color: 'blue',
     cwd,
@@ -63,8 +63,8 @@ function buildClaudeCommand(teamName: string): string {
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM='${sanitized}'`,
     'claude',
-    `--agent-id 'genie@${sanitized}'`,
-    `--agent-name 'genie'`,
+    `--agent-id 'team-lead@${sanitized}'`,
+    `--agent-name 'team-lead'`,
     `--team-name '${sanitized}'`,
     '--dangerously-skip-permissions',
     '-c',
