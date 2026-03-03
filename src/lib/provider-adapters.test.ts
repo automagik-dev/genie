@@ -65,9 +65,14 @@ describe('buildClaudeCommand', () => {
     expect(result.meta.role).toBe('implementor');
   });
 
+  it('includes --dangerously-skip-permissions', () => {
+    const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
+    expect(result.command).toContain('--dangerously-skip-permissions');
+  });
+
   it('excludes --agent when no role specified', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work' });
-    expect(result.command).toBe('claude');
+    expect(result.command).toContain('--dangerously-skip-permissions');
     expect(result.command).not.toContain('--agent');
   });
 
@@ -103,9 +108,9 @@ describe('buildCodexCommand', () => {
     expect(result.meta.role).toBe('tester');
   });
 
-  it('includes --full-auto for automated execution', () => {
+  it('includes --yolo for autonomous execution', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work' });
-    expect(result.command).toContain('--full-auto');
+    expect(result.command).toContain('--yolo');
   });
 
   it('includes --no-alt-screen for tmux compatibility', () => {
@@ -138,10 +143,10 @@ describe('buildCodexCommand', () => {
       extraArgs: ['--model', 'o3'],
     });
     // Prompt (containing "Genie worker") should come after extra args
-    const fullAutoIdx = result.command.indexOf('--full-auto');
+    const yoloIdx = result.command.indexOf('--yolo');
     const modelIdx = result.command.indexOf('--model');
     const promptIdx = result.command.indexOf('Genie worker');
-    expect(fullAutoIdx).toBeLessThan(modelIdx);
+    expect(yoloIdx).toBeLessThan(modelIdx);
     expect(modelIdx).toBeLessThan(promptIdx);
   });
 

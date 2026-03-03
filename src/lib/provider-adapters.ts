@@ -165,7 +165,7 @@ export function preflightCheck(provider: ProviderName): void {
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
-  const parts: string[] = ['claude'];
+  const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
   const nt = params.nativeTeam;
 
@@ -241,8 +241,8 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
 
   const parts: string[] = ['codex'];
 
-  // Automated execution for worker panes (sandbox + approval policy)
-  parts.push('--full-auto');
+  // Full autonomous execution — no permission prompts
+  parts.push('--yolo');
 
   // Inline mode for tmux compatibility (no alternate screen)
   parts.push('--no-alt-screen');
