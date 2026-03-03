@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from package.json
+        id: pkg
+        run: |
+          VERSION=$(jq -r '.version' package.json)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version from package.json: ${VERSION}"
+
+      - name: Check if release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          TAG="v${{ steps.pkg.outputs.version }}"
+
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Find previous release tag
+        id: prev
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          TAG="v${{ steps.pkg.outputs.version }}"
+          PREV=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -v "^${TAG}$" | head -1)
+          echo "tag=${PREV:-}" >> "$GITHUB_OUTPUT"
+          echo "Previous release tag: ${PREV:-none}"
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        if: steps.exists.outputs.skip != 'true'
+        with:
+          config: cliff.toml
+          args: ${{ steps.prev.outputs.tag && format('{0}..HEAD', steps.prev.outputs.tag) || '' }}
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Create release
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
+        run: |
+          TAG="v${{ steps.pkg.outputs.version }}"
+          gh release create "${TAG}" \
+            --target "${{ github.sha }}" \
+            --title "${TAG}" \
+            --notes "$RELEASE_NOTES"
+
+      - name: Setup Bun
+        if: steps.exists.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: steps.exists.outputs.skip != 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        if: steps.exists.outputs.skip != 'true'
+        run: bun run build
+
+      - name: Publish to npm
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "ERROR: NPM_TOKEN secret is not set. Cannot publish to npm." >&2
+            exit 1
+          fi
+          bun publish --access public
