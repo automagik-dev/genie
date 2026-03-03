@@ -1,5 +1,5 @@
 // Jenkinsfile.fleet-cli — Update genie-cli on all fleet hosts
-// Triggered by webhook on push to main of namastexlabs/genie-cli
+// Triggered by webhook on push to main of automagik-dev/genie
 //
 // Post-update: restarts OpenClaw gateway on each host and broadcasts
 // a system event so agents are notified about the new version.
@@ -25,7 +25,7 @@ mkdir -p "${BIN_DIR}" "$(dirname "${REPO_DIR}")"
 # ── Clone or update repo ───────────────────────────────
 if [ ! -d "${REPO_DIR}/.git" ]; then
     rm -rf "${REPO_DIR}"
-    git clone --branch main --depth 1 https://github.com/namastexlabs/genie-cli.git "${REPO_DIR}"
+    git clone --branch main --depth 1 https://github.com/automagik-dev/genie.git "${REPO_DIR}"
 fi
 
 cd "${REPO_DIR}"
@@ -34,7 +34,7 @@ cd "${REPO_DIR}"
 git reset --hard HEAD 2>/dev/null || true
 git clean -fd 2>/dev/null || true
 
-git remote set-url origin https://github.com/namastexlabs/genie-cli.git
+git remote set-url origin https://github.com/automagik-dev/genie.git
 git fetch origin +refs/heads/main:refs/remotes/origin/main
 git checkout -B main refs/remotes/origin/main
 git reset --hard refs/remotes/origin/main
