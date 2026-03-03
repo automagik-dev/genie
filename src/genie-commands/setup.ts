@@ -19,12 +19,14 @@ import {
   contractPath,
   updateShortcutsConfig,
 } from '../lib/genie-config.js';
+import { ensureCodexOtelConfig, isCodexConfigured, getCodexConfigPath } from '../lib/codex-config.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
 export interface SetupOptions {
   quick?: boolean;
   shortcuts?: boolean;
   claudio?: boolean;
+  codex?: boolean;
   terminal?: boolean;
   session?: boolean;
   reset?: boolean;
@@ -65,6 +67,7 @@ async function checkPrerequisites(): Promise<void> {
     { name: 'tmux', required: true },
     { name: 'bun', required: true },
     { name: 'claude', required: false, displayName: 'Claude Code CLI' },
+    { name: 'codex', required: false, displayName: 'OpenAI Codex CLI' },
     { name: 'jq', required: false },
   ];
 
@@ -242,11 +245,71 @@ async function configureClaudio(config: GenieConfig, quick: boolean): Promise<Ge
 }
 
 // ============================================================================
+// Codex Integration
+// ============================================================================
+
+async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('6. Codex Integration', 'Configure OpenAI Codex for genie workers');
+
+  const codexCheck = await checkCommand('codex');
+
+  if (!codexCheck.exists) {
+    console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
+    return config;
+  }
+
+  console.log(`  \x1b[32m\u2713\x1b[0m Codex CLI found (${codexCheck.version ?? 'unknown version'})`);
+
+  if (isCodexConfigured()) {
+    console.log('  \x1b[32m\u2713\x1b[0m Codex config already configured');
+    config.codex = { configured: true };
+    return config;
+  }
+
+  console.log();
+  console.log('  Genie needs to configure codex for worker communication:');
+  console.log('    \x1b[36mdisable_paste_burst\x1b[0m \u2192 Reliable tmux command injection');
+  console.log('    \x1b[36mOTel exporter\x1b[0m       \u2192 Telemetry relay for state detection');
+  console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
+  console.log();
+
+  if (quick) {
+    const changed = ensureCodexOtelConfig();
+    if (changed) {
+      console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
+    } else {
+      console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
+    }
+    config.codex = { configured: true };
+    return config;
+  }
+
+  const enableCodex = await confirm({
+    message: 'Configure Codex for genie worker integration?',
+    default: true,
+  });
+
+  if (enableCodex) {
+    const changed = ensureCodexOtelConfig();
+    if (changed) {
+      console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
+    } else {
+      console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
+    }
+    config.codex = { configured: true };
+  } else {
+    console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
+  }
+
+  return config;
+}
+
+// ============================================================================
 // Debug Options
 // ============================================================================
 
 async function configureDebug(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
-  printSection('6. Debug Options', 'Logging and debugging settings');
+  printSection('7. Debug Options', 'Logging and debugging settings');
 
   if (quick) {
     console.log('  Using defaults: tmuxDebug=false, verbose=false');
@@ -282,6 +345,7 @@ async function showSummaryAndSave(config: GenieConfig): Promise<void> {
   console.log(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
   console.log(`  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`);
   console.log(`  Claudio: ${config.claudio?.enabled ? '\x1b[32menabled\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
+  console.log(`  Codex:   ${config.codex?.configured ? '\x1b[32mconfigured\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
   console.log();
 
@@ -375,6 +439,14 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     return;
   }
 
+  if (options.codex) {
+    printHeader();
+    config = await configureCodex(config, false);
+    await saveGenieConfig(config);
+    console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
+    return;
+  }
+
   // Full wizard
   const quick = options.quick ?? false;
 
@@ -390,6 +462,7 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick);
   config = await configureClaudio(config, quick);
+  config = await configureCodex(config, quick);
   config = await configureDebug(config, quick);
 
   // Save and show summary

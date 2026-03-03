@@ -22,6 +22,7 @@ import { buildLaunchCommand, validateSpawnParams, type ProviderName, type SpawnP
 import { resolveLayoutMode, buildLayoutCommand } from '../lib/mosaic-layout.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import * as teamManager from '../lib/team-manager.js';
+import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -92,6 +93,336 @@ async function getCurrentState(paneId: string): Promise<string> {
     }
   } catch {
     return 'unknown';
+  }
+}
+
+
+/**
+ * Ensure the shared OTel relay is running on OTEL_RELAY_PORT.
+ *
+ * A single OTLP HTTP listener handles ALL codex workers. When
+ * telemetry events stop arriving (5s silence), the relay iterates
+ * all registered worker pane files in ~/.genie/relay/ and captures
+ * any changed panes, writing to the team-lead's native inbox.
+ *
+ * Idempotent — skips if the relay process is already alive.
+ */
+async function ensureOtelRelay(team: string): Promise<boolean> {
+  const { spawn: spawnChild, execSync: execSyncLocal } = require('child_process');
+  const { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync } = require('fs');
+  const { join } = require('path');
+  const { homedir } = require('os');
+
+  const relayDir = join(homedir(), '.genie', 'relay');
+  mkdirSync(relayDir, { recursive: true });
+
+  const pidFile = join(relayDir, 'otel-relay.pid');
+  const scriptFile = join(relayDir, 'otel-relay.mjs');
+
+  // Check if relay is already running
+  if (existsSync(pidFile)) {
+    try {
+      const pid = parseInt(readFileSync(pidFile, 'utf-8').trim());
+      if (pid > 0) {
+        process.kill(pid, 0); // Throws if process doesn't exist
+        return true; // Already running
+      }
+    } catch {
+      // Process dead — restart below
+    }
+  }
+
+  const inboxDir = join(
+    process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+    'teams', team, 'inboxes',
+  );
+  const escapedRelayDir = relayDir.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const escapedInboxDir = inboxDir.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const escapedPidFile = pidFile.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  try {
+    // Shared OTLP HTTP listener with state detection.
+    // On OTel silence, captures the pane and detects codex state:
+    //   - 'idle'       → codex waiting for input (relay output)
+    //   - 'permission' → codex asking for approval (relay with alert)
+    //   - 'working'    → still processing (skip, false alarm)
+    //   - 'finished'   → pane dead or process exited (final relay, stop)
+    // Only relays on idle/permission/finished — never during work.
+    // Bootstrap grace period: skip first 25s after worker registration
+    // to avoid noise from codex loading skills/config and initial approvals.
+    writeFileSync(scriptFile, `import { createServer } from 'http';
+import { execSync } from 'child_process';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs';
+import { createHash } from 'crypto';
+import { join } from 'path';
+
+const RELAY_DIR = '${escapedRelayDir}';
+const INBOX_DIR = '${escapedInboxDir}';
+const INBOX = join(INBOX_DIR, 'team-lead.json');
+const PID_FILE = '${escapedPidFile}';
+const PORT = ${OTEL_RELAY_PORT};
+const SILENCE_MS = 5000;
+const BOOTSTRAP_GRACE_MS = 20000; // Hard skip during first 20s after worker appears
+// After grace period, wait for first idle state (= bootstrap done) before relaying.
+// This avoids noise from codex reading context files and asking for permission.
+
+let silenceTimer = null;
+const lastHashes = new Map();       // workerId → content hash
+const workerFirstSeen = new Map();  // workerId → timestamp (ms)
+const bootstrapDone = new Set();    // Workers whose bootstrap is complete (stable idle seen)
+const bootstrapIdleCount = new Map(); // workerId → consecutive idle poll count during bootstrap
+const stoppedWorkers = new Set();   // Workers that finished — no more relays
+
+// Detect codex state from pane content
+function detectState(output) {
+  const lines = output.split('\\n').filter(l => l.trim());
+  const tail = lines.slice(-8).join('\\n');
+
+  // Permission prompt — codex is asking for approval
+  if (/Press enter to confirm or esc to cancel/.test(tail)) return 'permission';
+  if (/Would you like to run/.test(tail)) return 'permission';
+
+  // Working indicators — check BEFORE idle because the › prompt placeholder
+  // is visible even while codex is actively processing
+  if (/[◦◐◑◒◓⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(tail)) return 'working';  // Spinner chars
+  if (/esc to interrupt/.test(tail)) return 'working';  // Active processing hint
+
+  // Idle — codex prompt waiting for input (› at start of a line near bottom)
+  // The status bar (gpt-5.3-codex...) appears below the prompt
+  if (/^\\s*[>›]\\s/m.test(tail)) return 'idle';
+
+  // Still working
+  return 'working';
+}
+
+// Extract meaningful summary from codex pane output
+function extractSummary(output, state) {
+  const lines = output.split('\\n');
+
+  if (state === 'permission') {
+    // Find the command being requested (lines with $ or ✘ near the bottom)
+    const tail = lines.slice(-15);
+    // Look for the command line (starts with $ or contains the command after "Run")
+    const cmdLine = tail.reverse().find(l =>
+      /^\\s*\\$\\s/.test(l) || /^\\s*[•✘].*(?:Run|run|patch|write|exec)/.test(l)
+    );
+    if (cmdLine) {
+      const cleaned = cmdLine.replace(/^\\s*\\$\\s*/, '').replace(/^\\s*[•✘]\\s*/, '').trim().slice(0, 80);
+      return '[needs approval] ' + cleaned;
+    }
+    return '[needs approval]';
+  }
+
+  // Idle state — find the last codex response (• prefixed lines)
+  // Work backwards from the idle prompt to find the response block
+  const responseLines = [];
+  let foundPrompt = false;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    // Skip empty lines, status bar, and idle prompt
+    if (!line) continue;
+    if (/^[>›]\\s/.test(line)) {
+      if (foundPrompt) break; // Hit the user's input prompt — stop
+      foundPrompt = true;
+      continue;
+    }
+    if (/gpt-\\d|codex|left\\s*·|^Tip:/.test(line)) continue;
+    // Collect response lines (• prefixed or continuation)
+    if (foundPrompt || /^[•✔✘─]/.test(line)) {
+      foundPrompt = true;
+      responseLines.unshift(line);
+      if (responseLines.length >= 3) break; // Enough for summary
+    }
+  }
+
+  if (responseLines.length > 0) {
+    // Clean up the • prefix for summary
+    const summary = responseLines
+      .map(l => l.replace(/^[•✔✘]\\s*/, '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 120);
+    return summary || '(idle)';
+  }
+
+  return '(idle)';
+}
+
+function relayAll() {
+  let paneFiles;
+  try { paneFiles = readdirSync(RELAY_DIR).filter(f => f.endsWith('-pane')); }
+  catch { return; }
+
+  const now = Date.now();
+
+  for (const file of paneFiles) {
+    const workerId = file.replace(/-pane$/, '');
+    if (stoppedWorkers.has(workerId)) continue;
+
+    // Bootstrap grace period — skip relaying during first 25s
+    if (!workerFirstSeen.has(workerId)) {
+      // Use file mtime as registration time
+      try {
+        const stat = statSync(join(RELAY_DIR, file));
+        workerFirstSeen.set(workerId, stat.mtimeMs);
+      } catch {
+        workerFirstSeen.set(workerId, now);
+      }
+    }
+    const age = now - workerFirstSeen.get(workerId);
+    if (age < BOOTSTRAP_GRACE_MS) continue;
+
+    let paneId;
+    try { paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim(); }
+    catch { continue; }
+    if (!paneId) continue;
+
+    let meta = { agent: workerId, color: 'blue' };
+    try {
+      const raw = readFileSync(join(RELAY_DIR, workerId + '-meta'), 'utf-8');
+      meta = JSON.parse(raw);
+    } catch {}
+
+    let output;
+    try {
+      output = execSync(\`tmux capture-pane -p -t '\${paneId}' -S -80\`, { encoding: 'utf-8' }).trim();
+    } catch {
+      // Pane gone — final relay if we had previous content
+      const lastContent = lastHashes.get(workerId + ':content');
+      if (lastContent) {
+        const summary = extractSummary(lastContent, 'idle');
+        writeInbox(meta, lastContent, '[finished] ' + summary);
+      }
+      stoppedWorkers.add(workerId);
+      continue;
+    }
+    if (!output) continue;
+
+    // Detect state — only relay on idle or permission
+    const state = detectState(output);
+    if (state === 'working') continue;
+
+    // Bootstrap detection: require 2 consecutive idle polls before marking done.
+    // Permission prompts are ALWAYS relayed (they block progress).
+    // Brief idle states between actions are skipped (codex shows › between tasks).
+    if (!bootstrapDone.has(workerId)) {
+      if (state === 'idle') {
+        const count = (bootstrapIdleCount.get(workerId) || 0) + 1;
+        bootstrapIdleCount.set(workerId, count);
+        if (count >= 2) {
+          bootstrapDone.add(workerId);
+          // Fall through to relay this stable idle (bootstrap complete)
+        } else {
+          continue; // First idle poll — might be brief between actions
+        }
+      } else if (state === 'permission') {
+        bootstrapIdleCount.set(workerId, 0); // Reset — codex is still working
+        // Permission during bootstrap — falls through to relay
+      } else {
+        bootstrapIdleCount.set(workerId, 0); // Reset on working state
+        continue;
+      }
+    }
+
+    // Skip if content unchanged
+    const hash = createHash('md5').update(output).digest('hex');
+    if (lastHashes.get(workerId) === hash) continue;
+    lastHashes.set(workerId, hash);
+    lastHashes.set(workerId + ':content', output);
+
+    const summary = extractSummary(output, state);
+    writeInbox(meta, output, summary);
+  }
+}
+
+function writeInbox(meta, text, summary) {
+  mkdirSync(INBOX_DIR, { recursive: true });
+  let messages = [];
+  try { messages = JSON.parse(readFileSync(INBOX, 'utf-8')); } catch {}
+  // Trim old read messages to prevent inbox bloat — keep only last 5 read + all unread
+  const unread = messages.filter(m => !m.read);
+  const read = messages.filter(m => m.read);
+  messages = [...read.slice(-5), ...unread];
+  messages.push({
+    from: meta.agent,
+    text,
+    summary,
+    timestamp: new Date().toISOString(),
+    color: meta.color,
+    read: false,
+  });
+  writeFileSync(INBOX, JSON.stringify(messages, null, 2));
+}
+
+// Clean up dead panes every 30s
+setInterval(() => {
+  let paneFiles;
+  try { paneFiles = readdirSync(RELAY_DIR).filter(f => f.endsWith('-pane')); }
+  catch { return; }
+  for (const file of paneFiles) {
+    try {
+      const paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim();
+      execSync(\`tmux display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
+    } catch {
+      const workerId = file.replace(/-pane$/, '');
+      for (const suffix of ['-pane', '-meta']) {
+        try { unlinkSync(join(RELAY_DIR, workerId + suffix)); } catch {}
+      }
+      lastHashes.delete(workerId);
+      workerFirstSeen.delete(workerId);
+      bootstrapDone.delete(workerId);
+      stoppedWorkers.add(workerId);
+    }
+  }
+  try {
+    const remaining = readdirSync(RELAY_DIR).filter(f => f.endsWith('-pane'));
+    if (remaining.length === 0) process.exit(0);
+  } catch {}
+}, 30000);
+
+const server = createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (chunk) => chunks.push(chunk));
+  req.on('end', () => {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => relayAll(), SILENCE_MS);
+    res.writeHead(200);
+    res.end();
+  });
+});
+
+server.listen(PORT, '127.0.0.1', () => {
+  writeFileSync(PID_FILE, String(process.pid));
+});
+
+process.on('SIGTERM', () => { server.close(); process.exit(0); });
+process.on('SIGINT', () => { server.close(); process.exit(0); });
+`, { mode: 0o644 });
+
+    // Launch relay as a detached background process
+    const child = spawnChild('node', [scriptFile], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+
+    // Wait for PID file (up to 3 seconds)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      if (existsSync(pidFile)) {
+        try {
+          const pid = parseInt(readFileSync(pidFile, 'utf-8').trim());
+          if (pid > 0) {
+            process.kill(pid, 0);
+            return true;
+          }
+        } catch {}
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -282,7 +613,7 @@ export function registerWorkerNamespace(program: Command): void {
     .option('--provider <provider>', 'Provider: claude or codex', 'claude')
     .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
     .requiredOption('--role <role>', 'Worker role (e.g., implementor, tester)')
-    .option('--skill <skill>', 'Skill to load (required for codex)')
+    .option('--skill <skill>', 'Skill to load (optional)')
     .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
     .option('--color <color>', 'Teammate pane border color')
     .option('--plan-mode', 'Start teammate in plan mode')
@@ -365,15 +696,6 @@ export function registerWorkerNamespace(program: Command): void {
         // 5. Launch tmux pane with the provider command
         const { execSync } = require('child_process');
 
-        // Prepend env vars via `env` command (tmux exec's directly, no shell)
-        let fullCommand = launch.command;
-        if (launch.env && Object.keys(launch.env).length > 0) {
-          const envArgs = Object.entries(launch.env)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(' ');
-          fullCommand = `env ${envArgs} ${launch.command}`;
-        }
-
         const insideTmux = Boolean(process.env.TMUX);
         const nt = validated.nativeTeam;
         const now = new Date().toISOString();
@@ -382,6 +704,24 @@ export function registerWorkerNamespace(program: Command): void {
         // 6. Register worker + native team BEFORE launching
         //    (inline mode execs into claude, so post-launch code won't run)
         const agentName = nt?.agentName ?? validated.role ?? 'worker';
+
+        // 6b. Ensure shared OTel relay for non-native workers (Codex).
+        //     The relay listens for OTLP events and captures the pane
+        //     when codex goes idle (3s silence after last event).
+        let otelRelayActive = false;
+        if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
+          ensureCodexOtelConfig();
+          otelRelayActive = await ensureOtelRelay(validated.team);
+        }
+
+        // Prepend env vars via `env` command (tmux exec's directly, no shell)
+        let fullCommand = launch.command;
+        if (launch.env && Object.keys(launch.env).length > 0) {
+          const envArgs = Object.entries(launch.env)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ');
+          fullCommand = `env ${envArgs} ${launch.command}`;
+        }
 
         const registerWorker = async (paneId: string) => {
           const workerEntry: registry.Worker = {
@@ -449,6 +789,19 @@ export function registerWorkerNamespace(program: Command): void {
           const workerEntry = await registerWorker(paneId);
           await registerNative(paneId);
 
+          // Register pane with the shared OTel relay.
+          if (otelRelayActive && paneId !== '%0') {
+            const { writeFileSync: wfs } = require('fs');
+            const { join: pjoin } = require('path');
+            const { homedir: hdir } = require('os');
+            const rd = pjoin(hdir(), '.genie', 'relay');
+            wfs(pjoin(rd, `${workerId}-pane`), paneId);
+            wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({
+              agent: agentName,
+              color: spawnColor,
+            }));
+          }
+
           console.log(`Worker "${workerId}" spawned.`);
           console.log(`  Provider: ${launch.provider}`);
           console.log(`  Command:  ${fullCommand}`);
@@ -461,6 +814,9 @@ export function registerWorkerNamespace(program: Command): void {
             console.log(`  Native:   enabled`);
             console.log(`  AgentID:  ${workerEntry.nativeAgentId}`);
             console.log(`  Color:    ${nt.color}`);
+          }
+          if (otelRelayActive) {
+            console.log(`  OTel:     relay on port ${OTEL_RELAY_PORT}`);
           }
         } else {
           // Outside tmux — register first, then exec foreground (blocking)
@@ -584,6 +940,18 @@ export function registerWorkerNamespace(program: Command): void {
             console.log('  (skipped pane kill — would kill current session)');
           }
         } catch { /* pane may already be gone */ }
+
+        // Clean up OTel relay worker files (pane + meta).
+        // The shared relay auto-exits when no pane files remain.
+        try {
+          const { join } = require('path');
+          const { homedir } = require('os');
+          const { unlinkSync } = require('fs');
+          const relayDir = join(homedir(), '.genie', 'relay');
+          for (const suffix of ['-pane', '-meta', '-watcher.mjs']) {
+            try { unlinkSync(join(relayDir, `${id}${suffix}`)); } catch {}
+          }
+        } catch { /* best-effort */ }
 
         // Clean up native team: clear inbox + unregister member.
         // All providers register in native team now (not just Claude),
