@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # Genie CLI Installer
-# https://github.com/namastexlabs/genie-cli
+# https://github.com/automagik-dev/genie
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- uninstall
+#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall
 #
 # Exit codes:
 #   0 - Success
@@ -23,7 +23,7 @@ set -euo pipefail
 
 readonly VERSION="2.0.0"
 readonly PACKAGE_NAME="@automagik/genie"
-readonly RAW_REPO_URL="https://raw.githubusercontent.com/namastexlabs/genie-cli"
+readonly RAW_REPO_URL="https://raw.githubusercontent.com/automagik-dev/genie"
 
 readonly GENIE_HOME="${GENIE_HOME:-$HOME/.genie}"
 readonly CLAUDE_PLUGINS_DIR="$HOME/.claude/plugins"
@@ -591,7 +591,7 @@ offer_claude_plugin() {
             fi
         else
             # Marketplace mode
-            claude plugin marketplace add namastexlabs/genie-cli 2>/dev/null || true
+            claude plugin marketplace add automagik-dev/genie 2>/dev/null || true
             if claude plugin install genie@namastexlabs 2>/dev/null; then
                 success "Genie Claude Code plugin installed"
             else
@@ -671,7 +671,7 @@ To complete Genie setup, ask the user which integrations to enable:
 
 1. **Claude Code Plugin** — Adds skills, agents, and hooks to Claude Code
    Commands:
-   claude plugin marketplace add namastexlabs/genie-cli
+   claude plugin marketplace add automagik-dev/genie
    claude plugin install genie@namastexlabs
 
 2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
