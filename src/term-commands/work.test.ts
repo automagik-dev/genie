@@ -9,10 +9,10 @@
  * 4. .env sourcing from root repo in worktrees
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { $ } from 'bun';
-import { mkdir, rm, writeFile, access } from 'fs/promises';
-import { join } from 'path';
 
 // ============================================================================
 // Test Helpers
@@ -43,7 +43,7 @@ async function createTempGitRepo(basePath: string, name: string): Promise<string
 async function createWishFile(
   repoPath: string,
   wishId: string,
-  options: { repo?: string; title?: string } = {}
+  options: { repo?: string; title?: string } = {},
 ): Promise<string> {
   const wishDir = join(repoPath, '.genie', 'wishes', wishId);
   await mkdir(wishDir, { recursive: true });
@@ -82,7 +82,7 @@ async function pathExists(path: string): Promise<boolean> {
 // Import the internal detection function for unit testing
 // We re-implement minimal versions for testing since the actual function is not exported
 
-import { join as joinPath, resolve, isAbsolute } from 'path';
+import { isAbsolute, resolve } from 'node:path';
 
 // Import the env source prefix builder for unit testing
 import { buildEnvSourcePrefix } from './work.js';
@@ -103,19 +103,17 @@ async function detectTargetRepo(
   repoPath: string,
   explicitRepo?: string,
   issueTitle?: string,
-  issueDescription?: string
+  issueDescription?: string,
 ): Promise<{ targetRepo: string; detectionMethod: string }> {
   // 1. Explicit --repo flag takes priority
   if (explicitRepo) {
-    const targetPath = isAbsolute(explicitRepo)
-      ? explicitRepo
-      : resolve(repoPath, explicitRepo);
+    const targetPath = isAbsolute(explicitRepo) ? explicitRepo : resolve(repoPath, explicitRepo);
     return { targetRepo: targetPath, detectionMethod: '--repo flag' };
   }
 
   // 2. Check wish.md for repo: field
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
-  let metadata: { repo?: string; title?: string; description?: string } = {};
+  const metadata: { repo?: string; title?: string; description?: string } = {};
 
   try {
     const file = Bun.file(wishPath);
@@ -141,9 +139,7 @@ async function detectTargetRepo(
   }
 
   if (metadata.repo) {
-    const targetPath = isAbsolute(metadata.repo)
-      ? metadata.repo
-      : resolve(repoPath, metadata.repo);
+    const targetPath = isAbsolute(metadata.repo) ? metadata.repo : resolve(repoPath, metadata.repo);
     return { targetRepo: targetPath, detectionMethod: 'wish.md repo: field' };
   }
 
@@ -202,9 +198,9 @@ describe('term work - nested repo detection', () => {
       const result = await detectTargetRepo(
         'wish-1',
         macroRepo,
-        'code/genie-cli',  // explicit --repo
+        'code/genie-cli', // explicit --repo
         'Some wish title',
-        undefined
+        undefined,
       );
 
       expect(result.detectionMethod).toBe('--repo flag');
@@ -215,9 +211,9 @@ describe('term work - nested repo detection', () => {
       const result = await detectTargetRepo(
         'wish-1',
         macroRepo,
-        nestedRepo,  // absolute path
+        nestedRepo, // absolute path
         undefined,
-        undefined
+        undefined,
       );
 
       expect(result.detectionMethod).toBe('--repo flag');
@@ -228,15 +224,15 @@ describe('term work - nested repo detection', () => {
       // Create wish with different repo field
       await createWishFile(macroRepo, 'wish-2', {
         repo: 'some/other/repo',
-        title: 'Test Wish'
+        title: 'Test Wish',
       });
 
       const result = await detectTargetRepo(
         'wish-2',
         macroRepo,
-        'code/genie-cli',  // --repo should win
+        'code/genie-cli', // --repo should win
         undefined,
-        undefined
+        undefined,
       );
 
       expect(result.detectionMethod).toBe('--repo flag');
@@ -248,15 +244,15 @@ describe('term work - nested repo detection', () => {
     it('should detect repo from wish.md repo: field', async () => {
       await createWishFile(macroRepo, 'wish-3', {
         repo: 'code/genie-cli',
-        title: 'Update something'
+        title: 'Update something',
       });
 
       const result = await detectTargetRepo(
         'wish-3',
         macroRepo,
-        undefined,  // no --repo flag
+        undefined, // no --repo flag
         undefined,
-        undefined
+        undefined,
       );
 
       expect(result.detectionMethod).toBe('wish.md repo: field');
@@ -265,17 +261,11 @@ describe('term work - nested repo detection', () => {
 
     it('should handle absolute path in wish.md repo field', async () => {
       await createWishFile(macroRepo, 'wish-4', {
-        repo: nestedRepo,  // absolute path
-        title: 'Test'
+        repo: nestedRepo, // absolute path
+        title: 'Test',
       });
 
-      const result = await detectTargetRepo(
-        'wish-4',
-        macroRepo,
-        undefined,
-        undefined,
-        undefined
-      );
+      const result = await detectTargetRepo('wish-4', macroRepo, undefined, undefined, undefined);
 
       expect(result.detectionMethod).toBe('wish.md repo: field');
       expect(result.targetRepo).toBe(nestedRepo);
@@ -285,16 +275,10 @@ describe('term work - nested repo detection', () => {
   describe('heuristic detection', () => {
     it('should detect genie-cli from wish title containing "genie-cli"', async () => {
       await createWishFile(macroRepo, 'wish-5', {
-        title: 'Fix bug in genie-cli'
+        title: 'Fix bug in genie-cli',
       });
 
-      const result = await detectTargetRepo(
-        'wish-5',
-        macroRepo,
-        undefined,
-        'Fix bug in genie-cli',
-        undefined
-      );
+      const result = await detectTargetRepo('wish-5', macroRepo, undefined, 'Fix bug in genie-cli', undefined);
 
       expect(result.detectionMethod).toBe('heuristic (matched "code/genie-cli")');
       expect(result.targetRepo).toBe(nestedRepo);
@@ -302,16 +286,10 @@ describe('term work - nested repo detection', () => {
 
     it('should detect genie-cli from wish title containing "term work"', async () => {
       await createWishFile(macroRepo, 'wish-6', {
-        title: 'Improve term work command'
+        title: 'Improve term work command',
       });
 
-      const result = await detectTargetRepo(
-        'wish-6',
-        macroRepo,
-        undefined,
-        'Improve term work command',
-        undefined
-      );
+      const result = await detectTargetRepo('wish-6', macroRepo, undefined, 'Improve term work command', undefined);
 
       expect(result.detectionMethod).toBe('heuristic (matched "code/genie-cli")');
       expect(result.targetRepo).toBe(nestedRepo);
@@ -320,7 +298,7 @@ describe('term work - nested repo detection', () => {
     it('should not match heuristic if nested repo does not exist', async () => {
       // Create wish mentioning non-existent repo
       await createWishFile(macroRepo, 'wish-7', {
-        title: 'Fix something in nonexistent-repo'
+        title: 'Fix something in nonexistent-repo',
       });
 
       const result = await detectTargetRepo(
@@ -328,7 +306,7 @@ describe('term work - nested repo detection', () => {
         macroRepo,
         undefined,
         'Fix something in nonexistent-repo',
-        undefined
+        undefined,
       );
 
       // Should fall back to default since nonexistent-repo doesn't exist
@@ -338,7 +316,7 @@ describe('term work - nested repo detection', () => {
 
     it('should use description for heuristic matching too', async () => {
       await createWishFile(macroRepo, 'wish-8', {
-        title: 'Generic title'
+        title: 'Generic title',
       });
 
       const result = await detectTargetRepo(
@@ -346,7 +324,7 @@ describe('term work - nested repo detection', () => {
         macroRepo,
         undefined,
         'Generic title',
-        'This updates the genie-cli package'  // keyword in description
+        'This updates the genie-cli package', // keyword in description
       );
 
       expect(result.detectionMethod).toBe('heuristic (matched "code/genie-cli")');
@@ -357,7 +335,7 @@ describe('term work - nested repo detection', () => {
   describe('default fallback', () => {
     it('should fall back to current repo when no match found', async () => {
       await createWishFile(macroRepo, 'wish-9', {
-        title: 'Update documentation'
+        title: 'Update documentation',
       });
 
       const result = await detectTargetRepo(
@@ -365,7 +343,7 @@ describe('term work - nested repo detection', () => {
         macroRepo,
         undefined,
         'Update documentation',
-        'Just some doc changes'
+        'Just some doc changes',
       );
 
       expect(result.detectionMethod).toBe('default (current repo)');
@@ -374,13 +352,7 @@ describe('term work - nested repo detection', () => {
 
     it('should fall back when wish.md does not exist', async () => {
       // Don't create wish file for wish-10
-      const result = await detectTargetRepo(
-        'wish-10',
-        macroRepo,
-        undefined,
-        undefined,
-        undefined
-      );
+      const result = await detectTargetRepo('wish-10', macroRepo, undefined, undefined, undefined);
 
       expect(result.detectionMethod).toBe('default (current repo)');
       expect(result.targetRepo).toBe(macroRepo);
@@ -404,7 +376,9 @@ describe('term work - worktree creation', () => {
     // Clean up worktrees first (git requires this)
     try {
       await $`git -C ${testRepo} worktree prune`.quiet();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
 
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -482,17 +456,14 @@ describe('term work - branch naming convention', () => {
   afterEach(async () => {
     try {
       await $`git -C ${testRepo} worktree prune`.quiet();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
 
   it('should name branch work/<wish-id>', async () => {
-    const testCases = [
-      'wish-1',
-      'wish-22',
-      'wish-long-name-123',
-      'some-task-id',
-    ];
+    const testCases = ['wish-1', 'wish-22', 'wish-long-name-123', 'some-task-id'];
 
     for (const wishId of testCases) {
       const expectedBranch = `work/${wishId}`;
@@ -514,7 +485,7 @@ describe('term work - branch naming convention', () => {
 // Wish file search in .wishes/ directory
 // ============================================================================
 
-import { wishFileExists, loadWishContent, findWishInDotWishes } from './work.js';
+import { findWishInDotWishes, loadWishContent, wishFileExists } from './work.js';
 
 describe('term work - wish file search in .wishes/ directory', () => {
   let tempDir: string;
@@ -542,14 +513,17 @@ describe('term work - wish file search in .wishes/ directory', () => {
       const taskId = 'bd-99';
       const wishesDir = join(tempDir, '.wishes');
       await mkdir(wishesDir, { recursive: true });
-      await writeFile(join(wishesDir, 'my-feature-wish.md'), `# My Feature Wish
+      await writeFile(
+        join(wishesDir, 'my-feature-wish.md'),
+        `# My Feature Wish
 
 **Beads:** ${taskId}
 
 ## Summary
 
 Do something cool.
-`);
+`,
+      );
 
       expect(await wishFileExists(taskId, tempDir)).toBe(true);
     });
@@ -558,14 +532,17 @@ Do something cool.
       const taskId = 'bd-77';
       const wishesDir = join(tempDir, '.wishes');
       await mkdir(wishesDir, { recursive: true });
-      await writeFile(join(wishesDir, 'another-wish.md'), `# Another Wish
+      await writeFile(
+        join(wishesDir, 'another-wish.md'),
+        `# Another Wish
 
 Beads: ${taskId}
 
 ## Summary
 
 Do something else.
-`);
+`,
+      );
 
       expect(await wishFileExists(taskId, tempDir)).toBe(true);
     });
@@ -574,10 +551,13 @@ Do something else.
       const taskId = 'bd-123';
       const nestedDir = join(tempDir, '.wishes', 'features', 'phase-1');
       await mkdir(nestedDir, { recursive: true });
-      await writeFile(join(nestedDir, 'deep-feature-wish.md'), `# Deep Feature
+      await writeFile(
+        join(nestedDir, 'deep-feature-wish.md'),
+        `# Deep Feature
 
 **Beads:** ${taskId}
-`);
+`,
+      );
 
       expect(await wishFileExists(taskId, tempDir)).toBe(true);
     });
@@ -594,14 +574,17 @@ Do something else.
     it('should return false when .wishes/ files exist but none reference the taskId', async () => {
       const wishesDir = join(tempDir, '.wishes');
       await mkdir(wishesDir, { recursive: true });
-      await writeFile(join(wishesDir, 'unrelated-wish.md'), `# Unrelated Wish
+      await writeFile(
+        join(wishesDir, 'unrelated-wish.md'),
+        `# Unrelated Wish
 
 **Beads:** bd-other-id
 
 ## Summary
 
 Not the one we're looking for.
-`);
+`,
+      );
 
       expect(await wishFileExists('bd-999', tempDir)).toBe(false);
     });
@@ -725,9 +708,7 @@ describe('term work - .env sourcing in worktrees', () => {
       const workingDir = '/home/user/project/.genie/worktrees/task-1';
 
       const result = buildEnvSourcePrefix(workingDir, repoPath);
-      expect(result).toBe(
-        `[ -f '/home/user/project/.env' ] && set -a && source '/home/user/project/.env' && set +a; `
-      );
+      expect(result).toBe(`[ -f '/home/user/project/.env' ] && set -a && source '/home/user/project/.env' && set +a; `);
     });
 
     it('should escape single quotes in repoPath', () => {
@@ -762,9 +743,7 @@ describe('term work - .env sourcing in worktrees', () => {
 
       const result = buildEnvSourcePrefix(workingDir, repoPath);
       // Verify the full expected pattern
-      expect(result).toBe(
-        `[ -f '/my/repo/.env' ] && set -a && source '/my/repo/.env' && set +a; `
-      );
+      expect(result).toBe(`[ -f '/my/repo/.env' ] && set -a && source '/my/repo/.env' && set +a; `);
     });
 
     it('should handle paths with spaces', () => {

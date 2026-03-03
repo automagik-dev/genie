@@ -9,19 +9,16 @@
  *   term approve --stop                    - Stop the auto-approve engine
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
-  createAutoApproveEngine,
-  sendApprovalViaTmux,
   type AuditLogEntry,
   type AutoApproveEngine,
+  createAutoApproveEngine,
+  sendApprovalViaTmux,
 } from '../lib/auto-approve-engine.js';
 import { loadAutoApproveConfig } from '../lib/auto-approve.js';
-import {
-  createPermissionRequestQueue,
-  type PermissionRequestQueue,
-} from '../lib/event-listener.js';
+import { type PermissionRequestQueue, createPermissionRequestQueue } from '../lib/event-listener.js';
 
 // ============================================================================
 // Types
@@ -78,7 +75,7 @@ export interface StartEngineOptions {
 // ============================================================================
 
 let currentEngine: AutoApproveEngine | null = null;
-let sharedQueue: PermissionRequestQueue = createPermissionRequestQueue();
+const sharedQueue: PermissionRequestQueue = createPermissionRequestQueue();
 
 /**
  * Get the shared queue (for use by other modules)
@@ -104,7 +101,10 @@ function readAuditLog(auditDir: string): AuditLogEntry[] {
 
   try {
     const content = readFileSync(logPath, 'utf-8');
-    const lines = content.trim().split('\n').filter((line) => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim());
     const entries: AuditLogEntry[] = [];
 
     for (const line of lines) {
@@ -220,6 +220,7 @@ export function manualDeny(requestId: string, options: ManualActionOptions): boo
  * Check if the auto-approve engine is currently running.
  */
 export function isEngineRunning(): boolean {
+  // biome-ignore lint/complexity/useOptionalChain: optional chain returns boolean|undefined, breaking the return type
   return currentEngine !== null && currentEngine.isRunning();
 }
 
@@ -232,7 +233,7 @@ export function isEngineRunning(): boolean {
  */
 export async function startEngine(options: StartEngineOptions): Promise<void> {
   // If already running, do nothing
-  if (currentEngine && currentEngine.isRunning()) {
+  if (currentEngine?.isRunning()) {
     return;
   }
 
@@ -278,10 +279,7 @@ export interface ApproveCommandOptions {
  * - --deny <id>: manually deny a pending request
  * - <request-id> (argument): manually approve a pending request
  */
-export async function approveCommand(
-  requestId: string | undefined,
-  options: ApproveCommandOptions
-): Promise<void> {
+export async function approveCommand(requestId: string | undefined, options: ApproveCommandOptions): Promise<void> {
   const repoPath = process.cwd();
   const auditDir = repoPath;
 

@@ -10,7 +10,7 @@
  */
 
 import { $ } from 'bun';
-import { getCurrentBranch, assertNotMainBranch } from './ship.js';
+import { assertNotMainBranch, getCurrentBranch } from './ship.js';
 
 // ============================================================================
 // Types
@@ -25,9 +25,7 @@ export interface PushOptions {
 // Main Command
 // ============================================================================
 
-export async function pushCommand(
-  options: PushOptions = {}
-): Promise<void> {
+export async function pushCommand(options: PushOptions = {}): Promise<void> {
   try {
     const repoPath = process.cwd();
 
@@ -58,7 +56,7 @@ export async function pushCommand(
 
     if (!hasUpstream && options.setUpstream !== false) {
       pushArgs.push('-u', 'origin', branch);
-      console.log('   Setting upstream to origin/' + branch);
+      console.log(`   Setting upstream to origin/${branch}`);
     }
 
     // Execute push
@@ -70,7 +68,6 @@ export async function pushCommand(
     }
 
     console.log(`\n✅ Pushed ${branch} to remote`);
-
   } catch (error: any) {
     console.error(`❌ Push failed: ${error.message}`);
     process.exit(1);

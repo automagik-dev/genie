@@ -16,18 +16,18 @@
  * with a different model profile for diverse pair programming.
  */
 
-import * as tmux from '../lib/tmux.js';
-import * as skillLoader from '../lib/skill-loader.js';
-import { buildSpawnCommand } from '../lib/spawn-command.js';
 import {
-  loadGenieConfig,
-  getWorkerProfile,
   getCouncilPreset,
   getDefaultCouncilPreset,
   getFallbackCouncilPreset,
   getSessionName,
+  getWorkerProfile,
+  loadGenieConfig,
 } from '../lib/genie-config.js';
-import type { WorkerProfile, CouncilPreset } from '../types/genie-config.js';
+import * as skillLoader from '../lib/skill-loader.js';
+import { buildSpawnCommand } from '../lib/spawn-command.js';
+import * as tmux from '../lib/tmux.js';
+import type { CouncilPreset } from '../types/genie-config.js';
 
 // ============================================================================
 // Types
@@ -105,7 +105,7 @@ export async function councilCommand(options: CouncilOptions = {}): Promise<void
 
   // 5. Ensure session exists
   const sessions = await tmux.listSessions();
-  const sessionExists = sessions.some(s => s.name === session);
+  const sessionExists = sessions.some((s) => s.name === session);
   if (!sessionExists) {
     console.log(`Creating tmux session: ${session}`);
     await tmux.executeTmux(`new-session -d -s '${session}'`);
@@ -113,7 +113,7 @@ export async function councilCommand(options: CouncilOptions = {}): Promise<void
 
   // 6. Find unique window name
   const windows = await tmux.listWindows(session);
-  const windowNames = windows.map(w => w.name);
+  const windowNames = windows.map((w) => w.name);
   let windowName = 'council';
   let counter = 1;
   while (windowNames.includes(windowName)) {
@@ -151,7 +151,7 @@ export async function councilCommand(options: CouncilOptions = {}): Promise<void
 
   // 12. Wait for Claude instances to start, then send skill if available
   if (skill) {
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    await new Promise((resolve) => setTimeout(resolve, 2500));
 
     // 13. Send skill to both panes
     const slashCommand = `/${skillName}`;
@@ -167,9 +167,9 @@ export async function councilCommand(options: CouncilOptions = {}): Promise<void
   }
 
   // 15. Summary
-  console.log(`\n\x1b[32m✓ Council ready\x1b[0m`);
+  console.log('\n\x1b[32m✓ Council ready\x1b[0m');
   console.log(`\n  Window: ${session}:${windowName}`);
-  console.log(`  Switch panes: Ctrl-B + arrow keys`);
+  console.log('  Switch panes: Ctrl-B + arrow keys');
   console.log(`  Attach: term attach ${session}:${windowName}`);
   console.log('');
 }

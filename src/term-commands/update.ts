@@ -22,10 +22,7 @@ export interface UpdateOptions {
 
 const VALID_STATUSES = ['ready', 'in_progress', 'done', 'blocked'];
 
-export async function updateCommand(
-  taskId: string,
-  options: UpdateOptions
-): Promise<void> {
+export async function updateCommand(taskId: string, options: UpdateOptions): Promise<void> {
   try {
     const repoPath = process.cwd();
     const backend = getBackend(repoPath);
@@ -62,13 +59,21 @@ export async function updateCommand(
 
     // Parse blocked-by options
     // Note: empty string clears the list (results in [])
-    const blockedBy = options.blockedBy !== undefined
-      ? options.blockedBy.split(',').map(s => s.trim()).filter(Boolean)
-      : undefined;
+    const blockedBy =
+      options.blockedBy !== undefined
+        ? options.blockedBy
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
 
-    const addBlockedBy = options.addBlockedBy !== undefined
-      ? options.addBlockedBy.split(',').map(s => s.trim()).filter(Boolean)
-      : undefined;
+    const addBlockedBy =
+      options.addBlockedBy !== undefined
+        ? options.addBlockedBy
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
 
     // Perform update
     const updated = await backend.update(taskId, {
@@ -108,7 +113,6 @@ export async function updateCommand(
     for (const change of changes) {
       console.log(`   ${change}`);
     }
-
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
     process.exit(1);

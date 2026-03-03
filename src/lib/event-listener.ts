@@ -232,9 +232,7 @@ export function isBashRequest(request: PermissionRequest): boolean {
  * @param callback - Function to call when a permission request is detected
  * @returns EventSubscription handle for processing events and unsubscribing
  */
-export function subscribeToPermissionRequests(
-  callback: (request: PermissionRequest) => void
-): EventSubscription {
+export function subscribeToPermissionRequests(callback: (request: PermissionRequest) => void): EventSubscription {
   let active = true;
 
   return {

@@ -1,19 +1,15 @@
-import { join } from 'path';
-import * as tmux from '../lib/tmux.js';
-import { createWorktreeManager } from '../lib/worktree.js';
+import { join } from 'node:path';
 import { resolveTarget } from '../lib/target-resolver.js';
+import * as tmux from '../lib/tmux.js';
 import { addSubPane } from '../lib/worker-registry.js';
+import { createWorktreeManager } from '../lib/worktree.js';
 
 export interface SplitOptions {
   workspace?: string;
   worktree?: string;
 }
 
-export async function splitSessionPane(
-  target: string,
-  direction?: string,
-  options: SplitOptions = {}
-): Promise<void> {
+export async function splitSessionPane(target: string, direction?: string, options: SplitOptions = {}): Promise<void> {
   try {
     // Use target resolver (DEC-1 from wish-26)
     const resolved = await resolveTarget(target);
@@ -38,7 +34,7 @@ export async function splitSessionPane(
 
       const manager = createWorktreeManager({
         baseDir: join(options.workspace, '.worktrees'),
-        repoPath: options.workspace
+        repoPath: options.workspace,
       });
 
       // Check if worktree exists, create if not

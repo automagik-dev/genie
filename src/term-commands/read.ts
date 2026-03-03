@@ -1,5 +1,5 @@
-import * as logReader from '../lib/log-reader.js';
 import { getTerminalConfig } from '../lib/genie-config.js';
+import * as logReader from '../lib/log-reader.js';
 import { resolveTarget } from '../lib/target-resolver.js';
 
 export interface ReadOptions {
@@ -30,9 +30,9 @@ export async function readSessionLogs(target: string, options: ReadOptions): Pro
 
     // Parse options
     const readOptions: logReader.ReadOptions = {
-      lines: options.lines ? parseInt(options.lines, 10) : defaultLines,
-      from: options.from ? parseInt(options.from, 10) : undefined,
-      to: options.to ? parseInt(options.to, 10) : undefined,
+      lines: options.lines ? Number.parseInt(options.lines, 10) : defaultLines,
+      from: options.from ? Number.parseInt(options.from, 10) : undefined,
+      to: options.to ? Number.parseInt(options.to, 10) : undefined,
       range: options.range,
       search: options.search,
       grep: options.grep,
@@ -47,9 +47,13 @@ export async function readSessionLogs(target: string, options: ReadOptions): Pro
       console.log(`Following "${target}" (Ctrl+C to stop)...`);
       console.log('');
 
-      const stopFollowing = await logReader.followSessionLogs(sessionName, (line) => {
-        console.log(line);
-      }, { pane: resolvedPaneId });
+      const stopFollowing = await logReader.followSessionLogs(
+        sessionName,
+        (line) => {
+          console.log(line);
+        },
+        { pane: resolvedPaneId },
+      );
 
       // Handle Ctrl+C
       process.on('SIGINT', () => {
@@ -68,12 +72,18 @@ export async function readSessionLogs(target: string, options: ReadOptions): Pro
 
     if (options.json) {
       const lines = content.split('\n');
-      console.log(JSON.stringify({
-        target,
-        session: sessionName,
-        lineCount: lines.length,
-        content: lines,
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            target,
+            session: sessionName,
+            lineCount: lines.length,
+            content: lines,
+          },
+          null,
+          2,
+        ),
+      );
       return;
     }
 

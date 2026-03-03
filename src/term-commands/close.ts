@@ -14,18 +14,20 @@
  *   -y, --yes              - Skip confirmation
  */
 
-import { $ } from 'bun';
+import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
+import { $ } from 'bun';
+import * as beadsRegistry from '../lib/beads-registry.js';
+import { type TaskBackend, getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
-import { getBackend, TaskBackend } from '../lib/task-backend.js';
 import { cleanupEventFile } from './events.js';
-import { join } from 'path';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
-const useBeadsRegistry = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+const useBeadsRegistry =
+  beadsRegistry.isBeadsRegistryEnabled() &&
+  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -87,10 +89,7 @@ async function syncBeads(): Promise<boolean> {
 /**
  * Merge worktree branch to main
  */
-async function mergeToMain(
-  repoPath: string,
-  branchName: string
-): Promise<boolean> {
+async function mergeToMain(repoPath: string, branchName: string): Promise<boolean> {
   try {
     // Get current branch
     const currentResult = await $`git -C ${repoPath} branch --show-current`.quiet();
@@ -158,10 +157,7 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 // Main Command
 // ============================================================================
 
-export async function closeCommand(
-  taskId: string,
-  options: CloseOptions = {}
-): Promise<void> {
+export async function closeCommand(taskId: string, options: CloseOptions = {}): Promise<void> {
   try {
     // Detect repo path from cwd
     const repoPath = process.cwd();
@@ -191,9 +187,8 @@ export async function closeCommand(
 
     // Confirm with user
     if (!options.yes) {
-      const workerMsg = workerCount > 1
-        ? ` and kill ${workerCount} workers`
-        : worker ? ` and kill worker (pane ${worker.paneId})` : '';
+      const workerMsg =
+        workerCount > 1 ? ` and kill ${workerCount} workers` : worker ? ` and kill worker (pane ${worker.paneId})` : '';
       const confirmed = await confirm({
         message: `Close ${taskId}${workerMsg}?`,
         default: true,
@@ -215,7 +210,7 @@ export async function closeCommand(
         console.error(`❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
         // Continue with cleanup anyway
       } else {
-        console.log(`   ✅ Task marked as done`);
+        console.log('   ✅ Task marked as done');
       }
     } else {
       // Beads backend: use bd close
@@ -224,18 +219,18 @@ export async function closeCommand(
         console.error(`❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
         // Continue with cleanup anyway
       } else {
-        console.log(`   ✅ Issue closed`);
+        console.log('   ✅ Issue closed');
       }
     }
 
     // 2. Sync beads (unless --no-sync or using local backend)
     if (!isLocal && !options.noSync) {
-      console.log(`🔄 Syncing beads...`);
+      console.log('🔄 Syncing beads...');
       const synced = await syncBeads();
       if (synced) {
-        console.log(`   ✅ Synced to git`);
+        console.log('   ✅ Synced to git');
       } else {
-        console.log(`   ⚠️  Sync failed (non-fatal)`);
+        console.log('   ⚠️  Sync failed (non-fatal)');
       }
     }
 
@@ -243,18 +238,18 @@ export async function closeCommand(
     if (worker?.worktree && !options.keepWorktree) {
       // Merge if requested
       if (options.merge) {
-        console.log(`🔀 Merging changes...`);
+        console.log('🔀 Merging changes...');
         const merged = await mergeToMain(worker.repoPath, taskId);
         if (merged) {
-          console.log(`   ✅ Merged to main`);
+          console.log('   ✅ Merged to main');
         }
       }
 
       // Remove worktree
-      console.log(`🌳 Removing worktree...`);
+      console.log('🌳 Removing worktree...');
       const removed = await removeWorktree(taskId, worker.repoPath);
       if (removed) {
-        console.log(`   ✅ Worktree removed`);
+        console.log('   ✅ Worktree removed');
       }
     }
 
@@ -276,23 +271,23 @@ export async function closeCommand(
             // Session gone — try direct window kill as fallback
             await tmux.killWindow(w.windowId);
           }
-          console.log(`   ✅ Window killed`);
+          console.log('   ✅ Window killed');
         } catch {
-          console.log(`   ℹ️  Window already gone`);
+          console.log('   ℹ️  Window already gone');
         }
       } else if (w.windowName) {
         // Fallback: name-based kill for workers without windowId (backward compat)
         console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
         try {
           await tmux.killWindow(w.windowName);
-          console.log(`   ✅ Window killed`);
+          console.log('   ✅ Window killed');
         } catch {
-          console.log(`   ℹ️  Window already gone`);
+          console.log('   ℹ️  Window already gone');
         }
       } else {
         console.log(`💀 Killing worker pane (${w.id})...`);
         await killWorkerPane(w.paneId);
-        console.log(`   ✅ Pane killed`);
+        console.log('   ✅ Pane killed');
       }
 
       // 5. Unregister worker from both registries
@@ -318,7 +313,6 @@ export async function closeCommand(
     }
 
     console.log(`\n✅ ${taskId} closed successfully`);
-
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
     process.exit(1);

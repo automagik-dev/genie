@@ -24,10 +24,7 @@ export type LayoutMode = 'mosaic' | 'vertical';
  * @param windowTarget — tmux window target (e.g., "session:0" or "@4")
  * @param mode — Layout mode. Defaults to "mosaic".
  */
-export function buildLayoutCommand(
-  windowTarget: string,
-  mode: LayoutMode = 'mosaic',
-): string {
+export function buildLayoutCommand(windowTarget: string, mode: LayoutMode = 'mosaic'): string {
   const layout = mode === 'vertical' ? 'even-horizontal' : 'tiled';
   return `select-layout -t '${windowTarget}' ${layout}`;
 }

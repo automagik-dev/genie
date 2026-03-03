@@ -10,8 +10,8 @@
  *   - Partial-match section lookup
  */
 
-import { readFile, readdir, access, stat } from 'fs/promises';
-import { join } from 'path';
+import { access, readFile, readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // ============================================================================
 // Types
@@ -148,10 +148,7 @@ export async function readWish(repoPath: string, slug: string): Promise<WishDocu
   const wishPath = getWishPath(repoPath, slug);
 
   try {
-    const [content, fileStat] = await Promise.all([
-      readFile(wishPath, 'utf-8'),
-      stat(wishPath),
-    ]);
+    const [content, fileStat] = await Promise.all([readFile(wishPath, 'utf-8'), stat(wishPath)]);
 
     return {
       raw: content,
@@ -172,11 +169,11 @@ export function findSection(document: WishDocument, heading: string): WishSectio
   const lower = heading.toLowerCase();
 
   // Exact match first
-  const exact = document.sections.find(s => s.heading.toLowerCase() === lower);
+  const exact = document.sections.find((s) => s.heading.toLowerCase() === lower);
   if (exact) return exact;
 
   // Partial match
-  const partial = document.sections.find(s => s.heading.toLowerCase().includes(lower));
+  const partial = document.sections.find((s) => s.heading.toLowerCase().includes(lower));
   return partial || null;
 }
 
@@ -184,7 +181,7 @@ export function findSection(document: WishDocument, heading: string): WishSectio
  * List all section headings
  */
 export function listSections(document: WishDocument): Array<{ heading: string; level: number; lineCount: number }> {
-  return document.sections.map(s => ({
+  return document.sections.map((s) => ({
     heading: s.heading,
     level: s.level,
     lineCount: s.endLine - s.startLine,
@@ -214,7 +211,7 @@ export async function listWishSlugs(repoPath: string): Promise<string[]> {
 
     const results = await Promise.all(
       entries
-        .filter(entry => entry.isDirectory())
+        .filter((entry) => entry.isDirectory())
         .map(async (entry) => {
           try {
             await access(join(wishesDir, entry.name, 'wish.md'));
@@ -222,7 +219,7 @@ export async function listWishSlugs(repoPath: string): Promise<string[]> {
           } catch {
             return null;
           }
-        })
+        }),
     );
 
     return results.filter((slug): slug is string => slug !== null).sort();

@@ -1,6 +1,6 @@
-import { mkdir, readFile, writeFile, access } from 'fs/promises';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export interface SessionMetadata {
   worktreePath?: string;
@@ -34,10 +34,7 @@ async function saveSessions(data: SessionsData): Promise<void> {
   await writeFile(SESSIONS_FILE, JSON.stringify(data, null, 2));
 }
 
-export async function saveSessionMetadata(
-  name: string,
-  data: Omit<SessionMetadata, 'createdAt'>
-): Promise<void> {
+export async function saveSessionMetadata(name: string, data: Omit<SessionMetadata, 'createdAt'>): Promise<void> {
   const sessions = await loadSessions();
   sessions.sessions[name] = {
     ...data,

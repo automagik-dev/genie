@@ -5,8 +5,8 @@
  * Minimal by design.
  */
 
-import { readFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 
 export interface BeadsValidateOptions {
   repo?: string;

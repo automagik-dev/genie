@@ -9,17 +9,19 @@
  *   --keep-worktree        - Don't remove the worktree
  */
 
-import { $ } from 'bun';
+import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
+import { $ } from 'bun';
+import * as beadsRegistry from '../lib/beads-registry.js';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
 import { cleanupEventFile } from './events.js';
-import { join } from 'path';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
-const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+const useBeads =
+  beadsRegistry.isBeadsRegistryEnabled() &&
+  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -84,10 +86,7 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<boolean
 // Main Command
 // ============================================================================
 
-export async function killCommand(
-  target: string,
-  options: KillOptions = {}
-): Promise<void> {
+export async function killCommand(target: string, options: KillOptions = {}): Promise<void> {
   try {
     // Find worker by ID, pane, or task
     let worker: registry.Worker | null = null;
@@ -104,7 +103,7 @@ export async function killCommand(
 
     if (!worker) {
       console.error(`❌ Worker "${target}" not found.`);
-      console.log(`   Run \`genie workers\` to see active workers.`);
+      console.log('   Run `genie workers` to see active workers.');
       process.exit(1);
     }
 
@@ -138,35 +137,35 @@ export async function killCommand(
           // Session gone — try direct window kill as fallback
           await tmux.killWindow(worker.windowId);
         }
-        console.log(`   ✅ Window killed`);
+        console.log('   ✅ Window killed');
       } catch {
-        console.log(`   ℹ️  Window already gone`);
+        console.log('   ℹ️  Window already gone');
       }
     } else if (worker.windowName) {
       // Fallback: name-based kill for workers without windowId (backward compat)
       console.log(`💀 Killing worker window "${worker.windowName}"...`);
       try {
         await tmux.killWindow(worker.windowName);
-        console.log(`   ✅ Window killed`);
+        console.log('   ✅ Window killed');
       } catch {
-        console.log(`   ℹ️  Window already gone`);
+        console.log('   ℹ️  Window already gone');
       }
     } else {
       console.log(`💀 Killing worker pane ${worker.paneId}...`);
       const killed = await killWorkerPane(worker.paneId);
       if (killed) {
-        console.log(`   ✅ Pane killed`);
+        console.log('   ✅ Pane killed');
       } else {
-        console.log(`   ℹ️  Pane already gone`);
+        console.log('   ℹ️  Pane already gone');
       }
     }
 
     // 2. Remove worktree (unless --keep-worktree)
     if (worker.worktree && !options.keepWorktree) {
-      console.log(`🌳 Removing worktree...`);
+      console.log('🌳 Removing worktree...');
       const removed = await removeWorktree(worker.taskId, worker.repoPath);
       if (removed) {
-        console.log(`   ✅ Worktree removed`);
+        console.log('   ✅ Worktree removed');
       }
     }
 
@@ -186,13 +185,12 @@ export async function killCommand(
     await registry.unregister(worker.id);
     // Cleanup event file
     await cleanupEventFile(worker.paneId).catch(() => {});
-    console.log(`   ✅ Worker unregistered`);
+    console.log('   ✅ Worker unregistered');
 
     // 4. Note about task status
     console.log(`\n⚠️  Task ${worker.taskId} is still in_progress in beads.`);
     console.log(`   Run \`bd update ${worker.taskId} --status open\` to reopen,`);
     console.log(`   or \`term work ${worker.taskId}\` to start a new worker.`);
-
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
     process.exit(1);

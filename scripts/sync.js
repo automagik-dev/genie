@@ -13,12 +13,12 @@
  * Also triggers worker restart after sync.
  */
 
-import { execSync } from 'child_process';
-import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, copyFileSync, rmSync } from 'fs';
-import path from 'path';
-import os from 'os';
-import http from 'http';
-import { fileURLToPath } from 'url';
+import { execSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
@@ -77,20 +77,23 @@ function getPluginVersion() {
 function triggerWorkerRestart() {
   return new Promise((resolve) => {
     console.log('\nTriggering worker restart...');
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port: WORKER_PORT,
-      path: '/api/admin/restart',
-      method: 'POST',
-      timeout: 2000
-    }, (res) => {
-      if (res.statusCode === 200) {
-        console.log('Worker restart triggered');
-      } else {
-        console.log(`Worker restart returned status ${res.statusCode}`);
-      }
-      resolve();
-    });
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: WORKER_PORT,
+        path: '/api/admin/restart',
+        method: 'POST',
+        timeout: 2000,
+      },
+      (res) => {
+        if (res.statusCode === 200) {
+          console.log('Worker restart triggered');
+        } else {
+          console.log(`Worker restart returned status ${res.statusCode}`);
+        }
+        resolve();
+      },
+    );
     req.on('error', () => {
       console.log('Worker not running, will start on next hook');
       resolve();
@@ -105,7 +108,9 @@ function triggerWorkerRestart() {
 }
 
 async function main() {
-  console.warn('\x1b[33mWarning: scripts/sync.js is deprecated. Use `term sync` instead for symlink-based sync with registry updates.\x1b[0m\n');
+  console.warn(
+    '\x1b[33mWarning: scripts/sync.js is deprecated. Use `term sync` instead for symlink-based sync with registry updates.\x1b[0m\n',
+  );
 
   const version = getPluginVersion();
   console.log(`Syncing genie ${version || 'unknown'} to ${INSTALLED_PATH}...`);
@@ -130,7 +135,6 @@ async function main() {
 
     // Trigger worker restart
     await triggerWorkerRestart();
-
   } catch (error) {
     console.error('Sync failed:', error.message);
     process.exit(1);

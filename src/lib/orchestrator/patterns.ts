@@ -134,7 +134,7 @@ export const workingPatterns: PatternMatch[] = [
   {
     type: 'claude_code_working',
     // Claude Code shows tool icons when working
-    pattern: /[🛠️🔧⚙️]\s*(?:Read|Edit|Write|Bash|Glob|Grep|Task)/,
+    pattern: /[🛠️🔧⚙️]\s*(?:Read|Edit|Write|Bash|Glob|Grep|Task)/u,
   },
   {
     type: 'claude_code_streaming',
@@ -238,7 +238,7 @@ export function extractPlanFile(content: string): string | null {
 // Match all patterns of a type against content
 export function matchPatterns(
   content: string,
-  patterns: PatternMatch[]
+  patterns: PatternMatch[],
 ): { type: string; match: RegExpMatchArray; extracted?: Record<string, string> }[] {
   const cleanContent = stripAnsi(content);
   const matches: { type: string; match: RegExpMatchArray; extracted?: Record<string, string> }[] = [];
@@ -270,7 +270,7 @@ export function hasMatch(content: string, patterns: PatternMatch[]): boolean {
 // Get the first match from a pattern set
 export function getFirstMatch(
   content: string,
-  patterns: PatternMatch[]
+  patterns: PatternMatch[],
 ): { type: string; match: RegExpMatchArray; extracted?: Record<string, string> } | null {
   const matches = matchPatterns(content, patterns);
   return matches.length > 0 ? matches[0] : null;

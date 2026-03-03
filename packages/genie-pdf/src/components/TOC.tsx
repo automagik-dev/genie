@@ -1,7 +1,6 @@
-import React from "react";
-import { View, Text, StyleSheet } from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
-import type { HeadingInfo } from "../markdown.js";
+import { StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { HeadingInfo } from '../markdown.js';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface TOCProps {
   headings: HeadingInfo[];
@@ -9,7 +8,7 @@ interface TOCProps {
   title?: string;
 }
 
-export function TOC({ headings, theme, title = "Table of Contents" }: TOCProps) {
+export function TOC({ headings, theme, title = 'Table of Contents' }: TOCProps) {
   const styles = StyleSheet.create({
     container: {
       marginBottom: 30,
@@ -24,7 +23,7 @@ export function TOC({ headings, theme, title = "Table of Contents" }: TOCProps) 
       marginBottom: 15,
     },
     entry: {
-      flexDirection: "row",
+      flexDirection: 'row',
       marginBottom: 6,
     },
     entryText: {
@@ -64,7 +63,7 @@ export function TOC({ headings, theme, title = "Table of Contents" }: TOCProps) 
       {headings.map((heading, index) => (
         <View key={index} style={[styles.entry, getLevelStyle(heading.level)]}>
           <Text style={styles.entryText}>
-            {heading.level > 1 ? "• " : ""}
+            {heading.level > 1 ? '• ' : ''}
             {heading.text}
           </Text>
         </View>

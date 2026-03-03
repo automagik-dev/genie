@@ -6,11 +6,11 @@
  * Port: 48888 (avoids collision with claude-mem's 37777)
  */
 
-import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { spawn, execSync } from 'child_process';
+import { execSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const PORT = 48888;
 const GENIE_DIR = join(homedir(), '.genie');
@@ -57,7 +57,7 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
 function parseBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       try {
         resolve(body ? JSON.parse(body) : {});
@@ -91,7 +91,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       service: 'genie',
       version: process.env.GENIE_VERSION || 'dev',
       port: PORT,
-      uptime: process.uptime()
+      uptime: process.uptime(),
     });
     return;
   }
@@ -106,12 +106,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Update workflow state
   if (path === '/api/workflow/update' && method === 'POST') {
     try {
-      const body = await parseBody(req) as Partial<WorkflowState>;
+      const body = (await parseBody(req)) as Partial<WorkflowState>;
       const state = loadState();
       Object.assign(state, body);
       saveState(state);
       json(res, { success: true, state });
-    } catch (error) {
+    } catch (_error) {
       json(res, { error: 'Invalid request body' }, 400);
     }
     return;
@@ -120,7 +120,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Start wish tracking
   if (path === '/api/workflow/wish/start' && method === 'POST') {
     try {
-      const body = await parseBody(req) as { slug: string };
+      const body = (await parseBody(req)) as { slug: string };
       const state = loadState();
       state.activeWish = body.slug;
       saveState(state);
@@ -134,12 +134,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Start forge session
   if (path === '/api/workflow/forge/start' && method === 'POST') {
     try {
-      const body = await parseBody(req) as { wishSlug: string };
+      const body = (await parseBody(req)) as { wishSlug: string };
       const state = loadState();
       state.activeForge = {
         wishSlug: body.wishSlug,
         completedTasks: [],
-        failedTasks: []
+        failedTasks: [],
       };
       saveState(state);
       json(res, { success: true, forge: state.activeForge });
@@ -152,7 +152,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // Update forge task status
   if (path === '/api/workflow/forge/task' && method === 'POST') {
     try {
-      const body = await parseBody(req) as { task: string; status: 'started' | 'completed' | 'failed' };
+      const body = (await parseBody(req)) as { task: string; status: 'started' | 'completed' | 'failed' };
       const state = loadState();
       if (!state.activeForge) {
         json(res, { error: 'No active forge session' }, 400);
@@ -220,7 +220,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 function isAlreadyRunning(): boolean {
   try {
     if (existsSync(PID_FILE)) {
-      const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
+      const pid = Number.parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
       // Check if process exists
       process.kill(pid, 0);
       return true;
@@ -249,7 +249,7 @@ if (command === 'start') {
   if (process.argv[3] !== '--foreground') {
     const child = spawn(process.argv[0], [process.argv[1], 'start', '--foreground'], {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
     });
     child.unref();
     console.log(`Worker started (PID: ${child.pid})`);
@@ -258,7 +258,7 @@ if (command === 'start') {
 
   // Running in foreground
   const server = createServer((req, res) => {
-    handleRequest(req, res).catch(err => {
+    handleRequest(req, res).catch((err) => {
       console.error('Request error:', err);
       json(res, { error: 'Internal server error' }, 500);
     });
@@ -278,11 +278,10 @@ if (command === 'start') {
     server.close();
     process.exit(0);
   });
-
 } else if (command === 'stop') {
   try {
     if (existsSync(PID_FILE)) {
-      const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
+      const pid = Number.parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
       process.kill(pid, 'SIGTERM');
       console.log('Worker stopped');
     } else {
@@ -292,7 +291,6 @@ if (command === 'start') {
     console.log('Worker not running');
   }
   process.exit(0);
-
 } else if (command === 'status') {
   if (isAlreadyRunning()) {
     const pid = readFileSync(PID_FILE, 'utf-8').trim();
@@ -308,7 +306,6 @@ if (command === 'start') {
     console.log('Worker not running');
   }
   process.exit(0);
-
 } else if (command === 'hook') {
   // Hook subcommand for lifecycle hooks
   const hookType = process.argv[3];
@@ -326,7 +323,6 @@ if (command === 'start') {
     }
   }
   process.exit(0);
-
 } else {
   console.log(`
 genie worker service

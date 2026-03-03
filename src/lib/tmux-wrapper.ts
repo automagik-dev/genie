@@ -1,8 +1,8 @@
-import { exec as execCallback } from 'child_process';
-import { promisify } from 'util';
-import { join } from 'path';
-import { mkdirSync, existsSync } from 'fs';
-import { homedir } from 'os';
+import { exec as execCallback } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 const exec = promisify(execCallback);
 
@@ -21,7 +21,7 @@ function getLogDir(): string {
  * Strip verbose flags (-v, -vv, -vvv, etc.) from tmux arguments
  */
 function stripVerboseFlags(args: string[]): string[] {
-  return args.filter(arg => !/^-v+$/.test(arg));
+  return args.filter((arg) => !/^-v+$/.test(arg));
 }
 
 /**

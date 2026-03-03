@@ -5,9 +5,9 @@
  * This allows term sync to mark plugins as devMode after syncing.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const PLUGINS_DIR = join(homedir(), '.claude', 'plugins');
 const REGISTRY_PATH = join(PLUGINS_DIR, 'installed_plugins.json');
@@ -98,7 +98,7 @@ export function getPluginEntries(pluginId: string): PluginInstallEntry[] {
 export function findPluginEntry(
   pluginId: string,
   scope: 'user' | 'project',
-  projectPath?: string
+  projectPath?: string,
 ): PluginInstallEntry | null {
   const entries = getPluginEntries(pluginId);
 
@@ -123,10 +123,7 @@ export function findPluginEntry(
  * If an entry with the same scope (and projectPath for project scope) exists,
  * it will be updated. Otherwise, a new entry will be created.
  */
-export function upsertPluginEntry(
-  pluginId: string,
-  entry: PluginInstallEntry
-): void {
+export function upsertPluginEntry(pluginId: string, entry: PluginInstallEntry): void {
   const registry = loadPluginRegistry();
 
   if (!registry.plugins[pluginId]) {
@@ -166,11 +163,7 @@ export function upsertPluginEntry(
  * Updates the installPath to the symlink location and sets devMode: true.
  * Preserves existing metadata like installedAt, version, etc.
  */
-export function markPluginAsDevMode(
-  pluginId: string,
-  symlinkPath: string,
-  version?: string
-): boolean {
+export function markPluginAsDevMode(pluginId: string, symlinkPath: string, version?: string): boolean {
   const registry = loadPluginRegistry();
 
   if (!registry.plugins[pluginId]) {
@@ -248,7 +241,7 @@ export function unmarkPluginDevMode(pluginId: string): boolean {
 
   for (let i = 0; i < entries.length; i++) {
     if (entries[i].scope === 'user' && entries[i].devMode) {
-      delete entries[i].devMode;
+      entries[i].devMode = undefined;
       updated = true;
       break;
     }

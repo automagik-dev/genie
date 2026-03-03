@@ -19,7 +19,7 @@
  *   term session pane <sub>     - Pane management
  */
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
 // Re-export from existing command files
 export * as newCmd from '../new.js';
@@ -38,11 +38,8 @@ export * as paneCmd from '../pane.js';
  * Register session subcommands on a parent command
  */
 export function registerSessionCommands(program: Command): Command {
-  const sessionProgram = program
-    .command('session')
-    .description('Tmux session management (low-level primitives)');
+  const sessionProgram = program.command('session').description('Tmux session management (low-level primitives)');
 
   // Import dynamically to avoid circular deps
   return sessionProgram;
 }
-

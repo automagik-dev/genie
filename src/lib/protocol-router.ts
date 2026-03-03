@@ -7,10 +7,10 @@
  * (DEC-7) and then pushes to the tmux pane when the worker is idle.
  */
 
-import * as mailbox from './mailbox.js';
-import * as registry from './worker-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
+import * as mailbox from './mailbox.js';
 import { executeTmux } from './tmux.js';
+import * as registry from './worker-registry.js';
 
 // ============================================================================
 // Types
@@ -49,16 +49,14 @@ export async function sendMessage(
   if (!worker) {
     // Try finding by fuzzy match (team:role pattern)
     const allWorkers = await registry.list();
-    const matches = allWorkers.filter(w =>
-      w.id === to || w.role === to || `${w.team}:${w.role}` === to
-    );
+    const matches = allWorkers.filter((w) => w.id === to || w.role === to || `${w.team}:${w.role}` === to);
 
     if (matches.length > 1) {
       return {
         messageId: '',
         workerId: to,
         delivered: false,
-        reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map(m => m.id).join(', ')}. Please use a unique worker ID.`,
+        reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map((m) => m.id).join(', ')}. Please use a unique worker ID.`,
       };
     }
 
@@ -67,7 +65,7 @@ export async function sendMessage(
     if (!match) {
       // Fallback: try writing directly to native team inbox
       // This supports sending to team-lead or other agents not in the worker registry
-      const resolvedTeam = teamName ?? await nativeTeams.discoverTeamName();
+      const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
       if (resolvedTeam) {
         try {
           // Persist to mailbox first (DEC-7) even for native-only delivery
@@ -148,15 +146,9 @@ export async function sendMessage(
  * Write a Genie mailbox message to the Claude Code native inbox.
  * Best-effort — failures here don't block the Genie mailbox write.
  */
-async function writeToNativeInbox(
-  worker: registry.Worker,
-  message: mailbox.MailboxMessage,
-): Promise<boolean> {
+async function writeToNativeInbox(worker: registry.Worker, message: mailbox.MailboxMessage): Promise<boolean> {
   try {
-    const nativeMsg = mailbox.toNativeInboxMessage(
-      message,
-      worker.nativeColor ?? 'blue',
-    );
+    const nativeMsg = mailbox.toNativeInboxMessage(message, worker.nativeColor ?? 'blue');
     const agentName = worker.role ?? worker.id;
     await nativeTeams.writeNativeInbox(worker.team!, agentName, nativeMsg);
     return true;
@@ -171,10 +163,7 @@ async function writeToNativeInbox(
  * Used for non-native workers (e.g., Codex) that don't have
  * Claude Code's inbox polling. Best-effort — failures are non-fatal.
  */
-async function injectToTmuxPane(
-  worker: registry.Worker,
-  message: mailbox.MailboxMessage,
-): Promise<boolean> {
+async function injectToTmuxPane(worker: registry.Worker, message: mailbox.MailboxMessage): Promise<boolean> {
   if (!worker.paneId) return false;
 
   // Validate paneId to prevent shell injection
@@ -185,7 +174,7 @@ async function injectToTmuxPane(
     const escaped = message.body.replace(/'/g, "'\\''");
     // Send text first, then Enter after a short delay so the pane can process the input
     await executeTmux(`send-keys -t '${worker.paneId}' '${escaped}'`);
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 200));
     await executeTmux(`send-keys -t '${worker.paneId}' Enter`);
     return true;
   } catch {
@@ -199,10 +188,7 @@ async function injectToTmuxPane(
  * Called when a worker transitions to idle state.
  * For non-native workers, injects via tmux send-keys.
  */
-export async function flushPending(
-  repoPath: string,
-  workerId: string,
-): Promise<DeliveryResult[]> {
+export async function flushPending(repoPath: string, workerId: string): Promise<DeliveryResult[]> {
   const messages = await mailbox.pending(repoPath, workerId);
   if (messages.length === 0) return [];
 
@@ -237,20 +223,14 @@ export async function flushPending(
 /**
  * Get the inbox for a worker (all messages, with read/unread status).
  */
-export async function getInbox(
-  repoPath: string,
-  workerId: string,
-): Promise<mailbox.MailboxMessage[]> {
+export async function getInbox(repoPath: string, workerId: string): Promise<mailbox.MailboxMessage[]> {
   return mailbox.inbox(repoPath, workerId);
 }
 
 /**
  * Get unread message count for a worker.
  */
-export async function unreadCount(
-  repoPath: string,
-  workerId: string,
-): Promise<number> {
+export async function unreadCount(repoPath: string, workerId: string): Promise<number> {
   const messages = await mailbox.unread(repoPath, workerId);
   return messages.length;
 }

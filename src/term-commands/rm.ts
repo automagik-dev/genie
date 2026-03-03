@@ -1,7 +1,7 @@
-import { join } from 'path';
+import { join } from 'node:path';
+import { deleteSessionMetadata, loadSessionMetadata } from '../lib/session-metadata.js';
 import * as tmux from '../lib/tmux.js';
 import { createWorktreeManager } from '../lib/worktree.js';
-import { loadSessionMetadata, deleteSessionMetadata } from '../lib/session-metadata.js';
 
 export interface RemoveSessionOptions {
   keepWorktree?: boolean;
@@ -26,7 +26,7 @@ export async function removeSession(name: string, options: RemoveSessionOptions 
     if (metadata?.worktreePath && metadata?.workspace && !options.keepWorktree) {
       const manager = createWorktreeManager({
         baseDir: join(metadata.workspace, '.worktrees'),
-        repoPath: metadata.workspace
+        repoPath: metadata.workspace,
       });
       await manager.removeWorktree(name);
       console.log(`✅ Session "${name}" and worktree removed`);

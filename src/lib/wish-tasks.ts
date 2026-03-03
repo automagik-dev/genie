@@ -5,8 +5,8 @@
  * Stores links in .genie/wishes/<slug>/tasks.json
  */
 
-import { join } from 'path';
-import { readFile, writeFile, mkdir, access } from 'fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // ============================================================================
 // Types
@@ -100,12 +100,12 @@ export async function linkTask(
   wishSlug: string,
   taskId: string,
   taskTitle: string,
-  status: LinkedTask['status'] = 'open'
+  status: LinkedTask['status'] = 'open',
 ): Promise<void> {
   const data = await loadWishTasks(repoPath, wishSlug);
 
   // Check if already linked
-  const existing = data.tasks.find(t => t.id === taskId);
+  const existing = data.tasks.find((t) => t.id === taskId);
   if (existing) {
     // Update existing
     existing.title = taskTitle;
@@ -129,7 +129,7 @@ export async function linkTask(
 export async function unlinkTask(repoPath: string, wishSlug: string, taskId: string): Promise<boolean> {
   const data = await loadWishTasks(repoPath, wishSlug);
 
-  const index = data.tasks.findIndex(t => t.id === taskId);
+  const index = data.tasks.findIndex((t) => t.id === taskId);
   if (index === -1) {
     return false;
   }
@@ -146,11 +146,11 @@ export async function updateTaskStatus(
   repoPath: string,
   wishSlug: string,
   taskId: string,
-  status: LinkedTask['status']
+  status: LinkedTask['status'],
 ): Promise<boolean> {
   const data = await loadWishTasks(repoPath, wishSlug);
 
-  const task = data.tasks.find(t => t.id === taskId);
+  const task = data.tasks.find((t) => t.id === taskId);
   if (!task) {
     return false;
   }
@@ -171,7 +171,10 @@ export async function getWishTasks(repoPath: string, wishSlug: string): Promise<
 /**
  * Get wish status summary
  */
-export async function getWishStatus(repoPath: string, wishSlug: string): Promise<{
+export async function getWishStatus(
+  repoPath: string,
+  wishSlug: string,
+): Promise<{
   total: number;
   done: number;
   inProgress: number;
@@ -182,10 +185,10 @@ export async function getWishStatus(repoPath: string, wishSlug: string): Promise
 
   return {
     total: tasks.length,
-    done: tasks.filter(t => t.status === 'done').length,
-    inProgress: tasks.filter(t => t.status === 'in_progress').length,
-    blocked: tasks.filter(t => t.status === 'blocked').length,
-    open: tasks.filter(t => t.status === 'open').length,
+    done: tasks.filter((t) => t.status === 'done').length,
+    inProgress: tasks.filter((t) => t.status === 'in_progress').length,
+    blocked: tasks.filter((t) => t.status === 'blocked').length,
+    open: tasks.filter((t) => t.status === 'open').length,
   };
 }
 
@@ -196,13 +199,13 @@ export async function findWishForTask(repoPath: string, taskId: string): Promise
   const wishesDir = join(repoPath, '.genie', 'wishes');
 
   try {
-    const { readdir } = await import('fs/promises');
+    const { readdir } = await import('node:fs/promises');
     const entries = await readdir(wishesDir, { withFileTypes: true });
 
     for (const entry of entries) {
       if (entry.isDirectory()) {
         const tasks = await getWishTasks(repoPath, entry.name);
-        if (tasks.some(t => t.id === taskId)) {
+        if (tasks.some((t) => t.id === taskId)) {
           return entry.name;
         }
       }

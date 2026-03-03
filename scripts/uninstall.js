@@ -10,9 +10,9 @@
  *
  * Usage: node uninstall.js [--dry-run]
  */
-import { existsSync, unlinkSync, rmSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const VERBOSE = process.argv.includes('--verbose') || DRY_RUN;
@@ -79,7 +79,7 @@ function removeSymlink(name) {
 
 function removePluginEntry() {
   if (!existsSync(INSTALLED_PLUGINS)) {
-    if (VERBOSE) log(`  [skip] plugin entry - installed_plugins.json not found`);
+    if (VERBOSE) log('  [skip] plugin entry - installed_plugins.json not found');
     return false;
   }
 
@@ -88,12 +88,10 @@ function removePluginEntry() {
     const plugins = JSON.parse(content);
 
     // Find and remove genie entry
-    const key = Object.keys(plugins).find(k =>
-      k.includes('genie') || plugins[k]?.name === 'genie'
-    );
+    const key = Object.keys(plugins).find((k) => k.includes('genie') || plugins[k]?.name === 'genie');
 
     if (!key) {
-      if (VERBOSE) log(`  [skip] plugin entry - not found in installed_plugins.json`);
+      if (VERBOSE) log('  [skip] plugin entry - not found in installed_plugins.json');
       return false;
     }
 
@@ -103,7 +101,7 @@ function removePluginEntry() {
     }
 
     delete plugins[key];
-    writeFileSync(INSTALLED_PLUGINS, JSON.stringify(plugins, null, 2) + '\n');
+    writeFileSync(INSTALLED_PLUGINS, `${JSON.stringify(plugins, null, 2)}\n`);
     log(`  [removed] plugin entry: ${key}`);
     return true;
   } catch (error) {

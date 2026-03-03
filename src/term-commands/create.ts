@@ -15,10 +15,7 @@ export interface CreateOptions {
   json?: boolean;
 }
 
-export async function createCommand(
-  title: string,
-  options: CreateOptions = {}
-): Promise<void> {
+export async function createCommand(title: string, options: CreateOptions = {}): Promise<void> {
   const repoPath = process.cwd();
   const backend = getBackend(repoPath);
 
@@ -48,14 +45,14 @@ export async function createCommand(
     if (options.parent) console.log(`   Blocked by: ${options.parent}`);
 
     if (!options.json) {
-      console.log(`\nNext steps:`);
+      console.log('\nNext steps:');
       console.log(`   term work ${task.id}           - Start working on it`);
       console.log(`   term spawn brainstorm -t ${task.id}  - Plan with brainstorm skill`);
 
       if (backend.kind === 'beads') {
         console.log(`   bd show ${task.id}             - View details`);
       } else {
-        console.log(`   (Local tasks live in .genie/tasks.json)`);
+        console.log('   (Local tasks live in .genie/tasks.json)');
       }
     }
   } catch (error: any) {

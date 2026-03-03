@@ -67,7 +67,7 @@ export async function isTmuxRunning(): Promise<boolean> {
   try {
     await executeTmux("list-sessions -F '#{session_name}'");
     return true;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }
@@ -77,18 +77,18 @@ export async function isTmuxRunning(): Promise<boolean> {
  */
 export async function listSessions(): Promise<TmuxSession[]> {
   try {
-    const format = "#{session_id}:#{session_name}:#{?session_attached,1,0}:#{session_windows}";
+    const format = '#{session_id}:#{session_name}:#{?session_attached,1,0}:#{session_windows}';
     const output = await executeTmux(`list-sessions -F '${format}'`);
 
     if (!output) return [];
 
-    return output.split('\n').map(line => {
+    return output.split('\n').map((line) => {
       const [id, name, attached, windows] = line.split(':');
       return {
         id,
         name,
         attached: attached === '1',
-        windows: parseInt(windows, 10)
+        windows: Number.parseInt(windows, 10),
       };
     });
   } catch (error: any) {
@@ -106,8 +106,8 @@ export async function listSessions(): Promise<TmuxSession[]> {
 export async function findSessionByName(name: string): Promise<TmuxSession | null> {
   try {
     const sessions = await listSessions();
-    return sessions.find(session => session.name === name) || null;
-  } catch (error) {
+    return sessions.find((session) => session.name === name) || null;
+  } catch (_error) {
     return null;
   }
 }
@@ -117,18 +117,18 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
  */
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
   try {
-    const format = "#{window_id}:#{window_name}:#{?window_active,1,0}";
+    const format = '#{window_id}:#{window_name}:#{?window_active,1,0}';
     const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
 
     if (!output) return [];
 
-    return output.split('\n').map(line => {
+    return output.split('\n').map((line) => {
       const [id, name, active] = line.split(':');
       return {
         id,
         name,
         active: active === '1',
-        sessionId
+        sessionId,
       };
     });
   } catch (error: any) {
@@ -145,18 +145,18 @@ export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
  */
 export async function listPanes(windowId: string): Promise<TmuxPane[]> {
   try {
-    const format = "#{pane_id}:#{pane_title}:#{?pane_active,1,0}";
+    const format = '#{pane_id}:#{pane_title}:#{?pane_active,1,0}';
     const output = await executeTmux(`list-panes -t '${windowId}' -F '${format}'`);
 
     if (!output) return [];
 
-    return output.split('\n').map(line => {
+    return output.split('\n').map((line) => {
       const [id, title, active] = line.split(':');
       return {
         id,
         windowId,
         title: title,
-        active: active === '1'
+        active: active === '1',
       };
     });
   } catch (error: any) {
@@ -171,7 +171,7 @@ export async function listPanes(windowId: string): Promise<TmuxPane[]> {
 /**
  * Capture content from a specific pane, by default the latest 200 lines.
  */
-export async function capturePaneContent(paneId: string, lines: number = 200, includeColors: boolean = false): Promise<string> {
+export async function capturePaneContent(paneId: string, lines = 200, includeColors = false): Promise<string> {
   try {
     const colorFlag = includeColors ? '-e' : '';
     return await executeTmux(`capture-pane -p ${colorFlag} -t '${paneId}' -S -${lines} -E -`);
@@ -199,7 +199,7 @@ export async function createWindow(sessionId: string, name: string, workingDir?:
   const cdFlag = workingDir ? ` -c '${workingDir.replace(/'/g, "'\\''")}'` : '';
   await executeTmux(`new-window -t '${sessionId}' -n '${name}'${cdFlag}`);
   const windows = await listWindows(sessionId);
-  return windows.find(window => window.name === name) || null;
+  return windows.find((window) => window.name === name) || null;
 }
 
 /**
@@ -207,7 +207,7 @@ export async function createWindow(sessionId: string, name: string, workingDir?:
  */
 export async function findWindowByName(sessionId: string, name: string): Promise<TmuxWindow | null> {
   const windows = await listWindows(sessionId);
-  return windows.find(w => w.name === name) || null;
+  return windows.find((w) => w.name === name) || null;
 }
 
 /**
@@ -228,10 +228,7 @@ export async function killWindow(windowId: string): Promise<void> {
  * Kill a tmux window using session-qualified targeting.
  * Uses `sessionId:windowId` format to avoid ambiguity across sessions.
  */
-export async function killWindowQualified(
-  sessionId: string,
-  windowId: string
-): Promise<void> {
+export async function killWindowQualified(sessionId: string, windowId: string): Promise<void> {
   await executeTmux(`kill-window -t '${sessionId}:${windowId}'`);
 }
 
@@ -249,12 +246,8 @@ export async function killPane(paneId: string): Promise<void> {
  * Relies on codex's `disable_paste_burst = true` config to ensure Enter
  * is always treated as submit, not as a newline within a paste burst.
  */
-export async function pasteToPane(
-  paneId: string,
-  text: string,
-  submit: boolean = true,
-): Promise<void> {
-  const { execSync } = require('child_process');
+export async function pasteToPane(paneId: string, text: string, submit = true): Promise<void> {
+  const { execSync } = require('node:child_process');
   const escapedPane = escapeShellPath(paneId);
   const escapedText = text.replace(/'/g, "'\\''");
 
@@ -280,7 +273,7 @@ export async function splitPane(
   targetPaneId: string,
   direction: 'horizontal' | 'vertical' = 'vertical',
   size?: number,
-  workingDir?: string
+  workingDir?: string,
 ): Promise<TmuxPane | null> {
   // Build the split-window command
   // Order follows tmux convention: flags, -c, -p, -t, -F
@@ -319,7 +312,7 @@ export async function splitPane(
     id: newPaneId,
     windowId: windowId.trim(),
     active: false,
-    title: ''
+    title: '',
   };
 }
 
@@ -327,10 +320,15 @@ export async function splitPane(
 const activeCommands = new Map<string, CommandExecution>();
 
 const startMarkerText = 'TMUX_MCP_START';
-const endMarkerPrefix = "TMUX_MCP_DONE_";
+const endMarkerPrefix = 'TMUX_MCP_DONE_';
 
 // Execute a command in a tmux pane and track its execution
-export async function executeCommand(paneId: string, command: string, rawMode?: boolean, noEnter?: boolean): Promise<string> {
+export async function executeCommand(
+  paneId: string,
+  command: string,
+  rawMode?: boolean,
+  noEnter?: boolean,
+): Promise<string> {
   // Generate unique ID for this command execution
   const commandId = uuidv4();
 
@@ -349,16 +347,41 @@ export async function executeCommand(paneId: string, command: string, rawMode?: 
     command,
     status: 'pending',
     startTime: new Date(),
-    rawMode: rawMode || noEnter
+    rawMode: rawMode || noEnter,
   });
 
   // Send the command to the tmux pane
   if (noEnter) {
     // Check if this is a special key (e.g., Up, Down, Left, Right, Escape, Tab, etc.)
     // Special keys in tmux are typically capitalized or have special names
-    const specialKeys = ['Up', 'Down', 'Left', 'Right', 'Escape', 'Tab', 'Enter', 'Space',
-      'BSpace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown',
-      'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
+    const specialKeys = [
+      'Up',
+      'Down',
+      'Left',
+      'Right',
+      'Escape',
+      'Tab',
+      'Enter',
+      'Space',
+      'BSpace',
+      'Delete',
+      'Home',
+      'End',
+      'PageUp',
+      'PageDown',
+      'F1',
+      'F2',
+      'F3',
+      'F4',
+      'F5',
+      'F6',
+      'F7',
+      'F8',
+      'F9',
+      'F10',
+      'F11',
+      'F12',
+    ];
 
     if (specialKeys.includes(fullCommand)) {
       // Send special key as-is
@@ -386,7 +409,8 @@ export async function checkCommandStatus(commandId: string): Promise<CommandExec
   const content = await capturePaneContent(command.paneId, 1000);
 
   if (command.rawMode) {
-    command.result = 'Status tracking unavailable for rawMode commands. Use capture-pane to monitor interactive apps instead.';
+    command.result =
+      'Status tracking unavailable for rawMode commands. Use capture-pane to monitor interactive apps instead.';
     return command;
   }
 
@@ -395,7 +419,7 @@ export async function checkCommandStatus(commandId: string): Promise<CommandExec
   const endIndex = content.lastIndexOf(endMarkerPrefix);
 
   if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
-    command.result = "Command output could not be captured properly";
+    command.result = 'Command output could not be captured properly';
     return command;
   }
 
@@ -405,7 +429,7 @@ export async function checkCommandStatus(commandId: string): Promise<CommandExec
   const exitCodeMatch = endLine.match(endMarkerRegex);
 
   if (exitCodeMatch) {
-    const exitCode = parseInt(exitCodeMatch[1], 10);
+    const exitCode = Number.parseInt(exitCodeMatch[1], 10);
 
     command.status = exitCode === 0 ? 'completed' : 'error';
     command.exitCode = exitCode;
@@ -434,7 +458,7 @@ export function getActiveCommandIds(): string[] {
 }
 
 // Clean up completed commands older than a certain time
-export function cleanupOldCommands(maxAgeMinutes: number = 60): void {
+export function cleanupOldCommands(maxAgeMinutes = 60): void {
   const now = new Date();
 
   for (const [id, command] of activeCommands.entries()) {
@@ -447,9 +471,7 @@ export function cleanupOldCommands(maxAgeMinutes: number = 60): void {
 }
 
 function getEndMarkerText(): string {
-  return shellConfig.type === 'fish'
-    ? `${endMarkerPrefix}$status`
-    : `${endMarkerPrefix}$?`;
+  return shellConfig.type === 'fish' ? `${endMarkerPrefix}$status` : `${endMarkerPrefix}$?`;
 }
 
 /**
@@ -477,7 +499,7 @@ export async function renameWindow(windowId: string, newName: string): Promise<v
 export async function runCommandSync(
   paneId: string,
   command: string,
-  timeoutMs: number = 120000
+  timeoutMs = 120000,
 ): Promise<{ output: string; exitCode: number }> {
   const id = uuidv4().substring(0, 8);
   const outFile = `/tmp/genie-${id}.out`;
@@ -500,9 +522,7 @@ export async function runCommandSync(
   try {
     await Promise.race([
       executeTmux(`wait-for ${channel}`),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Command timed out')), timeoutMs)
-      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Command timed out')), timeoutMs)),
     ]);
   } catch (error: any) {
     if (error.message === 'Command timed out') {
@@ -520,14 +540,14 @@ export async function runCommandSync(
   let exitCode = 0;
 
   try {
-    const { readFile, unlink } = await import('fs/promises');
+    const { readFile, unlink } = await import('node:fs/promises');
 
     output = await readFile(outFile, 'utf-8');
     // Clean up output
     output = output.trim();
 
     const exitStr = await readFile(exitFile, 'utf-8');
-    exitCode = parseInt(exitStr.trim(), 10) || 0;
+    exitCode = Number.parseInt(exitStr.trim(), 10) || 0;
 
     // Clean up temp files
     await unlink(outFile).catch(() => {});
@@ -539,4 +559,3 @@ export async function runCommandSync(
 
   return { output, exitCode };
 }
-

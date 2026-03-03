@@ -3,19 +3,18 @@
  * Run with: bun test src/lib/event-listener.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { join } from 'path';
-import { mkdir, rm, writeFile, appendFile } from 'fs/promises';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { NormalizedEvent } from '../term-commands/events.js';
 import {
   type PermissionRequest,
-  type EventSubscription,
-  extractPermissionRequest,
   createPermissionRequestQueue,
-  subscribeToPermissionRequests,
+  extractPermissionRequest,
   getBashCommand,
   isBashRequest,
+  subscribeToPermissionRequests,
 } from './event-listener.js';
-import type { NormalizedEvent } from '../term-commands/events.js';
 
 // ============================================================================
 // Test Setup

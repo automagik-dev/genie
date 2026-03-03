@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-import { Config, ConfigSchema, Profile } from '../types/config.js';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { type Config, ConfigSchema, type Profile } from '../types/config.js';
 
 const CONFIG_DIR = join(homedir(), '.claudio');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');

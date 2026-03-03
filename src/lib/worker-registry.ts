@@ -6,9 +6,9 @@
  * `.genie/workers.json` (repo-local) or `~/.config/genie/workers.json`.
  */
 
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { ProviderName } from './provider-adapters.js';
 
 // ============================================================================
@@ -16,13 +16,13 @@ import type { ProviderName } from './provider-adapters.js';
 // ============================================================================
 
 export type WorkerState =
-  | 'spawning'    // Worker being created
-  | 'working'     // Actively producing output
-  | 'idle'        // At prompt, waiting for input
-  | 'permission'  // Waiting for permission approval
-  | 'question'    // Waiting for question answer
-  | 'done'        // Task completed, ready for close
-  | 'error';      // Encountered error
+  | 'spawning' // Worker being created
+  | 'working' // Actively producing output
+  | 'idle' // At prompt, waiting for input
+  | 'permission' // Waiting for permission approval
+  | 'question' // Waiting for question answer
+  | 'done' // Task completed, ready for close
+  | 'error'; // Encountered error
 
 export type TransportType = 'tmux';
 
@@ -98,7 +98,7 @@ function getRegistryFilePath(): string {
   const cwd = process.cwd();
   const repoGenie = join(cwd, '.genie');
   try {
-    const { existsSync } = require('fs');
+    const { existsSync } = require('node:fs');
     if (process.env.GENIE_WORKER_REGISTRY === 'global') {
       return join(CONFIG_DIR, 'workers.json');
     }
@@ -194,26 +194,26 @@ export async function update(id: string, updates: Partial<Worker>): Promise<void
 export async function findByPane(paneId: string): Promise<Worker | null> {
   const workers = await list();
   const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return workers.find(w => w.paneId === normalized) ?? null;
+  return workers.find((w) => w.paneId === normalized) ?? null;
 }
 
 /** Find worker by tmux window ID (e.g., "@4"). */
 export async function findByWindow(windowId: string): Promise<Worker | null> {
   const workers = await list();
   const normalizedId = windowId.startsWith('@') ? windowId : `@${windowId}`;
-  return workers.find(w => w.windowId === normalizedId) ?? null;
+  return workers.find((w) => w.windowId === normalizedId) ?? null;
 }
 
 /** Find worker by beads task ID (returns first match for backwards compat). */
 export async function findByTask(taskId: string): Promise<Worker | null> {
   const workers = await list();
-  return workers.find(w => w.taskId === taskId) ?? null;
+  return workers.find((w) => w.taskId === taskId) ?? null;
 }
 
 /** Find ALL workers for a beads task ID (supports N workers per task). */
 export async function findAllByTask(taskId: string): Promise<Worker[]> {
   const workers = await list();
-  return workers.filter(w => w.taskId === taskId);
+  return workers.filter((w) => w.taskId === taskId);
 }
 
 /** Count workers for a task. */
@@ -239,7 +239,7 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
   // Find next available suffix
   const workers = await list();
   let suffix = existingCount + 1;
-  while (workers.some(w => w.id === `${taskId}-${suffix}`)) {
+  while (workers.some((w) => w.id === `${taskId}-${suffix}`)) {
     suffix++;
   }
 
@@ -249,13 +249,13 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
 /** Find workers by wish slug. */
 export async function findByWish(wishSlug: string): Promise<Worker[]> {
   const workers = await list();
-  return workers.filter(w => w.wishSlug === wishSlug);
+  return workers.filter((w) => w.wishSlug === wishSlug);
 }
 
 /** Find worker by Claude session ID. */
 export async function findBySessionId(sessionId: string): Promise<Worker | null> {
   const workers = await list();
-  return workers.find(w => w.claudeSessionId === sessionId) ?? null;
+  return workers.find((w) => w.claudeSessionId === sessionId) ?? null;
 }
 
 /** Check if a worker exists for a given task. */
@@ -267,19 +267,19 @@ export async function hasWorkerForTask(taskId: string): Promise<boolean> {
 /** Find workers by team name. */
 export async function findByTeam(team: string): Promise<Worker[]> {
   const workers = await list();
-  return workers.filter(w => w.team === team);
+  return workers.filter((w) => w.team === team);
 }
 
 /** Find workers by provider. */
 export async function findByProvider(provider: ProviderName): Promise<Worker[]> {
   const workers = await list();
-  return workers.filter(w => w.provider === provider);
+  return workers.filter((w) => w.provider === provider);
 }
 
 /** Get workers in a specific state. */
 export async function getByState(state: WorkerState): Promise<Worker[]> {
   const workers = await list();
-  return workers.filter(w => w.state === state);
+  return workers.filter((w) => w.state === state);
 }
 
 /** Calculate elapsed time for a worker. */
@@ -363,6 +363,6 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
   const worker = registry.workers[workerId];
   if (!worker || !worker.subPanes) return;
 
-  worker.subPanes = worker.subPanes.filter(p => p !== paneId);
+  worker.subPanes = worker.subPanes.filter((p) => p !== paneId);
   await saveRegistry(registry, registryPath);
 }

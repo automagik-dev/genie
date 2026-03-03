@@ -3,18 +3,17 @@
  * Run with: bun test src/lib/worktree-manager.test.ts
  */
 
-import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
-import { join } from 'path';
-import { mkdir, rm, access, writeFile, stat } from 'fs/promises';
-import { existsSync } from 'fs';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { $ } from 'bun';
 
 // Will be imported after implementation
 import {
-  type WorktreeManagerInterface,
-  type WorktreeInfo,
-  GitWorktreeManager,
   BeadsWorktreeManager,
+  GitWorktreeManager,
+  type WorktreeInfo,
   getWorktreeManager,
   isBdAvailable,
 } from './worktree-manager.js';
@@ -50,10 +49,12 @@ async function cleanupTestRepo(): Promise<void> {
   try {
     // Remove all worktrees first
     const result = await $`git -C ${TEST_REPO} worktree list --porcelain`.quiet();
-    const paths = result.stdout.toString().split('\n')
-      .filter(line => line.startsWith('worktree '))
-      .map(line => line.slice(9))
-      .filter(path => path !== TEST_REPO);
+    const paths = result.stdout
+      .toString()
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice(9))
+      .filter((path) => path !== TEST_REPO);
 
     for (const path of paths) {
       try {
@@ -159,7 +160,7 @@ describe('GitWorktreeManager', () => {
 
     // Should have at least the worktrees we created
     expect(list.length).toBeGreaterThan(0);
-    const wishIds = list.map(wt => wt.wishId);
+    const wishIds = list.map((wt) => wt.wishId);
     expect(wishIds).toContain('wish-1');
   });
 
@@ -182,7 +183,7 @@ describe('BeadsWorktreeManager', () => {
   // These tests mock bd since it may not be available
   test('create() should call bd worktree create', async () => {
     // Skip if bd not available
-    if (!await isBdAvailable()) {
+    if (!(await isBdAvailable())) {
       console.log('Skipping BeadsWorktreeManager tests - bd not available');
       return;
     }

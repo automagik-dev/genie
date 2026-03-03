@@ -86,7 +86,7 @@ export async function createAgent(
     taskId: string;
     taskTitle?: string;
     claudeSessionId?: string;
-  }
+  },
 ): Promise<string> {
   // Create agent bead with metadata
   const title = `Worker: ${workerId}`;
@@ -138,7 +138,7 @@ export async function ensureAgent(
     taskId: string;
     taskTitle?: string;
     claudeSessionId?: string;
-  }
+  },
 ): Promise<string> {
   // Check if agent already exists
   const existing = await findAgentByWorkerId(workerId);
@@ -153,12 +153,7 @@ export async function ensureAgent(
  * Find agent bead by worker ID
  */
 async function findAgentByWorkerId(workerId: string): Promise<AgentBead | null> {
-  const { stdout, exitCode } = await runBd([
-    'list',
-    `--label=${AGENT_LABEL}`,
-    `--label=worker:${workerId}`,
-    '--json',
-  ]);
+  const { stdout, exitCode } = await runBd(['list', `--label=${AGENT_LABEL}`, `--label=worker:${workerId}`, '--json']);
 
   if (exitCode !== 0 || !stdout) return null;
 
@@ -350,11 +345,7 @@ export async function getWorker(workerId: string): Promise<Worker | null> {
  * List all workers
  */
 export async function listWorkers(): Promise<Worker[]> {
-  const { stdout, exitCode } = await runBd([
-    'list',
-    `--label=${AGENT_LABEL}`,
-    '--json',
-  ]);
+  const { stdout, exitCode } = await runBd(['list', `--label=${AGENT_LABEL}`, '--json']);
 
   if (exitCode !== 0 || !stdout) return [];
 
@@ -377,7 +368,7 @@ export async function listWorkers(): Promise<Worker[]> {
 export async function findByPane(paneId: string): Promise<Worker | null> {
   const workers = await listWorkers();
   const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return workers.find(w => w.paneId === normalizedPaneId) || null;
+  return workers.find((w) => w.paneId === normalizedPaneId) || null;
 }
 
 /**
@@ -401,7 +392,7 @@ export async function hasWorkerForTask(taskId: string): Promise<boolean> {
  */
 export async function findBySessionId(sessionId: string): Promise<Worker | null> {
   const workers = await listWorkers();
-  return workers.find(w => w.claudeSessionId === sessionId) || null;
+  return workers.find((w) => w.claudeSessionId === sessionId) || null;
 }
 
 // ============================================================================
@@ -510,7 +501,7 @@ export async function listWorktrees(): Promise<BeadsWorktreeInfo[]> {
  */
 export async function worktreeExists(name: string): Promise<boolean> {
   const worktrees = await listWorktrees();
-  return worktrees.some(wt => wt.name === name || wt.branch === name);
+  return worktrees.some((wt) => wt.name === name || wt.branch === name);
 }
 
 /**
@@ -518,7 +509,7 @@ export async function worktreeExists(name: string): Promise<boolean> {
  */
 export async function getWorktree(name: string): Promise<BeadsWorktreeInfo | null> {
   const worktrees = await listWorktrees();
-  return worktrees.find(wt => wt.name === name || wt.branch === name) || null;
+  return worktrees.find((wt) => wt.name === name || wt.branch === name) || null;
 }
 
 // ============================================================================
@@ -565,11 +556,7 @@ export async function updateSessionId(workerId: string, sessionId: string): Prom
   const updatedMetadata = { ...fullAgent.metadata, claudeSessionId: sessionId };
   const metadataJson = JSON.stringify(updatedMetadata);
 
-  const { exitCode: updateExitCode, stderr } = await runBd([
-    'update',
-    agent.id,
-    `--metadata=${metadataJson}`,
-  ]);
+  const { exitCode: updateExitCode, stderr } = await runBd(['update', agent.id, `--metadata=${metadataJson}`]);
 
   if (updateExitCode !== 0) {
     throw new Error(`Failed to update session ID: ${stderr}`);

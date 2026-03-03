@@ -1,12 +1,5 @@
-import React from "react";
-import {
-  Document,
-  Page,
-  View,
-  Text,
-  StyleSheet,
-} from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
+import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface ResearchData {
   title: string;
@@ -37,34 +30,34 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
     },
     header: {
       marginBottom: 30,
-      textAlign: "center",
+      textAlign: 'center',
     },
     title: {
       fontFamily: theme.fonts.heading,
       fontSize: 20,
       color: theme.colors.heading,
       marginBottom: 15,
-      textAlign: "center",
+      textAlign: 'center',
       lineHeight: 1.3,
     },
     authors: {
       fontSize: 11,
       marginBottom: 5,
-      textAlign: "center",
+      textAlign: 'center',
     },
     institution: {
       fontSize: 10,
       color: theme.colors.text,
       opacity: 0.7,
-      fontStyle: "italic",
-      textAlign: "center",
+      fontStyle: 'italic',
+      textAlign: 'center',
     },
     date: {
       fontSize: 10,
       color: theme.colors.text,
       opacity: 0.6,
       marginTop: 10,
-      textAlign: "center",
+      textAlign: 'center',
     },
     abstractBox: {
       marginVertical: 20,
@@ -74,12 +67,12 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
       fontFamily: theme.fonts.heading,
       fontSize: 11,
       marginBottom: 8,
-      textAlign: "center",
+      textAlign: 'center',
     },
     abstractText: {
       fontSize: 10,
       lineHeight: 1.6,
-      textAlign: "justify",
+      textAlign: 'justify',
     },
     keywords: {
       marginTop: 10,
@@ -104,7 +97,7 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
       fontSize: 10,
       lineHeight: 1.7,
       marginBottom: 10,
-      textAlign: "justify",
+      textAlign: 'justify',
     },
     referencesTitle: {
       fontFamily: theme.fonts.heading,
@@ -124,11 +117,11 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
       lineHeight: 1.4,
     },
     footer: {
-      position: "absolute",
+      position: 'absolute',
       bottom: 20,
       left: theme.spacing.page,
       right: theme.spacing.page,
-      textAlign: "center",
+      textAlign: 'center',
       fontSize: 9,
       color: theme.colors.text,
       opacity: 0.6,
@@ -136,17 +129,13 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
   });
 
   return (
-    <Document title={data.title} author={data.authors?.join(", ")}>
+    <Document title={data.title} author={data.authors?.join(', ')}>
       <Page size="A4" style={styles.page}>
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>{data.title}</Text>
-          {data.authors && data.authors.length > 0 && (
-            <Text style={styles.authors}>{data.authors.join(", ")}</Text>
-          )}
-          {data.institution && (
-            <Text style={styles.institution}>{data.institution}</Text>
-          )}
+          {data.authors && data.authors.length > 0 && <Text style={styles.authors}>{data.authors.join(', ')}</Text>}
+          {data.institution && <Text style={styles.institution}>{data.institution}</Text>}
           {data.date && <Text style={styles.date}>{data.date}</Text>}
         </View>
 
@@ -158,7 +147,7 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
             {data.keywords && data.keywords.length > 0 && (
               <Text style={styles.keywords}>
                 <Text style={styles.keywordLabel}>Keywords: </Text>
-                {data.keywords.join(", ")}
+                {data.keywords.join(', ')}
               </Text>
             )}
           </View>
@@ -189,11 +178,7 @@ export function ResearchTemplate({ data, theme }: ResearchProps) {
         )}
 
         <View style={styles.footer} fixed>
-          <Text
-            render={({ pageNumber, totalPages }) =>
-              `${pageNumber} / ${totalPages}`
-            }
-          />
+          <Text render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
         </View>
       </Page>
     </Document>

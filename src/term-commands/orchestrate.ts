@@ -11,8 +11,8 @@
  * - experiment: Test completion detection methods
  */
 
+import { formatResolvedLabel, resolveTarget } from '../lib/target-resolver.js';
 import * as tmux from '../lib/tmux.js';
-import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 /**
  * Find the active pane in a session, with fallback to the first pane.
@@ -26,29 +26,28 @@ async function findActivePane(sessionId: string, sessionName: string): Promise<s
     process.exit(1);
   }
 
-  const activeWindow = windows.find(w => w.active) || windows[0];
+  const activeWindow = windows.find((w) => w.active) || windows[0];
   const panes = await tmux.listPanes(activeWindow.id);
   if (!panes || panes.length === 0) {
     console.error(`No panes found in session "${sessionName}"`);
     process.exit(1);
   }
 
-  const activePane = panes.find(p => p.active) || panes[0];
+  const activePane = panes.find((p) => p.active) || panes[0];
   return activePane.id;
 }
 import {
+  type ClaudeEvent,
+  type ClaudeState,
   EventMonitor,
-  ClaudeEvent,
-  ClaudeState,
+  type PresetMethodName,
   detectState,
   extractPermissionDetails,
-  extractQuestionOptions,
   extractPlanFile,
-  getMethod,
+  extractQuestionOptions,
   getDefaultMethod,
+  getMethod,
   presetMethods,
-  PresetMethodName,
-  CompletionMethodMetrics,
   stripAnsi,
 } from '../lib/orchestrator/index.js';
 
@@ -103,9 +102,7 @@ export interface ExperimentOptions {
  * Resolve a target to paneId + session using the target resolver.
  * Used by all orchestrate commands except startSession.
  */
-async function resolveOrcTarget(
-  target: string
-): Promise<{ paneId: string; session: string; label: string }> {
+async function resolveOrcTarget(target: string): Promise<{ paneId: string; session: string; label: string }> {
   const resolved = await resolveTarget(target);
 
   return {
@@ -162,10 +159,7 @@ function formatEvent(event: ClaudeEvent): string {
  * NOTE: This command preserves session-creation behavior from getSessionPane().
  * It does NOT use resolveTarget() because it needs to create sessions that don't exist.
  */
-export async function startSession(
-  sessionName: string,
-  options: StartOptions = {}
-): Promise<void> {
+export async function startSession(sessionName: string, options: StartOptions = {}): Promise<void> {
   try {
     // Check if session exists
     let session = await tmux.findSessionByName(sessionName);
@@ -192,7 +186,7 @@ export async function startSession(
 
     // Start monitoring if requested
     if (options.monitor) {
-      console.log(`Starting event monitor...`);
+      console.log('Starting event monitor...');
 
       const monitor = new EventMonitor(sessionName, {
         pollIntervalMs: 500,
@@ -212,7 +206,7 @@ export async function startSession(
       });
 
       await monitor.start();
-      console.log(`Monitor active. Press Ctrl+C to stop.`);
+      console.log('Monitor active. Press Ctrl+C to stop.');
 
       // Keep running until interrupted
       process.on('SIGINT', () => {
@@ -233,11 +227,7 @@ export async function startSession(
 /**
  * Send a message to Claude and track completion
  */
-export async function sendMessage(
-  target: string,
-  message: string,
-  options: SendOptions = {}
-): Promise<void> {
+export async function sendMessage(target: string, message: string, options: SendOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -296,10 +286,7 @@ export async function sendMessage(
 /**
  * Show current Claude state
  */
-export async function showStatus(
-  target: string,
-  options: StatusOptions = {}
-): Promise<void> {
+export async function showStatus(target: string, options: StatusOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -339,8 +326,8 @@ export async function showStatus(
             planFile,
           },
           null,
-          2
-        )
+          2,
+        ),
       );
     } else {
       console.log(`Target: ${label}`);
@@ -351,7 +338,7 @@ export async function showStatus(
       console.log(`Confidence: ${(state.confidence * 100).toFixed(0)}%`);
 
       if (permissionDetails) {
-        console.log(`\nPermission Request:`);
+        console.log('\nPermission Request:');
         console.log(`  Type: ${permissionDetails.type}`);
         if (permissionDetails.command) {
           console.log(`  Command: ${permissionDetails.command}`);
@@ -362,7 +349,7 @@ export async function showStatus(
       }
 
       if (questionOptions.length > 0) {
-        console.log(`\nQuestion Options:`);
+        console.log('\nQuestion Options:');
         questionOptions.forEach((opt, i) => {
           console.log(`  [${i + 1}] ${opt}`);
         });
@@ -375,7 +362,7 @@ export async function showStatus(
       // Show last few lines of output
       const lines = stripAnsi(output).trim().split('\n');
       const lastLines = lines.slice(-5);
-      console.log(`\nLast output:`);
+      console.log('\nLast output:');
       lastLines.forEach((line) => console.log(`  ${line}`));
     }
   } catch (error: any) {
@@ -387,10 +374,7 @@ export async function showStatus(
 /**
  * Watch session events in real-time
  */
-export async function watchSession(
-  target: string,
-  options: WatchOptions = {}
-): Promise<void> {
+export async function watchSession(target: string, options: WatchOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -438,10 +422,7 @@ export async function watchSession(
 /**
  * Approve a pending permission request
  */
-export async function approvePermission(
-  target: string,
-  options: ApproveOptions = {}
-): Promise<void> {
+export async function approvePermission(target: string, options: ApproveOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -469,7 +450,7 @@ export async function approvePermission(
 
     // If auto mode, keep monitoring and approving
     if (options.auto) {
-      console.log(`Auto-approve mode enabled. Press Ctrl+C to stop.`);
+      console.log('Auto-approve mode enabled. Press Ctrl+C to stop.');
 
       const monitor = new EventMonitor(session, {
         pollIntervalMs: 250,
@@ -510,10 +491,7 @@ export async function approvePermission(
  * - "text:..." prefix: Type text directly (for option 4 "Type here...")
  * - Other: Send as raw keystrokes
  */
-export async function answerQuestion(
-  target: string,
-  choice: string
-): Promise<void> {
+export async function answerQuestion(target: string, choice: string): Promise<void> {
   try {
     const { paneId, label } = await resolveOrcTarget(target);
 
@@ -542,7 +520,7 @@ export async function answerQuestion(
       console.log(`Sent feedback: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
     } else if (/^\d+$/.test(choice)) {
       // Numeric choice - navigate using arrow keys to the option
-      const targetOption = parseInt(choice, 10);
+      const targetOption = Number.parseInt(choice, 10);
 
       // Find current selection position by looking for cursor marker
       const cleanOutput = stripAnsi(output);
@@ -551,7 +529,7 @@ export async function answerQuestion(
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].match(/^\s*❯\s*\d+\./)) {
           const match = lines[i].match(/❯\s*(\d+)\./);
-          if (match) currentOption = parseInt(match[1], 10);
+          if (match) currentOption = Number.parseInt(match[1], 10);
           break;
         }
       }
@@ -592,16 +570,13 @@ function shellEscape(str: string): string {
 
 // Helper to sleep
 function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
  * Test a completion detection method
  */
-export async function runExperiment(
-  methodName: string,
-  options: ExperimentOptions = {}
-): Promise<void> {
+export async function runExperiment(methodName: string, options: ExperimentOptions = {}): Promise<void> {
   const runs = options.runs || 1;
   const testTask = options.task || 'echo "Hello, World!"';
 
@@ -620,7 +595,7 @@ export async function runExperiment(
 
   // Create a test session
   const testSessionName = `orc-experiment-${Date.now()}`;
-  let session = await tmux.createSession(testSessionName);
+  const session = await tmux.createSession(testSessionName);
   if (!session) {
     console.error('Failed to create test session');
     process.exit(1);
@@ -668,8 +643,7 @@ export async function runExperiment(
 
     // Calculate statistics
     const successfulRuns = results.filter((r) => r.complete);
-    const avgLatency =
-      successfulRuns.reduce((sum, r) => sum + r.latencyMs, 0) / successfulRuns.length || 0;
+    const avgLatency = successfulRuns.reduce((sum, r) => sum + r.latencyMs, 0) / successfulRuns.length || 0;
     const minLatency = Math.min(...successfulRuns.map((r) => r.latencyMs)) || 0;
     const maxLatency = Math.max(...successfulRuns.map((r) => r.latencyMs)) || 0;
 
@@ -697,7 +671,7 @@ export async function runExperiment(
   } finally {
     // Cleanup test session
     await tmux.killSession(session.id);
-    console.log(`\nCleaned up test session`);
+    console.log('\nCleaned up test session');
   }
 }
 
@@ -725,11 +699,7 @@ export async function listMethods(): Promise<void> {
  *
  * Fire-and-forget: send message, auto-approve permissions, wait for idle
  */
-export async function runTask(
-  target: string,
-  message: string,
-  options: RunOptions = {}
-): Promise<void> {
+export async function runTask(target: string, message: string, options: RunOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
     const timeoutMs = options.timeout || 300000; // 5 minute default
@@ -765,7 +735,7 @@ export async function runTask(
 
       // Handle permission requests
       if (state.type === 'permission' && options.autoApprove) {
-        console.log(`   Auto-approving permission...`);
+        console.log('   Auto-approving permission...');
         await tmux.executeTmux(`send-keys -t '${paneId}' Enter`);
         await sleep(200);
         return false; // Continue monitoring
@@ -775,16 +745,16 @@ export async function runTask(
       if (state.type === 'question') {
         if (state.detail === 'plan_approval' && options.autoApprove) {
           // Auto-approve plans
-          console.log(`   Auto-approving plan...`);
+          console.log('   Auto-approving plan...');
           await tmux.executeTmux(`send-keys -t '${paneId}' Enter`);
           await sleep(200);
           return false; // Continue monitoring
         }
         // Other questions require user input - exit and report
-        console.log(`Question requires manual input`);
+        console.log('Question requires manual input');
         const questionOptions = extractQuestionOptions(output);
         if (questionOptions.length > 0) {
-          console.log(`   Options:`);
+          console.log('   Options:');
           questionOptions.forEach((opt, i) => console.log(`     [${i + 1}] ${opt}`));
         }
         return true; // Stop monitoring, need user input
@@ -799,7 +769,7 @@ export async function runTask(
 
       // Check for error
       if (state.type === 'error') {
-        console.log(`Task encountered error`);
+        console.log('Task encountered error');
         return true; // Done (with error)
       }
 
@@ -828,13 +798,19 @@ export async function runTask(
     if (options.json) {
       const output = await tmux.capturePaneContent(paneId, 30);
       const state = detectState(output);
-      console.log(JSON.stringify({
-        target,
-        session,
-        state: state.type,
-        detail: state.detail,
-        elapsedMs: Date.now() - startTime,
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            target,
+            session,
+            state: state.type,
+            detail: state.detail,
+            elapsedMs: Date.now() - startTime,
+          },
+          null,
+          2,
+        ),
+      );
     }
   } catch (error: any) {
     console.error(`Error: ${error.message}`);

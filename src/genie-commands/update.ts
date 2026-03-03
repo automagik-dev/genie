@@ -1,9 +1,9 @@
-import { spawn } from 'child_process';
-import { existsSync } from 'fs';
-import { mkdir, copyFile, chmod } from 'fs/promises';
-import { join } from 'path';
-import { homedir } from 'os';
-import { loadGenieConfig, genieConfigExists } from '../lib/genie-config.js';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { chmod, copyFile, mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { genieConfigExists, loadGenieConfig } from '../lib/genie-config.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
@@ -26,7 +26,11 @@ function warn(message: string): void {
   console.log(`\x1b[33m⚠\x1b[0m ${message}`);
 }
 
-async function runCommand(command: string, args: string[], cwd?: string): Promise<{ success: boolean; output: string }> {
+async function runCommand(
+  command: string,
+  args: string[],
+  cwd?: string,
+): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
     const output: string[] = [];
 
@@ -78,7 +82,11 @@ async function getGitInfo(cwd: string): Promise<{ branch: string; commit: string
   return null;
 }
 
-async function runCommandSilent(command: string, args: string[], cwd?: string): Promise<{ success: boolean; output: string }> {
+async function runCommandSilent(
+  command: string,
+  args: string[],
+  cwd?: string,
+): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
     const output: string[] = [];
 
@@ -264,7 +272,7 @@ async function updateSource(): Promise<void> {
 }
 
 async function symlinkOrCopy(src: string, dest: string): Promise<void> {
-  const { symlink, unlink } = await import('fs/promises');
+  const { symlink, unlink } = await import('node:fs/promises');
 
   try {
     // Remove existing symlink/file if present
@@ -292,7 +300,9 @@ export async function updateCommand(): Promise<void> {
     error('No Genie CLI installation found');
     console.log();
     console.log('Install method not configured. Please reinstall genie:');
-    console.log('\x1b[36m  curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash\x1b[0m');
+    console.log(
+      '\x1b[36m  curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash\x1b[0m',
+    );
     console.log();
     process.exit(1);
   }

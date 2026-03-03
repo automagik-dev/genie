@@ -8,9 +8,9 @@
  * Worktrees are created in .genie/worktrees/<wish-id>/ with branch work/<wish-id>
  */
 
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { $ } from 'bun';
-import { mkdir, rm, access, writeFile } from 'fs/promises';
-import { join, basename } from 'path';
 
 // ============================================================================
 // Types
@@ -175,7 +175,7 @@ export class GitWorktreeManager implements WorktreeManagerInterface {
     try {
       await access(worktreePath);
       // Worktree exists, return info
-      return await this.getWorktreeInfo(wishId, repoPath) as WorktreeInfo;
+      return (await this.getWorktreeInfo(wishId, repoPath)) as WorktreeInfo;
     } catch {
       // Doesn't exist, will create
     }
@@ -260,7 +260,7 @@ export class GitWorktreeManager implements WorktreeManagerInterface {
 
     for (const line of output.split('\n')) {
       if (line.startsWith('worktree ')) {
-        if (current.path && current.path.startsWith(baseDir)) {
+        if (current.path?.startsWith(baseDir)) {
           // Extract wishId from path
           current.wishId = basename(current.path);
           worktrees.push(current as WorktreeInfo);
@@ -274,7 +274,7 @@ export class GitWorktreeManager implements WorktreeManagerInterface {
     }
 
     // Don't forget the last worktree
-    if (current.path && current.path.startsWith(baseDir)) {
+    if (current.path?.startsWith(baseDir)) {
       current.wishId = basename(current.path);
       worktrees.push(current as WorktreeInfo);
     }
@@ -343,7 +343,7 @@ export class BeadsWorktreeManager implements WorktreeManagerInterface {
   /**
    * Create a new worktree for a wish
    */
-  async create(wishId: string, repoPath: string): Promise<WorktreeInfo> {
+  async create(wishId: string, _repoPath: string): Promise<WorktreeInfo> {
     const { stdout, exitCode, stderr } = await runBd(['worktree', 'create', wishId, '--json']);
 
     if (exitCode !== 0) {
@@ -398,7 +398,7 @@ export class BeadsWorktreeManager implements WorktreeManagerInterface {
       return [];
     }
 
-    return worktrees.map(wt => ({
+    return worktrees.map((wt) => ({
       path: wt.path,
       branch: wt.branch,
       wishId: wt.name,
@@ -410,9 +410,10 @@ export class BeadsWorktreeManager implements WorktreeManagerInterface {
    */
   async get(wishId: string): Promise<WorktreeInfo | null> {
     const worktrees = await this.list();
-    return worktrees.find(
-      wt => wt.wishId === wishId || wt.branch === wishId || wt.branch === getBranchName(wishId)
-    ) || null;
+    return (
+      worktrees.find((wt) => wt.wishId === wishId || wt.branch === wishId || wt.branch === getBranchName(wishId)) ||
+      null
+    );
   }
 }
 

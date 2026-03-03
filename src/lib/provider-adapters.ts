@@ -21,13 +21,29 @@ export type ProviderName = 'claude' | 'codex';
 
 /** Colors available for Claude Code native teammate UI. */
 export type ClaudeTeamColor =
-  | 'blue' | 'green' | 'yellow' | 'red' | 'magenta' | 'cyan'
-  | 'orange' | 'purple' | 'pink' | 'teal';
+  | 'blue'
+  | 'green'
+  | 'yellow'
+  | 'red'
+  | 'magenta'
+  | 'cyan'
+  | 'orange'
+  | 'purple'
+  | 'pink'
+  | 'teal';
 
 /** Rotating palette for auto-assigning teammate colors. */
 export const CLAUDE_TEAM_COLORS: ClaudeTeamColor[] = [
-  'blue', 'green', 'yellow', 'red', 'magenta',
-  'cyan', 'orange', 'purple', 'pink', 'teal',
+  'blue',
+  'green',
+  'yellow',
+  'red',
+  'magenta',
+  'cyan',
+  'orange',
+  'purple',
+  'pink',
+  'teal',
 ];
 
 /** Parameters for Claude Code native teammate integration. */
@@ -85,15 +101,17 @@ export const spawnParamsSchema = z.object({
   role: z.string().optional(),
   skill: z.string().optional(),
   extraArgs: z.array(z.string()).optional(),
-  nativeTeam: z.object({
-    enabled: z.boolean(),
-    parentSessionId: z.string().optional(),
-    color: z.string().optional(),
-    agentType: z.string().optional(),
-    planModeRequired: z.boolean().optional(),
-    permissionMode: z.string().optional(),
-    agentName: z.string().optional(),
-  }).optional(),
+  nativeTeam: z
+    .object({
+      enabled: z.boolean(),
+      parentSessionId: z.string().optional(),
+      color: z.string().optional(),
+      agentType: z.string().optional(),
+      planModeRequired: z.boolean().optional(),
+      permissionMode: z.string().optional(),
+      agentName: z.string().optional(),
+    })
+    .optional(),
 });
 
 /**
@@ -128,7 +146,7 @@ export function hasBinary(name: string): boolean {
     if (typeof (Bun as any).which === 'function') {
       return Boolean((Bun as any).which(name));
     }
-    const { execSync } = require('child_process');
+    const { execSync } = require('node:child_process');
     execSync(`which ${name}`, { stdio: 'ignore' });
     return true;
   } catch {
@@ -143,8 +161,7 @@ export function hasBinary(name: string): boolean {
 export function preflightCheck(provider: ProviderName): void {
   if (!hasBinary(provider)) {
     throw new Error(
-      `Provider binary "${provider}" not found on PATH. ` +
-      `Install ${provider} or check your environment.`
+      `Provider binary "${provider}" not found on PATH. ` + `Install ${provider} or check your environment.`,
     );
   }
 }
@@ -171,8 +188,8 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (nt?.enabled) {
     // Native teammate env vars
-    env['CLAUDECODE'] = '1';
-    env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'] = '1';
+    env.CLAUDECODE = '1';
+    env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
 
     const agentName = nt.agentName ?? params.role ?? 'worker';
     const teamName = params.team;
@@ -290,9 +307,6 @@ export function buildLaunchCommand(params: SpawnParams): LaunchCommand {
     case 'codex':
       return buildCodexCommand(validated);
     default:
-      throw new Error(
-        `Unknown provider "${(validated as any).provider}". ` +
-        'Valid providers: claude, codex'
-      );
+      throw new Error(`Unknown provider "${(validated as any).provider}". Valid providers: claude, codex`);
   }
 }

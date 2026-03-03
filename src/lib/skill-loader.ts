@@ -11,9 +11,9 @@
  *   - Prefixed: wish -> genie-wish/
  */
 
-import { access, readFile, readdir } from 'fs/promises';
-import { join } from 'path';
-import { homedir } from 'os';
+import { access, readFile, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 export type SkillSource = 'local' | 'user' | 'plugin';
 
@@ -59,18 +59,12 @@ async function pathExists(path: string): Promise<boolean> {
  * @param projectRoot - Project root directory (defaults to cwd)
  * @returns SkillInfo if found, null otherwise
  */
-export async function findSkill(
-  skillName: string,
-  projectRoot?: string
-): Promise<SkillInfo | null> {
+export async function findSkill(skillName: string, projectRoot?: string): Promise<SkillInfo | null> {
   const dirNames = skillNameToDirs(skillName);
   const cwd = projectRoot || process.cwd();
 
   // Search locations in order of precedence
-  const searchLocations = [
-    join(cwd, '.claude', 'skills'),
-    join(homedir(), '.claude', 'skills'),
-  ];
+  const searchLocations = [join(cwd, '.claude', 'skills'), join(homedir(), '.claude', 'skills')];
 
   for (const location of searchLocations) {
     for (const dirName of dirNames) {
@@ -136,20 +130,11 @@ export async function readSkillContent(skillFile: string): Promise<string> {
  * @param additionalPrompt - Optional additional context/instructions
  * @returns Combined prompt string
  */
-export async function buildSkillPrompt(
-  skill: SkillInfo,
-  additionalPrompt?: string
-): Promise<string> {
+export async function buildSkillPrompt(skill: SkillInfo, additionalPrompt?: string): Promise<string> {
   // Read the skill content
   const skillContent = await readFile(skill.skillFile, 'utf-8');
 
-  const parts = [
-    `You are running skill: ${skill.name}`,
-    '',
-    '## Skill Instructions',
-    '',
-    skillContent,
-  ];
+  const parts = [`You are running skill: ${skill.name}`, '', '## Skill Instructions', '', skillContent];
 
   if (additionalPrompt) {
     parts.push('', '---', '', '## Additional Context', '', additionalPrompt);
@@ -188,7 +173,7 @@ async function parseSkillName(skillFile: string, dirName: string): Promise<strin
  */
 export async function listSkills(projectRoot?: string): Promise<string[]> {
   const skills = await listSkillsDetailed(projectRoot);
-  return skills.map(s => s.name).sort();
+  return skills.map((s) => s.name).sort();
 }
 
 /**
@@ -219,12 +204,7 @@ export async function listSkillsDetailed(projectRoot?: string): Promise<Detailed
   const seenNames = new Set<string>();
 
   // Helper to add skill if not already seen
-  const addSkill = async (
-    skillFile: string,
-    dirName: string,
-    source: SkillSource,
-    pluginName?: string
-  ) => {
+  const addSkill = async (skillFile: string, dirName: string, source: SkillSource, pluginName?: string) => {
     const skillName = await parseSkillName(skillFile, dirName);
     const fullName = pluginName ? `${pluginName}:${skillName}` : skillName;
 
@@ -299,7 +279,7 @@ async function scanSkillsDir(
   dirPath: string,
   source: SkillSource,
   addSkill: (skillFile: string, dirName: string, source: SkillSource, pluginName?: string) => Promise<void>,
-  pluginName?: string
+  pluginName?: string,
 ): Promise<void> {
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
@@ -315,4 +295,3 @@ async function scanSkillsDir(
     // Directory doesn't exist, skip
   }
 }
-

@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, readFile } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ensureBeadsIssuesPath, upsertBeadsIssueJsonl } from '../lib/beads-issues-jsonl.js';
 
@@ -33,7 +33,7 @@ describe('beads-issues-jsonl', () => {
     expect(r2.updated_at).not.toBe(r1.updated_at);
 
     const content = await readFile(issuesPath, 'utf-8');
-    const lines = content.split('\n').filter(l => l.trim());
+    const lines = content.split('\n').filter((l) => l.trim());
     expect(lines.length).toBe(1);
 
     const parsed = JSON.parse(lines[0]);

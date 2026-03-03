@@ -13,12 +13,12 @@
  * 6. Expose start/stop for the engine
  */
 
-import { join } from 'path';
-import { mkdirSync, appendFileSync, existsSync } from 'fs';
-import { evaluateRequest, type AutoApproveConfig, type Decision } from './auto-approve.js';
-import { extractPermissionRequest, type PermissionRequest } from './event-listener.js';
-import { executeTmux } from './tmux.js';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NormalizedEvent } from '../term-commands/events.js';
+import { type AutoApproveConfig, type Decision, evaluateRequest } from './auto-approve.js';
+import { type PermissionRequest, extractPermissionRequest } from './event-listener.js';
+import { executeTmux } from './tmux.js';
 
 // ============================================================================
 // Types
@@ -121,7 +121,7 @@ function ensureAuditDir(auditDir: string): void {
 function writeAuditEntry(auditDir: string, entry: AuditLogEntry): void {
   ensureAuditDir(auditDir);
   const logPath = getAuditLogPath(auditDir);
-  const line = JSON.stringify(entry) + '\n';
+  const line = `${JSON.stringify(entry)}\n`;
   appendFileSync(logPath, line, 'utf-8');
 }
 

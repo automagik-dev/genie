@@ -3,21 +3,19 @@
  * Run with: bun test src/lib/auto-approve.test.ts
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { join } from 'path';
-import { mkdir, rm, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
-  AutoApproveConfigSchema,
-  loadAutoApproveConfig,
-  parseWishAutoApprove,
-  mergeConfigs,
-  evaluateRequest,
-  normalizeCommand,
-  hasShellMetacharacters,
   type AutoApproveConfig,
+  AutoApproveConfigSchema,
   type RepoConfig,
-  type Decision,
+  evaluateRequest,
+  hasShellMetacharacters,
+  loadAutoApproveConfig,
+  mergeConfigs,
+  normalizeCommand,
+  parseWishAutoApprove,
 } from './auto-approve.js';
 import type { PermissionRequest } from './event-listener.js';
 
@@ -606,12 +604,7 @@ describe('evaluateRequest', () => {
     const dangerousConfig = makeConfig({
       allow: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'],
       bash_allow_patterns: ['bun test', 'bun run build', 'npm run', 'git push'],
-      bash_deny_patterns: [
-        'rm -rf',
-        'git push.*--force',
-        'git reset --hard',
-        'git clean -f',
-      ],
+      bash_deny_patterns: ['rm -rf', 'git push.*--force', 'git reset --hard', 'git clean -f'],
     });
 
     test('denies rm -rf', () => {
@@ -1031,7 +1024,7 @@ describe('ReDoS protection', () => {
     // followed by a non-matching char, naive regex would hang
     const request = makeRequest({
       toolName: 'Bash',
-      toolInput: { command: 'a'.repeat(50) + '!' },
+      toolInput: { command: `${'a'.repeat(50)}!` },
     });
     const config = makeConfig({
       allow: ['Bash'],

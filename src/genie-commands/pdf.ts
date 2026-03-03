@@ -1,6 +1,6 @@
-import { spawn } from 'child_process';
-import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { spawn } from 'node:child_process';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Resolve genie-pdf path lazily to avoid crashing at module load time.
@@ -9,9 +9,7 @@ import { fileURLToPath } from 'url';
  */
 function getGeniePdfPath(): string {
   // In CJS bundles, __filename is available natively
-  const base = typeof __filename !== 'undefined'
-    ? dirname(__filename)
-    : dirname(fileURLToPath(import.meta.url));
+  const base = typeof __filename !== 'undefined' ? dirname(__filename) : dirname(fileURLToPath(import.meta.url));
   return resolve(base, '../../packages/genie-pdf/src/index.ts');
 }
 
@@ -50,7 +48,7 @@ function runGeniePdf(args: string[]): Promise<number> {
  */
 export async function pdfRenderCommand(
   input: string,
-  options: { output?: string; theme?: string; pageNumbers?: boolean; watch?: boolean }
+  options: { output?: string; theme?: string; pageNumbers?: boolean; watch?: boolean },
 ): Promise<void> {
   const args = ['render', input];
 
@@ -78,7 +76,7 @@ export async function pdfRenderCommand(
  */
 export async function pdfTemplateCommand(
   name: string,
-  options: { data?: string; output?: string; theme?: string }
+  options: { data?: string; output?: string; theme?: string },
 ): Promise<void> {
   const args = ['template', name];
 

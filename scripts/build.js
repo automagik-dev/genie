@@ -5,10 +5,10 @@
  * Bundles TypeScript CLIs into standalone CJS executables using esbuild
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
@@ -49,12 +49,12 @@ async function buildPlugin() {
       dependencies: {},
       engines: {
         node: '>=18.0.0',
-        bun: '>=1.0.0'
-      }
+        bun: '>=1.0.0',
+      },
     };
     fs.writeFileSync(
       path.join(rootDir, 'plugins/genie/package.json'),
-      JSON.stringify(pluginPackageJson, null, 2) + '\n'
+      `${JSON.stringify(pluginPackageJson, null, 2)}\n`,
     );
     console.log('plugins/genie/package.json generated');
 
@@ -83,8 +83,8 @@ async function buildPlugin() {
         logLevel: 'error',
         external: ['bun', 'bun:*'],
         define: {
-          '__GENIE_VERSION__': `"${version}"`
-        }
+          __GENIE_VERSION__: `"${version}"`,
+        },
       });
 
       // Add shebang based on target runtime (esbuild banner can cause duplicates if source has shebang)
@@ -115,18 +115,17 @@ async function buildPlugin() {
     if (fs.existsSync(pluginJsonPath)) {
       const pluginJson = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf-8'));
       pluginJson.version = version;
-      fs.writeFileSync(pluginJsonPath, JSON.stringify(pluginJson, null, 2) + '\n');
+      fs.writeFileSync(pluginJsonPath, `${JSON.stringify(pluginJson, null, 2)}\n`);
       console.log('Updated plugin.json version');
     }
 
     console.log('\nBuild complete!');
-    console.log(`Output: plugins/genie/scripts/`);
-
+    console.log('Output: plugins/genie/scripts/');
   } catch (error) {
     console.error('\nBuild failed:', error.message);
     if (error.errors) {
       console.error('\nBuild errors:');
-      error.errors.forEach(err => console.error(`  - ${err.text}`));
+      error.errors.forEach((err) => console.error(`  - ${err.text}`));
     }
     process.exit(1);
   }

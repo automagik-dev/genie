@@ -5,15 +5,8 @@
  * Uses synchronous file operations for thread-safety (writeFileSync for atomic writes).
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  readdirSync,
-  unlinkSync,
-} from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ============================================================================
 // Types
@@ -33,11 +26,11 @@ export interface BatchOptions {
 }
 
 export interface Batch {
-  id: string;                              // "batch-001"
-  createdAt: string;                       // ISO timestamp
+  id: string; // "batch-001"
+  createdAt: string; // ISO timestamp
   status: 'active' | 'complete' | 'cancelled';
-  wishes: string[];                        // ["wish-21", "wish-23"]
-  workers: Record<string, BatchWorker>;    // keyed by wish-id
+  wishes: string[]; // ["wish-21", "wish-23"]
+  workers: Record<string, BatchWorker>; // keyed by wish-id
   options: BatchOptions;
 }
 
@@ -108,8 +101,8 @@ function readCounter(genieDir: string): number {
   // Try reading the persisted counter
   if (existsSync(counterPath)) {
     try {
-      const value = parseInt(readFileSync(counterPath, 'utf-8').trim(), 10);
-      if (!isNaN(value)) {
+      const value = Number.parseInt(readFileSync(counterPath, 'utf-8').trim(), 10);
+      if (!Number.isNaN(value)) {
         return value;
       }
     } catch {
@@ -126,7 +119,7 @@ function readCounter(genieDir: string): number {
     for (const file of files) {
       const match = file.match(/^batch-(\d+)\.json$/);
       if (match) {
-        const num = parseInt(match[1], 10);
+        const num = Number.parseInt(match[1], 10);
         if (num > maxNumber) {
           maxNumber = num;
         }
@@ -173,11 +166,7 @@ function saveBatch(genieDir: string, batch: Batch): void {
  * Create a new batch with the given wish IDs and options.
  * Generates a sequential batch ID, initializes workers as 'queued', and persists to disk.
  */
-export function createBatch(
-  genieDir: string,
-  wishes: string[],
-  options: BatchOptions = {},
-): Batch {
+export function createBatch(genieDir: string, wishes: string[], options: BatchOptions = {}): Batch {
   const id = generateNextBatchId(genieDir);
 
   const workers: Record<string, BatchWorker> = {};
@@ -225,7 +214,7 @@ export function listBatches(genieDir: string): Batch[] {
   }
 
   const files = readdirSync(batchesDir)
-    .filter(f => f.match(/^batch-\d+\.json$/))
+    .filter((f) => f.match(/^batch-\d+\.json$/))
     .sort();
 
   const batches: Batch[] = [];
@@ -293,11 +282,7 @@ export function deleteBatch(genieDir: string, batchId: string): boolean {
 /**
  * Terminal statuses - workers in these states will not transition further.
  */
-const TERMINAL_STATUSES: Set<BatchWorker['status']> = new Set([
-  'complete',
-  'failed',
-  'cancelled',
-]);
+const TERMINAL_STATUSES: Set<BatchWorker['status']> = new Set(['complete', 'failed', 'cancelled']);
 
 /**
  * Check whether all workers in a batch have reached a terminal state.
@@ -309,10 +294,7 @@ const TERMINAL_STATUSES: Set<BatchWorker['status']> = new Set([
  * When complete=true and the batch status is still 'active', this function
  * automatically updates the batch status to 'complete' on disk.
  */
-export function checkBatchCompletion(
-  genieDir: string,
-  batchId: string,
-): BatchCompletionStatus {
+export function checkBatchCompletion(genieDir: string, batchId: string): BatchCompletionStatus {
   const emptySummary: BatchCompletionSummary = {
     total: 0,
     running: 0,
@@ -363,7 +345,7 @@ export function checkBatchCompletion(
     }
   }
 
-  const allTerminal = workers.every(w => TERMINAL_STATUSES.has(w.status));
+  const allTerminal = workers.every((w) => TERMINAL_STATUSES.has(w.status));
   // An empty batch is vacuously complete
   const isComplete = workers.length === 0 || allTerminal;
 

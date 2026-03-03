@@ -7,13 +7,13 @@
  *   <repo>/.beads/issues.jsonl
  */
 
-import { dirname, join, resolve } from 'path';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import {
+  type BeadsIssueRecord,
   ensureBeadsIssuesPath,
   getSourceRepo,
   upsertBeadsIssueJsonl,
-  type BeadsIssueRecord,
 } from '../lib/beads-issues-jsonl.js';
 
 export interface CrystallizeBrainstormOptions {
@@ -26,16 +26,14 @@ export interface CrystallizeBrainstormOptions {
 }
 
 export async function crystallizeBrainstormAndUpsertBeads(
-  opts: CrystallizeBrainstormOptions
+  opts: CrystallizeBrainstormOptions,
 ): Promise<{ designPath: string; beadsPath: string; record: BeadsIssueRecord }> {
   const repoPath = resolve(opts.repoPath);
   const slug = opts.slug;
   const title = opts.title;
   const status = opts.status ?? 'open';
 
-  const depends_on = (opts.dependsOn && opts.dependsOn.length > 0)
-    ? opts.dependsOn
-    : ['hq-roadmap'];
+  const depends_on = opts.dependsOn && opts.dependsOn.length > 0 ? opts.dependsOn : ['hq-roadmap'];
 
   const designPath = join(repoPath, '.genie', 'brainstorms', slug, 'design.md');
   await mkdir(dirname(designPath), { recursive: true });

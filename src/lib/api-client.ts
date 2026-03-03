@@ -29,7 +29,7 @@ export async function testConnection(apiUrl: string, apiKey: string): Promise<Co
     const response = await fetch(`${apiUrl}/v1/models`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
     });
@@ -50,7 +50,7 @@ export async function testConnection(apiUrl: string, apiKey: string): Promise<Co
       };
     }
 
-    const data = await response.json() as ModelsResponse;
+    const data = (await response.json()) as ModelsResponse;
     const models = data.data || [];
 
     return {
@@ -97,10 +97,7 @@ export async function getModels(apiUrl: string, apiKey: string): Promise<Model[]
   throw new Error(result.message);
 }
 
-export async function validateApiKeyAndGetModels(
-  apiUrl: string,
-  apiKey: string
-): Promise<Model[] | null> {
+export async function validateApiKeyAndGetModels(apiUrl: string, apiKey: string): Promise<Model[] | null> {
   const result = await testConnection(apiUrl, apiKey);
   if (result.success) {
     return result.models;

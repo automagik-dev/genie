@@ -2,22 +2,22 @@
  * Tests for local-tasks.ts — graceful init and claim guards
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, rm, readFile, mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  ensureTasksFile,
-  createWishTask,
-  claimTask,
-  getTask,
-  listTasks,
-  getQueue,
-  updateTask,
-  isLocalTasksEnabled,
-  markDone,
-  computePriorityScore,
   type PriorityScores,
+  claimTask,
+  computePriorityScore,
+  createWishTask,
+  ensureTasksFile,
+  getQueue,
+  getTask,
+  isLocalTasksEnabled,
+  listTasks,
+  markDone,
+  updateTask,
 } from './local-tasks.js';
 
 let tempDir: string;
@@ -54,7 +54,7 @@ describe('ensureTasksFile', () => {
   });
 
   it('should throw with clear message on read-only directory', async () => {
-    const { chmod } = await import('fs/promises');
+    const { chmod } = await import('node:fs/promises');
     const readOnlyDir = join(tempDir, 'readonly-repo');
     await mkdir(readOnlyDir, { recursive: true });
     // Make directory read-only
@@ -215,15 +215,27 @@ describe('getQueue priority sorting', () => {
     const file = JSON.parse(await readFile(tasksPath, 'utf-8'));
 
     file.tasks[high.id].priorityScores = {
-      blocking: 5, stability: 5, crossImpact: 5, quickWin: 5, complexityInverse: 5,
+      blocking: 5,
+      stability: 5,
+      crossImpact: 5,
+      quickWin: 5,
+      complexityInverse: 5,
     }; // score = 5.0
 
     file.tasks[mid.id].priorityScores = {
-      blocking: 3, stability: 3, crossImpact: 3, quickWin: 3, complexityInverse: 3,
+      blocking: 3,
+      stability: 3,
+      crossImpact: 3,
+      quickWin: 3,
+      complexityInverse: 3,
     }; // score = 3.0
 
     file.tasks[low.id].priorityScores = {
-      blocking: 1, stability: 1, crossImpact: 1, quickWin: 1, complexityInverse: 1,
+      blocking: 1,
+      stability: 1,
+      crossImpact: 1,
+      quickWin: 1,
+      complexityInverse: 1,
     }; // score = 1.0
 
     await writeFile(tasksPath, JSON.stringify(file, null, 2));
@@ -243,7 +255,11 @@ describe('getQueue priority sorting', () => {
     const file = JSON.parse(await readFile(tasksPath, 'utf-8'));
 
     file.tasks[withScore.id].priorityScores = {
-      blocking: 2, stability: 2, crossImpact: 2, quickWin: 2, complexityInverse: 2,
+      blocking: 2,
+      stability: 2,
+      crossImpact: 2,
+      quickWin: 2,
+      complexityInverse: 2,
     }; // score = 2.0, which is > -1 (no score)
 
     await writeFile(tasksPath, JSON.stringify(file, null, 2));
@@ -283,15 +299,27 @@ describe('listTasks priority sorting', () => {
     const file = JSON.parse(await readFile(tasksPath, 'utf-8'));
 
     file.tasks[a.id].priorityScores = {
-      blocking: 1, stability: 1, crossImpact: 1, quickWin: 1, complexityInverse: 1,
+      blocking: 1,
+      stability: 1,
+      crossImpact: 1,
+      quickWin: 1,
+      complexityInverse: 1,
     }; // score = 1.0
 
     file.tasks[b.id].priorityScores = {
-      blocking: 5, stability: 5, crossImpact: 5, quickWin: 5, complexityInverse: 5,
+      blocking: 5,
+      stability: 5,
+      crossImpact: 5,
+      quickWin: 5,
+      complexityInverse: 5,
     }; // score = 5.0
 
     file.tasks[c.id].priorityScores = {
-      blocking: 3, stability: 3, crossImpact: 3, quickWin: 3, complexityInverse: 3,
+      blocking: 3,
+      stability: 3,
+      crossImpact: 3,
+      quickWin: 3,
+      complexityInverse: 3,
     }; // score = 3.0
 
     await writeFile(tasksPath, JSON.stringify(file, null, 2));
@@ -312,7 +340,11 @@ describe('listTasks priority sorting', () => {
     const file = JSON.parse(await readFile(tasksPath, 'utf-8'));
 
     file.tasks[scored.id].priorityScores = {
-      blocking: 1, stability: 1, crossImpact: 1, quickWin: 1, complexityInverse: 1,
+      blocking: 1,
+      stability: 1,
+      crossImpact: 1,
+      quickWin: 1,
+      complexityInverse: 1,
     };
 
     await writeFile(tasksPath, JSON.stringify(file, null, 2));

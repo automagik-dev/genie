@@ -5,17 +5,13 @@
  * commands that operate on batch-manager data.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Batch } from '../lib/batch-manager.js';
 
-import {
-  renderBatchStatus,
-  renderBatchList,
-  cancelBatch,
-} from './batch.js';
+import { cancelBatch, renderBatchList, renderBatchStatus } from './batch.js';
 
 // ============================================================================
 // Helpers
@@ -51,7 +47,12 @@ function makeActiveBatch(overrides: Partial<Batch> = {}): Batch {
     wishes: ['wish-21', 'wish-23', 'wish-24'],
     workers: {
       'wish-21': { paneId: '%85', status: 'running', startedAt: '2026-02-03T20:00:10Z' },
-      'wish-23': { paneId: '%86', status: 'complete', startedAt: '2026-02-03T20:00:10Z', completedAt: '2026-02-03T20:05:00Z' },
+      'wish-23': {
+        paneId: '%86',
+        status: 'complete',
+        startedAt: '2026-02-03T20:00:10Z',
+        completedAt: '2026-02-03T20:05:00Z',
+      },
       'wish-24': { paneId: '%87', status: 'waiting', startedAt: '2026-02-03T20:00:10Z' },
     },
     options: { skill: 'forge', autoApprove: true },
@@ -66,8 +67,18 @@ function makeCompleteBatch(): Batch {
     status: 'complete',
     wishes: ['wish-10', 'wish-11'],
     workers: {
-      'wish-10': { paneId: '%70', status: 'complete', startedAt: '2026-02-03T18:00:10Z', completedAt: '2026-02-03T18:10:00Z' },
-      'wish-11': { paneId: '%71', status: 'complete', startedAt: '2026-02-03T18:00:10Z', completedAt: '2026-02-03T18:12:00Z' },
+      'wish-10': {
+        paneId: '%70',
+        status: 'complete',
+        startedAt: '2026-02-03T18:00:10Z',
+        completedAt: '2026-02-03T18:10:00Z',
+      },
+      'wish-11': {
+        paneId: '%71',
+        status: 'complete',
+        startedAt: '2026-02-03T18:00:10Z',
+        completedAt: '2026-02-03T18:12:00Z',
+      },
     },
     options: {},
   };

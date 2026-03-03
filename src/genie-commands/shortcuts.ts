@@ -4,15 +4,15 @@
  * Commands to install, uninstall, and show keyboard shortcuts.
  */
 
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
   displayShortcuts,
   installShortcuts,
-  uninstallShortcuts,
   isShortcutsInstalled,
+  uninstallShortcuts,
 } from '../term-commands/shortcuts.js';
-import { homedir } from 'os';
-import { join } from 'path';
-import { existsSync } from 'fs';
 
 /**
  * Show shortcuts info (default action)

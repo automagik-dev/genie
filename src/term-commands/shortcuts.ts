@@ -1,7 +1,7 @@
-import { homedir } from 'os';
-import { join } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
-import * as readline from 'readline';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import * as readline from 'node:readline';
 
 export interface ShortcutsOptions {
   tmux?: boolean;
@@ -106,7 +106,7 @@ Commands:
 async function prompt(question: string): Promise<string> {
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout
+    output: process.stdout,
   });
 
   return new Promise((resolve) => {
@@ -138,7 +138,7 @@ export async function installShortcuts(): Promise<void> {
   } else {
     const answer = await prompt(`Add shortcuts to ${tmuxConf}? [Y/n] `);
     if (answer !== 'n') {
-      const content = '\n' + generateTmuxConfig();
+      const content = `\n${generateTmuxConfig()}`;
       appendFileSync(tmuxConf, content);
       console.log(`✅ Added to ${tmuxConf}`);
     } else {
@@ -147,16 +147,14 @@ export async function installShortcuts(): Promise<void> {
   }
 
   // 2. Install to bashrc/zshrc
-  const shellRc = existsSync(join(home, '.zshrc'))
-    ? join(home, '.zshrc')
-    : join(home, '.bashrc');
+  const shellRc = existsSync(join(home, '.zshrc')) ? join(home, '.zshrc') : join(home, '.bashrc');
 
   if (contentExists(shellRc, marker)) {
     console.log(`✓ ${shellRc} already has genie shortcuts`);
   } else {
     const answer = await prompt(`Add shell functions to ${shellRc}? [Y/n] `);
     if (answer !== 'n') {
-      const content = '\n' + generateShellFunctions();
+      const content = `\n${generateShellFunctions()}`;
       appendFileSync(shellRc, content);
       console.log(`✅ Added to ${shellRc}`);
     } else {
@@ -178,7 +176,7 @@ export async function installShortcuts(): Promise<void> {
         if (!existsSync(termuxDir)) {
           mkdirSync(termuxDir, { recursive: true });
         }
-        const content = '\n' + generateTermuxConfig();
+        const content = `\n${generateTermuxConfig()}`;
         appendFileSync(termuxProps, content);
         console.log(`✅ Added to ${termuxProps}`);
         console.log('   Run: termux-reload-settings');
@@ -214,7 +212,7 @@ function removeMarkedContent(filePath: string, marker: string): boolean {
   const lines = content.split('\n');
   const filteredLines: string[] = [];
   let inBlock = false;
-  let blockStartIndex = -1;
+  const blockStartIndex = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -245,7 +243,7 @@ function removeMarkedContent(filePath: string, marker: string): boolean {
         line.includes('extra-keys') ||
         line.includes('F1=') ||
         line.includes('bind -x') ||
-        line.startsWith('#') && lines[i - 1]?.includes('genie');
+        (line.startsWith('#') && lines[i - 1]?.includes('genie'));
 
       if (!isGenieContent && line.trim() !== '') {
         inBlock = false;
@@ -263,7 +261,7 @@ function removeMarkedContent(filePath: string, marker: string): boolean {
   }
 
   // Add back one trailing newline if file had content
-  const newContent = filteredLines.length > 0 ? filteredLines.join('\n') + '\n' : '';
+  const newContent = filteredLines.length > 0 ? `${filteredLines.join('\n')}\n` : '';
   writeFileSync(filePath, newContent);
   return true;
 }

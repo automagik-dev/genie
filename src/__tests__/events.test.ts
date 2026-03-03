@@ -2,17 +2,17 @@
  * Tests for event emission and aggregation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdir, rm, readFile, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
-  getEventsDir,
-  getEventFilePath,
-  writeEventToFile,
-  readEventsFromFile,
+  type NormalizedEvent,
   aggregateAllEvents,
   cleanupEventFile,
-  type NormalizedEvent,
+  getEventFilePath,
+  getEventsDir,
+  readEventsFromFile,
+  writeEventToFile,
 } from '../term-commands/events.js';
 
 const TEST_DIR = '/tmp/genie-events-test';
@@ -104,7 +104,7 @@ describe('Event file operations', () => {
         { type: 'tool_call', timestamp: '2026-02-03T12:01:00.000Z', sessionId: 's1', cwd: '/tmp', toolName: 'Read' },
       ];
 
-      const content = events.map(e => JSON.stringify(e)).join('\n') + '\n';
+      const content = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
       await writeFile(join(TEST_EVENTS_DIR, '%42.jsonl'), content);
 
       const result = await readEventsFromFile('%42', TEST_GENIE_DIR);
@@ -125,19 +125,20 @@ describe('Event file operations', () => {
       const events42 = [
         { type: 'session_start', timestamp: '2026-02-03T12:00:00.000Z', sessionId: 's1', cwd: '/tmp', paneId: '%42' },
       ];
-      await writeFile(
-        join(TEST_EVENTS_DIR, '%42.jsonl'),
-        events42.map(e => JSON.stringify(e)).join('\n') + '\n'
-      );
+      await writeFile(join(TEST_EVENTS_DIR, '%42.jsonl'), `${events42.map((e) => JSON.stringify(e)).join('\n')}\n`);
 
       // Write events for pane %43
       const events43 = [
-        { type: 'tool_call', timestamp: '2026-02-03T12:01:00.000Z', sessionId: 's2', cwd: '/tmp', paneId: '%43', toolName: 'Bash' },
+        {
+          type: 'tool_call',
+          timestamp: '2026-02-03T12:01:00.000Z',
+          sessionId: 's2',
+          cwd: '/tmp',
+          paneId: '%43',
+          toolName: 'Bash',
+        },
       ];
-      await writeFile(
-        join(TEST_EVENTS_DIR, '%43.jsonl'),
-        events43.map(e => JSON.stringify(e)).join('\n') + '\n'
-      );
+      await writeFile(join(TEST_EVENTS_DIR, '%43.jsonl'), `${events43.map((e) => JSON.stringify(e)).join('\n')}\n`);
 
       const result = await aggregateAllEvents(TEST_GENIE_DIR);
       expect(result.length).toBe(2);

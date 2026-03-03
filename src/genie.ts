@@ -9,47 +9,39 @@
  */
 
 import { Command } from 'commander';
-import { VERSION } from './lib/version.js';
-import { installCommand } from './genie-commands/install.js';
-import { setupCommand, type SetupOptions } from './genie-commands/setup.js';
-import { updateCommand } from './genie-commands/update.js';
-import { uninstallCommand } from './genie-commands/uninstall.js';
+import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { doctorCommand } from './genie-commands/doctor.js';
-import { tuiCommand, type TuiOptions } from './genie-commands/tui.js';
+import { installCommand } from './genie-commands/install.js';
+import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
+import { pdfRenderCommand, pdfTemplateCommand, pdfTemplatesCommand, pdfThemesCommand } from './genie-commands/pdf.js';
 import {
-  shortcutsShowCommand,
-  shortcutsInstallCommand,
-  shortcutsUninstallCommand,
-} from './genie-commands/shortcuts.js';
-import {
-  profilesListCommand,
   profilesAddCommand,
+  profilesDefaultCommand,
+  profilesListCommand,
   profilesRmCommand,
   profilesShowCommand,
-  profilesDefaultCommand,
 } from './genie-commands/profiles.js';
+import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
-  pdfRenderCommand,
-  pdfTemplateCommand,
-  pdfThemesCommand,
-  pdfTemplatesCommand,
-} from './genie-commands/pdf.js';
-import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
-import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
+  shortcutsInstallCommand,
+  shortcutsShowCommand,
+  shortcutsUninstallCommand,
+} from './genie-commands/shortcuts.js';
+import { type TuiOptions, tuiCommand } from './genie-commands/tui.js';
+import { uninstallCommand } from './genie-commands/uninstall.js';
+import { updateCommand } from './genie-commands/update.js';
+import { VERSION } from './lib/version.js';
 
-// Provider-selectable orchestration namespaces (genie-cli-teams)
-import { registerTeamNamespace } from './term-commands/team.js';
-import { registerWorkerNamespace } from './term-commands/workers.js';
 import { registerMsgNamespace } from './term-commands/msg.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
+// Provider-selectable orchestration namespaces (genie-cli-teams)
+import { registerTeamNamespace } from './term-commands/team.js';
 import { registerTermNamespace } from './term-commands/term.js';
+import { registerWorkerNamespace } from './term-commands/workers.js';
 
 const program = new Command();
 
-program
-  .name('genie')
-  .description('Genie CLI - Setup and utilities for AI-assisted development')
-  .version(VERSION);
+program.name('genie').description('Genie CLI - Setup and utilities for AI-assisted development').version(VERSION);
 
 // Install command - check/install prerequisites
 program
@@ -76,22 +68,13 @@ program
   });
 
 // Doctor command - diagnostic checks
-program
-  .command('doctor')
-  .description('Run diagnostic checks on genie installation')
-  .action(doctorCommand);
+program.command('doctor').description('Run diagnostic checks on genie installation').action(doctorCommand);
 
 // Update command - pull latest and rebuild
-program
-  .command('update')
-  .description('Update Genie CLI to the latest version')
-  .action(updateCommand);
+program.command('update').description('Update Genie CLI to the latest version').action(updateCommand);
 
 // Uninstall command - remove genie CLI
-program
-  .command('uninstall')
-  .description('Remove Genie CLI and clean up hooks')
-  .action(uninstallCommand);
+program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
 // TUI command - attach to master genie session
 program
@@ -105,65 +88,38 @@ program
   });
 
 // Shortcuts command group - manage tmux keyboard shortcuts
-const shortcuts = program
-  .command('shortcuts')
-  .description('Manage tmux keyboard shortcuts');
+const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
 
 // Make 'show' the default action for bare `genie shortcuts`
 shortcuts.action(shortcutsShowCommand);
 
-shortcuts
-  .command('show')
-  .description('Show available shortcuts and installation status')
-  .action(shortcutsShowCommand);
+shortcuts.command('show').description('Show available shortcuts and installation status').action(shortcutsShowCommand);
 
 shortcuts
   .command('install')
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
   .action(shortcutsInstallCommand);
 
-shortcuts
-  .command('uninstall')
-  .description('Remove shortcuts from config files')
-  .action(shortcutsUninstallCommand);
+shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
 // Profiles command group - manage worker profiles
-const profiles = program
-  .command('profiles')
-  .description('Manage worker profiles for Claude Code spawning');
+const profiles = program.command('profiles').description('Manage worker profiles for Claude Code spawning');
 
 // Make 'list' the default action for bare `genie profiles`
 profiles.action(profilesListCommand);
 
-profiles
-  .command('list')
-  .description('List all configured worker profiles')
-  .action(profilesListCommand);
+profiles.command('list').description('List all configured worker profiles').action(profilesListCommand);
 
-profiles
-  .command('add <name>')
-  .description('Create a new worker profile interactively')
-  .action(profilesAddCommand);
+profiles.command('add <name>').description('Create a new worker profile interactively').action(profilesAddCommand);
 
-profiles
-  .command('rm <name>')
-  .description('Delete a worker profile')
-  .action(profilesRmCommand);
+profiles.command('rm <name>').description('Delete a worker profile').action(profilesRmCommand);
 
-profiles
-  .command('show <name>')
-  .description('Show details of a worker profile')
-  .action(profilesShowCommand);
+profiles.command('show <name>').description('Show details of a worker profile').action(profilesShowCommand);
 
-profiles
-  .command('default [name]')
-  .description('Get or set the default worker profile')
-  .action(profilesDefaultCommand);
+profiles.command('default [name]').description('Get or set the default worker profile').action(profilesDefaultCommand);
 
 // PDF command group - generate PDFs from markdown
-const pdf = program
-  .command('pdf')
-  .description('Generate PDFs from markdown files');
+const pdf = program.command('pdf').description('Generate PDFs from markdown files');
 
 pdf
   .command('render <input>')
@@ -182,20 +138,12 @@ pdf
   .option('-t, --theme <name>', 'Theme to use')
   .action(pdfTemplateCommand);
 
-pdf
-  .command('themes')
-  .description('List available themes')
-  .action(pdfThemesCommand);
+pdf.command('themes').description('List available themes').action(pdfThemesCommand);
 
-pdf
-  .command('templates')
-  .description('List available templates')
-  .action(pdfTemplatesCommand);
+pdf.command('templates').description('List available templates').action(pdfTemplatesCommand);
 
 // Brainstorm command group
-const brainstorm = program
-  .command('brainstorm')
-  .description('Brainstorm utilities (file-based helpers)');
+const brainstorm = program.command('brainstorm').description('Brainstorm utilities (file-based helpers)');
 
 brainstorm
   .command('crystallize')
@@ -209,9 +157,7 @@ brainstorm
   .action(brainstormCrystallizeCommand);
 
 // Ledger command group
-const ledger = program
-  .command('ledger')
-  .description('Ledger utilities (beads JSONL validation)');
+const ledger = program.command('ledger').description('Ledger utilities (beads JSONL validation)');
 
 ledger
   .command('validate')

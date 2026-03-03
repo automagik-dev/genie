@@ -1,13 +1,5 @@
-import React from "react";
-import {
-  Document,
-  Page,
-  View,
-  Text,
-  Link,
-  StyleSheet,
-} from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
+import { Document, Link, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface Experience {
   title: string;
@@ -75,8 +67,8 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
       marginBottom: 10,
     },
     contactRow: {
-      flexDirection: "row",
-      flexWrap: "wrap",
+      flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: 15,
     },
     contactItem: {
@@ -94,7 +86,7 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
       fontSize: 12,
       color: theme.colors.heading,
       marginBottom: 10,
-      textTransform: "uppercase",
+      textTransform: 'uppercase',
       letterSpacing: 1,
     },
     summary: {
@@ -106,8 +98,8 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
       marginBottom: 12,
     },
     experienceHeader: {
-      flexDirection: "row",
-      justifyContent: "space-between",
+      flexDirection: 'row',
+      justifyContent: 'space-between',
       marginBottom: 3,
     },
     experienceTitle: {
@@ -154,8 +146,8 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
       opacity: 0.7,
     },
     skillsContainer: {
-      flexDirection: "row",
-      flexWrap: "wrap",
+      flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: 6,
     },
     skill: {
@@ -166,7 +158,7 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
       borderRadius: 3,
     },
     languageItem: {
-      flexDirection: "row",
+      flexDirection: 'row',
       marginBottom: 4,
     },
     languageName: {
@@ -190,27 +182,19 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
           <View style={styles.contactRow}>
             {data.email && <Text style={styles.contactItem}>{data.email}</Text>}
             {data.phone && <Text style={styles.contactItem}>{data.phone}</Text>}
-            {data.location && (
-              <Text style={styles.contactItem}>{data.location}</Text>
-            )}
+            {data.location && <Text style={styles.contactItem}>{data.location}</Text>}
             {data.website && (
               <Link src={data.website} style={[styles.contactItem, styles.link]}>
-                {data.website.replace(/^https?:\/\//, "")}
+                {data.website.replace(/^https?:\/\//, '')}
               </Link>
             )}
             {data.linkedin && (
-              <Link
-                src={`https://linkedin.com/in/${data.linkedin}`}
-                style={[styles.contactItem, styles.link]}
-              >
+              <Link src={`https://linkedin.com/in/${data.linkedin}`} style={[styles.contactItem, styles.link]}>
                 linkedin.com/in/{data.linkedin}
               </Link>
             )}
             {data.github && (
-              <Link
-                src={`https://github.com/${data.github}`}
-                style={[styles.contactItem, styles.link]}
-              >
+              <Link src={`https://github.com/${data.github}`} style={[styles.contactItem, styles.link]}>
                 github.com/{data.github}
               </Link>
             )}
@@ -234,18 +218,14 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
                 <View style={styles.experienceHeader}>
                   <Text style={styles.experienceTitle}>{exp.title}</Text>
                   <Text style={styles.experienceDates}>
-                    {exp.startDate} – {exp.endDate || "Present"}
+                    {exp.startDate} – {exp.endDate || 'Present'}
                   </Text>
                 </View>
                 <Text style={styles.experienceCompany}>
                   {exp.company}
-                  {exp.location ? ` · ${exp.location}` : ""}
+                  {exp.location ? ` · ${exp.location}` : ''}
                 </Text>
-                {exp.description && (
-                  <Text style={styles.experienceDescription}>
-                    {exp.description}
-                  </Text>
-                )}
+                {exp.description && <Text style={styles.experienceDescription}>{exp.description}</Text>}
                 {exp.highlights?.map((highlight, i) => (
                   <Text key={i} style={styles.highlight}>
                     • {highlight}
@@ -265,7 +245,7 @@ export function ResumeTemplate({ data, theme }: ResumeProps) {
                 <Text style={styles.educationDegree}>{edu.degree}</Text>
                 <Text style={styles.educationSchool}>
                   {edu.institution}
-                  {edu.location ? ` · ${edu.location}` : ""}
+                  {edu.location ? ` · ${edu.location}` : ''}
                 </Text>
                 <Text style={styles.educationDate}>{edu.date}</Text>
               </View>

@@ -4,11 +4,11 @@
 
 import { describe, expect, it } from 'bun:test';
 import {
-  buildLaunchCommand,
+  type SpawnParams,
   buildClaudeCommand,
   buildCodexCommand,
+  buildLaunchCommand,
   validateSpawnParams,
-  type SpawnParams,
 } from './provider-adapters.js';
 
 // ============================================================================

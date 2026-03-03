@@ -5,20 +5,12 @@
  * emitting events for state changes, output, and silence detection.
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
 import * as tmux from '../tmux.js';
-import { ClaudeState, detectState, detectCompletion } from './state-detector.js';
+import { type ClaudeState, detectCompletion, detectState } from './state-detector.js';
 
 export interface ClaudeEvent {
-  type:
-    | 'state_change'
-    | 'output'
-    | 'silence'
-    | 'activity'
-    | 'permission'
-    | 'question'
-    | 'error'
-    | 'complete';
+  type: 'state_change' | 'output' | 'silence' | 'activity' | 'permission' | 'question' | 'error' | 'complete';
   state?: ClaudeState;
   output?: string;
   silenceMs?: number;
@@ -42,10 +34,10 @@ export class EventMonitor extends EventEmitter {
   private explicitPaneId: string | null = null;
   private options: Required<Omit<EventMonitorOptions, 'paneId'>>;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private lastOutput: string = '';
+  private lastOutput = '';
   private lastOutputTime: number = Date.now();
   private lastState: ClaudeState | null = null;
-  private running: boolean = false;
+  private running = false;
 
   constructor(sessionName: string, options: EventMonitorOptions = {}) {
     super();
@@ -66,9 +58,7 @@ export class EventMonitor extends EventEmitter {
 
     // Use explicit pane ID if provided
     if (this.explicitPaneId) {
-      this.paneId = this.explicitPaneId.startsWith('%')
-        ? this.explicitPaneId
-        : `%${this.explicitPaneId}`;
+      this.paneId = this.explicitPaneId.startsWith('%') ? this.explicitPaneId : `%${this.explicitPaneId}`;
     } else {
       // Find session and get pane ID
       const session = await tmux.findSessionByName(this.sessionName);
@@ -81,14 +71,14 @@ export class EventMonitor extends EventEmitter {
         throw new Error(`No windows found in session "${this.sessionName}"`);
       }
 
-      const activeWindow = windows.find(w => w.active) || windows[0];
+      const activeWindow = windows.find((w) => w.active) || windows[0];
 
       const panes = await tmux.listPanes(activeWindow.id);
       if (!panes || panes.length === 0) {
         throw new Error(`No panes found in session "${this.sessionName}"`);
       }
 
-      const activePane = panes.find(p => p.active) || panes[0];
+      const activePane = panes.find((p) => p.active) || panes[0];
       this.paneId = activePane.id;
     }
 
@@ -146,10 +136,7 @@ export class EventMonitor extends EventEmitter {
     if (!this.paneId || !this.running) return;
 
     try {
-      const output = await tmux.capturePaneContent(
-        this.paneId,
-        this.options.captureLines
-      );
+      const output = await tmux.capturePaneContent(this.paneId, this.options.captureLines);
       const now = Date.now();
 
       // Check for new output
@@ -281,7 +268,7 @@ export class EventMonitor extends EventEmitter {
 export async function waitForState(
   monitor: EventMonitor,
   predicate: (state: ClaudeState) => boolean,
-  timeoutMs: number = 60000
+  timeoutMs = 60000,
 ): Promise<ClaudeState> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -316,11 +303,7 @@ export async function waitForState(
 /**
  * Wait for silence (no output) for a duration
  */
-export async function waitForSilence(
-  monitor: EventMonitor,
-  silenceMs: number,
-  timeoutMs: number = 120000
-): Promise<void> {
+export async function waitForSilence(monitor: EventMonitor, silenceMs: number, timeoutMs = 120000): Promise<void> {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     let lastActivityTime = startTime;
@@ -361,7 +344,7 @@ export async function waitForCompletion(
     silenceMs?: number;
     timeoutMs?: number;
     requireIdle?: boolean;
-  } = {}
+  } = {},
 ): Promise<{ state: ClaudeState; reason: string }> {
   const { silenceMs = 3000, timeoutMs = 120000, requireIdle = true } = options;
 
@@ -421,9 +404,7 @@ export async function waitForCompletion(
         // Check if current state indicates completion
         if (
           currentState &&
-          (currentState.type === 'idle' ||
-            currentState.type === 'complete' ||
-            currentState.type === 'error')
+          (currentState.type === 'idle' || currentState.type === 'complete' || currentState.type === 'error')
         ) {
           cleanup();
           resolve({

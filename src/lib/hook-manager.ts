@@ -102,10 +102,7 @@ export async function listHooks(): Promise<TmuxHook[]> {
           });
         }
       }
-    } catch (error) {
-      // Hook not set, continue
-      continue;
-    }
+    } catch (_error) {}
   }
 
   return hooks;
@@ -124,7 +121,7 @@ export async function getHook(event: string): Promise<string | null> {
       }
     }
     return null;
-  } catch (error) {
+  } catch (_error) {
     return null;
   }
 }

@@ -1,6 +1,6 @@
-import { $ } from "bun";
-import { mkdir, rm, access, readFile, writeFile, stat } from "fs/promises";
-import { join, basename } from "path";
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { $ } from 'bun';
 
 export interface WorktreeInfo {
   path: string;
@@ -32,11 +32,11 @@ export interface WorktreeManagerConfig {
  */
 export function sanitizeBranchName(branchName: string): string {
   return branchName
-    .replace(/\//g, "-")
-    .replace(/\\/g, "-")
-    .replace(/[^a-zA-Z0-9-_.]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/\//g, '-')
+    .replace(/\\/g, '-')
+    .replace(/[^a-zA-Z0-9-_.]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 /**
@@ -48,13 +48,13 @@ export function parseTimeframe(timeframe: string): number {
     throw new Error(`Invalid timeframe format: ${timeframe}. Use format like 7d, 2w, 1m, 24h`);
   }
 
-  const value = parseInt(match[1], 10);
+  const value = Number.parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
 
   const multipliers: Record<string, number> = {
-    h: 60 * 60 * 1000,           // hours
-    d: 24 * 60 * 60 * 1000,      // days
-    w: 7 * 24 * 60 * 60 * 1000,  // weeks
+    h: 60 * 60 * 1000, // hours
+    d: 24 * 60 * 60 * 1000, // days
+    w: 7 * 24 * 60 * 60 * 1000, // weeks
     m: 30 * 24 * 60 * 60 * 1000, // months (approximate)
   };
 
@@ -96,7 +96,7 @@ export class WorktreeManager {
   constructor(config: WorktreeManagerConfig) {
     this.baseDir = config.baseDir;
     this.repoPath = config.repoPath;
-    this.metadataPath = join(this.baseDir, ".metadata.json");
+    this.metadataPath = join(this.baseDir, '.metadata.json');
   }
 
   /**
@@ -104,7 +104,7 @@ export class WorktreeManager {
    */
   private async loadMetadata(): Promise<WorktreeMetadata> {
     try {
-      const content = await readFile(this.metadataPath, "utf-8");
+      const content = await readFile(this.metadataPath, 'utf-8');
       return JSON.parse(content);
     } catch {
       return { worktrees: {} };
@@ -125,11 +125,7 @@ export class WorktreeManager {
    * @param createBranch - If true, create a new branch
    * @param baseBranch - Base branch for new branch (only with createBranch)
    */
-  async createWorktree(
-    branchName: string,
-    createBranch: boolean = false,
-    baseBranch?: string
-  ): Promise<WorktreeInfo> {
+  async createWorktree(branchName: string, createBranch = false, baseBranch?: string): Promise<WorktreeInfo> {
     const sanitizedName = sanitizeBranchName(branchName);
     const worktreePath = join(this.baseDir, sanitizedName);
 
@@ -141,7 +137,7 @@ export class WorktreeManager {
       await access(worktreePath);
       throw new Error(`Worktree already exists at ${worktreePath}`);
     } catch (e: any) {
-      if (e.code !== "ENOENT") throw e;
+      if (e.code !== 'ENOENT') throw e;
     }
 
     if (createBranch) {
@@ -224,16 +220,16 @@ export class WorktreeManager {
     const worktrees: WorktreeInfo[] = [];
     let current: Partial<WorktreeInfo> = {};
 
-    for (const line of output.split("\n")) {
-      if (line.startsWith("worktree ")) {
+    for (const line of output.split('\n')) {
+      if (line.startsWith('worktree ')) {
         if (current.path) {
           worktrees.push(current as WorktreeInfo);
         }
         current = { path: line.slice(9) };
-      } else if (line.startsWith("HEAD ")) {
+      } else if (line.startsWith('HEAD ')) {
         current.commitHash = line.slice(5);
-      } else if (line.startsWith("branch ")) {
-        current.branch = line.slice(7).replace("refs/heads/", "");
+      } else if (line.startsWith('branch ')) {
+        current.branch = line.slice(7).replace('refs/heads/', '');
       }
     }
 
@@ -266,7 +262,7 @@ export class WorktreeManager {
    * @param dryRun - If true, only report what would be removed
    * @returns List of removed (or would-be-removed) worktrees
    */
-  async cleanup(timeframe: string, dryRun: boolean = false): Promise<WorktreeInfo[]> {
+  async cleanup(timeframe: string, dryRun = false): Promise<WorktreeInfo[]> {
     const maxAge = parseTimeframe(timeframe);
     const now = Date.now();
     const worktrees = await this.listWorktrees();
@@ -305,8 +301,8 @@ export class WorktreeManager {
     try {
       const result = await $`du -sb ${dirPath}`.quiet();
       const output = result.stdout.toString().trim();
-      const size = parseInt(output.split("\t")[0], 10);
-      return isNaN(size) ? 0 : size;
+      const size = Number.parseInt(output.split('\t')[0], 10);
+      return Number.isNaN(size) ? 0 : size;
     } catch {
       return 0;
     }
@@ -352,10 +348,8 @@ export class WorktreeManager {
 /**
  * Creates a WorktreeManager with default configuration.
  */
-export function createWorktreeManager(
-  options?: Partial<WorktreeManagerConfig>
-): WorktreeManager {
-  const baseDir = options?.baseDir || join(process.cwd(), ".worktrees");
+export function createWorktreeManager(options?: Partial<WorktreeManagerConfig>): WorktreeManager {
+  const baseDir = options?.baseDir || join(process.cwd(), '.worktrees');
   const repoPath = options?.repoPath || process.cwd();
 
   return new WorktreeManager({ baseDir, repoPath });

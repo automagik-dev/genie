@@ -20,17 +20,11 @@
  *   Use --emit flag to enable this while tailing.
  */
 
-import {
-  getLogsForPane,
-  readLogFile,
-  tailLogFile,
-  parseLogEntry,
-  type ClaudeLogEntry,
-} from '../lib/claude-logs.js';
-import * as registry from '../lib/worker-registry.js';
+import { appendFile, mkdir, readFile, readdir, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { type ClaudeLogEntry, getLogsForPane, readLogFile, tailLogFile } from '../lib/claude-logs.js';
 import * as tmux from '../lib/tmux.js';
-import { mkdir, readFile, writeFile, appendFile, readdir, unlink, access } from 'fs/promises';
-import { join } from 'path';
+import * as registry from '../lib/worker-registry.js';
 
 // ============================================================================
 // Types
@@ -139,14 +133,10 @@ async function ensureEventsDir(genieDir?: string): Promise<void> {
  * Write an event to a pane's event file (append-only).
  * Creates the events directory and file if they don't exist.
  */
-export async function writeEventToFile(
-  event: NormalizedEvent,
-  paneId: string,
-  genieDir?: string
-): Promise<void> {
+export async function writeEventToFile(event: NormalizedEvent, paneId: string, genieDir?: string): Promise<void> {
   await ensureEventsDir(genieDir);
   const filePath = getEventFilePath(paneId, genieDir);
-  const line = JSON.stringify(event) + '\n';
+  const line = `${JSON.stringify(event)}\n`;
   await appendFile(filePath, line, 'utf-8');
 }
 
@@ -154,10 +144,7 @@ export async function writeEventToFile(
  * Read all events from a pane's event file.
  * Returns empty array if file doesn't exist.
  */
-export async function readEventsFromFile(
-  paneId: string,
-  genieDir?: string
-): Promise<NormalizedEvent[]> {
+export async function readEventsFromFile(paneId: string, genieDir?: string): Promise<NormalizedEvent[]> {
   const filePath = getEventFilePath(paneId, genieDir);
   const events: NormalizedEvent[] = [];
 
@@ -284,10 +271,7 @@ export async function listEventFiles(genieDir?: string): Promise<string[]> {
  * Parse a Claude log entry into a normalized event.
  * Returns null if the entry doesn't represent a relevant event.
  */
-export function parseLogEntryToEvent(
-  entry: ClaudeLogEntry,
-  workerContext?: WorkerContext
-): NormalizedEvent | null {
+export function parseLogEntryToEvent(entry: ClaudeLogEntry, workerContext?: WorkerContext): NormalizedEvent | null {
   const base = {
     timestamp: entry.timestamp,
     sessionId: entry.sessionId,
@@ -428,7 +412,7 @@ export async function eventsCommand(paneId: string | undefined, options: EventsO
         console.error(`Writing events to ${eventFile}...`);
       }
       console.error(`Tailing events from ${logInfo.logPath}...`);
-      console.error(`Press Ctrl+C to stop.\n`);
+      console.error('Press Ctrl+C to stop.\n');
 
       const cleanup = await tailLogFile(logInfo.logPath, async (entry) => {
         const event = parseLogEntryToEvent(entry, workerContext);
@@ -508,8 +492,8 @@ async function eventsAllCommand(options: EventsOptions): Promise<void> {
   const allEvents = await aggregateAllEvents();
 
   // Filter to events from active workers only
-  const activePaneIds = new Set(workers.map(w => w.paneId));
-  const activeEvents = allEvents.filter(e => e.paneId && activePaneIds.has(e.paneId));
+  const activePaneIds = new Set(workers.map((w) => w.paneId));
+  const activeEvents = allEvents.filter((e) => e.paneId && activePaneIds.has(e.paneId));
 
   // Limit to last N events
   const limit = options.lines || 50;
@@ -544,7 +528,7 @@ function outputEvent(event: NormalizedEvent, options: EventsOptions): void {
       case 'session_start':
         console.log(`${time} ${context}SESSION_START - ${event.cwd}`);
         break;
-      case 'tool_call':
+      case 'tool_call': {
         const input = event.toolInput
           ? Object.entries(event.toolInput)
               .slice(0, 2)
@@ -553,6 +537,7 @@ function outputEvent(event: NormalizedEvent, options: EventsOptions): void {
           : '';
         console.log(`${time} ${context}TOOL_CALL - ${event.toolName}(${input})`);
         break;
+      }
       case 'permission_request':
         console.log(`${time} ${context}PERMISSION_REQUEST - ${event.toolName || 'unknown'}`);
         break;

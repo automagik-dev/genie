@@ -1,5 +1,5 @@
-import { platform, arch } from 'os';
-import { readFile } from 'fs/promises';
+import { readFile } from 'node:fs/promises';
+import { arch, platform } from 'node:os';
 import { $ } from 'bun';
 
 export type OSType = 'macos' | 'linux' | 'unknown';
@@ -54,7 +54,8 @@ async function parseOsRelease(): Promise<LinuxDistro> {
     if (id === 'ubuntu' || idLike.includes('ubuntu')) return 'ubuntu';
     if (id === 'debian' || idLike.includes('debian')) return 'debian';
     if (id === 'fedora' || idLike.includes('fedora')) return 'fedora';
-    if (id === 'rhel' || id === 'centos' || id === 'rocky' || id === 'almalinux' || idLike.includes('rhel')) return 'rhel';
+    if (id === 'rhel' || id === 'centos' || id === 'rocky' || id === 'almalinux' || idLike.includes('rhel'))
+      return 'rhel';
     if (id === 'arch' || idLike.includes('arch')) return 'arch';
 
     return 'unknown';

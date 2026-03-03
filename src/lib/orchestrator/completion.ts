@@ -5,9 +5,9 @@
  * has finished a task, with metrics for evaluating effectiveness.
  */
 
-import { EventMonitor, waitForSilence, waitForCompletion } from './event-monitor.js';
-import { ClaudeState, detectState } from './state-detector.js';
 import * as tmux from '../tmux.js';
+import { type EventMonitor, waitForCompletion, waitForSilence } from './event-monitor.js';
+import type { ClaudeState } from './state-detector.js';
 
 export interface CompletionResult {
   complete: boolean;
@@ -44,7 +44,7 @@ export function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
     name: `silence-${silenceMs}ms`,
     totalRuns: 0,
     avgLatencyMs: 0,
-    minLatencyMs: Infinity,
+    minLatencyMs: Number.POSITIVE_INFINITY,
     maxLatencyMs: 0,
     falsePositives: 0,
     falseNegatives: 0,
@@ -83,8 +83,7 @@ export function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
 
     recordResult(latencyMs: number, correct: boolean, falsePositive: boolean): void {
       metrics.totalRuns++;
-      metrics.avgLatencyMs =
-        (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
+      metrics.avgLatencyMs = (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
       metrics.minLatencyMs = Math.min(metrics.minLatencyMs, latencyMs);
       metrics.maxLatencyMs = Math.max(metrics.maxLatencyMs, latencyMs);
 
@@ -96,9 +95,7 @@ export function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
         }
       }
 
-      metrics.successRate =
-        (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) /
-        metrics.totalRuns;
+      metrics.successRate = (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) / metrics.totalRuns;
     },
   };
 }
@@ -111,7 +108,7 @@ export function stateDetectionMethod(): CompletionMethod {
     name: 'state-detection',
     totalRuns: 0,
     avgLatencyMs: 0,
-    minLatencyMs: Infinity,
+    minLatencyMs: Number.POSITIVE_INFINITY,
     maxLatencyMs: 0,
     falsePositives: 0,
     falseNegatives: 0,
@@ -154,8 +151,7 @@ export function stateDetectionMethod(): CompletionMethod {
 
     recordResult(latencyMs: number, correct: boolean, falsePositive: boolean): void {
       metrics.totalRuns++;
-      metrics.avgLatencyMs =
-        (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
+      metrics.avgLatencyMs = (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
       metrics.minLatencyMs = Math.min(metrics.minLatencyMs, latencyMs);
       metrics.maxLatencyMs = Math.max(metrics.maxLatencyMs, latencyMs);
 
@@ -167,9 +163,7 @@ export function stateDetectionMethod(): CompletionMethod {
         }
       }
 
-      metrics.successRate =
-        (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) /
-        metrics.totalRuns;
+      metrics.successRate = (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) / metrics.totalRuns;
     },
   };
 }
@@ -182,7 +176,7 @@ export function waitForChannelMethod(channel: string): CompletionMethod {
     name: `wait-for-${channel}`,
     totalRuns: 0,
     avgLatencyMs: 0,
-    minLatencyMs: Infinity,
+    minLatencyMs: Number.POSITIVE_INFINITY,
     maxLatencyMs: 0,
     falsePositives: 0,
     falseNegatives: 0,
@@ -200,9 +194,7 @@ export function waitForChannelMethod(channel: string): CompletionMethod {
       try {
         await Promise.race([
           tmux.executeTmux(`wait-for ${channel}`),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), timeoutMs)
-          ),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs)),
         ]);
 
         const latencyMs = Date.now() - startTime;
@@ -225,8 +217,7 @@ export function waitForChannelMethod(channel: string): CompletionMethod {
 
     recordResult(latencyMs: number, correct: boolean, falsePositive: boolean): void {
       metrics.totalRuns++;
-      metrics.avgLatencyMs =
-        (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
+      metrics.avgLatencyMs = (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
       metrics.minLatencyMs = Math.min(metrics.minLatencyMs, latencyMs);
       metrics.maxLatencyMs = Math.max(metrics.maxLatencyMs, latencyMs);
 
@@ -238,9 +229,7 @@ export function waitForChannelMethod(channel: string): CompletionMethod {
         }
       }
 
-      metrics.successRate =
-        (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) /
-        metrics.totalRuns;
+      metrics.successRate = (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) / metrics.totalRuns;
     },
   };
 }
@@ -254,7 +243,7 @@ export function hybridMethod(
   options: {
     primaryTimeoutMs?: number;
     fallbackTimeoutMs?: number;
-  } = {}
+  } = {},
 ): CompletionMethod {
   const { primaryTimeoutMs = 30000, fallbackTimeoutMs = 90000 } = options;
 
@@ -262,7 +251,7 @@ export function hybridMethod(
     name: `hybrid(${primaryMethod.name},${fallbackMethod.name})`,
     totalRuns: 0,
     avgLatencyMs: 0,
-    minLatencyMs: Infinity,
+    minLatencyMs: Number.POSITIVE_INFINITY,
     maxLatencyMs: 0,
     falsePositives: 0,
     falseNegatives: 0,
@@ -278,10 +267,7 @@ export function hybridMethod(
       const startTime = Date.now();
 
       // Try primary method first
-      const primaryResult = await primaryMethod.detect(
-        monitor,
-        Math.min(primaryTimeoutMs, timeoutMs)
-      );
+      const primaryResult = await primaryMethod.detect(monitor, Math.min(primaryTimeoutMs, timeoutMs));
 
       if (primaryResult.complete) {
         return {
@@ -302,10 +288,7 @@ export function hybridMethod(
         };
       }
 
-      const fallbackResult = await fallbackMethod.detect(
-        monitor,
-        Math.min(fallbackTimeoutMs, remainingTime)
-      );
+      const fallbackResult = await fallbackMethod.detect(monitor, Math.min(fallbackTimeoutMs, remainingTime));
 
       return {
         ...fallbackResult,
@@ -317,8 +300,7 @@ export function hybridMethod(
 
     recordResult(latencyMs: number, correct: boolean, falsePositive: boolean): void {
       metrics.totalRuns++;
-      metrics.avgLatencyMs =
-        (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
+      metrics.avgLatencyMs = (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
       metrics.minLatencyMs = Math.min(metrics.minLatencyMs, latencyMs);
       metrics.maxLatencyMs = Math.max(metrics.maxLatencyMs, latencyMs);
 
@@ -330,9 +312,7 @@ export function hybridMethod(
         }
       }
 
-      metrics.successRate =
-        (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) /
-        metrics.totalRuns;
+      metrics.successRate = (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) / metrics.totalRuns;
     },
   };
 }
@@ -381,7 +361,7 @@ export function getMethod(name: string): CompletionMethod {
   // Parse custom silence timeout: "silence-Xms" or "silence-Xs"
   const silenceMatch = name.match(/^silence-(\d+)(ms|s)?$/);
   if (silenceMatch) {
-    const value = parseInt(silenceMatch[1], 10);
+    const value = Number.parseInt(silenceMatch[1], 10);
     const unit = silenceMatch[2] || 'ms';
     const ms = unit === 's' ? value * 1000 : value;
     return silenceTimeoutMethod(ms);

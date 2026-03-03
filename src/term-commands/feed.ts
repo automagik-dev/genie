@@ -16,12 +16,11 @@
  *   complexityInverse (0.10) - Simple = higher score
  */
 
-import { readFile, appendFile, access, mkdir } from 'fs/promises';
-import { join, resolve, dirname } from 'path';
-import { randomBytes } from 'crypto';
-import { execSync } from 'child_process';
-import { exec as execCb } from 'child_process';
-import { promisify } from 'util';
+import { exec as execCb } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { access, appendFile, mkdir, readFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 const execAsync = promisify(execCb);
 
@@ -68,11 +67,11 @@ interface BeadIssue {
 // ============================================================================
 
 const WEIGHTS = {
-  blocking: 0.30,
+  blocking: 0.3,
   stability: 0.25,
-  crossImpact: 0.20,
+  crossImpact: 0.2,
   quickWin: 0.15,
-  complexityInverse: 0.10,
+  complexityInverse: 0.1,
 } as const;
 
 const DEFAULT_SCORE = 3;
@@ -138,7 +137,9 @@ async function getIssuePrefix(beadsDir: string): Promise<string> {
   // Fallback: derive from git repo name
   try {
     const { stdout } = await execAsync('git rev-parse --show-toplevel');
-    return require('path').basename(stdout.trim()).replace(/[^a-zA-Z0-9-]/g, '');
+    return require('node:path')
+      .basename(stdout.trim())
+      .replace(/[^a-zA-Z0-9-]/g, '');
   } catch {
     return 'bd';
   }
@@ -233,7 +234,7 @@ async function loadExistingIds(issuesPath: string): Promise<Set<string>> {
 }
 
 async function appendIssue(issuesPath: string, issue: BeadIssue): Promise<void> {
-  const line = JSON.stringify(issue) + '\n';
+  const line = `${JSON.stringify(issue)}\n`;
   // Ensure directory exists
   await mkdir(dirname(issuesPath), { recursive: true });
   // Atomic append — no read-modify-write race
@@ -246,13 +247,13 @@ async function appendIssue(issuesPath: string, issue: BeadIssue): Promise<void> 
 
 function sanitizeTitle(raw: string): string {
   // Strip control characters, limit length
-  return raw.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
+  return raw
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .trim()
+    .slice(0, 200);
 }
 
-export async function feedCommand(
-  title: string,
-  options: FeedOptions = {}
-): Promise<void> {
+export async function feedCommand(title: string, options: FeedOptions = {}): Promise<void> {
   title = sanitizeTitle(title);
   if (!title) {
     console.error('❌ Title cannot be empty.');
@@ -315,12 +316,14 @@ export async function feedCommand(
   console.log(`🎯 Epic created: ${id}`);
   console.log(`   Title: "${title}"`);
   console.log(`   Priority Score: ${priorityScore}`);
-  console.log(`   Scores: blocking=${scores.blocking} stability=${scores.stability} crossImpact=${scores.crossImpact} quickWin=${scores.quickWin} complexity⁻¹=${scores.complexityInverse}`);
+  console.log(
+    `   Scores: blocking=${scores.blocking} stability=${scores.stability} crossImpact=${scores.crossImpact} quickWin=${scores.quickWin} complexity⁻¹=${scores.complexityInverse}`,
+  );
   if (issue.external_ref) {
     console.log(`   Linked: ${issue.external_ref}`);
   }
   console.log('');
   console.log('Next steps:');
   console.log(`   term work ${id}              — Start working on it`);
-  console.log(`   term task ls                 — List all tasks and epics`);
+  console.log('   term task ls                 — List all tasks and epics');
 }
