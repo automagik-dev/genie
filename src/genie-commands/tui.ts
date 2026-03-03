@@ -22,6 +22,11 @@ import {
 const DEFAULT_NAME = 'genie';
 const DEFAULT_WORKSPACE = join(homedir(), 'workspace');
 
+/** Shell-quote a string for safe embedding in shell commands. */
+function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
 export interface TuiOptions {
   reset?: boolean;
   name?: string;
@@ -58,14 +63,15 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  */
 function buildClaudeCommand(teamName: string): string {
   const sanitized = sanitizeTeamName(teamName);
+  const qTeam = shellQuote(sanitized);
   const parts = [
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
-    `GENIE_TEAM='${sanitized}'`,
+    `GENIE_TEAM=${qTeam}`,
     'claude',
-    `--agent-id 'team-lead@${sanitized}'`,
-    `--agent-name 'team-lead'`,
-    `--team-name '${sanitized}'`,
+    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
+    `--agent-name ${shellQuote('team-lead')}`,
+    `--team-name ${qTeam}`,
     '--dangerously-skip-permissions',
     '-c',
   ];
@@ -104,12 +110,13 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
         process.exit(1);
       }
 
-      // Change to workspace directory
-      await tmux.executeTmux(`send-keys -t '${name}' 'cd ${workspaceDir}' Enter`);
+      // Change to workspace directory (quote path for safe shell execution)
+      const cdCmd = `cd ${shellQuote(workspaceDir)}`;
+      await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
 
       // Start Claude Code as native team-lead
       const cmd = buildClaudeCommand(name);
-      await tmux.executeTmux(`send-keys -t '${name}' '${cmd}' Enter`);
+      await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
       console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
     } else {
       console.log(`Session "${name}" already exists`);

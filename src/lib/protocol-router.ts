@@ -70,6 +70,8 @@ export async function sendMessage(
       const resolvedTeam = teamName ?? await nativeTeams.discoverTeamName();
       if (resolvedTeam) {
         try {
+          // Persist to mailbox first (DEC-7) even for native-only delivery
+          const message = await mailbox.send(repoPath, from, to, body);
           const nativeMsg: nativeTeams.NativeInboxMessage = {
             from,
             text: body,
@@ -79,8 +81,9 @@ export async function sendMessage(
             read: false,
           };
           await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+          await mailbox.markDelivered(repoPath, to, message.id);
           return {
-            messageId: `native-${Date.now()}`,
+            messageId: message.id,
             workerId: to,
             delivered: true,
           };
@@ -101,16 +104,21 @@ export async function sendMessage(
     const message = await mailbox.send(repoPath, from, match.id, body);
 
     // Deliver based on worker type
+    let delivered = false;
     if (match.nativeTeamEnabled && match.team && match.role) {
-      await writeToNativeInbox(match, message);
+      delivered = await writeToNativeInbox(match, message);
     } else {
-      await injectToTmuxPane(match, message);
+      delivered = await injectToTmuxPane(match, message);
+    }
+
+    if (delivered) {
+      await mailbox.markDelivered(repoPath, match.id, message.id);
     }
 
     return {
       messageId: message.id,
       workerId: match.id,
-      delivered: true,
+      delivered,
     };
   }
 
@@ -118,16 +126,21 @@ export async function sendMessage(
   const message = await mailbox.send(repoPath, from, to, body);
 
   // 3. Deliver based on worker type
+  let delivered = false;
   if (worker.nativeTeamEnabled && worker.team && worker.role) {
-    await writeToNativeInbox(worker, message);
+    delivered = await writeToNativeInbox(worker, message);
   } else {
-    await injectToTmuxPane(worker, message);
+    delivered = await injectToTmuxPane(worker, message);
+  }
+
+  if (delivered) {
+    await mailbox.markDelivered(repoPath, to, message.id);
   }
 
   return {
     messageId: message.id,
     workerId: to,
-    delivered: true,
+    delivered,
   };
 }
 
@@ -138,7 +151,7 @@ export async function sendMessage(
 async function writeToNativeInbox(
   worker: registry.Worker,
   message: mailbox.MailboxMessage,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const nativeMsg = mailbox.toNativeInboxMessage(
       message,
@@ -146,8 +159,10 @@ async function writeToNativeInbox(
     );
     const agentName = worker.role ?? worker.id;
     await nativeTeams.writeNativeInbox(worker.team!, agentName, nativeMsg);
+    return true;
   } catch {
     // Best-effort — native inbox write failure is non-fatal
+    return false;
   }
 }
 
@@ -159,8 +174,8 @@ async function writeToNativeInbox(
 async function injectToTmuxPane(
   worker: registry.Worker,
   message: mailbox.MailboxMessage,
-): Promise<void> {
-  if (!worker.paneId) return;
+): Promise<boolean> {
+  if (!worker.paneId) return false;
 
   try {
     // Escape single quotes for shell embedding
@@ -169,8 +184,10 @@ async function injectToTmuxPane(
     await executeTmux(`send-keys -t '${worker.paneId}' '${escaped}'`);
     await new Promise(resolve => setTimeout(resolve, 200));
     await executeTmux(`send-keys -t '${worker.paneId}' Enter`);
+    return true;
   } catch {
     // Best-effort — pane may be dead or busy
+    return false;
   }
 }
 
@@ -190,16 +207,24 @@ export async function flushPending(
   const results: DeliveryResult[] = [];
 
   for (const msg of messages) {
-    // Inject into tmux pane for non-native workers
-    if (worker && !worker.nativeTeamEnabled && worker.paneId) {
-      await injectToTmuxPane(worker, msg);
+    let delivered = false;
+
+    if (worker) {
+      if (worker.nativeTeamEnabled && worker.team && worker.role) {
+        delivered = await writeToNativeInbox(worker, msg);
+      } else if (worker.paneId) {
+        delivered = await injectToTmuxPane(worker, msg);
+      }
     }
 
-    await mailbox.markDelivered(repoPath, workerId, msg.id);
+    if (delivered) {
+      await mailbox.markDelivered(repoPath, workerId, msg.id);
+    }
+
     results.push({
       messageId: msg.id,
       workerId,
-      delivered: true,
+      delivered,
     });
   }
 

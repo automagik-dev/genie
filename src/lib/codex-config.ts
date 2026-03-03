@@ -24,9 +24,14 @@ export function isCodexConfigured(): boolean {
 
   try {
     const content = readFileSync(CODEX_CONFIG_PATH, 'utf-8');
+    // Strip TOML comments (lines starting with #) before checking
+    const uncommented = content
+      .split('\n')
+      .filter(line => !line.trimStart().startsWith('#'))
+      .join('\n');
     return (
-      content.includes('disable_paste_burst') &&
-      content.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)
+      uncommented.includes('disable_paste_burst') &&
+      uncommented.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)
     );
   } catch {
     return false;
@@ -41,9 +46,9 @@ export function isCodexConfigured(): boolean {
  *
  * Idempotent — safe to call multiple times.
  *
- * @returns true if changes were made, false if already configured
+ * @returns 'changed' if changes were made, 'unchanged' if already configured, 'error' on failure
  */
-export function ensureCodexOtelConfig(): boolean {
+export function ensureCodexOtelConfig(): 'changed' | 'unchanged' | 'error' {
   try {
     mkdirSync(CODEX_CONFIG_DIR, { recursive: true });
 
@@ -59,7 +64,11 @@ export function ensureCodexOtelConfig(): boolean {
     if (!content.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)) {
       if (content.includes('[otel]')) {
         if (/exporter\s*=/.test(content)) {
-          content = content.replace(/exporter\s*=\s*.+/, otelLine);
+          // Replace exporter line only within the [otel] section
+          content = content.replace(
+            /(\[otel\][^\[]*?)exporter\s*=\s*.+/,
+            `$1${otelLine}`,
+          );
         } else {
           content = content.replace('[otel]', `[otel]\n${otelLine}`);
         }
@@ -87,9 +96,9 @@ export function ensureCodexOtelConfig(): boolean {
       writeFileSync(CODEX_CONFIG_PATH, content);
     }
 
-    return changed;
+    return changed ? 'changed' : 'unchanged';
   } catch {
-    return false;
+    return 'error';
   }
 }
 

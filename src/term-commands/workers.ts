@@ -275,7 +275,7 @@ function relayAll() {
     let paneId;
     try { paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim(); }
     catch { continue; }
-    if (!paneId) continue;
+    if (!paneId || !/^%\\d+$/.test(paneId)) continue;
 
     let meta = { agent: workerId, color: 'blue' };
     try {
@@ -362,6 +362,7 @@ setInterval(() => {
   for (const file of paneFiles) {
     try {
       const paneId = readFileSync(join(RELAY_DIR, file), 'utf-8').trim();
+      if (!/^%\\d+$/.test(paneId)) throw new Error('invalid pane id');
       execSync(\`tmux display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
     } catch {
       const workerId = file.replace(/-pane$/, '');
@@ -632,7 +633,7 @@ export function registerWorkerNamespace(program: Command): void {
     }) => {
       try {
         // 1. Resolve team name from flag, env, or session discovery
-        const team = options.team ?? await nativeTeams.discoverTeamName();
+        const team = options.team || await nativeTeams.discoverTeamName();
         if (!team) {
           console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
           process.exit(1);
@@ -777,9 +778,9 @@ export function registerWorkerNamespace(program: Command): void {
               `tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`,
               { encoding: 'utf-8' },
             ).trim();
-          } catch {
-            paneId = '%0';
-            console.log('  (tmux split failed — pane not created)');
+          } catch (err: any) {
+            console.error(`Failed to create tmux pane: ${err?.message ?? 'unknown error'}`);
+            process.exit(1);
           }
 
           try {
@@ -930,11 +931,12 @@ export function registerWorkerNamespace(program: Command): void {
           process.exit(1);
         }
 
-        // Kill the tmux pane
+        // Kill the tmux pane (validate paneId format to prevent injection)
         try {
           const { execSync } = require('child_process');
           const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
-          if (w.paneId && w.paneId !== currentPane) {
+          const validPaneId = w.paneId && /^(%\d+|inline)$/.test(w.paneId);
+          if (validPaneId && w.paneId !== currentPane) {
             execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
           } else if (w.paneId === currentPane) {
             console.log('  (skipped pane kill — would kill current session)');
@@ -948,7 +950,7 @@ export function registerWorkerNamespace(program: Command): void {
           const { homedir } = require('os');
           const { unlinkSync } = require('fs');
           const relayDir = join(homedir(), '.genie', 'relay');
-          for (const suffix of ['-pane', '-meta', '-watcher.mjs']) {
+          for (const suffix of ['-pane', '-meta']) {
             try { unlinkSync(join(relayDir, `${id}${suffix}`)); } catch {}
           }
         } catch { /* best-effort */ }

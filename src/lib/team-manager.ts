@@ -201,7 +201,11 @@ export async function deleteTeam(repoPath: string, name: string): Promise<boolea
   // Check if native teams were enabled and clean up
   const config = await getTeam(repoPath, name);
   if (config?.nativeTeamsEnabled) {
-    await nativeTeamsManager.deleteNativeTeam(name);
+    try {
+      await nativeTeamsManager.deleteNativeTeam(name);
+    } catch {
+      // Best-effort — native team cleanup failure shouldn't block local deletion
+    }
   }
 
   try {

@@ -33,7 +33,7 @@ export function registerTeamNamespace(program: Command): void {
         }
         if (config.nativeTeamsEnabled) {
           console.log(`  Native teams: enabled (CC detected)`);
-          console.log(`  Session: ${config.nativeTeamParentSessionId}`);
+          console.log(`  Session: ${config.nativeTeamParentSessionId ?? '(pending)'}`);
         }
       } catch (error: any) {
         console.error(`Error: ${error.message}`);
