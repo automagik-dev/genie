@@ -14,24 +14,20 @@
  * - .claude-plugin/marketplace.json (marketplace listing)
  */
 
-import { readFile, writeFile } from 'fs/promises';
-import { join, dirname } from 'path';
-import { existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-// Query npm registry for existing versions published today
+// Count existing versions for today from git tags
 function getTodayPublishCount(datePrefix: string): number {
   try {
-    const output = execSync('npm view @automagik/genie versions --json', {
+    const output = execSync(`git tag --list "v3.${datePrefix}.*"`, {
       encoding: 'utf-8',
-      timeout: 15000,
-      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5000,
     });
-    const versions: string[] = JSON.parse(output);
-    // Count versions matching 3.YYMMDD.* for today's date
-    return versions.filter(v => v.startsWith(`3.${datePrefix}.`)).length;
+    return output.trim().split('\n').filter(Boolean).length;
   } catch {
-    // Registry unreachable or package not found — start at 0
     return 0;
   }
 }
@@ -58,7 +54,7 @@ async function updateJsonVersion(filePath: string, version: string): Promise<boo
   try {
     const json = JSON.parse(await readFile(filePath, 'utf-8'));
     json.version = version;
-    await writeFile(filePath, JSON.stringify(json, null, 2) + '\n');
+    await writeFile(filePath, `${JSON.stringify(json, null, 2)}\n`);
     console.log(`  ✓ ${filePath}`);
     return true;
   } catch (err) {
@@ -83,29 +79,20 @@ async function main() {
     const versionContent = await readFile(versionPath, 'utf-8');
     const updatedContent = versionContent.replace(
       /export const VERSION = '[^']+';/,
-      `export const VERSION = '${version}';`
+      `export const VERSION = '${version}';`,
     );
     await writeFile(versionPath, updatedContent);
     console.log(`  ✓ ${versionPath}`);
   }
 
   // 3. Update Claude Code plugin manifest
-  await updateJsonVersion(
-    join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'),
-    version
-  );
+  await updateJsonVersion(join(rootDir, 'plugins/genie/.claude-plugin/plugin.json'), version);
 
   // 4. Update OpenClaw plugin manifest (root level)
-  await updateJsonVersion(
-    join(rootDir, 'openclaw.plugin.json'),
-    version
-  );
+  await updateJsonVersion(join(rootDir, 'openclaw.plugin.json'), version);
 
   // 5. Update plugin package.json (used by smart-install.js for version checks)
-  await updateJsonVersion(
-    join(rootDir, 'plugins/genie/package.json'),
-    version
-  );
+  await updateJsonVersion(join(rootDir, 'plugins/genie/package.json'), version);
 
   // 6. Update marketplace.json plugin version
   const marketplacePath = join(rootDir, '.claude-plugin/marketplace.json');
@@ -115,7 +102,7 @@ async function main() {
       if (json.plugins?.[0]) {
         json.plugins[0].version = version;
       }
-      await writeFile(marketplacePath, JSON.stringify(json, null, 2) + '\n');
+      await writeFile(marketplacePath, `${JSON.stringify(json, null, 2)}\n`);
       console.log(`  ✓ ${marketplacePath}`);
     } catch (err) {
       console.error(`  ✗ Failed: ${marketplacePath}`, err);
