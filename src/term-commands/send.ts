@@ -19,14 +19,9 @@ export async function sendKeysToSession(
     // Default: enter is true (append Enter key)
     const withEnter = options.enter !== false;
 
-    // Escape single quotes for shell
-    const escapedKeys = keys.replace(/'/g, "'\\''");
-
-    if (withEnter) {
-      await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedKeys}' Enter`);
-    } else {
-      await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedKeys}'`);
-    }
+    // Use paste-buffer for reliable text injection (atomic, no key-name issues).
+    // Falls back to send-keys only for single special keys without Enter.
+    await tmux.pasteToPane(paneId, keys, withEnter);
 
     console.log(`Keys sent to ${resolvedLabel}${withEnter ? ' (with Enter)' : ''}`);
   } catch (error: any) {

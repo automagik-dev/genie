@@ -43,6 +43,11 @@ export const ClaudioConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
 
+// Codex integration configuration
+export const CodexConfigSchema = z.object({
+  configured: z.boolean().default(false),
+});
+
 // Worker profile configuration
 // Defines how to launch a Claude worker
 export const WorkerProfileSchema = z.object({
@@ -74,6 +79,7 @@ export const GenieConfigSchema = z.object({
   shell: ShellConfigSchema.default({}),
   shortcuts: ShortcutsConfigSchema.default({}),
   claudio: ClaudioConfigSchema.optional(),
+  codex: CodexConfigSchema.optional(),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
   setupComplete: z.boolean().default(false),
   lastSetupAt: z.string().optional(),
@@ -96,6 +102,7 @@ export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
+export type CodexConfig = z.infer<typeof CodexConfigSchema>;
 export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
 export type CouncilPreset = z.infer<typeof CouncilPresetSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;

@@ -243,6 +243,29 @@ export async function killPane(paneId: string): Promise<void> {
 }
 
 /**
+ * Paste text into a tmux pane and optionally submit with Enter.
+ *
+ * Uses `send-keys -l` (literal mode) so text is not interpreted as key names.
+ * Relies on codex's `disable_paste_burst = true` config to ensure Enter
+ * is always treated as submit, not as a newline within a paste burst.
+ */
+export async function pasteToPane(
+  paneId: string,
+  text: string,
+  submit: boolean = true,
+): Promise<void> {
+  const { execSync } = require('child_process');
+  const escapedPane = escapeShellPath(paneId);
+  const escapedText = text.replace(/'/g, "'\\''");
+
+  // Send text literally (no key-name interpretation), then Enter to submit.
+  execSync(`tmux send-keys -t '${escapedPane}' -l '${escapedText}'`);
+  if (submit) {
+    execSync(`tmux send-keys -t '${escapedPane}' Enter`);
+  }
+}
+
+/**
  * Escape a string for safe use in shell single quotes.
  * Replaces ' with '\'' (end quote, escaped quote, start quote).
  */

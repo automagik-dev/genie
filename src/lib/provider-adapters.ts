@@ -103,14 +103,6 @@ export const spawnParamsSchema = z.object({
 export function validateSpawnParams(params: SpawnParams): SpawnParams {
   const parsed = spawnParamsSchema.parse(params);
 
-  // Provider-specific validation rules
-  if (parsed.provider === 'codex' && !parsed.skill) {
-    throw new Error(
-      'Codex provider requires --skill. ' +
-      'Example: genie worker spawn --provider codex --team work --skill work --role tester'
-    );
-  }
-
   return parsed as SpawnParams;
 }
 
@@ -247,13 +239,6 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 export function buildCodexCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('codex');
 
-  if (!params.skill) {
-    throw new Error(
-      'Codex adapter requires --skill. ' +
-      'The skill provides task instructions for the worker.'
-    );
-  }
-
   const parts: string[] = ['codex'];
 
   // Automated execution for worker panes (sandbox + approval policy)
@@ -269,8 +254,12 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
     }
   }
 
-  // Skill-driven instructions as positional [PROMPT] argument (must be last)
-  const prompt = `Genie worker. Team: ${params.team}. Skill: ${params.skill}.${params.role ? ` Role: ${params.role} (advisory).` : ''} Execute the ${params.skill} skill instructions.`;
+  // Build prompt from available context (skill + role are both optional)
+  const promptParts = [`Genie worker. Team: ${params.team}.`];
+  if (params.skill) promptParts.push(`Skill: ${params.skill}.`);
+  if (params.role) promptParts.push(`Role: ${params.role}.`);
+  if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
+  const prompt = promptParts.join(' ');
   parts.push(escapeShellArg(prompt));
 
   return {

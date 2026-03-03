@@ -66,6 +66,7 @@ program
   .option('--quick', 'Accept all defaults')
   .option('--shortcuts', 'Only configure keyboard shortcuts')
   .option('--claudio', 'Only configure Claudio integration')
+  .option('--codex', 'Only configure Codex integration')
   .option('--terminal', 'Only configure terminal defaults')
   .option('--session', 'Only configure session settings')
   .option('--reset', 'Reset configuration to defaults')

@@ -39,10 +39,9 @@ describe('validateSpawnParams', () => {
     expect(() => validateSpawnParams({ provider: 'claude', team: '' })).toThrow();
   });
 
-  it('rejects codex without skill', () => {
-    expect(() => validateSpawnParams({ provider: 'codex', team: 'work' })).toThrow(
-      /Codex provider requires --skill/
-    );
+  it('accepts codex without skill', () => {
+    const result = validateSpawnParams({ provider: 'codex', team: 'work' });
+    expect(result.provider).toBe('codex');
   });
 
   it('allows claude without skill', () => {
@@ -114,14 +113,16 @@ describe('buildCodexCommand', () => {
     expect(result.command).toContain('--no-alt-screen');
   });
 
-  it('throws when skill is missing', () => {
-    expect(() => buildCodexCommand({ provider: 'codex', team: 'work' })).toThrow(/requires --skill/);
+  it('builds command without skill', () => {
+    const result = buildCodexCommand({ provider: 'codex', team: 'work' });
+    expect(result.command).toContain('codex');
+    expect(result.command).toContain('Genie worker');
+    expect(result.command).not.toContain('Skill:');
   });
 
-  it('includes role as advisory metadata in prompt', () => {
+  it('includes role in prompt', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work', role: 'tester' });
     expect(result.command).toContain('Role: tester');
-    expect(result.command).toContain('advisory');
   });
 
   it('does not depend on agent-name routing', () => {
@@ -177,7 +178,9 @@ describe('buildLaunchCommand', () => {
     expect(() => buildLaunchCommand({ provider: 'invalid' as any, team: 'work' })).toThrow();
   });
 
-  it('rejects codex without skill at dispatch', () => {
-    expect(() => buildLaunchCommand({ provider: 'codex', team: 'work' })).toThrow(/--skill/);
+  it('dispatches codex without skill', () => {
+    const result = buildLaunchCommand({ provider: 'codex', team: 'work' });
+    expect(result.provider).toBe('codex');
+    expect(result.command).toContain('Genie worker');
   });
 });
