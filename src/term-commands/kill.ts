@@ -163,7 +163,7 @@ export async function killCommand(target: string, options: KillOptions = {}): Pr
     // 2. Remove worktree (unless --keep-worktree)
     if (worker.worktree && !options.keepWorktree) {
       console.log('🌳 Removing worktree...');
-      const removed = await removeWorktree(worker.taskId, worker.repoPath);
+      const removed = await removeWorktree(worker.taskId ?? worker.id, worker.repoPath);
       if (removed) {
         console.log('   ✅ Worktree removed');
       }

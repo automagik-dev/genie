@@ -480,7 +480,7 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
 
     for (const worker of workers) {
       const alive = await isPaneAlive(worker.paneId);
-      let currentState = worker.state;
+      let currentState: string = worker.state;
 
       if (alive) {
         // Get live state from pane

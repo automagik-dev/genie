@@ -424,7 +424,7 @@ async function findWorker(identifier: string): Promise<workerRegistry.Worker | n
   const match = allWorkers.find(
     (w) =>
       w.id.includes(identifier) ||
-      w.taskId.includes(identifier) ||
+      w.taskId?.includes(identifier) ||
       w.taskTitle?.toLowerCase().includes(identifier.toLowerCase()),
   );
 
@@ -476,7 +476,7 @@ export async function historyCommand(workerIdOrName: string, options: HistoryOpt
   const entries = await claudeLogs.readLogFile(logPath);
 
   if (entries.length === 0) {
-    console.error(`❌ Log file is empty: ${logInfo.logPath}`);
+    console.error(`❌ Log file is empty: ${logPath}`);
     process.exit(1);
   }
 

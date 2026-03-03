@@ -454,7 +454,7 @@ describe('AutoApproveEngine', () => {
         expect(typeof entry.toolName).toBe('string');
         expect(typeof entry.action).toBe('string');
         expect(typeof entry.reason).toBe('string');
-        expect(['approve', 'deny', 'escalate']).toContain(entry.action);
+        expect(['approve', 'deny', 'escalate']).toContain(entry.action as string);
       }
 
       // Verify specific entries

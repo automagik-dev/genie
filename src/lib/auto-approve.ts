@@ -96,7 +96,10 @@ function getDefaultGlobalConfigDir(): string {
 /**
  * Load YAML config file, returning null if not found or invalid
  */
-function loadYamlConfig<T>(filePath: string, schema: z.ZodSchema<T>): T | null {
+function loadYamlConfig<Output, Input = Output>(
+  filePath: string,
+  schema: z.ZodType<Output, z.ZodTypeDef, Input>,
+): Output | null {
   if (!existsSync(filePath)) {
     return null;
   }
@@ -111,8 +114,8 @@ function loadYamlConfig<T>(filePath: string, schema: z.ZodSchema<T>): T | null {
     }
     console.warn(`Warning: Invalid config at ${filePath}:`, result.error.message);
     return null;
-  } catch (error: any) {
-    console.warn(`Warning: Failed to load config at ${filePath}:`, error.message);
+  } catch (error: unknown) {
+    console.warn(`Warning: Failed to load config at ${filePath}:`, (error as Error).message);
     return null;
   }
 }

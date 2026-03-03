@@ -24,7 +24,7 @@ export type WorkerState =
   | 'done' // Task completed, ready for close
   | 'error'; // Encountered error
 
-export type TransportType = 'tmux';
+export type TransportType = 'tmux' | 'inline';
 
 export interface Worker {
   /** Unique worker ID (usually matches taskId, e.g., "bd-42"). */

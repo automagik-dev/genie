@@ -119,7 +119,7 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions 
 
   if (options.search || options.grep) {
     // Search logs
-    const pattern = options.search || options.grep;
+    const pattern = options.search ?? options.grep ?? '';
     const fullContent = await tmux.capturePaneContent(paneId, 10000);
     const cleanContent = stripTmuxMarkers(fullContent);
     const lines = cleanContent.split('\n');
