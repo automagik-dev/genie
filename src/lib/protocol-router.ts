@@ -177,6 +177,9 @@ async function injectToTmuxPane(
 ): Promise<boolean> {
   if (!worker.paneId) return false;
 
+  // Validate paneId to prevent shell injection
+  if (!/^%\d+$/.test(worker.paneId)) return false;
+
   try {
     // Escape single quotes for shell embedding
     const escaped = message.body.replace(/'/g, "'\\''");
