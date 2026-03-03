@@ -109,12 +109,14 @@ async function acquireLock(path: string): Promise<void> {
       await writeFile(lock, String(process.pid), { flag: 'wx' });
       return; // acquired
     } catch {
-      // Lock exists — wait and retry
-      await new Promise(r => setTimeout(r, LOCK_POLL_MS));
+      // Lock exists — wait with jitter and retry
+      const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
+      await new Promise(r => setTimeout(r, LOCK_POLL_MS + jitter));
     }
   }
 
-  // Timeout — force acquire (stale lock)
+  // Timeout — force acquire (likely stale lock)
+  console.warn(`[claude-native-teams] Force-acquiring stale lock: ${lock}`);
   await writeFile(lock, String(process.pid));
 }
 
@@ -134,7 +136,9 @@ async function loadConfig(teamName: string): Promise<NativeTeamConfig | null> {
   try {
     const content = await readFile(configPath(teamName), 'utf-8');
     return JSON.parse(content);
-  } catch {
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return null;
+    console.warn(`[claude-native-teams] Failed to load config for "${teamName}": ${err?.message}`);
     return null;
   }
 }

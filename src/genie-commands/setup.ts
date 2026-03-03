@@ -274,13 +274,15 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
   console.log();
 
   if (quick) {
-    const changed = ensureCodexOtelConfig();
-    if (changed) {
+    const result = ensureCodexOtelConfig();
+    if (result === 'changed') {
       console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
-    } else {
+    } else if (result === 'unchanged') {
       console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
+    } else {
+      console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
     }
-    config.codex = { configured: true };
+    config.codex = { configured: result !== 'error' };
     return config;
   }
 
@@ -290,13 +292,15 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
   });
 
   if (enableCodex) {
-    const changed = ensureCodexOtelConfig();
-    if (changed) {
+    const result = ensureCodexOtelConfig();
+    if (result === 'changed') {
       console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
-    } else {
+    } else if (result === 'unchanged') {
       console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
+    } else {
+      console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
     }
-    config.codex = { configured: true };
+    config.codex = { configured: result !== 'error' };
   } else {
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');
   }
@@ -443,7 +447,9 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     printHeader();
     config = await configureCodex(config, false);
     await saveGenieConfig(config);
-    console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
+    if (config.codex?.configured) {
+      console.log('\x1b[32m\u2713 Codex configuration saved.\x1b[0m');
+    }
     return;
   }
 

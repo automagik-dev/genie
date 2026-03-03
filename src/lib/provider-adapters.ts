@@ -256,7 +256,6 @@ export function buildCodexCommand(params: SpawnParams): LaunchCommand {
 
   // Build prompt from available context (skill + role are both optional)
   const promptParts = [`Genie worker. Team: ${params.team}.`];
-  if (params.skill) promptParts.push(`Skill: ${params.skill}.`);
   if (params.role) promptParts.push(`Role: ${params.role}.`);
   if (params.skill) promptParts.push(`Execute the ${params.skill} skill instructions.`);
   const prompt = promptParts.join(' ');
