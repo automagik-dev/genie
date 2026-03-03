@@ -19,9 +19,10 @@ export function registerMsgNamespace(program: Command): void {
   msg
     .command('send <body>')
     .description('Send a message to a worker')
-    .requiredOption('--to <worker>', 'Recipient worker ID')
-    .option('--from <sender>', 'Sender ID (default: team-lead)', 'team-lead')
-    .action(async (body: string, options: { to: string; from: string }) => {
+    .option('--to <worker>', 'Recipient worker ID (default: team-lead)', 'team-lead')
+    .option('--from <sender>', 'Sender ID (default: cli)', 'cli')
+    .option('--team <team>', 'Team name (default: genie)', 'genie')
+    .action(async (body: string, options: { to: string; from: string; team: string }) => {
       try {
         const repoPath = process.cwd();
         const result = await protocolRouter.sendMessage(
@@ -29,6 +30,7 @@ export function registerMsgNamespace(program: Command): void {
           options.from,
           options.to,
           body,
+          options.team,
         );
 
         if (result.delivered) {

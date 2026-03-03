@@ -42,6 +42,7 @@ export async function sendMessage(
   from: string,
   to: string,
   body: string,
+  teamName?: string,
 ): Promise<DeliveryResult> {
   // 1. Verify recipient exists in registry
   const worker = await registry.get(to);
@@ -64,6 +65,30 @@ export async function sendMessage(
     const match = matches[0];
 
     if (!match) {
+      // Fallback: try writing directly to native team inbox
+      // This supports sending to team-lead or other agents not in the worker registry
+      const resolvedTeam = teamName ?? await nativeTeams.discoverTeamName();
+      if (resolvedTeam) {
+        try {
+          const nativeMsg: nativeTeams.NativeInboxMessage = {
+            from,
+            text: body,
+            summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+            timestamp: new Date().toISOString(),
+            color: 'blue',
+            read: false,
+          };
+          await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+          return {
+            messageId: `native-${Date.now()}`,
+            workerId: to,
+            delivered: true,
+          };
+        } catch {
+          // Native inbox write failed — fall through to error
+        }
+      }
+
       return {
         messageId: '',
         workerId: to,
