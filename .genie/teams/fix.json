@@ -1,0 +1,10 @@
+{
+  "name": "fix",
+  "blueprint": "fix",
+  "roles": [
+    { "name": "debugger", "description": "Diagnoses and fixes bugs" },
+    { "name": "verifier", "description": "Verifies fixes and writes regression tests" }
+  ],
+  "createdAt": "2026-02-24T00:00:00.000Z",
+  "updatedAt": "2026-02-24T00:00:00.000Z"
+}

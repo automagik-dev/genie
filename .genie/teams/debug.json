@@ -1,0 +1,10 @@
+{
+  "name": "debug",
+  "blueprint": "debug",
+  "roles": [
+    { "name": "investigator", "description": "Investigates root causes" },
+    { "name": "reproducer", "description": "Creates minimal reproductions" }
+  ],
+  "createdAt": "2026-02-24T00:00:00.000Z",
+  "updatedAt": "2026-02-24T00:00:00.000Z"
+}
