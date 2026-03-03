@@ -1,4 +1,0 @@
-# .genie directory structure
-# wishes/ - Wish documents created by genie:wish skill
-# notes/ - Session notes and brainstorm artifacts
-# events/ - Event files for orchestrator consumption (append-only JSONL)
