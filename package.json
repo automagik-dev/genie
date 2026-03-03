@@ -8,14 +8,17 @@
     "genie": "./dist/genie.js"
   },
   "scripts": {
+    "prepare": "husky",
     "dev:claudio": "bun --watch src/claudio.ts",
     "version": "bun run scripts/version.ts",
-    "prebuild": "bun run version",
     "build": "bun build src/claudio.ts src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
     "build:plugin": "node scripts/build.js",
     "sync": "node scripts/sync.js",
     "build-and-sync": "npm run build:plugin && npm run sync",
     "prepack": "bun run build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
@@ -27,22 +30,26 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@commitlint/cli": "^20.4.1",
+    "@commitlint/config-conventional": "^20.4.1",
     "@types/bun": "^1.1.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.10.5",
     "esbuild": "^0.27.2",
+    "husky": "^9.1.7",
+    "knip": "^5.85.0",
     "typescript": "^5.3.3"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/namastexlabs/genie-cli.git"
+    "url": "git+https://github.com/automagik-dev/genie.git"
   },
   "openclaw": {
-    "extensions": [
-      "./plugins/genie/index.ts"
-    ]
+    "extensions": ["./plugins/genie/index.ts"]
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "trustedDependencies": ["@biomejs/biome"]
 }

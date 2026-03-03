@@ -7,12 +7,5 @@
   },
   "repository": "https://github.com/namastexlabs/genie-cli",
   "license": "MIT",
-  "keywords": [
-    "workflow",
-    "orchestration",
-    "collaboration",
-    "claude-code",
-    "tmux",
-    "agents"
-  ]
+  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"]
 }
