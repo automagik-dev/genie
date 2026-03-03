@@ -2,7 +2,7 @@
  * Tests for term history command
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 // We'll test the internal parsing functions by importing them
 // For now, test the module can be loaded
@@ -47,9 +47,7 @@ describe('event extraction', () => {
       parentUuid: '2',
       timestamp: '2026-02-05T14:05:00Z',
       cwd: '/test',
-      toolCalls: [
-        { id: 'tool3', name: 'Edit', input: { file_path: '/src/auth.ts' } },
-      ],
+      toolCalls: [{ id: 'tool3', name: 'Edit', input: { file_path: '/src/auth.ts' } }],
       raw: {},
     },
     {
@@ -59,9 +57,7 @@ describe('event extraction', () => {
       parentUuid: '3',
       timestamp: '2026-02-05T14:08:00Z',
       cwd: '/test',
-      toolCalls: [
-        { id: 'tool4', name: 'Bash', input: { command: 'bun test auth' } },
-      ],
+      toolCalls: [{ id: 'tool4', name: 'Bash', input: { command: 'bun test auth' } }],
       raw: {},
     },
   ];
@@ -79,7 +75,7 @@ describe('event extraction', () => {
 describe('formatting', () => {
   test('truncates long strings correctly', () => {
     const longString = 'a'.repeat(100);
-    const truncated = longString.slice(0, 77) + '...';
+    const truncated = `${longString.slice(0, 77)}...`;
     expect(truncated.length).toBe(80);
   });
 

@@ -5,12 +5,12 @@
  * rule matching, and approval via tmux send-keys.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { join } from 'path';
-import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'fs';
-import type { PermissionRequest } from './event-listener.js';
-import type { AutoApproveConfig } from './auto-approve.js';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import type { NormalizedEvent } from '../term-commands/events.js';
+import type { AutoApproveConfig } from './auto-approve.js';
+import type { PermissionRequest } from './event-listener.js';
 
 // ============================================================================
 // Test Helpers
@@ -72,13 +72,13 @@ function readAuditLog(auditPath: string): Array<Record<string, unknown>> {
 describe('AutoApproveEngine', () => {
   let tmpDir: string;
   let auditPath: string;
-  let tmuxSendKeysCalls: Array<{ paneId: string }>;
-  let originalModule: any;
+  let _tmuxSendKeysCalls: Array<{ paneId: string }>;
+  let _originalModule: any;
 
   beforeEach(() => {
     tmpDir = makeTmpDir();
     auditPath = join(tmpDir, '.genie', 'auto-approve-audit.jsonl');
-    tmuxSendKeysCalls = [];
+    _tmuxSendKeysCalls = [];
   });
 
   afterEach(() => {
@@ -436,17 +436,11 @@ describe('AutoApproveEngine', () => {
       instance.start();
 
       // Approved Read tool
-      await instance.processRequest(
-        makePermissionRequest({ toolName: 'Read', paneId: '%10', wishId: 'wish-1' })
-      );
+      await instance.processRequest(makePermissionRequest({ toolName: 'Read', paneId: '%10', wishId: 'wish-1' }));
       // Denied Write tool
-      await instance.processRequest(
-        makePermissionRequest({ toolName: 'Write', paneId: '%20', wishId: 'wish-2' })
-      );
+      await instance.processRequest(makePermissionRequest({ toolName: 'Write', paneId: '%20', wishId: 'wish-2' }));
       // Escalated unknown tool
-      await instance.processRequest(
-        makePermissionRequest({ toolName: 'Deploy', paneId: '%30', wishId: 'wish-3' })
-      );
+      await instance.processRequest(makePermissionRequest({ toolName: 'Deploy', paneId: '%30', wishId: 'wish-3' }));
 
       instance.stop();
 
@@ -764,8 +758,9 @@ describe('AutoApproveEngine', () => {
       const entries = readAuditLog(auditPath);
       // Expect at least 2 entries: the approval + the delivery failure
       const failureEntries = entries.filter(
-        (e) => (e.reason as string).toLowerCase().includes('delivery') ||
-               (e.reason as string).toLowerCase().includes('send')
+        (e) =>
+          (e.reason as string).toLowerCase().includes('delivery') ||
+          (e.reason as string).toLowerCase().includes('send'),
       );
       expect(failureEntries.length).toBeGreaterThanOrEqual(1);
 

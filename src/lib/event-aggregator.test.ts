@@ -5,13 +5,9 @@
  * from the wish-21 NormalizedEvent stream.
  */
 
-import { describe, test, expect, beforeEach } from 'bun:test';
-import {
-  createEventAggregator,
-  type WorkerDashboardState,
-  type EventAggregator,
-} from './event-aggregator.js';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { NormalizedEvent } from '../term-commands/events.js';
+import { type EventAggregator, createEventAggregator } from './event-aggregator.js';
 
 // ============================================================================
 // Helpers
@@ -65,19 +61,23 @@ describe('EventAggregator', () => {
     });
 
     test('updates existing worker state on subsequent events', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'tool_call',
-        paneId: '%42',
-        toolName: 'Read',
-        timestamp: '2026-02-03T10:00:00.000Z',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'tool_call',
+          paneId: '%42',
+          toolName: 'Read',
+          timestamp: '2026-02-03T10:00:00.000Z',
+        }),
+      );
 
-      aggregator.processEvent(makeEvent({
-        type: 'tool_call',
-        paneId: '%42',
-        toolName: 'Write',
-        timestamp: '2026-02-03T10:00:05.000Z',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'tool_call',
+          paneId: '%42',
+          toolName: 'Write',
+          timestamp: '2026-02-03T10:00:05.000Z',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
 
@@ -87,21 +87,25 @@ describe('EventAggregator', () => {
     });
 
     test('tracks multiple workers independently', () => {
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        toolName: 'Read',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          toolName: 'Read',
+        }),
+      );
 
-      aggregator.processEvent(makeEvent({
-        paneId: '%43',
-        toolName: 'Bash',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%43',
+          toolName: 'Bash',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states).toHaveLength(2);
 
-      const worker42 = states.find(s => s.paneId === '%42');
-      const worker43 = states.find(s => s.paneId === '%43');
+      const worker42 = states.find((s) => s.paneId === '%42');
+      const worker43 = states.find((s) => s.paneId === '%43');
       expect(worker42).toBeDefined();
       expect(worker43).toBeDefined();
       expect(worker42!.lastEvent!.toolName).toBe('Read');
@@ -109,10 +113,12 @@ describe('EventAggregator', () => {
     });
 
     test('ignores events without paneId', () => {
-      aggregator.processEvent(makeEvent({
-        paneId: undefined,
-        toolName: 'Read',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: undefined,
+          toolName: 'Read',
+        }),
+      );
 
       expect(aggregator.getWorkerStates()).toHaveLength(0);
     });
@@ -124,36 +130,44 @@ describe('EventAggregator', () => {
 
   describe('session lifecycle', () => {
     test('session_start sets status to running', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'session_start',
-        paneId: '%42',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'session_start',
+          paneId: '%42',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].status).toBe('running');
     });
 
     test('session_end sets status to stopped', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'session_start',
-        paneId: '%42',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'session_start',
+          paneId: '%42',
+        }),
+      );
 
-      aggregator.processEvent(makeEvent({
-        type: 'session_end',
-        paneId: '%42',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'session_end',
+          paneId: '%42',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].status).toBe('stopped');
     });
 
     test('tool_call sets status to running', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'tool_call',
-        paneId: '%42',
-        toolName: 'Read',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'tool_call',
+          paneId: '%42',
+          toolName: 'Read',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].status).toBe('running');
@@ -166,28 +180,34 @@ describe('EventAggregator', () => {
 
   describe('permission requests', () => {
     test('permission_request sets status to waiting', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'permission_request',
-        paneId: '%42',
-        toolName: 'Bash',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'permission_request',
+          paneId: '%42',
+          toolName: 'Bash',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].status).toBe('waiting');
     });
 
     test('tool_call after permission_request resets to running', () => {
-      aggregator.processEvent(makeEvent({
-        type: 'permission_request',
-        paneId: '%42',
-        toolName: 'Bash',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'permission_request',
+          paneId: '%42',
+          toolName: 'Bash',
+        }),
+      );
 
-      aggregator.processEvent(makeEvent({
-        type: 'tool_call',
-        paneId: '%42',
-        toolName: 'Read',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          type: 'tool_call',
+          paneId: '%42',
+          toolName: 'Read',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].status).toBe('running');
@@ -200,25 +220,31 @@ describe('EventAggregator', () => {
 
   describe('wish ID tracking', () => {
     test('captures wishId from events', () => {
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        wishId: 'wish-21',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          wishId: 'wish-21',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].wishId).toBe('wish-21');
     });
 
     test('updates wishId when it changes', () => {
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        wishId: 'wish-21',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          wishId: 'wish-21',
+        }),
+      );
 
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        wishId: 'wish-24',
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          wishId: 'wish-24',
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].wishId).toBe('wish-24');
@@ -234,18 +260,22 @@ describe('EventAggregator', () => {
       const t1 = '2026-02-03T10:00:00.000Z';
       const t2 = '2026-02-03T10:00:30.000Z';
 
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        timestamp: t1,
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          timestamp: t1,
+        }),
+      );
 
       const states1 = aggregator.getWorkerStates();
       const firstActivity = states1[0].lastActivityAt;
 
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        timestamp: t2,
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          timestamp: t2,
+        }),
+      );
 
       const states2 = aggregator.getWorkerStates();
       expect(states2[0].lastActivityAt).toBeGreaterThan(firstActivity);
@@ -254,10 +284,12 @@ describe('EventAggregator', () => {
     test('lastEvent.timestamp reflects the event timestamp', () => {
       const ts = '2026-02-03T10:00:00.000Z';
 
-      aggregator.processEvent(makeEvent({
-        paneId: '%42',
-        timestamp: ts,
-      }));
+      aggregator.processEvent(
+        makeEvent({
+          paneId: '%42',
+          timestamp: ts,
+        }),
+      );
 
       const states = aggregator.getWorkerStates();
       expect(states[0].lastEvent!.timestamp).toBe(new Date(ts).getTime());
@@ -338,8 +370,8 @@ describe('EventAggregator', () => {
 
       expect(states).toHaveLength(2);
 
-      const w1 = states.find(s => s.paneId === '%42');
-      const w2 = states.find(s => s.paneId === '%43');
+      const w1 = states.find((s) => s.paneId === '%42');
+      const w2 = states.find((s) => s.paneId === '%43');
 
       expect(w1).toBeDefined();
       expect(w1!.status).toBe('running');
@@ -362,17 +394,19 @@ describe('EventAggregator', () => {
       ];
 
       for (const tc of testCases) {
-        const states = aggregator.buildFallbackStates([{
-          id: 'test',
-          paneId: '%50',
-          session: 'test',
-          worktree: null,
-          taskId: 'test',
-          startedAt: '2026-02-03T10:00:00.000Z',
-          state: tc.registryState as any,
-          lastStateChange: '2026-02-03T10:00:00.000Z',
-          repoPath: '/tmp/test',
-        }]);
+        const states = aggregator.buildFallbackStates([
+          {
+            id: 'test',
+            paneId: '%50',
+            session: 'test',
+            worktree: null,
+            taskId: 'test',
+            startedAt: '2026-02-03T10:00:00.000Z',
+            state: tc.registryState as any,
+            lastStateChange: '2026-02-03T10:00:00.000Z',
+            repoPath: '/tmp/test',
+          },
+        ]);
 
         expect(states[0].status).toBe(tc.expectedStatus);
       }

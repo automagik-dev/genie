@@ -1,12 +1,6 @@
-import {
-  listProfiles,
-  removeProfile,
-  setDefaultProfile,
-  getProfile,
-  configExists,
-} from '../lib/config.js';
-import { runAddProfileWizard } from '../lib/wizard.js';
+import { configExists, getProfile, listProfiles, removeProfile, setDefaultProfile } from '../lib/config.js';
 import { promptConfirm } from '../lib/picker.js';
+import { runAddProfileWizard } from '../lib/wizard.js';
 
 export async function profilesListCommand(): Promise<void> {
   if (!configExists()) {

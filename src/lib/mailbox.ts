@@ -8,8 +8,8 @@
  * panes only when the worker is idle (not mid-turn).
  */
 
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import path, { join } from 'path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path, { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { NativeInboxMessage } from './claude-native-teams.js';
 
@@ -70,10 +70,7 @@ async function saveMailbox(repoPath: string, mailbox: WorkerMailbox): Promise<vo
   const dir = mailboxDir(repoPath);
   await mkdir(dir, { recursive: true });
   mailbox.lastUpdated = new Date().toISOString();
-  await writeFile(
-    mailboxFilePath(repoPath, mailbox.workerId),
-    JSON.stringify(mailbox, null, 2),
-  );
+  await writeFile(mailboxFilePath(repoPath, mailbox.workerId), JSON.stringify(mailbox, null, 2));
 }
 
 // ============================================================================
@@ -88,12 +85,7 @@ function generateMessageId(): string {
  * Write a message to a worker's mailbox.
  * This persists BEFORE any delivery attempt (DEC-7).
  */
-export async function send(
-  repoPath: string,
-  from: string,
-  to: string,
-  body: string,
-): Promise<MailboxMessage> {
+export async function send(repoPath: string, from: string, to: string, body: string): Promise<MailboxMessage> {
   const mailbox = await loadMailbox(repoPath, to);
 
   const message: MailboxMessage = {
@@ -115,10 +107,7 @@ export async function send(
 /**
  * Get all messages for a worker (inbox view).
  */
-export async function inbox(
-  repoPath: string,
-  workerId: string,
-): Promise<MailboxMessage[]> {
+export async function inbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
   const mailbox = await loadMailbox(repoPath, workerId);
   return mailbox.messages;
 }
@@ -126,24 +115,17 @@ export async function inbox(
 /**
  * Get unread messages for a worker.
  */
-export async function unread(
-  repoPath: string,
-  workerId: string,
-): Promise<MailboxMessage[]> {
+export async function unread(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
   const mailbox = await loadMailbox(repoPath, workerId);
-  return mailbox.messages.filter(m => !m.read);
+  return mailbox.messages.filter((m) => !m.read);
 }
 
 /**
  * Mark a message as read.
  */
-export async function markRead(
-  repoPath: string,
-  workerId: string,
-  messageId: string,
-): Promise<boolean> {
+export async function markRead(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
   const mailbox = await loadMailbox(repoPath, workerId);
-  const msg = mailbox.messages.find(m => m.id === messageId);
+  const msg = mailbox.messages.find((m) => m.id === messageId);
   if (!msg) return false;
   msg.read = true;
   await saveMailbox(repoPath, mailbox);
@@ -153,13 +135,9 @@ export async function markRead(
 /**
  * Mark a message as delivered (pane injection succeeded).
  */
-export async function markDelivered(
-  repoPath: string,
-  workerId: string,
-  messageId: string,
-): Promise<boolean> {
+export async function markDelivered(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
   const mailbox = await loadMailbox(repoPath, workerId);
-  const msg = mailbox.messages.find(m => m.id === messageId);
+  const msg = mailbox.messages.find((m) => m.id === messageId);
   if (!msg) return false;
   msg.deliveredAt = new Date().toISOString();
   await saveMailbox(repoPath, mailbox);
@@ -170,21 +148,15 @@ export async function markDelivered(
  * Get pending (undelivered) messages for a worker.
  * Used by the delivery loop to push queued messages.
  */
-export async function pending(
-  repoPath: string,
-  workerId: string,
-): Promise<MailboxMessage[]> {
+export async function pending(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
   const mailbox = await loadMailbox(repoPath, workerId);
-  return mailbox.messages.filter(m => m.deliveredAt === null);
+  return mailbox.messages.filter((m) => m.deliveredAt === null);
 }
 
 /**
  * Convert a Genie mailbox message to Claude Code's native inbox format.
  */
-export function toNativeInboxMessage(
-  msg: MailboxMessage,
-  color: string = 'blue',
-): NativeInboxMessage {
+export function toNativeInboxMessage(msg: MailboxMessage, color = 'blue'): NativeInboxMessage {
   // Truncate body to create a summary (5-10 words)
   const words = msg.body.split(/\s+/);
   const summary = words.slice(0, 8).join(' ') + (words.length > 8 ? '...' : '');

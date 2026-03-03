@@ -10,11 +10,11 @@
  *   term wish sections <slug>  - List sections in a wish
  */
 
-import { Command } from 'commander';
-import { readdir, readFile, access } from 'fs/promises';
-import { join } from 'path';
-import { getWishTasks, getWishStatus, LinkedTask } from '../../lib/wish-tasks.js';
-import { readWish, findSection, listSections } from '../../lib/wish-editor.js';
+import { access, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { Command } from 'commander';
+import { findSection, listSections, readWish } from '../../lib/wish-editor.js';
+import { type LinkedTask, getWishStatus, getWishTasks } from '../../lib/wish-tasks.js';
 
 // ============================================================================
 // Types
@@ -59,7 +59,10 @@ async function parseWishFrontmatter(wishPath: string): Promise<{ title: string; 
         if (line === '---') break;
 
         if (line.startsWith('title:')) {
-          title = line.substring(6).trim().replace(/^["']|["']$/g, '');
+          title = line
+            .substring(6)
+            .trim()
+            .replace(/^["']|["']$/g, '');
         }
         if (line.startsWith('status:')) {
           status = line.substring(7).trim().toUpperCase();
@@ -75,7 +78,7 @@ async function parseWishFrontmatter(wishPath: string): Promise<{ title: string; 
 
     // Fallback: look for # heading
     if (!title) {
-      const heading = lines.find(l => l.startsWith('# '));
+      const heading = lines.find((l) => l.startsWith('# '));
       if (heading) title = heading.substring(2).trim();
     }
 
@@ -115,23 +118,35 @@ async function listWishes(repoPath: string): Promise<WishSummary[]> {
 
 function formatTaskStatus(status: LinkedTask['status']): string {
   switch (status) {
-    case 'done': return '✅';
-    case 'in_progress': return '🔄';
-    case 'blocked': return '🔴';
-    case 'open': return '⚪';
-    default: return '❓';
+    case 'done':
+      return '✅';
+    case 'in_progress':
+      return '🔄';
+    case 'blocked':
+      return '🔴';
+    case 'open':
+      return '⚪';
+    default:
+      return '❓';
   }
 }
 
 function formatWishStatus(status: string): string {
   switch (status.toUpperCase()) {
-    case 'READY': return '🟢 READY';
-    case 'APPROVED': return '🟢 APPROVED';
-    case 'IN_PROGRESS': return '🔄 IN_PROGRESS';
-    case 'BLOCKED': return '🔴 BLOCKED';
-    case 'DONE': return '✅ DONE';
-    case 'DRAFT': return '📝 DRAFT';
-    default: return status;
+    case 'READY':
+      return '🟢 READY';
+    case 'APPROVED':
+      return '🟢 APPROVED';
+    case 'IN_PROGRESS':
+      return '🔄 IN_PROGRESS';
+    case 'BLOCKED':
+      return '🔴 BLOCKED';
+    case 'DONE':
+      return '✅ DONE';
+    case 'DRAFT':
+      return '📝 DRAFT';
+    default:
+      return status;
   }
 }
 
@@ -143,7 +158,9 @@ export function registerWishNamespace(program: Command): void {
   const wishProgram = program
     .command('wish')
     .description('Wish document management')
-    .addHelpText('after', `
+    .addHelpText(
+      'after',
+      `
 
 Browse
   wish ls                         List all wishes
@@ -153,7 +170,8 @@ Browse
 Read / inspect
   wish read <slug>                Read wish document (full)
   wish read <slug> --section <s>  Read specific section (partial match)
-  wish sections <slug>            List headings in a wish`);
+  wish sections <slug>            List headings in a wish`,
+    );
 
   // wish ls - List all wishes
   wishProgram
@@ -184,9 +202,10 @@ Read / inspect
       for (const wish of wishes) {
         const slug = wish.slug.padEnd(20).substring(0, 20);
         const status = formatWishStatus(wish.status).padEnd(13).substring(0, 13);
-        const taskProgress = wish.tasks.total > 0
-          ? `${wish.tasks.done}/${wish.tasks.total} (${wish.tasks.inProgress} active, ${wish.tasks.blocked} blocked)`
-          : '(no tasks)';
+        const taskProgress =
+          wish.tasks.total > 0
+            ? `${wish.tasks.done}/${wish.tasks.total} (${wish.tasks.inProgress} active, ${wish.tasks.blocked} blocked)`
+            : '(no tasks)';
         const tasks = taskProgress.padEnd(28).substring(0, 28);
         console.log(`│ ${slug} │ ${status} │ ${tasks} │`);
       }
@@ -256,7 +275,7 @@ Read / inspect
     .description('Alias for "wish status"')
     .option('--json', 'Output as JSON')
     .action(async (slug: string, options: { json?: boolean }) => {
-      const statusCmd = wishProgram.commands.find(c => c.name() === 'status');
+      const statusCmd = wishProgram.commands.find((c) => c.name() === 'status');
       if (statusCmd) {
         await statusCmd.parseAsync([slug, ...(options.json ? ['--json'] : [])], { from: 'user' });
       }
@@ -281,7 +300,7 @@ Read / inspect
         const section = findSection(doc, options.section);
         if (!section) {
           console.error(`❌ Section "${options.section}" not found in wish "${slug}".`);
-          console.error(`Available sections: ${doc.sections.map(s => s.heading).join(', ')}`);
+          console.error(`Available sections: ${doc.sections.map((s) => s.heading).join(', ')}`);
           process.exit(1);
         }
 
@@ -295,7 +314,13 @@ Read / inspect
       }
 
       if (options.json) {
-        console.log(JSON.stringify({ slug, path: doc.path, mtime: doc.mtime, sectionCount: doc.sections.length, content: doc.raw }, null, 2));
+        console.log(
+          JSON.stringify(
+            { slug, path: doc.path, mtime: doc.mtime, sectionCount: doc.sections.length, content: doc.raw },
+            null,
+            2,
+          ),
+        );
         return;
       }
 

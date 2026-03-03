@@ -9,11 +9,11 @@
  * 3. Wish-level: ## Auto-Approve section in wish.md
  */
 
-import { z } from 'zod';
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as yaml from 'js-yaml';
+import { z } from 'zod';
 import type { PermissionRequest } from './event-listener.js';
 import { getBashCommand } from './event-listener.js';
 
@@ -108,10 +108,9 @@ function loadYamlConfig<T>(filePath: string, schema: z.ZodSchema<T>): T | null {
 
     if (result.success) {
       return result.data;
-    } else {
-      console.warn(`Warning: Invalid config at ${filePath}:`, result.error.message);
-      return null;
     }
+    console.warn(`Warning: Invalid config at ${filePath}:`, result.error.message);
+    return null;
   } catch (error: any) {
     console.warn(`Warning: Failed to load config at ${filePath}:`, error.message);
     return null;
@@ -150,7 +149,7 @@ function getRepoOverrideFromGlobal(globalConfig: AutoApproveConfig, repoPath: st
 
   // Try to find a parent path match (e.g., /home/genie/workspace/guga matches /home/genie/workspace/guga/code/...)
   for (const [path, config] of Object.entries(globalConfig.repos)) {
-    if (repoPath.startsWith(path + '/') || repoPath === path) {
+    if (repoPath.startsWith(`${path}/`) || repoPath === path) {
       return config;
     }
   }
@@ -172,7 +171,7 @@ function mergeArrays<T>(base: T[] | undefined, override: T[] | undefined): T[] {
  */
 export function mergeConfigs(
   base: AutoApproveConfig,
-  override: Partial<RepoConfig> | WishAutoApproveOverride
+  override: Partial<RepoConfig> | WishAutoApproveOverride,
 ): AutoApproveConfig {
   // Handle inherit behavior
   const shouldInherit = 'inherit' in override ? override.inherit !== 'none' : true;
@@ -216,7 +215,7 @@ export function mergeConfigs(
  */
 export async function loadAutoApproveConfig(
   repoPath: string,
-  options: LoadConfigOptions = {}
+  options: LoadConfigOptions = {},
 ): Promise<AutoApproveConfig> {
   // Start with empty defaults
   let config: AutoApproveConfig = AutoApproveConfigSchema.parse({});
@@ -333,7 +332,6 @@ export function parseWishAutoApprove(wishContent: string): WishAutoApproveOverri
     const denyMatch = /^deny:\s*(\w+)$/.exec(content);
     if (denyMatch) {
       result.deny.push(denyMatch[1]);
-      continue;
     }
   }
 
@@ -351,7 +349,7 @@ export function parseWishAutoApprove(wishContent: string): WishAutoApproveOverri
 export async function loadFullAutoApproveConfig(
   repoPath: string,
   wishContent?: string,
-  options: LoadConfigOptions = {}
+  options: LoadConfigOptions = {},
 ): Promise<AutoApproveConfig> {
   // Load global + repo config
   let config = await loadAutoApproveConfig(repoPath, options);
@@ -449,7 +447,7 @@ function safeRegexTest(regex: RegExp, input: string): boolean {
     const elapsed = Date.now() - start;
     if (elapsed > REGEX_TIMEOUT_MS) {
       console.warn(
-        `Warning: Regex pattern "${regex.source}" took ${elapsed}ms to evaluate (limit: ${REGEX_TIMEOUT_MS}ms). Treating as non-match for safety.`
+        `Warning: Regex pattern "${regex.source}" took ${elapsed}ms to evaluate (limit: ${REGEX_TIMEOUT_MS}ms). Treating as non-match for safety.`,
       );
       return false;
     }
@@ -571,7 +569,7 @@ export function evaluateRequest(request: PermissionRequest, config: AutoApproveC
   if (allowPatterns.length === 0 && denyPatterns.length === 0) {
     return {
       action: 'approve',
-      reason: `Bash tool is allowed and no command patterns are configured`,
+      reason: 'Bash tool is allowed and no command patterns are configured',
     };
   }
 

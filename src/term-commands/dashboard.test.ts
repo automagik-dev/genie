@@ -5,7 +5,7 @@
  * truncation, JSON mode, verbose mode, and graceful fallback.
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { WorkerDashboardState } from '../lib/event-aggregator.js';
 import type { NormalizedEvent } from './events.js';
 
@@ -14,18 +14,18 @@ import type { NormalizedEvent } from './events.js';
 // ============================================================================
 
 import {
+  type DashboardData,
+  type DashboardOptions,
+  detectChanges,
   formatTimeAgo,
+  renderDashboardJson,
+  renderDashboardTable,
+  renderDashboardVerbose,
+  renderEventStream,
+  renderWatchHeader,
+  startWatchMode,
   statusIndicator,
   truncate,
-  renderDashboardTable,
-  renderDashboardJson,
-  renderDashboardVerbose,
-  detectChanges,
-  renderWatchHeader,
-  renderEventStream,
-  startWatchMode,
-  type DashboardOptions,
-  type DashboardData,
 } from './dashboard.js';
 
 // ============================================================================
@@ -735,7 +735,7 @@ describe('startWatchMode', () => {
     });
 
     // Wait a tick for async initial render
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     const output = capturedOutput.join('\n');
     expect(output).toContain('watching');
@@ -769,7 +769,7 @@ describe('startWatchMode', () => {
     });
 
     // Wait for initial + at least 1 interval
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
     expect(callCount).toBeGreaterThanOrEqual(2);
     cleanup();
@@ -790,12 +790,12 @@ describe('startWatchMode', () => {
     });
 
     // Wait for a couple ticks
-    await new Promise(resolve => setTimeout(resolve, 180));
+    await new Promise((resolve) => setTimeout(resolve, 180));
     const countAtCleanup = callCount;
     cleanup();
 
     // Wait some more
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Should not have increased by much (at most 1 more if timer fired before cleanup)
     expect(callCount).toBeLessThanOrEqual(countAtCleanup + 1);
@@ -828,7 +828,7 @@ describe('startWatchMode', () => {
     });
 
     // Wait for at least 2 renders (initial + 1 refresh where state changes)
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const fullOutput = capturedOutput.join('\n');
     // The bold code \x1b[1m should appear for the changed row
@@ -868,7 +868,7 @@ describe('startWatchMode', () => {
       intervalMs: 100000,
     });
 
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     const fullOutput = capturedOutput.join('\n');
     expect(fullOutput).toContain('EVENTS');

@@ -9,25 +9,17 @@
  * - --no-auto-approve flag presence on WorkOptions
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Module under test
-import {
-  getStatusEntries,
-  manualApprove,
-  manualDeny,
-  startEngine,
-  stopEngine,
-  isEngineRunning,
-  type StatusEntry,
-} from './approve.js';
+import { getStatusEntries, isEngineRunning, manualApprove, manualDeny, startEngine, stopEngine } from './approve.js';
 
-// Sibling types for queue manipulation
-import { createPermissionRequestQueue, type PermissionRequest } from '../lib/event-listener.js';
 import type { AuditLogEntry } from '../lib/auto-approve-engine.js';
+// Sibling types for queue manipulation
+import { type PermissionRequest, createPermissionRequestQueue } from '../lib/event-listener.js';
 
 // ============================================================================
 // Helpers
@@ -41,7 +33,7 @@ function makeTmpDir(): string {
 
 function writeAuditLog(baseDir: string, entries: AuditLogEntry[]): void {
   const logPath = join(baseDir, '.genie', 'auto-approve-audit.jsonl');
-  const content = entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
+  const content = `${entries.map((e) => JSON.stringify(e)).join('\n')}\n`;
   writeFileSync(logPath, content, 'utf-8');
 }
 

@@ -3,13 +3,8 @@
  * Run with: bun test src/lib/spawn-command.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import {
-  buildSpawnCommand,
-  hasClaudioBinary,
-  type WorkerProfile,
-  type SpawnOptions,
-} from './spawn-command.js';
+import { describe, expect, test } from 'bun:test';
+import { type WorkerProfile, buildSpawnCommand, hasClaudioBinary } from './spawn-command.js';
 
 // ============================================================================
 // Test Helpers
@@ -99,7 +94,7 @@ describe('buildSpawnCommand with claude launcher', () => {
       beadsDir: '/home/genie/workspace/project/.genie',
     });
     expect(command).toBe(
-      "BEADS_DIR='/home/genie/workspace/project/.genie' claude '--dangerously-skip-permissions' --session-id 'abc-123'"
+      "BEADS_DIR='/home/genie/workspace/project/.genie' claude '--dangerously-skip-permissions' --session-id 'abc-123'",
     );
   });
 });
@@ -116,9 +111,7 @@ describe('buildSpawnCommand with claudio launcher', () => {
       claudeArgs: ['--dangerously-skip-permissions'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'xyz-999' });
-    expect(command).toBe(
-      "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'xyz-999'"
-    );
+    expect(command).toBe("claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'xyz-999'");
   });
 
   test('builds claudio command with multiple claude args', () => {
@@ -129,7 +122,7 @@ describe('buildSpawnCommand with claudio launcher', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'aaa-111' });
     expect(command).toBe(
-      "claudio launch 'autonomous' -- '--dangerously-skip-permissions' '--model' 'opus' --session-id 'aaa-111'"
+      "claudio launch 'autonomous' -- '--dangerously-skip-permissions' '--model' 'opus' --session-id 'aaa-111'",
     );
   });
 
@@ -151,7 +144,7 @@ describe('buildSpawnCommand with claudio launcher', () => {
     });
     const command = buildSpawnCommand(profile, { resume: 'session-to-resume' });
     expect(command).toBe(
-      "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --resume 'session-to-resume'"
+      "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --resume 'session-to-resume'",
     );
   });
 
@@ -166,7 +159,7 @@ describe('buildSpawnCommand with claudio launcher', () => {
       beadsDir: '/path/to/.genie',
     });
     expect(command).toBe(
-      "BEADS_DIR='/path/to/.genie' claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'ccc-333'"
+      "BEADS_DIR='/path/to/.genie' claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'ccc-333'",
     );
   });
 });
@@ -177,9 +170,7 @@ describe('buildSpawnCommand with claudio launcher', () => {
 
 describe('buildSpawnCommand with undefined profile', () => {
   test('throws error when no profile is provided', () => {
-    expect(() => buildSpawnCommand(undefined, { sessionId: 'test-123' })).toThrow(
-      /No worker profile configured/
-    );
+    expect(() => buildSpawnCommand(undefined, { sessionId: 'test-123' })).toThrow(/No worker profile configured/);
   });
 });
 
@@ -208,9 +199,7 @@ describe('buildSpawnCommand edge cases', () => {
       sessionId: 'test-123',
       beadsDir: '/path/with spaces/.genie',
     });
-    expect(command).toBe(
-      "BEADS_DIR='/path/with spaces/.genie' claude --session-id 'test-123'"
-    );
+    expect(command).toBe("BEADS_DIR='/path/with spaces/.genie' claude --session-id 'test-123'");
   });
 
   test('sessionId takes precedence if both sessionId and resume provided', () => {
@@ -262,7 +251,7 @@ describe('shell injection prevention', () => {
     // The malicious payload should be safely escaped within single quotes
     // Single quotes inside are escaped as '\'' (end quote, backslash-quote, start quote)
     expect(command).toBe(
-      "claude '--dangerously-skip-permissions' '--append-system-prompt' ''\\''; rm -rf /; echo '\\''' --session-id 'test-123'"
+      "claude '--dangerously-skip-permissions' '--append-system-prompt' ''\\''; rm -rf /; echo '\\''' --session-id 'test-123'",
     );
   });
 
@@ -274,9 +263,7 @@ describe('shell injection prevention', () => {
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-456' });
     // Command substitution should be safely enclosed in single quotes (no interpretation)
-    expect(command).toBe(
-      "claudio launch 'test-profile' -- '--model' '$(whoami)' --session-id 'test-456'"
-    );
+    expect(command).toBe("claudio launch 'test-profile' -- '--model' '$(whoami)' --session-id 'test-456'");
   });
 
   test('escapes shell metacharacters in claudioProfile', () => {
@@ -289,7 +276,7 @@ describe('shell injection prevention', () => {
     // The profile name should be safely escaped
     // Single quotes escaped as '\' (end-quote, backslash-quote, start-quote)
     expect(command).toBe(
-      "claudio launch 'profile'\\''; rm -rf /; echo '\\''' -- '--dangerously-skip-permissions' --session-id 'test-789'"
+      "claudio launch 'profile'\\''; rm -rf /; echo '\\''' -- '--dangerously-skip-permissions' --session-id 'test-789'",
     );
   });
 
@@ -327,7 +314,7 @@ describe('shell injection prevention', () => {
   test('escapes newlines in claudeArgs', () => {
     const profile = makeProfile({
       launcher: 'claude',
-      claudeArgs: ['--prompt', "hello\nworld"],
+      claudeArgs: ['--prompt', 'hello\nworld'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-jkl' });
     // Newlines should be safely enclosed in single quotes
@@ -346,7 +333,7 @@ describe('buildSpawnCommand error handling', () => {
   test('error message mentions claudio binary not found', () => {
     // This is a documentation test - when claudio is missing, the error should be descriptive
     const expectedErrorPattern = /claudio binary not found on PATH/;
-    const expectedSuggestionPattern = /Install claudio|use a "claude" launcher profile/;
+    const _expectedSuggestionPattern = /Install claudio|use a "claude" launcher profile/;
 
     // If claudio is not installed, buildSpawnCommand with claudio profile should throw
     // We verify the error structure by checking the implementation
@@ -367,4 +354,3 @@ describe('buildSpawnCommand error handling', () => {
     }
   });
 });
-

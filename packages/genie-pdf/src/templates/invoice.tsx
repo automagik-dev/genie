@@ -1,12 +1,5 @@
-import React from "react";
-import {
-  Document,
-  Page,
-  View,
-  Text,
-  StyleSheet,
-} from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
+import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface InvoiceItem {
   description: string;
@@ -39,12 +32,9 @@ interface InvoiceProps {
 }
 
 export function InvoiceTemplate({ data, theme }: InvoiceProps) {
-  const currency = data.currency || "R$";
+  const currency = data.currency || 'R$';
 
-  const subtotal = data.items.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0
-  );
+  const subtotal = data.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
 
   const styles = StyleSheet.create({
     page: {
@@ -54,8 +44,8 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
       color: theme.colors.text,
     },
     header: {
-      flexDirection: "row",
-      justifyContent: "space-between",
+      flexDirection: 'row',
+      justifyContent: 'space-between',
       marginBottom: 40,
     },
     title: {
@@ -64,7 +54,7 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
       color: theme.colors.heading,
     },
     invoiceInfo: {
-      textAlign: "right",
+      textAlign: 'right',
     },
     invoiceNumber: {
       fontFamily: theme.fonts.heading,
@@ -72,12 +62,12 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
       marginBottom: 4,
     },
     parties: {
-      flexDirection: "row",
-      justifyContent: "space-between",
+      flexDirection: 'row',
+      justifyContent: 'space-between',
       marginBottom: 30,
     },
     party: {
-      width: "45%",
+      width: '45%',
     },
     partyLabel: {
       fontFamily: theme.fonts.heading,
@@ -85,7 +75,7 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
       color: theme.colors.text,
       opacity: 0.6,
       marginBottom: 5,
-      textTransform: "uppercase",
+      textTransform: 'uppercase',
     },
     partyName: {
       fontFamily: theme.fonts.heading,
@@ -102,47 +92,47 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
       marginVertical: 20,
     },
     tableHeader: {
-      flexDirection: "row",
+      flexDirection: 'row',
       borderBottomWidth: 2,
       borderBottomColor: theme.colors.heading,
       paddingBottom: 8,
       marginBottom: 8,
     },
     tableRow: {
-      flexDirection: "row",
+      flexDirection: 'row',
       paddingVertical: 8,
       borderBottomWidth: 1,
       borderBottomColor: theme.colors.border,
     },
     colDescription: { flex: 3 },
-    colQty: { flex: 1, textAlign: "center" },
-    colPrice: { flex: 1, textAlign: "right" },
-    colTotal: { flex: 1, textAlign: "right" },
+    colQty: { flex: 1, textAlign: 'center' },
+    colPrice: { flex: 1, textAlign: 'right' },
+    colTotal: { flex: 1, textAlign: 'right' },
     headerText: {
       fontFamily: theme.fonts.heading,
       fontSize: 9,
-      textTransform: "uppercase",
+      textTransform: 'uppercase',
       color: theme.colors.text,
       opacity: 0.7,
     },
     totals: {
       marginTop: 20,
-      alignItems: "flex-end",
+      alignItems: 'flex-end',
     },
     totalRow: {
-      flexDirection: "row",
-      justifyContent: "flex-end",
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
       marginVertical: 4,
     },
     totalLabel: {
       width: 100,
-      textAlign: "right",
+      textAlign: 'right',
       marginRight: 20,
       fontFamily: theme.fonts.heading,
     },
     totalValue: {
       width: 80,
-      textAlign: "right",
+      textAlign: 'right',
     },
     grandTotal: {
       fontSize: 14,
@@ -189,31 +179,21 @@ export function InvoiceTemplate({ data, theme }: InvoiceProps) {
           <View style={styles.party}>
             <Text style={styles.partyLabel}>From</Text>
             <Text style={styles.partyName}>{data.from.name}</Text>
-            {data.from.address && (
-              <Text style={styles.partyDetail}>{data.from.address}</Text>
-            )}
-            {data.from.email && (
-              <Text style={styles.partyDetail}>{data.from.email}</Text>
-            )}
+            {data.from.address && <Text style={styles.partyDetail}>{data.from.address}</Text>}
+            {data.from.email && <Text style={styles.partyDetail}>{data.from.email}</Text>}
           </View>
           <View style={styles.party}>
             <Text style={styles.partyLabel}>Bill To</Text>
             <Text style={styles.partyName}>{data.to.name}</Text>
-            {data.to.address && (
-              <Text style={styles.partyDetail}>{data.to.address}</Text>
-            )}
-            {data.to.email && (
-              <Text style={styles.partyDetail}>{data.to.email}</Text>
-            )}
+            {data.to.address && <Text style={styles.partyDetail}>{data.to.address}</Text>}
+            {data.to.email && <Text style={styles.partyDetail}>{data.to.email}</Text>}
           </View>
         </View>
 
         {/* Items Table */}
         <View style={styles.table}>
           <View style={styles.tableHeader}>
-            <Text style={[styles.headerText, styles.colDescription]}>
-              Description
-            </Text>
+            <Text style={[styles.headerText, styles.colDescription]}>Description</Text>
             <Text style={[styles.headerText, styles.colQty]}>Qty</Text>
             <Text style={[styles.headerText, styles.colPrice]}>Unit Price</Text>
             <Text style={[styles.headerText, styles.colTotal]}>Total</Text>

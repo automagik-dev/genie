@@ -9,16 +9,11 @@
  *   term sync --build  - Build plugin before syncing
  */
 
-import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
-import { execSync } from 'child_process';
-import {
-  detectSourcePath,
-  setSourcePath,
-  contractPath,
-  getStoredSourcePath,
-} from '../lib/genie-config.js';
+import { execSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { contractPath, detectSourcePath, getStoredSourcePath, setSourcePath } from '../lib/genie-config.js';
 import { markPluginAsDevMode } from '../lib/plugin-registry.js';
 
 export interface SyncOptions {
@@ -161,7 +156,9 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
       console.log(`Source: ${contractPath(sourcePath)}`);
       console.log(`Plugin source: ${contractPath(pluginSourceDir)}`);
       console.log(`Target: ${contractPath(INSTALLED_PLUGIN_PATH)}`);
-      console.log(`Current state: ${linkExists ? (isLink ? `symlink -> ${currentTarget}` : 'directory') : 'not installed'}`);
+      console.log(
+        `Current state: ${linkExists ? (isLink ? `symlink -> ${currentTarget}` : 'directory') : 'not installed'}`,
+      );
     }
 
     // Handle existing installation
@@ -201,7 +198,6 @@ export async function syncCommand(options: SyncOptions = {}): Promise<void> {
     console.log('');
     console.log('Plugin is now linked to source. Changes will be reflected immediately.');
     console.log('For TypeScript changes, rebuild with: npm run build:plugin');
-
   } catch (error: any) {
     console.error(`Sync failed: ${error.message}`);
     if (options.verbose) {

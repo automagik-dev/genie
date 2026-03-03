@@ -1,6 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet } from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
+import { StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface TableProps {
   headers: string[];
@@ -9,68 +8,58 @@ interface TableProps {
 }
 
 export function Table({ headers, rows, theme }: TableProps) {
-  const isGlass = theme.name === "glass";
-  const isExecutive = theme.name === "executive";
-  const isDark = theme.name === "dark";
-  
+  const isGlass = theme.name === 'glass';
+  const isExecutive = theme.name === 'executive';
+  const isDark = theme.name === 'dark';
+
   const styles = StyleSheet.create({
     tableContainer: {
       marginVertical: 12,
       borderRadius: isGlass ? 8 : 4,
-      overflow: "hidden",
+      overflow: 'hidden',
       ...(isGlass && {
-        backgroundColor: "rgba(255, 255, 255, 0.6)",
+        backgroundColor: 'rgba(255, 255, 255, 0.6)',
         borderWidth: 1,
-        borderColor: "rgba(148, 163, 184, 0.3)",
+        borderColor: 'rgba(148, 163, 184, 0.3)',
       }),
     },
     table: {
-      width: "100%",
+      width: '100%',
     },
     headerRow: {
-      flexDirection: "row",
-      backgroundColor: isGlass 
-        ? "rgba(99, 102, 241, 0.15)" 
-        : isDark 
-          ? "#374151"
-          : isExecutive 
-            ? "#1a365d" 
+      flexDirection: 'row',
+      backgroundColor: isGlass
+        ? 'rgba(99, 102, 241, 0.15)'
+        : isDark
+          ? '#374151'
+          : isExecutive
+            ? '#1a365d'
             : theme.colors.codeBg,
       borderBottomWidth: 2,
-      borderBottomColor: isGlass 
-        ? "rgba(99, 102, 241, 0.3)" 
-        : theme.colors.border,
+      borderBottomColor: isGlass ? 'rgba(99, 102, 241, 0.3)' : theme.colors.border,
       minHeight: 32,
-      alignItems: "center",
+      alignItems: 'center',
     },
     row: {
-      flexDirection: "row",
+      flexDirection: 'row',
       borderBottomWidth: 1,
-      borderBottomColor: isGlass 
-        ? "rgba(148, 163, 184, 0.2)" 
-        : theme.colors.border,
+      borderBottomColor: isGlass ? 'rgba(148, 163, 184, 0.2)' : theme.colors.border,
       minHeight: 28,
-      alignItems: "center",
-      backgroundColor: "transparent",
+      alignItems: 'center',
+      backgroundColor: 'transparent',
     },
     rowEven: {
-      flexDirection: "row",
+      flexDirection: 'row',
       borderBottomWidth: 1,
-      borderBottomColor: isGlass 
-        ? "rgba(148, 163, 184, 0.2)" 
-        : theme.colors.border,
+      borderBottomColor: isGlass ? 'rgba(148, 163, 184, 0.2)' : theme.colors.border,
       minHeight: 28,
-      alignItems: "center",
-      backgroundColor: isGlass 
-        ? "rgba(241, 245, 249, 0.5)" 
-        : isDark 
-          ? "#1f2937"
-          : "rgba(0, 0, 0, 0.02)",
+      alignItems: 'center',
+      backgroundColor: isGlass ? 'rgba(241, 245, 249, 0.5)' : isDark ? '#1f2937' : 'rgba(0, 0, 0, 0.02)',
     },
     lastRow: {
-      flexDirection: "row",
+      flexDirection: 'row',
       minHeight: 28,
-      alignItems: "center",
+      alignItems: 'center',
     },
     headerCell: {
       flex: 1,
@@ -78,12 +67,8 @@ export function Table({ headers, rows, theme }: TableProps) {
       paddingHorizontal: 10,
       fontFamily: theme.fonts.heading,
       fontSize: 9,
-      color: isGlass 
-        ? "#4338ca" 
-        : isExecutive || isDark 
-          ? "#ffffff" 
-          : theme.colors.heading,
-      textTransform: "uppercase",
+      color: isGlass ? '#4338ca' : isExecutive || isDark ? '#ffffff' : theme.colors.heading,
+      textTransform: 'uppercase',
       letterSpacing: 0.5,
     },
     cell: {
@@ -105,16 +90,12 @@ export function Table({ headers, rows, theme }: TableProps) {
   });
 
   // Detect if cell contains status indicators
-  const formatCell = (cell: string, isHeader: boolean = false) => {
+  const formatCell = (cell: string, _isHeader = false) => {
     if (!cell) return ' ';
-    
+
     // Convert emoji/symbol indicators to styled versions
-    let formatted = cell
-      .replace(/✓/g, '✓')
-      .replace(/✗/g, '✗')
-      .replace(/★/g, '★')
-      .replace(/●/g, '●');
-    
+    const formatted = cell.replace(/✓/g, '✓').replace(/✗/g, '✗').replace(/★/g, '★').replace(/●/g, '●');
+
     return formatted || ' ';
   };
 
@@ -129,17 +110,13 @@ export function Table({ headers, rows, theme }: TableProps) {
             </Text>
           ))}
         </View>
-        
+
         {/* Data Rows */}
         {rows.map((row, rowIndex) => {
           const isLast = rowIndex === rows.length - 1;
           const isEven = rowIndex % 2 === 1;
-          const rowStyle = isLast 
-            ? styles.lastRow 
-            : isEven 
-              ? styles.rowEven 
-              : styles.row;
-          
+          const rowStyle = isLast ? styles.lastRow : isEven ? styles.rowEven : styles.row;
+
           return (
             <View key={rowIndex} style={rowStyle}>
               {row.map((cell, cellIndex) => (

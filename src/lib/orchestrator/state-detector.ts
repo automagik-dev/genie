@@ -6,17 +6,17 @@
  */
 
 import {
+  completionPatterns,
+  errorPatterns,
+  getFirstMatch,
+  hasMatch,
+  idlePatterns,
+  matchPatterns,
   permissionPatterns,
   questionPatterns,
-  errorPatterns,
-  completionPatterns,
-  workingPatterns,
-  idlePatterns,
-  toolUsePatterns,
   stripAnsi,
-  hasMatch,
-  getFirstMatch,
-  matchPatterns,
+  toolUsePatterns,
+  workingPatterns,
 } from './patterns.js';
 
 export type ClaudeStateType =
@@ -48,10 +48,7 @@ export interface StateDetectorOptions {
 /**
  * Detect the current state of a Claude Code session from terminal output
  */
-export function detectState(
-  output: string,
-  options: StateDetectorOptions = {}
-): ClaudeState {
+export function detectState(output: string, options: StateDetectorOptions = {}): ClaudeState {
   const { linesToAnalyze = 50, minConfidence = 0.3 } = options;
 
   // Get the last N lines for analysis
@@ -77,7 +74,10 @@ export function detectState(
   }
 
   // Check for plan approval or question prompts
-  const hasPlanApproval = hasMatch(cleanOutput, questionPatterns.filter(p => p.type === 'claude_code_plan_approval'));
+  const hasPlanApproval = hasMatch(
+    cleanOutput,
+    questionPatterns.filter((p) => p.type === 'claude_code_plan_approval'),
+  );
 
   // Check for questions with options - only look at last 15 lines for actual menu options
   const lastMenuLines = lines.slice(-15).join('\n');
@@ -88,7 +88,7 @@ export function detectState(
     // Extract options only from the numbered list at the end
     const menuOptions = questionMatches
       .filter((m) => m.type === 'claude_code_numbered_options' && m.extracted?.option)
-      .map((m) => m.extracted!.option);
+      .map((m) => m.extracted?.option);
 
     if (menuOptions.length >= 2 || hasPlanApproval) {
       return {
@@ -103,7 +103,7 @@ export function detectState(
     // Fall back to other option types
     const otherOptions = questionMatches
       .filter((m) => m.extracted?.option && m.type !== 'claude_code_numbered_options')
-      .map((m) => m.extracted!.option);
+      .map((m) => m.extracted?.option);
 
     if (otherOptions.length >= 2) {
       return {
@@ -205,7 +205,7 @@ export function detectState(
  */
 export function detectCompletion(
   output: string,
-  previousOutput: string
+  previousOutput: string,
 ): { complete: boolean; reason: string; confidence: number } {
   const currentState = detectState(output);
   const prevState = detectState(previousOutput);
@@ -287,10 +287,11 @@ export function extractPermissionDetails(output: string): {
 
   // Try to extract command or file from surrounding context
   const lines = cleanOutput.split('\n');
-  const matchLine = lines.findIndex((line) =>
-    line.match(permissionPatterns[0].pattern) ||
-    line.match(permissionPatterns[1].pattern) ||
-    line.match(permissionPatterns[2].pattern)
+  const matchLine = lines.findIndex(
+    (line) =>
+      line.match(permissionPatterns[0].pattern) ||
+      line.match(permissionPatterns[1].pattern) ||
+      line.match(permissionPatterns[2].pattern),
   );
 
   let command: string | undefined;

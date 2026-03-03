@@ -5,14 +5,9 @@
  * how Claude Code workers are spawned (launcher, args, etc.)
  */
 
-import { confirm, select, input } from '@inquirer/prompts';
-import {
-  loadGenieConfig,
-  saveGenieConfig,
-  getWorkerProfile,
-  getDefaultWorkerProfile,
-} from '../lib/genie-config.js';
-import { WorkerProfile } from '../types/genie-config.js';
+import { confirm, input, select } from '@inquirer/prompts';
+import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
+import type { WorkerProfile } from '../types/genie-config.js';
 
 /**
  * genie profiles list - Show all configured worker profiles
@@ -36,10 +31,10 @@ export async function profilesListCommand(): Promise<void> {
   const launcherWidth = 12;
   const claudioWidth = 20;
   console.log(
-    `  ${'Name'.padEnd(nameWidth)}${'Launcher'.padEnd(launcherWidth)}${'Claudio Profile'.padEnd(claudioWidth)}Claude Args`
+    `  ${'Name'.padEnd(nameWidth)}${'Launcher'.padEnd(launcherWidth)}${'Claudio Profile'.padEnd(claudioWidth)}Claude Args`,
   );
   console.log(
-    `  ${'-'.repeat(nameWidth - 2)}  ${'-'.repeat(launcherWidth - 2)}  ${'-'.repeat(claudioWidth - 2)}  ${'-'.repeat(30)}`
+    `  ${'-'.repeat(nameWidth - 2)}  ${'-'.repeat(launcherWidth - 2)}  ${'-'.repeat(claudioWidth - 2)}  ${'-'.repeat(30)}`,
   );
 
   // Rows
@@ -51,7 +46,7 @@ export async function profilesListCommand(): Promise<void> {
     const args = profile.claudeArgs.join(' ') || '-';
 
     console.log(
-      `  ${marker}${name.padEnd(nameWidth - 1)}${profile.launcher.padEnd(launcherWidth)}${claudioProfile.padEnd(claudioWidth)}${args}`
+      `  ${marker}${name.padEnd(nameWidth - 1)}${profile.launcher.padEnd(launcherWidth)}${claudioProfile.padEnd(claudioWidth)}${args}`,
     );
   }
 
@@ -78,13 +73,13 @@ export async function profilesAddCommand(name: string): Promise<void> {
   console.log(`\nCreating worker profile: ${name}\n`);
 
   // Prompt for launcher
-  const launcher = await select({
+  const launcher = (await select({
     message: 'Launcher:',
     choices: [
       { value: 'claude', name: 'claude - Direct Claude Code' },
       { value: 'claudio', name: 'claudio - Via LLM router (custom models)' },
     ],
-  }) as 'claude' | 'claudio';
+  })) as 'claude' | 'claudio';
 
   // Prompt for claudio profile if using claudio
   let claudioProfile: string | undefined;
@@ -167,7 +162,7 @@ export async function profilesRmCommand(name: string): Promise<void> {
 
   // Clear default if it was this profile
   if (config.defaultWorkerProfile === name) {
-    delete config.defaultWorkerProfile;
+    config.defaultWorkerProfile = undefined;
     console.log(`\x1b[33m⚠ Cleared default profile (was '${name}')\x1b[0m`);
   }
 

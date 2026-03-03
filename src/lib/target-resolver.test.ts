@@ -3,9 +3,9 @@
  * Run with: bun test src/lib/target-resolver.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { join } from 'path';
-import { mkdirSync, rmSync, writeFileSync } from 'fs';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ============================================================================
 // Test Setup - Mock infrastructure
@@ -24,26 +24,32 @@ function cleanTestDir(): void {
 }
 
 function writeTestRegistry(workers: Record<string, any>): void {
-  writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({
-    workers,
-    lastUpdated: new Date().toISOString(),
-  }, null, 2));
+  writeFileSync(
+    TEST_REGISTRY_PATH,
+    JSON.stringify(
+      {
+        workers,
+        lastUpdated: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 // Track live panes for mock
-let livePanes: Set<string> = new Set();
+const _livePanes: Set<string> = new Set();
 // Track tmux sessions for mock
-let tmuxSessions: { name: string; windows: { name: string; panes: { id: string }[] }[] }[] = [];
+const _tmuxSessions: { name: string; windows: { name: string; panes: { id: string }[] }[] }[] = [];
 
 // We need to mock the dependencies before importing target-resolver.
 // The approach: mock the modules that target-resolver imports.
 
 // Mock worker-registry to use our test registry path
-let mockRegistryWorkers: Record<string, any> = {};
+const _mockRegistryWorkers: Record<string, any> = {};
 
 // We'll use a module-level approach: import after setting up mocks
-import { resolveTarget, formatResolvedLabel, type ResolvedTarget } from './target-resolver.js';
-import * as workerRegistry from './worker-registry.js';
+import { type ResolvedTarget, formatResolvedLabel, resolveTarget } from './target-resolver.js';
 
 // ============================================================================
 // Level 1: Raw pane ID (starts with %)
@@ -212,7 +218,7 @@ describe('Level 2: Worker ID', () => {
             repoPath: '/tmp/test',
           },
         },
-      })
+      }),
     ).rejects.toThrow(/sub-pane index 5/i);
   });
 
@@ -234,7 +240,7 @@ describe('Level 2: Worker ID', () => {
             repoPath: '/tmp/test',
           },
         },
-      })
+      }),
     ).rejects.toThrow(/sub-pane index 1/i);
   });
 });
@@ -291,7 +297,7 @@ describe('Level 4 removed: bare name without worker match throws', () => {
         checkLiveness: false,
         workers: {},
         tmuxLookup: async () => null,
-      })
+      }),
     ).rejects.toThrow(/not found/i);
   });
 });
@@ -307,7 +313,7 @@ describe('Error paths', () => {
         checkLiveness: false,
         workers: {},
         tmuxLookup: async () => null,
-      })
+      }),
     ).rejects.toThrow(/not found/i);
   });
 
@@ -317,7 +323,7 @@ describe('Error paths', () => {
         checkLiveness: false,
         workers: {},
         tmuxLookup: async () => null,
-      })
+      }),
     ).rejects.toThrow(/not found/i);
   });
 
@@ -358,9 +364,9 @@ describe('Liveness checking', () => {
             repoPath: '/tmp/test',
           },
         },
-        isPaneLive: async (paneId: string) => false, // dead pane
-        cleanupDeadPane: async (workerId: string, paneId: string) => {},
-      })
+        isPaneLive: async (_paneId: string) => false, // dead pane
+        cleanupDeadPane: async (_workerId: string, _paneId: string) => {},
+      }),
     ).rejects.toThrow(/dead|not alive/i);
   });
 
@@ -462,7 +468,7 @@ describe('Resolution priority', () => {
     const result = await resolveTarget('genie', {
       checkLiveness: false,
       workers: {
-        'genie': {
+        genie: {
           id: 'genie',
           paneId: '%50',
           session: 'main',
@@ -783,7 +789,7 @@ describe('Level 1.5: Window ID', () => {
             windowId: '@4',
           },
         },
-      })
+      }),
     ).rejects.toThrow('Window "@999" not found in worker registry');
   });
 
@@ -806,7 +812,7 @@ describe('Level 1.5: Window ID', () => {
             windowId: '@4',
           },
         },
-      })
+      }),
     ).rejects.toThrow(/Window @4.*dead/);
   });
 
@@ -815,7 +821,7 @@ describe('Level 1.5: Window ID', () => {
       resolveTarget('@4', {
         checkLiveness: false,
         workers: {},
-      })
+      }),
     ).rejects.toThrow('Window "@4" not found');
   });
 });

@@ -3,20 +3,11 @@
  * Run with: bun test src/lib/worker-registry.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { join } from 'path';
-import { mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import {
-  register,
-  get,
-  list,
-  addSubPane,
-  getPane,
-  removeSubPane,
-  findByWindow,
-  type Worker,
-} from './worker-registry.js';
+import { type Worker, addSubPane, findByWindow, getPane, removeSubPane } from './worker-registry.js';
 
 // ============================================================================
 // Test Setup
@@ -288,20 +279,34 @@ describe('loadRegistry fresh-read guarantee', () => {
   test('registry reads reflect disk changes between calls', async () => {
     // Write initial state
     const worker1 = makeWorker({ id: 'w1', paneId: '%10', taskId: 'w1' });
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({
-      workers: { w1: worker1 },
-      lastUpdated: new Date().toISOString(),
-    }, null, 2));
+    writeFileSync(
+      TEST_REGISTRY_PATH,
+      JSON.stringify(
+        {
+          workers: { w1: worker1 },
+          lastUpdated: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
 
     const pane1 = await getPane('w1', 0, TEST_REGISTRY_PATH);
     expect(pane1).toBe('%10');
 
     // Externally modify the file (simulates another process writing)
     const worker2 = makeWorker({ id: 'w1', paneId: '%99', taskId: 'w1' });
-    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({
-      workers: { w1: worker2 },
-      lastUpdated: new Date().toISOString(),
-    }, null, 2));
+    writeFileSync(
+      TEST_REGISTRY_PATH,
+      JSON.stringify(
+        {
+          workers: { w1: worker2 },
+          lastUpdated: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
 
     // Next read should see the updated value
     const pane2 = await getPane('w1', 0, TEST_REGISTRY_PATH);
@@ -357,9 +362,9 @@ describe('findByWindow', () => {
       lastUpdated: new Date().toISOString(),
     };
     // Write to global registry location
-    const { mkdirSync: mkdirs } = await import('fs');
-    const { join: joinPath } = await import('path');
-    const { homedir: home } = await import('os');
+    const { mkdirSync: mkdirs } = await import('node:fs');
+    const { join: joinPath } = await import('node:path');
+    const { homedir: home } = await import('node:os');
     const configDir = joinPath(home(), '.config', 'genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
@@ -370,8 +375,10 @@ describe('findByWindow', () => {
     expect(found!.windowId).toBe('@4');
 
     // Cleanup
-    const { unlinkSync } = await import('fs');
-    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
+    const { unlinkSync } = await import('node:fs');
+    try {
+      unlinkSync(joinPath(configDir, 'workers.json'));
+    } catch {}
   });
 
   test('findByWindow returns null for unknown window', async () => {
@@ -380,9 +387,9 @@ describe('findByWindow', () => {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
     };
-    const { mkdirSync: mkdirs } = await import('fs');
-    const { join: joinPath } = await import('path');
-    const { homedir: home } = await import('os');
+    const { mkdirSync: mkdirs } = await import('node:fs');
+    const { join: joinPath } = await import('node:path');
+    const { homedir: home } = await import('node:os');
     const configDir = joinPath(home(), '.config', 'genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
@@ -391,8 +398,10 @@ describe('findByWindow', () => {
     expect(found).toBeNull();
 
     // Cleanup
-    const { unlinkSync } = await import('fs');
-    try { unlinkSync(joinPath(configDir, 'workers.json')); } catch {}
+    const { unlinkSync } = await import('node:fs');
+    try {
+      unlinkSync(joinPath(configDir, 'workers.json'));
+    } catch {}
   });
 });
 
@@ -406,5 +415,5 @@ afterAll(() => {
   } catch {
     // Ignore
   }
-  delete process.env.GENIE_WORKER_REGISTRY;
+  process.env.GENIE_WORKER_REGISTRY = undefined;
 });

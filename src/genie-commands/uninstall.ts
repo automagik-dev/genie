@@ -7,15 +7,12 @@
  * - Remove symlinks from ~/.local/bin
  */
 
+import { existsSync, lstatSync, rmSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
-import { existsSync, rmSync, unlinkSync, lstatSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
-import {
-  hookScriptExists,
-  removeHookScript,
-} from '../lib/claude-settings.js';
-import { getGenieDir, contractPath } from '../lib/genie-config.js';
+import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
+import { contractPath, getGenieDir } from '../lib/genie-config.js';
 
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 
@@ -71,9 +68,7 @@ export async function uninstallCommand(): Promise<void> {
   const hasHookScript = hookScriptExists();
 
   // Count symlinks
-  const existingSymlinks = SYMLINKS.filter((name) =>
-    isGenieSymlink(join(LOCAL_BIN, name))
-  );
+  const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
 
   // Show what will be removed
   console.log('\x1b[2mThis will remove:\x1b[0m');
@@ -81,10 +76,10 @@ export async function uninstallCommand(): Promise<void> {
     console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
   }
   if (hasGenieDir) {
-    console.log('  \x1b[31m-\x1b[0m Genie directory (' + contractPath(genieDir) + ')');
+    console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   }
   if (existingSymlinks.length > 0) {
-    console.log('  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ' + existingSymlinks.join(', '));
+    console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
   }
   console.log();
 
@@ -116,7 +111,7 @@ export async function uninstallCommand(): Promise<void> {
       removeHookScript();
       console.log('  \x1b[32m+\x1b[0m Hook script removed');
     } catch (error: any) {
-      console.log('  \x1b[33m!\x1b[0m Could not remove hook script: ' + error.message);
+      console.log(`  \x1b[33m!\x1b[0m Could not remove hook script: ${error.message}`);
     }
   }
 
@@ -125,7 +120,7 @@ export async function uninstallCommand(): Promise<void> {
     console.log('\x1b[2mRemoving symlinks...\x1b[0m');
     const removed = removeSymlinks();
     if (removed.length > 0) {
-      console.log('  \x1b[32m+\x1b[0m Removed: ' + removed.join(', '));
+      console.log(`  \x1b[32m+\x1b[0m Removed: ${removed.join(', ')}`);
     }
   }
 
@@ -136,7 +131,7 @@ export async function uninstallCommand(): Promise<void> {
       rmSync(genieDir, { recursive: true, force: true });
       console.log('  \x1b[32m+\x1b[0m Directory removed');
     } catch (error: any) {
-      console.log('  \x1b[33m!\x1b[0m Could not remove directory: ' + error.message);
+      console.log(`  \x1b[33m!\x1b[0m Could not remove directory: ${error.message}`);
     }
   }
 

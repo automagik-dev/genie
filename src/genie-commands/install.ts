@@ -1,15 +1,15 @@
+import { spawn } from 'node:child_process';
 import { confirm } from '@inquirer/prompts';
-import { spawn } from 'child_process';
+import { genieConfigExists } from '../lib/genie-config.js';
 import {
-  detectSystem,
+  type PackageManager,
+  type PrerequisiteStatus,
+  type SystemInfo,
   checkAllPrerequisites,
   checkCommand,
+  detectSystem,
   getDistroDisplayName,
-  type SystemInfo,
-  type PrerequisiteStatus,
-  type PackageManager,
 } from '../lib/system-detect.js';
-import { genieConfigExists } from '../lib/genie-config.js';
 import { setupCommand } from './setup.js';
 
 export interface InstallOptions {
@@ -129,14 +129,14 @@ function printPrerequisiteStatus(prereqs: PrerequisiteStatus[]) {
 }
 
 function printSeparator() {
-  console.log('\x1b[2m' + '─'.repeat(40) + '\x1b[0m');
+  console.log(`\x1b[2m${'─'.repeat(40)}\x1b[0m`);
   console.log();
 }
 
 async function promptAndInstall(
   prereq: PrerequisiteStatus,
   command: string | null,
-  options: InstallOptions
+  options: InstallOptions,
 ): Promise<'installed' | 'skipped' | 'failed'> {
   const typeLabel = prereq.required ? '\x1b[31mrequired\x1b[0m' : '\x1b[2moptional, recommended\x1b[0m';
 
@@ -183,20 +183,18 @@ async function promptAndInstall(
       console.log(`\x1b[32m✅ ${prereq.name}${versionInfo} installed\x1b[0m`);
       console.log();
       return 'installed';
-    } else {
-      console.log();
-      console.log(`\x1b[33m⚠️  ${prereq.name} installed but not found in PATH\x1b[0m`);
-      console.log('\x1b[2m  You may need to restart your shell or source your profile\x1b[0m');
-      console.log();
-      return 'installed';
     }
-  } else {
     console.log();
-    console.log(`\x1b[31m❌ Failed to install ${prereq.name}\x1b[0m`);
-    console.log(`\x1b[2m  ${getManualInstructions(prereq.name)}\x1b[0m`);
+    console.log(`\x1b[33m⚠️  ${prereq.name} installed but not found in PATH\x1b[0m`);
+    console.log('\x1b[2m  You may need to restart your shell or source your profile\x1b[0m');
     console.log();
-    return 'failed';
+    return 'installed';
   }
+  console.log();
+  console.log(`\x1b[31m❌ Failed to install ${prereq.name}\x1b[0m`);
+  console.log(`\x1b[2m  ${getManualInstructions(prereq.name)}\x1b[0m`);
+  console.log();
+  return 'failed';
 }
 
 /**
@@ -261,20 +259,18 @@ export async function installCommand(options: InstallOptions): Promise<void> {
     // Offer to run setup if not already configured
     await promptForSetup(options);
 
-    console.log(`Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.`);
+    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
     console.log();
     return;
   }
 
-  console.log(
-    `Missing: ${missingRequired.length} required, ${missingOptional.length} optional`
-  );
+  console.log(`Missing: ${missingRequired.length} required, ${missingOptional.length} optional`);
   console.log();
 
   if (options.check) {
     if (missingRequired.length > 0) {
       console.log('\x1b[31m❌ Missing required prerequisites\x1b[0m');
-      console.log(`Run \x1b[36mgenie install\x1b[0m to install them.`);
+      console.log('Run \x1b[36mgenie install\x1b[0m to install them.');
       process.exit(1);
     }
     return;
@@ -310,15 +306,9 @@ export async function installCommand(options: InstallOptions): Promise<void> {
   printSeparator();
   console.log('\x1b[1mSummary:\x1b[0m');
 
-  const requiredInstalled = results.installed.filter((name) =>
-    missingRequired.some((p) => p.name === name)
-  );
-  const requiredFailed = results.failed.filter((name) =>
-    missingRequired.some((p) => p.name === name)
-  );
-  const optionalSkipped = results.skipped.filter((name) =>
-    missingOptional.some((p) => p.name === name)
-  );
+  const requiredInstalled = results.installed.filter((name) => missingRequired.some((p) => p.name === name));
+  const requiredFailed = results.failed.filter((name) => missingRequired.some((p) => p.name === name));
+  const optionalSkipped = results.skipped.filter((name) => missingOptional.some((p) => p.name === name));
 
   if (requiredFailed.length > 0) {
     console.log(`\x1b[31m  ❌ ${requiredFailed.length} required failed: ${requiredFailed.join(', ')}\x1b[0m`);
@@ -340,7 +330,7 @@ export async function installCommand(options: InstallOptions): Promise<void> {
     // Offer to run setup after successful installation
     await promptForSetup(options);
 
-    console.log(`Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.`);
+    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
   } else {
     console.log('\x1b[31mSome required prerequisites could not be installed.\x1b[0m');
     console.log('Please install them manually and run this command again.');

@@ -6,9 +6,9 @@
  * - OTel exporter: Routes telemetry to the shared relay for state detection
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 /** Fixed port for the shared OTel relay listener. */
 export const OTEL_RELAY_PORT = 14318;
@@ -27,12 +27,9 @@ export function isCodexConfigured(): boolean {
     // Strip TOML comments (lines starting with #) before checking
     const uncommented = content
       .split('\n')
-      .filter(line => !line.trimStart().startsWith('#'))
+      .filter((line) => !line.trimStart().startsWith('#'))
       .join('\n');
-    return (
-      uncommented.includes('disable_paste_burst') &&
-      uncommented.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)
-    );
+    return uncommented.includes('disable_paste_burst') && uncommented.includes(`127.0.0.1:${OTEL_RELAY_PORT}`);
   } catch {
     return false;
   }
@@ -52,9 +49,7 @@ export function ensureCodexOtelConfig(): 'changed' | 'unchanged' | 'error' {
   try {
     mkdirSync(CODEX_CONFIG_DIR, { recursive: true });
 
-    let content = existsSync(CODEX_CONFIG_PATH)
-      ? readFileSync(CODEX_CONFIG_PATH, 'utf-8')
-      : '';
+    let content = existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, 'utf-8') : '';
 
     let changed = false;
 
@@ -65,10 +60,7 @@ export function ensureCodexOtelConfig(): 'changed' | 'unchanged' | 'error' {
       if (content.includes('[otel]')) {
         if (/exporter\s*=/.test(content)) {
           // Replace exporter line only within the [otel] section
-          content = content.replace(
-            /(\[otel\][^\[]*?)exporter\s*=\s*.+/,
-            `$1${otelLine}`,
-          );
+          content = content.replace(/(\[otel\][^\[]*?)exporter\s*=\s*.+/, `$1${otelLine}`);
         } else {
           content = content.replace('[otel]', `[otel]\n${otelLine}`);
         }
@@ -83,9 +75,9 @@ export function ensureCodexOtelConfig(): 'changed' | 'unchanged' | 'error' {
       // Add at the top level (before any section headers)
       const firstSection = content.indexOf('[');
       if (firstSection > 0) {
-        content = content.slice(0, firstSection) + 'disable_paste_burst = true\n' + content.slice(firstSection);
+        content = `${content.slice(0, firstSection)}disable_paste_burst = true\n${content.slice(firstSection)}`;
       } else if (firstSection === 0) {
-        content = 'disable_paste_burst = true\n' + content;
+        content = `disable_paste_burst = true\n${content}`;
       } else {
         content += '\ndisable_paste_burst = true\n';
       }

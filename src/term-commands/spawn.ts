@@ -16,22 +16,24 @@
  *   --profile <name>            - Worker profile to use
  */
 
-import { $ } from 'bun';
-import { randomUUID } from 'crypto';
-import { join } from 'path';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { search } from '@inquirer/prompts';
+import { $ } from 'bun';
+import * as beadsRegistry from '../lib/beads-registry.js';
+import { getDefaultWorkerProfile, getWorkerProfile, loadGenieConfig } from '../lib/genie-config.js';
+import * as skillLoader from '../lib/skill-loader.js';
+import { buildSpawnCommand } from '../lib/spawn-command.js';
+import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
-import * as skillLoader from '../lib/skill-loader.js';
-import { getBackend } from '../lib/task-backend.js';
-import { buildSpawnCommand } from '../lib/spawn-command.js';
-import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile } from '../lib/genie-config.js';
 import type { WorkerProfile } from '../types/genie-config.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
-const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+const useBeads =
+  beadsRegistry.isBeadsRegistryEnabled() &&
+  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
@@ -78,11 +80,12 @@ async function pickSkill(projectRoot?: string): Promise<skillLoader.SkillInfo | 
     source: async (term) => {
       const searchTerm = (term || '').toLowerCase();
       return skillInfos
-        .filter(s =>
-          s.name.toLowerCase().includes(searchTerm) ||
-          (s.info.description?.toLowerCase().includes(searchTerm) ?? false)
+        .filter(
+          (s) =>
+            s.name.toLowerCase().includes(searchTerm) ||
+            (s.info.description?.toLowerCase().includes(searchTerm) ?? false),
         )
-        .map(s => ({
+        .map((s) => ({
           name: s.info.description
             ? `${s.name} - ${s.info.description.substring(0, 60)}${s.info.description.length > 60 ? '...' : ''}`
             : s.name,
@@ -147,7 +150,7 @@ async function getCurrentSession(): Promise<string | null> {
  * Create worktree for task
  */
 async function createWorktree(taskId: string, repoPath: string): Promise<string | null> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   const worktreeDir = join(repoPath, WORKTREE_DIR_NAME);
   const worktreePath = join(worktreeDir, taskId);
 
@@ -192,10 +195,7 @@ async function createWorktree(taskId: string, repoPath: string): Promise<string 
 /**
  * Spawn Claude worker in new pane (splits the CURRENT active pane)
  */
-async function spawnWorkerPane(
-  session: string,
-  workingDir: string
-): Promise<{ paneId: string } | null> {
+async function spawnWorkerPane(session: string, workingDir: string): Promise<{ paneId: string } | null> {
   try {
     const sessionObj = await tmux.findSessionByName(session);
     if (!sessionObj) {
@@ -209,24 +209,19 @@ async function spawnWorkerPane(
       return null;
     }
 
-    const activeWindow = windows.find(w => w.active) || windows[0];
+    const activeWindow = windows.find((w) => w.active) || windows[0];
     const panes = await tmux.listPanes(activeWindow.id);
     if (!panes || panes.length === 0) {
       console.error(`No panes in window "${activeWindow.name}"`);
       return null;
     }
 
-    const activePane = panes.find(p => p.active) || panes[0];
+    const activePane = panes.find((p) => p.active) || panes[0];
 
-    const newPane = await tmux.splitPane(
-      activePane.id,
-      'horizontal',
-      50,
-      workingDir
-    );
+    const newPane = await tmux.splitPane(activePane.id, 'horizontal', 50, workingDir);
 
     if (!newPane) {
-      console.error(`Failed to create new pane`);
+      console.error('Failed to create new pane');
       return null;
     }
 
@@ -241,10 +236,7 @@ async function spawnWorkerPane(
 // Main Command
 // ============================================================================
 
-export async function spawnCommand(
-  skillName: string | undefined,
-  options: SpawnOptions = {}
-): Promise<void> {
+export async function spawnCommand(skillName: string | undefined, options: SpawnOptions = {}): Promise<void> {
   const repoPath = process.cwd();
 
   // 1. Get skill (via picker or direct lookup)
@@ -282,7 +274,7 @@ export async function spawnCommand(
   }
 
   // 2. Get session
-  const session = options.session || await getCurrentSession();
+  const session = options.session || (await getCurrentSession());
   if (!session) {
     console.error('Not in a tmux session. Attach to a session first or use --session.');
     process.exit(1);
@@ -365,7 +357,7 @@ export async function spawnCommand(
   }
 
   // 4. Spawn Claude pane
-  console.log(`Spawning Claude pane...`);
+  console.log('Spawning Claude pane...');
   const paneResult = await spawnWorkerPane(session, workingDir);
   if (!paneResult) {
     process.exit(1);
@@ -425,15 +417,10 @@ export async function spawnCommand(
     sessionId: claudeSessionId,
     beadsDir,
   });
-  await tmux.executeCommand(
-    paneId,
-    `cd '${escapedWorkingDir}' && ${spawnCmd}`,
-    true,
-    false
-  );
+  await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnCmd}`, true, false);
 
   // 9. Wait for Claude to start, then send skill as slash command
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   // Build slash command: /{skillName} [optional prompt]
   // Include issue context if bound to a task
@@ -472,8 +459,8 @@ export async function spawnCommand(
     if (claudeSessionId) {
       console.log(`   Claude Session: ${claudeSessionId}`);
     }
-    console.log(`\nCommands:`);
-    console.log(`   term workers        - Check worker status`);
+    console.log('\nCommands:');
+    console.log('   term workers        - Check worker status');
     console.log(`   term approve ${options.taskId}  - Approve permissions`);
     console.log(`   term close ${options.taskId}    - Close issue when done`);
   }

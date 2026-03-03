@@ -7,13 +7,11 @@
  *   genie team delete <name>
  */
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 import * as teamManager from '../lib/team-manager.js';
 
 export function registerTeamNamespace(program: Command): void {
-  const team = program
-    .command('team')
-    .description('Team lifecycle management');
+  const team = program.command('team').description('Team lifecycle management');
 
   // team create
   team
@@ -29,10 +27,10 @@ export function registerTeamNamespace(program: Command): void {
           console.log(`  Blueprint: ${config.blueprint}`);
         }
         if (config.roles.length > 0) {
-          console.log(`  Roles: ${config.roles.map(r => r.name).join(', ')}`);
+          console.log(`  Roles: ${config.roles.map((r) => r.name).join(', ')}`);
         }
         if (config.nativeTeamsEnabled) {
-          console.log(`  Native teams: enabled (CC detected)`);
+          console.log('  Native teams: enabled (CC detected)');
           console.log(`  Session: ${config.nativeTeamParentSessionId ?? '(pending)'}`);
         }
       } catch (error: any) {
@@ -66,7 +64,7 @@ export function registerTeamNamespace(program: Command): void {
         console.log('TEAMS');
         console.log('-'.repeat(60));
         for (const t of teams) {
-          const roles = t.roles.map(r => r.name).join(', ') || '(no roles)';
+          const roles = t.roles.map((r) => r.name).join(', ') || '(no roles)';
           const bp = t.blueprint ? ` [${t.blueprint}]` : '';
           console.log(`  ${t.name}${bp}`);
           console.log(`    Roles: ${roles}`);
@@ -109,7 +107,7 @@ export function registerTeamNamespace(program: Command): void {
       for (const name of names) {
         const bp = teamManager.getBlueprint(name);
         if (bp) {
-          const roles = bp.roles.map(r => r.name).join(', ');
+          const roles = bp.roles.map((r) => r.name).join(', ');
           console.log(`  ${name}: ${roles}`);
         }
       }

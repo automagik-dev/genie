@@ -3,21 +3,20 @@
  * Run with: bun test src/lib/batch-manager.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { join } from 'path';
-import { mkdirSync, rmSync, existsSync, readFileSync } from 'fs';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
+  type Batch,
+  type BatchOptions,
+  type BatchWorker,
+  checkBatchCompletion,
   createBatch,
+  deleteBatch,
   getBatch,
   listBatches,
   updateBatch,
-  deleteBatch,
-  checkBatchCompletion,
-  type Batch,
-  type BatchWorker,
-  type BatchOptions,
-  type BatchCompletionStatus,
 } from './batch-manager.js';
 
 // ============================================================================
@@ -44,7 +43,13 @@ function cleanTestDir(): void {
 describe('Batch types', () => {
   test('BatchWorker should accept all valid statuses', () => {
     const statuses: BatchWorker['status'][] = [
-      'queued', 'spawning', 'running', 'waiting', 'complete', 'failed', 'cancelled',
+      'queued',
+      'spawning',
+      'running',
+      'waiting',
+      'complete',
+      'failed',
+      'cancelled',
     ];
     for (const status of statuses) {
       const worker: BatchWorker = { status };
@@ -101,7 +106,7 @@ describe('createBatch', () => {
   });
 
   test('should persist batch as JSON file in .genie/batches/', () => {
-    const batch = createBatch(TEST_GENIE_DIR, ['wish-21']);
+    const _batch = createBatch(TEST_GENIE_DIR, ['wish-21']);
 
     const filePath = join(TEST_BATCHES_DIR, 'batch-001.json');
     expect(existsSync(filePath)).toBe(true);
@@ -205,7 +210,7 @@ describe('listBatches', () => {
 
     const batches = listBatches(TEST_GENIE_DIR);
     expect(batches).toHaveLength(3);
-    const ids = batches.map(b => b.id);
+    const ids = batches.map((b) => b.id);
     expect(ids).toContain('batch-001');
     expect(ids).toContain('batch-002');
     expect(ids).toContain('batch-003');
@@ -349,7 +354,12 @@ describe('checkBatchCompletion', () => {
     updateBatch(TEST_GENIE_DIR, batch.id, {
       workers: {
         'wish-21': { paneId: '%85', status: 'running', startedAt: '2026-02-03T20:00:00Z' },
-        'wish-23': { paneId: '%86', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:05:00Z' },
+        'wish-23': {
+          paneId: '%86',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:05:00Z',
+        },
         'wish-24': { paneId: '%87', status: 'queued' },
       },
     });
@@ -370,8 +380,18 @@ describe('checkBatchCompletion', () => {
     const batch = createBatch(TEST_GENIE_DIR, ['wish-21', 'wish-23']);
     updateBatch(TEST_GENIE_DIR, batch.id, {
       workers: {
-        'wish-21': { paneId: '%85', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:10:00Z' },
-        'wish-23': { paneId: '%86', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:12:00Z' },
+        'wish-21': {
+          paneId: '%85',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:10:00Z',
+        },
+        'wish-23': {
+          paneId: '%86',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:12:00Z',
+        },
       },
     });
 
@@ -389,7 +409,12 @@ describe('checkBatchCompletion', () => {
     const batch = createBatch(TEST_GENIE_DIR, ['wish-21', 'wish-23', 'wish-24']);
     updateBatch(TEST_GENIE_DIR, batch.id, {
       workers: {
-        'wish-21': { paneId: '%85', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:10:00Z' },
+        'wish-21': {
+          paneId: '%85',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:10:00Z',
+        },
         'wish-23': { paneId: '%86', status: 'failed', startedAt: '2026-02-03T20:00:00Z' },
         'wish-24': { paneId: '%87', status: 'cancelled' },
       },
@@ -408,7 +433,12 @@ describe('checkBatchCompletion', () => {
     const batch = createBatch(TEST_GENIE_DIR, ['wish-21']);
     updateBatch(TEST_GENIE_DIR, batch.id, {
       workers: {
-        'wish-21': { paneId: '%85', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:10:00Z' },
+        'wish-21': {
+          paneId: '%85',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:10:00Z',
+        },
       },
     });
 
@@ -490,7 +520,12 @@ describe('checkBatchCompletion', () => {
     updateBatch(TEST_GENIE_DIR, batch.id, {
       status: 'complete',
       workers: {
-        'wish-21': { paneId: '%85', status: 'complete', startedAt: '2026-02-03T20:00:00Z', completedAt: '2026-02-03T20:10:00Z' },
+        'wish-21': {
+          paneId: '%85',
+          status: 'complete',
+          startedAt: '2026-02-03T20:00:00Z',
+          completedAt: '2026-02-03T20:10:00Z',
+        },
       },
     });
 

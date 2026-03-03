@@ -13,9 +13,9 @@
  *   3. tmux - pane existence (fallback)
  */
 
-import { createEventAggregator, type WorkerDashboardState } from '../lib/event-aggregator.js';
-import { readEventsFromFile, listEventFiles, aggregateAllEvents, type NormalizedEvent } from './events.js';
+import { type WorkerDashboardState, createEventAggregator } from '../lib/event-aggregator.js';
 import * as registry from '../lib/worker-registry.js';
+import { type NormalizedEvent, aggregateAllEvents, listEventFiles, readEventsFromFile } from './events.js';
 
 // ============================================================================
 // Types
@@ -68,11 +68,11 @@ export function formatTimeAgo(timestamp: number, now: number): string {
 
   if (hours > 0) {
     return `${hours}h ago`;
-  } else if (minutes > 0) {
-    return `${minutes}m ago`;
-  } else {
-    return `${seconds}s ago`;
   }
+  if (minutes > 0) {
+    return `${minutes}m ago`;
+  }
+  return `${seconds}s ago`;
 }
 
 // ============================================================================
@@ -139,7 +139,7 @@ export function truncate(str: string, maxLen: number): string {
   if (maxLen < 4) {
     return str.substring(0, maxLen);
   }
-  return str.substring(0, maxLen - 3) + '...';
+  return `${str.substring(0, maxLen - 3)}...`;
 }
 
 // ============================================================================
@@ -158,7 +158,7 @@ export function renderDashboardTable(data: DashboardData): string {
   const lines: string[] = [];
 
   // Count active workers (non-stopped)
-  const activeCount = workers.filter(w => w.status !== 'stopped').length;
+  const activeCount = workers.filter((w) => w.status !== 'stopped').length;
 
   // Header
   const headerLabel = 'WORKERS';
@@ -191,9 +191,7 @@ export function renderDashboardTable(data: DashboardData): string {
     const statusPlainLen = indicator.text.length + 2; // icon + space + text
     const statusPad = ' '.repeat(Math.max(0, 14 - statusPlainLen));
     const statusCell = indicator.ansi + statusPad;
-    const toolName = worker.lastEvent?.toolName
-      ? truncate(worker.lastEvent.toolName, 19).padEnd(20)
-      : '-'.padEnd(20);
+    const toolName = worker.lastEvent?.toolName ? truncate(worker.lastEvent.toolName, 19).padEnd(20) : '-'.padEnd(20);
     const timeAgo = formatTimeAgo(worker.lastActivityAt, now);
 
     lines.push(`${wishId}${pane}${statusCell}${toolName}${timeAgo}`);
@@ -218,13 +216,13 @@ export function renderDashboardJson(data: DashboardData): string {
 
   const summary = {
     total: workers.length,
-    running: workers.filter(w => w.status === 'running').length,
-    waiting: workers.filter(w => w.status === 'waiting').length,
-    idle: workers.filter(w => w.status === 'idle').length,
-    stopped: workers.filter(w => w.status === 'stopped').length,
+    running: workers.filter((w) => w.status === 'running').length,
+    waiting: workers.filter((w) => w.status === 'waiting').length,
+    idle: workers.filter((w) => w.status === 'idle').length,
+    stopped: workers.filter((w) => w.status === 'stopped').length,
   };
 
-  const workerEntries = workers.map(w => ({
+  const workerEntries = workers.map((w) => ({
     paneId: w.paneId,
     wishId: w.wishId || null,
     status: w.status,
@@ -252,7 +250,7 @@ export function renderDashboardVerbose(data: DashboardData): string {
   const { workers, now } = data;
   const lines: string[] = [];
 
-  const activeCount = workers.filter(w => w.status !== 'stopped').length;
+  const activeCount = workers.filter((w) => w.status !== 'stopped').length;
 
   // Header
   lines.push(`${ANSI_BOLD}WORKERS${ANSI_RESET} (verbose)  ${activeCount} active`);
@@ -274,7 +272,9 @@ export function renderDashboardVerbose(data: DashboardData): string {
     lines.push(`    ${worker.eventCount} events processed`);
 
     if (worker.lastEvent) {
-      lines.push(`    Last event: ${worker.lastEvent.type}${worker.lastEvent.toolName ? ` (${worker.lastEvent.toolName})` : ''}`);
+      lines.push(
+        `    Last event: ${worker.lastEvent.type}${worker.lastEvent.toolName ? ` (${worker.lastEvent.toolName})` : ''}`,
+      );
       const eventTime = new Date(worker.lastEvent.timestamp).toLocaleTimeString();
       lines.push(`    Event time: ${eventTime}`);
     } else {
@@ -297,10 +297,7 @@ export function renderDashboardVerbose(data: DashboardData): string {
  * Changes detected: status, lastActivityAt, eventCount, lastEvent toolName,
  * and workers added or removed.
  */
-export function detectChanges(
-  prev: WorkerDashboardState[],
-  current: WorkerDashboardState[],
-): Set<string> {
+export function detectChanges(prev: WorkerDashboardState[], current: WorkerDashboardState[]): Set<string> {
   const changed = new Set<string>();
 
   const prevMap = new Map<string, WorkerDashboardState>();
@@ -421,7 +418,7 @@ function renderWatchTable(data: DashboardData, changedPaneIds: Set<string>): str
   const lines: string[] = [];
 
   // Count active workers (non-stopped)
-  const activeCount = workers.filter(w => w.status !== 'stopped').length;
+  const _activeCount = workers.filter((w) => w.status !== 'stopped').length;
 
   // Column headers
   const colWish = 'WISH'.padEnd(12);
@@ -448,9 +445,7 @@ function renderWatchTable(data: DashboardData, changedPaneIds: Set<string>): str
     const statusPlainLen = indicator.text.length + 2;
     const statusPad = ' '.repeat(Math.max(0, 14 - statusPlainLen));
     const statusCell = indicator.ansi + statusPad;
-    const toolName = worker.lastEvent?.toolName
-      ? truncate(worker.lastEvent.toolName, 19).padEnd(20)
-      : '-'.padEnd(20);
+    const toolName = worker.lastEvent?.toolName ? truncate(worker.lastEvent.toolName, 19).padEnd(20) : '-'.padEnd(20);
     const timeAgo = formatTimeAgo(worker.lastActivityAt, now);
 
     lines.push(`${boldStart}${wishId}${pane}${statusCell}${toolName}${timeAgo}${boldEnd}`);
@@ -479,14 +474,11 @@ export function startWatchMode(options: WatchModeOptions): () => void {
     if (stopped) return;
 
     try {
-      const [data, events] = await Promise.all([
-        options.fetchData(),
-        options.fetchEvents(),
-      ]);
+      const [data, events] = await Promise.all([options.fetchData(), options.fetchEvents()]);
 
       // Detect changes from previous render
       const changedIds = detectChanges(previousWorkers, data.workers);
-      previousWorkers = data.workers.map(w => ({ ...w }));
+      previousWorkers = data.workers.map((w) => ({ ...w }));
 
       // Clear terminal
       process.stdout.write('\x1b[2J\x1b[H');

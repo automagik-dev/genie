@@ -1,16 +1,16 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  findSection,
+  getWishPath,
+  listSections,
+  listWishSlugs,
   parseSections,
   readWish,
-  findSection,
-  listSections,
-  wishExists,
-  listWishSlugs,
-  getWishPath,
   validateSlug,
+  wishExists,
 } from './wish-editor.js';
 
 // ============================================================================
@@ -72,7 +72,7 @@ This is real.
 describe('parseSections', () => {
   test('parses top-level and nested headings', () => {
     const sections = parseSections(SAMPLE_WISH);
-    const headings = sections.map(s => s.heading);
+    const headings = sections.map((s) => s.heading);
 
     expect(headings).toContain('Forge Resilience');
     expect(headings).toContain('Overview');
@@ -86,19 +86,19 @@ describe('parseSections', () => {
   test('assigns correct levels', () => {
     const sections = parseSections(SAMPLE_WISH);
 
-    const h1 = sections.find(s => s.heading === 'Forge Resilience');
+    const h1 = sections.find((s) => s.heading === 'Forge Resilience');
     expect(h1?.level).toBe(1);
 
-    const h2 = sections.find(s => s.heading === 'Overview');
+    const h2 = sections.find((s) => s.heading === 'Overview');
     expect(h2?.level).toBe(2);
 
-    const h3 = sections.find(s => s.heading === 'Group 1: Core Fixes');
+    const h3 = sections.find((s) => s.heading === 'Group 1: Core Fixes');
     expect(h3?.level).toBe(3);
   });
 
   test('section content includes heading line', () => {
     const sections = parseSections(SAMPLE_WISH);
-    const overview = sections.find(s => s.heading === 'Overview');
+    const overview = sections.find((s) => s.heading === 'Overview');
 
     expect(overview?.content).toContain('## Overview');
     expect(overview?.content).toContain("Sofia's field report");
@@ -118,7 +118,7 @@ describe('parseSections', () => {
     const sections = parseSections(SAMPLE_WISH);
 
     // "Execution Groups" (##) should include "Group 1" (###) and "Group 2" (###)
-    const execGroups = sections.find(s => s.heading === 'Execution Groups');
+    const execGroups = sections.find((s) => s.heading === 'Execution Groups');
     expect(execGroups).not.toBeNull();
     expect(execGroups!.content).toContain('### Group 1: Core Fixes');
     expect(execGroups!.content).toContain('Fix the bugs.');
@@ -129,7 +129,7 @@ describe('parseSections', () => {
   test('child sections have their own entries too', () => {
     const sections = parseSections(SAMPLE_WISH);
 
-    const group1 = sections.find(s => s.heading === 'Group 1: Core Fixes');
+    const group1 = sections.find((s) => s.heading === 'Group 1: Core Fixes');
     expect(group1).not.toBeNull();
     expect(group1!.content).toContain('Fix the bugs.');
     // Group 1 should NOT include Group 2 content (same level)
@@ -138,7 +138,7 @@ describe('parseSections', () => {
 
   test('h1 section includes all nested content until EOF', () => {
     const sections = parseSections(SAMPLE_WISH);
-    const h1 = sections.find(s => s.heading === 'Forge Resilience');
+    const h1 = sections.find((s) => s.heading === 'Forge Resilience');
     expect(h1).not.toBeNull();
     // h1 has no sibling, so it runs to EOF — includes everything
     expect(h1!.content).toContain('## Overview');
@@ -147,7 +147,7 @@ describe('parseSections', () => {
 
   test('ignores headings inside code blocks', () => {
     const sections = parseSections(WISH_WITH_CODE);
-    const headings = sections.map(s => s.heading);
+    const headings = sections.map((s) => s.heading);
 
     expect(headings).toContain('My Wish');
     expect(headings).toContain('Description');

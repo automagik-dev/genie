@@ -5,35 +5,35 @@
  * Full command tree ported from the standalone `term` binary.
  */
 
-import { Command } from 'commander';
-import * as spawnCmd from './spawn.js';
-import * as workCmd from './work.js';
-import * as workersCmd from './workers.js';
-import * as dashboardCmd from './dashboard.js';
+import type { Command } from 'commander';
+import { getRepoGenieDir } from '../lib/genie-dir.js';
 import * as approveCmd from './approve.js';
-import * as orchestrateCmd from './orchestrate.js';
-import * as closeCmd from './close.js';
-import * as killCmd from './kill.js';
-import * as daemonCmd from './daemon.js';
-import * as createCmd from './create.js';
-import * as updateCmd from './update.js';
-import * as shipCmd from './ship.js';
-import * as pushCmd from './push.js';
-import * as syncCmd from './sync.js';
-import * as eventsCmd from './events.js';
-import * as shortcutsCmd from './shortcuts.js';
-import * as spawnParallelCmd from './spawn-parallel.js';
 import * as batchCmd from './batch.js';
+import * as closeCmd from './close.js';
 import * as councilCmd from './council.js';
-import * as resolveCmd from './resolve.js';
-import * as historyCmd from './history.js';
+import * as createCmd from './create.js';
+import * as daemonCmd from './daemon.js';
+import * as dashboardCmd from './dashboard.js';
+import * as eventsCmd from './events.js';
 import * as feedCmd from './feed.js';
+import * as historyCmd from './history.js';
+import * as killCmd from './kill.js';
 import * as nextCmd from './next.js';
+import * as orchestrateCmd from './orchestrate.js';
+import * as pushCmd from './push.js';
+import * as resolveCmd from './resolve.js';
 import * as scoreCmd from './score.js';
 import { registerSessionNamespace } from './session/commands.js';
+import * as shipCmd from './ship.js';
+import * as shortcutsCmd from './shortcuts.js';
+import * as spawnParallelCmd from './spawn-parallel.js';
+import * as spawnCmd from './spawn.js';
+import * as syncCmd from './sync.js';
 import { registerTaskNamespace } from './task/commands.js';
+import * as updateCmd from './update.js';
 import { registerWishNamespace } from './wish/commands.js';
-import { getRepoGenieDir } from '../lib/genie-dir.js';
+import * as workCmd from './work.js';
+import * as workersCmd from './workers.js';
 
 export function registerTermNamespace(program: Command): void {
   const term = program
@@ -368,22 +368,27 @@ Examples:
     .option('-n, --lines <number>', 'Number of recent events to show (default: 20)', '20')
     .option('--emit', 'Write events to .genie/events/<pane-id>.jsonl while tailing')
     .option('--all', 'Aggregate events from all active workers')
-    .action(async (paneId: string | undefined, options: { json?: boolean; follow?: boolean; lines?: string; emit?: boolean; all?: boolean }) => {
-      await eventsCmd.eventsCommand(paneId, {
-        json: options.json,
-        follow: options.follow,
-        lines: options.lines ? parseInt(options.lines, 10) : undefined,
-        emit: options.emit,
-        all: options.all,
-      });
-    });
+    .action(
+      async (
+        paneId: string | undefined,
+        options: { json?: boolean; follow?: boolean; lines?: string; emit?: boolean; all?: boolean },
+      ) => {
+        await eventsCmd.eventsCommand(paneId, {
+          json: options.json,
+          follow: options.follow,
+          lines: options.lines ? Number.parseInt(options.lines, 10) : undefined,
+          emit: options.emit,
+          all: options.all,
+        });
+      },
+    );
 
   // History command
   term
     .command('history <worker>')
     .description('Show compressed session history for a worker (catch-up)')
     .option('--full', 'Show full conversation without compression')
-    .option('--since <n>', 'Show last N user/assistant exchanges', parseInt)
+    .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
     .option('--json', 'Output as JSON')
     .option('--raw', 'Output raw JSONL entries')
     .option('--log-file <path>', 'Direct path to log file (for testing)')
@@ -396,7 +401,7 @@ Examples:
     .command('h <worker>')
     .description('Alias for "genie term history"')
     .option('--full', 'Show full conversation')
-    .option('--since <n>', 'Last N exchanges', parseInt)
+    .option('--since <n>', 'Last N exchanges', Number.parseInt)
     .option('--json', 'JSON output')
     .option('--log-file <path>', 'Direct log file path')
     .action(async (worker: string, options: historyCmd.HistoryOptions) => {
@@ -504,9 +509,14 @@ Examples:
     .option('--deny <request-id>', 'Manually deny a pending request')
     .option('--start', 'Start the auto-approve engine')
     .option('--stop', 'Stop the auto-approve engine')
-    .action(async (requestId: string | undefined, options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean }) => {
-      await approveCmd.approveCommand(requestId, options);
-    });
+    .action(
+      async (
+        requestId: string | undefined,
+        options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean },
+      ) => {
+        await approveCmd.approveCommand(requestId, options);
+      },
+    );
 
   // Parallel spawn command
   term
@@ -515,7 +525,7 @@ Examples:
     .option('--all-ready', 'Spawn all wishes with Status: READY')
     .option('--skill <name>', 'Skill for all workers')
     .option('--no-auto-approve', 'Disable auto-approve')
-    .option('--max <n>', 'Max concurrent workers', parseInt)
+    .option('--max <n>', 'Max concurrent workers', Number.parseInt)
     .option('-s, --session <name>', 'Target tmux session')
     .action(async (wishIds: string[], options: spawnParallelCmd.SpawnParallelOptions) => {
       await spawnParallelCmd.spawnParallelCommand(wishIds, options);

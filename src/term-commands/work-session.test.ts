@@ -7,9 +7,9 @@
  * 3. Auto-creates a session if not inside tmux
  */
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import * as tmux from '../lib/tmux.js';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as genieConfig from '../lib/genie-config.js';
+import * as tmux from '../lib/tmux.js';
 
 // We test getOrCreateSession which is exported from work.ts
 import { getOrCreateSession } from './work.js';
@@ -80,9 +80,7 @@ describe('getOrCreateSession', () => {
     expect(result).toBe('genie');
     expect(createSessionMock).toHaveBeenCalledWith('genie');
     // Should print creation message
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Created tmux session 'genie'")
-    );
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("Created tmux session 'genie'"));
   });
 
   it('should use existing session if one with the config name already exists', async () => {
@@ -103,9 +101,7 @@ describe('getOrCreateSession', () => {
     // Should NOT create a new session
     expect(createSessionMock).not.toHaveBeenCalled();
     // Should print found message
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Found existing tmux session 'genie'")
-    );
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("Found existing tmux session 'genie'"));
   });
 
   it('should use custom session name from config', async () => {
@@ -161,8 +157,6 @@ describe('getOrCreateSession', () => {
     });
 
     await getOrCreateSession();
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('tmux attach -t genie')
-    );
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('tmux attach -t genie'));
   });
 });

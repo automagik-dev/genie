@@ -107,13 +107,27 @@ function countStatuses(workers: Record<string, BatchWorker>): StatusCounts {
   for (const worker of Object.values(workers)) {
     counts.total++;
     switch (worker.status) {
-      case 'complete': counts.complete++; break;
-      case 'running': counts.running++; break;
-      case 'waiting': counts.waiting++; break;
-      case 'queued': counts.queued++; break;
-      case 'failed': counts.failed++; break;
-      case 'cancelled': counts.cancelled++; break;
-      case 'spawning': counts.spawning++; break;
+      case 'complete':
+        counts.complete++;
+        break;
+      case 'running':
+        counts.running++;
+        break;
+      case 'waiting':
+        counts.waiting++;
+        break;
+      case 'queued':
+        counts.queued++;
+        break;
+      case 'failed':
+        counts.failed++;
+        break;
+      case 'cancelled':
+        counts.cancelled++;
+        break;
+      case 'spawning':
+        counts.spawning++;
+        break;
     }
   }
 
@@ -222,11 +236,7 @@ export function renderBatchList(batches: Batch[]): string {
 
   for (const batch of batches) {
     const counts = countStatuses(batch.workers);
-    const statusColor = batch.status === 'active'
-      ? ANSI_GREEN
-      : batch.status === 'cancelled'
-        ? ANSI_RED
-        : ANSI_GRAY;
+    const statusColor = batch.status === 'active' ? ANSI_GREEN : batch.status === 'cancelled' ? ANSI_RED : ANSI_GRAY;
 
     const batchId = batch.id.padEnd(12);
     const status = `${statusColor}${batch.status}${ANSI_RESET}`.padEnd(10 + statusColor.length + ANSI_RESET.length);
@@ -247,11 +257,7 @@ export function renderBatchList(batches: Batch[]): string {
 /**
  * Terminal statuses that should not be changed by cancellation.
  */
-const TERMINAL_STATUSES: Set<BatchWorker['status']> = new Set([
-  'complete',
-  'failed',
-  'cancelled',
-]);
+const TERMINAL_STATUSES: Set<BatchWorker['status']> = new Set(['complete', 'failed', 'cancelled']);
 
 /**
  * Cancel all active workers in a batch.

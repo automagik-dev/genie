@@ -11,10 +11,10 @@
  * approval, direct messages) without needing tmux send-keys injection.
  */
 
-import { mkdir, readFile, writeFile, rm, readdir, stat, unlink } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { ClaudeTeamColor } from './provider-adapters.js';
 import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 
@@ -111,7 +111,7 @@ async function acquireLock(path: string): Promise<void> {
     } catch {
       // Lock exists — wait with jitter and retry
       const jitter = Math.floor(Math.random() * LOCK_POLL_MS);
-      await new Promise(r => setTimeout(r, LOCK_POLL_MS + jitter));
+      await new Promise((r) => setTimeout(r, LOCK_POLL_MS + jitter));
     }
   }
 
@@ -204,7 +204,7 @@ export async function registerNativeMember(
   const agentId = `${sanitizeTeamName(member.agentName)}@${sanitized}`;
 
   // Remove existing entry with same agentId (re-register)
-  config.members = config.members.filter(m => m.agentId !== agentId);
+  config.members = config.members.filter((m) => m.agentId !== agentId);
 
   config.members.push({
     agentId,
@@ -232,17 +232,14 @@ export async function registerNativeMember(
  * Unregister a member from the native team config.json.
  * Marks them as inactive rather than removing (preserves history).
  */
-export async function unregisterNativeMember(
-  teamName: string,
-  agentName: string,
-): Promise<void> {
+export async function unregisterNativeMember(teamName: string, agentName: string): Promise<void> {
   const config = await loadConfig(teamName);
   if (!config) return;
 
   const sanitized = sanitizeTeamName(teamName);
   const agentId = `${sanitizeTeamName(agentName)}@${sanitized}`;
 
-  const member = config.members.find(m => m.agentId === agentId);
+  const member = config.members.find((m) => m.agentId === agentId);
   if (member) {
     member.isActive = false;
   }
@@ -282,10 +279,7 @@ export async function writeNativeInbox(
 /**
  * Read all messages from a member's native inbox.
  */
-export async function readNativeInbox(
-  teamName: string,
-  agentName: string,
-): Promise<NativeInboxMessage[]> {
+export async function readNativeInbox(teamName: string, agentName: string): Promise<NativeInboxMessage[]> {
   try {
     const content = await readFile(inboxPath(teamName, agentName), 'utf-8');
     return JSON.parse(content);
@@ -301,7 +295,7 @@ export async function assignColor(teamName: string): Promise<ClaudeTeamColor> {
   const config = await loadConfig(teamName);
   if (!config) return CLAUDE_TEAM_COLORS[0];
 
-  const usedColors = new Set(config.members.map(m => m.color));
+  const usedColors = new Set(config.members.map((m) => m.color));
 
   for (const color of CLAUDE_TEAM_COLORS) {
     if (!usedColors.has(color)) return color;
@@ -380,7 +374,7 @@ export async function discoverClaudeSessionId(cwd?: string): Promise<string | nu
 
   try {
     const entries = await readdir(projectDir);
-    const jsonls = entries.filter(e => e.endsWith('.jsonl'));
+    const jsonls = entries.filter((e) => e.endsWith('.jsonl'));
 
     if (jsonls.length === 0) return null;
 
@@ -475,16 +469,12 @@ export async function registerAsTeamLead(
   if (!sessionId) {
     throw new Error(
       'Could not discover Claude Code session ID. ' +
-      'Are you running inside Claude Code with CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1?'
+        'Are you running inside Claude Code with CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1?',
     );
   }
 
   // Create or load the native team, using the real CC session ID
-  const config = await ensureNativeTeam(
-    teamName,
-    `Genie team: ${teamName}`,
-    sessionId,
-  );
+  const config = await ensureNativeTeam(teamName, `Genie team: ${teamName}`, sessionId);
 
   // Update leadSessionId if the team already existed with a stale ID
   if (config.leadSessionId !== sessionId) {
@@ -495,7 +485,7 @@ export async function registerAsTeamLead(
   // Register the leader as a member (CC expects the lead in the members array)
   const sanitized = sanitizeTeamName(teamName);
   const leadAgentId = `team-lead@${sanitized}`;
-  const existingLead = config.members.find(m => m.agentId === leadAgentId);
+  const existingLead = config.members.find((m) => m.agentId === leadAgentId);
 
   if (!existingLead || !existingLead.isActive) {
     await registerNativeMember(teamName, {

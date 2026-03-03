@@ -73,7 +73,7 @@ function debug(msg: string): void {
 
 async function defaultTmuxLookup(
   sessionName: string,
-  windowName?: string
+  windowName?: string,
 ): Promise<{ paneId: string; session: string } | null> {
   try {
     const tmux = await import('./tmux.js');
@@ -86,16 +86,16 @@ async function defaultTmuxLookup(
 
     let targetWindow;
     if (windowName) {
-      targetWindow = windows.find(w => w.name === windowName);
+      targetWindow = windows.find((w) => w.name === windowName);
       if (!targetWindow) return null;
     } else {
-      targetWindow = windows.find(w => w.active) || windows[0];
+      targetWindow = windows.find((w) => w.active) || windows[0];
     }
 
     const panes = await tmux.listPanes(targetWindow.id);
     if (!panes || panes.length === 0) return null;
 
-    const targetPane = panes.find(p => p.active) || panes[0];
+    const targetPane = panes.find((p) => p.active) || panes[0];
     return { paneId: targetPane.id, session: sessionName };
   } catch {
     return null;
@@ -125,9 +125,7 @@ async function defaultCleanupDeadPane(workerId: string, paneId: string): Promise
 async function defaultDeriveSession(paneId: string): Promise<string | null> {
   try {
     const tmux = await import('./tmux.js');
-    const sessionName = await tmux.executeTmux(
-      `display-message -p -t '${paneId}' '#{session_name}'`
-    );
+    const sessionName = await tmux.executeTmux(`display-message -p -t '${paneId}' '#{session_name}'`);
     const trimmed = sessionName.trim();
     return trimmed || null;
   } catch {
@@ -147,10 +145,7 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
  * @returns ResolvedTarget with paneId and metadata
  * @throws Error with prescriptive message if target cannot be resolved
  */
-export async function resolveTarget(
-  target: string,
-  options: ResolveOptions = {}
-): Promise<ResolvedTarget> {
+export async function resolveTarget(target: string, options: ResolveOptions = {}): Promise<ResolvedTarget> {
   const {
     checkLiveness = false,
     workers: injectedWorkers,
@@ -169,9 +164,7 @@ export async function resolveTarget(
     if (checkLiveness) {
       const live = await isPaneLive(target);
       if (!live) {
-        throw new Error(
-          `Pane ${target} is dead or does not exist. Check with: tmux list-panes -a`
-        );
+        throw new Error(`Pane ${target} is dead or does not exist. Check with: tmux list-panes -a`);
       }
     }
 
@@ -193,7 +186,7 @@ export async function resolveTarget(
 
     const workers = await getWorkers(injectedWorkers, options.registryPath);
     const normalizedId = target;
-    const matchingWorker = Object.values(workers).find(w => w.windowId === normalizedId);
+    const matchingWorker = Object.values(workers).find((w) => w.windowId === normalizedId);
 
     if (matchingWorker) {
       debug(`"${target}" -> found worker "${matchingWorker.id}" with pane ${matchingWorker.paneId}`);
@@ -203,7 +196,7 @@ export async function resolveTarget(
         if (!live) {
           throw new Error(
             `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. ` +
-            `Run 'term kill ${matchingWorker.id}' to clean up.`
+              `Run 'term kill ${matchingWorker.id}' to clean up.`,
           );
         }
       }
@@ -218,8 +211,7 @@ export async function resolveTarget(
 
     // No worker owns this window
     throw new Error(
-      `Window "${target}" not found in worker registry.\n` +
-      `Run 'term workers' to list workers or 'term session window ls <session>' to list windows.`
+      `Window "${target}" not found in worker registry.\nRun 'term workers' to list workers or 'term session window ls <session>' to list windows.`,
     );
   }
 
@@ -235,11 +227,10 @@ export async function resolveTarget(
 
     if (worker) {
       // This is a worker:index pattern
-      const index = parseInt(rightSide, 10);
-      if (isNaN(index) || index < 0) {
+      const index = Number.parseInt(rightSide, 10);
+      if (Number.isNaN(index) || index < 0) {
         throw new Error(
-          `Invalid sub-pane index "${rightSide}" for worker "${leftSide}". ` +
-          `Use a non-negative integer (0 = primary, 1+ = sub-panes).`
+          `Invalid sub-pane index "${rightSide}" for worker "${leftSide}". Use a non-negative integer (0 = primary, 1+ = sub-panes).`,
         );
       }
 
@@ -248,8 +239,8 @@ export async function resolveTarget(
         const maxIndex = worker.subPanes ? worker.subPanes.length : 0;
         throw new Error(
           `Worker "${leftSide}" has no sub-pane index ${index}. ` +
-          `Available: 0 (primary)${maxIndex > 0 ? `, 1-${maxIndex} (sub-panes)` : ''}. ` +
-          `Split first with: term split ${leftSide}`
+            `Available: 0 (primary)${maxIndex > 0 ? `, 1-${maxIndex} (sub-panes)` : ''}. ` +
+            `Split first with: term split ${leftSide}`,
         );
       }
 
@@ -259,10 +250,7 @@ export async function resolveTarget(
         const live = await isPaneLive(paneId);
         if (!live) {
           await cleanupDeadPane(leftSide, paneId);
-          throw new Error(
-            `Worker ${leftSide}: pane ${paneId} is dead. ` +
-            `Run 'term kill ${leftSide}' to clean up.`
-          );
+          throw new Error(`Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'term kill ${leftSide}' to clean up.`);
         }
       }
 
@@ -284,9 +272,7 @@ export async function resolveTarget(
       if (checkLiveness) {
         const live = await isPaneLive(sessionWindowResult.paneId);
         if (!live) {
-          throw new Error(
-            `Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`
-          );
+          throw new Error(`Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`);
         }
       }
 
@@ -299,9 +285,7 @@ export async function resolveTarget(
 
     // session:window not found either
     throw new Error(
-      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux ` +
-      `session:window "${leftSide}:${rightSide}" found.\n` +
-      `Run 'term workers' to list workers or 'term session ls' to list sessions.`
+      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'term workers' to list workers or 'term session ls' to list sessions.`,
     );
   }
 
@@ -314,10 +298,7 @@ export async function resolveTarget(
       const live = await isPaneLive(worker.paneId);
       if (!live) {
         await cleanupDeadPane(target, worker.paneId);
-        throw new Error(
-          `Worker ${target}: pane ${worker.paneId} is dead. ` +
-          `Run 'term kill ${target}' to clean up.`
-        );
+        throw new Error(`Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'term kill ${target}' to clean up.`);
       }
     }
 
@@ -330,10 +311,7 @@ export async function resolveTarget(
   }
 
   // ---- Nothing found ----
-  throw new Error(
-    `Target "${target}" not found. Not a worker or pane ID.\n` +
-    `Run 'term workers' to list workers.`
-  );
+  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'term workers' to list workers.`);
 }
 
 // ============================================================================
@@ -369,10 +347,7 @@ export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: st
 // Helpers
 // ============================================================================
 
-async function getWorkers(
-  injected?: Record<string, Worker>,
-  registryPath?: string
-): Promise<Record<string, Worker>> {
+async function getWorkers(injected?: Record<string, Worker>, _registryPath?: string): Promise<Record<string, Worker>> {
   if (injected !== undefined) {
     return injected;
   }

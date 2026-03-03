@@ -1,7 +1,7 @@
 import { password as passwordPrompt } from '@inquirer/prompts';
-import { testConnection, Model } from './api-client.js';
-import { saveConfig, getDefaultApiUrl, configExists, loadConfig } from './config.js';
-import { Config, Profile } from '../types/config.js';
+import type { Config, Profile } from '../types/config.js';
+import { testConnection } from './api-client.js';
+import { configExists, getDefaultApiUrl, loadConfig, saveConfig } from './config.js';
 import { pickProfileModels, promptText } from './picker.js';
 
 export async function runSetupWizard(): Promise<void> {
@@ -9,7 +9,7 @@ export async function runSetupWizard(): Promise<void> {
 
   // 1. Prompt for API URL
   const defaultUrl = getDefaultApiUrl();
-  const apiUrl = await promptText(`API URL`, defaultUrl);
+  const apiUrl = await promptText('API URL', defaultUrl);
 
   // 2. Prompt for API key (masked)
   const apiKey = await passwordPrompt({
@@ -60,7 +60,7 @@ export async function runSetupWizard(): Promise<void> {
   await saveConfig(config);
 
   console.log(`\n✓ Profile "${profileName}" created and set as default`);
-  console.log(`\nRun \`claudio\` to launch, or \`claudio profiles add\` to create more.`);
+  console.log('\nRun `claudio` to launch, or `claudio profiles add` to create more.');
 }
 
 export async function runAddProfileWizard(): Promise<void> {

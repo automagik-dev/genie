@@ -5,9 +5,9 @@
  * Uses Zod with passthrough() to preserve unknown fields.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 
 // Claude directory and settings file paths
@@ -16,30 +16,38 @@ const CLAUDE_HOOKS_DIR = join(CLAUDE_DIR, 'hooks');
 const CLAUDE_SETTINGS_FILE = join(CLAUDE_DIR, 'settings.json');
 
 // Hook entry schema for a single hook command
-const HookCommandSchema = z.object({
-  type: z.literal('command'),
-  command: z.string(),
-  timeout: z.number().optional(),
-}).passthrough();
+const HookCommandSchema = z
+  .object({
+    type: z.literal('command'),
+    command: z.string(),
+    timeout: z.number().optional(),
+  })
+  .passthrough();
 
 // Matcher hooks schema (array of hook commands for a specific matcher)
-const MatcherHooksSchema = z.object({
-  matcher: z.string(),
-  hooks: z.array(HookCommandSchema),
-}).passthrough();
+const MatcherHooksSchema = z
+  .object({
+    matcher: z.string(),
+    hooks: z.array(HookCommandSchema),
+  })
+  .passthrough();
 
 // Hooks configuration schema
-const HooksConfigSchema = z.object({
-  PreToolUse: z.array(MatcherHooksSchema).optional(),
-  PostToolUse: z.array(MatcherHooksSchema).optional(),
-}).passthrough();
+const HooksConfigSchema = z
+  .object({
+    PreToolUse: z.array(MatcherHooksSchema).optional(),
+    PostToolUse: z.array(MatcherHooksSchema).optional(),
+  })
+  .passthrough();
 
 // Full settings schema with passthrough to preserve unknown fields
-const ClaudeSettingsSchema = z.object({
-  model: z.string().optional(),
-  enabledPlugins: z.record(z.unknown()).optional(),
-  hooks: HooksConfigSchema.optional(),
-}).passthrough();
+const ClaudeSettingsSchema = z
+  .object({
+    model: z.string().optional(),
+    enabledPlugins: z.record(z.unknown()).optional(),
+    hooks: HooksConfigSchema.optional(),
+  })
+  .passthrough();
 
 export type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
 
@@ -146,8 +154,8 @@ export function removeHookScript(): void {
  */
 export function contractClaudePath(path: string): string {
   const home = homedir();
-  if (path.startsWith(home + '/')) {
-    return '~' + path.slice(home.length);
+  if (path.startsWith(`${home}/`)) {
+    return `~${path.slice(home.length)}`;
   }
   if (path === home) {
     return '~';

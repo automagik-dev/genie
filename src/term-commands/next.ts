@@ -6,14 +6,9 @@
  *   term next <id>         - Pick specific item (bypass queue)
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
-import {
-  listTasks,
-  getTask,
-  computePriorityScore,
-  type LocalTask,
-} from '../lib/local-tasks.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { type LocalTask, computePriorityScore, getTask, listTasks } from '../lib/local-tasks.js';
 
 export interface NextOptions {
   json?: boolean;
@@ -37,23 +32,23 @@ function detectState(task: LocalTask, repoPath: string): { state: string; skill:
       const status = statusMatch?.[1]?.toUpperCase() || 'DRAFT';
 
       if (status === 'DONE' || status === 'COMPLETE') {
-        return { state: 'done', skill: '/review', detail: `Wish complete — run final review` };
+        return { state: 'done', skill: '/review', detail: 'Wish complete — run final review' };
       }
       if (status === 'IN_PROGRESS') {
-        return { state: 'working', skill: '/work', detail: `Wish in progress — continue /work` };
+        return { state: 'working', skill: '/work', detail: 'Wish in progress — continue /work' };
       }
       // DRAFT or REVIEW
-      return { state: 'wish-ready', skill: '/work', detail: `Wish exists — run /work to execute` };
+      return { state: 'wish-ready', skill: '/work', detail: 'Wish exists — run /work to execute' };
     } catch {
-      return { state: 'wish-ready', skill: '/work', detail: `Wish exists — run /work to execute` };
+      return { state: 'wish-ready', skill: '/work', detail: 'Wish exists — run /work to execute' };
     }
   }
 
   if (hasBrainstorm) {
-    return { state: 'brainstormed', skill: '/wish', detail: `Design exists — run /wish to plan` };
+    return { state: 'brainstormed', skill: '/wish', detail: 'Design exists — run /wish to plan' };
   }
 
-  return { state: 'raw', skill: '/brainstorm', detail: `No brainstorm yet — run /brainstorm` };
+  return { state: 'raw', skill: '/brainstorm', detail: 'No brainstorm yet — run /brainstorm' };
 }
 
 /**
@@ -87,11 +82,7 @@ export async function nextCommand(target?: string, options: NextOptions = {}): P
   } else {
     // Auto-pick: get all tasks, filter to epics, pick top unblocked
     const allTasks = await listTasks(repoPath);
-    const epics = allTasks.filter(t =>
-      t.issueType === 'epic' &&
-      t.status !== 'done' &&
-      t.status !== 'in_progress'
-    );
+    const epics = allTasks.filter((t) => t.issueType === 'epic' && t.status !== 'done' && t.status !== 'in_progress');
 
     if (epics.length === 0) {
       console.log('📭 No epics in the queue. Use `term feed "<idea>"` to add one.');
@@ -113,7 +104,9 @@ export async function nextCommand(target?: string, options: NextOptions = {}): P
   console.log(`\n🎯 Next: ${task.id} — "${task.title}"`);
   if (task.priorityScores) {
     const s = task.priorityScores;
-    console.log(`   Score: ${score.toFixed(2)}/5.00 (B=${s.blocking} S=${s.stability} C=${s.crossImpact} Q=${s.quickWin} X=${s.complexityInverse})`);
+    console.log(
+      `   Score: ${score.toFixed(2)}/5.00 (B=${s.blocking} S=${s.stability} C=${s.crossImpact} Q=${s.quickWin} X=${s.complexityInverse})`,
+    );
   }
   console.log(`   State: ${state}`);
   console.log(`   → ${detail}`);

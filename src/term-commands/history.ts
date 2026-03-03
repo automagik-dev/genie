@@ -11,9 +11,8 @@
  *   term history <worker> --json   # JSON output
  */
 
-import * as workerRegistry from '../lib/worker-registry.js';
 import * as claudeLogs from '../lib/claude-logs.js';
-import { resolve } from 'path';
+import * as workerRegistry from '../lib/worker-registry.js';
 
 // ============================================================================
 // Types
@@ -97,7 +96,7 @@ function formatTime(timestamp: string): string {
  */
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 3) + '...';
+  return `${str.slice(0, maxLen - 3)}...`;
 }
 
 /**
@@ -105,9 +104,7 @@ function truncate(str: string, maxLen: number): string {
  */
 function formatPath(path: string): string {
   // Remove common prefixes
-  const shortened = path
-    .replace(/^\/home\/\w+\/workspace\//, '~/')
-    .replace(/^\/home\/\w+\//, '~/');
+  const shortened = path.replace(/^\/home\/\w+\/workspace\//, '~/').replace(/^\/home\/\w+\//, '~/');
   return truncate(shortened, 50);
 }
 
@@ -126,9 +123,8 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
       events.push({
         timestamp: lastReadTime,
         type: 'read',
-        summary: pendingReads.length === 1
-          ? `Read: ${formatPath(pendingReads[0])}`
-          : `Read ${pendingReads.length} files`,
+        summary:
+          pendingReads.length === 1 ? `Read: ${formatPath(pendingReads[0])}` : `Read ${pendingReads.length} files`,
         details: pendingReads.length > 1 ? pendingReads.map(formatPath) : undefined,
       });
       pendingReads.length = 0;
@@ -140,9 +136,8 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
       events.push({
         timestamp: lastEditTime,
         type: 'edit',
-        summary: pendingEdits.length === 1
-          ? `Edit: ${formatPath(pendingEdits[0])}`
-          : `Edit ${pendingEdits.length} files`,
+        summary:
+          pendingEdits.length === 1 ? `Edit: ${formatPath(pendingEdits[0])}` : `Edit ${pendingEdits.length} files`,
         details: pendingEdits.length > 1 ? pendingEdits.map(formatPath) : undefined,
       });
       pendingEdits.length = 0;
@@ -195,7 +190,7 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
             });
             break;
 
-          case 'Bash':
+          case 'Bash': {
             flushReads();
             flushEdits();
             const cmd = String(input.command || '').replace(/\n/g, ' ');
@@ -205,8 +200,9 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
               summary: `Bash: ${truncate(cmd, 60)}`,
             });
             break;
+          }
 
-          case 'AskUserQuestion':
+          case 'AskUserQuestion': {
             flushReads();
             flushEdits();
             const questions = input.questions as Array<{ question?: string }> | undefined;
@@ -217,6 +213,7 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
               summary: `Question: ${truncate(questionText, 60)}`,
             });
             break;
+          }
         }
       }
     }
@@ -298,7 +295,9 @@ function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats):
 
   // Header
   lines.push('');
-  lines.push(`Session: ${stats.workerId}${stats.branch ? ` (${stats.branch})` : ''} | ${stats.duration} | ${stats.totalLines} lines → ${stats.compressedLines} lines`);
+  lines.push(
+    `Session: ${stats.workerId}${stats.branch ? ` (${stats.branch})` : ''} | ${stats.duration} | ${stats.totalLines} lines → ${stats.compressedLines} lines`,
+  );
   lines.push('');
 
   // Events
@@ -325,7 +324,9 @@ function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats):
 
   // Footer
   lines.push('');
-  lines.push(`Status: ${stats.status.toUpperCase()} | ${stats.exchanges} exchanges | ${stats.toolCalls} tool calls | ${stats.compressionRatio.toFixed(0)}x compression`);
+  lines.push(
+    `Status: ${stats.status.toUpperCase()} | ${stats.exchanges} exchanges | ${stats.toolCalls} tool calls | ${stats.compressionRatio.toFixed(0)}x compression`,
+  );
   lines.push('');
 
   return lines.join('\n');
@@ -336,17 +337,28 @@ function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats):
  */
 function getEventIcon(type: CompressedEvent['type']): string {
   switch (type) {
-    case 'prompt': return '💬';
-    case 'read': return '📖';
-    case 'edit': return '✏️';
-    case 'write': return '📝';
-    case 'bash': return '⚡';
-    case 'question': return '❓';
-    case 'answer': return '✅';
-    case 'permission': return '🔐';
-    case 'thinking': return '🤔';
-    case 'response': return '💭';
-    default: return '•';
+    case 'prompt':
+      return '💬';
+    case 'read':
+      return '📖';
+    case 'edit':
+      return '✏️';
+    case 'write':
+      return '📝';
+    case 'bash':
+      return '⚡';
+    case 'question':
+      return '❓';
+    case 'answer':
+      return '✅';
+    case 'permission':
+      return '🔐';
+    case 'thinking':
+      return '🤔';
+    case 'response':
+      return '💭';
+    default:
+      return '•';
   }
 }
 
@@ -409,10 +421,11 @@ async function findWorker(identifier: string): Promise<workerRegistry.Worker | n
 
   // Try partial match on worker ID
   const allWorkers = await workerRegistry.list();
-  const match = allWorkers.find(w =>
-    w.id.includes(identifier) ||
-    w.taskId.includes(identifier) ||
-    (w.taskTitle && w.taskTitle.toLowerCase().includes(identifier.toLowerCase()))
+  const match = allWorkers.find(
+    (w) =>
+      w.id.includes(identifier) ||
+      w.taskId.includes(identifier) ||
+      w.taskTitle?.toLowerCase().includes(identifier.toLowerCase()),
   );
 
   return match || null;
@@ -421,10 +434,7 @@ async function findWorker(identifier: string): Promise<workerRegistry.Worker | n
 /**
  * Main history command handler
  */
-export async function historyCommand(
-  workerIdOrName: string,
-  options: HistoryOptions
-): Promise<void> {
+export async function historyCommand(workerIdOrName: string, options: HistoryOptions): Promise<void> {
   let logPath: string;
   let workerId: string;
   let branch: string | undefined;
@@ -471,9 +481,7 @@ export async function historyCommand(
   }
 
   // Filter to user/assistant entries for conversation
-  const conversationEntries = entries.filter(e =>
-    e.type === 'user' || e.type === 'assistant'
-  );
+  const conversationEntries = entries.filter((e) => e.type === 'user' || e.type === 'assistant');
 
   // Handle --since option (last N exchanges)
   let filteredEntries = conversationEntries;
@@ -497,7 +505,7 @@ export async function historyCommand(
 
   // Calculate stats
   const toolCallCount = entries.reduce((count, e) => count + (e.toolCalls?.length || 0), 0);
-  const userMessageCount = entries.filter(e => e.type === 'user').length;
+  const userMessageCount = entries.filter((e) => e.type === 'user').length;
 
   // Handle --raw option
   if (options.raw) {

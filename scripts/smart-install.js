@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execSync, spawnSync } from 'node:child_process';
 /**
  * Smart Install Script for genie
  *
@@ -12,10 +13,9 @@
  * - Dependency installation when version changes
  * - Version marker management
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { execSync, spawnSync } from 'child_process';
-import { join } from 'path';
-import { homedir } from 'os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 const ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(homedir(), '.claude', 'plugins', 'genie');
 const GENIE_DIR = join(homedir(), '.genie');
@@ -44,7 +44,7 @@ function getBunPath() {
     const result = spawnSync('bun', ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     if (result.status === 0) return 'bun';
   } catch {
@@ -64,7 +64,7 @@ function getBunVersion() {
     const result = spawnSync(bunPath, ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
@@ -106,7 +106,7 @@ function isTmuxInstalled() {
     const result = spawnSync('tmux', ['-V'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     return result.status === 0;
   } catch {
@@ -122,7 +122,7 @@ function getTmuxVersion() {
     const result = spawnSync('tmux', ['-V'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
@@ -138,7 +138,7 @@ function getBeadsPath() {
     const result = spawnSync('bd', ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     if (result.status === 0) return 'bd';
   } catch {
@@ -214,12 +214,15 @@ function installDeps() {
     // Ignore
   }
 
-  writeFileSync(MARKER, JSON.stringify({
-    version,
-    bun: getBunVersion(),
-    tmux: getTmuxVersion(),
-    installedAt: new Date().toISOString()
-  }));
+  writeFileSync(
+    MARKER,
+    JSON.stringify({
+      version,
+      bun: getBunVersion(),
+      tmux: getTmuxVersion(),
+      installedAt: new Date().toISOString(),
+    }),
+  );
 }
 
 /**
@@ -231,7 +234,7 @@ function getGeniePath() {
     const result = spawnSync('genie', ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     if (result.status === 0) return 'genie';
   } catch {
@@ -250,7 +253,7 @@ function getGenieVersion() {
     const result = spawnSync(geniePath, ['--version'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS
+      shell: IS_WINDOWS,
     });
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
@@ -358,7 +361,6 @@ try {
   if (genieCliNeedsInstall()) {
     installGenieCli();
   }
-
 } catch (e) {
   console.error('Installation failed:', e.message);
   process.exit(1);

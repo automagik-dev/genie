@@ -20,9 +20,16 @@
  *   Use processQueue() to spawn next workers when slots become available.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'fs';
-import { join } from 'path';
-import { createBatch, getBatch, updateBatch, checkBatchCompletion, type Batch, type BatchOptions } from '../lib/batch-manager.js';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  type Batch,
+  type BatchOptions,
+  checkBatchCompletion,
+  createBatch,
+  getBatch,
+  updateBatch,
+} from '../lib/batch-manager.js';
 import { getRepoGenieDir } from '../lib/genie-dir.js';
 import * as registry from '../lib/worker-registry.js';
 
@@ -67,9 +74,9 @@ function isGlobPattern(input: string): boolean {
  */
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // escape regex specials except * and ?
-    .replace(/\*/g, '.*')                    // * -> .*
-    .replace(/\?/g, '.');                    // ? -> .
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape regex specials except * and ?
+    .replace(/\*/g, '.*') // * -> .*
+    .replace(/\?/g, '.'); // ? -> .
   return new RegExp(`^${escaped}$`);
 }
 
@@ -83,8 +90,8 @@ function listWishDirs(genieDir: string): string[] {
   }
   try {
     return readdirSync(wishesDir, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .map(entry => entry.name)
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
       .sort();
   } catch {
     return [];
@@ -113,7 +120,7 @@ export function resolveWishIds(args: string[], genieDir: string): ResolveResult 
   for (const arg of args) {
     if (isGlobPattern(arg)) {
       const regex = globToRegExp(arg);
-      const matches = allWishes.filter(w => regex.test(w));
+      const matches = allWishes.filter((w) => regex.test(w));
       if (matches.length === 0) {
         notFound.push(arg);
       } else {
@@ -182,14 +189,10 @@ export function findReadyWishes(genieDir: string): string[] {
  * Create a batch in the registry for the given wish IDs.
  * This is the pure-data part of spawn-parallel, separated for testability.
  */
-export function prepareBatch(
-  wishIds: string[],
-  options: SpawnParallelOptions,
-  genieDir: string,
-): Batch {
+export function prepareBatch(wishIds: string[], options: SpawnParallelOptions, genieDir: string): Batch {
   const batchOptions: BatchOptions = {
     skill: options.skill,
-    autoApprove: options.noAutoApprove ? false : true,
+    autoApprove: !options.noAutoApprove,
     maxConcurrent: options.max,
   };
 
@@ -351,7 +354,7 @@ export async function monitorBatch(
   genieDir: string,
   batchId: string,
   options: SpawnParallelOptions,
-  pollIntervalMs: number = 2000,
+  pollIntervalMs = 2000,
 ): Promise<void> {
   const spawnFn = async (wishId: string) => {
     const { workCommand } = await import('./work.js');
@@ -384,7 +387,7 @@ export async function monitorBatch(
   }
 
   while (true) {
-    await new Promise(r => setTimeout(r, pollIntervalMs));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
 
     const batch = getBatch(genieDir, batchId);
     if (!batch || batch.status !== 'active') break;
@@ -408,7 +411,7 @@ export async function monitorBatch(
         // Check if worker has been running for at least 5 seconds to avoid race with registration
         const startedAt = batchWorker.startedAt ? new Date(batchWorker.startedAt).getTime() : 0;
         const runningLongEnough = Date.now() - startedAt > 5000;
-        
+
         if (batchWorker.status === 'running' && runningLongEnough) {
           workers[wishId] = {
             ...batchWorker,
@@ -532,7 +535,7 @@ export async function spawnParallelCommand(
 
   // 3. Determine which wishes to spawn now (respects --max)
   const wishesToSpawn = getWishesToSpawn(batch);
-  const queued = resolvedIds.filter(id => !wishesToSpawn.includes(id));
+  const queued = resolvedIds.filter((id) => !wishesToSpawn.includes(id));
 
   if (queued.length > 0) {
     console.log(`Queued ${queued.length} wish(es) (max ${options.max} concurrent): ${queued.join(', ')}`);

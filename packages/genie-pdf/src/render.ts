@@ -1,9 +1,9 @@
-import React from "react";
-import { renderToFile } from "@react-pdf/renderer";
-import type { ReactElement } from "react";
-import { parseMarkdown } from "./markdown.js";
-import { getTheme, type ThemeConfig } from "./themes/index.js";
-import { Document, Markdown, TOC } from "./components/index.js";
+import { renderToFile } from '@react-pdf/renderer';
+import React from 'react';
+import type { ReactElement } from 'react';
+import { Document, Markdown, TOC } from './components/index.js';
+import { parseMarkdown } from './markdown.js';
+import { type ThemeConfig, getTheme } from './themes/index.js';
 
 export interface RenderOptions {
   input: string;
@@ -16,8 +16,8 @@ function toOptionalString(value: unknown): string | undefined {
   if (value == null) return undefined;
   if (value instanceof Date) {
     const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, "0");
-    const day = String(value.getDate()).padStart(2, "0");
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
 
@@ -26,7 +26,7 @@ function toOptionalString(value: unknown): string | undefined {
 }
 
 export async function renderMarkdownToPDF(options: RenderOptions): Promise<void> {
-  const { input, output, theme: themeName = "default", showPageNumbers = true } = options;
+  const { input, output, theme: themeName = 'default', showPageNumbers = true } = options;
 
   // Read input file
   const content = await Bun.file(input).text();
@@ -35,7 +35,7 @@ export async function renderMarkdownToPDF(options: RenderOptions): Promise<void>
   const parsed = parseMarkdown(content);
 
   // Get theme (CLI option overrides frontmatter)
-  const effectiveTheme = themeName || parsed.frontmatter.theme || "default";
+  const effectiveTheme = themeName || parsed.frontmatter.theme || 'default';
   const theme = getTheme(effectiveTheme);
 
   // Build children array
@@ -44,34 +44,31 @@ export async function renderMarkdownToPDF(options: RenderOptions): Promise<void>
   if (parsed.hasTOC) {
     children.push(
       React.createElement(TOC, {
-        key: "toc",
+        key: 'toc',
         headings: parsed.headings,
         theme,
-      })
+      }),
     );
   }
 
   children.push(
     React.createElement(Markdown, {
-      key: "content",
+      key: 'content',
       tokens: parsed.tokens,
       theme,
-    })
+    }),
   );
 
   // Create document
-  const doc = React.createElement(
-    Document,
-    {
-      title: toOptionalString(parsed.frontmatter.title),
-      subtitle: toOptionalString(parsed.frontmatter.subtitle),
-      author: toOptionalString(parsed.frontmatter.author),
-      date: toOptionalString(parsed.frontmatter.date),
-      theme,
-      showPageNumbers,
-      children,
-    }
-  );
+  const doc = React.createElement(Document, {
+    title: toOptionalString(parsed.frontmatter.title),
+    subtitle: toOptionalString(parsed.frontmatter.subtitle),
+    author: toOptionalString(parsed.frontmatter.author),
+    date: toOptionalString(parsed.frontmatter.date),
+    theme,
+    showPageNumbers,
+    children,
+  });
 
   // Render to file - cast to satisfy @react-pdf/renderer types
   await renderToFile(doc as unknown as ReactElement, output);
@@ -81,7 +78,7 @@ export async function renderTemplateToPDF(
   templateName: string,
   data: unknown,
   output: string,
-  theme: ThemeConfig
+  theme: ThemeConfig,
 ): Promise<void> {
   // Dynamic import of template
   const templatePath = `./templates/${templateName}.js`;
@@ -96,7 +93,7 @@ export async function renderTemplateToPDF(
 
     // Render to file - cast to satisfy @react-pdf/renderer types
     await renderToFile(doc as unknown as ReactElement, output);
-  } catch (error) {
+  } catch (_error) {
     throw new Error(`Template "${templateName}" not found`);
   }
 }

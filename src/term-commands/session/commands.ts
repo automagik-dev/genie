@@ -4,27 +4,25 @@
  * Registers all session-related commands under `term session` namespace.
  */
 
-import { Command } from 'commander';
-import * as newCmd from '../new.js';
-import * as lsCmd from '../ls.js';
+import type { Command } from 'commander';
 import * as attachCmd from '../attach.js';
-import * as rmCmd from '../rm.js';
-import * as readCmd from '../read.js';
 import * as execCmd from '../exec.js';
-import * as sendCmd from '../send.js';
-import * as statusCmd from '../status.js';
-import * as splitCmd from '../split.js';
-import * as windowCmd from '../window.js';
-import * as paneCmd from '../pane.js';
 import * as hookCmd from '../hook.js';
+import * as lsCmd from '../ls.js';
+import * as newCmd from '../new.js';
+import * as paneCmd from '../pane.js';
+import * as readCmd from '../read.js';
+import * as rmCmd from '../rm.js';
+import * as sendCmd from '../send.js';
+import * as splitCmd from '../split.js';
+import * as statusCmd from '../status.js';
+import * as windowCmd from '../window.js';
 
 /**
  * Register the `term session` namespace with all subcommands
  */
 export function registerSessionNamespace(program: Command): void {
-  const sessionProgram = program
-    .command('session')
-    .description('Tmux session management (low-level primitives)');
+  const sessionProgram = program.command('session').description('Tmux session management (low-level primitives)');
 
   // session new
   sessionProgram
@@ -89,7 +87,7 @@ export function registerSessionNamespace(program: Command): void {
     .action(async (target: string, command: string[], options: { quiet?: boolean; timeout?: string }) => {
       await execCmd.executeInSession(target, command.join(' '), {
         quiet: options.quiet,
-        timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
+        timeout: options.timeout ? Number.parseInt(options.timeout, 10) : undefined,
       });
     });
 
@@ -118,9 +116,11 @@ export function registerSessionNamespace(program: Command): void {
     .description('Split pane for a target (worker, session, pane ID)')
     .option('-d, --workspace <path>', 'Working directory for the new pane')
     .option('-w, --worktree <branch>', 'Create git worktree in .worktrees/<branch>/')
-    .action(async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
-      await splitCmd.splitSessionPane(target, direction, options);
-    });
+    .action(
+      async (target: string, direction: string | undefined, options: { workspace?: string; worktree?: string }) => {
+        await splitCmd.splitSessionPane(target, direction, options);
+      },
+    );
 
   // session window (subcommand group)
   const windowProgram = sessionProgram.command('window').description('Manage tmux windows');

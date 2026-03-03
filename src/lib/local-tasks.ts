@@ -4,33 +4,33 @@
  * This is meant for the macro repo (blanco) where bd is not required.
  */
 
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { getRepoGenieDir } from './genie-dir.js';
 
 export type LocalTaskStatus = 'ready' | 'in_progress' | 'done' | 'blocked';
 
 export interface PriorityScores {
-  blocking: number;            // 0-5: How many other items depend on this
-  stability: number;           // 0-5: Foundation/infra impact
-  crossImpact: number;         // 0-5: Affects multiple agents/repos
-  quickWin: number;            // 0-5: Effort-to-value ratio
-  complexityInverse: number;   // 0-5: Simplicity (5=trivial, 0=massive)
+  blocking: number; // 0-5: How many other items depend on this
+  stability: number; // 0-5: Foundation/infra impact
+  crossImpact: number; // 0-5: Affects multiple agents/repos
+  quickWin: number; // 0-5: Effort-to-value ratio
+  complexityInverse: number; // 0-5: Simplicity (5=trivial, 0=massive)
 }
 
 export function computePriorityScore(scores: PriorityScores): number {
   return (
-    scores.blocking * 0.30 +
+    scores.blocking * 0.3 +
     scores.stability * 0.25 +
-    scores.crossImpact * 0.20 +
+    scores.crossImpact * 0.2 +
     scores.quickWin * 0.15 +
-    scores.complexityInverse * 0.10
+    scores.complexityInverse * 0.1
   );
 }
 
 export interface LocalTask {
-  id: string;           // wish-<n>
+  id: string; // wish-<n>
   title: string;
   description?: string;
   status: LocalTaskStatus;
@@ -109,7 +109,7 @@ export function isLocalTasksEnabled(repoPath: string): boolean {
 export async function createWishTask(
   repoPath: string,
   title: string,
-  options: { description?: string; parent?: string } = {}
+  options: { description?: string; parent?: string } = {},
 ): Promise<LocalTask> {
   const state = await loadState(repoPath);
   const id = `wish-${state.nextWishId}`;
@@ -143,7 +143,7 @@ export async function getTask(repoPath: string, id: string): Promise<LocalTask |
 
 export async function listTasks(repoPath: string): Promise<LocalTask[]> {
   const file = await loadTasks(repoPath);
-  const tasks = file.order.map(id => file.tasks[id]).filter(Boolean);
+  const tasks = file.order.map((id) => file.tasks[id]).filter(Boolean);
 
   // Sort by priority score (descending). Tasks with scores above tasks without.
   tasks.sort((a, b) => {
@@ -234,8 +234,8 @@ export async function ensureTasksFile(repoPath: string): Promise<boolean> {
       if (code === 'EACCES' || code === 'EROFS') {
         throw new Error(
           `Cannot create .genie/tasks.json — directory is read-only (${code}).\n` +
-          `   Path: ${fp}\n` +
-          `   Fix: Check permissions on ${getRepoGenieDir(repoPath)}`
+            `   Path: ${fp}\n` +
+            `   Fix: Check permissions on ${getRepoGenieDir(repoPath)}`,
         );
       }
       throw err;
@@ -258,17 +258,13 @@ export async function markDone(repoPath: string, id: string): Promise<boolean> {
 export interface UpdateTaskOptions {
   status?: LocalTaskStatus;
   title?: string;
-  blockedBy?: string[];  // replaces existing blockedBy
-  addBlockedBy?: string[];  // appends to existing blockedBy
+  blockedBy?: string[]; // replaces existing blockedBy
+  addBlockedBy?: string[]; // appends to existing blockedBy
   priorityScores?: PriorityScores;
   issueType?: 'task' | 'epic';
 }
 
-export async function updateTask(
-  repoPath: string,
-  id: string,
-  options: UpdateTaskOptions
-): Promise<LocalTask | null> {
+export async function updateTask(repoPath: string, id: string, options: UpdateTaskOptions): Promise<LocalTask | null> {
   const file = await loadTasks(repoPath);
   const t = file.tasks[id];
   if (!t) return null;

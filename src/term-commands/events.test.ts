@@ -4,13 +4,10 @@
  * Run with: bun test src/term-commands/events.test.ts
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { join } from 'path';
-import { mkdir, rm, writeFile } from 'fs/promises';
-import {
-  parseLogEntryToEvent,
-  type NormalizedEvent,
-} from './events.js';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { parseLogEntryToEvent } from './events.js';
 
 // ============================================================================
 // Test Setup
@@ -96,7 +93,9 @@ async function setupTestStructure(): Promise<void> {
   await mkdir(projectDir, { recursive: true });
 
   // Create session log file
-  const logContent = Object.values(sampleLogEntries).map(e => JSON.stringify(e)).join('\n') + '\n';
+  const logContent = `${Object.values(sampleLogEntries)
+    .map((e) => JSON.stringify(e))
+    .join('\n')}\n`;
   await writeFile(join(projectDir, 'test-session-123.jsonl'), logContent);
 
   // Create sessions-index.json
@@ -171,9 +170,7 @@ describe('parseLogEntryToEvent', () => {
       parentUuid: 'msg-1',
       timestamp: '2026-02-03T12:00:05.000Z',
       cwd: '/home/genie/workspace/guga',
-      toolCalls: [
-        { id: 'toolu_123', name: 'Read', input: { file_path: '/test/file.txt' } },
-      ],
+      toolCalls: [{ id: 'toolu_123', name: 'Read', input: { file_path: '/test/file.txt' } }],
       raw: sampleLogEntries.assistant,
     };
 
@@ -193,9 +190,7 @@ describe('parseLogEntryToEvent', () => {
       parentUuid: 'msg-2',
       timestamp: '2026-02-03T12:00:07.000Z',
       cwd: '/home/genie/workspace/guga',
-      toolCalls: [
-        { id: 'toolu_456', name: 'Bash', input: { command: 'rm -rf /' } },
-      ],
+      toolCalls: [{ id: 'toolu_456', name: 'Bash', input: { command: 'rm -rf /' } }],
       raw: {},
     };
 

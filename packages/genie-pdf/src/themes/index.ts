@@ -1,9 +1,9 @@
-import defaultTheme from "./default.js";
-import minimalTheme from "./minimal.js";
-import corporateTheme from "./corporate.js";
-import darkTheme from "./dark.js";
-import executiveTheme from "./executive.js";
-import glassTheme from "./glass.js";
+import corporateTheme from './corporate.js';
+import darkTheme from './dark.js';
+import defaultTheme from './default.js';
+import executiveTheme from './executive.js';
+import glassTheme from './glass.js';
+import minimalTheme from './minimal.js';
 
 export type ThemeConfig = {
   name: string;
@@ -41,7 +41,7 @@ export function getTheme(name: string): ThemeConfig {
   const theme = themes[name];
   if (!theme) {
     console.warn(`Theme "${name}" not found, using default`);
-    return themes["default"]!;
+    return themes.default!;
   }
   return theme;
 }

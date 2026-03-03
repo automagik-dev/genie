@@ -1,5 +1,5 @@
-import { readFile } from 'fs/promises';
-import { basename, dirname, join, resolve } from 'path';
+import { readFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { crystallizeBrainstormAndUpsertBeads } from '../../term-commands/brainstorm-beads.js';
 
 export interface BrainstormCrystallizeOptions {
@@ -39,7 +39,10 @@ export async function brainstormCrystallizeCommand(options: BrainstormCrystalliz
 
   const title = options.title || slug;
   const dependsOn = options.dependsOn
-    ? options.dependsOn.split(',').map(s => s.trim()).filter(Boolean)
+    ? options.dependsOn
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
     : undefined;
 
   const { designPath, beadsPath } = await crystallizeBrainstormAndUpsertBeads({

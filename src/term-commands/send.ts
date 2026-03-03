@@ -1,15 +1,11 @@
+import { formatResolvedLabel, resolveTarget } from '../lib/target-resolver.js';
 import * as tmux from '../lib/tmux.js';
-import { resolveTarget, formatResolvedLabel } from '../lib/target-resolver.js';
 
 export interface SendOptions {
   enter?: boolean;
 }
 
-export async function sendKeysToSession(
-  target: string,
-  keys: string,
-  options: SendOptions = {}
-): Promise<void> {
+export async function sendKeysToSession(target: string, keys: string, options: SendOptions = {}): Promise<void> {
   try {
     // Use target resolver (DEC-1 from wish-26)
     const resolved = await resolveTarget(target);

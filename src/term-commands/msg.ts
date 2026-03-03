@@ -6,14 +6,11 @@
  *   genie msg inbox <worker>
  */
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 import * as protocolRouter from '../lib/protocol-router.js';
-import * as mailbox from '../lib/mailbox.js';
 
 export function registerMsgNamespace(program: Command): void {
-  const msg = program
-    .command('msg')
-    .description('Mailbox-first messaging between workers');
+  const msg = program.command('msg').description('Mailbox-first messaging between workers');
 
   // msg send
   msg
@@ -25,13 +22,7 @@ export function registerMsgNamespace(program: Command): void {
     .action(async (body: string, options: { to: string; from: string; team: string }) => {
       try {
         const repoPath = process.cwd();
-        const result = await protocolRouter.sendMessage(
-          repoPath,
-          options.from,
-          options.to,
-          body,
-          options.team,
-        );
+        const result = await protocolRouter.sendMessage(repoPath, options.from, options.to, body, options.team);
 
         if (result.delivered) {
           console.log(`Message sent to "${result.workerId}".`);
@@ -58,7 +49,7 @@ export function registerMsgNamespace(program: Command): void {
         let messages = await protocolRouter.getInbox(repoPath, worker);
 
         if (options.unread) {
-          messages = messages.filter(m => !m.read);
+          messages = messages.filter((m) => !m.read);
         }
 
         if (options.json) {

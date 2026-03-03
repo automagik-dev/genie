@@ -81,13 +81,10 @@ export function hasClaudioBinary(): boolean {
  * buildSpawnCommand({ launcher: 'claudio', claudioProfile: 'coding-fast', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
  * // Returns: "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'abc'"
  */
-export function buildSpawnCommand(
-  profile: WorkerProfile | undefined,
-  options: SpawnOptions
-): string {
+export function buildSpawnCommand(profile: WorkerProfile | undefined, options: SpawnOptions): string {
   if (!profile) {
     throw new Error(
-      'No worker profile configured. Please configure a worker profile in ~/.genie/config.json under "workerProfiles".'
+      'No worker profile configured. Please configure a worker profile in ~/.genie/config.json under "workerProfiles".',
     );
   }
 
@@ -105,8 +102,8 @@ export function buildSpawnCommand(
     if (!hasClaudioBinary()) {
       throw new Error(
         'claudio binary not found on PATH. ' +
-        'Install claudio or use a "claude" launcher profile instead. ' +
-        'See: https://github.com/automagik/claudio'
+          'Install claudio or use a "claude" launcher profile instead. ' +
+          'See: https://github.com/automagik/claudio',
       );
     }
     parts.push('claudio');

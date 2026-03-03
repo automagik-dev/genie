@@ -1,12 +1,5 @@
-import React from "react";
-import {
-  Document,
-  Page,
-  View,
-  Text,
-  StyleSheet,
-} from "@react-pdf/renderer";
-import type { ThemeConfig } from "../themes/index.js";
+import { Document, Page, StyleSheet, Text, View } from '@react-pdf/renderer';
+import type { ThemeConfig } from '../themes/index.js';
 
 interface ReportData {
   title: string;
@@ -35,28 +28,28 @@ export function ReportTemplate({ data, theme }: ReportProps) {
     },
     titlePage: {
       flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
+      justifyContent: 'center',
+      alignItems: 'center',
     },
     title: {
       fontFamily: theme.fonts.heading,
       fontSize: 32,
       color: theme.colors.heading,
       marginBottom: 10,
-      textAlign: "center",
+      textAlign: 'center',
     },
     subtitle: {
       fontSize: 16,
       color: theme.colors.text,
       opacity: 0.7,
       marginBottom: 30,
-      textAlign: "center",
+      textAlign: 'center',
     },
     meta: {
       fontSize: 12,
       color: theme.colors.text,
       opacity: 0.6,
-      textAlign: "center",
+      textAlign: 'center',
     },
     sectionTitle: {
       fontFamily: theme.fonts.heading,
@@ -86,11 +79,11 @@ export function ReportTemplate({ data, theme }: ReportProps) {
       marginBottom: 8,
     },
     footer: {
-      position: "absolute",
+      position: 'absolute',
       bottom: 20,
       left: theme.spacing.page,
       right: theme.spacing.page,
-      textAlign: "center",
+      textAlign: 'center',
       fontSize: 9,
       color: theme.colors.text,
       opacity: 0.6,
@@ -126,11 +119,7 @@ export function ReportTemplate({ data, theme }: ReportProps) {
         ))}
 
         <View style={styles.footer} fixed>
-          <Text
-            render={({ pageNumber, totalPages }) =>
-              `${pageNumber} / ${totalPages}`
-            }
-          />
+          <Text render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} />
         </View>
       </Page>
     </Document>

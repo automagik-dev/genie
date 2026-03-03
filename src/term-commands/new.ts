@@ -1,7 +1,7 @@
-import { join } from 'path';
+import { join } from 'node:path';
+import { saveSessionMetadata } from '../lib/session-metadata.js';
 import * as tmux from '../lib/tmux.js';
 import { createWorktreeManager } from '../lib/worktree.js';
-import { saveSessionMetadata } from '../lib/session-metadata.js';
 
 export interface CreateSessionOptions {
   workspace?: string;
@@ -28,7 +28,7 @@ export async function createNewSession(name: string, options: CreateSessionOptio
 
       const manager = createWorktreeManager({
         baseDir: join(options.workspace, '.worktrees'),
-        repoPath: options.workspace
+        repoPath: options.workspace,
       });
 
       // Check if worktree already exists

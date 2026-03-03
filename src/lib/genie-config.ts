@@ -1,15 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
-  GenieConfig,
+  type CouncilPreset,
+  type GenieConfig,
   GenieConfigSchema,
-  LoggingConfig,
-  TerminalConfig,
-  SessionConfig,
-  ShortcutsConfig,
-  WorkerProfile,
-  CouncilPreset,
+  type LoggingConfig,
+  type SessionConfig,
+  type ShortcutsConfig,
+  type TerminalConfig,
+  type WorkerProfile,
 } from '../types/genie-config.js';
 
 const GENIE_DIR = join(homedir(), '.genie');
@@ -139,8 +139,8 @@ export function expandPath(path: string): string {
  */
 export function contractPath(path: string): string {
   const home = homedir();
-  if (path.startsWith(home + '/')) {
-    return '~' + path.slice(home.length);
+  if (path.startsWith(`${home}/`)) {
+    return `~${path.slice(home.length)}`;
   }
   if (path === home) {
     return '~';
@@ -418,7 +418,7 @@ export function detectSourcePath(): string | null {
 /**
  * Get or detect source path, with option to save if detected
  */
-export async function getOrDetectSourcePath(saveIfFound: boolean = true): Promise<string | null> {
+export async function getOrDetectSourcePath(saveIfFound = true): Promise<string | null> {
   const sourcePath = detectSourcePath();
 
   if (sourcePath && saveIfFound) {

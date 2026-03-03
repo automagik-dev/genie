@@ -5,23 +5,13 @@
  * Checks prerequisites, configuration, and tmux connectivity.
  */
 
-import {
-  checkCommand,
-} from '../lib/system-detect.js';
-import {
-  getClaudeSettingsPath,
-  contractClaudePath,
-} from '../lib/claude-settings.js';
-import {
-  loadGenieConfig,
-  genieConfigExists,
-  getGenieConfigPath,
-  isSetupComplete,
-} from '../lib/genie-config.js';
-import { hasClaudioBinary } from '../lib/spawn-command.js';
-import { configExists as claudioConfigExists, getProfile as getClaudioProfile } from '../lib/config.js';
+import { existsSync } from 'node:fs';
 import { $ } from 'bun';
-import { existsSync } from 'fs';
+import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
+import { configExists as claudioConfigExists, getProfile as getClaudioProfile } from '../lib/config.js';
+import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
+import { hasClaudioBinary } from '../lib/spawn-command.js';
+import { checkCommand } from '../lib/system-detect.js';
 
 interface CheckResult {
   name: string;
@@ -415,7 +405,7 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 export async function doctorCommand(): Promise<void> {
   console.log();
   console.log('\x1b[1mGenie Doctor\x1b[0m');
-  console.log('\x1b[2m' + '\u2500'.repeat(40) + '\x1b[0m');
+  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
 
   let hasErrors = false;
   let hasWarnings = false;
@@ -458,7 +448,7 @@ export async function doctorCommand(): Promise<void> {
 
   // Summary
   console.log();
-  console.log('\x1b[2m' + '\u2500'.repeat(40) + '\x1b[0m');
+  console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
 
   if (hasErrors) {
     console.log('\x1b[31mSome checks failed.\x1b[0m Run \x1b[36mgenie setup\x1b[0m to fix.');

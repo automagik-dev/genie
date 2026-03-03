@@ -1,5 +1,5 @@
-import { search, input, confirm } from '@inquirer/prompts';
-import { Model } from './api-client.js';
+import { confirm, input, search } from '@inquirer/prompts';
+import type { Model } from './api-client.js';
 
 export interface PickerOptions {
   message: string;
@@ -15,9 +15,7 @@ export async function pickModel(options: PickerOptions): Promise<string> {
     message,
     source: async (term) => {
       const searchTerm = (term || '').toLowerCase();
-      const filtered = modelIds.filter((id) =>
-        id.toLowerCase().includes(searchTerm)
-      );
+      const filtered = modelIds.filter((id) => id.toLowerCase().includes(searchTerm));
       return filtered.map((id) => ({
         name: id,
         value: id,

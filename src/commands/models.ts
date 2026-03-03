@@ -1,5 +1,5 @@
-import { loadConfig, configExists, getDefaultProfile } from '../lib/config.js';
 import { testConnection } from '../lib/api-client.js';
+import { configExists, loadConfig } from '../lib/config.js';
 
 export async function modelsCommand(): Promise<void> {
   if (!configExists()) {
@@ -18,7 +18,7 @@ export async function modelsCommand(): Promise<void> {
     process.exit(1);
   }
 
-  console.log(`✓\n`);
+  console.log('✓\n');
   console.log(`Available models (${result.modelCount}):\n`);
 
   for (const model of result.models) {

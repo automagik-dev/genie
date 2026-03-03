@@ -7,10 +7,10 @@
  * external ingestion. It only performs local JSONL upsert operations.
  */
 
-import { access, mkdir, readFile, rename, writeFile } from 'fs/promises';
-import { dirname, join } from 'path';
-import { promisify } from 'util';
-import { exec as execCb } from 'child_process';
+import { exec as execCb } from 'node:child_process';
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 const execAsync = promisify(execCb);
 
@@ -68,7 +68,7 @@ export async function upsertBeadsIssueJsonl(
   record: Omit<BeadsIssueRecord, 'created_at' | 'updated_at'> & {
     created_at?: string;
     updated_at?: string;
-  }
+  },
 ): Promise<BeadsIssueRecord> {
   const now = utcNowRfc3339();
 
@@ -109,8 +109,8 @@ export async function upsertBeadsIssueJsonl(
 
   // Atomic write
   await mkdir(dirname(issuesPath), { recursive: true });
-  const tmp = issuesPath + `.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmp, newLines.join('\n') + '\n', 'utf-8');
+  const tmp = `${issuesPath}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmp, `${newLines.join('\n')}\n`, 'utf-8');
   await rename(tmp, issuesPath);
 
   return final;

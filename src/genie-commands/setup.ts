@@ -5,21 +5,21 @@
  * Supports full wizard, quick mode, and section-specific setup.
  */
 
-import { confirm, input, select } from '@inquirer/prompts';
-import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
-import { homedir } from 'os';
-import { join } from 'path';
-import { checkCommand } from '../lib/system-detect.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { confirm, input } from '@inquirer/prompts';
+import { ensureCodexOtelConfig, getCodexConfigPath, isCodexConfigured } from '../lib/codex-config.js';
 import {
+  contractPath,
+  getGenieConfigPath,
   loadGenieConfig,
-  saveGenieConfig,
   markSetupComplete,
   resetConfig,
-  getGenieConfigPath,
-  contractPath,
+  saveGenieConfig,
   updateShortcutsConfig,
 } from '../lib/genie-config.js';
-import { ensureCodexOtelConfig, isCodexConfigured, getCodexConfigPath } from '../lib/codex-config.js';
+import { checkCommand } from '../lib/system-detect.js';
+import { installShortcuts, isShortcutsInstalled } from '../term-commands/shortcuts.js';
 import type { GenieConfig } from '../types/genie-config.js';
 
 export interface SetupOptions {
@@ -38,9 +38,9 @@ export interface SetupOptions {
  */
 function printHeader(): void {
   console.log();
-  console.log('\x1b[1m\x1b[36m' + '=' .repeat(64) + '\x1b[0m');
+  console.log(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
   console.log('\x1b[1m\x1b[36m  Genie Setup Wizard\x1b[0m');
-  console.log('\x1b[1m\x1b[36m' + '=' .repeat(64) + '\x1b[0m');
+  console.log(`\x1b[1m\x1b[36m${'='.repeat(64)}\x1b[0m`);
   console.log();
 }
 
@@ -49,9 +49,9 @@ function printHeader(): void {
  */
 function printSection(title: string, description?: string): void {
   console.log();
-  console.log('\x1b[1m' + title + '\x1b[0m');
+  console.log(`\x1b[1m${title}\x1b[0m`);
   if (description) {
-    console.log('\x1b[2m' + description + '\x1b[0m');
+    console.log(`\x1b[2m${description}\x1b[0m`);
   }
   console.log();
 }
@@ -136,8 +136,8 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
     message: 'Exec timeout (milliseconds):',
     default: String(config.terminal.execTimeout),
     validate: (v) => {
-      const n = parseInt(v, 10);
-      return !isNaN(n) && n > 0 ? true : 'Must be a positive number';
+      const n = Number.parseInt(v, 10);
+      return !Number.isNaN(n) && n > 0 ? true : 'Must be a positive number';
     },
   });
 
@@ -145,8 +145,8 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
     message: 'Read lines (default for term read):',
     default: String(config.terminal.readLines),
     validate: (v) => {
-      const n = parseInt(v, 10);
-      return !isNaN(n) && n > 0 ? true : 'Must be a positive number';
+      const n = Number.parseInt(v, 10);
+      return !Number.isNaN(n) && n > 0 ? true : 'Must be a positive number';
     },
   });
 
@@ -156,8 +156,8 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   });
 
   config.terminal = {
-    execTimeout: parseInt(timeoutStr, 10),
-    readLines: parseInt(linesStr, 10),
+    execTimeout: Number.parseInt(timeoutStr, 10),
+    readLines: Number.parseInt(linesStr, 10),
     worktreeBase,
   };
 
@@ -343,11 +343,13 @@ async function configureDebug(config: GenieConfig, quick: boolean): Promise<Geni
 // ============================================================================
 
 async function showSummaryAndSave(config: GenieConfig): Promise<void> {
-  printSection('Summary', 'Configuration will be saved to ' + contractPath(getGenieConfigPath()));
+  printSection('Summary', `Configuration will be saved to ${contractPath(getGenieConfigPath())}`);
 
   console.log(`  Session: \x1b[36m${config.session.name}\x1b[0m (window: ${config.session.defaultWindow})`);
   console.log(`  Terminal: timeout=${config.terminal.execTimeout}ms, lines=${config.terminal.readLines}`);
-  console.log(`  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`);
+  console.log(
+    `  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`,
+  );
   console.log(`  Claudio: ${config.claudio?.enabled ? '\x1b[32menabled\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Codex:   ${config.codex?.configured ? '\x1b[32mconfigured\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
@@ -370,7 +372,7 @@ async function showCurrentConfig(): Promise<void> {
 
   console.log();
   console.log('\x1b[1mCurrent Genie Configuration\x1b[0m');
-  console.log('\x1b[2m' + contractPath(getGenieConfigPath()) + '\x1b[0m');
+  console.log(`\x1b[2m${contractPath(getGenieConfigPath())}\x1b[0m`);
   console.log();
   console.log(JSON.stringify(config, null, 2));
   console.log();

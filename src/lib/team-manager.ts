@@ -6,11 +6,11 @@
  * without forcing a team-level provider lock (DEC-2).
  */
 
-import { mkdir, readFile, writeFile, readdir, unlink } from 'fs/promises';
-import { existsSync } from 'fs';
-import path, { join } from 'path';
-import type { ProviderName } from './provider-adapters.js';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import path, { join } from 'node:path';
 import * as nativeTeamsManager from './claude-native-teams.js';
+import type { ProviderName } from './provider-adapters.js';
 
 // ============================================================================
 // Types
@@ -123,11 +123,7 @@ export function listBlueprints(): string[] {
 }
 
 /** Create a new team from a blueprint. Auto-enables native teams when inside CC. */
-export async function createTeam(
-  repoPath: string,
-  name: string,
-  blueprintName?: string,
-): Promise<TeamConfig> {
+export async function createTeam(repoPath: string, name: string, blueprintName?: string): Promise<TeamConfig> {
   const dir = teamsDir(repoPath);
   await mkdir(dir, { recursive: true });
 

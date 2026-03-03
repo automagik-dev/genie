@@ -67,11 +67,25 @@ export function getBackend(repoPath: string): TaskBackend {
           description: options?.description,
           parent: options?.parent,
         });
-        return { id: task.id, title: task.title, status: task.status, description: task.description, blockedBy: task.blockedBy };
+        return {
+          id: task.id,
+          title: task.title,
+          status: task.status,
+          description: task.description,
+          blockedBy: task.blockedBy,
+        };
       },
       async get(id) {
         const task = await local.getTask(repoPath, id);
-        return task ? { id: task.id, title: task.title, status: task.status, description: task.description, blockedBy: task.blockedBy } : null;
+        return task
+          ? {
+              id: task.id,
+              title: task.title,
+              status: task.status,
+              description: task.description,
+              blockedBy: task.blockedBy,
+            }
+          : null;
       },
       async claim(id) {
         return local.claimTask(repoPath, id);
@@ -86,7 +100,15 @@ export function getBackend(repoPath: string): TaskBackend {
           blockedBy: options.blockedBy,
           addBlockedBy: options.addBlockedBy,
         });
-        return task ? { id: task.id, title: task.title, status: task.status, description: task.description, blockedBy: task.blockedBy } : null;
+        return task
+          ? {
+              id: task.id,
+              title: task.title,
+              status: task.status,
+              description: task.description,
+              blockedBy: task.blockedBy,
+            }
+          : null;
       },
       async queue() {
         return local.getQueue(repoPath);
@@ -176,7 +198,7 @@ export function getBackend(repoPath: string): TaskBackend {
             const issues = JSON.parse(stdout);
             for (const issue of issues) ready.push(`${issue.id}`);
           } catch {
-            const lines = stdout.split('\n').filter(l => l.trim());
+            const lines = stdout.split('\n').filter((l) => l.trim());
             for (const line of lines) {
               const match = line.match(/^(bd-\d+)/);
               if (match) ready.push(match[1]);

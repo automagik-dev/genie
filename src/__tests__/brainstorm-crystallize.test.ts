@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
 import { describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { brainstormCrystallizeCommand } from '../genie-commands/brainstorm/crystallize.js';
 
 async function mkRepo(): Promise<string> {

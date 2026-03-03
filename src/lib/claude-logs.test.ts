@@ -3,17 +3,15 @@
  * Run with: bun test src/lib/claude-logs.test.ts
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { join } from 'path';
-import { mkdir, rm, writeFile, readFile } from 'fs/promises';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
-  projectPathToHash,
-  findClaudeProjectDir,
   findActiveSession,
-  parseLogEntry,
+  findClaudeProjectDir,
   listSessions,
-  type ClaudeLogEntry,
-  type ClaudeSession,
+  parseLogEntry,
+  projectPathToHash,
 } from './claude-logs.js';
 
 // ============================================================================
@@ -100,7 +98,7 @@ async function setupTestStructure(): Promise<void> {
   await mkdir(projectDir, { recursive: true });
 
   // Create session log file
-  const logContent = sampleLogEntries.map(e => JSON.stringify(e)).join('\n') + '\n';
+  const logContent = `${sampleLogEntries.map((e) => JSON.stringify(e)).join('\n')}\n`;
   await writeFile(join(projectDir, 'test-session-123.jsonl'), logContent);
 
   // Create sessions-index.json
@@ -145,7 +143,7 @@ describe('projectPathToHash', () => {
 
   test('should handle paths with multiple slashes', () => {
     expect(projectPathToHash('/home/genie/workspace/guga/code/genie-cli')).toBe(
-      '-home-genie-workspace-guga-code-genie-cli'
+      '-home-genie-workspace-guga-code-genie-cli',
     );
   });
 
@@ -278,7 +276,7 @@ describe('Integration with real Claude logs', () => {
     // This test uses the actual ~/.claude directory
     // It will be skipped if Claude is not installed
     try {
-      const { access } = await import('fs/promises');
+      const { access } = await import('node:fs/promises');
       await access(realClaudeDir);
 
       const projectDir = await findClaudeProjectDir('/home/genie/workspace/guga', realClaudeDir);

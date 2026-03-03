@@ -23,10 +23,8 @@
  * { type: "tool_use", id: "toolu_xxx", name: "Read", input: { file_path: "..." } }
  */
 
-import { join } from 'path';
-import { readdir, readFile, access, stat } from 'fs/promises';
-import { createReadStream } from 'fs';
-import { createInterface } from 'readline';
+import { access, readFile, readdir, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // ============================================================================
 // Types
@@ -144,10 +142,7 @@ export function getProjectsDir(claudeDir?: string): string {
  * @param claudeDir - Optional custom Claude directory (defaults to ~/.claude)
  * @returns The project directory path, or null if not found
  */
-export async function findClaudeProjectDir(
-  projectPath: string,
-  claudeDir?: string
-): Promise<string | null> {
+export async function findClaudeProjectDir(projectPath: string, claudeDir?: string): Promise<string | null> {
   const projectsDir = getProjectsDir(claudeDir);
   const expectedHash = projectPathToHash(projectPath);
 
@@ -390,7 +385,7 @@ export async function readLastEntries(logPath: string, count: number): Promise<C
 
   try {
     const content = await readFile(logPath, 'utf-8');
-    const lines = content.split('\n').filter(line => line.trim());
+    const lines = content.split('\n').filter((line) => line.trim());
 
     // Get last N lines
     const startIndex = Math.max(0, lines.length - count);
@@ -425,7 +420,7 @@ export async function readLastEntries(logPath: string, count: number): Promise<C
 export async function tailLogFile(
   logPath: string,
   onEntry: (entry: ClaudeLogEntry) => void,
-  pollIntervalMs: number = 500
+  pollIntervalMs = 500,
 ): Promise<() => void> {
   let lastSize = 0;
   let running = true;
@@ -447,8 +442,8 @@ export async function tailLogFile(
 
       if (currentSize > lastSize) {
         // Read new content
-        const { createReadStream } = await import('fs');
-        const { promisify } = await import('util');
+        const { createReadStream } = await import('node:fs');
+        const { promisify } = await import('node:util');
 
         // Create a read stream starting from last position
         const stream = createReadStream(logPath, {
@@ -477,7 +472,7 @@ export async function tailLogFile(
 
         lastSize = currentSize;
       }
-    } catch (error) {
+    } catch (_error) {
       // File might have been deleted or rotated
       // Just continue polling
     }
@@ -506,7 +501,7 @@ export async function tailLogFile(
  */
 export async function findLogsForWorkspace(
   workspacePath: string,
-  claudeDir?: string
+  claudeDir?: string,
 ): Promise<{ projectDir: string; session: ClaudeSession } | null> {
   const projectDir = await findClaudeProjectDir(workspacePath, claudeDir);
 
@@ -533,7 +528,7 @@ export async function findLogsForWorkspace(
  */
 export async function getLogsForPane(
   paneWorkdir: string,
-  claudeDir?: string
+  claudeDir?: string,
 ): Promise<{ logPath: string; session: ClaudeSession; projectDir: string } | null> {
   const result = await findLogsForWorkspace(paneWorkdir, claudeDir);
 

@@ -1,5 +1,5 @@
-import { marked, type Token, type Tokens } from "marked";
-import matter from "gray-matter";
+import matter from 'gray-matter';
+import { type Token, type Tokens, marked } from 'marked';
 
 export interface ParsedMarkdown {
   frontmatter: {
@@ -23,9 +23,9 @@ export interface HeadingInfo {
 function generateId(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
     .trim();
 }
 
@@ -33,8 +33,8 @@ export function parseMarkdown(content: string): ParsedMarkdown {
   const { data: frontmatter, content: markdownContent } = matter(content);
 
   // Check for TOC marker
-  const hasTOC = markdownContent.includes("[TOC]");
-  const cleanedContent = markdownContent.replace(/\[TOC\]/g, "");
+  const hasTOC = markdownContent.includes('[TOC]');
+  const cleanedContent = markdownContent.replace(/\[TOC\]/g, '');
 
   // Parse markdown to tokens
   const tokens = marked.lexer(cleanedContent);
@@ -42,7 +42,7 @@ export function parseMarkdown(content: string): ParsedMarkdown {
   // Extract headings for TOC
   const headings: HeadingInfo[] = [];
   for (const token of tokens) {
-    if (token.type === "heading") {
+    if (token.type === 'heading') {
       const headingToken = token as Tokens.Heading;
       headings.push({
         level: headingToken.depth,

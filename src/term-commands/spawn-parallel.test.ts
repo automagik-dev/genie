@@ -3,18 +3,13 @@
  * Run with: bun test src/term-commands/spawn-parallel.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
-import { join } from 'path';
-import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import {
-  resolveWishIds,
-  findReadyWishes,
-  type SpawnParallelOptions,
-  type SpawnParallelResult,
-} from './spawn-parallel.js';
+import { findReadyWishes, resolveWishIds } from './spawn-parallel.js';
 
-import { getBatch, listBatches } from '../lib/batch-manager.js';
+import { getBatch } from '../lib/batch-manager.js';
 
 // ============================================================================
 // Test Setup
@@ -36,13 +31,13 @@ function cleanTestDir(): void {
 /**
  * Create a fake wish directory with a wish.md file
  */
-function createWish(slug: string, status: string = 'READY'): void {
+function createWish(slug: string, status = 'READY'): void {
   const wishDir = join(TEST_WISHES_DIR, slug);
   mkdirSync(wishDir, { recursive: true });
   writeFileSync(
     join(wishDir, 'wish.md'),
     `# Wish: ${slug}\n\n**Status:** ${status}\n**Slug:** \`${slug}\`\n\n## Summary\n\nTest wish.\n`,
-    'utf-8'
+    'utf-8',
   );
 }
 
@@ -165,11 +160,7 @@ describe('spawnParallelCommand', () => {
 
     // Use the prepareBatch helper (testable without tmux)
     const { prepareBatch } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21', 'wish-23'],
-      { skill: 'forge' },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-23'], { skill: 'forge' }, TEST_GENIE_DIR);
 
     expect(batch.id).toMatch(/^batch-\d{3}$/);
     expect(batch.wishes).toEqual(['wish-21', 'wish-23']);
@@ -187,11 +178,7 @@ describe('spawnParallelCommand', () => {
     createWish('wish-21');
 
     const { prepareBatch } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21'],
-      { noAutoApprove: true },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21'], { noAutoApprove: true }, TEST_GENIE_DIR);
 
     expect(batch.options.autoApprove).toBe(false);
   });
@@ -200,11 +187,7 @@ describe('spawnParallelCommand', () => {
     createWish('wish-21');
 
     const { prepareBatch } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21'],
-      {},
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21'], {}, TEST_GENIE_DIR);
 
     expect(batch.options.autoApprove).toBe(true);
   });
@@ -232,11 +215,7 @@ describe('Concurrency control', () => {
     createWish('wish-23');
 
     const { prepareBatch } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     expect(batch.options.maxConcurrent).toBe(2);
   });
@@ -247,11 +226,7 @@ describe('Concurrency control', () => {
     createWish('wish-23');
 
     const { prepareBatch, getWishesToSpawn } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      {},
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], {}, TEST_GENIE_DIR);
 
     const toSpawn = getWishesToSpawn(batch);
     expect(toSpawn).toEqual(['wish-21', 'wish-22', 'wish-23']);
@@ -263,11 +238,7 @@ describe('Concurrency control', () => {
     createWish('wish-23');
 
     const { prepareBatch, getWishesToSpawn } = await import('./spawn-parallel.js');
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     const toSpawn = getWishesToSpawn(batch);
     expect(toSpawn).toEqual(['wish-21', 'wish-22']);
@@ -281,11 +252,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, getWishesToSpawn } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     // Simulate wish-21 already running
     updateBatch(TEST_GENIE_DIR, batch.id, {
@@ -310,11 +277,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     // Simulate wish-21 complete, wish-22 running, wish-23 queued
     updateBatch(TEST_GENIE_DIR, batch.id, {
@@ -346,11 +309,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     // Simulate wish-21 and wish-22 running, wish-23 queued
     updateBatch(TEST_GENIE_DIR, batch.id, {
@@ -384,7 +343,7 @@ describe('Concurrency control', () => {
     const batch = prepareBatch(
       ['wish-21', 'wish-22', 'wish-23'],
       {}, // No max set
-      TEST_GENIE_DIR
+      TEST_GENIE_DIR,
     );
 
     // Simulate all wishes still queued
@@ -416,11 +375,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22'], { max: 2 }, TEST_GENIE_DIR);
 
     // All workers complete
     updateBatch(TEST_GENIE_DIR, batch.id, {
@@ -449,11 +404,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23'],
-      { max: 2 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23'], { max: 2 }, TEST_GENIE_DIR);
 
     // wish-21 spawning (counts as active), wish-22 running, wish-23 queued
     updateBatch(TEST_GENIE_DIR, batch.id, {
@@ -481,11 +432,7 @@ describe('Concurrency control', () => {
 
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
 
-    const batch = prepareBatch(
-      ['wish-21'],
-      {},
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21'], {}, TEST_GENIE_DIR);
 
     let statusDuringSpawn: string | undefined;
     const mockSpawnFn = async (wishId: string) => {
@@ -510,11 +457,7 @@ describe('Concurrency control', () => {
 
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22'],
-      {},
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22'], {}, TEST_GENIE_DIR);
 
     const mockSpawnFn = async (wishId: string) => {
       if (wishId === 'wish-22') {
@@ -552,11 +495,7 @@ describe('Concurrency control', () => {
     const { prepareBatch, processQueue } = await import('./spawn-parallel.js');
     const { updateBatch } = await import('../lib/batch-manager.js');
 
-    const batch = prepareBatch(
-      ['wish-21', 'wish-22', 'wish-23', 'wish-24'],
-      { max: 3 },
-      TEST_GENIE_DIR
-    );
+    const batch = prepareBatch(['wish-21', 'wish-22', 'wish-23', 'wish-24'], { max: 3 }, TEST_GENIE_DIR);
 
     // wish-21 complete, wish-22/23/24 queued (3 slots available)
     updateBatch(TEST_GENIE_DIR, batch.id, {

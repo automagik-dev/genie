@@ -17,28 +17,30 @@
  *   --profile <name>      - Worker profile to use (from ~/.genie/config.json workerProfiles)
  */
 
+import { randomUUID } from 'node:crypto';
+import { isAbsolute, join, resolve } from 'node:path';
 import { $ } from 'bun';
-import { randomUUID } from 'crypto';
+import { type AutoApproveEngine, createAutoApproveEngine, sendApprovalViaTmux } from '../lib/auto-approve-engine.js';
+import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
+import * as beadsRegistry from '../lib/beads-registry.js';
+import type { PermissionRequest } from '../lib/event-listener.js';
+import { getDefaultWorkerProfile, getSessionName, getWorkerProfile, loadGenieConfig } from '../lib/genie-config.js';
+import { EventMonitor } from '../lib/orchestrator/index.js';
+import { extractPermissionDetails } from '../lib/orchestrator/state-detector.js';
+import { buildSpawnCommand } from '../lib/spawn-command.js';
+import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
-import { getBackend } from '../lib/task-backend.js';
-import { EventMonitor } from '../lib/orchestrator/index.js';
-import { cleanupEventFile } from './events.js';
-import { join, resolve, isAbsolute } from 'path';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
-import { buildSpawnCommand } from '../lib/spawn-command.js';
-import { loadGenieConfig, getWorkerProfile, getDefaultWorkerProfile, getSessionName } from '../lib/genie-config.js';
 import type { WorkerProfile } from '../types/genie-config.js';
-import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
-import { createAutoApproveEngine, sendApprovalViaTmux, type AutoApproveEngine } from '../lib/auto-approve-engine.js';
-import { extractPermissionDetails } from '../lib/orchestrator/state-detector.js';
-import type { PermissionRequest } from '../lib/event-listener.js';
+import { cleanupEventFile } from './events.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // (macro repos like blanco may run without bd)
 // @ts-ignore
-const useBeads = beadsRegistry.isBeadsRegistryEnabled() && (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+const useBeads =
+  beadsRegistry.isBeadsRegistryEnabled() &&
+  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
 
 // ============================================================================
 // Types
@@ -235,7 +237,7 @@ async function getNextReadyIssue(repoPath: string): Promise<BeadsIssue | null> {
     }
     return null;
   } catch {
-    const lines = stdout.split('\n').filter(l => l.trim());
+    const lines = stdout.split('\n').filter((l) => l.trim());
     if (lines.length > 0) {
       const match = lines[0].match(/^(bd-\d+)/);
       if (match) return getBeadsIssue(match[1]);
@@ -256,7 +258,7 @@ async function claimIssue(id: string): Promise<boolean> {
  * Parse wish.md file for metadata including repo field
  */
 async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   const metadata: WishMetadata = {};
 
   try {
@@ -270,7 +272,8 @@ async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
     }
 
     // Parse metadata fields like **Status:**, **Slug:**, **repo:** etc.
-    for (const line of lines.slice(0, 20)) { // Only check first 20 lines
+    for (const line of lines.slice(0, 20)) {
+      // Only check first 20 lines
       const statusMatch = line.match(/^\*\*Status:\*\*\s*(.+)$/i);
       if (statusMatch) {
         metadata.status = statusMatch[1].trim();
@@ -287,7 +290,6 @@ async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
       const repoMatch = line.match(/^\*\*repo:\*\*\s*`?([^`]+)`?$/i);
       if (repoMatch) {
         metadata.repo = repoMatch[1].trim();
-        continue;
       }
     }
 
@@ -296,9 +298,7 @@ async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
     if (summaryIndex !== -1) {
       const afterSummary = content.slice(summaryIndex + 10);
       const nextSection = afterSummary.indexOf('\n## ');
-      const summaryContent = nextSection !== -1
-        ? afterSummary.slice(0, nextSection)
-        : afterSummary.slice(0, 500);
+      const summaryContent = nextSection !== -1 ? afterSummary.slice(0, nextSection) : afterSummary.slice(0, 500);
       metadata.description = summaryContent.trim();
     }
 
@@ -315,9 +315,9 @@ async function parseWishMetadata(wishPath: string): Promise<WishMetadata> {
 async function detectRepoFromHeuristics(
   title: string,
   description: string | undefined,
-  repoPath: string
+  repoPath: string,
 ): Promise<string | null> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   const searchText = `${title} ${description || ''}`.toLowerCase();
 
   for (const [keyword, relativePath] of Object.entries(KNOWN_NESTED_REPOS)) {
@@ -353,13 +353,11 @@ async function detectTargetRepo(
   repoPath: string,
   explicitRepo?: string,
   issueTitle?: string,
-  issueDescription?: string
+  issueDescription?: string,
 ): Promise<{ targetRepo: string; detectionMethod: string }> {
   // 1. Explicit --repo flag takes priority
   if (explicitRepo) {
-    const targetPath = isAbsolute(explicitRepo)
-      ? explicitRepo
-      : resolve(repoPath, explicitRepo);
+    const targetPath = isAbsolute(explicitRepo) ? explicitRepo : resolve(repoPath, explicitRepo);
     return { targetRepo: targetPath, detectionMethod: '--repo flag' };
   }
 
@@ -368,9 +366,7 @@ async function detectTargetRepo(
   const metadata = await parseWishMetadata(wishPath);
 
   if (metadata.repo) {
-    const targetPath = isAbsolute(metadata.repo)
-      ? metadata.repo
-      : resolve(repoPath, metadata.repo);
+    const targetPath = isAbsolute(metadata.repo) ? metadata.repo : resolve(repoPath, metadata.repo);
     return { targetRepo: targetPath, detectionMethod: 'wish.md repo: field' };
   }
 
@@ -439,10 +435,7 @@ export async function getOrCreateSession(sessionOption?: string): Promise<string
  * Create worktree for worker using WorktreeManager
  * Creates worktree in .genie/worktrees/<taskId> with branch work/<taskId>
  */
-async function createWorktreeForTask(
-  taskId: string,
-  repoPath: string
-): Promise<string | null> {
+async function createWorktreeForTask(taskId: string, repoPath: string): Promise<string | null> {
   try {
     const manager = await getWorktreeManager(repoPath);
     const info = await manager.create(taskId, repoPath);
@@ -473,7 +466,7 @@ async function removeWorktree(taskId: string, repoPath: string): Promise<void> {
  * Returns the file path if found, undefined otherwise.
  */
 export async function findWishInDotWishes(taskId: string, repoPath: string): Promise<string | undefined> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   const wishesDir = join(repoPath, '.wishes');
   try {
     await fs.access(wishesDir);
@@ -493,7 +486,7 @@ export async function findWishInDotWishes(taskId: string, repoPath: string): Pro
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        results.push(...await findWishFiles(fullPath));
+        results.push(...(await findWishFiles(fullPath)));
       } else if (entry.isFile() && entry.name.endsWith('-wish.md')) {
         results.push(fullPath);
       }
@@ -536,7 +529,7 @@ function escapeRegExp(str: string): string {
  * then searches .wishes/ directory for *-wish.md files referencing the taskId.
  */
 export async function wishFileExists(taskId: string, repoPath: string): Promise<boolean> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   // Fast path: check .genie/wishes/<taskId>/wish.md
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
   try {
@@ -557,7 +550,7 @@ export async function wishFileExists(taskId: string, repoPath: string): Promise<
  * then searches .wishes/ directory for *-wish.md files referencing the taskId.
  */
 export async function loadWishContent(taskId: string, repoPath: string): Promise<string | undefined> {
-  const fs = await import('fs/promises');
+  const fs = await import('node:fs/promises');
   // Fast path: check .genie/wishes/<taskId>/wish.md
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
   try {
@@ -608,13 +601,15 @@ async function createEngineForTask(
  * Resolves on SIGINT (Ctrl+C).
  */
 async function blockForAutoApprove(engine: AutoApproveEngine): Promise<void> {
-  console.log(`\n🔒 Auto-approve active. Press Ctrl+C to detach.`);
+  console.log('\n🔒 Auto-approve active. Press Ctrl+C to detach.');
 
   return new Promise<void>((resolve) => {
     const cleanup = () => {
       engine.stop();
       const stats = engine.getStats();
-      console.log(`\n🔒 Auto-approve stopped. (${stats.approved} approved, ${stats.denied} denied, ${stats.escalated} escalated)`);
+      console.log(
+        `\n🔒 Auto-approve stopped. (${stats.approved} approved, ${stats.denied} denied, ${stats.escalated} escalated)`,
+      );
       resolve();
     };
 
@@ -629,11 +624,7 @@ async function blockForAutoApprove(engine: AutoApproveEngine): Promise<void> {
  * Wait for Claude CLI to be ready to accept input
  * Polls pane content looking for Claude's input prompt indicator
  */
-async function waitForClaudeReady(
-  paneId: string,
-  timeoutMs: number = 30000,
-  pollIntervalMs: number = 500
-): Promise<boolean> {
+async function waitForClaudeReady(paneId: string, timeoutMs = 30000, pollIntervalMs = 500): Promise<boolean> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
@@ -643,7 +634,7 @@ async function waitForClaudeReady(
       // Claude CLI shows ">" prompt when ready for input
       // Also check for the input area indicator
       // The prompt appears at the end of output when Claude is waiting for input
-      const lines = content.split('\n').filter(l => l.trim());
+      const lines = content.split('\n').filter((l) => l.trim());
       if (lines.length > 0) {
         const lastFewLines = lines.slice(-5).join('\n');
         // Claude shows "❯" prompt when ready for input
@@ -661,7 +652,7 @@ async function waitForClaudeReady(
       // Pane may not exist yet, continue polling
     }
 
-    await new Promise(r => setTimeout(r, pollIntervalMs));
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
   }
 
   // Timeout - return false but don't fail (caller can decide)
@@ -675,7 +666,7 @@ async function waitForClaudeReady(
 async function ensureWorkerWindow(
   session: string,
   taskId: string,
-  workingDir: string
+  workingDir: string,
 ): Promise<{ paneId: string; windowId: string; windowCreated: boolean } | null> {
   try {
     // Find session
@@ -722,12 +713,7 @@ async function ensureWorkerWindow(
  * Start monitoring worker state and update registry
  * Updates both beads and JSON registry during transition
  */
-function startWorkerMonitoring(
-  workerId: string,
-  session: string,
-  paneId: string,
-  engine?: AutoApproveEngine,
-): void {
+function startWorkerMonitoring(workerId: string, session: string, paneId: string, engine?: AutoApproveEngine): void {
   const monitor = new EventMonitor(session, {
     pollIntervalMs: 1000,
     paneId,
@@ -782,7 +768,9 @@ function startWorkerMonitoring(
       const decision = await engine.processRequest(request);
       if (decision.action === 'approve') {
         lastApprovalTime = now;
-        console.log(`   ✅ Auto-approved: ${toolName}${details?.command ? ` (${details.command.substring(0, 50)})` : ''}`);
+        console.log(
+          `   ✅ Auto-approved: ${toolName}${details?.command ? ` (${details.command.substring(0, 50)})` : ''}`,
+        );
       } else if (decision.action === 'deny') {
         console.log(`   ❌ Auto-denied: ${toolName} - ${decision.reason}`);
       }
@@ -852,10 +840,7 @@ function startWorkerMonitoring(
 // Main Command
 // ============================================================================
 
-export async function workCommand(
-  target: string,
-  options: WorkOptions = {}
-): Promise<void> {
+export async function workCommand(target: string, options: WorkOptions = {}): Promise<void> {
   try {
     // Get current working directory as repo path
     const repoPath = process.cwd();
@@ -914,7 +899,7 @@ export async function workCommand(
       if (!sanitized) {
         console.error(`❌ Invalid task ID: "${target}"`);
         console.error(`   Task IDs must be alphanumeric with hyphens/underscores (e.g., "bd-123", "wish-1").`);
-        console.error(`   Got characters that are unsafe for git branches or shell commands.`);
+        console.error('   Got characters that are unsafe for git branches or shell commands.');
         process.exit(1);
       }
       target = sanitized;
@@ -933,22 +918,22 @@ export async function workCommand(
           };
         }
       }
-      
+
       // Fall back to beads if not found locally
       if (!issue) {
         issue = await getBeadsIssue(target);
       }
-      
+
       if (!issue) {
         const backend = getBackend(repoPath);
         if (backend.kind === 'local') {
           console.error(`❌ Issue "${target}" not found in local task registry.`);
           console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
-          const fs = await import('fs');
+          const fs = await import('node:fs');
           if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
-            console.error(`   ⚠️  tasks.json does not exist. This is likely a fresh repo.`);
+            console.error('   ⚠️  tasks.json does not exist. This is likely a fresh repo.');
             console.error(`   Fix: Run \`genie term create "Your task title"\` to create the first task,`);
-            console.error(`         or \`bd sync\` if using beads.`);
+            console.error('         or `bd sync` if using beads.');
           } else {
             console.error(`   Task "${target}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
           }
@@ -962,9 +947,7 @@ export async function workCommand(
     const taskId = issue.id;
 
     // 2. Check not already assigned (check both registries)
-    let existingWorker = useBeads
-      ? await beadsRegistry.findByTask(taskId)
-      : null;
+    let existingWorker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
     if (!existingWorker) {
       existingWorker = await registry.findByTask(taskId);
     }
@@ -973,14 +956,14 @@ export async function workCommand(
       if (existingWorker.claudeSessionId && options.resume !== false) {
         console.log(`📋 Found existing worker for ${taskId} with resumable session`);
         console.log(`   Session ID: ${existingWorker.claudeSessionId}`);
-        console.log(`   Resuming previous Claude session...`);
+        console.log('   Resuming previous Claude session...');
 
         // Get session (auto-creates if not inside tmux)
         const session = await getOrCreateSession(options.session);
 
         // Ensure dedicated window for the resumed session
         const workingDir = existingWorker.worktree || existingWorker.repoPath;
-        console.log(`🚀 Ensuring worker window...`);
+        console.log('🚀 Ensuring worker window...');
         const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
         if (!paneResult) {
           process.exit(1);
@@ -1014,12 +997,7 @@ export async function workCommand(
 
         // Source .env from root repo when running in a worktree
         const resumeEnvPrefix = buildEnvSourcePrefix(workingDir, existingWorker.repoPath);
-        await tmux.executeCommand(
-          paneId,
-          `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`,
-          true,
-          false
-        );
+        await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`, true, false);
 
         // Update state to working
         if (useBeads) {
@@ -1030,13 +1008,9 @@ export async function workCommand(
         // Create auto-approve engine (if enabled)
         let resumeEngine: AutoApproveEngine | undefined;
         if (!options.noAutoApprove) {
-          resumeEngine = await createEngineForTask(
-            taskId,
-            existingWorker.repoPath,
-            existingWorker.repoPath,
-          );
+          resumeEngine = await createEngineForTask(taskId, existingWorker.repoPath, existingWorker.repoPath);
           if (resumeEngine) {
-            console.log(`🔒 Auto-approve engine started`);
+            console.log('🔒 Auto-approve engine started');
           }
         }
 
@@ -1053,8 +1027,8 @@ export async function workCommand(
         console.log(`   Pane: ${paneId}`);
         console.log(`   Session: ${session}`);
         console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
-        console.log(`\nCommands:`);
-        console.log(`   term workers        - Check worker status`);
+        console.log('\nCommands:');
+        console.log('   term workers        - Check worker status');
         console.log(`   term approve ${taskId}  - Approve permissions`);
         console.log(`   term close ${taskId}    - Close issue when done`);
         console.log(`   term kill ${taskId}     - Force kill worker`);
@@ -1089,7 +1063,7 @@ export async function workCommand(
     if (!claimed) {
       if (backend.kind === 'beads') {
         console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
-        console.error(`   The issue may not exist or is already claimed.`);
+        console.error('   The issue may not exist or is already claimed.');
         console.error(`   Run \`bd show ${taskId}\` to check status.`);
         process.exit(1);
       } else {
@@ -1101,7 +1075,7 @@ export async function workCommand(
           console.error(`   Or create one: \`term create "${taskId} title"\``);
         } else {
           console.error(`❌ Failed to claim ${taskId} (status: ${task.status}).`);
-          console.error(`   Task may already be in_progress or done.`);
+          console.error('   Task may already be in_progress or done.');
         }
         process.exit(1);
       }
@@ -1113,7 +1087,7 @@ export async function workCommand(
       repoPath,
       options.repo,
       issue.title,
-      issue.description
+      issue.description,
     );
 
     // Log if using a nested repo
@@ -1134,7 +1108,7 @@ export async function workCommand(
         console.log(`   Created: ${worktreePath}`);
         console.log(`   Branch: work/${taskId}`);
       } else {
-        console.log(`⚠️  Worktree creation failed. Using shared repo.`);
+        console.log('⚠️  Worktree creation failed. Using shared repo.');
       }
     }
 
@@ -1180,7 +1154,7 @@ export async function workCommand(
     // Register in beads (creates agent bead)
     if (useBeads) {
       try {
-        const agentId = await beadsRegistry.ensureAgent(taskId, {
+        const _agentId = await beadsRegistry.ensureAgent(taskId, {
           paneId,
           session,
           worktree: worktreePath,
@@ -1210,7 +1184,7 @@ export async function workCommand(
       const hasWish = await wishFileExists(taskId, repoPath);
       if (hasWish) {
         skill = 'forge';
-        console.log(`📋 Found wish.md - using /forge skill`);
+        console.log('📋 Found wish.md - using /forge skill');
       }
     }
 
@@ -1219,7 +1193,9 @@ export async function workCommand(
     if (skill) {
       prompt = `/${skill}`;
     } else {
-      prompt = options.prompt || `Work on beads issue ${taskId}: "${issue.title}"
+      prompt =
+        options.prompt ||
+        `Work on beads issue ${taskId}: "${issue.title}"
 
 ## Description
 ${issue.description || 'No description provided.'}
@@ -1269,7 +1245,7 @@ When you're done, commit your changes and let me know.`;
     if (!options.noAutoApprove) {
       engine = await createEngineForTask(taskId, repoPath, targetRepo);
       if (engine) {
-        console.log(`🔒 Auto-approve engine started`);
+        console.log('🔒 Auto-approve engine started');
       }
     }
 
@@ -1292,8 +1268,8 @@ When you're done, commit your changes and let me know.`;
     if (targetRepo !== repoPath) {
       console.log(`   Target repo: ${targetRepo}`);
     }
-    console.log(`\nCommands:`);
-    console.log(`   term workers        - Check worker status`);
+    console.log('\nCommands:');
+    console.log('   term workers        - Check worker status');
     console.log(`   term approve ${taskId}  - Approve permissions`);
     console.log(`   term close ${taskId}    - Close issue when done`);
     console.log(`   term kill ${taskId}     - Force kill worker`);
@@ -1302,7 +1278,6 @@ When you're done, commit your changes and let me know.`;
     if (engine && !options._skipAutoApproveBlock) {
       await blockForAutoApprove(engine);
     }
-
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
     process.exit(1);

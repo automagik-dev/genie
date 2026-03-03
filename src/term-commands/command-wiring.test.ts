@@ -7,10 +7,10 @@
  * Run with: bun test src/term-commands/command-wiring.test.ts
  */
 
-import { describe, test, expect } from 'bun:test';
-import type { SendOptions } from './send.js';
-import type { ExecOptions } from './exec.js';
+import { describe, expect, test } from 'bun:test';
 import { resolveTarget } from '../lib/target-resolver.js';
+import type { ExecOptions } from './exec.js';
+import type { SendOptions } from './send.js';
 
 // ============================================================================
 // send.ts: sendKeysToSession uses resolveTarget
@@ -54,7 +54,6 @@ describe('read.ts: target resolution wiring', () => {
     const readModule = await import('./read.js');
     expect(typeof readModule.readSessionLogs).toBe('function');
   });
-
 });
 
 // ============================================================================
@@ -66,7 +65,6 @@ describe('split.ts: target resolution wiring', () => {
     const splitModule = await import('./split.js');
     expect(typeof splitModule.splitSessionPane).toBe('function');
   });
-
 });
 
 // ============================================================================
@@ -192,7 +190,7 @@ describe('resolveTarget integration', () => {
         checkLiveness: false,
         workers: {},
         tmuxLookup: async () => null,
-      })
+      }),
     ).rejects.toThrow(/not found/i);
   });
 });

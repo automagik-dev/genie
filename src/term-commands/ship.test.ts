@@ -7,10 +7,10 @@
  * 3. Full flow: wish -> work -> ship creates PR-ready branch
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { $ } from 'bun';
-import { mkdir, rm, writeFile, access } from 'fs/promises';
-import { join } from 'path';
 
 // ============================================================================
 // Test Helpers
@@ -162,10 +162,8 @@ describe('term ship/push - branch protection', () => {
         expect(allowed).toBe(true);
 
         // Go back to main for next iteration
-        const mainBranch = await $`git -C ${testRepo} rev-parse --abbrev-ref HEAD`.quiet();
-        await $`git -C ${testRepo} checkout main`.quiet().catch(() =>
-          $`git -C ${testRepo} checkout master`.quiet()
-        );
+        const _mainBranch = await $`git -C ${testRepo} rev-parse --abbrev-ref HEAD`.quiet();
+        await $`git -C ${testRepo} checkout main`.quiet().catch(() => $`git -C ${testRepo} checkout master`.quiet());
       }
     });
   });
@@ -198,19 +196,13 @@ describe('term ship/push - getCurrentBranch', () => {
   });
 
   it('should handle branches with special characters', async () => {
-    const specialBranches = [
-      'work/wish-1',
-      'feature/add-new-thing',
-      'fix/bug-123',
-    ];
+    const specialBranches = ['work/wish-1', 'feature/add-new-thing', 'fix/bug-123'];
 
     for (const branchName of specialBranches) {
       await $`git -C ${testRepo} checkout -b ${branchName}`.quiet();
       const detected = await getCurrentBranch(testRepo);
       expect(detected).toBe(branchName);
-      await $`git -C ${testRepo} checkout main`.quiet().catch(() =>
-        $`git -C ${testRepo} checkout master`.quiet()
-      );
+      await $`git -C ${testRepo} checkout main`.quiet().catch(() => $`git -C ${testRepo} checkout master`.quiet());
     }
   });
 });
@@ -240,7 +232,9 @@ describe('full flow: wish -> work -> ship', () => {
     // Clean up worktrees first
     try {
       await $`git -C ${nestedRepo} worktree prune`.quiet();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -250,7 +244,9 @@ describe('full flow: wish -> work -> ship', () => {
     // Step 1: Create wish with repo field pointing to nested repo
     const wishDir = join(macroRepo, '.genie', 'wishes', wishId);
     await mkdir(wishDir, { recursive: true });
-    await writeFile(join(wishDir, 'wish.md'), `# Wish: Test Full Flow
+    await writeFile(
+      join(wishDir, 'wish.md'),
+      `# Wish: Test Full Flow
 
 **Status:** IN-PROGRESS
 **Slug:** \`${wishId}\`
@@ -259,7 +255,8 @@ describe('full flow: wish -> work -> ship', () => {
 ## Summary
 
 Test the full wish -> work -> ship flow.
-`);
+`,
+    );
 
     // Step 2: Simulate work command - create worktree in nested repo
     const branchName = `work/${wishId}`;

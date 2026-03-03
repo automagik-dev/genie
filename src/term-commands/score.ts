@@ -7,12 +7,7 @@
  *   term score <id> --sofia                   - Trigger Sofia validation (via sessions_send)
  */
 
-import {
-  getTask,
-  updateTask,
-  computePriorityScore,
-  type PriorityScores,
-} from '../lib/local-tasks.js';
+import { type PriorityScores, computePriorityScore, getTask, updateTask } from '../lib/local-tasks.js';
 
 export interface ScoreOptions {
   set?: string;
@@ -28,7 +23,7 @@ const DIMENSION_LABELS: Record<keyof PriorityScores, string> = {
   complexityInverse: 'Complexity⁻¹ (0.10)',
 };
 
-function renderBar(value: number, max: number = 5): string {
+function renderBar(value: number, max = 5): string {
   const filled = Math.round(value);
   return '█'.repeat(filled) + '░'.repeat(max - filled);
 }
@@ -45,7 +40,11 @@ export async function scoreCommand(taskId: string, options: ScoreOptions = {}): 
   // Handle --set: update scores
   if (options.set) {
     const currentScores: PriorityScores = task.priorityScores || {
-      blocking: 3, stability: 3, crossImpact: 3, quickWin: 3, complexityInverse: 3,
+      blocking: 3,
+      stability: 3,
+      crossImpact: 3,
+      quickWin: 3,
+      complexityInverse: 3,
     };
 
     const pairs = options.set.split(',');
@@ -58,7 +57,7 @@ export async function scoreCommand(taskId: string, options: ScoreOptions = {}): 
         console.error(`❌ Unknown dimension: "${trimmedKey}". Valid: ${Object.keys(currentScores).join(', ')}`);
         process.exit(1);
       }
-      if (isNaN(value) || value < 0 || value > 5) {
+      if (Number.isNaN(value) || value < 0 || value > 5) {
         console.error(`❌ Score for "${trimmedKey}" must be 0-5 (got ${valStr})`);
         process.exit(1);
       }
@@ -72,8 +71,8 @@ export async function scoreCommand(taskId: string, options: ScoreOptions = {}): 
 
   // Handle --sofia: trigger validation
   if (options.sofia) {
-    console.log(`📡 Sofia validation not yet connected (requires sessions_send integration).`);
-    console.log(`   Manual workaround: ask Sofia to validate these scores.`);
+    console.log('📡 Sofia validation not yet connected (requires sessions_send integration).');
+    console.log('   Manual workaround: ask Sofia to validate these scores.');
   }
 
   // Display scores

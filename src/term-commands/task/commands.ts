@@ -21,17 +21,17 @@
  * dependency resolution.
  */
 
-import { Command } from 'commander';
-import { mkdir, readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
-import * as createCmd from '../create.js';
-import * as updateCmd from '../update.js';
-import * as shipCmd from '../ship.js';
-import * as closeCmd from '../close.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { exec } from 'node:child_process';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import type { Command } from 'commander';
+import { computePriorityScore, listTasks } from '../../lib/local-tasks.js';
 import { getBackend } from '../../lib/task-backend.js';
-import { listTasks, computePriorityScore, type LocalTask } from '../../lib/local-tasks.js';
+import * as closeCmd from '../close.js';
+import * as createCmd from '../create.js';
+import * as shipCmd from '../ship.js';
+import * as updateCmd from '../update.js';
 
 const execAsync = promisify(exec);
 
@@ -88,7 +88,7 @@ async function saveTasks(repoPath: string, data: TasksFile): Promise<void> {
 function resolveStatus(task: Task, allTasks: Record<string, Task>): TaskStatus {
   if (task.status === 'done' || task.status === 'in_progress') return task.status;
   if (task.blockedBy.length === 0) return 'ready';
-  const allDone = task.blockedBy.every(id => allTasks[id]?.status === 'done');
+  const allDone = task.blockedBy.every((id) => allTasks[id]?.status === 'done');
   return allDone ? 'ready' : 'blocked';
 }
 
@@ -100,9 +100,7 @@ function resolveStatus(task: Task, allTasks: Record<string, Task>): TaskStatus {
  * Register the `task` namespace with all subcommands
  */
 export function registerTaskNamespace(program: Command): void {
-  const taskProgram = program
-    .command('task')
-    .description('Task/issue management (beads + dependency-aware)');
+  const taskProgram = program.command('task').description('Task/issue management (beads + dependency-aware)');
 
   // task create
   taskProgram
@@ -166,7 +164,7 @@ export function registerTaskNamespace(program: Command): void {
       if (backend.kind === 'local') {
         // Local backend: show tasks sorted by priority score
         const tasks = await listTasks(repoPath);
-        const filtered = options.all ? tasks : tasks.filter(t => t.status !== 'done');
+        const filtered = options.all ? tasks : tasks.filter((t) => t.status !== 'done');
 
         if (options.json) {
           console.log(JSON.stringify(filtered, null, 2));
@@ -186,7 +184,14 @@ export function registerTaskNamespace(program: Command): void {
         for (const task of filtered) {
           const id = task.id.padEnd(10).substring(0, 10);
           const type = (task.issueType === 'epic' ? 'epic' : 'task').padEnd(4);
-          const statusEmoji = task.status === 'done' ? '✅' : task.status === 'in_progress' ? '🔄' : task.status === 'blocked' ? '🔴' : '⚪';
+          const statusEmoji =
+            task.status === 'done'
+              ? '✅'
+              : task.status === 'in_progress'
+                ? '🔄'
+                : task.status === 'blocked'
+                  ? '🔴'
+                  : '⚪';
           const status = `${statusEmoji} ${task.status}`.padEnd(10).substring(0, 10);
           const score = task.priorityScores
             ? computePriorityScore(task.priorityScores).toFixed(1).padStart(5)
@@ -224,7 +229,7 @@ export function registerTaskNamespace(program: Command): void {
       const repoPath = process.cwd();
 
       // Verify wish exists
-      if (!await wishExists(repoPath, wishSlug)) {
+      if (!(await wishExists(repoPath, wishSlug))) {
         console.error(`❌ Wish "${wishSlug}" not found in .genie/wishes/`);
         process.exit(1);
       }
@@ -276,9 +281,7 @@ export function registerTaskNamespace(program: Command): void {
         const id = `task-${data.nextId}`;
         data.nextId += 1;
 
-        const blockedBy = options.blockedBy
-          ? options.blockedBy.split(',').map(s => s.trim())
-          : [];
+        const blockedBy = options.blockedBy ? options.blockedBy.split(',').map((s) => s.trim()) : [];
 
         const now = new Date().toISOString();
         const newTask: Task = {
@@ -320,10 +323,10 @@ export function registerTaskNamespace(program: Command): void {
         const allTasks = data.tasks;
 
         const tasks = data.order
-          .map(id => allTasks[id])
+          .map((id) => allTasks[id])
           .filter(Boolean)
-          .filter(t => options.all || t.status !== 'done')
-          .map(t => ({
+          .filter((t) => options.all || t.status !== 'done')
+          .map((t) => ({
             ...t,
             effectiveStatus: resolveStatus(t, allTasks),
           }));
@@ -338,10 +341,10 @@ export function registerTaskNamespace(program: Command): void {
           return;
         }
 
-        const ready = tasks.filter(t => t.effectiveStatus === 'ready');
-        const blocked = tasks.filter(t => t.effectiveStatus === 'blocked');
-        const inProgress = tasks.filter(t => t.effectiveStatus === 'in_progress');
-        const done = tasks.filter(t => t.effectiveStatus === 'done');
+        const ready = tasks.filter((t) => t.effectiveStatus === 'ready');
+        const blocked = tasks.filter((t) => t.effectiveStatus === 'blocked');
+        const inProgress = tasks.filter((t) => t.effectiveStatus === 'in_progress');
+        const done = tasks.filter((t) => t.effectiveStatus === 'done');
 
         console.log('');
         console.log('TASKS');
@@ -407,9 +410,7 @@ export function registerTaskNamespace(program: Command): void {
           task.title = options.title;
         }
         if (options.blockedBy !== undefined) {
-          task.blockedBy = options.blockedBy
-            ? options.blockedBy.split(',').map(s => s.trim())
-            : [];
+          task.blockedBy = options.blockedBy ? options.blockedBy.split(',').map((s) => s.trim()) : [];
         }
 
         task.updatedAt = new Date().toISOString();

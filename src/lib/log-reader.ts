@@ -1,16 +1,16 @@
 import * as tmux from './tmux.js';
 
 export interface ReadOptions {
-  lines?: number;           // Number of lines (default 100)
-  from?: number;            // Start line
-  to?: number;              // End line
-  search?: string;          // Search pattern
-  grep?: string;            // Regex pattern
-  follow?: boolean;         // Live tail mode
-  all?: boolean;            // Entire scrollback
-  reverse?: boolean;        // Newest first
-  range?: string;           // Range syntax like "100:200"
-  pane?: string;            // Target specific pane ID (e.g., %16)
+  lines?: number; // Number of lines (default 100)
+  from?: number; // Start line
+  to?: number; // End line
+  search?: string; // Search pattern
+  grep?: string; // Regex pattern
+  follow?: boolean; // Live tail mode
+  all?: boolean; // Entire scrollback
+  reverse?: boolean; // Newest first
+  range?: string; // Range syntax like "100:200"
+  pane?: string; // Target specific pane ID (e.g., %16)
 }
 
 /**
@@ -20,7 +20,7 @@ function stripTmuxMarkers(content: string): string {
   const lines = content.split('\n');
 
   // First pass: mark lines to remove
-  const filtered = lines.filter(line => {
+  const filtered = lines.filter((line) => {
     const trimmed = line.trim();
 
     // Remove complete marker lines
@@ -39,7 +39,7 @@ function stripTmuxMarkers(content: string): string {
     if (line.includes('-bash:')) return false;
     if (line.includes('warning: setlocale:')) return false;
     if (line.includes('cannot change locale')) return false;
-    if (trimmed === 'or directory') return false;  // Orphan fragment from wrapped warning
+    if (trimmed === 'or directory') return false; // Orphan fragment from wrapped warning
 
     return true;
   });
@@ -58,10 +58,7 @@ function stripTmuxMarkers(content: string): string {
 /**
  * Read logs from a tmux session with comprehensive filtering options
  */
-export async function readSessionLogs(
-  sessionName: string,
-  options: ReadOptions = {}
-): Promise<string> {
+export async function readSessionLogs(sessionName: string, options: ReadOptions = {}): Promise<string> {
   // Find session
   const session = await tmux.findSessionByName(sessionName);
   if (!session) {
@@ -79,14 +76,14 @@ export async function readSessionLogs(
       throw new Error(`No windows found in session "${sessionName}"`);
     }
 
-    const activeWindow = windows.find(w => w.active) || windows[0];
+    const activeWindow = windows.find((w) => w.active) || windows[0];
 
     const panes = await tmux.listPanes(activeWindow.id);
     if (!panes || panes.length === 0) {
       throw new Error(`No panes found in session "${sessionName}"`);
     }
 
-    const activePane = panes.find(p => p.active) || panes[0];
+    const activePane = panes.find((p) => p.active) || panes[0];
     paneId = activePane.id;
   }
 
@@ -94,8 +91,8 @@ export async function readSessionLogs(
   if (options.range) {
     const parts = options.range.split(':');
     if (parts.length === 2) {
-      options.from = parseInt(parts[0], 10);
-      options.to = parseInt(parts[1], 10);
+      options.from = Number.parseInt(parts[0], 10);
+      options.to = Number.parseInt(parts[1], 10);
     }
   }
 
@@ -129,7 +126,7 @@ export async function readSessionLogs(
 
     try {
       const regex = new RegExp(pattern, 'i');
-      const matchedLines = lines.filter(line => regex.test(line));
+      const matchedLines = lines.filter((line) => regex.test(line));
 
       if (options.reverse) {
         return matchedLines.reverse().join('\n');
@@ -161,7 +158,7 @@ export async function readSessionLogs(
 export async function followSessionLogs(
   sessionName: string,
   callback: (line: string) => void,
-  options: { pane?: string } = {}
+  options: { pane?: string } = {},
 ): Promise<() => void> {
   const session = await tmux.findSessionByName(sessionName);
   if (!session) {
@@ -178,14 +175,14 @@ export async function followSessionLogs(
       throw new Error(`No windows found in session "${sessionName}"`);
     }
 
-    const activeWindow = windows.find(w => w.active) || windows[0];
+    const activeWindow = windows.find((w) => w.active) || windows[0];
 
     const panes = await tmux.listPanes(activeWindow.id);
     if (!panes || panes.length === 0) {
       throw new Error(`No panes found in session "${sessionName}"`);
     }
 
-    const activePane = panes.find(p => p.active) || panes[0];
+    const activePane = panes.find((p) => p.active) || panes[0];
     paneId = activePane.id;
   }
   let lastContent = '';
@@ -210,7 +207,7 @@ export async function followSessionLogs(
         const startIndex = oldLines.length > 0 ? oldLines.length - 1 : 0;
         const addedLines = newLines.slice(startIndex);
 
-        addedLines.forEach(line => {
+        addedLines.forEach((line) => {
           if (line && line !== oldLines[oldLines.length - 1]) {
             callback(line);
           }
@@ -218,7 +215,7 @@ export async function followSessionLogs(
 
         lastContent = content;
       }
-    } catch (error) {
+    } catch (_error) {
       // Session might have been closed
       clearInterval(pollInterval);
       following = false;

@@ -8,23 +8,23 @@
  * - Starts Claude Code as native team-lead on first creation
  */
 
-import { spawnSync } from 'child_process';
-import { homedir } from 'os';
-import { join } from 'path';
-import * as tmux from '../lib/tmux.js';
+import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import {
-  ensureNativeTeam,
   deleteNativeTeam,
+  ensureNativeTeam,
   registerNativeMember,
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
+import * as tmux from '../lib/tmux.js';
 
 const DEFAULT_NAME = 'genie';
 const DEFAULT_WORKSPACE = join(homedir(), 'workspace');
 
 /** Shell-quote a string for safe embedding in shell commands. */
 function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 export interface TuiOptions {
@@ -41,11 +41,7 @@ export interface TuiOptions {
  * CC recognizes itself as leader because --team-name is passed without --agent-id.
  */
 async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise<void> {
-  await ensureNativeTeam(
-    teamName,
-    `Genie team: ${teamName}`,
-    'pending',
-  );
+  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
 
   await registerNativeMember(teamName, {
     agentName: 'team-lead',
@@ -123,7 +119,7 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
     }
 
     // Attach to session — switch-client if already inside tmux, attach otherwise
-    console.log(`Attaching...`);
+    console.log('Attaching...');
     if (process.env.TMUX) {
       spawnSync('tmux', ['switch-client', '-t', name], { stdio: 'inherit' });
     } else {
