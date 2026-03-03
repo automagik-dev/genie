@@ -408,7 +408,7 @@ describe('EventAggregator', () => {
           },
         ]);
 
-        expect(states[0].status).toBe(tc.expectedStatus);
+        expect(states[0].status as string).toBe(tc.expectedStatus);
       }
     });
   });

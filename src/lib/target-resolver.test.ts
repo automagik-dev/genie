@@ -254,7 +254,7 @@ describe('Level 3: Session:window', () => {
     const result = await resolveTarget('genie:OMNI', {
       checkLiveness: false,
       workers: {}, // no worker named "genie"
-      tmuxLookup: async (sessionName: string, windowName: string) => {
+      tmuxLookup: async (sessionName: string, windowName?: string) => {
         if (sessionName === 'genie' && windowName === 'OMNI') {
           return { paneId: '%5', session: 'genie' };
         }
@@ -272,7 +272,7 @@ describe('Level 3: Session:window', () => {
     const result = await resolveTarget('main:dev', {
       checkLiveness: false,
       workers: {},
-      tmuxLookup: async (sessionName: string, windowName: string) => {
+      tmuxLookup: async (sessionName: string, windowName?: string) => {
         if (sessionName === 'main' && windowName === 'dev') {
           return { paneId: '%10', session: 'main' };
         }

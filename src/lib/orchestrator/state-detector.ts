@@ -88,7 +88,8 @@ export function detectState(output: string, options: StateDetectorOptions = {}):
     // Extract options only from the numbered list at the end
     const menuOptions = questionMatches
       .filter((m) => m.type === 'claude_code_numbered_options' && m.extracted?.option)
-      .map((m) => m.extracted?.option);
+      .map((m) => m.extracted?.option)
+      .filter((o): o is string => o !== undefined);
 
     if (menuOptions.length >= 2 || hasPlanApproval) {
       return {
@@ -103,7 +104,8 @@ export function detectState(output: string, options: StateDetectorOptions = {}):
     // Fall back to other option types
     const otherOptions = questionMatches
       .filter((m) => m.extracted?.option && m.type !== 'claude_code_numbered_options')
-      .map((m) => m.extracted?.option);
+      .map((m) => m.extracted?.option)
+      .filter((o): o is string => o !== undefined);
 
     if (otherOptions.length >= 2) {
       return {
