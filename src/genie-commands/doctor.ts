@@ -238,6 +238,76 @@ async function checkTmux(): Promise<CheckResult[]> {
   return results;
 }
 
+async function validateClaudioProfileRef(
+  name: string,
+  claudioProfile: string | undefined,
+  results: CheckResult[],
+): Promise<void> {
+  if (!claudioProfile) {
+    results.push({
+      name: `Profile '${name}'`,
+      status: 'warn',
+      message: 'no claudioProfile specified',
+      suggestion: 'Add claudioProfile to the profile config',
+    });
+    return;
+  }
+
+  try {
+    const profile = await getClaudioProfile(claudioProfile);
+    results.push(
+      profile
+        ? { name: `Profile '${name}'`, status: 'pass', message: `claudio:${claudioProfile}` }
+        : {
+            name: `Profile '${name}'`,
+            status: 'warn',
+            message: `claudio profile '${claudioProfile}' not found`,
+            suggestion: `Run: claudio profiles add ${claudioProfile}`,
+          },
+    );
+  } catch {
+    results.push({
+      name: `Profile '${name}'`,
+      status: 'warn',
+      message: `could not verify claudio profile '${claudioProfile}'`,
+    });
+  }
+}
+
+async function validateClaudioProfiles(
+  claudioProfiles: { name: string; claudioProfile?: string }[],
+  results: CheckResult[],
+): Promise<void> {
+  // Check claudio binary
+  results.push(
+    hasClaudioBinary()
+      ? { name: 'claudio binary', status: 'pass' }
+      : {
+          name: 'claudio binary',
+          status: 'warn',
+          message: 'not found',
+          suggestion: `${claudioProfiles.length} profile${claudioProfiles.length === 1 ? '' : 's'} use claudio. Install or switch to claude launcher.`,
+        },
+  );
+
+  if (claudioConfigExists()) {
+    results.push({ name: 'claudio config', status: 'pass', message: '~/.claudio/config.json' });
+    for (const { name, claudioProfile } of claudioProfiles) {
+      await validateClaudioProfileRef(name, claudioProfile, results);
+    }
+  } else {
+    results.push({ name: 'claudio config', status: 'warn', message: 'not found', suggestion: 'Run: claudio setup' });
+    for (const { name, claudioProfile } of claudioProfiles) {
+      results.push({
+        name: `Profile '${name}'`,
+        status: 'warn',
+        message: `requires claudio profile '${claudioProfile || 'default'}'`,
+        suggestion: 'Set up claudio first',
+      });
+    }
+  }
+}
+
 /**
  * Check worker profiles configuration
  * Validates that profiles using claudio launcher have proper dependencies
@@ -290,83 +360,7 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 
   // If there are claudio profiles, verify claudio binary and config
   if (claudioProfiles.length > 0) {
-    // Check claudio binary
-    if (hasClaudioBinary()) {
-      results.push({
-        name: 'claudio binary',
-        status: 'pass',
-      });
-    } else {
-      results.push({
-        name: 'claudio binary',
-        status: 'warn',
-        message: 'not found',
-        suggestion: `${claudioProfiles.length} profile${claudioProfiles.length === 1 ? '' : 's'} use claudio. Install or switch to claude launcher.`,
-      });
-    }
-
-    // Check claudio config exists
-    if (claudioConfigExists()) {
-      results.push({
-        name: 'claudio config',
-        status: 'pass',
-        message: '~/.claudio/config.json',
-      });
-
-      // Validate each claudio profile reference
-      for (const { name, claudioProfile } of claudioProfiles) {
-        if (!claudioProfile) {
-          results.push({
-            name: `Profile '${name}'`,
-            status: 'warn',
-            message: 'no claudioProfile specified',
-            suggestion: 'Add claudioProfile to the profile config',
-          });
-          continue;
-        }
-
-        try {
-          const profile = await getClaudioProfile(claudioProfile);
-          if (profile) {
-            results.push({
-              name: `Profile '${name}'`,
-              status: 'pass',
-              message: `claudio:${claudioProfile}`,
-            });
-          } else {
-            results.push({
-              name: `Profile '${name}'`,
-              status: 'warn',
-              message: `claudio profile '${claudioProfile}' not found`,
-              suggestion: `Run: claudio profiles add ${claudioProfile}`,
-            });
-          }
-        } catch {
-          results.push({
-            name: `Profile '${name}'`,
-            status: 'warn',
-            message: `could not verify claudio profile '${claudioProfile}'`,
-          });
-        }
-      }
-    } else {
-      results.push({
-        name: 'claudio config',
-        status: 'warn',
-        message: 'not found',
-        suggestion: 'Run: claudio setup',
-      });
-
-      // Mark all claudio profiles as having issues
-      for (const { name, claudioProfile } of claudioProfiles) {
-        results.push({
-          name: `Profile '${name}'`,
-          status: 'warn',
-          message: `requires claudio profile '${claudioProfile || 'default'}'`,
-          suggestion: 'Set up claudio first',
-        });
-      }
-    }
+    await validateClaudioProfiles(claudioProfiles, results);
   }
 
   // Report claude profiles (always valid)
@@ -402,57 +396,34 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
 /**
  * Main doctor command
  */
+function runCheckSection(label: string, results: CheckResult[], counts: { errors: boolean; warnings: boolean }): void {
+  printSectionHeader(label);
+  for (const result of results) {
+    printCheckResult(result);
+    if (result.status === 'fail') counts.errors = true;
+    if (result.status === 'warn') counts.warnings = true;
+  }
+}
+
 export async function doctorCommand(): Promise<void> {
   console.log();
   console.log('\x1b[1mGenie Doctor\x1b[0m');
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
 
-  let hasErrors = false;
-  let hasWarnings = false;
+  const counts = { errors: false, warnings: false };
 
-  // Prerequisites
-  printSectionHeader('Prerequisites');
-  const prereqResults = await checkPrerequisites();
-  for (const result of prereqResults) {
-    printCheckResult(result);
-    if (result.status === 'fail') hasErrors = true;
-    if (result.status === 'warn') hasWarnings = true;
-  }
-
-  // Configuration
-  printSectionHeader('Configuration');
-  const configResults = await checkConfiguration();
-  for (const result of configResults) {
-    printCheckResult(result);
-    if (result.status === 'fail') hasErrors = true;
-    if (result.status === 'warn') hasWarnings = true;
-  }
-
-  // Tmux
-  printSectionHeader('Tmux');
-  const tmuxResults = await checkTmux();
-  for (const result of tmuxResults) {
-    printCheckResult(result);
-    if (result.status === 'fail') hasErrors = true;
-    if (result.status === 'warn') hasWarnings = true;
-  }
-
-  // Worker Profiles
-  printSectionHeader('Worker Profiles');
-  const profileResults = await checkWorkerProfiles();
-  for (const result of profileResults) {
-    printCheckResult(result);
-    if (result.status === 'fail') hasErrors = true;
-    if (result.status === 'warn') hasWarnings = true;
-  }
+  runCheckSection('Prerequisites', await checkPrerequisites(), counts);
+  runCheckSection('Configuration', await checkConfiguration(), counts);
+  runCheckSection('Tmux', await checkTmux(), counts);
+  runCheckSection('Worker Profiles', await checkWorkerProfiles(), counts);
 
   // Summary
   console.log();
   console.log(`\x1b[2m${'\u2500'.repeat(40)}\x1b[0m`);
 
-  if (hasErrors) {
+  if (counts.errors) {
     console.log('\x1b[31mSome checks failed.\x1b[0m Run \x1b[36mgenie setup\x1b[0m to fix.');
-  } else if (hasWarnings) {
+  } else if (counts.warnings) {
     console.log('\x1b[33mSome warnings detected.\x1b[0m Everything should still work.');
   } else {
     console.log('\x1b[32mAll checks passed!\x1b[0m');
@@ -460,7 +431,7 @@ export async function doctorCommand(): Promise<void> {
 
   console.log();
 
-  if (hasErrors) {
+  if (counts.errors) {
     process.exit(1);
   }
 }

@@ -80,8 +80,9 @@ const WORKTREE_DIR_NAME = '.genie/worktrees';
 export async function isBdAvailable(): Promise<boolean> {
   try {
     // Use Bun.which if available, otherwise try running bd
-    if (typeof (Bun as any).which === 'function') {
-      return Boolean((Bun as any).which('bd'));
+    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+    if (typeof BunExt.which === 'function') {
+      return Boolean(BunExt.which('bd'));
     }
     await $`bd --version`.quiet();
     return true;
@@ -434,12 +435,5 @@ export async function getWorktreeManager(repoPath: string): Promise<WorktreeMana
   if (await isBdAvailable()) {
     return new BeadsWorktreeManager();
   }
-  return new GitWorktreeManager(repoPath);
-}
-
-/**
- * Create a GitWorktreeManager directly (for cases where git is always preferred)
- */
-function createGitWorktreeManager(repoPath: string): GitWorktreeManager {
   return new GitWorktreeManager(repoPath);
 }

@@ -179,48 +179,8 @@ export function createAutoApproveEngine(options: AutoApproveEngineOptions): Auto
     stats = { approved: 0, denied: 0, escalated: 0, total: 0 };
   }
 
-  async function processRequest(request: PermissionRequest): Promise<Decision> {
-    // If the engine is not running, escalate with a clear reason
-    if (!running) {
-      return {
-        action: 'escalate',
-        reason: 'Auto-approve engine is not running; request requires human review',
-      };
-    }
-
-    // SECURITY: Validate paneId to prevent command injection
-    if (request.paneId && !isValidPaneId(request.paneId)) {
-      const escalateDecision: Decision = {
-        action: 'escalate',
-        reason: `Security: invalid pane ID "${request.paneId}" — possible command injection; escalating to human review`,
-      };
-
-      const auditEntry: AuditLogEntry = {
-        timestamp: new Date().toISOString(),
-        paneId: request.paneId,
-        toolName: request.toolName,
-        action: escalateDecision.action,
-        reason: escalateDecision.reason,
-        wishId: request.wishId,
-        requestId: request.id,
-      };
-
-      try {
-        writeAuditEntry(auditDir, auditEntry);
-      } catch (_err) {
-        // Best-effort audit for invalid paneId; escalation still happens
-      }
-
-      stats.total++;
-      stats.escalated++;
-      return escalateDecision;
-    }
-
-    // Evaluate the request against the config
-    const decision = evaluateRequest(request, config);
-
-    // Build the audit log entry
-    const auditEntry: AuditLogEntry = {
+  function buildAuditEntry(request: PermissionRequest, decision: Decision): AuditLogEntry {
+    return {
       timestamp: new Date().toISOString(),
       paneId: request.paneId,
       toolName: request.toolName,
@@ -229,52 +189,74 @@ export function createAutoApproveEngine(options: AutoApproveEngineOptions): Auto
       wishId: request.wishId,
       requestId: request.id,
     };
+  }
+
+  function recordStat(action: Decision['action']): void {
+    stats.total++;
+    if (action === 'approve') stats.approved++;
+    else if (action === 'deny') stats.denied++;
+    else stats.escalated++;
+  }
+
+  function escalate(reason: string): Decision {
+    return { action: 'escalate', reason };
+  }
+
+  async function deliverApproval(request: PermissionRequest): Promise<void> {
+    if (!request.paneId) return;
+    try {
+      await sendApproval(request.paneId);
+    } catch (err) {
+      const failEntry = buildAuditEntry(
+        request,
+        escalate(
+          `Approval delivery failed via sendApproval (${err instanceof Error ? err.message : String(err)}); send-keys did not reach pane`,
+        ),
+      );
+      try {
+        writeAuditEntry(auditDir, failEntry);
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  async function processRequest(request: PermissionRequest): Promise<Decision> {
+    if (!running) {
+      return escalate('Auto-approve engine is not running; request requires human review');
+    }
+
+    // SECURITY: Validate paneId to prevent command injection
+    if (request.paneId && !isValidPaneId(request.paneId)) {
+      const decision = escalate(
+        `Security: invalid pane ID "${request.paneId}" — possible command injection; escalating to human review`,
+      );
+      try {
+        writeAuditEntry(auditDir, buildAuditEntry(request, decision));
+      } catch {
+        /* best-effort */
+      }
+      recordStat(decision.action);
+      return decision;
+    }
+
+    const decision = evaluateRequest(request, config);
 
     // Write audit log entry — escalate if audit trail cannot be written
     try {
-      writeAuditEntry(auditDir, auditEntry);
+      writeAuditEntry(auditDir, buildAuditEntry(request, decision));
     } catch (err) {
-      // Cannot guarantee audit trail; escalate instead of approving silently
-      const auditFailDecision: Decision = {
-        action: 'escalate',
-        reason: `Audit log write failed (${err instanceof Error ? err.message : String(err)}); escalating to human review to preserve audit trail`,
-      };
-      stats.total++;
-      stats.escalated++;
-      return auditFailDecision;
+      const failDecision = escalate(
+        `Audit log write failed (${err instanceof Error ? err.message : String(err)}); escalating to human review to preserve audit trail`,
+      );
+      recordStat(failDecision.action);
+      return failDecision;
     }
 
-    // Update stats
-    stats.total++;
+    recordStat(decision.action);
+
     if (decision.action === 'approve') {
-      stats.approved++;
-    } else if (decision.action === 'deny') {
-      stats.denied++;
-    } else {
-      stats.escalated++;
-    }
-
-    // If approved and we have a pane ID, send approval
-    if (decision.action === 'approve' && request.paneId) {
-      try {
-        await sendApproval(request.paneId);
-      } catch (err) {
-        // Approval was logged but delivery failed — write a delivery failure audit entry
-        const deliveryFailEntry: AuditLogEntry = {
-          timestamp: new Date().toISOString(),
-          paneId: request.paneId,
-          toolName: request.toolName,
-          action: 'escalate',
-          reason: `Approval delivery failed via sendApproval (${err instanceof Error ? err.message : String(err)}); send-keys did not reach pane`,
-          wishId: request.wishId,
-          requestId: request.id,
-        };
-        try {
-          writeAuditEntry(auditDir, deliveryFailEntry);
-        } catch (_auditErr) {
-          // Best-effort: if audit also fails here, we already logged the decision above
-        }
-      }
+      await deliverApproval(request);
     }
 
     return decision;

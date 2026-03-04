@@ -248,11 +248,16 @@ async function configureClaudio(config: GenieConfig, quick: boolean): Promise<Ge
 // Codex Integration
 // ============================================================================
 
+function printCodexResult(result: 'changed' | 'unchanged' | 'error'): void {
+  if (result === 'changed') console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
+  else if (result === 'unchanged') console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
+  else console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
+}
+
 async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
   printSection('6. Codex Integration', 'Configure OpenAI Codex for genie workers');
 
   const codexCheck = await checkCommand('codex');
-
   if (!codexCheck.exists) {
     console.log('  \x1b[33m!\x1b[0m Codex CLI not found. Skipping codex integration.');
     return config;
@@ -275,31 +280,15 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
 
   if (quick) {
     const result = ensureCodexOtelConfig();
-    if (result === 'changed') {
-      console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
-    } else if (result === 'unchanged') {
-      console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
-    } else {
-      console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
-    }
+    printCodexResult(result);
     config.codex = { configured: result !== 'error' };
     return config;
   }
 
-  const enableCodex = await confirm({
-    message: 'Configure Codex for genie worker integration?',
-    default: true,
-  });
-
+  const enableCodex = await confirm({ message: 'Configure Codex for genie worker integration?', default: true });
   if (enableCodex) {
     const result = ensureCodexOtelConfig();
-    if (result === 'changed') {
-      console.log('  \x1b[32m\u2713\x1b[0m Codex config updated');
-    } else if (result === 'unchanged') {
-      console.log('  \x1b[32m\u2713\x1b[0m Codex config already up to date');
-    } else {
-      console.log('  \x1b[31m\u2717\x1b[0m Failed to update codex config');
-    }
+    printCodexResult(result);
     config.codex = { configured: result !== 'error' };
   } else {
     console.log('  Skipped. Run \x1b[36mgenie setup --codex\x1b[0m later.');

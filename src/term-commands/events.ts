@@ -176,6 +176,19 @@ export async function readEventsFromFile(paneId: string, genieDir?: string): Pro
  * Aggregate events from all pane event files.
  * Returns events sorted by timestamp (oldest first).
  */
+function parseJsonlFile(content: string): NormalizedEvent[] {
+  const events: NormalizedEvent[] = [];
+  for (const line of content.trim().split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line) as NormalizedEvent);
+    } catch {
+      // Skip invalid JSON lines
+    }
+  }
+  return events;
+}
+
 export async function aggregateAllEvents(genieDir?: string): Promise<NormalizedEvent[]> {
   const eventsDir = getEventsDir(genieDir);
   const allEvents: NormalizedEvent[] = [];
@@ -184,41 +197,20 @@ export async function aggregateAllEvents(genieDir?: string): Promise<NormalizedE
     const files = await readdir(eventsDir);
 
     for (const file of files) {
-      if (file.endsWith('.jsonl')) {
-        const filePath = join(eventsDir, file);
-        try {
-          const content = await readFile(filePath, 'utf-8');
-          const lines = content.trim().split('\n');
-
-          for (const line of lines) {
-            if (line.trim()) {
-              try {
-                allEvents.push(JSON.parse(line) as NormalizedEvent);
-              } catch {
-                // Skip invalid JSON lines
-              }
-            }
-          }
-        } catch {
-          // Skip files that can't be read
-        }
+      if (!file.endsWith('.jsonl')) continue;
+      try {
+        const content = await readFile(join(eventsDir, file), 'utf-8');
+        allEvents.push(...parseJsonlFile(content));
+      } catch {
+        // Skip files that can't be read
       }
     }
   } catch (err) {
     const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    // Events directory doesn't exist
-    if (errCode !== 'ENOENT') {
-      throw err;
-    }
+    if (errCode !== 'ENOENT') throw err;
   }
 
-  // Sort by timestamp
-  allEvents.sort((a, b) => {
-    const timeA = new Date(a.timestamp).getTime();
-    const timeB = new Date(b.timestamp).getTime();
-    return timeA - timeB;
-  });
-
+  allEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   return allEvents;
 }
 
@@ -240,33 +232,6 @@ export async function cleanupEventFile(paneId: string, genieDir?: string): Promi
   }
 }
 
-/**
- * List all pane IDs that have event files.
- */
-async function listEventFiles(genieDir?: string): Promise<string[]> {
-  const eventsDir = getEventsDir(genieDir);
-  const paneIds: string[] = [];
-
-  try {
-    const files = await readdir(eventsDir);
-
-    for (const file of files) {
-      if (file.endsWith('.jsonl')) {
-        // Extract pane ID from filename (e.g., %42.jsonl -> %42)
-        paneIds.push(file.replace('.jsonl', ''));
-      }
-    }
-  } catch (err) {
-    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    // Events directory doesn't exist
-    if (errCode !== 'ENOENT') {
-      throw err;
-    }
-  }
-
-  return paneIds;
-}
-
 // ============================================================================
 // Event Parsing
 // ============================================================================
@@ -275,65 +240,41 @@ async function listEventFiles(genieDir?: string): Promise<string[]> {
  * Parse a Claude log entry into a normalized event.
  * Returns null if the entry doesn't represent a relevant event.
  */
+function parseProgressEvent(entry: ClaudeLogEntry, base: Record<string, unknown>): NormalizedEvent | null {
+  const data = entry.data as Record<string, unknown>;
+  if (data.type === 'permission_request' || data.waitingForPermission) {
+    return { ...base, type: 'permission_request', toolName: (data.toolName as string) || undefined } as NormalizedEvent;
+  }
+  if (data.type === 'session_end' || data.type === 'conversation_end') {
+    return { ...base, type: 'session_end', exitReason: (data.reason as string) || 'completed' } as NormalizedEvent;
+  }
+  return null;
+}
+
 export function parseLogEntryToEvent(entry: ClaudeLogEntry, workerContext?: WorkerContext): NormalizedEvent | null {
   const base = {
     timestamp: entry.timestamp,
     sessionId: entry.sessionId,
     cwd: entry.cwd,
     gitBranch: entry.gitBranch,
-    // Worker context enrichment
     paneId: workerContext?.paneId,
     wishId: workerContext?.wishSlug,
     taskId: workerContext?.taskId,
   };
 
-  // Session start: first user message (parentUuid is null)
   if (entry.type === 'user' && !entry.parentUuid) {
-    return {
-      ...base,
-      type: 'session_start',
-    };
+    return { ...base, type: 'session_start' };
   }
 
-  // Tool calls: assistant messages with tool_use content
   if (entry.type === 'assistant' && entry.toolCalls && entry.toolCalls.length > 0) {
-    // Return first tool call (could be expanded to return multiple events)
     const tool = entry.toolCalls[0];
-    return {
-      ...base,
-      type: 'tool_call',
-      toolName: tool.name,
-      toolInput: tool.input,
-      toolCallId: tool.id,
-    };
+    return { ...base, type: 'tool_call', toolName: tool.name, toolInput: tool.input, toolCallId: tool.id };
   }
 
-  // Permission request detection from progress events
   if (entry.type === 'progress' && entry.data) {
-    const data = entry.data as Record<string, unknown>;
-    // Check for permission-related progress events
-    if (data.type === 'permission_request' || data.waitingForPermission) {
-      return {
-        ...base,
-        type: 'permission_request',
-        toolName: (data.toolName as string) || undefined,
-      };
-    }
+    return parseProgressEvent(entry, base);
   }
 
-  // Session end: detect via specific progress event types
-  if (entry.type === 'progress' && entry.data) {
-    const data = entry.data as Record<string, unknown>;
-    if (data.type === 'session_end' || data.type === 'conversation_end') {
-      return {
-        ...base,
-        type: 'session_end',
-        exitReason: (data.reason as string) || 'completed',
-      };
-    }
-  }
-
-  // Not a relevant event
   return null;
 }
 
@@ -360,114 +301,122 @@ async function getPaneWorkdir(paneId: string): Promise<string | undefined> {
 // ============================================================================
 
 /**
+ * Resolve pane context: worker info, working directory, and log path.
+ */
+async function resolvePaneContext(paneId: string) {
+  const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
+
+  const worker = await registry.findByPane(normalizedPaneId);
+  const workerContext: WorkerContext | undefined = worker
+    ? { paneId: worker.paneId, wishSlug: worker.wishSlug, taskId: worker.taskId }
+    : undefined;
+
+  let workdir = worker?.repoPath;
+  if (!workdir) {
+    workdir = await getPaneWorkdir(normalizedPaneId);
+  }
+
+  if (!workdir) {
+    console.error(`Could not determine working directory for pane ${normalizedPaneId}`);
+    process.exit(1);
+  }
+
+  const logInfo = await getLogsForPane(workdir);
+  if (!logInfo) {
+    console.error(`No Claude Code logs found for pane ${normalizedPaneId}`);
+    console.error(`Working directory: ${workdir}`);
+    process.exit(1);
+  }
+
+  return { normalizedPaneId, workerContext, logInfo };
+}
+
+/**
+ * Tail mode: stream events in real-time, optionally writing to event file.
+ */
+async function tailEvents(
+  logPath: string,
+  normalizedPaneId: string,
+  workerContext: WorkerContext | undefined,
+  options: EventsOptions,
+): Promise<void> {
+  if (options.emit) {
+    console.error(`Writing events to ${getEventFilePath(normalizedPaneId)}...`);
+  }
+  console.error(`Tailing events from ${logPath}...`);
+  console.error('Press Ctrl+C to stop.\n');
+
+  const cleanup = await tailLogFile(logPath, async (entry) => {
+    const event = parseLogEntryToEvent(entry, workerContext);
+    if (!event) return;
+    if (!options.emit || options.json || options.follow) {
+      outputEvent(event, options);
+    }
+    if (options.emit) {
+      await writeEventToFile(event, normalizedPaneId);
+    }
+  });
+
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(0);
+  });
+  await new Promise(() => {});
+}
+
+/**
+ * Read mode: show recent events from log file.
+ */
+async function readEvents(
+  logPath: string,
+  workerContext: WorkerContext | undefined,
+  options: EventsOptions,
+): Promise<void> {
+  const entries = await readLogFile(logPath);
+  const events: NormalizedEvent[] = [];
+  for (const entry of entries) {
+    const event = parseLogEntryToEvent(entry, workerContext);
+    if (event) events.push(event);
+  }
+
+  const limit = options.lines || 20;
+  const recentEvents = events.slice(-limit);
+
+  if (options.json) {
+    console.log(JSON.stringify(recentEvents, null, 2));
+    return;
+  }
+  if (recentEvents.length === 0) {
+    console.log('No events found.');
+    return;
+  }
+  for (const event of recentEvents) {
+    outputEvent(event, options);
+  }
+}
+
+/**
  * Main events command entry point.
  * Supports single pane, all workers, follow mode, and emit mode.
  */
 export async function eventsCommand(paneId: string | undefined, options: EventsOptions = {}): Promise<void> {
   try {
-    // Handle --all mode: aggregate events from all workers
     if (options.all) {
       await eventsAllCommand(options);
       return;
     }
 
-    // Require pane ID for single-pane mode
     if (!paneId) {
       console.error('Error: pane-id is required (or use --all for all workers)');
       process.exit(1);
     }
 
-    // Normalize pane ID
-    const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
-
-    // Look up worker context from registry
-    const worker = await registry.findByPane(normalizedPaneId);
-    const workerContext: WorkerContext | undefined = worker
-      ? {
-          paneId: worker.paneId,
-          wishSlug: worker.wishSlug,
-          taskId: worker.taskId,
-        }
-      : undefined;
-
-    // Get pane working directory
-    let workdir = worker?.repoPath;
-    if (!workdir) {
-      workdir = await getPaneWorkdir(normalizedPaneId);
-    }
-
-    if (!workdir) {
-      console.error(`Could not determine working directory for pane ${normalizedPaneId}`);
-      process.exit(1);
-    }
-
-    // Find Claude logs for this pane
-    const logInfo = await getLogsForPane(workdir);
-    if (!logInfo) {
-      console.error(`No Claude Code logs found for pane ${normalizedPaneId}`);
-      console.error(`Working directory: ${workdir}`);
-      process.exit(1);
-    }
+    const { normalizedPaneId, workerContext, logInfo } = await resolvePaneContext(paneId);
 
     if (options.follow || options.emit) {
-      // Tail mode: stream events in real-time
-      if (options.emit) {
-        const eventFile = getEventFilePath(normalizedPaneId);
-        console.error(`Writing events to ${eventFile}...`);
-      }
-      console.error(`Tailing events from ${logInfo.logPath}...`);
-      console.error('Press Ctrl+C to stop.\n');
-
-      const cleanup = await tailLogFile(logInfo.logPath, async (entry) => {
-        const event = parseLogEntryToEvent(entry, workerContext);
-        if (event) {
-          // Always output to console unless in pure emit mode
-          if (!options.emit || options.json || options.follow) {
-            outputEvent(event, options);
-          }
-
-          // Write to event file if --emit is enabled
-          if (options.emit) {
-            await writeEventToFile(event, normalizedPaneId);
-          }
-        }
-      });
-
-      // Handle Ctrl+C
-      process.on('SIGINT', () => {
-        cleanup();
-        process.exit(0);
-      });
-
-      // Keep running
-      await new Promise(() => {});
+      await tailEvents(logInfo.logPath, normalizedPaneId, workerContext, options);
     } else {
-      // Read mode: show recent events
-      const entries = await readLogFile(logInfo.logPath);
-      const events: NormalizedEvent[] = [];
-
-      for (const entry of entries) {
-        const event = parseLogEntryToEvent(entry, workerContext);
-        if (event) {
-          events.push(event);
-        }
-      }
-
-      // Limit to last N events
-      const limit = options.lines || 20;
-      const recentEvents = events.slice(-limit);
-
-      if (options.json) {
-        console.log(JSON.stringify(recentEvents, null, 2));
-      } else {
-        if (recentEvents.length === 0) {
-          console.log('No events found.');
-        } else {
-          for (const event of recentEvents) {
-            outputEvent(event, options);
-          }
-        }
-      }
+      await readEvents(logInfo.logPath, workerContext, options);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

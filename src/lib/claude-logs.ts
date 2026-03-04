@@ -156,30 +156,6 @@ export async function findClaudeProjectDir(projectPath: string, claudeDir?: stri
   }
 }
 
-/**
- * List all Claude project directories
- */
-async function listClaudeProjects(claudeDir?: string): Promise<string[]> {
-  const projectsDir = getProjectsDir(claudeDir);
-
-  try {
-    const entries = await readdir(projectsDir);
-    const projects: string[] = [];
-
-    for (const entry of entries) {
-      const projectPath = join(projectsDir, entry);
-      const stats = await stat(projectPath);
-      if (stats.isDirectory()) {
-        projects.push(projectPath);
-      }
-    }
-
-    return projects;
-  } catch {
-    return [];
-  }
-}
-
 // ============================================================================
 // Session Discovery
 // ============================================================================
@@ -258,13 +234,6 @@ export async function findActiveSession(projectDir: string): Promise<ClaudeSessi
   return sessions[0];
 }
 
-/**
- * Get the log file path for a session
- */
-function getSessionLogPath(projectDir: string, sessionId: string): string {
-  return join(projectDir, `${sessionId}.jsonl`);
-}
-
 // ============================================================================
 // Log Entry Parsing
 // ============================================================================
@@ -275,18 +244,42 @@ function getSessionLogPath(projectDir: string, sessionId: string): string {
  * @param line - A single line from a .jsonl log file
  * @returns Parsed log entry, or null if invalid
  */
-export function parseLogEntry(line: string): ClaudeLogEntry | null {
-  if (!line || !line.trim()) {
-    return null;
+function extractToolCalls(content: unknown[]): ToolCall[] | undefined {
+  const toolCalls: ToolCall[] = [];
+  for (const item of content as { type?: string; id?: string; name?: string; input?: unknown }[]) {
+    if (item.type === 'tool_use') {
+      toolCalls.push({
+        id: item.id || '',
+        name: item.name || '',
+        input: (item.input || {}) as Record<string, unknown>,
+      });
+    }
   }
+  return toolCalls.length > 0 ? toolCalls : undefined;
+}
+
+function populateAssistantFields(
+  entry: ClaudeLogEntry,
+  raw: { type: string; message: { content?: unknown; model?: string; usage?: unknown } },
+): void {
+  if (raw.type !== 'assistant') return;
+  if (Array.isArray(raw.message.content)) {
+    entry.toolCalls = extractToolCalls(raw.message.content);
+  }
+  if (raw.message.model) {
+    entry.model = raw.message.model;
+    if (raw.message.usage) {
+      entry.usage = raw.message.usage as { input_tokens: number; output_tokens: number };
+    }
+  }
+}
+
+export function parseLogEntry(line: string): ClaudeLogEntry | null {
+  if (!line || !line.trim()) return null;
 
   try {
     const raw = JSON.parse(line);
-
-    // Basic validation - must have type
-    if (!raw.type) {
-      return null;
-    }
+    if (!raw.type) return null;
 
     const entry: ClaudeLogEntry = {
       type: raw.type,
@@ -300,42 +293,11 @@ export function parseLogEntry(line: string): ClaudeLogEntry | null {
       raw,
     };
 
-    // Handle message content
     if (raw.message) {
-      entry.message = {
-        role: raw.message.role,
-        content: raw.message.content,
-      };
-
-      // Extract tool calls from assistant messages
-      if (raw.type === 'assistant' && Array.isArray(raw.message.content)) {
-        const toolCalls: ToolCall[] = [];
-
-        for (const item of raw.message.content) {
-          if (item.type === 'tool_use') {
-            toolCalls.push({
-              id: item.id || '',
-              name: item.name || '',
-              input: item.input || {},
-            });
-          }
-        }
-
-        if (toolCalls.length > 0) {
-          entry.toolCalls = toolCalls;
-        }
-      }
-
-      // Extract model and usage from assistant messages
-      if (raw.type === 'assistant' && raw.message.model) {
-        entry.model = raw.message.model;
-        if (raw.message.usage) {
-          entry.usage = raw.message.usage;
-        }
-      }
+      entry.message = { role: raw.message.role, content: raw.message.content };
+      populateAssistantFields(entry, raw);
     }
 
-    // Handle progress data
     if (raw.data) {
       entry.data = raw.data;
     }
@@ -360,38 +322,6 @@ export async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
     const lines = content.split('\n');
 
     for (const line of lines) {
-      const entry = parseLogEntry(line);
-      if (entry) {
-        entries.push(entry);
-      }
-    }
-  } catch {
-    // File doesn't exist or can't be read
-  }
-
-  return entries;
-}
-
-/**
- * Read the last N entries from a log file (most recent).
- * More efficient than reading the entire file.
- *
- * @param logPath - Path to the .jsonl log file
- * @param count - Number of entries to read from the end
- * @returns Array of parsed log entries (most recent last)
- */
-async function readLastEntries(logPath: string, count: number): Promise<ClaudeLogEntry[]> {
-  const entries: ClaudeLogEntry[] = [];
-
-  try {
-    const content = await readFile(logPath, 'utf-8');
-    const lines = content.split('\n').filter((line) => line.trim());
-
-    // Get last N lines
-    const startIndex = Math.max(0, lines.length - count);
-    const lastLines = lines.slice(startIndex);
-
-    for (const line of lastLines) {
       const entry = parseLogEntry(line);
       if (entry) {
         entries.push(entry);
@@ -433,48 +363,37 @@ export async function tailLogFile(
     // File doesn't exist yet, start from 0
   }
 
+  async function readNewContent(fromOffset: number): Promise<string> {
+    const { createReadStream } = await import('node:fs');
+    const stream = createReadStream(logPath, { start: fromOffset, encoding: 'utf-8' });
+    let content = '';
+    for await (const chunk of stream) {
+      content += chunk;
+    }
+    return content;
+  }
+
+  function processLines(newContent: string): void {
+    const content = pendingBuffer + newContent;
+    const lines = content.split('\n');
+    pendingBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const entry = parseLogEntry(line);
+      if (entry) onEntry(entry);
+    }
+  }
+
   const poll = async () => {
     if (!running) return;
 
     try {
-      const stats = await stat(logPath);
-      const currentSize = stats.size;
-
+      const currentSize = (await stat(logPath)).size;
       if (currentSize > lastSize) {
-        // Read new content
-        const { createReadStream } = await import('node:fs');
-        const { promisify } = await import('node:util');
-
-        // Create a read stream starting from last position
-        const stream = createReadStream(logPath, {
-          start: lastSize,
-          encoding: 'utf-8',
-        });
-
-        let newContent = '';
-        for await (const chunk of stream) {
-          newContent += chunk;
-        }
-
-        // Process new content line by line
-        const content = pendingBuffer + newContent;
-        const lines = content.split('\n');
-
-        // Last element might be incomplete, save it for next poll
-        pendingBuffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const entry = parseLogEntry(line);
-          if (entry) {
-            onEntry(entry);
-          }
-        }
-
+        processLines(await readNewContent(lastSize));
         lastSize = currentSize;
       }
-    } catch (_error) {
+    } catch {
       // File might have been deleted or rotated
-      // Just continue polling
     }
 
     if (running) {

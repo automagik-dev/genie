@@ -239,6 +239,39 @@ async function promptForSetup(options: InstallOptions): Promise<void> {
   }
 }
 
+interface InstallResults {
+  installed: string[];
+  skipped: string[];
+  failed: string[];
+}
+
+function printInstallSummary(
+  results: InstallResults,
+  missingRequired: Array<{ name: string }>,
+  missingOptional: Array<{ name: string }>,
+): boolean {
+  printSeparator();
+  console.log('\x1b[1mSummary:\x1b[0m');
+
+  const requiredFailed = results.failed.filter((name) => missingRequired.some((p) => p.name === name));
+  const optionalSkipped = results.skipped.filter((name) => missingOptional.some((p) => p.name === name));
+
+  if (requiredFailed.length > 0) {
+    console.log(`\x1b[31m  ❌ ${requiredFailed.length} required failed: ${requiredFailed.join(', ')}\x1b[0m`);
+  } else {
+    console.log('\x1b[32m  ✅ All required prerequisites installed\x1b[0m');
+  }
+  if (results.installed.length > 0) {
+    console.log(`\x1b[32m  ✅ Installed: ${results.installed.join(', ')}\x1b[0m`);
+  }
+  if (optionalSkipped.length > 0) {
+    console.log(`\x1b[33m  ⚠️  ${optionalSkipped.length} optional skipped: ${optionalSkipped.join(', ')}\x1b[0m`);
+  }
+  console.log();
+
+  return requiredFailed.length === 0;
+}
+
 export async function installCommand(options: InstallOptions): Promise<void> {
   printHeader();
 
@@ -249,20 +282,18 @@ export async function installCommand(options: InstallOptions): Promise<void> {
   printPrerequisiteStatus(prereqs);
 
   const missing = prereqs.filter((p) => !p.installed);
-  const missingRequired = missing.filter((p) => p.required);
-  const missingOptional = missing.filter((p) => !p.required);
 
   if (missing.length === 0) {
     console.log('\x1b[32m✅ All prerequisites are installed!\x1b[0m');
     console.log();
-
-    // Offer to run setup if not already configured
     await promptForSetup(options);
-
     console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
     console.log();
     return;
   }
+
+  const missingRequired = missing.filter((p) => p.required);
+  const missingOptional = missing.filter((p) => !p.required);
 
   console.log(`Missing: ${missingRequired.length} required, ${missingOptional.length} optional`);
   console.log();
@@ -278,58 +309,23 @@ export async function installCommand(options: InstallOptions): Promise<void> {
 
   printSeparator();
 
-  const results = {
-    installed: [] as string[],
-    skipped: [] as string[],
-    failed: [] as string[],
-  };
+  const results: InstallResults = { installed: [], skipped: [], failed: [] };
 
-  // Install missing prerequisites
   for (const prereq of missing) {
     const command = getInstallCommand(prereq.name, system.preferredPM);
     const result = await promptAndInstall(prereq, command, options);
 
-    if (result === 'installed') {
-      results.installed.push(prereq.name);
-    } else if (result === 'skipped') {
-      results.skipped.push(prereq.name);
-    } else {
-      results.failed.push(prereq.name);
-    }
+    if (result === 'installed') results.installed.push(prereq.name);
+    else if (result === 'skipped') results.skipped.push(prereq.name);
+    else results.failed.push(prereq.name);
 
-    if (prereq !== missing[missing.length - 1]) {
-      printSeparator();
-    }
+    if (prereq !== missing[missing.length - 1]) printSeparator();
   }
 
-  // Print summary
-  printSeparator();
-  console.log('\x1b[1mSummary:\x1b[0m');
+  const allRequiredOk = printInstallSummary(results, missingRequired, missingOptional);
 
-  const requiredInstalled = results.installed.filter((name) => missingRequired.some((p) => p.name === name));
-  const requiredFailed = results.failed.filter((name) => missingRequired.some((p) => p.name === name));
-  const optionalSkipped = results.skipped.filter((name) => missingOptional.some((p) => p.name === name));
-
-  if (requiredFailed.length > 0) {
-    console.log(`\x1b[31m  ❌ ${requiredFailed.length} required failed: ${requiredFailed.join(', ')}\x1b[0m`);
-  } else if (requiredInstalled.length > 0 || missingRequired.length === 0) {
-    console.log('\x1b[32m  ✅ All required prerequisites installed\x1b[0m');
-  }
-
-  if (results.installed.length > 0) {
-    console.log(`\x1b[32m  ✅ Installed: ${results.installed.join(', ')}\x1b[0m`);
-  }
-
-  if (optionalSkipped.length > 0) {
-    console.log(`\x1b[33m  ⚠️  ${optionalSkipped.length} optional skipped: ${optionalSkipped.join(', ')}\x1b[0m`);
-  }
-
-  console.log();
-
-  if (requiredFailed.length === 0) {
-    // Offer to run setup after successful installation
+  if (allRequiredOk) {
     await promptForSetup(options);
-
     console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
   } else {
     console.log('\x1b[31mSome required prerequisites could not be installed.\x1b[0m');

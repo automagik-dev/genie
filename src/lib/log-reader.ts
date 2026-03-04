@@ -16,33 +16,23 @@ export interface ReadOptions {
 /**
  * Strip internal TMUX_MCP markers from log output
  */
-function stripTmuxMarkers(content: string): string {
-  const lines = content.split('\n');
+function isTmuxMarkerOrNoise(line: string): boolean {
+  const trimmed = line.trim();
 
-  // First pass: mark lines to remove
-  const filtered = lines.filter((line) => {
-    const trimmed = line.trim();
+  // Marker lines and fragments
+  if (trimmed.includes('TMUX_MCP_START') || trimmed.includes('TMUX_MCP_DONE_')) return true;
+  if (line.includes('echo "TMUX_MCP_START"') || line.includes('echo "TMUX_MCP_DONE_')) return true;
 
-    // Remove complete marker lines
-    if (trimmed.match(/^TMUX_MCP_START$/)) return false;
-    if (trimmed.match(/^TMUX_MCP_DONE_\d+$/)) return false;
-
-    // Remove partial marker fragments (from split echo commands)
-    if (trimmed.includes('TMUX_MCP_START')) return false;
-    if (trimmed.includes('TMUX_MCP_DONE_')) return false;
-
-    // Remove lines containing echo commands for markers
-    if (line.includes('echo "TMUX_MCP_START"')) return false;
-    if (line.includes('echo "TMUX_MCP_DONE_')) return false;
-
-    // Remove bash locale warnings and fragments
-    if (line.includes('-bash:')) return false;
-    if (line.includes('warning: setlocale:')) return false;
-    if (line.includes('cannot change locale')) return false;
-    if (trimmed === 'or directory') return false; // Orphan fragment from wrapped warning
-
+  // Bash locale warnings and fragments
+  if (line.includes('-bash:') || line.includes('warning: setlocale:') || line.includes('cannot change locale'))
     return true;
-  });
+  if (trimmed === 'or directory') return true;
+
+  return false;
+}
+
+function stripTmuxMarkers(content: string): string {
+  const filtered = content.split('\n').filter((line) => !isTmuxMarkerOrNoise(line));
 
   // Remove leading/trailing empty lines
   while (filtered.length > 0 && filtered[0].trim() === '') {
@@ -58,34 +48,53 @@ function stripTmuxMarkers(content: string): string {
 /**
  * Read logs from a tmux session with comprehensive filtering options
  */
+async function resolveActivePaneId(sessionName: string, session: { id: string }): Promise<string> {
+  const windows = await tmux.listWindows(session.id);
+  if (!windows || windows.length === 0) {
+    throw new Error(`No windows found in session "${sessionName}"`);
+  }
+
+  const activeWindow = windows.find((w) => w.active) || windows[0];
+  const panes = await tmux.listPanes(activeWindow.id);
+  if (!panes || panes.length === 0) {
+    throw new Error(`No panes found in session "${sessionName}"`);
+  }
+
+  return (panes.find((p) => p.active) || panes[0]).id;
+}
+
+function maybeReverse(content: string, reverse?: boolean): string {
+  return reverse ? content.split('\n').reverse().join('\n') : content;
+}
+
+function readRange(paneContent: string, from: number, to: number, reverse?: boolean): string {
+  const lines = stripTmuxMarkers(paneContent).split('\n');
+  return maybeReverse(lines.slice(from, to + 1).join('\n'), reverse);
+}
+
+function searchContent(paneContent: string, pattern: string, reverse?: boolean): string {
+  const lines = stripTmuxMarkers(paneContent).split('\n');
+  try {
+    const regex = new RegExp(pattern, 'i');
+    const matched = lines.filter((line) => regex.test(line));
+    return maybeReverse(matched.join('\n'), reverse);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid regex pattern: ${message}`);
+  }
+}
+
 export async function readSessionLogs(sessionName: string, options: ReadOptions = {}): Promise<string> {
-  // Find session
   const session = await tmux.findSessionByName(sessionName);
   if (!session) {
     throw new Error(`Session "${sessionName}" not found`);
   }
 
-  // Use specified pane or find active pane
-  let paneId: string;
-
-  if (options.pane) {
-    paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
-  } else {
-    const windows = await tmux.listWindows(session.id);
-    if (!windows || windows.length === 0) {
-      throw new Error(`No windows found in session "${sessionName}"`);
-    }
-
-    const activeWindow = windows.find((w) => w.active) || windows[0];
-
-    const panes = await tmux.listPanes(activeWindow.id);
-    if (!panes || panes.length === 0) {
-      throw new Error(`No panes found in session "${sessionName}"`);
-    }
-
-    const activePane = panes.find((p) => p.active) || panes[0];
-    paneId = activePane.id;
-  }
+  const paneId = options.pane
+    ? options.pane.startsWith('%')
+      ? options.pane
+      : `%${options.pane}`
+    : await resolveActivePaneId(sessionName, session);
 
   // Parse range if provided
   if (options.range) {
@@ -96,60 +105,22 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions 
     }
   }
 
-  // Handle different read modes
   if (options.all) {
-    // Get entire scrollback buffer (tmux history limit, usually 2000-10000 lines)
-    const content = await tmux.capturePaneContent(paneId, 10000);
-    return stripTmuxMarkers(content);
+    return stripTmuxMarkers(await tmux.capturePaneContent(paneId, 10000));
   }
 
   if (options.from !== undefined && options.to !== undefined) {
-    // Read specific range
-    const fullContent = await tmux.capturePaneContent(paneId, 10000);
-    const cleanContent = stripTmuxMarkers(fullContent);
-    const lines = cleanContent.split('\n');
-    const rangeContent = lines.slice(options.from, options.to + 1).join('\n');
-
-    if (options.reverse) {
-      return rangeContent.split('\n').reverse().join('\n');
-    }
-
-    return rangeContent;
+    return readRange(await tmux.capturePaneContent(paneId, 10000), options.from, options.to, options.reverse);
   }
 
   if (options.search || options.grep) {
-    // Search logs
     const pattern = options.search ?? options.grep ?? '';
-    const fullContent = await tmux.capturePaneContent(paneId, 10000);
-    const cleanContent = stripTmuxMarkers(fullContent);
-    const lines = cleanContent.split('\n');
-
-    try {
-      const regex = new RegExp(pattern, 'i');
-      const matchedLines = lines.filter((line) => regex.test(line));
-
-      if (options.reverse) {
-        return matchedLines.reverse().join('\n');
-      }
-
-      return matchedLines.join('\n');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Invalid regex pattern: ${message}`);
-    }
+    return searchContent(await tmux.capturePaneContent(paneId, 10000), pattern, options.reverse);
   }
 
   // Default: last N lines
-  const lineCount = options.lines || 100;
-  let content = await tmux.capturePaneContent(paneId, lineCount);
-  content = stripTmuxMarkers(content);
-
-  if (options.reverse) {
-    // Newest first
-    content = content.split('\n').reverse().join('\n');
-  }
-
-  return content;
+  const content = stripTmuxMarkers(await tmux.capturePaneContent(paneId, options.lines || 100));
+  return maybeReverse(content, options.reverse);
 }
 
 /**
@@ -189,6 +160,16 @@ export async function followSessionLogs(
   let lastContent = '';
   let following = true;
 
+  function emitNewLines(oldContent: string, newContent: string): void {
+    const newLines = newContent.split('\n');
+    const oldLines = oldContent.split('\n');
+    const startIndex = oldLines.length > 0 ? oldLines.length - 1 : 0;
+    const lastOldLine = oldLines[oldLines.length - 1];
+    for (const line of newLines.slice(startIndex)) {
+      if (line && line !== lastOldLine) callback(line);
+    }
+  }
+
   // Poll for new content every 500ms
   const pollInterval = setInterval(async () => {
     if (!following) {
@@ -197,27 +178,12 @@ export async function followSessionLogs(
     }
 
     try {
-      const rawContent = await tmux.capturePaneContent(paneId, 100);
-      const content = stripTmuxMarkers(rawContent);
-
+      const content = stripTmuxMarkers(await tmux.capturePaneContent(paneId, 100));
       if (content !== lastContent) {
-        const newLines = content.split('\n');
-        const oldLines = lastContent.split('\n');
-
-        // Find new lines by comparing arrays
-        const startIndex = oldLines.length > 0 ? oldLines.length - 1 : 0;
-        const addedLines = newLines.slice(startIndex);
-
-        addedLines.forEach((line) => {
-          if (line && line !== oldLines[oldLines.length - 1]) {
-            callback(line);
-          }
-        });
-
+        emitNewLines(lastContent, content);
         lastContent = content;
       }
-    } catch (_error) {
-      // Session might have been closed
+    } catch {
       clearInterval(pollInterval);
       following = false;
     }

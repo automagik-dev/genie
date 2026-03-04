@@ -65,11 +65,3 @@ export function getRepoGenieDir(repoPath: string): string {
 
   return localDir;
 }
-
-/**
- * Heuristic: treat repo as "local-backend capable" if it has (or intends to have)
- * a tracked .genie/ directory.
- */
-function hasRepoGenieDir(repoPath: string): boolean {
-  return existsSync(getRepoGenieDir(repoPath));
-}

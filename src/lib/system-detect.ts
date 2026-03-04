@@ -35,30 +35,34 @@ function getOSType(): OSType {
   return 'unknown';
 }
 
+function matchDistro(id: string, idLike: string): LinuxDistro {
+  const distroChecks: Array<{ distro: LinuxDistro; ids: string[] }> = [
+    { distro: 'ubuntu', ids: ['ubuntu'] },
+    { distro: 'debian', ids: ['debian'] },
+    { distro: 'fedora', ids: ['fedora'] },
+    { distro: 'rhel', ids: ['rhel', 'centos', 'rocky', 'almalinux'] },
+    { distro: 'arch', ids: ['arch'] },
+  ];
+
+  for (const { distro, ids } of distroChecks) {
+    if (ids.includes(id) || ids.some((d) => idLike.includes(d))) return distro;
+  }
+  return 'unknown';
+}
+
 async function parseOsRelease(): Promise<LinuxDistro> {
   try {
     const content = await readFile('/etc/os-release', 'utf-8');
-    const lines = content.split('\n');
     const info: Record<string, string> = {};
 
-    for (const line of lines) {
+    for (const line of content.split('\n')) {
       const [key, ...valueParts] = line.split('=');
       if (key && valueParts.length > 0) {
         info[key] = valueParts.join('=').replace(/^"|"$/g, '');
       }
     }
 
-    const id = (info.ID || '').toLowerCase();
-    const idLike = (info.ID_LIKE || '').toLowerCase();
-
-    if (id === 'ubuntu' || idLike.includes('ubuntu')) return 'ubuntu';
-    if (id === 'debian' || idLike.includes('debian')) return 'debian';
-    if (id === 'fedora' || idLike.includes('fedora')) return 'fedora';
-    if (id === 'rhel' || id === 'centos' || id === 'rocky' || id === 'almalinux' || idLike.includes('rhel'))
-      return 'rhel';
-    if (id === 'arch' || idLike.includes('arch')) return 'arch';
-
-    return 'unknown';
+    return matchDistro((info.ID || '').toLowerCase(), (info.ID_LIKE || '').toLowerCase());
   } catch {
     return 'unknown';
   }

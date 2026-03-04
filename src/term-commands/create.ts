@@ -15,6 +15,16 @@ export interface CreateOptions {
   json?: boolean;
 }
 
+async function handleWishLink(repoPath: string, wish: string, taskId: string, title: string): Promise<void> {
+  if (await wishExists(repoPath, wish)) {
+    await linkTask(repoPath, wish, taskId, title);
+    console.log(`✅ Created ${taskId} and linked to wish "${wish}"`);
+  } else {
+    console.log(`✅ Created ${taskId}`);
+    console.warn(`⚠️  Wish "${wish}" not found - task not linked`);
+  }
+}
+
 export async function createCommand(title: string, options: CreateOptions = {}): Promise<void> {
   const repoPath = process.cwd();
   const backend = getBackend(repoPath);
@@ -25,15 +35,8 @@ export async function createCommand(title: string, options: CreateOptions = {}):
       parent: options.parent,
     });
 
-    // Link to wish if specified
     if (options.wish) {
-      if (await wishExists(repoPath, options.wish)) {
-        await linkTask(repoPath, options.wish, task.id, title);
-        console.log(`✅ Created ${task.id} and linked to wish "${options.wish}"`);
-      } else {
-        console.log(`✅ Created ${task.id}`);
-        console.warn(`⚠️  Wish "${options.wish}" not found - task not linked`);
-      }
+      await handleWishLink(repoPath, options.wish, task.id, title);
     } else if (options.json) {
       const full = await backend.get(task.id);
       console.log(JSON.stringify(full || task, null, 2));
@@ -47,12 +50,11 @@ export async function createCommand(title: string, options: CreateOptions = {}):
     if (!options.json) {
       console.log('\nNext steps:');
       console.log(`   genie work ${task.id}           - Start working on it`);
-
-      if (backend.kind === 'beads') {
-        console.log(`   bd show ${task.id}             - View details`);
-      } else {
-        console.log('   (Local tasks live in .genie/tasks.json)');
-      }
+      console.log(
+        backend.kind === 'beads'
+          ? `   bd show ${task.id}             - View details`
+          : '   (Local tasks live in .genie/tasks.json)',
+      );
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

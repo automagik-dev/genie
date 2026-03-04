@@ -84,7 +84,7 @@ async function defaultTmuxLookup(
     const windows = await tmux.listWindows(session.id);
     if (!windows || windows.length === 0) return null;
 
-    let targetWindow;
+    let targetWindow: Awaited<ReturnType<typeof tmux.listWindows>>[number] | undefined;
     if (windowName) {
       targetWindow = windows.find((w) => w.name === windowName);
       if (!targetWindow) return null;
@@ -145,6 +145,79 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
  * @returns ResolvedTarget with paneId and metadata
  * @throws Error with prescriptive message if target cannot be resolved
  */
+async function assertLive(
+  paneId: string,
+  isPaneLive: (id: string) => Promise<boolean>,
+  errorMsg: string,
+  cleanup?: () => Promise<void>,
+): Promise<void> {
+  const live = await isPaneLive(paneId);
+  if (!live) {
+    if (cleanup) await cleanup();
+    throw new Error(errorMsg);
+  }
+}
+
+async function resolveRawPane(
+  target: string,
+  opts: {
+    checkLiveness: boolean;
+    isPaneLive: (id: string) => Promise<boolean>;
+    deriveSession: (id: string) => Promise<string | null>;
+  },
+): Promise<ResolvedTarget> {
+  if (opts.checkLiveness) {
+    await assertLive(
+      target,
+      opts.isPaneLive,
+      `Pane ${target} is dead or does not exist. Check with: tmux list-panes -a`,
+    );
+  }
+  const session = await opts.deriveSession(target);
+  return { paneId: target, session: session ?? undefined, resolvedVia: 'raw' };
+}
+
+async function resolveWindowId(
+  target: string,
+  workers: Record<string, Worker>,
+  opts: { checkLiveness: boolean; isPaneLive: (id: string) => Promise<boolean> },
+): Promise<ResolvedTarget> {
+  const matchingWorker = Object.values(workers).find((w) => w.windowId === target);
+  if (!matchingWorker) {
+    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie worker list' to list workers.`);
+  }
+  if (opts.checkLiveness) {
+    await assertLive(
+      matchingWorker.paneId,
+      opts.isPaneLive,
+      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie worker kill ${matchingWorker.id}' to clean up.`,
+    );
+  }
+  return {
+    paneId: matchingWorker.paneId,
+    session: matchingWorker.session,
+    workerId: matchingWorker.id,
+    resolvedVia: 'worker',
+  };
+}
+
+function resolveWorkerSubPane(worker: Worker, leftSide: string, rightSide: string): string {
+  const index = Number.parseInt(rightSide, 10);
+  if (Number.isNaN(index) || index < 0) {
+    throw new Error(
+      `Invalid sub-pane index "${rightSide}" for worker "${leftSide}". Use a non-negative integer (0 = primary, 1+ = sub-panes).`,
+    );
+  }
+  const paneId = getPaneByIndex(worker, index);
+  if (!paneId) {
+    const maxIndex = worker.subPanes ? worker.subPanes.length : 0;
+    throw new Error(
+      `Worker "${leftSide}" has no sub-pane index ${index}. Available: 0 (primary)${maxIndex > 0 ? `, 1-${maxIndex} (sub-panes)` : ''}. Sub-pane index ${index} does not exist.`,
+    );
+  }
+  return paneId;
+}
+
 export async function resolveTarget(target: string, options: ResolveOptions = {}): Promise<ResolvedTarget> {
   const {
     checkLiveness = false,
@@ -157,66 +230,20 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
 
   debug(`resolving "${target}"`);
 
-  // ---- Level 1: Raw pane ID (starts with %) ----
+  // Level 1: Raw pane ID (starts with %)
   if (target.startsWith('%')) {
-    debug(`"${target}" -> raw pane ID passthrough`);
-
-    if (checkLiveness) {
-      const live = await isPaneLive(target);
-      if (!live) {
-        throw new Error(`Pane ${target} is dead or does not exist. Check with: tmux list-panes -a`);
-      }
-    }
-
-    // Derive session name from pane ID so downstream consumers (e.g., log-reader)
-    // can look up the session. Best-effort: session is optional.
-    const session = await deriveSession(target);
-    debug(`"${target}" -> derived session: ${session || '(none)'}`);
-
-    return {
-      paneId: target,
-      session: session ?? undefined,
-      resolvedVia: 'raw',
-    };
+    return resolveRawPane(target, { checkLiveness, isPaneLive, deriveSession });
   }
 
-  // ---- Level 1.5: Raw window ID (starts with @) -> worker lookup ----
+  // Level 1.5: Raw window ID (starts with @)
   if (target.startsWith('@')) {
-    debug(`"${target}" -> window ID lookup`);
-
     const workers = await getWorkers(injectedWorkers, options.registryPath);
-    const normalizedId = target;
-    const matchingWorker = Object.values(workers).find((w) => w.windowId === normalizedId);
-
-    if (matchingWorker) {
-      debug(`"${target}" -> found worker "${matchingWorker.id}" with pane ${matchingWorker.paneId}`);
-
-      if (checkLiveness) {
-        const live = await isPaneLive(matchingWorker.paneId);
-        if (!live) {
-          throw new Error(
-            `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. ` +
-              `Run 'genie worker kill ${matchingWorker.id}' to clean up.`,
-          );
-        }
-      }
-
-      return {
-        paneId: matchingWorker.paneId,
-        session: matchingWorker.session,
-        workerId: matchingWorker.id,
-        resolvedVia: 'worker',
-      };
-    }
-
-    // No worker owns this window
-    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie worker list' to list workers.`);
+    return resolveWindowId(target, workers, { checkLiveness, isPaneLive });
   }
 
-  // ---- Load workers (injected or from registry) ----
   const workers = await getWorkers(injectedWorkers, options.registryPath);
 
-  // ---- Level 2: Worker[:index] ----
+  // Level 2: Worker[:index] or session:window
   const colonIndex = target.indexOf(':');
   if (colonIndex !== -1) {
     const leftSide = target.substring(0, colonIndex);
@@ -224,95 +251,50 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     const worker = workers[leftSide];
 
     if (worker) {
-      // This is a worker:index pattern
+      const paneId = resolveWorkerSubPane(worker, leftSide, rightSide);
       const index = Number.parseInt(rightSide, 10);
-      if (Number.isNaN(index) || index < 0) {
-        throw new Error(
-          `Invalid sub-pane index "${rightSide}" for worker "${leftSide}". Use a non-negative integer (0 = primary, 1+ = sub-panes).`,
-        );
-      }
-
-      const paneId = getPaneByIndex(worker, index);
-      if (!paneId) {
-        const maxIndex = worker.subPanes ? worker.subPanes.length : 0;
-        throw new Error(
-          `Worker "${leftSide}" has no sub-pane index ${index}. ` +
-            `Available: 0 (primary)${maxIndex > 0 ? `, 1-${maxIndex} (sub-panes)` : ''}. ` +
-            `Sub-pane index ${index} does not exist.`,
-        );
-      }
-
-      debug(`"${target}" -> worker "${leftSide}" pane index ${index} -> ${paneId}`);
-
       if (checkLiveness) {
-        const live = await isPaneLive(paneId);
-        if (!live) {
-          await cleanupDeadPane(leftSide, paneId);
-          throw new Error(
-            `Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'genie worker kill ${leftSide}' to clean up.`,
-          );
-        }
+        await assertLive(
+          paneId,
+          isPaneLive,
+          `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie worker kill ${leftSide}' to clean up.`,
+          () => cleanupDeadPane(leftSide, paneId),
+        );
       }
-
-      return {
-        paneId,
-        session: worker.session,
-        workerId: leftSide,
-        paneIndex: index,
-        resolvedVia: 'worker',
-      };
+      return { paneId, session: worker.session, workerId: leftSide, paneIndex: index, resolvedVia: 'worker' };
     }
 
-    // Not a worker -- fall through to Level 3: session:window
-    debug(`"${leftSide}" is not a registered worker, trying session:window`);
+    // Not a worker -- try session:window
     const sessionWindowResult = await tmuxLookup(leftSide, rightSide);
-    if (sessionWindowResult) {
-      debug(`"${target}" -> session:window -> pane ${sessionWindowResult.paneId}`);
-
-      if (checkLiveness) {
-        const live = await isPaneLive(sessionWindowResult.paneId);
-        if (!live) {
-          throw new Error(`Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`);
-        }
-      }
-
-      return {
-        paneId: sessionWindowResult.paneId,
-        session: sessionWindowResult.session,
-        resolvedVia: 'session:window',
-      };
+    if (!sessionWindowResult) {
+      throw new Error(
+        `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie worker list' to list workers.`,
+      );
     }
-
-    // session:window not found either
-    throw new Error(
-      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie worker list' to list workers.`,
-    );
+    if (checkLiveness) {
+      await assertLive(
+        sessionWindowResult.paneId,
+        isPaneLive,
+        `Session "${leftSide}" window "${rightSide}": pane ${sessionWindowResult.paneId} is dead.`,
+      );
+    }
+    return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
   }
 
-  // ---- No colon: check worker registry first ----
+  // No colon: check worker registry
   const worker = workers[target];
   if (worker) {
-    debug(`"${target}" -> worker lookup -> pane ${worker.paneId}, session ${worker.session}`);
-
     if (checkLiveness) {
-      const live = await isPaneLive(worker.paneId);
-      if (!live) {
-        await cleanupDeadPane(target, worker.paneId);
-        throw new Error(
-          `Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'genie worker kill ${target}' to clean up.`,
-        );
-      }
+      await assertLive(
+        worker.paneId,
+        isPaneLive,
+        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie worker kill ${target}' to clean up.`,
+        () => cleanupDeadPane(target, worker.paneId),
+      );
     }
-
-    return {
-      paneId: worker.paneId,
-      session: worker.session,
-      workerId: target,
-      resolvedVia: 'worker',
-    };
+    return { paneId: worker.paneId, session: worker.session, workerId: target, resolvedVia: 'worker' };
   }
 
-  // ---- Nothing found ----
   throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie worker list' to list workers.`);
 }
 

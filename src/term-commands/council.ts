@@ -47,33 +47,31 @@ export interface CouncilOptions {
 /**
  * Main council command - spawn dual Claude instances
  */
+function resolvePreset(
+  config: ReturnType<typeof loadGenieConfig> extends Promise<infer T> ? T : never,
+  presetName?: string,
+): CouncilPreset {
+  if (!presetName) {
+    return getDefaultCouncilPreset(config) || getFallbackCouncilPreset(config);
+  }
+
+  const found = getCouncilPreset(config, presetName);
+  if (found) return found;
+
+  const available = Object.keys(config.councilPresets || {});
+  console.error(`\x1b[31m✗ Council preset '${presetName}' not found.\x1b[0m`);
+  console.log(
+    available.length > 0
+      ? `Available presets: ${available.join(', ')}`
+      : 'No presets configured. Add councilPresets to ~/.genie/config.json',
+  );
+  process.exit(1);
+}
+
 export async function councilCommand(options: CouncilOptions = {}): Promise<void> {
   const config = await loadGenieConfig();
-
-  // 1. Resolve session
   const session = options.session || getSessionName();
-
-  // 2. Resolve council preset
-  let preset: CouncilPreset;
-
-  if (options.preset) {
-    // Explicit preset requested
-    const found = getCouncilPreset(config, options.preset);
-    if (!found) {
-      const available = Object.keys(config.councilPresets || {});
-      console.error(`\x1b[31m✗ Council preset '${options.preset}' not found.\x1b[0m`);
-      if (available.length > 0) {
-        console.log(`Available presets: ${available.join(', ')}`);
-      } else {
-        console.log('No presets configured. Add councilPresets to ~/.genie/config.json');
-      }
-      process.exit(1);
-    }
-    preset = found;
-  } else {
-    // Use default preset, or fallback
-    preset = getDefaultCouncilPreset(config) || getFallbackCouncilPreset(config);
-  }
+  const preset = resolvePreset(config, options.preset);
 
   // Allow skill override via flag
   const skillName = options.skill || preset.skill;

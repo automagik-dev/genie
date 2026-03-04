@@ -278,18 +278,6 @@ export async function writeNativeInbox(
 }
 
 /**
- * Read all messages from a member's native inbox.
- */
-async function readNativeInbox(teamName: string, agentName: string): Promise<NativeInboxMessage[]> {
-  try {
-    const content = await readFile(inboxPath(teamName, agentName), 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return [];
-  }
-}
-
-/**
  * Assign the next unused color from the palette for a team.
  */
 export async function assignColor(teamName: string): Promise<ClaudeTeamColor> {
@@ -329,20 +317,6 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 
   await rm(dir, { recursive: true, force: true });
   return true;
-}
-
-/**
- * Check if a native team exists.
- */
-function nativeTeamExists(teamName: string): boolean {
-  return existsSync(configPath(teamName));
-}
-
-/**
- * Get the native team directory path (for external inspection).
- */
-function getNativeTeamDir(teamName: string): string {
-  return teamDir(teamName);
 }
 
 // ============================================================================
@@ -440,13 +414,6 @@ export async function discoverTeamName(cwd?: string): Promise<string | null> {
   return null;
 }
 
-/**
- * Check if native teams feature is enabled.
- */
-function isNativeTeamsEnabled(): boolean {
-  return process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
-}
-
 // ============================================================================
 // Team Lead Registration
 // ============================================================================
@@ -506,5 +473,8 @@ export async function registerAsTeamLead(
 
   // Return the final config
   const finalConfig = await loadConfig(teamName);
-  return { sessionId, config: finalConfig! };
+  if (!finalConfig) {
+    throw new Error(`Failed to load config for team "${teamName}" after creation`);
+  }
+  return { sessionId, config: finalConfig };
 }

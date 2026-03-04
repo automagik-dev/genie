@@ -37,10 +37,12 @@ import { cleanupEventFile } from './events.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // (macro repos like blanco may run without bd)
-// @ts-ignore
 const useBeads =
   beadsRegistry.isBeadsRegistryEnabled() &&
-  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+  (() => {
+    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
+  })();
 
 // ============================================================================
 // Types
@@ -93,9 +95,6 @@ interface BeadsIssue {
 // ============================================================================
 // Configuration
 // ============================================================================
-
-// Worktrees are created inside the project at .genie/worktrees/<taskId>
-const WORKTREE_DIR_NAME = '.genie/worktrees';
 
 /**
  * Known nested repo patterns for heuristic detection
@@ -167,14 +166,15 @@ function sanitizeTaskId(raw: string): string | null {
 /**
  * Parse raw beads issue JSON into a BeadsIssue object.
  */
-function parseBeadsIssue(data: any): BeadsIssue | null {
-  if (!data) return null;
+function parseBeadsIssue(data: unknown): BeadsIssue | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
   return {
-    id: data.id,
-    title: data.title || data.description?.substring(0, 50) || 'Untitled',
-    status: data.status,
-    description: data.description,
-    blockedBy: data.blockedBy || [],
+    id: d.id as string,
+    title: (d.title as string) || (d.description as string)?.substring(0, 50) || 'Untitled',
+    status: d.status as string,
+    description: d.description as string | undefined,
+    blockedBy: (d.blockedBy as string[]) || [],
   };
 }
 
@@ -195,6 +195,31 @@ async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
   }
 
   return null;
+}
+
+/**
+ * Parse beads `bd ready --json` output into a BeadsIssue.
+ * Falls back to line-based parsing when JSON is invalid.
+ */
+async function parseBeadsReadyOutput(stdout: string): Promise<BeadsIssue | null> {
+  try {
+    const issues = JSON.parse(stdout);
+    if (!Array.isArray(issues) || issues.length === 0) return null;
+    const issue = issues[0];
+    return {
+      id: issue.id,
+      title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
+      status: issue.status,
+      description: issue.description,
+      blockedBy: issue.blockedBy || [],
+    };
+  } catch {
+    // JSON parse failed — try line-based fallback
+    const lines = stdout.split('\n').filter((l) => l.trim());
+    if (lines.length === 0) return null;
+    const match = lines[0].match(/^(bd-\d+)/);
+    return match ? getBeadsIssue(match[1]) : null;
+  }
 }
 
 /**
@@ -221,28 +246,7 @@ async function getNextReadyIssue(repoPath: string): Promise<BeadsIssue | null> {
   // beads backend
   const { stdout, exitCode } = await runBd(['ready', '--json']);
   if (exitCode !== 0 || !stdout) return null;
-
-  try {
-    const issues = JSON.parse(stdout);
-    if (Array.isArray(issues) && issues.length > 0) {
-      const issue = issues[0];
-      return {
-        id: issue.id,
-        title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
-        status: issue.status,
-        description: issue.description,
-        blockedBy: issue.blockedBy || [],
-      };
-    }
-    return null;
-  } catch {
-    const lines = stdout.split('\n').filter((l) => l.trim());
-    if (lines.length > 0) {
-      const match = lines[0].match(/^(bd-\d+)/);
-      if (match) return getBeadsIssue(match[1]);
-    }
-    return null;
-  }
+  return parseBeadsReadyOutput(stdout);
 }
 
 /**
@@ -447,20 +451,6 @@ async function createWorktreeForTask(taskId: string, repoPath: string): Promise<
 }
 
 /**
- * Remove worktree for a worker
- */
-async function removeWorktree(taskId: string, repoPath: string): Promise<void> {
-  const worktreePath = join(repoPath, WORKTREE_DIR_NAME, taskId);
-
-  try {
-    // Remove worktree
-    await $`git -C ${repoPath} worktree remove ${worktreePath} --force`.quiet();
-  } catch {
-    // Ignore errors - worktree may already be removed
-  }
-}
-
-/**
  * Search .wishes/ directory recursively for a *-wish.md file
  * whose content references the given taskId in a Beads field.
  * Returns the file path if found, undefined otherwise.
@@ -477,7 +467,7 @@ export async function findWishInDotWishes(taskId: string, repoPath: string): Pro
   // Recursively find all *-wish.md files
   async function findWishFiles(dir: string): Promise<string[]> {
     const results: string[] = [];
-    let entries;
+    let entries: import('node:fs').Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
@@ -712,6 +702,36 @@ async function ensureWorkerWindow(
 }
 
 /**
+ * Resolve tool name and input from raw permission output.
+ */
+function resolveToolFromPermission(
+  rawOutput: string,
+  details: ReturnType<typeof extractPermissionDetails>,
+): { toolName: string; toolInput: Record<string, unknown> | undefined } {
+  if (!details) return { toolName: 'unknown', toolInput: undefined };
+
+  switch (details.type) {
+    case 'bash':
+      return {
+        toolName: 'Bash',
+        toolInput: details.command ? { command: details.command } : undefined,
+      };
+    case 'file': {
+      let toolName = 'Write'; // conservative default
+      if (/Allow.*Edit/i.test(rawOutput)) toolName = 'Edit';
+      else if (/Allow.*Write/i.test(rawOutput)) toolName = 'Write';
+      else if (/Allow.*Read/i.test(rawOutput)) toolName = 'Read';
+      return {
+        toolName,
+        toolInput: details.file ? { file_path: details.file } : undefined,
+      };
+    }
+    default:
+      return { toolName: details.type, toolInput: undefined };
+  }
+}
+
+/**
  * Start monitoring worker state and update registry
  * Updates both beads and JSON registry during transition
  */
@@ -732,29 +752,7 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
 
       const rawOutput = event.state?.rawOutput || '';
       const details = extractPermissionDetails(rawOutput);
-
-      // Map terminal permission type to tool name
-      let toolName = 'unknown';
-      let toolInput: Record<string, unknown> | undefined;
-
-      if (details) {
-        switch (details.type) {
-          case 'bash':
-            toolName = 'Bash';
-            if (details.command) toolInput = { command: details.command };
-            break;
-          case 'file':
-            // Detect specific file tool from raw output
-            if (/Allow.*Edit/i.test(rawOutput)) toolName = 'Edit';
-            else if (/Allow.*Write/i.test(rawOutput)) toolName = 'Write';
-            else if (/Allow.*Read/i.test(rawOutput)) toolName = 'Read';
-            else toolName = 'Write'; // conservative default
-            if (details.file) toolInput = { file_path: details.file };
-            break;
-          default:
-            toolName = details.type;
-        }
-      }
+      const { toolName, toolInput } = resolveToolFromPermission(rawOutput, details);
 
       const request: PermissionRequest = {
         id: `auto-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -839,252 +837,436 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
 }
 
 // ============================================================================
+// workCommand helpers
+// ============================================================================
+
+/**
+ * Ensure beads daemon is running for auto-sync.
+ */
+async function ensureBeadsDaemon(): Promise<void> {
+  if (!useBeads) return;
+  const daemonStatus = await beadsRegistry.checkDaemonStatus();
+  if (daemonStatus.running) return;
+  console.log('🔄 Starting beads daemon for auto-sync...');
+  const started = await beadsRegistry.startDaemon({ autoCommit: true });
+  console.log(started ? '   ✅ Daemon started' : '   ⚠️  Daemon failed to start (non-fatal)');
+}
+
+/**
+ * Load and validate worker profile from config.
+ */
+async function resolveWorkerProfile(profileName?: string): Promise<WorkerProfile | undefined> {
+  const config = await loadGenieConfig();
+  if (!profileName) return getDefaultWorkerProfile(config);
+
+  const profile = getWorkerProfile(config, profileName);
+  if (profile) return profile;
+
+  const available = Object.keys(config.workerProfiles || {});
+  console.error(`Profile '${profileName}' not found.`);
+  console.log(
+    available.length > 0
+      ? `Available profiles: ${available.join(', ')}`
+      : 'No profiles configured in ~/.genie/config.json',
+  );
+  process.exit(1);
+}
+
+/**
+ * Resolve a specific task ID target to a BeadsIssue.
+ * Checks local backend first, then falls back to beads.
+ */
+async function resolveSpecificTarget(target: string, repoPath: string): Promise<BeadsIssue> {
+  const sanitized = sanitizeTaskId(target);
+  if (!sanitized) {
+    console.error(`❌ Invalid task ID: "${target}"`);
+    console.error('   Task IDs must be alphanumeric with hyphens/underscores (e.g., "bd-123", "wish-1").');
+    console.error('   Got characters that are unsafe for git branches or shell commands.');
+    process.exit(1);
+  }
+
+  // Check local backend first
+  const backend = getBackend(repoPath);
+  if (backend.kind === 'local') {
+    const localTask = await backend.get(sanitized);
+    if (localTask) {
+      return {
+        id: localTask.id,
+        title: localTask.title,
+        status: localTask.status,
+        description: localTask.description,
+        blockedBy: localTask.blockedBy || [],
+      };
+    }
+  }
+
+  // Fall back to beads
+  const issue = await getBeadsIssue(sanitized);
+  if (issue) return issue;
+
+  // Not found — print backend-specific error
+  printTargetNotFoundError(sanitized, repoPath);
+  process.exit(1);
+}
+
+/**
+ * Print error message when a target task is not found.
+ */
+async function printTargetNotFoundError(taskTarget: string, repoPath: string): Promise<void> {
+  const backend = getBackend(repoPath);
+  if (backend.kind !== 'local') {
+    console.error(`❌ Issue "${taskTarget}" not found. Run \`bd list\` to see issues.`);
+    return;
+  }
+  console.error(`❌ Issue "${taskTarget}" not found in local task registry.`);
+  console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
+  const fs = await import('node:fs');
+  if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
+    console.error('   ⚠️  tasks.json does not exist. This is likely a fresh repo.');
+    console.error('   Fix: Run `genie task create "Your task title"` to create the first task,');
+    console.error('         or `bd sync` if using beads.');
+  } else {
+    console.error(`   Task "${taskTarget}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
+  }
+}
+
+/**
+ * Resolve work target to a BeadsIssue.
+ * Handles 'next', 'wish', and specific task ID targets.
+ * Returns null only for 'next' with no ready issues (caller should return early).
+ */
+async function resolveTarget(target: string, repoPath: string): Promise<BeadsIssue | null> {
+  if (target === 'next') {
+    console.log('🔍 Finding next ready issue...');
+    const issue = await getNextReadyIssue(repoPath);
+    if (!issue) {
+      console.log('ℹ️  No ready issues. Run `bd ready` to see the queue.');
+      return null;
+    }
+    console.log(`📋 Found: ${issue.id} - "${issue.title}"`);
+    return issue;
+  }
+
+  if (target === 'wish') {
+    console.error('❌ `genie work wish` is not yet implemented.');
+    process.exit(1);
+  }
+
+  return resolveSpecificTarget(target, repoPath);
+}
+
+/**
+ * Resume an existing worker session.
+ * Returns true if resumed successfully (caller should return), false if not resumable.
+ */
+async function resumeExistingWorker(
+  existingWorker: registry.Worker,
+  taskId: string,
+  options: WorkOptions,
+  workerProfile: WorkerProfile | undefined,
+): Promise<boolean> {
+  if (!existingWorker.claudeSessionId || options.resume === false) return false;
+
+  console.log(`📋 Found existing worker for ${taskId} with resumable session`);
+  console.log(`   Session ID: ${existingWorker.claudeSessionId}`);
+  console.log('   Resuming previous Claude session...');
+
+  const session = await getOrCreateSession(options.session);
+  const workingDir = existingWorker.worktree || existingWorker.repoPath;
+
+  console.log('🚀 Ensuring worker window...');
+  const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
+  if (!paneResult) process.exit(1);
+
+  const { paneId, windowId } = paneResult;
+
+  // Update registry with new pane/window info
+  await registry.update(existingWorker.id, {
+    paneId,
+    session,
+    windowName: taskId,
+    windowId,
+    state: 'spawning',
+    lastStateChange: new Date().toISOString(),
+  });
+  if (useBeads) {
+    await beadsRegistry.setAgentState(existingWorker.id, 'spawning').catch(() => {});
+  }
+
+  // Launch Claude in the pane
+  const beadsDir = join(existingWorker.repoPath, '.genie');
+  const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
+  const resumeCmd = buildSpawnCommand(workerProfile, {
+    resume: existingWorker.claudeSessionId,
+    beadsDir,
+  });
+  const resumeEnvPrefix = buildEnvSourcePrefix(workingDir, existingWorker.repoPath);
+  await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`, true, false);
+
+  // Update state to working
+  if (useBeads) {
+    await beadsRegistry.setAgentState(existingWorker.id, 'working').catch(() => {});
+  }
+  await registry.updateState(existingWorker.id, 'working');
+
+  // Auto-approve + monitoring
+  let resumeEngine: AutoApproveEngine | undefined;
+  if (!options.noAutoApprove) {
+    resumeEngine = await createEngineForTask(taskId, existingWorker.repoPath, existingWorker.repoPath);
+    if (resumeEngine) console.log('🔒 Auto-approve engine started');
+  }
+  startWorkerMonitoring(existingWorker.id, session, paneId, resumeEngine);
+
+  if (options.focus === true) {
+    await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
+  }
+
+  printWorkerStatus('Resumed', taskId, paneId, session, existingWorker.claudeSessionId);
+
+  if (resumeEngine && !options._skipAutoApproveBlock) {
+    await blockForAutoApprove(resumeEngine);
+  }
+  return true;
+}
+
+/**
+ * Claim a task via the appropriate backend, exiting on failure.
+ */
+async function claimTaskOrExit(taskId: string, repoPath: string): Promise<void> {
+  console.log(`📝 Claiming ${taskId}...`);
+  const backend = getBackend(repoPath);
+  let claimed = false;
+  let claimError: string | undefined;
+
+  try {
+    claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    claimError = message || String(err);
+  }
+
+  if (claimed) return;
+
+  if (backend.kind === 'beads') {
+    console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
+    console.error('   The issue may not exist or is already claimed.');
+    console.error(`   Run \`bd show ${taskId}\` to check status.`);
+    process.exit(1);
+  }
+
+  // Local backend
+  const task = await backend.get(taskId);
+  if (!task) {
+    console.error(`❌ Task "${taskId}" not found in .genie/tasks.json.`);
+    console.error(`   Available tasks: run \`cat .genie/tasks.json | jq '.order'\``);
+    console.error(`   Or create one: \`term create "${taskId} title"\``);
+  } else {
+    console.error(`❌ Failed to claim ${taskId} (status: ${task.status}).`);
+    console.error('   Task may already be in_progress or done.');
+  }
+  process.exit(1);
+}
+
+/**
+ * Register worker in beads registry (non-fatal on error).
+ */
+async function registerInBeads(
+  taskId: string,
+  opts: {
+    paneId: string;
+    session: string;
+    worktree: string | null;
+    repoPath: string;
+    taskTitle: string;
+    claudeSessionId: string;
+  },
+): Promise<void> {
+  if (!useBeads) return;
+  try {
+    await beadsRegistry.ensureAgent(taskId, {
+      paneId: opts.paneId,
+      session: opts.session,
+      worktree: opts.worktree,
+      repoPath: opts.repoPath,
+      taskId,
+      taskTitle: opts.taskTitle,
+      claudeSessionId: opts.claudeSessionId,
+    });
+    await beadsRegistry.bindWork(taskId, taskId);
+    await beadsRegistry.setAgentState(taskId, 'spawning');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`⚠️  Beads registration failed: ${message} (non-fatal)`);
+  }
+}
+
+/**
+ * Build the worker prompt based on skill detection and options.
+ */
+async function buildWorkerPrompt(
+  taskId: string,
+  issue: BeadsIssue,
+  options: WorkOptions,
+  repoPath: string,
+): Promise<string> {
+  let skill = options.skill;
+  if (!skill && !options.prompt) {
+    const hasWish = await wishFileExists(taskId, repoPath);
+    if (hasWish) {
+      skill = 'forge';
+      console.log('📋 Found wish.md - using /forge skill');
+    }
+  }
+
+  if (skill) return `/${skill}`;
+
+  return (
+    options.prompt ||
+    `Work on beads issue ${taskId}: "${issue.title}"
+
+## Description
+${issue.description || 'No description provided.'}
+
+When you're done, commit your changes and let me know.`
+  );
+}
+
+/**
+ * Print worker status and help commands.
+ */
+function printWorkerStatus(
+  verb: string,
+  taskId: string,
+  paneId: string,
+  session: string,
+  claudeSessionId?: string,
+  extra?: { worktreePath?: string | null; targetRepo?: string; repoPath?: string },
+): void {
+  console.log(`\n✅ ${verb} worker for ${taskId}`);
+  console.log(`   Window: ${taskId}`);
+  console.log(`   Pane: ${paneId}`);
+  console.log(`   Session: ${session}`);
+  if (claudeSessionId) console.log(`   Claude Session: ${claudeSessionId}`);
+  if (extra?.worktreePath) {
+    console.log(`   Worktree: ${extra.worktreePath}`);
+    console.log(`   Branch: work/${taskId}`);
+  }
+  if (extra?.targetRepo && extra?.repoPath && extra.targetRepo !== extra.repoPath) {
+    console.log(`   Target repo: ${extra.targetRepo}`);
+  }
+  console.log('\nCommands:');
+  console.log('   genie worker list        - Check worker status');
+  console.log('   genie worker approve     - Approve permissions');
+  console.log(`   genie worker close ${taskId}  - Close issue when done`);
+  console.log(`   genie worker kill ${taskId}   - Force kill worker`);
+}
+
+/**
+ * Create worktree for task if enabled, returning the working directory and worktree path.
+ */
+async function setupWorktree(
+  taskId: string,
+  targetRepo: string,
+  noWorktree?: boolean,
+): Promise<{ workingDir: string; worktreePath: string | null }> {
+  if (noWorktree) return { workingDir: targetRepo, worktreePath: null };
+
+  console.log(`🌳 Creating worktree for ${taskId} in ${targetRepo}...`);
+  const worktreePath = await createWorktreeForTask(taskId, targetRepo);
+  if (!worktreePath) {
+    console.log('⚠️  Worktree creation failed. Using shared repo.');
+    return { workingDir: targetRepo, worktreePath: null };
+  }
+  console.log(`   Created: ${worktreePath}`);
+  console.log(`   Branch: work/${taskId}`);
+  return { workingDir: worktreePath, worktreePath };
+}
+
+/**
+ * Spawn Claude in a pane, wait for ready, then send the prompt.
+ */
+async function spawnAndSendPrompt(
+  paneId: string,
+  workingDir: string,
+  repoPath: string,
+  claudeSessionId: string,
+  prompt: string,
+  workerProfile: WorkerProfile | undefined,
+): Promise<void> {
+  const escapedPrompt = prompt.replace(/'/g, "'\\''");
+  const beadsDir = join(repoPath, '.genie');
+  const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
+  const spawnCmd = buildSpawnCommand(workerProfile, { sessionId: claudeSessionId, beadsDir });
+  const spawnEnvPrefix = buildEnvSourcePrefix(workingDir, repoPath);
+  await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnEnvPrefix}${spawnCmd}`, true, false);
+  console.log(`   Session ID: ${claudeSessionId}`);
+
+  const ready = await waitForClaudeReady(paneId);
+  if (!ready) console.log('   (Claude startup timed out, sending prompt anyway)');
+  await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedPrompt}' Enter`);
+}
+
+/**
+ * Find an existing worker for a task across registries.
+ */
+async function findExistingWorker(taskId: string): Promise<registry.Worker | null> {
+  const beadsWorker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
+  return beadsWorker || (await registry.findByTask(taskId));
+}
+
+/**
+ * Start auto-approve engine and monitoring for a worker.
+ */
+async function setupAutoApproveAndMonitoring(
+  workerId: string,
+  taskId: string,
+  session: string,
+  paneId: string,
+  repoPath: string,
+  targetRepo: string,
+  options: WorkOptions,
+): Promise<AutoApproveEngine | undefined> {
+  let engine: AutoApproveEngine | undefined;
+  if (!options.noAutoApprove) {
+    engine = await createEngineForTask(taskId, repoPath, targetRepo);
+    if (engine) console.log('🔒 Auto-approve engine started');
+  }
+  startWorkerMonitoring(workerId, session, paneId, engine);
+  return engine;
+}
+
+// ============================================================================
 // Main Command
 // ============================================================================
 
 export async function workCommand(target: string, options: WorkOptions = {}): Promise<void> {
   try {
-    // Get current working directory as repo path
     const repoPath = process.cwd();
 
-    // Ensure beads daemon is running for auto-sync
-    if (useBeads) {
-      const daemonStatus = await beadsRegistry.checkDaemonStatus();
-      if (!daemonStatus.running) {
-        console.log('🔄 Starting beads daemon for auto-sync...');
-        const started = await beadsRegistry.startDaemon({ autoCommit: true });
-        if (started) {
-          console.log('   ✅ Daemon started');
-        } else {
-          console.log('   ⚠️  Daemon failed to start (non-fatal)');
-        }
-      }
-    }
-
-    // Load and validate worker profile (before creating pane)
-    const config = await loadGenieConfig();
-    let workerProfile: WorkerProfile | undefined;
-
-    if (options.profile) {
-      workerProfile = getWorkerProfile(config, options.profile);
-      if (!workerProfile) {
-        const available = Object.keys(config.workerProfiles || {});
-        console.error(`Profile '${options.profile}' not found.`);
-        if (available.length > 0) {
-          console.log(`Available profiles: ${available.join(', ')}`);
-        } else {
-          console.log('No profiles configured in ~/.genie/config.json');
-        }
-        process.exit(1);
-      }
-    } else {
-      workerProfile = getDefaultWorkerProfile(config);
-    }
+    await ensureBeadsDaemon();
+    const workerProfile = await resolveWorkerProfile(options.profile);
 
     // 1. Resolve target
-    let issue: BeadsIssue | null = null;
-
-    if (target === 'next') {
-      console.log('🔍 Finding next ready issue...');
-      issue = await getNextReadyIssue(repoPath);
-      if (!issue) {
-        console.log('ℹ️  No ready issues. Run `bd ready` to see the queue.');
-        return;
-      }
-      console.log(`📋 Found: ${issue.id} - "${issue.title}"`);
-    } else if (target === 'wish') {
-      console.error('❌ `genie work wish` is not yet implemented.');
-      process.exit(1);
-    } else {
-      // Validate and sanitize target ID before using in shell/git/file operations
-      const sanitized = sanitizeTaskId(target);
-      if (!sanitized) {
-        console.error(`❌ Invalid task ID: "${target}"`);
-        console.error(`   Task IDs must be alphanumeric with hyphens/underscores (e.g., "bd-123", "wish-1").`);
-        console.error('   Got characters that are unsafe for git branches or shell commands.');
-        process.exit(1);
-      }
-      target = sanitized;
-
-      // Check local backend first, then fall back to beads
-      const backend = getBackend(repoPath);
-      if (backend.kind === 'local') {
-        const localTask = await backend.get(target);
-        if (localTask) {
-          issue = {
-            id: localTask.id,
-            title: localTask.title,
-            status: localTask.status,
-            description: localTask.description,
-            blockedBy: localTask.blockedBy || [],
-          };
-        }
-      }
-
-      // Fall back to beads if not found locally
-      if (!issue) {
-        issue = await getBeadsIssue(target);
-      }
-
-      if (!issue) {
-        const backend = getBackend(repoPath);
-        if (backend.kind === 'local') {
-          console.error(`❌ Issue "${target}" not found in local task registry.`);
-          console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
-          const fs = await import('node:fs');
-          if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
-            console.error('   ⚠️  tasks.json does not exist. This is likely a fresh repo.');
-            console.error(`   Fix: Run \`genie task create "Your task title"\` to create the first task,`);
-            console.error('         or `bd sync` if using beads.');
-          } else {
-            console.error(`   Task "${target}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
-          }
-        } else {
-          console.error(`❌ Issue "${target}" not found. Run \`bd list\` to see issues.`);
-        }
-        process.exit(1);
-      }
-    }
+    const issue = await resolveTarget(target, repoPath);
+    if (!issue) return; // 'next' with no ready issues
 
     const taskId = issue.id;
 
-    // 2. Check not already assigned (check both registries)
-    let existingWorker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
-    if (!existingWorker) {
-      existingWorker = await registry.findByTask(taskId);
-    }
+    // 2. Check not already assigned
+    const existingWorker = await findExistingWorker(taskId);
     if (existingWorker) {
-      // If worker exists and has a session ID, offer to resume
-      if (existingWorker.claudeSessionId && options.resume !== false) {
-        console.log(`📋 Found existing worker for ${taskId} with resumable session`);
-        console.log(`   Session ID: ${existingWorker.claudeSessionId}`);
-        console.log('   Resuming previous Claude session...');
-
-        // Get session (auto-creates if not inside tmux)
-        const session = await getOrCreateSession(options.session);
-
-        // Ensure dedicated window for the resumed session
-        const workingDir = existingWorker.worktree || existingWorker.repoPath;
-        console.log('🚀 Ensuring worker window...');
-        const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
-        if (!paneResult) {
-          process.exit(1);
-        }
-
-        const { paneId, windowId } = paneResult;
-
-        // Update worker with new pane ID, window name, and window ID
-        await registry.update(existingWorker.id, {
-          paneId,
-          session,
-          windowName: taskId,
-          windowId,
-          state: 'spawning',
-          lastStateChange: new Date().toISOString(),
-        });
-        if (useBeads) {
-          await beadsRegistry.setAgentState(existingWorker.id, 'spawning').catch(() => {});
-        }
-
-        // Set BEADS_DIR so bd commands work in the worktree
-        const beadsDir = join(existingWorker.repoPath, '.genie');
-        const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
-
-        // Resume Claude with the stored session ID
-        // Uses profile configuration if available
-        const resumeCmd = buildSpawnCommand(workerProfile, {
-          resume: existingWorker.claudeSessionId,
-          beadsDir,
-        });
-
-        // Source .env from root repo when running in a worktree
-        const resumeEnvPrefix = buildEnvSourcePrefix(workingDir, existingWorker.repoPath);
-        await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`, true, false);
-
-        // Update state to working
-        if (useBeads) {
-          await beadsRegistry.setAgentState(existingWorker.id, 'working').catch(() => {});
-        }
-        await registry.updateState(existingWorker.id, 'working');
-
-        // Create auto-approve engine (if enabled)
-        let resumeEngine: AutoApproveEngine | undefined;
-        if (!options.noAutoApprove) {
-          resumeEngine = await createEngineForTask(taskId, existingWorker.repoPath, existingWorker.repoPath);
-          if (resumeEngine) {
-            console.log('🔒 Auto-approve engine started');
-          }
-        }
-
-        // Start monitoring
-        startWorkerMonitoring(existingWorker.id, session, paneId, resumeEngine);
-
-        // Focus window (only if explicitly requested)
-        if (options.focus === true) {
-          await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
-        }
-
-        console.log(`\n✅ Resumed worker for ${taskId}`);
-        console.log(`   Window: ${taskId}`);
-        console.log(`   Pane: ${paneId}`);
-        console.log(`   Session: ${session}`);
-        console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
-        console.log('\nCommands:');
-        console.log('   genie worker list        - Check worker status');
-        console.log('   genie worker approve     - Approve permissions');
-        console.log(`   genie worker close ${taskId}  - Close issue when done`);
-        console.log(`   genie worker kill ${taskId}   - Force kill worker`);
-
-        // Keep process alive for auto-approve monitoring
-        if (resumeEngine && !options._skipAutoApproveBlock) {
-          await blockForAutoApprove(resumeEngine);
-        }
-        return;
-      }
-
+      const resumed = await resumeExistingWorker(existingWorker, taskId, options, workerProfile);
+      if (resumed) return;
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
       console.log(`   Run \`genie worker kill ${existingWorker.id}\` first, or work on a different issue.`);
       process.exit(1);
     }
 
-    // 3. Get session (auto-creates if not inside tmux)
+    // 3. Get session + claim task
     const session = await getOrCreateSession(options.session);
+    await claimTaskOrExit(taskId, repoPath);
 
-    // 4. Claim task (backend-dependent)
-    console.log(`📝 Claiming ${taskId}...`);
-    const backend = getBackend(repoPath);
-    let claimed = false;
-    let claimError: string | undefined;
-
-    try {
-      claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      claimError = message || String(err);
-    }
-
-    if (!claimed) {
-      if (backend.kind === 'beads') {
-        console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
-        console.error('   The issue may not exist or is already claimed.');
-        console.error(`   Run \`bd show ${taskId}\` to check status.`);
-        process.exit(1);
-      } else {
-        // Local backend
-        const task = await backend.get(taskId);
-        if (!task) {
-          console.error(`❌ Task "${taskId}" not found in .genie/tasks.json.`);
-          console.error(`   Available tasks: run \`cat .genie/tasks.json | jq '.order'\``);
-          console.error(`   Or create one: \`term create "${taskId} title"\``);
-        } else {
-          console.error(`❌ Failed to claim ${taskId} (status: ${task.status}).`);
-          console.error('   Task may already be in_progress or done.');
-        }
-        process.exit(1);
-      }
-    }
-
-    // 5. Detect target repo for worktree creation
+    // 4. Detect target repo
     const { targetRepo, detectionMethod } = await detectTargetRepo(
       taskId,
       repoPath,
@@ -1092,50 +1274,23 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       issue.title,
       issue.description,
     );
-
-    // Log if using a nested repo
     if (targetRepo !== repoPath) {
       console.log(`🎯 Detected nested repo: ${targetRepo}`);
       console.log(`   Detection: ${detectionMethod}`);
     }
 
-    // 6. Create worktree (unless --no-worktree)
-    let workingDir = targetRepo;
-    let worktreePath: string | null = null;
+    // 5. Create worktree
+    const { workingDir, worktreePath } = await setupWorktree(taskId, targetRepo, options.noWorktree);
 
-    if (!options.noWorktree) {
-      console.log(`🌳 Creating worktree for ${taskId} in ${targetRepo}...`);
-      worktreePath = await createWorktreeForTask(taskId, targetRepo);
-      if (worktreePath) {
-        workingDir = worktreePath;
-        console.log(`   Created: ${worktreePath}`);
-        console.log(`   Branch: work/${taskId}`);
-      } else {
-        console.log('⚠️  Worktree creation failed. Using shared repo.');
-      }
-    }
-
-    // 7. Ensure dedicated window for worker
+    // 6. Ensure dedicated window
     console.log(`🚀 Creating worker window "${taskId}"...`);
     const paneResult = await ensureWorkerWindow(session, taskId, workingDir);
-    if (!paneResult) {
-      process.exit(1);
-    }
-
+    if (!paneResult) process.exit(1);
     const { paneId, windowId } = paneResult;
 
-    // 8. Generate Claude session ID for resume capability
+    // 7. Generate IDs + register
     const claudeSessionId = randomUUID();
-
-    // 8.5. Generate worker ID (supports N workers per task)
     const workerId = await registry.generateWorkerId(taskId, options.name);
-    const existingCount = await registry.countByTask(taskId);
-
-    if (existingCount > 0) {
-      console.log(`   📌 Additional worker on task (${existingCount + 1} total)`);
-    }
-
-    // 9. Register worker (write to both registries during transition)
     const worker: registry.Worker = {
       id: workerId,
       paneId,
@@ -1146,142 +1301,47 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       startedAt: new Date().toISOString(),
       state: 'spawning',
       lastStateChange: new Date().toISOString(),
-      repoPath: targetRepo, // Store the target repo, not the macro repo
+      repoPath: targetRepo,
       claudeSessionId,
       windowName: taskId,
       windowId,
       role: options.role,
       customName: options.name,
     };
-
-    // Register in beads (creates agent bead)
-    if (useBeads) {
-      try {
-        const _agentId = await beadsRegistry.ensureAgent(taskId, {
-          paneId,
-          session,
-          worktree: worktreePath,
-          repoPath: targetRepo,
-          taskId,
-          taskTitle: issue.title,
-          claudeSessionId,
-        });
-
-        // Bind work to agent
-        await beadsRegistry.bindWork(taskId, taskId);
-
-        // Set initial state
-        await beadsRegistry.setAgentState(taskId, 'spawning');
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.log(`⚠️  Beads registration failed: ${message} (non-fatal)`);
-      }
-    }
-
-    // Also register in JSON registry (parallel operation during transition)
+    await registerInBeads(taskId, {
+      paneId,
+      session,
+      worktree: worktreePath,
+      repoPath: targetRepo,
+      taskTitle: issue.title,
+      claudeSessionId,
+    });
     await registry.register(worker);
 
-    // 10. Detect skill and build prompt
-    // If --skill is explicitly set, use that. Otherwise check for wish.md to auto-detect forge.
-    let skill = options.skill;
-    if (!skill && !options.prompt) {
-      const hasWish = await wishFileExists(taskId, repoPath);
-      if (hasWish) {
-        skill = 'forge';
-        console.log('📋 Found wish.md - using /forge skill');
-      }
-    }
+    // 8. Spawn Claude + send prompt
+    const prompt = await buildWorkerPrompt(taskId, issue, options, repoPath);
+    await spawnAndSendPrompt(paneId, workingDir, repoPath, claudeSessionId, prompt, workerProfile);
 
-    // Build prompt: if skill is set, use /<skill>, otherwise use default or custom prompt
-    let prompt: string;
-    if (skill) {
-      prompt = `/${skill}`;
-    } else {
-      prompt =
-        options.prompt ||
-        `Work on beads issue ${taskId}: "${issue.title}"
-
-## Description
-${issue.description || 'No description provided.'}
-
-When you're done, commit your changes and let me know.`;
-    }
-
-    // Escape the prompt for shell (single quotes)
-    const escapedPrompt = prompt.replace(/'/g, "'\\''");
-
-    // Set BEADS_DIR so bd commands work in the worktree
-    const beadsDir = join(repoPath, '.genie');
-
-    // Escape workingDir for shell
-    const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
-
-    // Start Claude with session ID for resume capability (without prompt)
-    // First cd to correct directory (shell rc files may have overridden tmux -c)
-    // Uses profile configuration if available
-    const spawnCmd = buildSpawnCommand(workerProfile, {
-      sessionId: claudeSessionId,
-      beadsDir,
-    });
-
-    // Source .env from root repo when running in a worktree
-    const spawnEnvPrefix = buildEnvSourcePrefix(workingDir, repoPath);
-    await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnEnvPrefix}${spawnCmd}`, true, false);
-
-    console.log(`   Session ID: ${claudeSessionId}`);
-
-    // Wait for Claude to be ready, then send prompt via send-keys
-    // This avoids shell argument length limits and escaping issues
-    const ready = await waitForClaudeReady(paneId);
-    if (!ready) {
-      console.log('   (Claude startup timed out, sending prompt anyway)');
-    }
-    await tmux.executeTmux(`send-keys -t '${paneId}' '${escapedPrompt}' Enter`);
-
-    // 11. Update state to working (both registries)
-    if (useBeads) {
-      await beadsRegistry.setAgentState(taskId, 'working').catch(() => {});
-    }
+    // 9. Update state to working
+    if (useBeads) await beadsRegistry.setAgentState(taskId, 'working').catch(() => {});
     await registry.updateState(taskId, 'working');
 
-    // 12. Create auto-approve engine (if enabled)
-    let engine: AutoApproveEngine | undefined;
-    if (!options.noAutoApprove) {
-      engine = await createEngineForTask(taskId, repoPath, targetRepo);
-      if (engine) {
-        console.log('🔒 Auto-approve engine started');
-      }
-    }
+    // 10. Auto-approve + monitoring
+    const engine = await setupAutoApproveAndMonitoring(
+      workerId,
+      taskId,
+      session,
+      paneId,
+      repoPath,
+      targetRepo,
+      options,
+    );
 
-    // 13. Start monitoring
-    startWorkerMonitoring(taskId, session, paneId, engine);
+    if (options.focus === true) await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
 
-    // 14. Focus window (only if explicitly requested)
-    if (options.focus === true) {
-      await tmux.executeTmux(`select-window -t '${session}:${taskId}'`);
-    }
+    printWorkerStatus('Started', taskId, paneId, session, undefined, { worktreePath, targetRepo, repoPath });
 
-    console.log(`\n✅ Worker started for ${taskId}`);
-    console.log(`   Window: ${taskId}`);
-    console.log(`   Pane: ${paneId}`);
-    console.log(`   Session: ${session}`);
-    if (worktreePath) {
-      console.log(`   Worktree: ${worktreePath}`);
-      console.log(`   Branch: work/${taskId}`);
-    }
-    if (targetRepo !== repoPath) {
-      console.log(`   Target repo: ${targetRepo}`);
-    }
-    console.log('\nCommands:');
-    console.log('   genie worker list        - Check worker status');
-    console.log('   genie worker approve     - Approve permissions');
-    console.log(`   genie worker close ${taskId}  - Close issue when done`);
-    console.log(`   genie worker kill ${taskId}   - Force kill worker`);
-
-    // Keep process alive for auto-approve monitoring
-    if (engine && !options._skipAutoApproveBlock) {
-      await blockForAutoApprove(engine);
-    }
+    if (engine && !options._skipAutoApproveBlock) await blockForAutoApprove(engine);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`❌ Error: ${message}`);

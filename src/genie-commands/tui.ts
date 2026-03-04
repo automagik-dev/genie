@@ -95,12 +95,30 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string): str
   return parts.join(' ');
 }
 
+async function createTuiSession(name: string, workspaceDir: string, systemPrompt: string | null): Promise<void> {
+  await ensureNativeTeamForLeader(name, workspaceDir);
+  console.log(`Native team "${name}" ready at ~/.claude/teams/${sanitizeTeamName(name)}/`);
+
+  console.log(`Creating session "${name}"...`);
+  const session = await tmux.createSession(name);
+  if (!session) {
+    console.error(`Failed to create session "${name}"`);
+    process.exit(1);
+  }
+
+  const cdCmd = `cd ${shellQuote(workspaceDir)}`;
+  await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
+
+  const cmd = buildClaudeCommand(name, systemPrompt || undefined);
+  await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
+  console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
+}
+
 export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
   const name = options.name ?? DEFAULT_NAME;
   const workspaceDir = options.dir ?? DEFAULT_WORKSPACE;
 
   try {
-    // Handle reset flag - kill existing session + clean up native team
     if (options.reset) {
       const existing = await tmux.findSessionByName(name);
       if (existing) {
@@ -110,41 +128,18 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
       await deleteNativeTeam(name);
     }
 
-    // Check if session exists
-    let session = await tmux.findSessionByName(name);
-
-    // Read AGENTS.md system prompt from cwd
+    const session = await tmux.findSessionByName(name);
     const systemPrompt = getAgentsSystemPrompt();
     if (!systemPrompt) {
       console.warn('Warning: No AGENTS.md found in current directory. Launching without --system-prompt.');
     }
 
     if (!session) {
-      // Pre-create native team directory for CC
-      await ensureNativeTeamForLeader(name, workspaceDir);
-      console.log(`Native team "${name}" ready at ~/.claude/teams/${sanitizeTeamName(name)}/`);
-
-      // Create tmux session
-      console.log(`Creating session "${name}"...`);
-      session = await tmux.createSession(name);
-      if (!session) {
-        console.error(`Failed to create session "${name}"`);
-        process.exit(1);
-      }
-
-      // Change to workspace directory (quote path for safe shell execution)
-      const cdCmd = `cd ${shellQuote(workspaceDir)}`;
-      await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
-
-      // Start Claude Code as native team-lead
-      const cmd = buildClaudeCommand(name, systemPrompt || undefined);
-      await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
-      console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
+      await createTuiSession(name, workspaceDir, systemPrompt);
     } else {
       console.log(`Session "${name}" already exists`);
     }
 
-    // Attach to session — switch-client if already inside tmux, attach otherwise
     console.log('Attaching...');
     if (process.env.TMUX) {
       spawnSync('tmux', ['switch-client', '-t', name], { stdio: 'inherit' });

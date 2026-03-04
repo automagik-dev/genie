@@ -121,18 +121,6 @@ export async function unread(repoPath: string, workerId: string): Promise<Mailbo
 }
 
 /**
- * Mark a message as read.
- */
-async function markRead(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
-  const mailbox = await loadMailbox(repoPath, workerId);
-  const msg = mailbox.messages.find((m) => m.id === messageId);
-  if (!msg) return false;
-  msg.read = true;
-  await saveMailbox(repoPath, mailbox);
-  return true;
-}
-
-/**
  * Mark a message as delivered (pane injection succeeded).
  */
 export async function markDelivered(repoPath: string, workerId: string, messageId: string): Promise<boolean> {

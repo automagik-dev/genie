@@ -36,18 +36,7 @@ interface CommandExecution {
 
 type ShellType = 'bash' | 'zsh' | 'fish';
 
-let shellConfig: { type: ShellType } = { type: 'bash' };
-
-function setShellConfig(config: { type: string }): void {
-  // Validate shell type
-  const validShells: ShellType[] = ['bash', 'zsh', 'fish'];
-
-  if (validShells.includes(config.type as ShellType)) {
-    shellConfig = { type: config.type as ShellType };
-  } else {
-    shellConfig = { type: 'bash' };
-  }
-}
+const shellConfig: { type: ShellType } = { type: 'bash' };
 
 /**
  * Execute a tmux command and return the result
@@ -58,18 +47,6 @@ export async function executeTmux(tmuxCommand: string): Promise<string> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to execute tmux command: ${message}`);
-  }
-}
-
-/**
- * Check if tmux server is running
- */
-async function isTmuxRunning(): Promise<boolean> {
-  try {
-    await executeTmux("list-sessions -F '#{session_name}'");
-    return true;
-  } catch (_error) {
-    return false;
   }
 }
 
@@ -259,83 +236,6 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   }
 }
 
-/**
- * Paste text into a tmux pane and optionally submit with Enter.
- *
- * Uses `send-keys -l` (literal mode) so text is not interpreted as key names.
- * Relies on codex's `disable_paste_burst = true` config to ensure Enter
- * is always treated as submit, not as a newline within a paste burst.
- */
-async function pasteToPane(paneId: string, text: string, submit = true): Promise<void> {
-  const { execSync } = require('node:child_process');
-  const escapedPane = escapeShellPath(paneId);
-  const escapedText = text.replace(/'/g, "'\\''");
-
-  // Send text literally (no key-name interpretation), then Enter to submit.
-  execSync(`tmux send-keys -t '${escapedPane}' -l '${escapedText}'`);
-  if (submit) {
-    execSync(`tmux send-keys -t '${escapedPane}' Enter`);
-  }
-}
-
-/**
- * Escape a string for safe use in shell single quotes.
- * Replaces ' with '\'' (end quote, escaped quote, start quote).
- */
-function escapeShellPath(path: string): string {
-  return path.replace(/'/g, "'\\''");
-}
-
-/**
- * Split a tmux pane horizontally or vertically
- */
-async function splitPane(
-  targetPaneId: string,
-  direction: 'horizontal' | 'vertical' = 'vertical',
-  size?: number,
-  workingDir?: string,
-): Promise<TmuxPane | null> {
-  // Build the split-window command
-  // Order follows tmux convention: flags, -c, -p, -t, -F
-  let splitCommand = 'split-window';
-
-  // Add direction flag (-h for horizontal, -v for vertical)
-  if (direction === 'horizontal') {
-    splitCommand += ' -h';
-  } else {
-    splitCommand += ' -v';
-  }
-
-  // Add working directory if specified (must come before -t)
-  if (workingDir) {
-    splitCommand += ` -c '${escapeShellPath(workingDir)}'`;
-  }
-
-  // Add size if specified (as percentage)
-  if (size !== undefined && size > 0 && size < 100) {
-    splitCommand += ` -p ${size}`;
-  }
-
-  // Add target pane
-  splitCommand += ` -t '${targetPaneId}'`;
-
-  // Add -P flag to print new pane info, with format to get pane ID
-  splitCommand += ` -P -F '#{pane_id}'`;
-
-  // Execute the split command - returns the new pane ID
-  const newPaneId = (await executeTmux(splitCommand)).trim();
-
-  // Get the window ID for the new pane
-  const windowId = await executeTmux(`display-message -p -t '${newPaneId}' '#{window_id}'`);
-
-  return {
-    id: newPaneId,
-    windowId: windowId.trim(),
-    active: false,
-    title: '',
-  };
-}
-
 // Map to track ongoing command executions
 const activeCommands = new Map<string, CommandExecution>();
 
@@ -420,92 +320,8 @@ export async function executeCommand(
   return commandId;
 }
 
-async function checkCommandStatus(commandId: string): Promise<CommandExecution | null> {
-  const command = activeCommands.get(commandId);
-  if (!command) return null;
-
-  if (command.status !== 'pending') return command;
-
-  const content = await capturePaneContent(command.paneId, 1000);
-
-  if (command.rawMode) {
-    command.result =
-      'Status tracking unavailable for rawMode commands. Use capture-pane to monitor interactive apps instead.';
-    return command;
-  }
-
-  // Find the last occurrence of the markers
-  const startIndex = content.lastIndexOf(startMarkerText);
-  const endIndex = content.lastIndexOf(endMarkerPrefix);
-
-  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
-    command.result = 'Command output could not be captured properly';
-    return command;
-  }
-
-  // Extract exit code from the end marker line
-  const endLine = content.substring(endIndex).split('\n')[0];
-  const endMarkerRegex = new RegExp(`${endMarkerPrefix}(\\d+)`);
-  const exitCodeMatch = endLine.match(endMarkerRegex);
-
-  if (exitCodeMatch) {
-    const exitCode = Number.parseInt(exitCodeMatch[1], 10);
-
-    command.status = exitCode === 0 ? 'completed' : 'error';
-    command.exitCode = exitCode;
-
-    // Extract output between the start and end markers
-    const outputStart = startIndex + startMarkerText.length;
-    const outputContent = content.substring(outputStart, endIndex).trim();
-
-    command.result = outputContent.substring(outputContent.indexOf('\n') + 1).trim();
-
-    // Update in map
-    activeCommands.set(commandId, command);
-  }
-
-  return command;
-}
-
-// Get command by ID
-function getCommand(commandId: string): CommandExecution | null {
-  return activeCommands.get(commandId) || null;
-}
-
-// Get all active command IDs
-function getActiveCommandIds(): string[] {
-  return Array.from(activeCommands.keys());
-}
-
-// Clean up completed commands older than a certain time
-function cleanupOldCommands(maxAgeMinutes = 60): void {
-  const now = new Date();
-
-  for (const [id, command] of activeCommands.entries()) {
-    const ageMinutes = (now.getTime() - command.startTime.getTime()) / (1000 * 60);
-
-    if (command.status !== 'pending' && ageMinutes > maxAgeMinutes) {
-      activeCommands.delete(id);
-    }
-  }
-}
-
 function getEndMarkerText(): string {
   return shellConfig.type === 'fish' ? `${endMarkerPrefix}$status` : `${endMarkerPrefix}$?`;
-}
-
-/**
- * Get the current session ID when running inside tmux
- */
-async function getCurrentSessionId(): Promise<string> {
-  return await executeTmux(`display-message -p '#{session_id}'`);
-}
-
-/**
- * Rename a window
- */
-async function renameWindow(windowId: string, newName: string): Promise<void> {
-  await executeTmux(`rename-window -t '${windowId}' '${newName}'`);
 }
 
 /**

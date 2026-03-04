@@ -20,10 +20,12 @@ import * as registry from '../lib/worker-registry.js';
 import { cleanupEventFile } from './events.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
-// @ts-ignore
 const useBeads =
   beadsRegistry.isBeadsRegistryEnabled() &&
-  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+  (() => {
+    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
+  })();
 
 // ============================================================================
 // Types
@@ -134,112 +136,106 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 // Main Command
 // ============================================================================
 
+/**
+ * Kill and unregister a worker, cleaning up tmux and registries.
+ */
+async function cleanupWorker(worker: registry.Worker): Promise<void> {
+  if (worker.windowName) {
+    console.log(`💀 Killing worker window "${worker.windowName}"...`);
+    try {
+      await tmux.killWindow(worker.windowName);
+      console.log('   ✅ Window killed');
+    } catch {
+      console.log('   ℹ️  Window already gone');
+    }
+  } else {
+    console.log('💀 Killing worker pane...');
+    await killWorkerPane(worker.paneId);
+    console.log('   ✅ Pane killed');
+  }
+
+  if (useBeads) {
+    try {
+      await beadsRegistry.unbindWork(worker.id);
+      await beadsRegistry.setAgentState(worker.id, 'done');
+      await beadsRegistry.deleteAgent(worker.id);
+    } catch {
+      /* Non-fatal */
+    }
+  }
+  await registry.unregister(worker.id);
+  await cleanupEventFile(worker.paneId).catch(() => {});
+  console.log('   ✅ Worker unregistered');
+}
+
+/**
+ * Find the worker for a task across registries.
+ */
+async function findWorkerForTask(taskId: string): Promise<registry.Worker | null> {
+  if (useBeads) {
+    const w = await beadsRegistry.findByTask(taskId);
+    if (w) return w;
+  }
+  return registry.findByTask(taskId);
+}
+
+/**
+ * Build ship confirmation message.
+ */
+function buildShipMessage(taskId: string, title: string, worker: registry.Worker | null, merge: boolean): string {
+  const mergeNote = merge ? ', merge to main' : '';
+  if (worker) return `Ship ${taskId} "${title}"? (mark done, kill worker pane ${worker.paneId}${mergeNote})`;
+  return `Ship ${taskId} "${title}"? (mark done${mergeNote})`;
+}
+
+/**
+ * Handle worktree operations for ship (merge + remove).
+ */
+async function handleShipWorktree(worker: registry.Worker, taskId: string, options: ShipOptions): Promise<void> {
+  if (!worker.worktree || options.keepWorktree) return;
+  if (options.merge) {
+    console.log('🔀 Merging changes...');
+    const merged = await mergeToMain(worker.repoPath, `work/${taskId}`);
+    if (merged) console.log('   ✅ Merged to main');
+  }
+  console.log('🌳 Removing worktree...');
+  const removed = await removeWorktree(taskId, worker.repoPath);
+  if (removed) console.log('   ✅ Worktree removed');
+}
+
 export async function shipCommand(taskId: string, options: ShipOptions = {}): Promise<void> {
   try {
     const repoPath = process.cwd();
     const backend = getBackend(repoPath);
-
-    // Branch protection: refuse to ship from main/master
     await assertNotMainBranch(repoPath);
 
-    // Find worker in registry
-    let worker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
-    if (!worker) {
-      worker = await registry.findByTask(taskId);
-    }
-
-    // Get task info
+    const worker = await findWorkerForTask(taskId);
     const task = await backend.get(taskId);
     if (!task) {
       console.error(`❌ Task "${taskId}" not found.`);
-      if (backend.kind === 'local') {
-        console.error('   Check .genie/tasks.json');
-      } else {
-        console.error(`   Run \`bd show ${taskId}\` to check.`);
-      }
+      console.error(backend.kind === 'local' ? '   Check .genie/tasks.json' : `   Run \`bd show ${taskId}\` to check.`);
       process.exit(1);
     }
 
-    // Confirm with user
     if (!options.yes) {
-      const message = worker
-        ? `Ship ${taskId} "${task.title}"? (mark done, kill worker pane ${worker.paneId}${options.merge ? ', merge to main' : ''})`
-        : `Ship ${taskId} "${task.title}"? (mark done${options.merge ? ', merge to main' : ''})`;
-
       const confirmed = await confirm({
-        message,
+        message: buildShipMessage(taskId, task.title, worker, !!options.merge),
         default: true,
       });
-
       if (!confirmed) {
         console.log('Cancelled.');
         return;
       }
     }
 
-    // 1. Mark task as done
     console.log(`📦 Marking ${taskId} as done...`);
-    const marked = await backend.markDone(taskId);
-    if (!marked) {
-      console.error(`   Failed to mark ${taskId} as done.`);
-      // Continue with cleanup anyway
-    } else {
-      console.log('   ✅ Task marked as done');
-    }
+    console.log(
+      (await backend.markDone(taskId)) ? '   ✅ Task marked as done' : `   Failed to mark ${taskId} as done.`,
+    );
 
-    // 2. Handle worktree
-    if (worker?.worktree && !options.keepWorktree) {
-      // Merge if requested
-      if (options.merge) {
-        console.log('🔀 Merging changes...');
-        const branchName = `work/${taskId}`;
-        const merged = await mergeToMain(worker.repoPath, branchName);
-        if (merged) {
-          console.log('   ✅ Merged to main');
-        }
-      }
-
-      // Remove worktree
-      console.log('🌳 Removing worktree...');
-      const removed = await removeWorktree(taskId, worker.repoPath);
-      if (removed) {
-        console.log('   ✅ Worktree removed');
-      }
-    }
-
-    // 3. Kill worker window (or pane if no window name)
     if (worker) {
-      if (worker.windowName) {
-        console.log(`💀 Killing worker window "${worker.windowName}"...`);
-        try {
-          await tmux.killWindow(worker.windowName);
-          console.log('   ✅ Window killed');
-        } catch {
-          console.log('   ℹ️  Window already gone');
-        }
-      } else {
-        console.log('💀 Killing worker pane...');
-        await killWorkerPane(worker.paneId);
-        console.log('   ✅ Pane killed');
-      }
-
-      // 4. Unregister worker from both registries
-      if (useBeads) {
-        try {
-          // Unbind work from agent
-          await beadsRegistry.unbindWork(worker.id);
-          // Set agent state to done
-          await beadsRegistry.setAgentState(worker.id, 'done');
-          // Delete agent bead
-          await beadsRegistry.deleteAgent(worker.id);
-        } catch {
-          // Non-fatal if beads cleanup fails
-        }
-      }
-      await registry.unregister(worker.id);
-      // Cleanup event file
-      await cleanupEventFile(worker.paneId).catch(() => {});
-      console.log('   ✅ Worker unregistered');
+      await handleShipWorktree(worker, taskId, options);
+      await cleanupWorker(worker);
     }
 
     console.log(`\n🚀 ${taskId} shipped successfully!`);

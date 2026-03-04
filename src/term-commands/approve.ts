@@ -77,13 +77,6 @@ interface StartEngineOptions {
 let currentEngine: AutoApproveEngine | null = null;
 const sharedQueue: PermissionRequestQueue = createPermissionRequestQueue();
 
-/**
- * Get the shared queue (for use by other modules)
- */
-function getSharedQueue(): PermissionRequestQueue {
-  return sharedQueue;
-}
-
 // ============================================================================
 // Status
 // ============================================================================
@@ -270,6 +263,42 @@ interface ApproveCommandOptions {
 }
 
 /**
+ * Display status of all auto-approve requests.
+ */
+function displayStatus(auditDir: string): void {
+  const entries = getStatusEntries({ auditDir, queue: sharedQueue });
+  if (entries.length === 0) {
+    console.log('No auto-approve requests found.');
+    return;
+  }
+
+  console.log('Auto-Approve Requests:');
+  console.log('');
+  for (const entry of entries) {
+    const statusLabel = entry.status.toUpperCase().padEnd(10);
+    const pane = entry.paneId ?? 'N/A';
+    console.log(`  [${statusLabel}] ${entry.requestId}  ${entry.toolName}  pane:${pane}  ${entry.timestamp}`);
+    if (entry.reason) {
+      console.log(`              Reason: ${entry.reason}`);
+    }
+  }
+}
+
+/**
+ * Handle manual approve or deny of a request.
+ */
+function handleManualAction(id: string, action: 'approve' | 'deny'): void {
+  const fn = action === 'approve' ? manualApprove : manualDeny;
+  const result = fn(id, { queue: sharedQueue });
+  if (result) {
+    console.log(`${action === 'approve' ? 'Approved' : 'Denied'} request: ${id}`);
+  } else {
+    console.error(`Request "${id}" not found in pending queue.`);
+    process.exit(1);
+  }
+}
+
+/**
  * Main CLI command handler for `genie worker approve`.
  *
  * Dispatches to the appropriate sub-function based on options:
@@ -283,28 +312,11 @@ export async function approveCommand(requestId: string | undefined, options: App
   const repoPath = process.cwd();
   const auditDir = repoPath;
 
-  // --status: show all requests
   if (options.status) {
-    const entries = getStatusEntries({ auditDir, queue: sharedQueue });
-    if (entries.length === 0) {
-      console.log('No auto-approve requests found.');
-      return;
-    }
-
-    console.log('Auto-Approve Requests:');
-    console.log('');
-    for (const entry of entries) {
-      const statusLabel = entry.status.toUpperCase().padEnd(10);
-      const pane = entry.paneId ?? 'N/A';
-      console.log(`  [${statusLabel}] ${entry.requestId}  ${entry.toolName}  pane:${pane}  ${entry.timestamp}`);
-      if (entry.reason) {
-        console.log(`              Reason: ${entry.reason}`);
-      }
-    }
+    displayStatus(auditDir);
     return;
   }
 
-  // --start: start the auto-approve engine
   if (options.start) {
     if (isEngineRunning()) {
       console.log('Auto-approve engine is already running.');
@@ -315,7 +327,6 @@ export async function approveCommand(requestId: string | undefined, options: App
     return;
   }
 
-  // --stop: stop the auto-approve engine
   if (options.stop) {
     if (!isEngineRunning()) {
       console.log('Auto-approve engine is not running.');
@@ -326,31 +337,15 @@ export async function approveCommand(requestId: string | undefined, options: App
     return;
   }
 
-  // --deny <id>: manually deny a pending request
   if (options.deny) {
-    const denied = manualDeny(options.deny, { queue: sharedQueue });
-    if (denied) {
-      console.log(`Denied request: ${options.deny}`);
-    } else {
-      console.error(`Request "${options.deny}" not found in pending queue.`);
-      process.exit(1);
-    }
+    handleManualAction(options.deny, 'deny');
     return;
   }
-
-  // <request-id>: manually approve a pending request
   if (requestId) {
-    const approved = manualApprove(requestId, { queue: sharedQueue });
-    if (approved) {
-      console.log(`Approved request: ${requestId}`);
-    } else {
-      console.error(`Request "${requestId}" not found in pending queue.`);
-      process.exit(1);
-    }
+    handleManualAction(requestId, 'approve');
     return;
   }
 
-  // No option provided - show help
   console.log('Usage:');
   console.log('  genie worker approve --status              Show pending/approved/denied requests');
   console.log('  genie worker approve <request-id>          Manually approve a pending request');

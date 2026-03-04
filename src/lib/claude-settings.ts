@@ -5,68 +5,16 @@
  * Uses Zod with passthrough() to preserve unknown fields.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { z } from 'zod';
-
 // Claude directory and settings file paths
 const CLAUDE_DIR = join(homedir(), '.claude');
 const CLAUDE_HOOKS_DIR = join(CLAUDE_DIR, 'hooks');
 const CLAUDE_SETTINGS_FILE = join(CLAUDE_DIR, 'settings.json');
 
-// Hook entry schema for a single hook command
-const HookCommandSchema = z
-  .object({
-    type: z.literal('command'),
-    command: z.string(),
-    timeout: z.number().optional(),
-  })
-  .passthrough();
-
-// Matcher hooks schema (array of hook commands for a specific matcher)
-const MatcherHooksSchema = z
-  .object({
-    matcher: z.string(),
-    hooks: z.array(HookCommandSchema),
-  })
-  .passthrough();
-
-// Hooks configuration schema
-const HooksConfigSchema = z
-  .object({
-    PreToolUse: z.array(MatcherHooksSchema).optional(),
-    PostToolUse: z.array(MatcherHooksSchema).optional(),
-  })
-  .passthrough();
-
-// Full settings schema with passthrough to preserve unknown fields
-const ClaudeSettingsSchema = z
-  .object({
-    model: z.string().optional(),
-    enabledPlugins: z.record(z.unknown()).optional(),
-    hooks: HooksConfigSchema.optional(),
-  })
-  .passthrough();
-
-type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
-
 // Constants for the genie hook script (used for cleanup)
 const GENIE_HOOK_SCRIPT_NAME = 'genie-bash-hook.sh';
-
-/**
- * Get the path to the Claude directory (~/.claude)
- */
-function getClaudeDir(): string {
-  return CLAUDE_DIR;
-}
-
-/**
- * Get the path to the Claude hooks directory (~/.claude/hooks)
- */
-function getClaudeHooksDir(): string {
-  return CLAUDE_HOOKS_DIR;
-}
 
 /**
  * Get the path to the Claude settings file (~/.claude/settings.json)
@@ -80,58 +28,6 @@ export function getClaudeSettingsPath(): string {
  */
 function getGenieHookScriptPath(): string {
   return join(CLAUDE_HOOKS_DIR, GENIE_HOOK_SCRIPT_NAME);
-}
-
-/**
- * Check if Claude settings file exists
- */
-function claudeSettingsExists(): boolean {
-  return existsSync(CLAUDE_SETTINGS_FILE);
-}
-
-/**
- * Ensure the Claude directory exists
- */
-function ensureClaudeDir(): void {
-  if (!existsSync(CLAUDE_DIR)) {
-    mkdirSync(CLAUDE_DIR, { recursive: true });
-  }
-}
-
-/**
- * Load Claude settings, returning defaults if not found
- */
-async function loadClaudeSettings(): Promise<ClaudeSettings> {
-  if (!existsSync(CLAUDE_SETTINGS_FILE)) {
-    return ClaudeSettingsSchema.parse({});
-  }
-
-  try {
-    const content = readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8');
-    const data = JSON.parse(content);
-    return ClaudeSettingsSchema.parse(data);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // If settings are invalid, return defaults but warn
-    console.warn(`Warning: Invalid Claude settings, using defaults: ${message}`);
-    return ClaudeSettingsSchema.parse({});
-  }
-}
-
-/**
- * Save Claude settings to disk
- */
-async function saveClaudeSettings(settings: ClaudeSettings): Promise<void> {
-  ensureClaudeDir();
-
-  try {
-    const validated = ClaudeSettingsSchema.parse(settings);
-    const content = JSON.stringify(validated, null, 2);
-    writeFileSync(CLAUDE_SETTINGS_FILE, content, 'utf-8');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to save Claude settings: ${message}`);
-  }
 }
 
 /**

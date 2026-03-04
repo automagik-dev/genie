@@ -50,9 +50,9 @@ function escapeForShell(str: string): string {
  * Check if claudio binary is available on PATH
  */
 export function hasClaudioBinary(): boolean {
-  // @ts-ignore - Bun.which may not be in type definitions
-  if (typeof (Bun as any).which === 'function') {
-    return Boolean((Bun as any).which('claudio'));
+  const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+  if (typeof BunExt.which === 'function') {
+    return Boolean(BunExt.which('claudio'));
   }
   // Fallback: assume available (will fail at runtime if not)
   return true;

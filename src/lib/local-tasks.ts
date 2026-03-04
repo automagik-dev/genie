@@ -264,48 +264,30 @@ interface UpdateTaskOptions {
   issueType?: 'task' | 'epic';
 }
 
+function applyBlockedBy(task: LocalTask, blockedBy: string[]): void {
+  task.blockedBy = blockedBy;
+  if (blockedBy.length > 0 && task.status === 'ready') {
+    task.status = 'blocked';
+  }
+}
+
+function appendBlockedBy(task: LocalTask, deps: string[]): void {
+  const existing = new Set(task.blockedBy || []);
+  for (const dep of deps) existing.add(dep);
+  applyBlockedBy(task, Array.from(existing));
+}
+
 export async function updateTask(repoPath: string, id: string, options: UpdateTaskOptions): Promise<LocalTask | null> {
   const file = await loadTasks(repoPath);
   const t = file.tasks[id];
   if (!t) return null;
 
-  if (options.status !== undefined) {
-    t.status = options.status;
-  }
-
-  if (options.title !== undefined) {
-    t.title = options.title;
-  }
-
-  if (options.blockedBy !== undefined) {
-    // Replace blockedBy list
-    t.blockedBy = options.blockedBy;
-    // Auto-set status to blocked if there are dependencies
-    if (options.blockedBy.length > 0 && t.status === 'ready') {
-      t.status = 'blocked';
-    }
-  }
-
-  if (options.priorityScores !== undefined) {
-    t.priorityScores = options.priorityScores;
-  }
-
-  if (options.issueType !== undefined) {
-    t.issueType = options.issueType;
-  }
-
-  if (options.addBlockedBy !== undefined && options.addBlockedBy.length > 0) {
-    // Append to blockedBy list (deduplicate)
-    const existing = new Set(t.blockedBy || []);
-    for (const dep of options.addBlockedBy) {
-      existing.add(dep);
-    }
-    t.blockedBy = Array.from(existing);
-    // Auto-set status to blocked if there are dependencies
-    if (t.blockedBy.length > 0 && t.status === 'ready') {
-      t.status = 'blocked';
-    }
-  }
+  if (options.status !== undefined) t.status = options.status;
+  if (options.title !== undefined) t.title = options.title;
+  if (options.blockedBy !== undefined) applyBlockedBy(t, options.blockedBy);
+  if (options.priorityScores !== undefined) t.priorityScores = options.priorityScores;
+  if (options.issueType !== undefined) t.issueType = options.issueType;
+  if (options.addBlockedBy?.length) appendBlockedBy(t, options.addBlockedBy);
 
   t.updatedAt = new Date().toISOString();
   file.tasks[id] = t;

@@ -364,36 +364,11 @@ export async function listWorkers(): Promise<Worker[]> {
 }
 
 /**
- * Find worker by pane ID
- */
-async function findByPane(paneId: string): Promise<Worker | null> {
-  const workers = await listWorkers();
-  const normalizedPaneId = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return workers.find((w) => w.paneId === normalizedPaneId) || null;
-}
-
-/**
  * Find worker by task ID
  */
 export async function findByTask(taskId: string): Promise<Worker | null> {
   // Worker ID typically matches task ID
   return getWorker(taskId);
-}
-
-/**
- * Check if a worker exists for a task
- */
-async function hasWorkerForTask(taskId: string): Promise<boolean> {
-  const worker = await findByTask(taskId);
-  return worker !== null;
-}
-
-/**
- * Find worker by Claude session ID
- */
-async function findBySessionId(sessionId: string): Promise<Worker | null> {
-  const workers = await listWorkers();
-  return workers.find((w) => w.claudeSessionId === sessionId) || null;
 }
 
 // ============================================================================
@@ -442,40 +417,9 @@ export async function stopDaemon(): Promise<boolean> {
   return exitCode === 0;
 }
 
-/**
- * Ensure daemon is running, start if not
- */
-async function ensureDaemon(options?: { autoCommit?: boolean }): Promise<boolean> {
-  const status = await checkDaemonStatus();
-  if (status.running) return true;
-
-  return startDaemon(options);
-}
-
 // ============================================================================
 // Worktree Management (via bd worktree)
 // ============================================================================
-
-interface BeadsWorktreeInfo {
-  path: string;
-  branch: string;
-  name: string;
-}
-
-/**
- * Create worktree via beads
- */
-async function createWorktree(name: string): Promise<BeadsWorktreeInfo | null> {
-  const { stdout, exitCode, stderr } = await runBd(['worktree', 'create', name, '--json']);
-
-  if (exitCode !== 0) {
-    console.error(`bd worktree create failed: ${stderr}`);
-    return null;
-  }
-
-  const info = parseJson<BeadsWorktreeInfo>(stdout);
-  return info;
-}
 
 /**
  * Remove worktree via beads
@@ -483,34 +427,6 @@ async function createWorktree(name: string): Promise<BeadsWorktreeInfo | null> {
 export async function removeWorktree(name: string): Promise<boolean> {
   const { exitCode } = await runBd(['worktree', 'remove', name]);
   return exitCode === 0;
-}
-
-/**
- * List worktrees via beads
- */
-async function listWorktrees(): Promise<BeadsWorktreeInfo[]> {
-  const { stdout, exitCode } = await runBd(['worktree', 'list', '--json']);
-
-  if (exitCode !== 0 || !stdout) return [];
-
-  const worktrees = parseJson<BeadsWorktreeInfo[]>(stdout);
-  return worktrees || [];
-}
-
-/**
- * Check if worktree exists via beads
- */
-async function worktreeExists(name: string): Promise<boolean> {
-  const worktrees = await listWorktrees();
-  return worktrees.some((wt) => wt.name === name || wt.branch === name);
-}
-
-/**
- * Get worktree info via beads
- */
-async function getWorktree(name: string): Promise<BeadsWorktreeInfo | null> {
-  const worktrees = await listWorktrees();
-  return worktrees.find((wt) => wt.name === name || wt.branch === name) || null;
 }
 
 // ============================================================================
@@ -531,35 +447,4 @@ export async function unregister(workerId: string): Promise<void> {
 export async function updateState(workerId: string, state: WorkerState): Promise<void> {
   await setAgentState(workerId, state);
   await heartbeat(workerId);
-}
-
-/**
- * Update Claude session ID for a worker
- */
-async function updateSessionId(workerId: string, sessionId: string): Promise<void> {
-  const agent = await findAgentByWorkerId(workerId);
-  if (!agent) {
-    throw new Error(`Agent not found for worker ${workerId}`);
-  }
-
-  // Get current metadata
-  const { stdout, exitCode } = await runBd(['show', agent.id, '--json']);
-  if (exitCode !== 0 || !stdout) {
-    throw new Error(`Failed to get agent metadata for ${workerId}`);
-  }
-
-  const fullAgent = parseJson<AgentBead & { metadata?: AgentMetadata }>(stdout);
-  if (!fullAgent?.metadata) {
-    throw new Error(`Agent ${workerId} has no metadata`);
-  }
-
-  // Update metadata with new session ID
-  const updatedMetadata = { ...fullAgent.metadata, claudeSessionId: sessionId };
-  const metadataJson = JSON.stringify(updatedMetadata);
-
-  const { exitCode: updateExitCode, stderr } = await runBd(['update', agent.id, `--metadata=${metadataJson}`]);
-
-  if (updateExitCode !== 0) {
-    throw new Error(`Failed to update session ID: ${stderr}`);
-  }
 }

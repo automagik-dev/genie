@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 // ============================================================================
@@ -21,20 +21,6 @@ function cleanTestDir(): void {
     // Ignore
   }
   mkdirSync(join(TEST_DIR, '.genie'), { recursive: true });
-}
-
-function writeTestRegistry(workers: Record<string, any>): void {
-  writeFileSync(
-    TEST_REGISTRY_PATH,
-    JSON.stringify(
-      {
-        workers,
-        lastUpdated: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
 }
 
 // Track live panes for mock

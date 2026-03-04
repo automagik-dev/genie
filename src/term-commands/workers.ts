@@ -19,7 +19,6 @@
  */
 
 import type { Command } from 'commander';
-import * as beadsRegistry from '../lib/beads-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import * as mailbox from '../lib/mailbox.js';
@@ -32,7 +31,6 @@ import {
   buildLaunchCommand,
   validateSpawnParams,
 } from '../lib/provider-adapters.js';
-import { getBackend } from '../lib/task-backend.js';
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
@@ -45,33 +43,6 @@ import * as historyCmd from './history.js';
 import * as orchestrateCmd from './orchestrate.js';
 import * as readCmd from './read.js';
 import * as shipCmd from './ship.js';
-
-// Use beads registry only when enabled AND bd exists on PATH
-// @ts-ignore
-const useBeads =
-  beadsRegistry.isBeadsRegistryEnabled() &&
-  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
-
-// ============================================================================
-// Types (legacy workers command)
-// ============================================================================
-
-interface WorkersOptions {
-  json?: boolean;
-  watch?: boolean;
-}
-
-interface WorkerDisplay {
-  name: string;
-  pane: string;
-  window?: string;
-  windowId?: string;
-  task: string;
-  state: string;
-  time: string;
-  alive: boolean;
-  role?: string;
-}
 
 // ============================================================================
 // Helper Functions (legacy)
@@ -108,6 +79,22 @@ async function getCurrentState(paneId: string): Promise<string> {
   }
 }
 
+/** Check if a process is alive by PID file. */
+function isRelayAlive(pidFile: string): boolean {
+  const { readFileSync, existsSync } = require('node:fs');
+  if (!existsSync(pidFile)) return false;
+  try {
+    const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim());
+    if (pid > 0) {
+      process.kill(pid, 0);
+      return true;
+    }
+  } catch {
+    // Process dead
+  }
+  return false;
+}
+
 /**
  * Ensure the shared OTel relay is running on OTEL_RELAY_PORT.
  *
@@ -119,8 +106,7 @@ async function getCurrentState(paneId: string): Promise<string> {
  * Idempotent — skips if the relay process is already alive.
  */
 async function ensureOtelRelay(team: string): Promise<boolean> {
-  const { spawn: spawnChild, execSync: execSyncLocal } = require('node:child_process');
-  const { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync } = require('node:fs');
+  const { writeFileSync, mkdirSync } = require('node:fs');
   const { join } = require('node:path');
   const { homedir } = require('node:os');
 
@@ -131,17 +117,7 @@ async function ensureOtelRelay(team: string): Promise<boolean> {
   const scriptFile = join(relayDir, 'otel-relay.mjs');
 
   // Check if relay is already running
-  if (existsSync(pidFile)) {
-    try {
-      const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim());
-      if (pid > 0) {
-        process.kill(pid, 0); // Throws if process doesn't exist
-        return true; // Already running
-      }
-    } catch {
-      // Process dead — restart below
-    }
-  }
+  if (isRelayAlive(pidFile)) return true;
 
   const inboxDir = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'teams', team, 'inboxes');
   const escapedRelayDir = relayDir.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -413,6 +389,7 @@ process.on('SIGINT', () => { server.close(); process.exit(0); });
     );
 
     // Launch relay as a detached background process
+    const { spawn: spawnChild } = require('node:child_process');
     const child = spawnChild('node', [scriptFile], {
       detached: true,
       stdio: 'ignore',
@@ -422,173 +399,12 @@ process.on('SIGINT', () => { server.close(); process.exit(0); });
     // Wait for PID file (up to 3 seconds)
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 100));
-      if (existsSync(pidFile)) {
-        try {
-          const pid = Number.parseInt(readFileSync(pidFile, 'utf-8').trim());
-          if (pid > 0) {
-            process.kill(pid, 0);
-            return true;
-          }
-        } catch {}
-      }
+      if (isRelayAlive(pidFile)) return true;
     }
 
     return false;
   } catch {
     return false;
-  }
-}
-
-/**
- * Get queue status from the active task backend.
- */
-async function getQueueStatus(repoPath: string): Promise<{ ready: string[]; blocked: string[] }> {
-  const backend = getBackend(repoPath);
-  return backend.queue();
-}
-
-/**
- * Format time elapsed
- */
-function formatElapsed(startedAt: string): string {
-  const startTime = new Date(startedAt).getTime();
-  const ms = Date.now() - startTime;
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-
-  if (hours > 0) {
-    return `${hours}h ${minutes % 60}m`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m`;
-  }
-  return '<1m';
-}
-
-// ============================================================================
-// Legacy Workers Command (genie worker list)
-// ============================================================================
-
-async function workersCommand(options: WorkersOptions = {}): Promise<void> {
-  try {
-    let workers: registry.Worker[] = [];
-
-    if (useBeads) {
-      workers = await beadsRegistry.listWorkers();
-    } else {
-      workers = await registry.list();
-    }
-
-    // Gather display data for each worker
-    const displayData: WorkerDisplay[] = [];
-
-    for (const worker of workers) {
-      const alive = await isPaneAlive(worker.paneId);
-      let currentState: string = worker.state;
-
-      if (alive) {
-        // Get live state from pane
-        currentState = await getCurrentState(worker.paneId);
-
-        // Update registry if state differs
-        const mappedState = mapDisplayStateToRegistry(currentState);
-        if (mappedState && mappedState !== worker.state) {
-          if (useBeads) {
-            await beadsRegistry.updateState(worker.id, mappedState).catch(() => {});
-          } else {
-            await registry.updateState(worker.id, mappedState);
-          }
-        } else if (useBeads) {
-          // Just send heartbeat even if state unchanged
-          await beadsRegistry.heartbeat(worker.id).catch(() => {});
-        }
-      } else {
-        currentState = '💀 dead';
-      }
-
-      displayData.push({
-        name: worker.id,
-        pane: worker.paneId,
-        window: worker.windowName,
-        windowId: worker.windowId,
-        task: worker.taskTitle
-          ? `"${worker.taskTitle.substring(0, 25)}${worker.taskTitle.length > 25 ? '...' : ''}"`
-          : worker.taskId || '-',
-        state: currentState,
-        time: formatElapsed(worker.startedAt),
-        alive,
-        role: worker.role,
-      });
-    }
-
-    // Get queue status
-    const queue = await getQueueStatus(process.cwd());
-
-    // Filter out dead workers from ready count
-    const activeTaskIds = workers
-      .filter((w) => displayData.find((d) => d.name === w.id && d.alive))
-      .map((w) => w.taskId);
-    const actuallyReady = queue.ready.filter((id) => !activeTaskIds.includes(id));
-
-    if (options.json) {
-      console.log(
-        JSON.stringify(
-          {
-            workers: displayData,
-            queue: {
-              ready: actuallyReady,
-              blocked: queue.blocked,
-            },
-          },
-          null,
-          2,
-        ),
-      );
-      return;
-    }
-
-    // Display workers table
-    console.log('┌─────────────────────────────────────────────────────────────────┐');
-    console.log('│ WORKERS                                                         │');
-    console.log('├──────────┬──────────┬───────────────────────────┬──────────┬────┤');
-    console.log('│ Name     │ Pane     │ Task                      │ State    │Time│');
-    console.log('├──────────┼──────────┼───────────────────────────┼──────────┼────┤');
-
-    if (displayData.length === 0) {
-      console.log('│ (no workers)                                                    │');
-    } else {
-      for (const w of displayData) {
-        const name = w.name.padEnd(8).substring(0, 8);
-        const pane = w.pane.padEnd(8).substring(0, 8);
-        const task = w.task.padEnd(25).substring(0, 25);
-        const state = w.state.padEnd(8).substring(0, 8);
-        const time = w.time.padStart(4).substring(0, 4);
-        console.log(`│ ${name} │ ${pane} │ ${task} │ ${state} │${time}│`);
-      }
-    }
-
-    console.log('└──────────┴──────────┴───────────────────────────┴──────────┴────┘');
-
-    // Display queue
-    if (queue.blocked.length > 0) {
-      console.log(`\nBlocked: ${queue.blocked.slice(0, 5).join(', ')}${queue.blocked.length > 5 ? '...' : ''}`);
-    }
-
-    if (actuallyReady.length > 0) {
-      console.log(`Ready: ${actuallyReady.slice(0, 5).join(', ')}${actuallyReady.length > 5 ? '...' : ''}`);
-    } else if (displayData.length > 0) {
-      console.log('\nReady: (none - all assigned or blocked)');
-    }
-
-    // Cleanup dead workers (optional - could prompt)
-    const deadWorkers = displayData.filter((w) => !w.alive);
-    if (deadWorkers.length > 0) {
-      console.log(`\n⚠️  ${deadWorkers.length} dead worker(s) detected. Run \`genie worker kill <name>\` to clean up.`);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`❌ Error: ${message}`);
-    process.exit(1);
   }
 }
 
@@ -636,6 +452,516 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 }
 
 // ============================================================================
+// Spawn helpers (extracted for cognitive complexity)
+// ============================================================================
+
+/** Shared context between spawn helper functions. */
+interface SpawnCtx {
+  workerId: string;
+  validated: SpawnParams;
+  launch: { command: string; provider: string; env?: Record<string, string> };
+  layoutMode: 'mosaic' | 'vertical';
+  fullCommand: string;
+  agentName: string;
+  spawnColor: string;
+  parentSessionId: string;
+  claudeSessionId: string | undefined;
+  otelRelayActive: boolean;
+  now: string;
+  transport: registry.TransportType;
+  extraArgs?: string[];
+}
+
+async function registerSpawnWorker(ctx: SpawnCtx, paneId: string): Promise<registry.Worker> {
+  const nt = ctx.validated.nativeTeam;
+  const workerEntry: registry.Worker = {
+    id: ctx.workerId,
+    paneId,
+    session: 'genie',
+    provider: ctx.validated.provider,
+    transport: ctx.transport,
+    role: ctx.validated.role,
+    skill: ctx.validated.skill,
+    team: ctx.validated.team,
+    worktree: null,
+    startedAt: ctx.now,
+    state: 'spawning',
+    lastStateChange: ctx.now,
+    repoPath: process.cwd(),
+    claudeSessionId: ctx.claudeSessionId,
+    nativeTeamEnabled: nt?.enabled ?? false,
+    nativeAgentId: `${ctx.agentName}@${ctx.validated.team}`,
+    nativeColor: nt?.color ?? ctx.spawnColor,
+    parentSessionId: nt?.parentSessionId ?? ctx.parentSessionId,
+  };
+  await registry.register(workerEntry);
+  return workerEntry;
+}
+
+async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
+  const nt = ctx.validated.nativeTeam;
+  await nativeTeams.registerNativeMember(ctx.validated.team, {
+    agentName: ctx.agentName,
+    agentType: nt?.agentType ?? ctx.validated.role ?? 'general-purpose',
+    color: nt?.color ?? ctx.spawnColor ?? 'blue',
+    tmuxPaneId: paneId,
+    cwd: process.cwd(),
+    planModeRequired: nt?.planModeRequired,
+  });
+  await nativeTeams.writeNativeInbox(ctx.validated.team, 'team-lead', {
+    from: ctx.agentName,
+    text: `Worker ${ctx.agentName} (${ctx.validated.provider}) joined team ${ctx.validated.team}. cwd: ${process.cwd()}. Ready for tasks.`,
+    summary: `${ctx.agentName} (${ctx.validated.provider}) joined`,
+    timestamp: new Date().toISOString(),
+    color: nt?.color ?? ctx.spawnColor ?? 'blue',
+    read: false,
+  });
+}
+
+function registerOtelRelayPane(workerId: string, paneId: string, agentName: string, spawnColor: string): void {
+  const { writeFileSync: wfs } = require('node:fs');
+  const { join: pjoin } = require('node:path');
+  const { homedir: hdir } = require('node:os');
+  const rd = pjoin(hdir(), '.genie', 'relay');
+  wfs(pjoin(rd, `${workerId}-pane`), paneId);
+  wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor }));
+}
+
+function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Worker): void {
+  const nt = ctx.validated.nativeTeam;
+  console.log(`Worker "${ctx.workerId}" spawned.`);
+  console.log(`  Provider: ${ctx.launch.provider}`);
+  console.log(`  Command:  ${ctx.fullCommand}`);
+  console.log(`  Team:     ${ctx.validated.team}`);
+  console.log(`  Pane:     ${paneId}`);
+  if (ctx.validated.role) console.log(`  Role:     ${ctx.validated.role}`);
+  if (ctx.validated.skill) console.log(`  Skill:    ${ctx.validated.skill}`);
+  if (workerEntry.claudeSessionId) {
+    console.log(`  Session:  ${workerEntry.claudeSessionId}`);
+  }
+  console.log(`  Layout:   ${ctx.layoutMode}`);
+  if (nt?.enabled) {
+    console.log('  Native:   enabled');
+    console.log(`  AgentID:  ${workerEntry.nativeAgentId}`);
+    console.log(`  Color:    ${nt.color}`);
+  }
+  if (ctx.otelRelayActive) {
+    console.log(`  OTel:     relay on port ${OTEL_RELAY_PORT}`);
+  }
+}
+
+async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+  const { execSync } = require('node:child_process');
+
+  let paneId: string;
+  try {
+    paneId = execSync(`tmux split-window -d -P -F '#{pane_id}' ${ctx.fullCommand}`, { encoding: 'utf-8' }).trim();
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    process.exit(1);
+  }
+
+  try {
+    execSync(`tmux ${buildLayoutCommand('genie:0', ctx.layoutMode)}`, { stdio: 'ignore' });
+  } catch {
+    /* best-effort */
+  }
+
+  const workerEntry = await registerSpawnWorker(ctx, paneId);
+  await notifySpawnJoin(ctx, paneId);
+
+  // Save spawn template for auto-respawn on message delivery
+  await registry.saveTemplate({
+    id: ctx.validated.role ?? ctx.workerId,
+    provider: ctx.validated.provider,
+    team: ctx.validated.team,
+    role: ctx.validated.role,
+    skill: ctx.validated.skill,
+    cwd: process.cwd(),
+    extraArgs: ctx.extraArgs,
+    nativeTeamEnabled: workerEntry.nativeTeamEnabled,
+    lastSpawnedAt: new Date().toISOString(),
+    lastSessionId: workerEntry.claudeSessionId,
+  });
+
+  // Register pane with the shared OTel relay.
+  if (ctx.otelRelayActive && paneId !== '%0') {
+    registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
+  }
+
+  printSpawnInfo(ctx, paneId, workerEntry);
+}
+
+async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {
+  const nt = ctx.validated.nativeTeam;
+  const paneId = 'inline';
+  const workerEntry = await registerSpawnWorker(ctx, paneId);
+  await notifySpawnJoin(ctx, paneId);
+
+  console.log(`Worker "${ctx.workerId}" starting inline...`);
+  console.log(`  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
+  if (nt?.enabled) {
+    console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
+  }
+  console.log('');
+
+  // Exec into claude — this blocks until the session ends
+  const { spawnSync } = require('node:child_process');
+  const envVars = { ...process.env, ...(ctx.launch.env ?? {}) };
+  const result = spawnSync('sh', ['-c', ctx.launch.command], {
+    env: envVars,
+    stdio: 'inherit',
+  });
+
+  // Session ended — clean up
+  await registry.unregister(ctx.workerId);
+  if (nt?.enabled && ctx.agentName) {
+    await nativeTeams.clearNativeInbox(ctx.validated.team, ctx.agentName).catch(() => {});
+    await nativeTeams.unregisterNativeMember(ctx.validated.team, ctx.agentName).catch(() => {});
+  }
+  console.log(`\nWorker "${ctx.workerId}" session ended.`);
+  process.exit(result.status ?? 0);
+}
+
+function prependEnvVars(command: string, env?: Record<string, string>): string {
+  if (!env || Object.keys(env).length === 0) return command;
+  const envArgs = Object.entries(env)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(' ');
+  return `env ${envArgs} ${command}`;
+}
+
+async function handleWorkerSpawn(options: {
+  provider: string;
+  team: string;
+  role?: string;
+  skill?: string;
+  layout?: string;
+  color?: string;
+  planMode?: boolean;
+  permissionMode?: string;
+  extraArgs?: string[];
+}): Promise<void> {
+  // 1. Resolve team name from flag, env, or session discovery
+  const team = options.team || (await nativeTeams.discoverTeamName());
+  if (!team) {
+    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
+    process.exit(1);
+  }
+
+  // 1b. Validate spawn parameters (Group A contract)
+  const params: SpawnParams = {
+    provider: options.provider as ProviderName,
+    team,
+    role: options.role,
+    skill: options.skill,
+    extraArgs: options.extraArgs,
+  };
+
+  // 2. Ensure native team infrastructure exists (all providers).
+  const repoPath = process.cwd();
+  const teamConfig = await teamManager.getTeam(repoPath, team);
+  let parentSessionId = teamConfig?.nativeTeamParentSessionId;
+  if (!parentSessionId) {
+    parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
+  }
+  await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
+  const spawnColor = (options.color as ClaudeTeamColor) ?? (await nativeTeams.assignColor(team));
+
+  // 2b. Enable native teammate CLI flags for Claude only.
+  if (options.provider === 'claude') {
+    params.nativeTeam = {
+      enabled: true,
+      parentSessionId,
+      color: spawnColor,
+      agentType: options.role ?? 'general-purpose',
+      planModeRequired: options.planMode,
+      permissionMode: options.permissionMode,
+      agentName: options.role,
+    };
+  }
+
+  // Session ID only for Claude
+  const isClaude = params.provider === 'claude';
+  const claudeSessionId = isClaude ? crypto.randomUUID() : undefined;
+  if (claudeSessionId) params.sessionId = claudeSessionId;
+
+  const validated = validateSpawnParams(params);
+  const launch = buildLaunchCommand(validated);
+  const layoutMode = resolveLayoutMode(options.layout);
+  const workerId = await generateWorkerId(validated.team, validated.role);
+
+  const insideTmux = Boolean(process.env.TMUX);
+  const nt = validated.nativeTeam;
+  const now = new Date().toISOString();
+  const agentName = nt?.agentName ?? validated.role ?? 'worker';
+
+  // OTel relay for non-native workers (Codex)
+  let otelRelayActive = false;
+  if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
+    ensureCodexOtelConfig();
+    otelRelayActive = await ensureOtelRelay(validated.team);
+  }
+
+  const fullCommand = prependEnvVars(launch.command, launch.env);
+
+  const ctx: SpawnCtx = {
+    workerId,
+    validated,
+    launch,
+    layoutMode,
+    fullCommand,
+    agentName,
+    spawnColor,
+    parentSessionId,
+    claudeSessionId,
+    otelRelayActive,
+    now,
+    transport: insideTmux ? 'tmux' : 'inline',
+    extraArgs: options.extraArgs,
+  };
+
+  if (insideTmux) {
+    await launchTmuxSpawn(ctx);
+  } else {
+    await launchInlineSpawn(ctx);
+  }
+}
+
+// ============================================================================
+// List helpers (extracted for cognitive complexity)
+// ============================================================================
+
+type WorkerListEntry = { worker: registry.Worker; liveState: string; lastMsg: string | null; dead: boolean };
+
+/** Clean up a worker's native team registration. */
+async function cleanupWorkerNativeTeam(w: registry.Worker): Promise<void> {
+  if (!w.team || !w.nativeAgentId) return;
+  const agentName = w.nativeAgentId.split('@')[0];
+  await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
+  await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
+}
+
+/** Process a single worker for the list view: returns entry or pruned ID. */
+async function processWorkerForList(
+  w: registry.Worker,
+  prune?: boolean,
+): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
+  if (w.state === 'suspended') {
+    return processSuspendedWorker(w, prune);
+  }
+
+  const paneAlive = await isPaneAlive(w.paneId);
+
+  if (paneAlive) {
+    const liveState = await getCurrentState(w.paneId);
+    const mapped = mapDisplayStateToRegistry(liveState);
+    if (mapped && mapped !== w.state) {
+      await registry.updateState(w.id, mapped);
+    }
+    const lastMsg = await getLastMessageTime(w);
+    return { entry: { worker: w, liveState, lastMsg, dead: false } };
+  }
+
+  if (prune) {
+    await cleanupWorkerNativeTeam(w);
+    await registry.unregister(w.id);
+    return { prunedId: w.id };
+  }
+
+  const lastMsg = await getLastMessageTime(w);
+  return { entry: { worker: w, liveState: '\u{1F480} dead', lastMsg, dead: true } };
+}
+
+async function processSuspendedWorker(
+  w: registry.Worker,
+  prune?: boolean,
+): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
+  const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
+  const suspendedAge = w.suspendedAt ? Date.now() - new Date(w.suspendedAt).getTime() : Number.POSITIVE_INFINITY;
+
+  if (prune && suspendedAge > SUSPEND_EXPIRY_MS) {
+    await cleanupWorkerNativeTeam(w);
+    if (w.role) await registry.removeTemplate(w.role).catch(() => {});
+    await registry.removeTemplate(w.id).catch(() => {});
+    await registry.unregister(w.id);
+    return { prunedId: w.id };
+  }
+
+  const lastMsg = await getLastMessageTime(w);
+  return { entry: { worker: w, liveState: '\u{1F4A4} suspended', lastMsg, dead: false } };
+}
+
+function printWorkerList(
+  entries: WorkerListEntry[],
+  pruned: string[],
+  options: { json?: boolean; prune?: boolean },
+): void {
+  if (options.json) {
+    printWorkerListJson(entries, pruned);
+    return;
+  }
+
+  if (entries.length === 0 && pruned.length === 0) {
+    console.log('No workers found.');
+    console.log('  Spawn one: genie worker spawn --role implementor');
+    return;
+  }
+
+  console.log('');
+  console.log('WORKERS');
+  console.log('-'.repeat(90));
+  console.log(
+    `${'ID'.padEnd(20)}${'PROVIDER'.padEnd(10)}${'TEAM'.padEnd(10)}${'ROLE'.padEnd(14)}${'STATE'.padEnd(16)}${'TIME'.padEnd(8)}LAST MSG`,
+  );
+  console.log('-'.repeat(90));
+
+  for (const { worker: w, liveState, lastMsg } of entries) {
+    const id = w.id.padEnd(20).substring(0, 20);
+    const provider = (w.provider || '-').padEnd(10);
+    const team = (w.team || '-').padEnd(10).substring(0, 10);
+    const role = (w.role || '-').padEnd(14).substring(0, 14);
+    const state = liveState.padEnd(16).substring(0, 16);
+    const time = registry.getElapsedTime(w).formatted.padEnd(8);
+    const msg = lastMsg ?? '-';
+    console.log(`${id}${provider}${team}${role}${state}${time}${msg}`);
+  }
+
+  if (pruned.length > 0) {
+    console.log('');
+    console.log(`Pruned ${pruned.length} dead worker(s): ${pruned.join(', ')}`);
+  }
+
+  const deadCount = entries.filter((e) => e.dead).length;
+  if (deadCount > 0 && !options.prune) {
+    console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
+  }
+  console.log('');
+}
+
+function printWorkerListJson(entries: WorkerListEntry[], pruned: string[]): void {
+  const result: Record<string, unknown>[] = entries.map(({ worker: w, liveState, lastMsg }) => ({
+    id: w.id,
+    provider: w.provider,
+    transport: w.transport,
+    team: w.team,
+    role: w.role,
+    state: liveState,
+    elapsed: registry.getElapsedTime(w).formatted,
+    lastMessage: lastMsg ?? null,
+  }));
+  if (pruned.length > 0) {
+    result.push(...pruned.map((id) => ({ id, state: 'dead (pruned)' })));
+  }
+  console.log(JSON.stringify(result, null, 2));
+}
+
+// ============================================================================
+// Kill helpers (extracted for cognitive complexity)
+// ============================================================================
+
+function killWorkerPane(w: registry.Worker): void {
+  try {
+    const { execSync } = require('node:child_process');
+    const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
+    const validPaneId = w.paneId && /^(%\d+|inline)$/.test(w.paneId);
+    if (validPaneId && w.paneId !== currentPane) {
+      execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+    } else if (w.paneId === currentPane) {
+      console.log('  (skipped pane kill — would kill current session)');
+    }
+  } catch {
+    /* pane may already be gone */
+  }
+}
+
+function cleanupRelayFiles(id: string): void {
+  try {
+    const { join } = require('node:path');
+    const { homedir } = require('node:os');
+    const { unlinkSync } = require('node:fs');
+    const relayDir = join(homedir(), '.genie', 'relay');
+    for (const suffix of ['-pane', '-meta']) {
+      try {
+        unlinkSync(join(relayDir, `${id}${suffix}`));
+      } catch {}
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+// ============================================================================
+// Dashboard helpers (extracted for cognitive complexity)
+// ============================================================================
+
+function printDashboardJson(workers: registry.Worker[]): void {
+  const summary = {
+    total: workers.length,
+    byProvider: {
+      claude: workers.filter((w) => w.provider === 'claude').length,
+      codex: workers.filter((w) => w.provider === 'codex').length,
+    },
+    byState: {
+      spawning: workers.filter((w) => w.state === 'spawning').length,
+      working: workers.filter((w) => w.state === 'working').length,
+      idle: workers.filter((w) => w.state === 'idle').length,
+      done: workers.filter((w) => w.state === 'done').length,
+      suspended: workers.filter((w) => w.state === 'suspended').length,
+    },
+  };
+  console.log(
+    JSON.stringify(
+      {
+        summary,
+        workers: workers.map((w) => ({
+          id: w.id,
+          provider: w.provider,
+          team: w.team,
+          role: w.role,
+          skill: w.skill,
+          state: w.state,
+          paneId: w.paneId,
+          transport: w.transport,
+        })),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+function printDashboardText(workers: registry.Worker[], watch?: boolean): void {
+  console.log('');
+  console.log('WORKER DASHBOARD');
+  console.log('='.repeat(80));
+  console.log(`Workers: ${workers.length}`);
+  console.log(`  Claude: ${workers.filter((w) => w.provider === 'claude').length}`);
+  console.log(`  Codex:  ${workers.filter((w) => w.provider === 'codex').length}`);
+  console.log('');
+
+  if (workers.length === 0) {
+    console.log('No active workers.');
+    return;
+  }
+
+  for (const w of workers) {
+    const elapsed = registry.getElapsedTime(w).formatted;
+    console.log(
+      `  [${w.provider || 'claude'}] ${w.id} (${w.team || 'default'}/${w.role || 'default'}) — ${w.state} — ${elapsed}`,
+    );
+    if (w.skill) console.log(`    Skill: ${w.skill}`);
+    console.log(`    Pane: ${w.paneId} | Session: ${w.session} | Transport: ${w.transport || 'tmux'}`);
+  }
+
+  console.log('');
+
+  if (watch) {
+    console.log('Watch mode: would auto-refresh every 2s (tmux required)');
+  }
+}
+
+// ============================================================================
 // Worker Namespace (genie worker — provider-selectable orchestration)
 // ============================================================================
 
@@ -668,245 +994,7 @@ export function registerWorkerNamespace(program: Command): void {
         extraArgs?: string[];
       }) => {
         try {
-          // 1. Resolve team name from flag, env, or session discovery
-          const team = options.team || (await nativeTeams.discoverTeamName());
-          if (!team) {
-            console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
-            process.exit(1);
-          }
-
-          // 1b. Validate spawn parameters (Group A contract)
-          const params: SpawnParams = {
-            provider: options.provider as ProviderName,
-            team,
-            role: options.role,
-            skill: options.skill,
-            extraArgs: options.extraArgs,
-          };
-
-          // 2. Ensure native team infrastructure exists (all providers).
-          //    The team-lead is always Claude Code, so the native team
-          //    directory + inbox must exist for join notifications to land.
-          const repoPath = process.cwd();
-          const teamConfig = await teamManager.getTeam(repoPath, team);
-
-          let parentSessionId = teamConfig?.nativeTeamParentSessionId;
-          if (!parentSessionId) {
-            parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
-          }
-
-          await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
-
-          const spawnColor = (options.color as ClaudeTeamColor) ?? (await nativeTeams.assignColor(team));
-
-          // 2b. Enable native teammate CLI flags for Claude only.
-          //     Codex doesn't speak the native IPC protocol, but still
-          //     gets registered in the team config for visibility.
-          if (options.provider === 'claude') {
-            params.nativeTeam = {
-              enabled: true,
-              parentSessionId,
-              color: spawnColor,
-              agentType: options.role ?? 'general-purpose',
-              planModeRequired: options.planMode,
-              permissionMode: options.permissionMode,
-              agentName: options.role,
-            };
-          }
-
-          // Session ID only for Claude — Codex doesn't support --session-id/--resume
-          const isClaude = params.provider === 'claude';
-          const claudeSessionId = isClaude ? crypto.randomUUID() : undefined;
-          if (claudeSessionId) {
-            params.sessionId = claudeSessionId;
-          }
-
-          const validated = validateSpawnParams(params);
-
-          // 2. Build launch command (Group C adapters)
-          const launch = buildLaunchCommand(validated);
-
-          // 3. Resolve layout (Group D)
-          const layoutMode = resolveLayoutMode(options.layout);
-
-          // 4. Generate worker ID
-          const workerId = await generateWorkerId(validated.team, validated.role);
-
-          // 5. Launch tmux pane with the provider command
-          const { execSync } = require('node:child_process');
-
-          const insideTmux = Boolean(process.env.TMUX);
-          const nt = validated.nativeTeam;
-          const now = new Date().toISOString();
-          const transport = insideTmux ? 'tmux' : 'inline';
-
-          // 6. Register worker + native team BEFORE launching
-          //    (inline mode execs into claude, so post-launch code won't run)
-          const agentName = nt?.agentName ?? validated.role ?? 'worker';
-
-          // 6b. Ensure shared OTel relay for non-native workers (Codex).
-          //     The relay listens for OTLP events and captures the pane
-          //     when codex goes idle (3s silence after last event).
-          let otelRelayActive = false;
-          if (!nt?.enabled && validated.provider === 'codex' && insideTmux) {
-            ensureCodexOtelConfig();
-            otelRelayActive = await ensureOtelRelay(validated.team);
-          }
-
-          // Prepend env vars via `env` command (tmux exec's directly, no shell)
-          let fullCommand = launch.command;
-          if (launch.env && Object.keys(launch.env).length > 0) {
-            const envArgs = Object.entries(launch.env)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(' ');
-            fullCommand = `env ${envArgs} ${launch.command}`;
-          }
-
-          const registerWorker = async (paneId: string) => {
-            const workerEntry: registry.Worker = {
-              id: workerId,
-              paneId,
-              session: 'genie',
-              provider: validated.provider,
-              transport,
-              role: validated.role,
-              skill: validated.skill,
-              team: validated.team,
-              worktree: null,
-              startedAt: now,
-              state: 'spawning',
-              lastStateChange: now,
-              repoPath: process.cwd(),
-              claudeSessionId,
-              nativeTeamEnabled: nt?.enabled ?? false,
-              nativeAgentId: `${agentName}@${validated.team}`,
-              nativeColor: nt?.color ?? spawnColor,
-              parentSessionId: nt?.parentSessionId ?? parentSessionId,
-            };
-            await registry.register(workerEntry);
-            return workerEntry;
-          };
-
-          // Register in native team config + send join notification.
-          // Runs for ALL providers — the team-lead is always Claude Code
-          // and polls its native inbox, so the notification always lands.
-          const registerNative = async (paneId: string) => {
-            await nativeTeams.registerNativeMember(validated.team, {
-              agentName,
-              agentType: nt?.agentType ?? validated.role ?? 'general-purpose',
-              color: nt?.color ?? spawnColor ?? 'blue',
-              tmuxPaneId: paneId,
-              cwd: process.cwd(),
-              planModeRequired: nt?.planModeRequired,
-            });
-            await nativeTeams.writeNativeInbox(validated.team, 'team-lead', {
-              from: agentName,
-              text: `Worker ${agentName} (${validated.provider}) joined team ${validated.team}. cwd: ${process.cwd()}. Ready for tasks.`,
-              summary: `${agentName} (${validated.provider}) joined`,
-              timestamp: new Date().toISOString(),
-              color: nt?.color ?? spawnColor ?? 'blue',
-              read: false,
-            });
-          };
-
-          let paneId: string;
-
-          if (insideTmux) {
-            try {
-              paneId = execSync(`tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`, { encoding: 'utf-8' }).trim();
-            } catch (err) {
-              console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-              process.exit(1);
-            }
-
-            try {
-              execSync(`tmux ${buildLayoutCommand('genie:0', layoutMode)}`, { stdio: 'ignore' });
-            } catch {
-              /* best-effort */
-            }
-
-            const workerEntry = await registerWorker(paneId);
-            await registerNative(paneId);
-
-            // Save spawn template for auto-respawn on message delivery
-            await registry.saveTemplate({
-              id: validated.role ?? workerId,
-              provider: validated.provider,
-              team: validated.team,
-              role: validated.role,
-              skill: validated.skill,
-              cwd: process.cwd(),
-              extraArgs: options.extraArgs,
-              nativeTeamEnabled: workerEntry.nativeTeamEnabled,
-              lastSpawnedAt: new Date().toISOString(),
-              lastSessionId: workerEntry.claudeSessionId,
-            });
-
-            // Register pane with the shared OTel relay.
-            if (otelRelayActive && paneId !== '%0') {
-              const { writeFileSync: wfs } = require('node:fs');
-              const { join: pjoin } = require('node:path');
-              const { homedir: hdir } = require('node:os');
-              const rd = pjoin(hdir(), '.genie', 'relay');
-              wfs(pjoin(rd, `${workerId}-pane`), paneId);
-              wfs(
-                pjoin(rd, `${workerId}-meta`),
-                JSON.stringify({
-                  agent: agentName,
-                  color: spawnColor,
-                }),
-              );
-            }
-
-            console.log(`Worker "${workerId}" spawned.`);
-            console.log(`  Provider: ${launch.provider}`);
-            console.log(`  Command:  ${fullCommand}`);
-            console.log(`  Team:     ${validated.team}`);
-            console.log(`  Pane:     ${paneId}`);
-            if (validated.role) console.log(`  Role:     ${validated.role}`);
-            if (validated.skill) console.log(`  Skill:    ${validated.skill}`);
-            if (workerEntry.claudeSessionId) {
-              console.log(`  Session:  ${workerEntry.claudeSessionId}`);
-            }
-            console.log(`  Layout:   ${layoutMode}`);
-            if (nt?.enabled) {
-              console.log('  Native:   enabled');
-              console.log(`  AgentID:  ${workerEntry.nativeAgentId}`);
-              console.log(`  Color:    ${nt.color}`);
-            }
-            if (otelRelayActive) {
-              console.log(`  OTel:     relay on port ${OTEL_RELAY_PORT}`);
-            }
-          } else {
-            // Outside tmux — register first, then exec foreground (blocking)
-            paneId = 'inline';
-            const workerEntry = await registerWorker(paneId);
-            await registerNative(paneId);
-
-            console.log(`Worker "${workerId}" starting inline...`);
-            console.log(`  Provider: ${launch.provider} | Team: ${validated.team} | Role: ${validated.role ?? '-'}`);
-            if (nt?.enabled) {
-              console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
-            }
-            console.log('');
-
-            // Exec into claude — this blocks until the session ends
-            const { spawnSync } = require('node:child_process');
-            const envVars = { ...process.env, ...(launch.env ?? {}) };
-            const result = spawnSync('sh', ['-c', launch.command], {
-              env: envVars,
-              stdio: 'inherit',
-            });
-
-            // Session ended — clean up
-            await registry.unregister(workerId);
-            if (nt?.enabled && agentName) {
-              await nativeTeams.clearNativeInbox(validated.team, agentName).catch(() => {});
-              await nativeTeams.unregisterNativeMember(validated.team, agentName).catch(() => {});
-            }
-            console.log(`\nWorker "${workerId}" session ended.`);
-            process.exit(result.status ?? 0);
-          }
+          await handleWorkerSpawn(options);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`Error: ${message}`);
@@ -925,112 +1013,16 @@ export function registerWorkerNamespace(program: Command): void {
     .action(async (options: { json?: boolean; prune?: boolean }) => {
       try {
         const workers = await registry.list();
-
-        const entries: { worker: registry.Worker; liveState: string; lastMsg: string | null; dead: boolean }[] = [];
+        const entries: WorkerListEntry[] = [];
         const pruned: string[] = [];
 
         for (const w of workers) {
-          // Suspended workers
-          if (w.state === 'suspended') {
-            const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
-            const suspendedAge = w.suspendedAt
-              ? Date.now() - new Date(w.suspendedAt).getTime()
-              : Number.POSITIVE_INFINITY;
-
-            if (options.prune && suspendedAge > SUSPEND_EXPIRY_MS) {
-              if (w.team && w.nativeAgentId) {
-                const agentName = w.nativeAgentId.split('@')[0];
-                await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
-                await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
-              }
-              if (w.role) await registry.removeTemplate(w.role).catch(() => {});
-              await registry.removeTemplate(w.id).catch(() => {});
-              await registry.unregister(w.id);
-              pruned.push(w.id);
-            } else {
-              const lastMsg = await getLastMessageTime(w);
-              entries.push({ worker: w, liveState: '\u{1F4A4} suspended', lastMsg, dead: false });
-            }
-            continue;
-          }
-
-          const paneAlive = await isPaneAlive(w.paneId);
-
-          if (paneAlive) {
-            const liveState = await getCurrentState(w.paneId);
-            const mapped = mapDisplayStateToRegistry(liveState);
-            if (mapped && mapped !== w.state) {
-              await registry.updateState(w.id, mapped);
-            }
-            const lastMsg = await getLastMessageTime(w);
-            entries.push({ worker: w, liveState, lastMsg, dead: false });
-          } else if (options.prune) {
-            if (w.team && w.nativeAgentId) {
-              const agentName = w.nativeAgentId.split('@')[0];
-              await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
-              await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
-            }
-            await registry.unregister(w.id);
-            pruned.push(w.id);
-          } else {
-            const lastMsg = await getLastMessageTime(w);
-            entries.push({ worker: w, liveState: '\u{1F480} dead', lastMsg, dead: true });
-          }
+          const result = await processWorkerForList(w, options.prune);
+          if (result.entry) entries.push(result.entry);
+          if (result.prunedId) pruned.push(result.prunedId);
         }
 
-        if (options.json) {
-          const result: any[] = entries.map(({ worker: w, liveState, lastMsg }) => ({
-            id: w.id,
-            provider: w.provider,
-            transport: w.transport,
-            team: w.team,
-            role: w.role,
-            state: liveState,
-            elapsed: registry.getElapsedTime(w).formatted,
-            lastMessage: lastMsg ?? null,
-          }));
-          if (pruned.length > 0) {
-            result.push(...pruned.map((id) => ({ id, state: 'dead (pruned)' })));
-          }
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-
-        if (entries.length === 0 && pruned.length === 0) {
-          console.log('No workers found.');
-          console.log('  Spawn one: genie worker spawn --role implementor');
-          return;
-        }
-
-        console.log('');
-        console.log('WORKERS');
-        console.log('-'.repeat(90));
-        console.log(
-          `${'ID'.padEnd(20)}${'PROVIDER'.padEnd(10)}${'TEAM'.padEnd(10)}${'ROLE'.padEnd(14)}${'STATE'.padEnd(16)}${'TIME'.padEnd(8)}LAST MSG`,
-        );
-        console.log('-'.repeat(90));
-
-        for (const { worker: w, liveState, lastMsg } of entries) {
-          const id = w.id.padEnd(20).substring(0, 20);
-          const provider = (w.provider || '-').padEnd(10);
-          const team = (w.team || '-').padEnd(10).substring(0, 10);
-          const role = (w.role || '-').padEnd(14).substring(0, 14);
-          const state = liveState.padEnd(16).substring(0, 16);
-          const time = registry.getElapsedTime(w).formatted.padEnd(8);
-          const msg = lastMsg ?? '-';
-          console.log(`${id}${provider}${team}${role}${state}${time}${msg}`);
-        }
-
-        if (pruned.length > 0) {
-          console.log('');
-          console.log(`Pruned ${pruned.length} dead worker(s): ${pruned.join(', ')}`);
-        }
-
-        const deadCount = entries.filter((e) => e.dead).length;
-        if (deadCount > 0 && !options.prune) {
-          console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
-        }
-        console.log('');
+        printWorkerList(entries, pruned, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -1051,49 +1043,9 @@ export function registerWorkerNamespace(program: Command): void {
           process.exit(1);
         }
 
-        // Kill the tmux pane (validate paneId format to prevent injection)
-        try {
-          const { execSync } = require('node:child_process');
-          const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
-          const validPaneId = w.paneId && /^(%\d+|inline)$/.test(w.paneId);
-          if (validPaneId && w.paneId !== currentPane) {
-            execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
-          } else if (w.paneId === currentPane) {
-            console.log('  (skipped pane kill — would kill current session)');
-          }
-        } catch {
-          /* pane may already be gone */
-        }
-
-        // Clean up OTel relay worker files (pane + meta).
-        // The shared relay auto-exits when no pane files remain.
-        try {
-          const { join } = require('node:path');
-          const { homedir } = require('node:os');
-          const { unlinkSync } = require('node:fs');
-          const relayDir = join(homedir(), '.genie', 'relay');
-          for (const suffix of ['-pane', '-meta']) {
-            try {
-              unlinkSync(join(relayDir, `${id}${suffix}`));
-            } catch {}
-          }
-        } catch {
-          /* best-effort */
-        }
-
-        // Clean up native team: clear inbox + unregister member.
-        // All providers register in native team now (not just Claude),
-        // so clean up based on nativeAgentId presence, not nativeTeamEnabled.
-        if (w.team && w.nativeAgentId) {
-          try {
-            const agentName = w.nativeAgentId.split('@')[0];
-            await nativeTeams.clearNativeInbox(w.team, agentName);
-            await nativeTeams.unregisterNativeMember(w.team, agentName);
-          } catch {
-            /* best-effort */
-          }
-        }
-
+        killWorkerPane(w);
+        cleanupRelayFiles(id);
+        await cleanupWorkerNativeTeam(w);
         await registry.unregister(id);
 
         // Remove spawn template to prevent auto-respawn of killed workers
@@ -1189,70 +1141,10 @@ export function registerWorkerNamespace(program: Command): void {
     .action(async (options: { json?: boolean; watch?: boolean }) => {
       try {
         const workers = await registry.list();
-
         if (options.json) {
-          const summary = {
-            total: workers.length,
-            byProvider: {
-              claude: workers.filter((w) => w.provider === 'claude').length,
-              codex: workers.filter((w) => w.provider === 'codex').length,
-            },
-            byState: {
-              spawning: workers.filter((w) => w.state === 'spawning').length,
-              working: workers.filter((w) => w.state === 'working').length,
-              idle: workers.filter((w) => w.state === 'idle').length,
-              done: workers.filter((w) => w.state === 'done').length,
-              suspended: workers.filter((w) => w.state === 'suspended').length,
-            },
-          };
-          console.log(
-            JSON.stringify(
-              {
-                summary,
-                workers: workers.map((w) => ({
-                  id: w.id,
-                  provider: w.provider,
-                  team: w.team,
-                  role: w.role,
-                  skill: w.skill,
-                  state: w.state,
-                  paneId: w.paneId,
-                  transport: w.transport,
-                })),
-              },
-              null,
-              2,
-            ),
-          );
-          return;
-        }
-
-        console.log('');
-        console.log('WORKER DASHBOARD');
-        console.log('='.repeat(80));
-        console.log(`Workers: ${workers.length}`);
-        console.log(`  Claude: ${workers.filter((w) => w.provider === 'claude').length}`);
-        console.log(`  Codex:  ${workers.filter((w) => w.provider === 'codex').length}`);
-        console.log('');
-
-        if (workers.length === 0) {
-          console.log('No active workers.');
-          return;
-        }
-
-        for (const w of workers) {
-          const elapsed = registry.getElapsedTime(w).formatted;
-          console.log(
-            `  [${w.provider || 'claude'}] ${w.id} (${w.team || 'default'}/${w.role || 'default'}) — ${w.state} — ${elapsed}`,
-          );
-          if (w.skill) console.log(`    Skill: ${w.skill}`);
-          console.log(`    Pane: ${w.paneId} | Session: ${w.session} | Transport: ${w.transport || 'tmux'}`);
-        }
-
-        console.log('');
-
-        if (options.watch) {
-          console.log('Watch mode: would auto-refresh every 2s (tmux required)');
+          printDashboardJson(workers);
+        } else {
+          printDashboardText(workers, options.watch);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

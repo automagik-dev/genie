@@ -58,53 +58,12 @@ function removeSymlinks(): string[] {
 /**
  * Uninstall Genie CLI entirely
  */
-export async function uninstallCommand(): Promise<void> {
-  console.log();
-  console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
-  console.log();
-
-  const genieDir = getGenieDir();
-  const hasGenieDir = existsSync(genieDir);
-  const hasHookScript = hookScriptExists();
-
-  // Count symlinks
-  const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
-
-  // Show what will be removed
-  console.log('\x1b[2mThis will remove:\x1b[0m');
-  if (hasHookScript) {
-    console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
-  }
-  if (hasGenieDir) {
-    console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
-  }
-  if (existingSymlinks.length > 0) {
-    console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
-  }
-  console.log();
-
-  if (!hasGenieDir && !hasHookScript && existingSymlinks.length === 0) {
-    console.log('\x1b[33mNothing to uninstall.\x1b[0m');
-    console.log();
-    return;
-  }
-
-  // Confirm with user
-  const proceed = await confirm({
-    message: 'Are you sure you want to uninstall Genie CLI?',
-    default: false,
-  });
-
-  if (!proceed) {
-    console.log();
-    console.log('\x1b[2mUninstall cancelled.\x1b[0m');
-    console.log();
-    return;
-  }
-
-  console.log();
-
-  // 1. Remove hook script
+function performUninstall(
+  hasHookScript: boolean,
+  existingSymlinks: string[],
+  genieDir: string,
+  hasGenieDir: boolean,
+): void {
   if (hasHookScript) {
     console.log('\x1b[2mRemoving hook script...\x1b[0m');
     try {
@@ -116,7 +75,6 @@ export async function uninstallCommand(): Promise<void> {
     }
   }
 
-  // 2. Remove symlinks
   if (existingSymlinks.length > 0) {
     console.log('\x1b[2mRemoving symlinks...\x1b[0m');
     const removed = removeSymlinks();
@@ -125,7 +83,6 @@ export async function uninstallCommand(): Promise<void> {
     }
   }
 
-  // 3. Delete ~/.genie directory
   if (hasGenieDir) {
     console.log('\x1b[2mRemoving genie directory...\x1b[0m');
     try {
@@ -136,12 +93,45 @@ export async function uninstallCommand(): Promise<void> {
       console.log(`  \x1b[33m!\x1b[0m Could not remove directory: ${message}`);
     }
   }
+}
+
+export async function uninstallCommand(): Promise<void> {
+  console.log();
+  console.log('\x1b[1m\x1b[33m Uninstall Genie CLI\x1b[0m');
+  console.log();
+
+  const genieDir = getGenieDir();
+  const hasGenieDir = existsSync(genieDir);
+  const hasHookScript = hookScriptExists();
+  const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
+
+  console.log('\x1b[2mThis will remove:\x1b[0m');
+  if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
+  if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
+  if (existingSymlinks.length > 0)
+    console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
+  console.log();
+
+  if (!hasGenieDir && !hasHookScript && existingSymlinks.length === 0) {
+    console.log('\x1b[33mNothing to uninstall.\x1b[0m');
+    console.log();
+    return;
+  }
+
+  const proceed = await confirm({ message: 'Are you sure you want to uninstall Genie CLI?', default: false });
+  if (!proceed) {
+    console.log();
+    console.log('\x1b[2mUninstall cancelled.\x1b[0m');
+    console.log();
+    return;
+  }
+
+  console.log();
+  performUninstall(hasHookScript, existingSymlinks, genieDir, hasGenieDir);
 
   console.log();
   console.log('\x1b[32m+\x1b[0m Genie CLI uninstalled.');
   console.log();
-
-  // Note about npm/bun global package
   console.log('\x1b[2mNote: If you installed via npm/bun, also run:\x1b[0m');
   console.log('  \x1b[36mbun remove -g @automagik/genie\x1b[0m');
   console.log('  \x1b[2mor\x1b[0m');

@@ -135,10 +135,6 @@ function getRegistryFilePath(): string {
 // Internal
 // ============================================================================
 
-async function ensureConfigDir(): Promise<void> {
-  await mkdir(CONFIG_DIR, { recursive: true });
-}
-
 async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   try {
     const filePath = registryPath ?? getRegistryFilePath();
@@ -166,51 +162,70 @@ const LOCK_TIMEOUT_MS = 5000;
 const LOCK_RETRY_MS = 50;
 const LOCK_STALE_MS = 10000;
 
+async function tryCleanStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    const lockStat = await stat(lockPath);
+    if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+      try {
+        await unlink(lockPath);
+      } catch {
+        /* race with other cleanup */
+      }
+      return true;
+    }
+  } catch {
+    return true; // lock gone, retry
+  }
+  return false;
+}
+
+function createReleaseFn(lockPath: string): () => Promise<void> {
+  return async () => {
+    try {
+      await unlink(lockPath);
+    } catch {
+      /* already removed */
+    }
+  };
+}
+
+async function tryCreateLock(lockPath: string): Promise<(() => Promise<void>) | null> {
+  try {
+    const handle = await open(lockPath, 'wx');
+    await handle.writeFile(String(process.pid));
+    await handle.close();
+    return createReleaseFn(lockPath);
+  } catch (err) {
+    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (errCode !== 'EEXIST') throw err;
+    return null;
+  }
+}
+
+async function forceRemoveLock(lockPath: string): Promise<void> {
+  try {
+    await unlink(lockPath);
+  } catch {
+    throw new Error(`Registry lock timeout: could not remove stale lock at ${lockPath}`);
+  }
+}
+
 async function acquireLock(registryPath?: string): Promise<() => Promise<void>> {
-  const filePath = registryPath ?? getRegistryFilePath();
-  const lockPath = `${filePath}.lock`;
+  const lockPath = `${registryPath ?? getRegistryFilePath()}.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
 
   while (true) {
-    try {
-      const handle = await open(lockPath, 'wx');
-      await handle.writeFile(String(process.pid));
-      await handle.close();
-      return async () => {
-        try {
-          await unlink(lockPath);
-        } catch {
-          /* already removed */
-        }
-      };
-    } catch (err) {
-      const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-      if (errCode !== 'EEXIST') throw err;
+    const release = await tryCreateLock(lockPath);
+    if (release) return release;
 
-      try {
-        const lockStat = await stat(lockPath);
-        if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
-          try {
-            await unlink(lockPath);
-          } catch {
-            /* race with other cleanup */
-          }
-          continue;
-        }
-      } catch {
-        continue;
-      }
+    const cleaned = await tryCleanStaleLock(lockPath);
+    if (cleaned) continue;
 
-      if (Date.now() > deadline) {
-        try {
-          await unlink(lockPath);
-        } catch {
-          throw new Error(`Registry lock timeout: could not remove stale lock at ${lockPath}`);
-        }
-        continue;
-      }
-      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    if (Date.now() > deadline) {
+      await forceRemoveLock(lockPath);
+      continue;
     }
+    await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
   }
 }
 
@@ -336,42 +351,6 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
   return `${taskId}-${suffix}`;
 }
 
-/** Find workers by wish slug. */
-async function findByWish(wishSlug: string): Promise<Worker[]> {
-  const workers = await list();
-  return workers.filter((w) => w.wishSlug === wishSlug);
-}
-
-/** Find worker by Claude session ID. */
-async function findBySessionId(sessionId: string): Promise<Worker | null> {
-  const workers = await list();
-  return workers.find((w) => w.claudeSessionId === sessionId) ?? null;
-}
-
-/** Check if a worker exists for a given task. */
-async function hasWorkerForTask(taskId: string): Promise<boolean> {
-  const worker = await findByTask(taskId);
-  return worker !== null;
-}
-
-/** Find workers by team name. */
-async function findByTeam(team: string): Promise<Worker[]> {
-  const workers = await list();
-  return workers.filter((w) => w.team === team);
-}
-
-/** Find workers by provider. */
-async function findByProvider(provider: ProviderName): Promise<Worker[]> {
-  const workers = await list();
-  return workers.filter((w) => w.provider === provider);
-}
-
-/** Get workers in a specific state. */
-async function getByState(state: WorkerState): Promise<Worker[]> {
-  const workers = await list();
-  return workers.filter((w) => w.state === state);
-}
-
 /** Calculate elapsed time for a worker. */
 export function getElapsedTime(worker: Worker): { ms: number; formatted: string } {
   const startTime = new Date(worker.startedAt).getTime();
@@ -390,16 +369,6 @@ export function getElapsedTime(worker: Worker): { ms: number; formatted: string 
   }
 
   return { ms, formatted };
-}
-
-/** Get the config directory path. */
-function getConfigDir(): string {
-  return CONFIG_DIR;
-}
-
-/** Get the registry file path. */
-function getRegistryPath(): string {
-  return getRegistryFilePath();
 }
 
 // ============================================================================
@@ -462,19 +431,6 @@ export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   await withRegistry((reg) => {
     reg.templates[template.id] = template;
   });
-}
-
-/** Get a template by exact ID. */
-async function getTemplate(id: string): Promise<WorkerTemplate | null> {
-  const reg = await loadRegistry();
-  return reg.templates?.[id] ?? null;
-}
-
-/** Find a template by ID, role, or team:role pattern. */
-async function findTemplate(query: string): Promise<WorkerTemplate | null> {
-  const reg = await loadRegistry();
-  const templates = Object.values(reg.templates ?? {});
-  return templates.find((t) => t.id === query || t.role === query || `${t.team}:${t.role}` === query) ?? null;
 }
 
 /** Remove a template by ID. */

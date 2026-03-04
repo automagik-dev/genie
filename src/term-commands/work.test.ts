@@ -96,6 +96,51 @@ const KNOWN_NESTED_REPOS: Record<string, string> = {
 };
 
 /**
+ * Parse wish.md metadata (repo and title fields).
+ */
+async function parseWishMetadata(wishPath: string): Promise<{ repo?: string; title?: string }> {
+  try {
+    const file = Bun.file(wishPath);
+    const content = await file.text();
+    const lines = content.split('\n');
+
+    let repo: string | undefined;
+    for (const line of lines.slice(0, 20)) {
+      const repoMatch = line.match(/^\*\*repo:\*\*\s*`?([^`]+)`?$/i);
+      if (repoMatch) {
+        repo = repoMatch[1].trim();
+        break;
+      }
+    }
+
+    const titleMatch = lines[0]?.match(/^#\s+(?:Wish:\s+)?(.+)$/i);
+    const title = titleMatch ? titleMatch[1].trim() : undefined;
+
+    return { repo, title };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Try to detect target repo via heuristic keyword matching.
+ */
+async function detectViaHeuristic(
+  searchText: string,
+  repoPath: string,
+): Promise<{ targetRepo: string; detectionMethod: string } | null> {
+  const lowerText = searchText.toLowerCase();
+  for (const [keyword, relativePath] of Object.entries(KNOWN_NESTED_REPOS)) {
+    if (!lowerText.includes(keyword.toLowerCase())) continue;
+    const fullPath = join(repoPath, relativePath);
+    if (await pathExists(join(fullPath, '.git'))) {
+      return { targetRepo: fullPath, detectionMethod: `heuristic (matched "${relativePath}")` };
+    }
+  }
+  return null;
+}
+
+/**
  * Simulated repo detection logic (mirrors work.ts detectTargetRepo)
  */
 async function detectTargetRepo(
@@ -105,60 +150,24 @@ async function detectTargetRepo(
   issueTitle?: string,
   issueDescription?: string,
 ): Promise<{ targetRepo: string; detectionMethod: string }> {
-  // 1. Explicit --repo flag takes priority
   if (explicitRepo) {
     const targetPath = isAbsolute(explicitRepo) ? explicitRepo : resolve(repoPath, explicitRepo);
     return { targetRepo: targetPath, detectionMethod: '--repo flag' };
   }
 
-  // 2. Check wish.md for repo: field
   const wishPath = join(repoPath, '.genie', 'wishes', taskId, 'wish.md');
-  const metadata: { repo?: string; title?: string; description?: string } = {};
-
-  try {
-    const file = Bun.file(wishPath);
-    const content = await file.text();
-    const lines = content.split('\n');
-
-    // Parse repo field
-    for (const line of lines.slice(0, 20)) {
-      const repoMatch = line.match(/^\*\*repo:\*\*\s*`?([^`]+)`?$/i);
-      if (repoMatch) {
-        metadata.repo = repoMatch[1].trim();
-        break;
-      }
-    }
-
-    // Parse title
-    const titleMatch = lines[0]?.match(/^#\s+(?:Wish:\s+)?(.+)$/i);
-    if (titleMatch) {
-      metadata.title = titleMatch[1].trim();
-    }
-  } catch {
-    // No wish.md or parse error
-  }
+  const metadata = await parseWishMetadata(wishPath);
 
   if (metadata.repo) {
     const targetPath = isAbsolute(metadata.repo) ? metadata.repo : resolve(repoPath, metadata.repo);
     return { targetRepo: targetPath, detectionMethod: 'wish.md repo: field' };
   }
 
-  // 3. Heuristic detection from title/description
   const title = metadata.title || issueTitle || '';
-  const description = metadata.description || issueDescription || '';
-  const searchText = `${title} ${description}`.toLowerCase();
+  const description = issueDescription || '';
+  const heuristic = await detectViaHeuristic(`${title} ${description}`, repoPath);
+  if (heuristic) return heuristic;
 
-  for (const [keyword, relativePath] of Object.entries(KNOWN_NESTED_REPOS)) {
-    if (searchText.includes(keyword.toLowerCase())) {
-      const fullPath = join(repoPath, relativePath);
-      const gitPath = join(fullPath, '.git');
-      if (await pathExists(gitPath)) {
-        return { targetRepo: fullPath, detectionMethod: `heuristic (matched "${relativePath}")` };
-      }
-    }
-  }
-
-  // 4. Default: use current repo
   return { targetRepo: repoPath, detectionMethod: 'default (current repo)' };
 }
 
