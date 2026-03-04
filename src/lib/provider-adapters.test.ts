@@ -2,7 +2,7 @@
  * Provider Adapters — Unit Tests
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import {
   type SpawnParams,
   buildClaudeCommand,
@@ -98,6 +98,16 @@ describe('buildClaudeCommand', () => {
 // ============================================================================
 
 describe('buildCodexCommand', () => {
+  // Mock Bun.which to pretend codex is installed (hasBinary check)
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'codex' ? '/usr/local/bin/codex' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
   it('builds command with positional prompt for skill', () => {
     const result = buildCodexCommand({ provider: 'codex', team: 'work', skill: 'work', role: 'tester' });
     expect(result.command).toContain('codex');
@@ -167,6 +177,16 @@ describe('buildCodexCommand', () => {
 // ============================================================================
 
 describe('buildLaunchCommand', () => {
+  // Mock Bun.which to pretend codex is installed (hasBinary check)
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'codex' ? '/usr/local/bin/codex' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
   it('dispatches to claude adapter', () => {
     const result = buildLaunchCommand({ provider: 'claude', team: 'work', role: 'implementor' });
     expect(result.provider).toBe('claude');
