@@ -44,6 +44,8 @@ export interface TuiOptions {
   reset?: boolean;
   name?: string;
   dir?: string;
+  /** Team name — when set, focus (or create) a dedicated window for this team. */
+  team?: string;
 }
 
 /**
@@ -90,8 +92,6 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string): str
     parts.push(`--system-prompt ${shellQuote(sanitized)}`);
   }
 
-  parts.push('-c');
-
   return parts.join(' ');
 }
 
@@ -106,12 +106,40 @@ async function createTuiSession(name: string, workspaceDir: string, systemPrompt
     process.exit(1);
   }
 
+  // Name the main window and lock the name
+  await tmux.executeTmux(`rename-window -t ${shellQuote(`${name}:0`)} ${shellQuote(name)}`);
+  await tmux.executeTmux(`set-window-option -t ${shellQuote(`${name}:0`)} automatic-rename off`);
+
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
 
   const cmd = buildClaudeCommand(name, systemPrompt || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
+}
+
+/** Focus (or create) a team window within an existing session. */
+async function focusTeamWindow(
+  sessionName: string,
+  team: string,
+  workingDir: string,
+  systemPrompt: string | null,
+): Promise<void> {
+  const teamWindow = await tmux.ensureTeamWindow(sessionName, team, workingDir);
+  if (teamWindow.created) {
+    console.log(`Created team window "${team}"`);
+
+    // Bootstrap native team and launch Claude Code in the new window
+    await ensureNativeTeamForLeader(team, workingDir);
+    const target = `${sessionName}:${team}`;
+    const cdCmd = `cd ${shellQuote(workingDir)}`;
+    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
+    const cmd = buildClaudeCommand(team, systemPrompt || undefined);
+    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
+    console.log(`Started Claude Code as team-lead@${sanitizeTeamName(team)} in ${workingDir}`);
+  }
+  await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${team}`)}`);
+  console.log(`Focused team window "${team}"`);
 }
 
 export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
@@ -128,7 +156,7 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
       await deleteNativeTeam(name);
     }
 
-    const session = await tmux.findSessionByName(name);
+    let session = await tmux.findSessionByName(name);
     const systemPrompt = getAgentsSystemPrompt();
     if (!systemPrompt) {
       console.warn('Warning: No AGENTS.md found in current directory. Launching without --system-prompt.');
@@ -136,8 +164,13 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
 
     if (!session) {
       await createTuiSession(name, workspaceDir, systemPrompt);
+      session = await tmux.findSessionByName(name);
     } else {
       console.log(`Session "${name}" already exists`);
+    }
+
+    if (options.team && session) {
+      await focusTeamWindow(name, options.team, workspaceDir, systemPrompt);
     }
 
     console.log('Attaching...');
