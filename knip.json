@@ -1,7 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
-  "entry": ["src/claudio.ts", "src/genie.ts"],
   "project": ["src/**/*.ts"],
-  "ignore": ["scripts/**", "plugins/**"],
-  "ignoreDependencies": ["esbuild"]
+  "ignoreBinaries": ["tmux", "bd", "which"]
 }
