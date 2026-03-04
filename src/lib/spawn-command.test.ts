@@ -3,7 +3,7 @@
  * Run with: bun test src/lib/spawn-command.test.ts
  */
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { type WorkerProfile, buildSpawnCommand, hasClaudioBinary } from './spawn-command.js';
 
 // ============================================================================
@@ -104,6 +104,19 @@ describe('buildSpawnCommand with claude launcher', () => {
 // ============================================================================
 
 describe('buildSpawnCommand with claudio launcher', () => {
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      ['claude', 'claudio', 'codex'].includes(name)
+        ? `/usr/local/bin/${name}`
+        : typeof originalWhich === 'function'
+          ? originalWhich(name)
+          : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
   test('builds claudio launch command with profile', () => {
     const profile = makeProfile({
       launcher: 'claudio',
@@ -242,6 +255,19 @@ describe('hasClaudioBinary', () => {
 // ============================================================================
 
 describe('shell injection prevention', () => {
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      ['claude', 'claudio', 'codex'].includes(name)
+        ? `/usr/local/bin/${name}`
+        : typeof originalWhich === 'function'
+          ? originalWhich(name)
+          : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
   test('escapes shell metacharacters in claudeArgs (claude launcher)', () => {
     const profile = makeProfile({
       launcher: 'claude',
