@@ -474,9 +474,7 @@ export async function getTemplate(id: string): Promise<WorkerTemplate | null> {
 export async function findTemplate(query: string): Promise<WorkerTemplate | null> {
   const reg = await loadRegistry();
   const templates = Object.values(reg.templates ?? {});
-  return (
-    templates.find((t) => t.id === query || t.role === query || `${t.team}:${t.role}` === query) ?? null
-  );
+  return templates.find((t) => t.id === query || t.role === query || `${t.team}:${t.role}` === query) ?? null;
 }
 
 /** Remove a template by ID. */

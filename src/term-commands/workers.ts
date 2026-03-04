@@ -19,17 +19,10 @@
  */
 
 import type { Command } from 'commander';
-import * as approveCmd from './approve.js';
-import * as closeCmd from './close.js';
-import * as eventsCmd from './events.js';
-import * as execCmd from './exec.js';
-import * as historyCmd from './history.js';
-import * as orchestrateCmd from './orchestrate.js';
-import * as readCmd from './read.js';
-import * as shipCmd from './ship.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
+import * as mailbox from '../lib/mailbox.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
 import { detectState } from '../lib/orchestrator/index.js';
 import {
@@ -44,7 +37,14 @@ import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
-import * as mailbox from '../lib/mailbox.js';
+import * as approveCmd from './approve.js';
+import * as closeCmd from './close.js';
+import * as eventsCmd from './events.js';
+import * as execCmd from './exec.js';
+import * as historyCmd from './history.js';
+import * as orchestrateCmd from './orchestrate.js';
+import * as readCmd from './read.js';
+import * as shipCmd from './ship.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -933,7 +933,9 @@ export function registerWorkerNamespace(program: Command): void {
           // Suspended workers
           if (w.state === 'suspended') {
             const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
-            const suspendedAge = w.suspendedAt ? Date.now() - new Date(w.suspendedAt).getTime() : Infinity;
+            const suspendedAge = w.suspendedAt
+              ? Date.now() - new Date(w.suspendedAt).getTime()
+              : Number.POSITIVE_INFINITY;
 
             if (options.prune && suspendedAge > SUSPEND_EXPIRY_MS) {
               if (w.team && w.nativeAgentId) {

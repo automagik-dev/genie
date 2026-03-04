@@ -8,13 +8,8 @@
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as nativeTeams from './claude-native-teams.js';
-import { resolveLayoutMode, buildLayoutCommand } from './mosaic-layout.js';
-import {
-  type ProviderName,
-  type SpawnParams,
-  buildLaunchCommand,
-  validateSpawnParams,
-} from './provider-adapters.js';
+import { buildLayoutCommand, resolveLayoutMode } from './mosaic-layout.js';
+import { type SpawnParams, buildLaunchCommand, validateSpawnParams } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
 import * as registry from './worker-registry.js';
 import type { WorkerTemplate } from './worker-registry.js';

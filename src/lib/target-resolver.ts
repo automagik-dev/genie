@@ -210,9 +210,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     }
 
     // No worker owns this window
-    throw new Error(
-      `Window "${target}" not found in worker registry.\nRun 'genie worker list' to list workers.`,
-    );
+    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie worker list' to list workers.`);
   }
 
   // ---- Load workers (injected or from registry) ----
@@ -250,7 +248,9 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
         const live = await isPaneLive(paneId);
         if (!live) {
           await cleanupDeadPane(leftSide, paneId);
-          throw new Error(`Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'genie worker kill ${leftSide}' to clean up.`);
+          throw new Error(
+            `Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'genie worker kill ${leftSide}' to clean up.`,
+          );
         }
       }
 
@@ -298,7 +298,9 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
       const live = await isPaneLive(worker.paneId);
       if (!live) {
         await cleanupDeadPane(target, worker.paneId);
-        throw new Error(`Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'genie worker kill ${target}' to clean up.`);
+        throw new Error(
+          `Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'genie worker kill ${target}' to clean up.`,
+        );
       }
     }
 

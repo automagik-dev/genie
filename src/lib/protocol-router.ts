@@ -65,7 +65,9 @@ async function ensureWorkerAlive(
   const templates = await registry.listTemplates();
   const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
   const uniqueCandidates = [...new Set(candidates)];
-  const template = templates.find((t) => uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q));
+  const template = templates.find((t) =>
+    uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q),
+  );
   if (!template) return null;
 
   const resumeSessionId =
