@@ -80,8 +80,9 @@ program
   .description('Start Claude Code as native team-lead (default: "genie" in ~/workspace)')
   .option('-r, --reset', 'Kill existing session and start fresh')
   .option('-d, --dir <path>', 'Working directory (default: ~/workspace)')
+  .option('-t, --team <team>', 'Focus (or create) a dedicated team window')
   .action(async (name: string | undefined, options: TuiOptions) => {
-    if (name) options.name = name;
+    if (name) options.team = name;
     await tuiCommand(options);
   });
 

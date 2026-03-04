@@ -179,9 +179,20 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
  */
 export async function createWindow(sessionId: string, name: string, workingDir?: string): Promise<TmuxWindow | null> {
   const cdFlag = workingDir ? ` -c '${workingDir.replace(/'/g, "'\\''")}'` : '';
-  await executeTmux(`new-window -t '${sessionId}' -n '${name}'${cdFlag}`);
-  const windows = await listWindows(sessionId);
-  return windows.find((window) => window.name === name) || null;
+  // Use -d (don't switch focus) and -P -F to capture the window ID directly.
+  // Avoids relying on findWindowByName which can fail if automatic-rename fires.
+  const output = await executeTmux(`new-window -d -P -F '#{window_id}' -t '${sessionId}:' -n '${name}'${cdFlag}`);
+  const windowId = output.trim();
+  if (!windowId) return null;
+
+  // Lock the window name — prevent tmux automatic-rename from overriding it
+  try {
+    await executeTmux(`set-window-option -t '${windowId}' automatic-rename off`);
+  } catch {
+    /* best-effort */
+  }
+
+  return { id: windowId, name, active: false, sessionId };
 }
 
 /**
@@ -190,6 +201,39 @@ export async function createWindow(sessionId: string, name: string, workingDir?:
 export async function findWindowByName(sessionId: string, name: string): Promise<TmuxWindow | null> {
   const windows = await listWindows(sessionId);
   return windows.find((w) => w.name === name) || null;
+}
+
+/**
+ * Ensure a tmux window exists for a team within a session.
+ * Idempotent: if the window already exists, returns its first pane.
+ * If not, creates the window and returns pane 0.
+ */
+export async function ensureTeamWindow(
+  session: string,
+  teamName: string,
+  workingDir?: string,
+): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
+  const existing = await findWindowByName(session, teamName);
+  if (existing) {
+    // Ensure automatic-rename is off so the team name sticks
+    try {
+      await executeTmux(`set-window-option -t '${existing.id}' automatic-rename off`);
+    } catch {
+      /* best-effort */
+    }
+    const panes = await listPanes(existing.id);
+    const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
+    return { windowId: existing.id, windowName: teamName, paneId, created: false };
+  }
+
+  const newWindow = await createWindow(session, teamName, workingDir);
+  if (!newWindow) {
+    throw new Error(`Failed to create team window "${teamName}" in session "${session}"`);
+  }
+
+  const panes = await listPanes(newWindow.id);
+  const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
+  return { windowId: newWindow.id, windowName: teamName, paneId, created: true };
 }
 
 /**
