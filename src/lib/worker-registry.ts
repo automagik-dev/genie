@@ -112,10 +112,12 @@ interface WorkerRegistry {
 // Configuration
 // ============================================================================
 
-const GLOBAL_DIR = join(homedir(), '.genie');
+function getGlobalDir(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
 
 function getRegistryFilePath(): string {
-  return join(GLOBAL_DIR, 'workers.json');
+  return join(getGlobalDir(), 'workers.json');
 }
 
 // ============================================================================
