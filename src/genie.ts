@@ -13,7 +13,6 @@ import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crysta
 import { doctorCommand } from './genie-commands/doctor.js';
 import { installCommand } from './genie-commands/install.js';
 import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
-import { pdfRenderCommand, pdfTemplateCommand, pdfTemplatesCommand, pdfThemesCommand } from './genie-commands/pdf.js';
 import {
   profilesAddCommand,
   profilesDefaultCommand,
@@ -117,30 +116,6 @@ profiles.command('rm <name>').description('Delete a worker profile').action(prof
 profiles.command('show <name>').description('Show details of a worker profile').action(profilesShowCommand);
 
 profiles.command('default [name]').description('Get or set the default worker profile').action(profilesDefaultCommand);
-
-// PDF command group - generate PDFs from markdown
-const pdf = program.command('pdf').description('Generate PDFs from markdown files');
-
-pdf
-  .command('render <input>')
-  .description('Render a markdown file to PDF')
-  .option('-o, --output <file>', 'Output PDF file', 'output.pdf')
-  .option('-t, --theme <name>', 'Theme to use (default, minimal, corporate, dark)')
-  .option('--no-page-numbers', 'Disable page numbers')
-  .option('-w, --watch', 'Watch for changes and re-render')
-  .action(pdfRenderCommand);
-
-pdf
-  .command('template <name>')
-  .description('Generate PDF from a template with JSON data')
-  .option('-d, --data <file>', 'JSON data file')
-  .option('-o, --output <file>', 'Output PDF file', 'output.pdf')
-  .option('-t, --theme <name>', 'Theme to use')
-  .action(pdfTemplateCommand);
-
-pdf.command('themes').description('List available themes').action(pdfThemesCommand);
-
-pdf.command('templates').description('List available templates').action(pdfTemplatesCommand);
 
 // Brainstorm command group
 const brainstorm = program.command('brainstorm').description('Brainstorm utilities (file-based helpers)');
