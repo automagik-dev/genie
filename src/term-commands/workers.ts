@@ -1090,6 +1090,74 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
+  // worker suspend
+  worker
+    .command('suspend <id>')
+    .description('Suspend a worker (kill pane, preserve session for resume)')
+    .action(async (id: string) => {
+      try {
+        const w = await registry.get(id);
+        if (!w) {
+          console.error(`Worker "${id}" not found.`);
+          process.exit(1);
+        }
+        if (w.state === 'suspended') {
+          console.log(`Worker "${id}" is already suspended.`);
+          return;
+        }
+        const { suspendWorker } = await import('../lib/idle-timeout.js');
+        const ok = await suspendWorker(id);
+        if (ok) {
+          console.log(`Worker "${id}" suspended.`);
+          if (w.claudeSessionId) {
+            console.log(`  Session preserved: ${w.claudeSessionId}`);
+          }
+          console.log(`  Send a message to auto-resume: genie msg send ${id} "your message"`);
+        } else {
+          console.error(`Failed to suspend worker "${id}".`);
+          process.exit(1);
+        }
+      } catch (error: any) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
+  // worker watchdog
+  worker
+    .command('watchdog')
+    .description('Start idle timeout watchdog (suspends idle workers)')
+    .option('--once', 'Run a single check and exit')
+    .action(async (options: { once?: boolean }) => {
+      try {
+        const { checkIdleWorkers, runWatchdogLoop, getIdleTimeoutMs } = await import('../lib/idle-timeout.js');
+        const timeoutMs = getIdleTimeoutMs();
+
+        if (timeoutMs === 0) {
+          console.log('Idle timeout is disabled (GENIE_IDLE_TIMEOUT_MS=0).');
+          return;
+        }
+
+        console.log(`Idle timeout: ${Math.round(timeoutMs / 60000)}m`);
+
+        if (options.once) {
+          const suspended = await checkIdleWorkers();
+          if (suspended.length > 0) {
+            console.log(`Suspended ${suspended.length} worker(s): ${suspended.join(', ')}`);
+          } else {
+            console.log('No idle workers to suspend.');
+          }
+          return;
+        }
+
+        console.log('Starting watchdog loop (Ctrl+C to stop)...');
+        await runWatchdogLoop();
+      } catch (error: any) {
+        console.error(`Error: ${error.message}`);
+        process.exit(1);
+      }
+    });
+
   // worker dashboard
   worker
     .command('dashboard')
@@ -1112,6 +1180,7 @@ export function registerWorkerNamespace(program: Command): void {
               working: workers.filter((w) => w.state === 'working').length,
               idle: workers.filter((w) => w.state === 'idle').length,
               done: workers.filter((w) => w.state === 'done').length,
+              suspended: workers.filter((w) => w.state === 'suspended').length,
             },
           };
           console.log(
