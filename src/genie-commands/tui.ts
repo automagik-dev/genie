@@ -140,6 +140,7 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string, resu
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
+    `GENIE_AGENT_NAME='team-lead'`,
     'claude',
     `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
     `--agent-name ${shellQuote('team-lead')}`,

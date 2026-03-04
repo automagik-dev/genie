@@ -183,6 +183,7 @@ function appendNativeTeamFlags(
   env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
 
   const agentName = nt.agentName ?? params.role ?? 'worker';
+  env.GENIE_AGENT_NAME = agentName;
   parts.push('--agent-id', escapeShellArg(`${agentName}@${params.team}`));
   parts.push('--agent-name', escapeShellArg(agentName));
   parts.push('--team-name', escapeShellArg(params.team));
