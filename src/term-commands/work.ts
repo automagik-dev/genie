@@ -139,8 +139,9 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
   try {
     const result = await $`bd ${args}`.quiet();
     return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error: any) {
-    return { stdout: error.stdout?.toString().trim() || '', exitCode: error.exitCode || 1 };
+  } catch (error) {
+    const shellErr = error as { stdout?: Buffer; exitCode?: number };
+    return { stdout: shellErr.stdout?.toString().trim() || '', exitCode: shellErr.exitCode || 1 };
   }
 }
 
@@ -438,8 +439,9 @@ async function createWorktreeForTask(taskId: string, repoPath: string): Promise<
     const manager = await getWorktreeManager(repoPath);
     const info = await manager.create(taskId, repoPath);
     return info.path;
-  } catch (error: any) {
-    console.error(`⚠️  Failed to create worktree: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️  Failed to create worktree: ${message}`);
     return null;
   }
 }
@@ -588,8 +590,9 @@ async function createEngineForTask(
     });
     engine.start();
     return engine;
-  } catch (err: any) {
-    console.log(`⚠️  Auto-approve setup failed: ${err.message} (non-fatal)`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`⚠️  Auto-approve setup failed: ${message} (non-fatal)`);
     return undefined;
   }
 }
@@ -701,8 +704,9 @@ async function ensureWorkerWindow(
     }
 
     return { paneId: panes[0].id, windowId: newWindow.id, windowCreated: true };
-  } catch (error: any) {
-    console.error(`❌ Error ensuring worker window: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error ensuring worker window: ${message}`);
     return null;
   }
 }
@@ -1054,8 +1058,9 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
 
     try {
       claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
-    } catch (err: any) {
-      claimError = err.message || String(err);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      claimError = message || String(err);
     }
 
     if (!claimed) {
@@ -1167,8 +1172,9 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
 
         // Set initial state
         await beadsRegistry.setAgentState(taskId, 'spawning');
-      } catch (error: any) {
-        console.log(`⚠️  Beads registration failed: ${error.message} (non-fatal)`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`⚠️  Beads registration failed: ${message} (non-fatal)`);
       }
     }
 
@@ -1276,8 +1282,9 @@ When you're done, commit your changes and let me know.`;
     if (engine && !options._skipAutoApproveBlock) {
       await blockForAutoApprove(engine);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }

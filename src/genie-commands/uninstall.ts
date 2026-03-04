@@ -110,8 +110,9 @@ export async function uninstallCommand(): Promise<void> {
     try {
       removeHookScript();
       console.log('  \x1b[32m+\x1b[0m Hook script removed');
-    } catch (error: any) {
-      console.log(`  \x1b[33m!\x1b[0m Could not remove hook script: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  \x1b[33m!\x1b[0m Could not remove hook script: ${message}`);
     }
   }
 
@@ -130,8 +131,9 @@ export async function uninstallCommand(): Promise<void> {
     try {
       rmSync(genieDir, { recursive: true, force: true });
       console.log('  \x1b[32m+\x1b[0m Directory removed');
-    } catch (error: any) {
-      console.log(`  \x1b[33m!\x1b[0m Could not remove directory: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  \x1b[33m!\x1b[0m Could not remove directory: ${message}`);
     }
   }
 

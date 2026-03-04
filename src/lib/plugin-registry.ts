@@ -59,8 +59,9 @@ export function loadPluginRegistry(): PluginRegistry {
     const content = readFileSync(REGISTRY_PATH, 'utf-8');
     const data = JSON.parse(content);
     return data as PluginRegistry;
-  } catch (error: any) {
-    console.warn(`Warning: Failed to parse plugin registry: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Warning: Failed to parse plugin registry: ${message}`);
     return {
       version: 2,
       plugins: {},
@@ -78,8 +79,9 @@ export function savePluginRegistry(registry: PluginRegistry): void {
   try {
     const content = JSON.stringify(registry, null, 2);
     writeFileSync(REGISTRY_PATH, content, 'utf-8');
-  } catch (error: any) {
-    throw new Error(`Failed to save plugin registry: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to save plugin registry: ${message}`);
   }
 }
 

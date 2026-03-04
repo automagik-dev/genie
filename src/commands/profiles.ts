@@ -64,8 +64,9 @@ export async function profilesDefaultCommand(name: string): Promise<void> {
   try {
     await setDefaultProfile(name);
     console.log(`✓ Default profile set to "${name}"`);
-  } catch (error: any) {
-    console.error(`❌ ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ ${message}`);
     process.exit(1);
   }
 }

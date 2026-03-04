@@ -55,8 +55,9 @@ export function setShellConfig(config: { type: string }): void {
 export async function executeTmux(tmuxCommand: string): Promise<string> {
   try {
     return await wrapperExecuteTmux(tmuxCommand);
-  } catch (error: any) {
-    throw new Error(`Failed to execute tmux command: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to execute tmux command: ${message}`);
   }
 }
 
@@ -91,9 +92,10 @@ export async function listSessions(): Promise<TmuxSession[]> {
         windows: Number.parseInt(windows, 10),
       };
     });
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle "no server running" gracefully
-    if (error.message.includes('no server running')) {
+    if (message.includes('no server running')) {
       return [];
     }
     throw error;
@@ -131,9 +133,10 @@ export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
         sessionId,
       };
     });
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle session not found or no server running
-    if (error.message.includes('no server running') || error.message.includes('session not found')) {
+    if (message.includes('no server running') || message.includes('session not found')) {
       return [];
     }
     throw error;
@@ -159,9 +162,10 @@ export async function listPanes(windowId: string): Promise<TmuxPane[]> {
         active: active === '1',
       };
     });
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle window not found or no server running
-    if (error.message.includes('no server running') || error.message.includes('window not found')) {
+    if (message.includes('no server running') || message.includes('window not found')) {
       return [];
     }
     throw error;
@@ -175,9 +179,10 @@ export async function capturePaneContent(paneId: string, lines = 200, includeCol
   try {
     const colorFlag = includeColors ? '-e' : '';
     return await executeTmux(`capture-pane -p ${colorFlag} -t '${paneId}' -S -${lines} -E -`);
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle pane not found or no server running
-    if (error.message.includes('no server running') || error.message.includes('pane not found')) {
+    if (message.includes('no server running') || message.includes('pane not found')) {
       return '';
     }
     throw error;
@@ -539,8 +544,9 @@ export async function runCommandSync(
       executeTmux(`wait-for ${channel}`),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Command timed out')), timeoutMs)),
     ]);
-  } catch (error: any) {
-    if (error.message === 'Command timed out') {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === 'Command timed out') {
       // Clean up on timeout
       try {
         await executeTmux(`wait-for -S ${channel}`); // Unblock any waiters

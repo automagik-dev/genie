@@ -151,8 +151,9 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
     } else {
       spawnSync('tmux', ['attach', '-t', name], { stdio: 'inherit' });
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }

@@ -33,8 +33,9 @@ export function registerTeamNamespace(program: Command): void {
           console.log('  Native teams: enabled (CC detected)');
           console.log(`  Session: ${config.nativeTeamParentSessionId ?? '(pending)'}`);
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -70,8 +71,9 @@ export function registerTeamNamespace(program: Command): void {
           console.log(`    Roles: ${roles}`);
         }
         console.log('');
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -91,8 +93,9 @@ export function registerTeamNamespace(program: Command): void {
           console.error(`Team "${name}" not found.`);
           process.exit(1);
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });

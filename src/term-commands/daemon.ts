@@ -72,8 +72,9 @@ export async function startCommand(options: DaemonStartOptions = {}): Promise<vo
       console.log('   Check `bd daemon status` for details');
       process.exit(1);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }
@@ -99,8 +100,9 @@ export async function stopCommand(): Promise<void> {
       console.error('❌ Failed to stop daemon');
       process.exit(1);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }
@@ -137,8 +139,9 @@ export async function statusCommand(options: DaemonStatusOptions = {}): Promise<
     } else {
       console.log('\nRun `genie daemon start` to start the daemon');
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }
@@ -169,8 +172,9 @@ export async function restartCommand(options: DaemonStartOptions = {}): Promise<
       console.error('❌ Failed to restart daemon');
       process.exit(1);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }

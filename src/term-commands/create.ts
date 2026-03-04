@@ -54,8 +54,9 @@ export async function createCommand(title: string, options: CreateOptions = {}):
         console.log('   (Local tasks live in .genie/tasks.json)');
       }
     }
-  } catch (error: any) {
-    console.error(`Failed to create task: ${error.message || String(error)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to create task: ${message || String(error)}`);
     process.exit(1);
   }
 }

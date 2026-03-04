@@ -88,8 +88,9 @@ export async function readSessionLogs(target: string, options: ReadOptions): Pro
     }
 
     console.log(content);
-  } catch (error: any) {
-    console.error(`Error reading logs: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error reading logs: ${message}`);
     process.exit(1);
   }
 }

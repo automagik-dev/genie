@@ -110,9 +110,10 @@ export async function loadClaudeSettings(): Promise<ClaudeSettings> {
     const content = readFileSync(CLAUDE_SETTINGS_FILE, 'utf-8');
     const data = JSON.parse(content);
     return ClaudeSettingsSchema.parse(data);
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     // If settings are invalid, return defaults but warn
-    console.warn(`Warning: Invalid Claude settings, using defaults: ${error.message}`);
+    console.warn(`Warning: Invalid Claude settings, using defaults: ${message}`);
     return ClaudeSettingsSchema.parse({});
   }
 }
@@ -127,8 +128,9 @@ export async function saveClaudeSettings(settings: ClaudeSettings): Promise<void
     const validated = ClaudeSettingsSchema.parse(settings);
     const content = JSON.stringify(validated, null, 2);
     writeFileSync(CLAUDE_SETTINGS_FILE, content, 'utf-8');
-  } catch (error: any) {
-    throw new Error(`Failed to save Claude settings: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to save Claude settings: ${message}`);
   }
 }
 

@@ -31,8 +31,9 @@ export function registerMsgNamespace(program: Command): void {
           console.error(`Failed to send: ${result.reason}`);
           process.exit(1);
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -74,8 +75,9 @@ export function registerMsgNamespace(program: Command): void {
           console.log(`    ${msg.body}`);
           console.log('');
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });

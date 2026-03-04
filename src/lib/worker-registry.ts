@@ -183,8 +183,9 @@ async function acquireLock(registryPath?: string): Promise<() => Promise<void>> 
           /* already removed */
         }
       };
-    } catch (err: any) {
-      if (err.code !== 'EEXIST') throw err;
+    } catch (err) {
+      const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+      if (errCode !== 'EEXIST') throw err;
 
       try {
         const lockStat = await stat(lockPath);

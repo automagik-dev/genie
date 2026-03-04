@@ -23,8 +23,9 @@ export async function loadConfig(): Promise<Config> {
     const content = readFileSync(CONFIG_FILE, 'utf-8');
     const data = JSON.parse(content);
     return ConfigSchema.parse(data);
-  } catch (error: any) {
-    throw new Error(`Failed to load config: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to load config: ${message}`);
   }
 }
 
@@ -37,8 +38,9 @@ export async function saveConfig(config: Config): Promise<void> {
     const validated = ConfigSchema.parse(config);
     const content = JSON.stringify(validated, null, 2);
     writeFileSync(CONFIG_FILE, content, 'utf-8');
-  } catch (error: any) {
-    throw new Error(`Failed to save config: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to save config: ${message}`);
   }
 }
 

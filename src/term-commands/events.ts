@@ -161,9 +161,10 @@ export async function readEventsFromFile(paneId: string, genieDir?: string): Pro
         }
       }
     }
-  } catch (err: any) {
+  } catch (err) {
+    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
     // File doesn't exist or can't be read
-    if (err.code !== 'ENOENT') {
+    if (errCode !== 'ENOENT') {
       throw err;
     }
   }
@@ -203,9 +204,10 @@ export async function aggregateAllEvents(genieDir?: string): Promise<NormalizedE
         }
       }
     }
-  } catch (err: any) {
+  } catch (err) {
+    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
     // Events directory doesn't exist
-    if (err.code !== 'ENOENT') {
+    if (errCode !== 'ENOENT') {
       throw err;
     }
   }
@@ -229,9 +231,10 @@ export async function cleanupEventFile(paneId: string, genieDir?: string): Promi
 
   try {
     await unlink(filePath);
-  } catch (err: any) {
+  } catch (err) {
+    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
     // Ignore if file doesn't exist
-    if (err.code !== 'ENOENT') {
+    if (errCode !== 'ENOENT') {
       throw err;
     }
   }
@@ -253,9 +256,10 @@ export async function listEventFiles(genieDir?: string): Promise<string[]> {
         paneIds.push(file.replace('.jsonl', ''));
       }
     }
-  } catch (err: any) {
+  } catch (err) {
+    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
     // Events directory doesn't exist
-    if (err.code !== 'ENOENT') {
+    if (errCode !== 'ENOENT') {
       throw err;
     }
   }
@@ -465,8 +469,9 @@ export async function eventsCommand(paneId: string | undefined, options: EventsO
         }
       }
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
