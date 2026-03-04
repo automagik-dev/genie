@@ -4,12 +4,12 @@ export interface Model {
   owned_by: string;
 }
 
-export interface ModelsResponse {
+interface ModelsResponse {
   data: Model[];
   object: string;
 }
 
-export type ConnectionResult =
+type ConnectionResult =
   | { success: true; modelCount: number; models: Model[] }
   | { success: false; error: 'auth_failure' | 'network_error' | 'invalid_url' | 'unknown'; message: string };
 
@@ -92,7 +92,7 @@ export async function testConnection(apiUrl: string, apiKey: string): Promise<Co
   }
 }
 
-export async function getModels(apiUrl: string, apiKey: string): Promise<Model[]> {
+async function getModels(apiUrl: string, apiKey: string): Promise<Model[]> {
   const result = await testConnection(apiUrl, apiKey);
   if (result.success) {
     return result.models;
@@ -100,7 +100,7 @@ export async function getModels(apiUrl: string, apiKey: string): Promise<Model[]
   throw new Error(result.message);
 }
 
-export async function validateApiKeyAndGetModels(apiUrl: string, apiKey: string): Promise<Model[] | null> {
+async function validateApiKeyAndGetModels(apiUrl: string, apiKey: string): Promise<Model[] | null> {
   const result = await testConnection(apiUrl, apiKey);
   if (result.success) {
     return result.models;

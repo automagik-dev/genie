@@ -24,7 +24,7 @@ import { getBashCommand } from './event-listener.js';
 /**
  * Tool names that can be auto-approved
  */
-export const ToolName = z.string();
+const ToolName = z.string();
 
 /**
  * Repo-level configuration (can be used at global defaults or per-repo)
@@ -42,14 +42,14 @@ export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 /**
  * Defaults configuration section
  */
-export const DefaultsConfigSchema = z.object({
+const DefaultsConfigSchema = z.object({
   allow: z.array(ToolName).default([]),
   deny: z.array(ToolName).default([]),
   bash_allow_patterns: z.array(z.string()).optional(),
   bash_deny_patterns: z.array(z.string()).optional(),
 });
 
-export type DefaultsConfig = z.infer<typeof DefaultsConfigSchema>;
+type DefaultsConfig = z.infer<typeof DefaultsConfigSchema>;
 
 /**
  * Full auto-approve configuration schema (global config file)
@@ -64,7 +64,7 @@ export type AutoApproveConfig = z.infer<typeof AutoApproveConfigSchema>;
 /**
  * Wish-level auto-approve override (parsed from markdown)
  */
-export interface WishAutoApproveOverride {
+interface WishAutoApproveOverride {
   allow: string[];
   deny: string[];
   bash_allow_patterns: string[];
@@ -78,7 +78,7 @@ export interface WishAutoApproveOverride {
 /**
  * Options for loading auto-approve config
  */
-export interface LoadConfigOptions {
+interface LoadConfigOptions {
   /**
    * Override the global config directory (for testing)
    * Default: ~/.config/genie
@@ -629,20 +629,20 @@ export function evaluateRequest(request: PermissionRequest, config: AutoApproveC
 /**
  * Get the path to the global auto-approve config file
  */
-export function getGlobalConfigPath(): string {
+function getGlobalConfigPath(): string {
   return join(getDefaultGlobalConfigDir(), 'auto-approve.yaml');
 }
 
 /**
  * Get the path to a repo's auto-approve config file
  */
-export function getRepoConfigPath(repoPath: string): string {
+function getRepoConfigPath(repoPath: string): string {
   return join(repoPath, '.genie', 'auto-approve.yaml');
 }
 
 /**
  * Get default auto-approve config (empty/permissive)
  */
-export function getDefaultConfig(): AutoApproveConfig {
+function getDefaultConfig(): AutoApproveConfig {
   return AutoApproveConfigSchema.parse({});
 }

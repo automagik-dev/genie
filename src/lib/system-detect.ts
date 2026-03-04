@@ -13,7 +13,7 @@ export interface SystemInfo {
   preferredPM: PackageManager;
 }
 
-export interface CommandCheck {
+interface CommandCheck {
   exists: boolean;
   version?: string;
   path?: string;

@@ -2,21 +2,21 @@ import { v4 as uuidv4 } from 'uuid';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
 // Basic interfaces for tmux objects
-export interface TmuxSession {
+interface TmuxSession {
   id: string;
   name: string;
   attached: boolean;
   windows: number;
 }
 
-export interface TmuxWindow {
+interface TmuxWindow {
   id: string;
   name: string;
   active: boolean;
   sessionId: string;
 }
 
-export interface TmuxPane {
+interface TmuxPane {
   id: string;
   windowId: string;
   active: boolean;
@@ -34,11 +34,11 @@ interface CommandExecution {
   rawMode?: boolean;
 }
 
-export type ShellType = 'bash' | 'zsh' | 'fish';
+type ShellType = 'bash' | 'zsh' | 'fish';
 
 let shellConfig: { type: ShellType } = { type: 'bash' };
 
-export function setShellConfig(config: { type: string }): void {
+function setShellConfig(config: { type: string }): void {
   // Validate shell type
   const validShells: ShellType[] = ['bash', 'zsh', 'fish'];
 
@@ -64,7 +64,7 @@ export async function executeTmux(tmuxCommand: string): Promise<string> {
 /**
  * Check if tmux server is running
  */
-export async function isTmuxRunning(): Promise<boolean> {
+async function isTmuxRunning(): Promise<boolean> {
   try {
     await executeTmux("list-sessions -F '#{session_name}'");
     return true;
@@ -266,7 +266,7 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
  * Relies on codex's `disable_paste_burst = true` config to ensure Enter
  * is always treated as submit, not as a newline within a paste burst.
  */
-export async function pasteToPane(paneId: string, text: string, submit = true): Promise<void> {
+async function pasteToPane(paneId: string, text: string, submit = true): Promise<void> {
   const { execSync } = require('node:child_process');
   const escapedPane = escapeShellPath(paneId);
   const escapedText = text.replace(/'/g, "'\\''");
@@ -289,7 +289,7 @@ function escapeShellPath(path: string): string {
 /**
  * Split a tmux pane horizontally or vertically
  */
-export async function splitPane(
+async function splitPane(
   targetPaneId: string,
   direction: 'horizontal' | 'vertical' = 'vertical',
   size?: number,
@@ -420,7 +420,7 @@ export async function executeCommand(
   return commandId;
 }
 
-export async function checkCommandStatus(commandId: string): Promise<CommandExecution | null> {
+async function checkCommandStatus(commandId: string): Promise<CommandExecution | null> {
   const command = activeCommands.get(commandId);
   if (!command) return null;
 
@@ -468,17 +468,17 @@ export async function checkCommandStatus(commandId: string): Promise<CommandExec
 }
 
 // Get command by ID
-export function getCommand(commandId: string): CommandExecution | null {
+function getCommand(commandId: string): CommandExecution | null {
   return activeCommands.get(commandId) || null;
 }
 
 // Get all active command IDs
-export function getActiveCommandIds(): string[] {
+function getActiveCommandIds(): string[] {
   return Array.from(activeCommands.keys());
 }
 
 // Clean up completed commands older than a certain time
-export function cleanupOldCommands(maxAgeMinutes = 60): void {
+function cleanupOldCommands(maxAgeMinutes = 60): void {
   const now = new Date();
 
   for (const [id, command] of activeCommands.entries()) {
@@ -497,14 +497,14 @@ function getEndMarkerText(): string {
 /**
  * Get the current session ID when running inside tmux
  */
-export async function getCurrentSessionId(): Promise<string> {
+async function getCurrentSessionId(): Promise<string> {
   return await executeTmux(`display-message -p '#{session_id}'`);
 }
 
 /**
  * Rename a window
  */
-export async function renameWindow(windowId: string, newName: string): Promise<void> {
+async function renameWindow(windowId: string, newName: string): Promise<void> {
   await executeTmux(`rename-window -t '${windowId}' '${newName}'`);
 }
 

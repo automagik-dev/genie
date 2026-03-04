@@ -34,7 +34,7 @@ export interface Batch {
   options: BatchOptions;
 }
 
-export interface BatchCompletionSummary {
+interface BatchCompletionSummary {
   total: number;
   running: number;
   complete: number;
@@ -44,7 +44,7 @@ export interface BatchCompletionSummary {
   cancelled: number;
 }
 
-export interface BatchCompletionStatus {
+interface BatchCompletionStatus {
   complete: boolean;
   summary: BatchCompletionSummary;
 }

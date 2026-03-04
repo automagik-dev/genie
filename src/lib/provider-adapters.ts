@@ -81,7 +81,7 @@ export interface SpawnParams {
 }
 
 /** Result of a successful launch-command build. */
-export interface LaunchCommand {
+interface LaunchCommand {
   /** The full shell command string. */
   command: string;
   /** The provider that was used. */
@@ -99,7 +99,7 @@ export interface LaunchCommand {
 // Validation schemas (Group A contract validation)
 // ============================================================================
 
-export const spawnParamsSchema = z.object({
+const spawnParamsSchema = z.object({
   provider: z.enum(['claude', 'codex']),
   team: z.string().min(1, 'Team name is required'),
   role: z.string().optional(),
@@ -146,7 +146,7 @@ function escapeShellArg(arg: string): string {
  * Check if a binary exists on PATH.
  * Returns true if found, false otherwise.
  */
-export function hasBinary(name: string): boolean {
+function hasBinary(name: string): boolean {
   try {
     // @ts-ignore — Bun.which is available at runtime
     if (typeof (Bun as any).which === 'function') {
@@ -164,7 +164,7 @@ export function hasBinary(name: string): boolean {
  * Run preflight checks for a provider.
  * Throws with an actionable error if the binary is not found.
  */
-export function preflightCheck(provider: ProviderName): void {
+function preflightCheck(provider: ProviderName): void {
   if (!hasBinary(provider)) {
     throw new Error(
       `Provider binary "${provider}" not found on PATH. ` + `Install ${provider} or check your environment.`,

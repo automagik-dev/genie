@@ -56,7 +56,7 @@ const useBeads =
 // Types (legacy workers command)
 // ============================================================================
 
-export interface WorkersOptions {
+interface WorkersOptions {
   json?: boolean;
   watch?: boolean;
 }
@@ -469,7 +469,7 @@ function formatElapsed(startedAt: string): string {
 // Legacy Workers Command (genie worker list)
 // ============================================================================
 
-export async function workersCommand(options: WorkersOptions = {}): Promise<void> {
+async function workersCommand(options: WorkersOptions = {}): Promise<void> {
   try {
     let workers: registry.Worker[] = [];
 

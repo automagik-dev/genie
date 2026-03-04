@@ -27,7 +27,7 @@ import { type PermissionRequestQueue, createPermissionRequestQueue } from '../li
 /**
  * Status entry representing a request's current state
  */
-export interface StatusEntry {
+interface StatusEntry {
   /** Request ID */
   requestId: string;
   /** Tool name */
@@ -45,7 +45,7 @@ export interface StatusEntry {
 /**
  * Options for getStatusEntries
  */
-export interface GetStatusOptions {
+interface GetStatusOptions {
   /** Base directory where .genie/auto-approve-audit.jsonl lives */
   auditDir: string;
   /** The permission request queue for pending items */
@@ -55,7 +55,7 @@ export interface GetStatusOptions {
 /**
  * Options for manual approve/deny
  */
-export interface ManualActionOptions {
+interface ManualActionOptions {
   /** The permission request queue */
   queue: PermissionRequestQueue;
 }
@@ -63,7 +63,7 @@ export interface ManualActionOptions {
 /**
  * Options for starting the engine
  */
-export interface StartEngineOptions {
+interface StartEngineOptions {
   /** Base directory for the audit log */
   auditDir: string;
   /** Repository path for config loading */
@@ -80,7 +80,7 @@ const sharedQueue: PermissionRequestQueue = createPermissionRequestQueue();
 /**
  * Get the shared queue (for use by other modules)
  */
-export function getSharedQueue(): PermissionRequestQueue {
+function getSharedQueue(): PermissionRequestQueue {
   return sharedQueue;
 }
 
@@ -262,7 +262,7 @@ export function stopEngine(): void {
 // CLI Command Handler
 // ============================================================================
 
-export interface ApproveCommandOptions {
+interface ApproveCommandOptions {
   status?: boolean;
   deny?: string;
   start?: boolean;

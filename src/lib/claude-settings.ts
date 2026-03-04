@@ -49,22 +49,22 @@ const ClaudeSettingsSchema = z
   })
   .passthrough();
 
-export type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
+type ClaudeSettings = z.infer<typeof ClaudeSettingsSchema>;
 
 // Constants for the genie hook script (used for cleanup)
-export const GENIE_HOOK_SCRIPT_NAME = 'genie-bash-hook.sh';
+const GENIE_HOOK_SCRIPT_NAME = 'genie-bash-hook.sh';
 
 /**
  * Get the path to the Claude directory (~/.claude)
  */
-export function getClaudeDir(): string {
+function getClaudeDir(): string {
   return CLAUDE_DIR;
 }
 
 /**
  * Get the path to the Claude hooks directory (~/.claude/hooks)
  */
-export function getClaudeHooksDir(): string {
+function getClaudeHooksDir(): string {
   return CLAUDE_HOOKS_DIR;
 }
 
@@ -78,21 +78,21 @@ export function getClaudeSettingsPath(): string {
 /**
  * Get the path to the genie hook script (for cleanup)
  */
-export function getGenieHookScriptPath(): string {
+function getGenieHookScriptPath(): string {
   return join(CLAUDE_HOOKS_DIR, GENIE_HOOK_SCRIPT_NAME);
 }
 
 /**
  * Check if Claude settings file exists
  */
-export function claudeSettingsExists(): boolean {
+function claudeSettingsExists(): boolean {
   return existsSync(CLAUDE_SETTINGS_FILE);
 }
 
 /**
  * Ensure the Claude directory exists
  */
-export function ensureClaudeDir(): void {
+function ensureClaudeDir(): void {
   if (!existsSync(CLAUDE_DIR)) {
     mkdirSync(CLAUDE_DIR, { recursive: true });
   }
@@ -101,7 +101,7 @@ export function ensureClaudeDir(): void {
 /**
  * Load Claude settings, returning defaults if not found
  */
-export async function loadClaudeSettings(): Promise<ClaudeSettings> {
+async function loadClaudeSettings(): Promise<ClaudeSettings> {
   if (!existsSync(CLAUDE_SETTINGS_FILE)) {
     return ClaudeSettingsSchema.parse({});
   }
@@ -121,7 +121,7 @@ export async function loadClaudeSettings(): Promise<ClaudeSettings> {
 /**
  * Save Claude settings to disk
  */
-export async function saveClaudeSettings(settings: ClaudeSettings): Promise<void> {
+async function saveClaudeSettings(settings: ClaudeSettings): Promise<void> {
   ensureClaudeDir();
 
   try {

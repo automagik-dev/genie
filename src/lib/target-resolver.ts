@@ -34,7 +34,7 @@ export interface ResolvedTarget {
  * Options for controlling resolver behavior.
  * Test code can inject mocks via these options.
  */
-export interface ResolveOptions {
+interface ResolveOptions {
   /** Whether to validate pane liveness via tmux (default: true in production) */
   checkLiveness?: boolean;
 

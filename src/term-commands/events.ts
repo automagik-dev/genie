@@ -30,7 +30,7 @@ import * as registry from '../lib/worker-registry.js';
 // Types
 // ============================================================================
 
-export interface EventsOptions {
+interface EventsOptions {
   json?: boolean;
   follow?: boolean;
   lines?: number;
@@ -79,7 +79,7 @@ export interface NormalizedEvent {
 /**
  * Worker context for event enrichment
  */
-export interface WorkerContext {
+interface WorkerContext {
   paneId: string;
   wishSlug?: string;
   taskId?: string;
@@ -93,7 +93,7 @@ export interface WorkerContext {
  * Get the .genie directory path for the current working directory.
  * Falls back to .genie in the current directory.
  */
-export function getGenieDir(baseDir?: string): string {
+function getGenieDir(baseDir?: string): string {
   return baseDir || join(process.cwd(), '.genie');
 }
 
@@ -243,7 +243,7 @@ export async function cleanupEventFile(paneId: string, genieDir?: string): Promi
 /**
  * List all pane IDs that have event files.
  */
-export async function listEventFiles(genieDir?: string): Promise<string[]> {
+async function listEventFiles(genieDir?: string): Promise<string[]> {
   const eventsDir = getEventsDir(genieDir);
   const paneIds: string[] = [];
 

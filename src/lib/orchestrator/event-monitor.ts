@@ -17,7 +17,7 @@ export interface ClaudeEvent {
   timestamp: number;
 }
 
-export interface EventMonitorOptions {
+interface EventMonitorOptions {
   /** Polling interval in milliseconds (default: 500) */
   pollIntervalMs?: number;
   /** Number of lines to capture (default: 30) */
@@ -265,7 +265,7 @@ export class EventMonitor extends EventEmitter {
 /**
  * Wait for a specific state or condition
  */
-export async function waitForState(
+async function waitForState(
   monitor: EventMonitor,
   predicate: (state: ClaudeState) => boolean,
   timeoutMs = 60000,

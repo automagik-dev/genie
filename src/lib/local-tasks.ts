@@ -29,7 +29,7 @@ export function computePriorityScore(scores: PriorityScores): number {
   );
 }
 
-export interface LocalTask {
+interface LocalTask {
   id: string; // wish-<n>
   title: string;
   description?: string;
@@ -255,7 +255,7 @@ export async function markDone(repoPath: string, id: string): Promise<boolean> {
   return true;
 }
 
-export interface UpdateTaskOptions {
+interface UpdateTaskOptions {
   status?: LocalTaskStatus;
   title?: string;
   blockedBy?: string[]; // replaces existing blockedBy

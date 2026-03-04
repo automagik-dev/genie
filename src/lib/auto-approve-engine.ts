@@ -61,7 +61,7 @@ export interface EngineStats {
 /**
  * Options for creating an auto-approve engine
  */
-export interface AutoApproveEngineOptions {
+interface AutoApproveEngineOptions {
   /** The merged auto-approve configuration */
   config: AutoApproveConfig;
   /** Base directory for the audit log (audit log goes in <auditDir>/.genie/auto-approve-audit.jsonl) */

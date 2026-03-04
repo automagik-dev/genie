@@ -106,7 +106,7 @@ export async function findSkill(skillName: string, projectRoot?: string): Promis
  * @param skillPath - Path to skill directory
  * @returns true if valid, false otherwise
  */
-export async function validateSkill(skillPath: string): Promise<boolean> {
+async function validateSkill(skillPath: string): Promise<boolean> {
   const skillFile = join(skillPath, 'SKILL.md');
   return pathExists(skillFile);
 }
@@ -117,7 +117,7 @@ export async function validateSkill(skillPath: string): Promise<boolean> {
  * @param skillFile - Path to SKILL.md
  * @returns Skill content as string
  */
-export async function readSkillContent(skillFile: string): Promise<string> {
+async function readSkillContent(skillFile: string): Promise<string> {
   return readFile(skillFile, 'utf-8');
 }
 
@@ -130,7 +130,7 @@ export async function readSkillContent(skillFile: string): Promise<string> {
  * @param additionalPrompt - Optional additional context/instructions
  * @returns Combined prompt string
  */
-export async function buildSkillPrompt(skill: SkillInfo, additionalPrompt?: string): Promise<string> {
+async function buildSkillPrompt(skill: SkillInfo, additionalPrompt?: string): Promise<string> {
   // Read the skill content
   const skillContent = await readFile(skill.skillFile, 'utf-8');
 
@@ -171,7 +171,7 @@ async function parseSkillName(skillFile: string, dirName: string): Promise<strin
  * @param projectRoot - Project root directory (defaults to cwd)
  * @returns Array of skill names found
  */
-export async function listSkills(projectRoot?: string): Promise<string[]> {
+async function listSkills(projectRoot?: string): Promise<string[]> {
   const skills = await listSkillsDetailed(projectRoot);
   return skills.map((s) => s.name).sort();
 }
@@ -179,7 +179,7 @@ export async function listSkills(projectRoot?: string): Promise<string[]> {
 /**
  * Detailed skill info for listing
  */
-export interface DetailedSkillInfo {
+interface DetailedSkillInfo {
   name: string;
   source: SkillSource;
   pluginName?: string;
@@ -198,7 +198,7 @@ export interface DetailedSkillInfo {
  * @param projectRoot - Project root directory (defaults to cwd)
  * @returns Array of detailed skill info
  */
-export async function listSkillsDetailed(projectRoot?: string): Promise<DetailedSkillInfo[]> {
+async function listSkillsDetailed(projectRoot?: string): Promise<DetailedSkillInfo[]> {
   const cwd = projectRoot || process.cwd();
   const skills: DetailedSkillInfo[] = [];
   const seenNames = new Set<string>();

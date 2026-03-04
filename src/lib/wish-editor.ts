@@ -20,7 +20,7 @@ import { join } from 'node:path';
 /**
  * Represents a parsed wish document with sections
  */
-export interface WishDocument {
+interface WishDocument {
   /** Raw markdown content */
   raw: string;
   /** Wish slug */
@@ -36,7 +36,7 @@ export interface WishDocument {
 /**
  * A section in a wish document (delimited by headings)
  */
-export interface WishSection {
+interface WishSection {
   /** Section heading (without #) */
   heading: string;
   /** Section content (including the heading line and nested subsections) */
@@ -72,7 +72,7 @@ export function getWishPath(repoPath: string, slug: string): string {
   return join(repoPath, '.genie', 'wishes', slug, 'wish.md');
 }
 
-export function getWishDir(repoPath: string, slug: string): string {
+function getWishDir(repoPath: string, slug: string): string {
   validateSlug(slug);
   return join(repoPath, '.genie', 'wishes', slug);
 }

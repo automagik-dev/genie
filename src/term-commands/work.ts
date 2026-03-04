@@ -400,7 +400,7 @@ async function getCurrentSession(): Promise<string | null> {
  * If already in a tmux session, returns the current session name.
  * Otherwise, auto-creates a new detached session using the configured name.
  */
-export async function getOrCreateSession(sessionOption?: string): Promise<string> {
+async function getOrCreateSession(sessionOption?: string): Promise<string> {
   // If session was explicitly provided via --session, use that
   if (sessionOption) return sessionOption;
 

@@ -28,7 +28,7 @@ export const LoggingConfigSchema = z.object({
 });
 
 // Shell configuration
-export const ShellConfigSchema = z.object({
+const ShellConfigSchema = z.object({
   preference: z.enum(['auto', 'zsh', 'bash', 'fish']).default('auto'),
 });
 
@@ -39,12 +39,12 @@ export const ShortcutsConfigSchema = z.object({
 });
 
 // Claudio integration configuration
-export const ClaudioConfigSchema = z.object({
+const ClaudioConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
 
 // Codex integration configuration
-export const CodexConfigSchema = z.object({
+const CodexConfigSchema = z.object({
   configured: z.boolean().default(false),
 });
 
@@ -99,10 +99,10 @@ export const GenieConfigSchema = z.object({
 export type SessionConfig = z.infer<typeof SessionConfigSchema>;
 export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;
 export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
-export type ShellConfig = z.infer<typeof ShellConfigSchema>;
+type ShellConfig = z.infer<typeof ShellConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
-export type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
-export type CodexConfig = z.infer<typeof CodexConfigSchema>;
+type ClaudioConfig = z.infer<typeof ClaudioConfigSchema>;
+type CodexConfig = z.infer<typeof CodexConfigSchema>;
 export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
 export type CouncilPreset = z.infer<typeof CouncilPresetSchema>;
 export type GenieConfig = z.infer<typeof GenieConfigSchema>;

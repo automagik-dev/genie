@@ -1,12 +1,12 @@
 import { confirm, input, search } from '@inquirer/prompts';
 import type { Model } from './api-client.js';
 
-export interface PickerOptions {
+interface PickerOptions {
   message: string;
   models: Model[];
 }
 
-export async function pickModel(options: PickerOptions): Promise<string> {
+async function pickModel(options: PickerOptions): Promise<string> {
   const { message, models } = options;
 
   const modelIds = models.map((m) => m.id);

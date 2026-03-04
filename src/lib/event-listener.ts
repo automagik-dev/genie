@@ -51,7 +51,7 @@ export interface PermissionRequest {
 /**
  * Event subscription handle
  */
-export interface EventSubscription {
+interface EventSubscription {
   /** Process a normalized event - extracts permission request if applicable */
   processEvent: (event: NormalizedEvent) => void;
   /** Unsubscribe and stop processing events */

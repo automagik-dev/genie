@@ -17,7 +17,7 @@ import * as registry from './worker-registry.js';
 // Types
 // ============================================================================
 
-export interface DeliveryResult {
+interface DeliveryResult {
   messageId: string;
   workerId: string;
   delivered: boolean;
@@ -264,7 +264,7 @@ async function injectToTmuxPane(worker: registry.Worker, message: mailbox.Mailbo
  * Called when a worker transitions to idle state.
  * For non-native workers, injects via tmux send-keys.
  */
-export async function flushPending(repoPath: string, workerId: string): Promise<DeliveryResult[]> {
+async function flushPending(repoPath: string, workerId: string): Promise<DeliveryResult[]> {
   const messages = await mailbox.pending(repoPath, workerId);
   if (messages.length === 0) return [];
 
@@ -306,7 +306,7 @@ export async function getInbox(repoPath: string, workerId: string): Promise<mail
 /**
  * Get unread message count for a worker.
  */
-export async function unreadCount(repoPath: string, workerId: string): Promise<number> {
+async function unreadCount(repoPath: string, workerId: string): Promise<number> {
   const messages = await mailbox.unread(repoPath, workerId);
   return messages.length;
 }

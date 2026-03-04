@@ -17,7 +17,7 @@ import type { ProviderName } from './provider-adapters.js';
 // ============================================================================
 
 /** Role descriptor within a team blueprint. */
-export interface RoleDescriptor {
+interface RoleDescriptor {
   /** Human-readable role name (e.g., "implementor", "tester"). */
   name: string;
   /** Suggested provider for this role (optional — not enforced). */
@@ -29,13 +29,13 @@ export interface RoleDescriptor {
 }
 
 /** Blueprint schema — provides default role descriptors for a team type. */
-export interface Blueprint {
+interface Blueprint {
   name: string;
   roles: RoleDescriptor[];
 }
 
 /** Persisted team configuration. */
-export interface TeamConfig {
+interface TeamConfig {
   /** Team name (unique identifier). */
   name: string;
   /** Blueprint that was used to create the team (informational). */
