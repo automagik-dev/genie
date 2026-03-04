@@ -58,7 +58,7 @@ This ensures **one SKILL.md per skill**, reused by both ecosystems.
 ### One-line install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
 ### Dev install (from a local clone)
@@ -410,7 +410,7 @@ Config lives in `~/.claudio/config.json`.
 ## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall
 ```
 
 The uninstaller will offer to remove:
