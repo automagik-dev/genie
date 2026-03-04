@@ -470,9 +470,15 @@ interface SpawnCtx {
   now: string;
   transport: registry.TransportType;
   extraArgs?: string[];
+  /** Working directory for the worker (defaults to process.cwd()). */
+  cwd: string;
 }
 
-async function registerSpawnWorker(ctx: SpawnCtx, paneId: string): Promise<registry.Worker> {
+async function registerSpawnWorker(
+  ctx: SpawnCtx,
+  paneId: string,
+  windowInfo?: { windowId: string; windowName: string } | null,
+): Promise<registry.Worker> {
   const nt = ctx.validated.nativeTeam;
   const workerEntry: registry.Worker = {
     id: ctx.workerId,
@@ -487,12 +493,16 @@ async function registerSpawnWorker(ctx: SpawnCtx, paneId: string): Promise<regis
     startedAt: ctx.now,
     state: 'spawning',
     lastStateChange: ctx.now,
-    repoPath: process.cwd(),
+    repoPath: ctx.cwd,
     claudeSessionId: ctx.claudeSessionId,
     nativeTeamEnabled: nt?.enabled ?? false,
     nativeAgentId: `${ctx.agentName}@${ctx.validated.team}`,
     nativeColor: nt?.color ?? ctx.spawnColor,
     parentSessionId: nt?.parentSessionId ?? ctx.parentSessionId,
+    // Team window tracking
+    window: windowInfo?.windowName,
+    windowName: windowInfo?.windowName,
+    windowId: windowInfo?.windowId,
   };
   await registry.register(workerEntry);
   return workerEntry;
@@ -505,12 +515,12 @@ async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
     agentType: nt?.agentType ?? ctx.validated.role ?? 'general-purpose',
     color: nt?.color ?? ctx.spawnColor ?? 'blue',
     tmuxPaneId: paneId,
-    cwd: process.cwd(),
+    cwd: ctx.cwd,
     planModeRequired: nt?.planModeRequired,
   });
   await nativeTeams.writeNativeInbox(ctx.validated.team, 'team-lead', {
     from: ctx.agentName,
-    text: `Worker ${ctx.agentName} (${ctx.validated.provider}) joined team ${ctx.validated.team}. cwd: ${process.cwd()}. Ready for tasks.`,
+    text: `Worker ${ctx.agentName} (${ctx.validated.provider}) joined team ${ctx.validated.team}. cwd: ${ctx.cwd}. Ready for tasks.`,
     summary: `${ctx.agentName} (${ctx.validated.provider}) joined`,
     timestamp: new Date().toISOString(),
     color: nt?.color ?? ctx.spawnColor ?? 'blue',
@@ -550,24 +560,44 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Wor
   }
 }
 
+type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
+
+/** Resolve team window for spawn. Returns null if team is unset or resolution fails. */
+async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Promise<TeamWindowInfo | null> {
+  if (!team) return null;
+  try {
+    return await tmux.ensureTeamWindow('genie', team, cwd);
+  } catch (err) {
+    console.warn(`Warning: could not ensure team window for "${team}": ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   const { execSync } = require('node:child_process');
 
+  const teamWindow = await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+
   let paneId: string;
   try {
-    paneId = execSync(`tmux split-window -d -P -F '#{pane_id}' ${ctx.fullCommand}`, { encoding: 'utf-8' }).trim();
+    const splitCmd = `tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+    paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
     process.exit(1);
   }
 
+  // Apply layout to team window (or fallback to window 0)
+  const session = 'genie';
+  const layoutTarget = teamWindow ? `${session}:${teamWindow.windowName}` : `${session}:0`;
   try {
-    execSync(`tmux ${buildLayoutCommand('genie:0', ctx.layoutMode)}`, { stdio: 'ignore' });
+    execSync(`tmux ${buildLayoutCommand(layoutTarget, ctx.layoutMode)}`, { stdio: 'ignore' });
   } catch {
     /* best-effort */
   }
 
-  const workerEntry = await registerSpawnWorker(ctx, paneId);
+  const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
 
   // Save spawn template for auto-respawn on message delivery
@@ -577,7 +607,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     team: ctx.validated.team,
     role: ctx.validated.role,
     skill: ctx.validated.skill,
-    cwd: process.cwd(),
+    cwd: ctx.cwd,
     extraArgs: ctx.extraArgs,
     nativeTeamEnabled: workerEntry.nativeTeamEnabled,
     lastSpawnedAt: new Date().toISOString(),
@@ -589,6 +619,9 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
   }
 
+  if (teamWindow) {
+    console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
+  }
   printSpawnInfo(ctx, paneId, workerEntry);
 }
 
@@ -631,35 +664,29 @@ function prependEnvVars(command: string, env?: Record<string, string>): string {
   return `env ${envArgs} ${command}`;
 }
 
-async function handleWorkerSpawn(options: {
-  provider: string;
-  team: string;
-  role?: string;
-  skill?: string;
-  layout?: string;
-  color?: string;
-  planMode?: boolean;
-  permissionMode?: string;
-  extraArgs?: string[];
-}): Promise<void> {
-  // 1. Resolve team name from flag, env, or session discovery
-  const team = options.team || (await nativeTeams.discoverTeamName());
-  if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
-    process.exit(1);
+/**
+ * Reject spawn if a live worker with the same role already exists in the team.
+ * Dead/suspended workers (pane gone) are ignored — only live panes block.
+ */
+async function rejectDuplicateRole(team: string, role: string): Promise<void> {
+  const existing = await registry.list();
+  for (const w of existing) {
+    if (w.role === role && w.team === team && (await isPaneAlive(w.paneId))) {
+      console.error(
+        `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
+          `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
+      );
+      process.exit(1);
+    }
   }
+}
 
-  // 1b. Validate spawn parameters (Group A contract)
-  const params: SpawnParams = {
-    provider: options.provider as ProviderName,
-    team,
-    role: options.role,
-    skill: options.skill,
-    extraArgs: options.extraArgs,
-  };
-
-  // 2. Ensure native team infrastructure exists (all providers).
-  const repoPath = process.cwd();
+/** Resolve parent session ID and set up native team infrastructure. */
+async function resolveNativeTeam(
+  team: string,
+  repoPath: string,
+  options: { provider: string; role?: string; color?: string; planMode?: boolean; permissionMode?: string },
+): Promise<{ parentSessionId: string; spawnColor: ClaudeTeamColor; nativeTeam?: SpawnParams['nativeTeam'] }> {
   const teamConfig = await teamManager.getTeam(repoPath, team);
   let parentSessionId = teamConfig?.nativeTeamParentSessionId;
   if (!parentSessionId) {
@@ -668,9 +695,9 @@ async function handleWorkerSpawn(options: {
   await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
   const spawnColor = (options.color as ClaudeTeamColor) ?? (await nativeTeams.assignColor(team));
 
-  // 2b. Enable native teammate CLI flags for Claude only.
+  let nativeTeam: SpawnParams['nativeTeam'];
   if (options.provider === 'claude') {
-    params.nativeTeam = {
+    nativeTeam = {
       enabled: true,
       parentSessionId,
       color: spawnColor,
@@ -681,9 +708,47 @@ async function handleWorkerSpawn(options: {
     };
   }
 
+  return { parentSessionId, spawnColor, nativeTeam };
+}
+
+async function handleWorkerSpawn(options: {
+  provider: string;
+  team: string;
+  role?: string;
+  skill?: string;
+  layout?: string;
+  color?: string;
+  planMode?: boolean;
+  permissionMode?: string;
+  extraArgs?: string[];
+  cwd?: string;
+}): Promise<void> {
+  // 1. Resolve team name from flag, env, or session discovery
+  const team = options.team || (await nativeTeams.discoverTeamName());
+  if (!team) {
+    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
+    process.exit(1);
+  }
+
+  // 1a. Reject if a live worker with the same role already exists in this team
+  if (options.role) await rejectDuplicateRole(team, options.role);
+
+  // 1b. Validate spawn parameters (Group A contract)
+  const params: SpawnParams = {
+    provider: options.provider as ProviderName,
+    team,
+    role: options.role,
+    skill: options.skill,
+    extraArgs: options.extraArgs,
+  };
+
+  // 2. Ensure native team infrastructure + Claude flags.
+  const repoPath = options.cwd ?? process.cwd();
+  const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, repoPath, options);
+  if (nativeTeam) params.nativeTeam = nativeTeam;
+
   // Session ID only for Claude
-  const isClaude = params.provider === 'claude';
-  const claudeSessionId = isClaude ? crypto.randomUUID() : undefined;
+  const claudeSessionId = params.provider === 'claude' ? crypto.randomUUID() : undefined;
   if (claudeSessionId) params.sessionId = claudeSessionId;
 
   const validated = validateSpawnParams(params);
@@ -719,6 +784,7 @@ async function handleWorkerSpawn(options: {
     now,
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
+    cwd: repoPath,
   };
 
   if (insideTmux) {
@@ -812,12 +878,13 @@ function formatWorkerRow(
   provider: string,
   team: string,
   role: string,
+  window: string,
   state: string,
   time: string,
   lastMsg: string,
   cwd: string,
 ): string {
-  return `${id.padEnd(20).substring(0, 20)}${(provider || '-').padEnd(10)}${(team || '-').padEnd(10).substring(0, 10)}${(role || '-').padEnd(14).substring(0, 14)}${state.padEnd(16).substring(0, 16)}${time.padEnd(8)}${(lastMsg || '-').padEnd(10)}${cwd}`;
+  return `${id.padEnd(20).substring(0, 20)}${(provider || '-').padEnd(10)}${(team || '-').padEnd(10).substring(0, 10)}${(role || '-').padEnd(14).substring(0, 14)}${(window || '-').padEnd(12).substring(0, 12)}${state.padEnd(16).substring(0, 16)}${time.padEnd(8)}${(lastMsg || '-').padEnd(10)}${cwd}`;
 }
 
 function printWorkerRows(entries: WorkerListEntry[], stopped: StoppedEntry[]): void {
@@ -828,6 +895,7 @@ function printWorkerRows(entries: WorkerListEntry[], stopped: StoppedEntry[]): v
         w.provider || '-',
         w.team || '-',
         w.role || '-',
+        w.window || w.windowName || '-',
         liveState,
         registry.getElapsedTime(w).formatted,
         lastMsg ?? '-',
@@ -844,6 +912,7 @@ function printWorkerRows(entries: WorkerListEntry[], stopped: StoppedEntry[]): v
         t.provider || '-',
         t.team || '-',
         t.role || '-',
+        '-',
         'stopped',
         '-',
         lastActivity,
@@ -872,9 +941,9 @@ function printWorkerList(
 
   console.log('');
   console.log('WORKERS');
-  console.log('-'.repeat(120));
-  console.log(formatWorkerRow('ID', 'PROVIDER', 'TEAM', 'ROLE', 'STATE', 'TIME', 'LAST MSG', 'CWD'));
-  console.log('-'.repeat(120));
+  console.log('-'.repeat(132));
+  console.log(formatWorkerRow('ID', 'PROVIDER', 'TEAM', 'ROLE', 'WINDOW', 'STATE', 'TIME', 'LAST MSG', 'CWD'));
+  console.log('-'.repeat(132));
 
   printWorkerRows(entries, stopped);
   printWorkerListFooter(entries, pruned, stopped, options);
@@ -908,6 +977,7 @@ function printWorkerListJson(entries: WorkerListEntry[], pruned: string[], stopp
     transport: w.transport,
     team: w.team,
     role: w.role,
+    window: w.window || w.windowName || null,
     state: liveState,
     elapsed: registry.getElapsedTime(w).formatted,
     lastMessage: lastMsg ?? null,
@@ -1053,6 +1123,7 @@ export function registerWorkerNamespace(program: Command): void {
     .option('--plan-mode', 'Start teammate in plan mode')
     .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
     .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
+    .option('--cwd <path>', 'Working directory for the worker (default: current directory)')
     .action(
       async (options: {
         provider: string;
@@ -1064,6 +1135,7 @@ export function registerWorkerNamespace(program: Command): void {
         planMode?: boolean;
         permissionMode?: string;
         extraArgs?: string[];
+        cwd?: string;
       }) => {
         try {
           await handleWorkerSpawn(options);
