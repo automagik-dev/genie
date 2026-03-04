@@ -28,7 +28,9 @@ import {
 import { getBackend } from '../lib/task-backend.js';
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
+import { isPaneAlive } from '../lib/tmux.js';
 import * as registry from '../lib/worker-registry.js';
+import * as mailbox from '../lib/mailbox.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
 // @ts-ignore
@@ -60,18 +62,6 @@ interface WorkerDisplay {
 // ============================================================================
 // Helper Functions (legacy)
 // ============================================================================
-
-/**
- * Check if a pane still exists
- */
-async function isPaneAlive(paneId: string): Promise<boolean> {
-  try {
-    await tmux.capturePaneContent(paneId, 1);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Get current state from pane output
@@ -604,6 +594,22 @@ function mapDisplayStateToRegistry(displayState: string): registry.WorkerState |
 // Helper: Generate Worker ID (teams)
 // ============================================================================
 
+async function getLastMessageTime(w: registry.Worker): Promise<string | null> {
+  try {
+    const repoPath = w.repoPath ?? process.cwd();
+    const messages = await mailbox.inbox(repoPath, w.id);
+    if (messages.length === 0) return null;
+    const last = messages[messages.length - 1];
+    const ago = Date.now() - new Date(last.createdAt).getTime();
+    const mins = Math.floor(ago / 60000);
+    if (mins < 1) return '<1m ago';
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.floor(mins / 60)}h ago`;
+  } catch {
+    return null;
+  }
+}
+
 async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
   const existing = await registry.list();
@@ -693,6 +699,13 @@ export function registerWorkerNamespace(program: Command): void {
             };
           }
 
+          // Session ID only for Claude — Codex doesn't support --session-id/--resume
+          const isClaude = params.provider === 'claude';
+          const claudeSessionId = isClaude ? crypto.randomUUID() : undefined;
+          if (claudeSessionId) {
+            params.sessionId = claudeSessionId;
+          }
+
           const validated = validateSpawnParams(params);
 
           // 2. Build launch command (Group C adapters)
@@ -749,6 +762,7 @@ export function registerWorkerNamespace(program: Command): void {
               state: 'spawning',
               lastStateChange: now,
               repoPath: process.cwd(),
+              claudeSessionId,
               nativeTeamEnabled: nt?.enabled ?? false,
               nativeAgentId: `${agentName}@${validated.team}`,
               nativeColor: nt?.color ?? spawnColor,
@@ -799,6 +813,20 @@ export function registerWorkerNamespace(program: Command): void {
             const workerEntry = await registerWorker(paneId);
             await registerNative(paneId);
 
+            // Save spawn template for auto-respawn on message delivery
+            await registry.saveTemplate({
+              id: validated.role ?? workerId,
+              provider: validated.provider,
+              team: validated.team,
+              role: validated.role,
+              skill: validated.skill,
+              cwd: process.cwd(),
+              extraArgs: options.extraArgs,
+              nativeTeamEnabled: workerEntry.nativeTeamEnabled,
+              lastSpawnedAt: new Date().toISOString(),
+              lastSessionId: workerEntry.claudeSessionId,
+            });
+
             // Register pane with the shared OTel relay.
             if (otelRelayActive && paneId !== '%0') {
               const { writeFileSync: wfs } = require('node:fs');
@@ -822,6 +850,9 @@ export function registerWorkerNamespace(program: Command): void {
             console.log(`  Pane:     ${paneId}`);
             if (validated.role) console.log(`  Role:     ${validated.role}`);
             if (validated.skill) console.log(`  Skill:    ${validated.skill}`);
+            if (workerEntry.claudeSessionId) {
+              console.log(`  Session:  ${workerEntry.claudeSessionId}`);
+            }
             console.log(`  Layout:   ${layoutMode}`);
             if (nt?.enabled) {
               console.log('  Native:   enabled');
@@ -874,34 +905,80 @@ export function registerWorkerNamespace(program: Command): void {
     .alias('ls')
     .description('List all workers with provider metadata')
     .option('--json', 'Output as JSON')
-    .action(async (options: { json?: boolean }) => {
+    .option('--prune', 'Auto-remove dead workers from registry')
+    .action(async (options: { json?: boolean; prune?: boolean }) => {
       try {
         const workers = await registry.list();
 
+        const entries: { worker: registry.Worker; liveState: string; lastMsg: string | null; dead: boolean }[] = [];
+        const pruned: string[] = [];
+
+        for (const w of workers) {
+          // Suspended workers
+          if (w.state === 'suspended') {
+            const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
+            const suspendedAge = w.suspendedAt ? Date.now() - new Date(w.suspendedAt).getTime() : Infinity;
+
+            if (options.prune && suspendedAge > SUSPEND_EXPIRY_MS) {
+              if (w.team && w.nativeAgentId) {
+                const agentName = w.nativeAgentId.split('@')[0];
+                await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
+                await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
+              }
+              if (w.role) await registry.removeTemplate(w.role).catch(() => {});
+              await registry.removeTemplate(w.id).catch(() => {});
+              await registry.unregister(w.id);
+              pruned.push(w.id);
+            } else {
+              const lastMsg = await getLastMessageTime(w);
+              entries.push({ worker: w, liveState: '\u{1F4A4} suspended', lastMsg, dead: false });
+            }
+            continue;
+          }
+
+          const paneAlive = await isPaneAlive(w.paneId);
+
+          if (paneAlive) {
+            const liveState = await getCurrentState(w.paneId);
+            const mapped = mapDisplayStateToRegistry(liveState);
+            if (mapped && mapped !== w.state) {
+              await registry.updateState(w.id, mapped);
+            }
+            const lastMsg = await getLastMessageTime(w);
+            entries.push({ worker: w, liveState, lastMsg, dead: false });
+          } else if (options.prune) {
+            if (w.team && w.nativeAgentId) {
+              const agentName = w.nativeAgentId.split('@')[0];
+              await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
+              await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
+            }
+            await registry.unregister(w.id);
+            pruned.push(w.id);
+          } else {
+            const lastMsg = await getLastMessageTime(w);
+            entries.push({ worker: w, liveState: '\u{1F480} dead', lastMsg, dead: true });
+          }
+        }
+
         if (options.json) {
-          console.log(
-            JSON.stringify(
-              workers.map((w) => ({
-                id: w.id,
-                provider: w.provider,
-                transport: w.transport,
-                session: w.session,
-                window: w.window,
-                paneId: w.paneId,
-                role: w.role,
-                skill: w.skill,
-                team: w.team,
-                state: w.state,
-                elapsed: registry.getElapsedTime(w).formatted,
-              })),
-              null,
-              2,
-            ),
-          );
+          const result: any[] = entries.map(({ worker: w, liveState, lastMsg }) => ({
+            id: w.id,
+            provider: w.provider,
+            transport: w.transport,
+            team: w.team,
+            role: w.role,
+            state: liveState,
+            elapsed: registry.getElapsedTime(w).formatted,
+            lastMessage: lastMsg ?? null,
+          }));
+          if (pruned.length > 0) {
+            result.push(...pruned.map((id) => ({ id, state: 'dead (pruned)' })));
+          }
+          console.log(JSON.stringify(result, null, 2));
           return;
         }
 
-        if (workers.length === 0) {
+        if (entries.length === 0 && pruned.length === 0) {
           console.log('No workers found.');
           console.log('  Spawn one: genie worker spawn --role implementor');
           return;
@@ -909,20 +986,31 @@ export function registerWorkerNamespace(program: Command): void {
 
         console.log('');
         console.log('WORKERS');
-        console.log('-'.repeat(80));
+        console.log('-'.repeat(90));
         console.log(
-          `${'ID'.padEnd(20) + 'PROVIDER'.padEnd(10) + 'TEAM'.padEnd(10) + 'ROLE'.padEnd(14) + 'STATE'.padEnd(12)}TIME`,
+          `${'ID'.padEnd(20)}${'PROVIDER'.padEnd(10)}${'TEAM'.padEnd(10)}${'ROLE'.padEnd(14)}${'STATE'.padEnd(16)}${'TIME'.padEnd(8)}LAST MSG`,
         );
-        console.log('-'.repeat(80));
+        console.log('-'.repeat(90));
 
-        for (const w of workers) {
+        for (const { worker: w, liveState, lastMsg } of entries) {
           const id = w.id.padEnd(20).substring(0, 20);
           const provider = (w.provider || '-').padEnd(10);
           const team = (w.team || '-').padEnd(10).substring(0, 10);
           const role = (w.role || '-').padEnd(14).substring(0, 14);
-          const state = w.state.padEnd(12);
-          const time = registry.getElapsedTime(w).formatted;
-          console.log(`${id}${provider}${team}${role}${state}${time}`);
+          const state = liveState.padEnd(16).substring(0, 16);
+          const time = registry.getElapsedTime(w).formatted.padEnd(8);
+          const msg = lastMsg ?? '-';
+          console.log(`${id}${provider}${team}${role}${state}${time}${msg}`);
+        }
+
+        if (pruned.length > 0) {
+          console.log('');
+          console.log(`Pruned ${pruned.length} dead worker(s): ${pruned.join(', ')}`);
+        }
+
+        const deadCount = entries.filter((e) => e.dead).length;
+        if (deadCount > 0 && !options.prune) {
+          console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
         }
         console.log('');
       } catch (error: any) {
@@ -988,6 +1076,13 @@ export function registerWorkerNamespace(program: Command): void {
         }
 
         await registry.unregister(id);
+
+        // Remove spawn template to prevent auto-respawn of killed workers
+        if (w.role) {
+          await registry.removeTemplate(w.role).catch(() => {});
+        }
+        await registry.removeTemplate(id).catch(() => {});
+
         console.log(`Worker "${id}" killed and unregistered.`);
       } catch (error: any) {
         console.error(`Error: ${error.message}`);

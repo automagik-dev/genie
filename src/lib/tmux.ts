@@ -240,6 +240,21 @@ export async function killPane(paneId: string): Promise<void> {
 }
 
 /**
+ * Check if a tmux pane is still alive by attempting a minimal capture.
+ * Returns false for invalid pane IDs ('inline', empty, non-%N format).
+ */
+export async function isPaneAlive(paneId: string): Promise<boolean> {
+  if (!paneId || paneId === 'inline') return false;
+  if (!/^%\d+$/.test(paneId)) return false;
+  try {
+    await capturePaneContent(paneId, 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Paste text into a tmux pane and optionally submit with Enter.
  *
  * Uses `send-keys -l` (literal mode) so text is not interpreted as key names.

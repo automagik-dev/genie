@@ -9,7 +9,8 @@
 
 import * as nativeTeams from './claude-native-teams.js';
 import * as mailbox from './mailbox.js';
-import { executeTmux } from './tmux.js';
+import { detectState } from './orchestrator/index.js';
+import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
 import * as registry from './worker-registry.js';
 
 // ============================================================================
@@ -21,6 +22,75 @@ export interface DeliveryResult {
   workerId: string;
   delivered: boolean;
   reason?: string;
+}
+
+// ============================================================================
+// Auto-Spawn Helpers
+// ============================================================================
+
+/** Max time (ms) to wait for a freshly-spawned worker to reach idle. */
+const AUTO_SPAWN_READY_TIMEOUT_MS = 15000;
+/** Polling interval (ms) while waiting for worker readiness. */
+const AUTO_SPAWN_POLL_INTERVAL_MS = 1000;
+
+async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_TIMEOUT_MS): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const content = await capturePaneContent(paneId, 30);
+      const state = detectState(content);
+      if (state.type === 'idle') return true;
+    } catch {
+      /* pane not ready yet */
+    }
+    await new Promise((r) => setTimeout(r, AUTO_SPAWN_POLL_INTERVAL_MS));
+  }
+  return false;
+}
+
+/**
+ * Ensure a worker is alive, auto-spawning from template if needed.
+ * Handles suspended workers by resuming with --resume flag.
+ */
+async function ensureWorkerAlive(
+  worker: registry.Worker | null,
+  recipientId: string,
+): Promise<{ worker: registry.Worker; respawned: boolean } | null> {
+  if (worker && worker.state !== 'suspended' && (await isPaneAlive(worker.paneId))) {
+    return { worker, respawned: false };
+  }
+
+  if (!process.env.TMUX) return null;
+
+  const templates = await registry.listTemplates();
+  const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
+  const uniqueCandidates = [...new Set(candidates)];
+  const template = templates.find((t) => uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q));
+  if (!template) return null;
+
+  const resumeSessionId =
+    template.provider === 'claude' ? (worker?.claudeSessionId ?? template.lastSessionId) : undefined;
+
+  try {
+    if (worker) {
+      await registry.unregister(worker.id);
+    }
+
+    const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
+    const result = await spawnWorkerFromTemplate(template, resumeSessionId);
+
+    await registry.saveTemplate({
+      ...template,
+      lastSpawnedAt: new Date().toISOString(),
+      lastSessionId: result.worker.claudeSessionId,
+    });
+
+    await waitForWorkerReady(result.paneId);
+
+    return { worker: result.worker, respawned: true };
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -44,8 +114,12 @@ export async function sendMessage(
   body: string,
   teamName?: string,
 ): Promise<DeliveryResult> {
-  // 1. Verify recipient exists in registry
-  const worker = await registry.get(to);
+  // 1. Verify recipient exists in registry (auto-spawn if dead/suspended)
+  let worker = await registry.get(to);
+  const alive = await ensureWorkerAlive(worker, to);
+  if (alive?.respawned) {
+    worker = alive.worker;
+  }
   if (!worker) {
     // Try finding by fuzzy match (team:role pattern)
     const allWorkers = await registry.list();

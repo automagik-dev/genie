@@ -6,7 +6,7 @@
  * `.genie/workers.json` (repo-local) or `~/.config/genie/workers.json`.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { ProviderName } from './provider-adapters.js';
@@ -22,7 +22,8 @@ export type WorkerState =
   | 'permission' // Waiting for permission approval
   | 'question' // Waiting for question answer
   | 'done' // Task completed, ready for close
-  | 'error'; // Encountered error
+  | 'error' // Encountered error
+  | 'suspended'; // Pane killed, session preserved for resume
 
 export type TransportType = 'tmux' | 'inline';
 
@@ -81,10 +82,29 @@ export interface Worker {
   nativeTeamEnabled?: boolean;
   /** Parent session UUID for native team IPC. */
   parentSessionId?: string;
+  /** ISO timestamp when worker was suspended (pane killed, session preserved). */
+  suspendedAt?: string;
+}
+
+/** Saved spawn configuration for auto-respawn on message delivery. */
+export interface WorkerTemplate {
+  id: string;
+  provider: ProviderName;
+  team: string;
+  role?: string;
+  skill?: string;
+  cwd: string;
+  extraArgs?: string[];
+  nativeTeamEnabled?: boolean;
+  /** Timestamp of last spawn from this template. */
+  lastSpawnedAt: string;
+  /** Last known Claude session ID for resume capability. */
+  lastSessionId?: string;
 }
 
 export interface WorkerRegistry {
   workers: Record<string, Worker>;
+  templates: Record<string, WorkerTemplate>;
   lastUpdated: string;
 }
 
@@ -123,9 +143,11 @@ async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   try {
     const filePath = registryPath ?? getRegistryFilePath();
     const content = await readFile(filePath, 'utf-8');
-    return JSON.parse(content);
+    const data = JSON.parse(content);
+    if (!data.templates) data.templates = {};
+    return data;
   } catch {
-    return { workers: {}, lastUpdated: new Date().toISOString() };
+    return { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
   }
 }
 
@@ -137,21 +159,88 @@ async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Pr
 }
 
 // ============================================================================
+// File Locking — prevents concurrent load/modify/save races
+// ============================================================================
+
+const LOCK_TIMEOUT_MS = 5000;
+const LOCK_RETRY_MS = 50;
+const LOCK_STALE_MS = 10000;
+
+async function acquireLock(registryPath?: string): Promise<() => Promise<void>> {
+  const filePath = registryPath ?? getRegistryFilePath();
+  const lockPath = `${filePath}.lock`;
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      const handle = await open(lockPath, 'wx');
+      await handle.writeFile(String(process.pid));
+      await handle.close();
+      return async () => {
+        try {
+          await unlink(lockPath);
+        } catch {
+          /* already removed */
+        }
+      };
+    } catch (err: any) {
+      if (err.code !== 'EEXIST') throw err;
+
+      try {
+        const lockStat = await stat(lockPath);
+        if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
+          try {
+            await unlink(lockPath);
+          } catch {
+            /* race with other cleanup */
+          }
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      if (Date.now() > deadline) {
+        try {
+          await unlink(lockPath);
+        } catch {
+          throw new Error(`Registry lock timeout: could not remove stale lock at ${lockPath}`);
+        }
+        continue;
+      }
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+
+async function withRegistry<T>(fn: (reg: WorkerRegistry) => T | Promise<T>, registryPath?: string): Promise<T> {
+  const release = await acquireLock(registryPath);
+  try {
+    const reg = await loadRegistry(registryPath);
+    const result = await fn(reg);
+    await saveRegistry(reg, registryPath);
+    return result;
+  } finally {
+    await release();
+  }
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
 /** Register a new worker. */
 export async function register(worker: Worker): Promise<void> {
-  const registry = await loadRegistry();
-  registry.workers[worker.id] = worker;
-  await saveRegistry(registry);
+  await withRegistry((reg) => {
+    reg.workers[worker.id] = worker;
+  });
 }
 
 /** Unregister (remove) a worker. */
 export async function unregister(id: string): Promise<void> {
-  const registry = await loadRegistry();
-  delete registry.workers[id];
-  await saveRegistry(registry);
+  await withRegistry((reg) => {
+    delete reg.workers[id];
+  });
 }
 
 /** Get a worker by ID. */
@@ -168,26 +257,26 @@ export async function list(): Promise<Worker[]> {
 
 /** Update a worker's state. */
 export async function updateState(id: string, state: WorkerState): Promise<void> {
-  const registry = await loadRegistry();
-  const worker = registry.workers[id];
-  if (worker) {
-    worker.state = state;
-    worker.lastStateChange = new Date().toISOString();
-    await saveRegistry(registry);
-  }
+  await withRegistry((reg) => {
+    const worker = reg.workers[id];
+    if (worker) {
+      worker.state = state;
+      worker.lastStateChange = new Date().toISOString();
+    }
+  });
 }
 
 /** Update multiple worker fields. */
 export async function update(id: string, updates: Partial<Worker>): Promise<void> {
-  const registry = await loadRegistry();
-  const worker = registry.workers[id];
-  if (worker) {
-    Object.assign(worker, updates);
-    if (updates.state) {
-      worker.lastStateChange = new Date().toISOString();
+  await withRegistry((reg) => {
+    const worker = reg.workers[id];
+    if (worker) {
+      Object.assign(worker, updates);
+      if (updates.state) {
+        worker.lastStateChange = new Date().toISOString();
+      }
     }
-    await saveRegistry(registry);
-  }
+  });
 }
 
 /** Find worker by tmux pane ID. */
@@ -321,15 +410,12 @@ export function getRegistryPath(): string {
  * If the worker doesn't exist, this is a no-op.
  */
 export async function addSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  const registry = await loadRegistry(registryPath);
-  const worker = registry.workers[workerId];
-  if (!worker) return;
-
-  if (!worker.subPanes) {
-    worker.subPanes = [];
-  }
-  worker.subPanes.push(paneId);
-  await saveRegistry(registry, registryPath);
+  await withRegistry((reg) => {
+    const worker = reg.workers[workerId];
+    if (!worker) return;
+    if (!worker.subPanes) worker.subPanes = [];
+    worker.subPanes.push(paneId);
+  }, registryPath);
 }
 
 /**
@@ -359,10 +445,48 @@ export async function getPane(workerId: string, index: number, registryPath?: st
  * If the worker doesn't exist or has no subPanes, this is a no-op.
  */
 export async function removeSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
-  const registry = await loadRegistry(registryPath);
-  const worker = registry.workers[workerId];
-  if (!worker || !worker.subPanes) return;
+  await withRegistry((reg) => {
+    const worker = reg.workers[workerId];
+    if (!worker || !worker.subPanes) return;
+    worker.subPanes = worker.subPanes.filter((p) => p !== paneId);
+  }, registryPath);
+}
 
-  worker.subPanes = worker.subPanes.filter((p) => p !== paneId);
-  await saveRegistry(registry, registryPath);
+// ============================================================================
+// Worker Templates (for auto-respawn)
+// ============================================================================
+
+/** Save or update a worker template. */
+export async function saveTemplate(template: WorkerTemplate): Promise<void> {
+  await withRegistry((reg) => {
+    reg.templates[template.id] = template;
+  });
+}
+
+/** Get a template by exact ID. */
+export async function getTemplate(id: string): Promise<WorkerTemplate | null> {
+  const reg = await loadRegistry();
+  return reg.templates?.[id] ?? null;
+}
+
+/** Find a template by ID, role, or team:role pattern. */
+export async function findTemplate(query: string): Promise<WorkerTemplate | null> {
+  const reg = await loadRegistry();
+  const templates = Object.values(reg.templates ?? {});
+  return (
+    templates.find((t) => t.id === query || t.role === query || `${t.team}:${t.role}` === query) ?? null
+  );
+}
+
+/** Remove a template by ID. */
+export async function removeTemplate(id: string): Promise<void> {
+  await withRegistry((reg) => {
+    delete reg.templates[id];
+  });
+}
+
+/** List all templates. */
+export async function listTemplates(): Promise<WorkerTemplate[]> {
+  const reg = await loadRegistry();
+  return Object.values(reg.templates ?? {});
 }
