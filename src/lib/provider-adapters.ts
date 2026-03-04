@@ -20,7 +20,7 @@ import { z } from 'zod';
 export type ProviderName = 'claude' | 'codex';
 
 /** Colors available for Claude Code native teammate UI. */
-export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink' | 'teal';
+export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink';
 
 /** Rotating palette for auto-assigning teammate colors. */
 export const CLAUDE_TEAM_COLORS: ClaudeTeamColor[] = [
@@ -32,7 +32,6 @@ export const CLAUDE_TEAM_COLORS: ClaudeTeamColor[] = [
   'orange',
   'purple',
   'pink',
-  'teal',
 ];
 
 /** Parameters for Claude Code native teammate integration. */
