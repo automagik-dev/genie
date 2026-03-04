@@ -56,6 +56,16 @@ describe('validateSpawnParams', () => {
 // ============================================================================
 
 describe('buildClaudeCommand', () => {
+  // Mock Bun.which to pretend claude is installed (hasBinary check)
+  const originalWhich = (Bun as Record<string, unknown>).which;
+  beforeAll(() => {
+    (Bun as Record<string, unknown>).which = (name: string) =>
+      name === 'claude' ? '/usr/local/bin/claude' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+  });
+  afterAll(() => {
+    (Bun as Record<string, unknown>).which = originalWhich;
+  });
+
   it('builds command with --agent role', () => {
     const result = buildClaudeCommand({ provider: 'claude', team: 'work', role: 'implementor' });
     expect(result.command).toContain('claude');
@@ -181,7 +191,11 @@ describe('buildLaunchCommand', () => {
   const originalWhich = (Bun as Record<string, unknown>).which;
   beforeAll(() => {
     (Bun as Record<string, unknown>).which = (name: string) =>
-      name === 'codex' ? '/usr/local/bin/codex' : typeof originalWhich === 'function' ? originalWhich(name) : null;
+      name === 'codex' || name === 'claude'
+        ? `/usr/local/bin/${name}`
+        : typeof originalWhich === 'function'
+          ? originalWhich(name)
+          : null;
   });
   afterAll(() => {
     (Bun as Record<string, unknown>).which = originalWhich;
