@@ -49,17 +49,38 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
 }
 
 /**
- * Find an existing live (non-suspended, pane alive) worker by fuzzy match.
- * Used when registry.get() misses because the recipient is a role name.
+ * Resolve a recipient to live workers using strict tiered matching.
+ * Priority: exact ID > role > team:role.
+ * Only returns workers with alive panes (non-suspended).
  */
-async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Worker | null> {
+async function resolveRecipient(recipientId: string): Promise<registry.Worker[]> {
   const allWorkers = await registry.list();
+
+  const byId: registry.Worker[] = [];
+  const byRole: registry.Worker[] = [];
+  const byTeamRole: registry.Worker[] = [];
+
   for (const w of allWorkers) {
     if (w.state === 'suspended') continue;
-    const matches = w.id === recipientId || w.role === recipientId || `${w.team}:${w.role}` === recipientId;
-    if (matches && (await isPaneAlive(w.paneId))) return w;
+    if (!(await isPaneAlive(w.paneId))) continue;
+
+    if (w.id === recipientId) byId.push(w);
+    else if (w.role === recipientId) byRole.push(w);
+    else if (`${w.team}:${w.role}` === recipientId) byTeamRole.push(w);
   }
-  return null;
+
+  if (byId.length > 0) return byId;
+  if (byRole.length > 0) return byRole;
+  return byTeamRole;
+}
+
+/**
+ * Find exactly one live worker by tiered match.
+ * Returns null if zero or multiple matches (ambiguous).
+ */
+async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Worker | null> {
+  const matches = await resolveRecipient(recipientId);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 /**
@@ -74,21 +95,23 @@ async function ensureWorkerAlive(
     return { worker, respawned: false };
   }
 
-  // When worker is null (fuzzy recipient like a role name), check if there's
-  // already a live worker matching the recipientId before attempting to spawn.
-  if (!worker) {
-    const live = await findLiveWorkerFuzzy(recipientId);
-    if (live) return { worker: live, respawned: false };
-  }
+  // Always check for a live worker before attempting to spawn — prevents
+  // duplicate spawns when the registry entry is stale/dead but another
+  // instance with the same role is already alive.
+  const live = await findLiveWorkerFuzzy(recipientId);
+  if (live) return { worker: live, respawned: false };
 
   if (!process.env.TMUX) return null;
 
   const templates = await registry.listTemplates();
   const candidates = [worker?.role, worker?.id, recipientId].filter((v): v is string => Boolean(v));
   const uniqueCandidates = [...new Set(candidates)];
-  const template = templates.find((t) =>
-    uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q),
-  );
+  const workerTeam = worker?.team;
+  const template = templates.find((t) => {
+    // Only match templates from the same team to prevent cross-team contamination
+    if (workerTeam && t.team !== workerTeam) return false;
+    return uniqueCandidates.some((q) => t.id === q || t.role === q || `${t.team}:${t.role}` === q);
+  });
   if (!template) return null;
 
   const resumeSessionId =
@@ -181,11 +204,6 @@ async function deliverViaNativeInbox(
   }
 }
 
-async function resolveWorkerFuzzy(to: string): Promise<registry.Worker[] | null> {
-  const allWorkers = await registry.list();
-  return allWorkers.filter((w) => w.id === to || w.role === to || `${w.team}:${w.role}` === to);
-}
-
 export async function sendMessage(
   repoPath: string,
   from: string,
@@ -193,34 +211,34 @@ export async function sendMessage(
   body: string,
   teamName?: string,
 ): Promise<DeliveryResult> {
-  let worker = await registry.get(to);
-  const alive = await ensureWorkerAlive(worker, to);
-  if (alive?.respawned) worker = alive.worker;
+  // 1. Find live workers using strict tiered matching (ID > role > team:role)
+  const liveMatches = await resolveRecipient(to);
 
-  if (worker) {
-    return deliverToWorker(repoPath, from, worker, body);
+  if (liveMatches.length === 1) {
+    return deliverToWorker(repoPath, from, liveMatches[0], body);
   }
 
-  const matches = await resolveWorkerFuzzy(to);
-  if (matches && matches.length > 1) {
+  if (liveMatches.length > 1) {
     return {
       messageId: '',
       workerId: to,
       delivered: false,
-      reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map((m) => m.id).join(', ')}. Please use a unique worker ID.`,
+      reason: `Worker "${to}" is ambiguous. Found ${liveMatches.length} live matches: ${liveMatches.map((m) => m.id).join(', ')}. Use exact worker ID.`,
     };
   }
 
-  const match = matches?.[0];
-  if (match) {
-    return deliverToWorker(repoPath, from, match, body);
+  // 2. No live match — try auto-spawn from template (dead/missing worker)
+  const worker = await registry.get(to);
+  const alive = await ensureWorkerAlive(worker, to);
+  if (alive) {
+    return deliverToWorker(repoPath, from, alive.worker, body);
   }
 
-  // Fallback: try native team inbox for agents not in worker registry
+  // 3. Fallback: try native team inbox for agents not in worker registry
   const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName);
   if (nativeResult) return nativeResult;
 
-  return { messageId: '', workerId: to, delivered: false, reason: `Worker "${to}" not found in registry` };
+  return { messageId: '', workerId: to, delivered: false, reason: `Worker "${to}" not found or not alive` };
 }
 
 /**
