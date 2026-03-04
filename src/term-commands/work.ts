@@ -781,7 +781,7 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
   monitor.on('state_change', async (event) => {
     if (!event.state) return;
 
-    let newState: registry.WorkerState;
+    let newState: registry.AgentState;
     switch (event.state.type) {
       case 'working':
       case 'tool_use':
@@ -960,7 +960,7 @@ async function resolveTarget(target: string, repoPath: string): Promise<BeadsIss
  * Returns true if resumed successfully (caller should return), false if not resumable.
  */
 async function resumeExistingWorker(
-  existingWorker: registry.Worker,
+  existingWorker: registry.Agent,
   taskId: string,
   options: WorkOptions,
   workerProfile: WorkerProfile | undefined,
@@ -1209,7 +1209,7 @@ async function spawnAndSendPrompt(
 /**
  * Find an existing worker for a task across registries.
  */
-async function findExistingWorker(taskId: string): Promise<registry.Worker | null> {
+async function findExistingWorker(taskId: string): Promise<registry.Agent | null> {
   const beadsWorker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
   return beadsWorker || (await registry.findByTask(taskId));
 }
@@ -1291,7 +1291,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
     // 7. Generate IDs + register
     const claudeSessionId = randomUUID();
     const workerId = await registry.generateWorkerId(taskId, options.name);
-    const worker: registry.Worker = {
+    const worker: registry.Agent = {
       id: workerId,
       paneId,
       session,

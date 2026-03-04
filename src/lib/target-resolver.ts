@@ -9,7 +9,7 @@
  * Returns { paneId, session, workerId?, paneIndex?, resolvedVia }
  */
 
-import type { Worker } from './worker-registry.js';
+import type { Agent } from './agent-registry.js';
 
 // ============================================================================
 // Types
@@ -42,7 +42,7 @@ interface ResolveOptions {
   registryPath?: string;
 
   /** Inject workers directly (bypasses file-based registry) */
-  workers?: Record<string, Worker>;
+  workers?: Record<string, Agent>;
 
   /** Custom tmux lookup function (for session:window and session fallback) */
   tmuxLookup?: (sessionName: string, windowName?: string) => Promise<{ paneId: string; session: string } | null>;
@@ -115,7 +115,7 @@ async function defaultIsPaneLive(paneId: string): Promise<boolean> {
 
 async function defaultCleanupDeadPane(workerId: string, paneId: string): Promise<void> {
   try {
-    const registry = await import('./worker-registry.js');
+    const registry = await import('./agent-registry.js');
     await registry.removeSubPane(workerId, paneId);
   } catch {
     // Best-effort cleanup
@@ -179,7 +179,7 @@ async function resolveRawPane(
 
 async function resolveWindowId(
   target: string,
-  workers: Record<string, Worker>,
+  workers: Record<string, Agent>,
   opts: { checkLiveness: boolean; isPaneLive: (id: string) => Promise<boolean> },
 ): Promise<ResolvedTarget> {
   const matchingWorker = Object.values(workers).find((w) => w.windowId === target);
@@ -201,7 +201,7 @@ async function resolveWindowId(
   };
 }
 
-function resolveWorkerSubPane(worker: Worker, leftSide: string, rightSide: string): string {
+function resolveWorkerSubPane(worker: Agent, leftSide: string, rightSide: string): string {
   const index = Number.parseInt(rightSide, 10);
   if (Number.isNaN(index) || index < 0) {
     throw new Error(
@@ -331,15 +331,15 @@ export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: st
 // Helpers
 // ============================================================================
 
-async function getWorkers(injected?: Record<string, Worker>, _registryPath?: string): Promise<Record<string, Worker>> {
+async function getWorkers(injected?: Record<string, Agent>, _registryPath?: string): Promise<Record<string, Agent>> {
   if (injected !== undefined) {
     return injected;
   }
 
   try {
-    const registry = await import('./worker-registry.js');
+    const registry = await import('./agent-registry.js');
     const workersList = await registry.list();
-    const map: Record<string, Worker> = {};
+    const map: Record<string, Agent> = {};
     for (const w of workersList) {
       map[w.id] = w;
     }
@@ -353,7 +353,7 @@ async function getWorkers(injected?: Record<string, Worker>, _registryPath?: str
  * Get pane ID by index from a worker.
  * Index 0 = primary paneId, 1+ = subPanes[index - 1].
  */
-function getPaneByIndex(worker: Worker, index: number): string | null {
+function getPaneByIndex(worker: Agent, index: number): string | null {
   if (index === 0) {
     return worker.paneId;
   }

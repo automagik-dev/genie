@@ -9,7 +9,7 @@ let mockUpdates: Array<{ id: string; updates: any }> = [];
 let mockExecuteTmuxCalls: string[] = [];
 let mockPaneAliveMap: Record<string, boolean> = {};
 
-mock.module('./worker-registry.js', () => ({
+mock.module('./agent-registry.js', () => ({
   list: async () => mockWorkers,
   get: async (id: string) => mockWorkers.find((w) => w.id === id) ?? null,
   update: async (id: string, updates: any) => {

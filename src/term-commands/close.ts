@@ -164,7 +164,7 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 /**
  * Kill a single worker's window or pane via tmux.
  */
-async function killWorkerTmux(w: registry.Worker): Promise<void> {
+async function killWorkerTmux(w: registry.Agent): Promise<void> {
   if (w.windowId && w.session) {
     console.log(`💀 Killing worker window "${w.windowName || w.windowId}" (${w.id})...`);
     try {
@@ -202,7 +202,7 @@ async function killWorkerTmux(w: registry.Worker): Promise<void> {
 /**
  * Unregister a worker from all registries and clean up event files.
  */
-async function unregisterWorker(w: registry.Worker): Promise<void> {
+async function unregisterWorker(w: registry.Agent): Promise<void> {
   if (useBeadsRegistry) {
     try {
       await beadsRegistry.unbindWork(w.id);
@@ -237,10 +237,7 @@ async function closeTaskByBackend(backend: TaskBackend, taskId: string, isLocal:
 /**
  * Find representative worker for a task.
  */
-async function findRepresentativeWorker(
-  allWorkers: registry.Worker[],
-  taskId: string,
-): Promise<registry.Worker | null> {
+async function findRepresentativeWorker(allWorkers: registry.Agent[], taskId: string): Promise<registry.Agent | null> {
   if (useBeadsRegistry) {
     const w = await beadsRegistry.findByTask(taskId);
     if (w) return w;
@@ -251,7 +248,7 @@ async function findRepresentativeWorker(
 /**
  * Prompt user to confirm closing a task.
  */
-async function confirmClose(taskId: string, workerCount: number, worker: registry.Worker | null): Promise<boolean> {
+async function confirmClose(taskId: string, workerCount: number, worker: registry.Agent | null): Promise<boolean> {
   const workerMsg =
     workerCount > 1 ? ` and kill ${workerCount} workers` : worker ? ` and kill worker (pane ${worker.paneId})` : '';
   return confirm({ message: `Close ${taskId}${workerMsg}?`, default: true });
@@ -260,7 +257,7 @@ async function confirmClose(taskId: string, workerCount: number, worker: registr
 /**
  * Handle worktree cleanup (merge + remove).
  */
-async function handleWorktreeCleanup(worker: registry.Worker, taskId: string, options: CloseOptions): Promise<void> {
+async function handleWorktreeCleanup(worker: registry.Agent, taskId: string, options: CloseOptions): Promise<void> {
   if (!worker.worktree || options.keepWorktree) return;
   if (options.merge) {
     console.log('🔀 Merging changes...');
@@ -284,7 +281,7 @@ async function maybeSyncBeads(isLocal: boolean, noSync: boolean | undefined): Pr
 /**
  * Kill and unregister all workers for a task.
  */
-async function killAndUnregisterAll(allWorkers: registry.Worker[]): Promise<void> {
+async function killAndUnregisterAll(allWorkers: registry.Agent[]): Promise<void> {
   for (const w of allWorkers) {
     await killWorkerTmux(w);
     await unregisterWorker(w);
