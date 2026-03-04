@@ -6,7 +6,7 @@ import { type Config, ConfigSchema, type Profile } from '../types/config.js';
 const CONFIG_DIR = join(homedir(), '.claudio');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
-export function getConfigPath(): string {
+function getConfigPath(): string {
   return CONFIG_FILE;
 }
 
@@ -44,7 +44,7 @@ export async function saveConfig(config: Config): Promise<void> {
   }
 }
 
-export async function deleteConfig(): Promise<void> {
+async function deleteConfig(): Promise<void> {
   if (existsSync(CONFIG_FILE)) {
     unlinkSync(CONFIG_FILE);
   }
@@ -54,7 +54,7 @@ export function getDefaultApiUrl(): string {
   return 'http://10.114.1.119:8317';
 }
 
-export function getAnthropicApiUrl(): string {
+function getAnthropicApiUrl(): string {
   return 'https://api.anthropic.com/v1';
 }
 
@@ -74,7 +74,7 @@ export async function setDefaultProfile(name: string): Promise<void> {
   await saveConfig(config);
 }
 
-export async function addProfile(name: string, profile: Profile): Promise<void> {
+async function addProfile(name: string, profile: Profile): Promise<void> {
   const config = await loadConfig();
   if (config.profiles[name]) {
     throw new Error(`Profile "${name}" already exists`);

@@ -39,9 +39,9 @@ const execAsync = promisify(exec);
 // Types (dependency-aware tasks from genie-cli-teams)
 // ============================================================================
 
-export type TaskStatus = 'ready' | 'in_progress' | 'done' | 'blocked';
+type TaskStatus = 'ready' | 'in_progress' | 'done' | 'blocked';
 
-export interface Task {
+interface Task {
   id: string;
   title: string;
   description?: string;

@@ -55,40 +55,40 @@ import {
 // Types
 // ============================================================================
 
-export interface StartOptions {
+interface StartOptions {
   monitor?: boolean;
   command?: string;
   json?: boolean;
 }
 
-export interface RunOptions {
+interface RunOptions {
   autoApprove?: boolean;
   timeout?: number;
   json?: boolean;
 }
 
-export interface SendOptions {
+interface SendOptions {
   method?: string;
   timeout?: number;
   json?: boolean;
   noWait?: boolean;
 }
 
-export interface StatusOptions {
+interface StatusOptions {
   json?: boolean;
 }
 
-export interface WatchOptions {
+interface WatchOptions {
   json?: boolean;
   poll?: number;
 }
 
-export interface ApproveOptions {
+interface ApproveOptions {
   auto?: boolean;
   deny?: boolean;
 }
 
-export interface ExperimentOptions {
+interface ExperimentOptions {
   runs?: number;
   task?: string;
   json?: boolean;
@@ -159,7 +159,7 @@ function formatEvent(event: ClaudeEvent): string {
  * NOTE: This command preserves session-creation behavior from getSessionPane().
  * It does NOT use resolveTarget() because it needs to create sessions that don't exist.
  */
-export async function startSession(sessionName: string, options: StartOptions = {}): Promise<void> {
+async function startSession(sessionName: string, options: StartOptions = {}): Promise<void> {
   try {
     // Check if session exists
     let session = await tmux.findSessionByName(sessionName);
@@ -228,7 +228,7 @@ export async function startSession(sessionName: string, options: StartOptions = 
 /**
  * Send a message to Claude and track completion
  */
-export async function sendMessage(target: string, message: string, options: SendOptions = {}): Promise<void> {
+async function sendMessage(target: string, message: string, options: SendOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -289,7 +289,7 @@ export async function sendMessage(target: string, message: string, options: Send
 /**
  * Show current Claude state
  */
-export async function showStatus(target: string, options: StatusOptions = {}): Promise<void> {
+async function showStatus(target: string, options: StatusOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -378,7 +378,7 @@ export async function showStatus(target: string, options: StatusOptions = {}): P
 /**
  * Watch session events in real-time
  */
-export async function watchSession(target: string, options: WatchOptions = {}): Promise<void> {
+async function watchSession(target: string, options: WatchOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -427,7 +427,7 @@ export async function watchSession(target: string, options: WatchOptions = {}): 
 /**
  * Approve a pending permission request
  */
-export async function approvePermission(target: string, options: ApproveOptions = {}): Promise<void> {
+async function approvePermission(target: string, options: ApproveOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
 
@@ -584,7 +584,7 @@ function sleep(ms: number): Promise<void> {
 /**
  * Test a completion detection method
  */
-export async function runExperiment(methodName: string, options: ExperimentOptions = {}): Promise<void> {
+async function runExperiment(methodName: string, options: ExperimentOptions = {}): Promise<void> {
   const runs = options.runs || 1;
   const testTask = options.task || 'echo "Hello, World!"';
 
@@ -686,7 +686,7 @@ export async function runExperiment(methodName: string, options: ExperimentOptio
 /**
  * List available completion methods
  */
-export async function listMethods(): Promise<void> {
+async function listMethods(): Promise<void> {
   console.log('Available completion methods:');
   console.log('');
 
@@ -707,7 +707,7 @@ export async function listMethods(): Promise<void> {
  *
  * Fire-and-forget: send message, auto-approve permissions, wait for idle
  */
-export async function runTask(target: string, message: string, options: RunOptions = {}): Promise<void> {
+async function runTask(target: string, message: string, options: RunOptions = {}): Promise<void> {
   try {
     const { paneId, session, label } = await resolveOrcTarget(target);
     const timeoutMs = options.timeout || 300000; // 5 minute default

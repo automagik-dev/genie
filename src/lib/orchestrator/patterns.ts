@@ -5,7 +5,7 @@
  * when Claude Code is running in a terminal session.
  */
 
-export interface PatternMatch {
+interface PatternMatch {
   type: string;
   pattern: RegExp;
   extract?: (match: RegExpMatchArray) => Record<string, string>;
@@ -205,7 +205,7 @@ export const toolUsePatterns: PatternMatch[] = [
 ];
 
 // Plan file patterns - extract plan file paths from Claude Code output
-export const planFilePatterns: PatternMatch[] = [
+const planFilePatterns: PatternMatch[] = [
   {
     type: 'claude_plan_file',
     // Matches: ~/.claude/plans/something.md or full paths

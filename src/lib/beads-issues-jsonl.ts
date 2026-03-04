@@ -36,7 +36,7 @@ let _lastUtcNowMs = 0;
  * in the same tick (common in tests and fast CLIs), we still want updated_at
  * to advance so downstream consumers can rely on it.
  */
-export function utcNowRfc3339(): string {
+function utcNowRfc3339(): string {
   const ms = Date.now();
   const next = ms <= _lastUtcNowMs ? _lastUtcNowMs + 1 : ms;
   _lastUtcNowMs = next;
@@ -133,7 +133,7 @@ export async function getSourceRepo(repoPath: string): Promise<string> {
   return `git:file:${repoPath}`;
 }
 
-export function normalizeGitRemote(url: string): string {
+function normalizeGitRemote(url: string): string {
   // Trim and strip trailing .git or slash
   let u = (url || '').trim();
   u = u.replace(/\s+/g, '');
@@ -147,7 +147,7 @@ export function normalizeGitRemote(url: string): string {
   return u;
 }
 
-export async function pathExists(p: string): Promise<boolean> {
+async function pathExists(p: string): Promise<boolean> {
   try {
     await access(p);
     return true;

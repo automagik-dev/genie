@@ -34,7 +34,7 @@ export interface MailboxMessage {
   deliveredAt: string | null;
 }
 
-export interface WorkerMailbox {
+interface WorkerMailbox {
   workerId: string;
   messages: MailboxMessage[];
   lastUpdated: string;
@@ -123,7 +123,7 @@ export async function unread(repoPath: string, workerId: string): Promise<Mailbo
 /**
  * Mark a message as read.
  */
-export async function markRead(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
+async function markRead(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
   const mailbox = await loadMailbox(repoPath, workerId);
   const msg = mailbox.messages.find((m) => m.id === messageId);
   if (!msg) return false;

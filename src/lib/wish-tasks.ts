@@ -12,7 +12,7 @@ import { join } from 'node:path';
 // Types
 // ============================================================================
 
-export interface LinkedTask {
+interface LinkedTask {
   /** Beads task ID (e.g., "bd-42") */
   id: string;
   /** Task title */
@@ -23,7 +23,7 @@ export interface LinkedTask {
   linkedAt: string;
 }
 
-export interface WishTasksFile {
+interface WishTasksFile {
   /** Wish slug */
   wishId: string;
   /** Linked tasks */
@@ -39,7 +39,7 @@ export interface WishTasksFile {
 /**
  * Get the tasks file path for a wish
  */
-export function getWishTasksPath(repoPath: string, wishSlug: string): string {
+function getWishTasksPath(repoPath: string, wishSlug: string): string {
   return join(repoPath, '.genie', 'wishes', wishSlug, 'tasks.json');
 }
 
@@ -142,7 +142,7 @@ export async function unlinkTask(repoPath: string, wishSlug: string, taskId: str
 /**
  * Update task status in wish
  */
-export async function updateTaskStatus(
+async function updateTaskStatus(
   repoPath: string,
   wishSlug: string,
   taskId: string,
@@ -163,7 +163,7 @@ export async function updateTaskStatus(
 /**
  * Get all tasks for a wish
  */
-export async function getWishTasks(repoPath: string, wishSlug: string): Promise<LinkedTask[]> {
+async function getWishTasks(repoPath: string, wishSlug: string): Promise<LinkedTask[]> {
   const data = await loadWishTasks(repoPath, wishSlug);
   return data.tasks;
 }
@@ -171,7 +171,7 @@ export async function getWishTasks(repoPath: string, wishSlug: string): Promise<
 /**
  * Get wish status summary
  */
-export async function getWishStatus(
+async function getWishStatus(
   repoPath: string,
   wishSlug: string,
 ): Promise<{
@@ -195,7 +195,7 @@ export async function getWishStatus(
 /**
  * Find which wish a task is linked to
  */
-export async function findWishForTask(repoPath: string, taskId: string): Promise<string | null> {
+async function findWishForTask(repoPath: string, taskId: string): Promise<string | null> {
   const wishesDir = join(repoPath, '.genie', 'wishes');
 
   try {

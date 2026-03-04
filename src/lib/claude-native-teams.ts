@@ -23,7 +23,7 @@ import { CLAUDE_TEAM_COLORS } from './provider-adapters.js';
 // ============================================================================
 
 /** A member entry in the native team config.json. */
-export interface NativeTeamMember {
+interface NativeTeamMember {
   agentId: string;
   name: string;
   agentType: string;
@@ -37,7 +37,7 @@ export interface NativeTeamMember {
 }
 
 /** The native team config.json root structure. */
-export interface NativeTeamConfig {
+interface NativeTeamConfig {
   name: string;
   description?: string;
   createdAt: number;
@@ -280,7 +280,7 @@ export async function writeNativeInbox(
 /**
  * Read all messages from a member's native inbox.
  */
-export async function readNativeInbox(teamName: string, agentName: string): Promise<NativeInboxMessage[]> {
+async function readNativeInbox(teamName: string, agentName: string): Promise<NativeInboxMessage[]> {
   try {
     const content = await readFile(inboxPath(teamName, agentName), 'utf-8');
     return JSON.parse(content);
@@ -334,14 +334,14 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
 /**
  * Check if a native team exists.
  */
-export function nativeTeamExists(teamName: string): boolean {
+function nativeTeamExists(teamName: string): boolean {
   return existsSync(configPath(teamName));
 }
 
 /**
  * Get the native team directory path (for external inspection).
  */
-export function getNativeTeamDir(teamName: string): string {
+function getNativeTeamDir(teamName: string): string {
   return teamDir(teamName);
 }
 
@@ -443,7 +443,7 @@ export async function discoverTeamName(cwd?: string): Promise<string | null> {
 /**
  * Check if native teams feature is enabled.
  */
-export function isNativeTeamsEnabled(): boolean {
+function isNativeTeamsEnabled(): boolean {
   return process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
 }
 

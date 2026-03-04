@@ -49,7 +49,7 @@ const WORKTREE_DIR_NAME = '.genie/worktrees';
 /**
  * Get the current branch name
  */
-export async function getCurrentBranch(repoPath: string): Promise<string> {
+async function getCurrentBranch(repoPath: string): Promise<string> {
   const result = await $`git -C ${repoPath} branch --show-current`.quiet();
   return result.stdout.toString().trim();
 }
@@ -58,7 +58,7 @@ export async function getCurrentBranch(repoPath: string): Promise<string> {
  * Check if current branch is main/master and exit if so
  * Used to prevent accidental pushes to protected branches
  */
-export async function assertNotMainBranch(repoPath: string): Promise<void> {
+async function assertNotMainBranch(repoPath: string): Promise<void> {
   const branch = await getCurrentBranch(repoPath);
   if (branch === 'main' || branch === 'master') {
     console.error('❌ Cannot push from main/master. Use a feature branch.');

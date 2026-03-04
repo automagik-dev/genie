@@ -35,7 +35,7 @@ export interface WorktreeInfo {
 /**
  * Unified interface for worktree management
  */
-export interface WorktreeManagerInterface {
+interface WorktreeManagerInterface {
   /**
    * Create a new worktree for a wish
    * @param wishId - The wish identifier (e.g., "wish-1")
@@ -140,7 +140,7 @@ function getWorktreePath(repoPath: string, wishId: string): string {
 /**
  * Get branch name for a wish
  */
-export function getBranchName(wishId: string): string {
+function getBranchName(wishId: string): string {
   return `work/${wishId}`;
 }
 
@@ -440,6 +440,6 @@ export async function getWorktreeManager(repoPath: string): Promise<WorktreeMana
 /**
  * Create a GitWorktreeManager directly (for cases where git is always preferred)
  */
-export function createGitWorktreeManager(repoPath: string): GitWorktreeManager {
+function createGitWorktreeManager(repoPath: string): GitWorktreeManager {
   return new GitWorktreeManager(repoPath);
 }

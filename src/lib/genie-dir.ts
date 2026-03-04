@@ -9,7 +9,7 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const GENIE_DIR_NAME = '.genie';
+const GENIE_DIR_NAME = '.genie';
 
 /**
  * Get the git common directory (main repo) if we're in a worktree.
@@ -70,6 +70,6 @@ export function getRepoGenieDir(repoPath: string): string {
  * Heuristic: treat repo as "local-backend capable" if it has (or intends to have)
  * a tracked .genie/ directory.
  */
-export function hasRepoGenieDir(repoPath: string): boolean {
+function hasRepoGenieDir(repoPath: string): boolean {
   return existsSync(getRepoGenieDir(repoPath));
 }

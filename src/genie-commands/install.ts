@@ -12,7 +12,7 @@ import {
 } from '../lib/system-detect.js';
 import { setupCommand } from './setup.js';
 
-export interface InstallOptions {
+interface InstallOptions {
   check?: boolean;
   yes?: boolean;
 }

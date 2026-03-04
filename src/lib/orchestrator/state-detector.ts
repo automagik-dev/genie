@@ -38,7 +38,7 @@ export interface ClaudeState {
   confidence: number; // 0-1, how confident we are in this detection
 }
 
-export interface StateDetectorOptions {
+interface StateDetectorOptions {
   /** Number of lines from end to analyze (default: 50) */
   linesToAnalyze?: number;
   /** Minimum confidence threshold (default: 0.5) */

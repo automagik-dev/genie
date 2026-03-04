@@ -25,7 +25,7 @@ export interface WorkerProfile {
 /**
  * Options for building a spawn command
  */
-export interface SpawnOptions {
+interface SpawnOptions {
   /** Session ID for new sessions (--session-id flag) */
   sessionId?: string;
   /** Session ID to resume (--resume flag) */

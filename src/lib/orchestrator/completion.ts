@@ -9,7 +9,7 @@ import * as tmux from '../tmux.js';
 import { type EventMonitor, waitForCompletion, waitForSilence } from './event-monitor.js';
 import type { ClaudeState } from './state-detector.js';
 
-export interface CompletionResult {
+interface CompletionResult {
   complete: boolean;
   state?: ClaudeState;
   reason: string;
@@ -17,7 +17,7 @@ export interface CompletionResult {
   method: string;
 }
 
-export interface CompletionMethodMetrics {
+interface CompletionMethodMetrics {
   name: string;
   totalRuns: number;
   avgLatencyMs: number;
@@ -28,7 +28,7 @@ export interface CompletionMethodMetrics {
   successRate: number;
 }
 
-export interface CompletionMethod {
+interface CompletionMethod {
   name: string;
   description: string;
   detect(monitor: EventMonitor, timeoutMs?: number): Promise<CompletionResult>;
@@ -39,7 +39,7 @@ export interface CompletionMethod {
 /**
  * Create a completion method based on silence timeout
  */
-export function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
+function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
   const metrics: CompletionMethodMetrics = {
     name: `silence-${silenceMs}ms`,
     totalRuns: 0,
@@ -103,7 +103,7 @@ export function silenceTimeoutMethod(silenceMs: number): CompletionMethod {
 /**
  * Create a completion method based on state detection (idle state)
  */
-export function stateDetectionMethod(): CompletionMethod {
+function stateDetectionMethod(): CompletionMethod {
   const metrics: CompletionMethodMetrics = {
     name: 'state-detection',
     totalRuns: 0,
@@ -171,7 +171,7 @@ export function stateDetectionMethod(): CompletionMethod {
 /**
  * Create a completion method using tmux wait-for channel
  */
-export function waitForChannelMethod(channel: string): CompletionMethod {
+function waitForChannelMethod(channel: string): CompletionMethod {
   const metrics: CompletionMethodMetrics = {
     name: `wait-for-${channel}`,
     totalRuns: 0,
@@ -237,7 +237,7 @@ export function waitForChannelMethod(channel: string): CompletionMethod {
 /**
  * Create a hybrid completion method that uses multiple strategies
  */
-export function hybridMethod(
+function hybridMethod(
   primaryMethod: CompletionMethod,
   fallbackMethod: CompletionMethod,
   options: {

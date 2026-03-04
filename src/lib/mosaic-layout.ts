@@ -9,7 +9,7 @@
 // Types
 // ============================================================================
 
-export type LayoutMode = 'mosaic' | 'vertical';
+type LayoutMode = 'mosaic' | 'vertical';
 
 // ============================================================================
 // Layout Application

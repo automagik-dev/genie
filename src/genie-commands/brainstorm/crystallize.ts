@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { crystallizeBrainstormAndUpsertBeads } from '../../term-commands/brainstorm-beads.js';
 
-export interface BrainstormCrystallizeOptions {
+interface BrainstormCrystallizeOptions {
   slug: string;
   file?: string;
   repo?: string;

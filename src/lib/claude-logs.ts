@@ -76,7 +76,7 @@ export interface ClaudeLogEntry {
 /**
  * Session metadata from sessions-index.json
  */
-export interface ClaudeSession {
+interface ClaudeSession {
   sessionId: string;
   fullPath: string;
   fileMtime: number;
@@ -120,14 +120,14 @@ export function projectPathToHash(projectPath: string): string {
 /**
  * Get the default Claude directory path
  */
-export function getClaudeDir(): string {
+function getClaudeDir(): string {
   return join(process.env.HOME || '', '.claude');
 }
 
 /**
  * Get the projects directory path
  */
-export function getProjectsDir(claudeDir?: string): string {
+function getProjectsDir(claudeDir?: string): string {
   return join(claudeDir || getClaudeDir(), 'projects');
 }
 
@@ -159,7 +159,7 @@ export async function findClaudeProjectDir(projectPath: string, claudeDir?: stri
 /**
  * List all Claude project directories
  */
-export async function listClaudeProjects(claudeDir?: string): Promise<string[]> {
+async function listClaudeProjects(claudeDir?: string): Promise<string[]> {
   const projectsDir = getProjectsDir(claudeDir);
 
   try {
@@ -261,7 +261,7 @@ export async function findActiveSession(projectDir: string): Promise<ClaudeSessi
 /**
  * Get the log file path for a session
  */
-export function getSessionLogPath(projectDir: string, sessionId: string): string {
+function getSessionLogPath(projectDir: string, sessionId: string): string {
   return join(projectDir, `${sessionId}.jsonl`);
 }
 
@@ -380,7 +380,7 @@ export async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
  * @param count - Number of entries to read from the end
  * @returns Array of parsed log entries (most recent last)
  */
-export async function readLastEntries(logPath: string, count: number): Promise<ClaudeLogEntry[]> {
+async function readLastEntries(logPath: string, count: number): Promise<ClaudeLogEntry[]> {
   const entries: ClaudeLogEntry[] = [];
 
   try {
@@ -499,7 +499,7 @@ export async function tailLogFile(
  * Find logs for a workspace path.
  * Returns the project directory and active session if found.
  */
-export async function findLogsForWorkspace(
+async function findLogsForWorkspace(
   workspacePath: string,
   claudeDir?: string,
 ): Promise<{ projectDir: string; session: ClaudeSession } | null> {

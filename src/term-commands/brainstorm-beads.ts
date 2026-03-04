@@ -16,7 +16,7 @@ import {
   upsertBeadsIssueJsonl,
 } from '../lib/beads-issues-jsonl.js';
 
-export interface CrystallizeBrainstormOptions {
+interface CrystallizeBrainstormOptions {
   repoPath: string;
   slug: string; // kebab-case
   title: string;

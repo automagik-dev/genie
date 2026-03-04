@@ -102,7 +102,7 @@ export interface WorkerTemplate {
   lastSessionId?: string;
 }
 
-export interface WorkerRegistry {
+interface WorkerRegistry {
   workers: Record<string, Worker>;
   templates: Record<string, WorkerTemplate>;
   lastUpdated: string;
@@ -337,37 +337,37 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
 }
 
 /** Find workers by wish slug. */
-export async function findByWish(wishSlug: string): Promise<Worker[]> {
+async function findByWish(wishSlug: string): Promise<Worker[]> {
   const workers = await list();
   return workers.filter((w) => w.wishSlug === wishSlug);
 }
 
 /** Find worker by Claude session ID. */
-export async function findBySessionId(sessionId: string): Promise<Worker | null> {
+async function findBySessionId(sessionId: string): Promise<Worker | null> {
   const workers = await list();
   return workers.find((w) => w.claudeSessionId === sessionId) ?? null;
 }
 
 /** Check if a worker exists for a given task. */
-export async function hasWorkerForTask(taskId: string): Promise<boolean> {
+async function hasWorkerForTask(taskId: string): Promise<boolean> {
   const worker = await findByTask(taskId);
   return worker !== null;
 }
 
 /** Find workers by team name. */
-export async function findByTeam(team: string): Promise<Worker[]> {
+async function findByTeam(team: string): Promise<Worker[]> {
   const workers = await list();
   return workers.filter((w) => w.team === team);
 }
 
 /** Find workers by provider. */
-export async function findByProvider(provider: ProviderName): Promise<Worker[]> {
+async function findByProvider(provider: ProviderName): Promise<Worker[]> {
   const workers = await list();
   return workers.filter((w) => w.provider === provider);
 }
 
 /** Get workers in a specific state. */
-export async function getByState(state: WorkerState): Promise<Worker[]> {
+async function getByState(state: WorkerState): Promise<Worker[]> {
   const workers = await list();
   return workers.filter((w) => w.state === state);
 }
@@ -393,12 +393,12 @@ export function getElapsedTime(worker: Worker): { ms: number; formatted: string 
 }
 
 /** Get the config directory path. */
-export function getConfigDir(): string {
+function getConfigDir(): string {
   return CONFIG_DIR;
 }
 
 /** Get the registry file path. */
-export function getRegistryPath(): string {
+function getRegistryPath(): string {
   return getRegistryFilePath();
 }
 
@@ -465,13 +465,13 @@ export async function saveTemplate(template: WorkerTemplate): Promise<void> {
 }
 
 /** Get a template by exact ID. */
-export async function getTemplate(id: string): Promise<WorkerTemplate | null> {
+async function getTemplate(id: string): Promise<WorkerTemplate | null> {
   const reg = await loadRegistry();
   return reg.templates?.[id] ?? null;
 }
 
 /** Find a template by ID, role, or team:role pattern. */
-export async function findTemplate(query: string): Promise<WorkerTemplate | null> {
+async function findTemplate(query: string): Promise<WorkerTemplate | null> {
   const reg = await loadRegistry();
   const templates = Object.values(reg.templates ?? {});
   return templates.find((t) => t.id === query || t.role === query || `${t.team}:${t.role}` === query) ?? null;
