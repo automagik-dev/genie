@@ -32,8 +32,9 @@ export async function executeInSession(target: string, command: string, options:
     }
 
     process.exit(exitCode);
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }

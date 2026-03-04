@@ -96,8 +96,9 @@ async function mergeToMain(repoPath: string, branchName: string): Promise<boolea
     await $`git -C ${repoPath} merge ${branchName} --no-edit`.quiet();
 
     return true;
-  } catch (error: any) {
-    console.error(`   Merge failed: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`   Merge failed: ${message}`);
     return false;
   }
 }
@@ -242,8 +243,9 @@ export async function shipCommand(taskId: string, options: ShipOptions = {}): Pr
     }
 
     console.log(`\n🚀 ${taskId} shipped successfully!`);
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }

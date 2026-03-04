@@ -229,7 +229,7 @@ export async function ensureTasksFile(repoPath: string): Promise<boolean> {
       await ensureGenieDir(repoPath);
       await saveTasks(repoPath, { tasks: {}, order: [], lastUpdated: new Date().toISOString() });
       return true;
-    } catch (err: any) {
+    } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'EACCES' || code === 'EROFS') {
         throw new Error(

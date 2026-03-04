@@ -113,8 +113,9 @@ export async function updateCommand(taskId: string, options: UpdateOptions): Pro
     for (const change of changes) {
       console.log(`   ${change}`);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }

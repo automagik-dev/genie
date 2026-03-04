@@ -585,8 +585,9 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
     if (deadWorkers.length > 0) {
       console.log(`\n⚠️  ${deadWorkers.length} dead worker(s) detected. Run \`genie worker kill <name>\` to clean up.`);
     }
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }
@@ -813,8 +814,8 @@ export function registerWorkerNamespace(program: Command): void {
           if (insideTmux) {
             try {
               paneId = execSync(`tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`, { encoding: 'utf-8' }).trim();
-            } catch (err: any) {
-              console.error(`Failed to create tmux pane: ${err?.message ?? 'unknown error'}`);
+            } catch (err) {
+              console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
               process.exit(1);
             }
 
@@ -906,8 +907,9 @@ export function registerWorkerNamespace(program: Command): void {
             console.log(`\nWorker "${workerId}" session ended.`);
             process.exit(result.status ?? 0);
           }
-        } catch (error: any) {
-          console.error(`Error: ${error.message}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`Error: ${message}`);
           process.exit(1);
         }
       },
@@ -1027,8 +1029,9 @@ export function registerWorkerNamespace(program: Command): void {
           console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
         }
         console.log('');
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -1098,8 +1101,9 @@ export function registerWorkerNamespace(program: Command): void {
         await registry.removeTemplate(id).catch(() => {});
 
         console.log(`Worker "${id}" killed and unregistered.`);
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -1131,8 +1135,9 @@ export function registerWorkerNamespace(program: Command): void {
           console.error(`Failed to suspend worker "${id}".`);
           process.exit(1);
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -1166,8 +1171,9 @@ export function registerWorkerNamespace(program: Command): void {
 
         console.log('Starting watchdog loop (Ctrl+C to stop)...');
         await runWatchdogLoop();
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -1246,8 +1252,9 @@ export function registerWorkerNamespace(program: Command): void {
         if (options.watch) {
           console.log('Watch mode: would auto-refresh every 2s (tmux required)');
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });

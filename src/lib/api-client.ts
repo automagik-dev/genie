@@ -58,23 +58,26 @@ export async function testConnection(apiUrl: string, apiKey: string): Promise<Co
       modelCount: models.length,
       models,
     };
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const cause = error instanceof Error ? (error.cause as Record<string, unknown>) : undefined;
+    const name = error instanceof Error ? error.name : '';
     // Network errors (connection refused, timeout, DNS failure, etc.)
-    if (error.cause?.code === 'ECONNREFUSED' || error.message?.includes('ECONNREFUSED')) {
+    if (cause?.code === 'ECONNREFUSED' || message?.includes('ECONNREFUSED')) {
       return {
         success: false,
         error: 'network_error',
         message: `Connection refused. Is the server running at ${apiUrl}?`,
       };
     }
-    if (error.cause?.code === 'ENOTFOUND' || error.message?.includes('ENOTFOUND')) {
+    if (cause?.code === 'ENOTFOUND' || message?.includes('ENOTFOUND')) {
       return {
         success: false,
         error: 'network_error',
         message: `Could not resolve hostname. Check the URL: ${apiUrl}`,
       };
     }
-    if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+    if (name === 'AbortError' || message?.includes('timeout')) {
       return {
         success: false,
         error: 'network_error',
@@ -84,7 +87,7 @@ export async function testConnection(apiUrl: string, apiKey: string): Promise<Co
     return {
       success: false,
       error: 'network_error',
-      message: `Network error: ${error.message || 'Unknown error'}`,
+      message: `Network error: ${message || 'Unknown error'}`,
     };
   }
 }

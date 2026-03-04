@@ -58,8 +58,9 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
   try {
     const result = await $`bd ${args}`.quiet();
     return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error: any) {
-    return { stdout: error.stdout?.toString().trim() || '', exitCode: error.exitCode || 1 };
+  } catch (error) {
+    const shellErr = error as { stdout?: Buffer; exitCode?: number };
+    return { stdout: shellErr.stdout?.toString().trim() || '', exitCode: shellErr.exitCode || 1 };
   }
 }
 
@@ -108,8 +109,9 @@ async function mergeToMain(repoPath: string, branchName: string): Promise<boolea
     await $`git -C ${repoPath} merge ${branchName} --no-edit`.quiet();
 
     return true;
-  } catch (error: any) {
-    console.error(`⚠️  Merge failed: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`⚠️  Merge failed: ${message}`);
     return false;
   }
 }
@@ -313,8 +315,9 @@ export async function closeCommand(taskId: string, options: CloseOptions = {}): 
     }
 
     console.log(`\n✅ ${taskId} closed successfully`);
-  } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error: ${message}`);
     process.exit(1);
   }
 }

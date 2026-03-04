@@ -133,8 +133,9 @@ export async function readSessionLogs(sessionName: string, options: ReadOptions 
       }
 
       return matchedLines.join('\n');
-    } catch (error: any) {
-      throw new Error(`Invalid regex pattern: ${error.message}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid regex pattern: ${message}`);
     }
   }
 

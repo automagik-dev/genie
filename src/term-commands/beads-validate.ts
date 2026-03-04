@@ -49,8 +49,8 @@ export async function beadsValidateCommand(options: BeadsValidateOptions = {}): 
       } else {
         errors.push({ line: i + 1, error: 'missing id' });
       }
-    } catch (e: any) {
-      errors.push({ line: i + 1, error: e?.message || 'invalid json' });
+    } catch (e) {
+      errors.push({ line: i + 1, error: e instanceof Error ? e.message : 'invalid json' });
     }
   }
 

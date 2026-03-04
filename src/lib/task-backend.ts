@@ -48,10 +48,12 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
   try {
     const result = await $`bd ${args}`.quiet();
     return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error: any) {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const shellErr = error as { stdout?: Buffer; exitCode?: number };
     return {
-      stdout: error.stdout?.toString().trim() || error.message,
-      exitCode: error.exitCode || 1,
+      stdout: shellErr.stdout?.toString().trim() || message,
+      exitCode: shellErr.exitCode || 1,
     };
   }
 }

@@ -304,8 +304,9 @@ export function registerTaskNamespace(program: Command): void {
         if (blockedBy.length > 0) {
           console.log(`  Blocked by: ${blockedBy.join(', ')}`);
         }
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -379,8 +380,9 @@ export function registerTaskNamespace(program: Command): void {
         }
 
         console.log('');
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });
@@ -418,8 +420,9 @@ export function registerTaskNamespace(program: Command): void {
 
         console.log(`Task "${id}" updated.`);
         console.log(`  Status: ${task.status}`);
-      } catch (error: any) {
-        console.error(`Error: ${error.message}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
         process.exit(1);
       }
     });

@@ -136,8 +136,9 @@ export class WorktreeManager {
     try {
       await access(worktreePath);
       throw new Error(`Worktree already exists at ${worktreePath}`);
-    } catch (e: any) {
-      if (e.code !== 'ENOENT') throw e;
+    } catch (e) {
+      const errCode = e instanceof Error && 'code' in e ? (e as NodeJS.ErrnoException).code : undefined;
+      if (errCode !== 'ENOENT') throw e;
     }
 
     if (createBranch) {

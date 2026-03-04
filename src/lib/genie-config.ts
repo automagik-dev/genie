@@ -57,8 +57,9 @@ export async function loadGenieConfig(): Promise<GenieConfig> {
     const content = readFileSync(GENIE_CONFIG_FILE, 'utf-8');
     const data = JSON.parse(content);
     return GenieConfigSchema.parse(data);
-  } catch (error: any) {
-    console.warn(`Warning: Invalid genie config, using defaults: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Warning: Invalid genie config, using defaults: ${message}`);
     return GenieConfigSchema.parse({});
   }
 }
@@ -73,8 +74,9 @@ export async function saveGenieConfig(config: GenieConfig): Promise<void> {
     const validated = GenieConfigSchema.parse(config);
     const content = JSON.stringify(validated, null, 2);
     writeFileSync(GENIE_CONFIG_FILE, content, 'utf-8');
-  } catch (error: any) {
-    throw new Error(`Failed to save genie config: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to save genie config: ${message}`);
   }
 }
 

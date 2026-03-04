@@ -136,9 +136,10 @@ async function loadConfig(teamName: string): Promise<NativeTeamConfig | null> {
   try {
     const content = await readFile(configPath(teamName), 'utf-8');
     return JSON.parse(content);
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') return null;
-    console.warn(`[claude-native-teams] Failed to load config for "${teamName}": ${err?.message}`);
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[claude-native-teams] Failed to load config for "${teamName}": ${message}`);
     return null;
   }
 }

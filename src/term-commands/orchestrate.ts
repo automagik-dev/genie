@@ -218,8 +218,9 @@ export async function startSession(sessionName: string, options: StartOptions = 
       // Keep process alive
       await new Promise(() => {});
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -272,13 +273,15 @@ export async function sendMessage(target: string, message: string, options: Send
       const output = await tmux.capturePaneContent(paneId, 100);
       console.log('\n--- Response ---');
       console.log(stripAnsi(output).trim());
-    } catch (error: any) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       monitor.stop();
-      console.error(`Completion detection failed: ${error.message}`);
+      console.error(`Completion detection failed: ${message}`);
       process.exit(1);
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -365,8 +368,9 @@ export async function showStatus(target: string, options: StatusOptions = {}): P
       console.log('\nLast output:');
       lastLines.forEach((line) => console.log(`  ${line}`));
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -413,8 +417,9 @@ export async function watchSession(target: string, options: WatchOptions = {}): 
 
     // Keep process alive
     await new Promise(() => {});
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -462,8 +467,9 @@ export async function approvePermission(target: string, options: ApproveOptions 
           const response = options.deny ? 'n' : 'y';
           await tmux.executeCommand(paneId, response, false, true);
           console.log(`Auto-${options.deny ? 'denied' : 'approved'}: ${event.state?.detail || 'unknown'}`);
-        } catch (err: any) {
-          console.error(`Auto-approve failed: ${err.message}`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`Auto-approve failed: ${message}`);
         }
       });
 
@@ -477,8 +483,9 @@ export async function approvePermission(target: string, options: ApproveOptions 
 
       await new Promise(() => {});
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -557,8 +564,9 @@ export async function answerQuestion(target: string, choice: string): Promise<vo
       await tmux.executeTmux(`send-keys -t '${paneId}' '${choice}'`);
       console.log(`Sent '${choice}' to ${label}`);
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }
@@ -812,8 +820,9 @@ export async function runTask(target: string, message: string, options: RunOptio
         ),
       );
     }
-  } catch (error: any) {
-    console.error(`Error: ${error.message}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
     process.exit(1);
   }
 }

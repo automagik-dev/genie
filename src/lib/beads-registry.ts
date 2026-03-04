@@ -39,11 +39,12 @@ async function runBd(args: string[]): Promise<{ stdout: string; stderr: string; 
       stderr: result.stderr.toString().trim(),
       exitCode: 0,
     };
-  } catch (error: any) {
+  } catch (error) {
+    const shellErr = error as { stdout?: Buffer; stderr?: Buffer; exitCode?: number };
     return {
-      stdout: error.stdout?.toString().trim() || '',
-      stderr: error.stderr?.toString().trim() || '',
-      exitCode: error.exitCode || 1,
+      stdout: shellErr.stdout?.toString().trim() || '',
+      stderr: shellErr.stderr?.toString().trim() || '',
+      exitCode: shellErr.exitCode || 1,
     };
   }
 }
