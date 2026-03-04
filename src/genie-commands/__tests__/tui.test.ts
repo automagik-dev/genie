@@ -43,9 +43,9 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('--dangerously-skip-permissions');
   });
 
-  test('preserves -c flag', () => {
+  test('does not include -c flag (fresh session)', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain('-c');
+    expect(cmd).not.toContain(' -c');
   });
 
   test('with system prompt still preserves all existing flags', () => {
@@ -54,7 +54,7 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('--agent-name');
     expect(cmd).toContain('--team-name');
     expect(cmd).toContain('--dangerously-skip-permissions');
-    expect(cmd).toContain('-c');
+    expect(cmd).not.toContain(' -c');
   });
 
   test('system prompt with newlines does not break command', () => {
