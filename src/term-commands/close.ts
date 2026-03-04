@@ -24,10 +24,12 @@ import * as registry from '../lib/worker-registry.js';
 import { cleanupEventFile } from './events.js';
 
 // Use beads registry only when enabled AND bd exists on PATH
-// @ts-ignore
 const useBeadsRegistry =
   beadsRegistry.isBeadsRegistryEnabled() &&
-  (typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true);
+  (() => {
+    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
+  })();
 
 // ============================================================================
 // Types
@@ -156,163 +158,166 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 }
 
 // ============================================================================
+// Worker Cleanup Helpers
+// ============================================================================
+
+/**
+ * Kill a single worker's window or pane via tmux.
+ */
+async function killWorkerTmux(w: registry.Worker): Promise<void> {
+  if (w.windowId && w.session) {
+    console.log(`💀 Killing worker window "${w.windowName || w.windowId}" (${w.id})...`);
+    try {
+      const sessionObj = await tmux.findSessionByName(w.session);
+      if (sessionObj) {
+        try {
+          await tmux.killWindowQualified(sessionObj.id, w.windowId);
+        } catch {
+          await tmux.killWindow(w.windowId);
+        }
+      } else {
+        await tmux.killWindow(w.windowId);
+      }
+      console.log('   ✅ Window killed');
+    } catch {
+      console.log('   ℹ️  Window already gone');
+    }
+    return;
+  }
+  if (w.windowName) {
+    console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
+    try {
+      await tmux.killWindow(w.windowName);
+      console.log('   ✅ Window killed');
+    } catch {
+      console.log('   ℹ️  Window already gone');
+    }
+    return;
+  }
+  console.log(`💀 Killing worker pane (${w.id})...`);
+  await killWorkerPane(w.paneId);
+  console.log('   ✅ Pane killed');
+}
+
+/**
+ * Unregister a worker from all registries and clean up event files.
+ */
+async function unregisterWorker(w: registry.Worker): Promise<void> {
+  if (useBeadsRegistry) {
+    try {
+      await beadsRegistry.unbindWork(w.id);
+      await beadsRegistry.setAgentState(w.id, 'done');
+      await beadsRegistry.deleteAgent(w.id);
+    } catch {
+      /* Non-fatal */
+    }
+  }
+  await registry.unregister(w.id);
+  await cleanupEventFile(w.paneId).catch(() => {});
+}
+
+/**
+ * Close a task using the appropriate backend.
+ */
+async function closeTaskByBackend(backend: TaskBackend, taskId: string, isLocal: boolean): Promise<void> {
+  console.log(`📝 Closing ${taskId}...`);
+  if (isLocal) {
+    const closed = await closeLocalTask(backend, taskId);
+    console.log(closed ? '   ✅ Task marked as done' : `❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
+  } else {
+    const closed = await closeBeadsIssue(taskId);
+    console.log(closed ? '   ✅ Issue closed' : `❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
+  }
+}
+
+// ============================================================================
 // Main Command
 // ============================================================================
 
+/**
+ * Find representative worker for a task.
+ */
+async function findRepresentativeWorker(
+  allWorkers: registry.Worker[],
+  taskId: string,
+): Promise<registry.Worker | null> {
+  if (useBeadsRegistry) {
+    const w = await beadsRegistry.findByTask(taskId);
+    if (w) return w;
+  }
+  return allWorkers.length > 0 ? allWorkers[0] : null;
+}
+
+/**
+ * Prompt user to confirm closing a task.
+ */
+async function confirmClose(taskId: string, workerCount: number, worker: registry.Worker | null): Promise<boolean> {
+  const workerMsg =
+    workerCount > 1 ? ` and kill ${workerCount} workers` : worker ? ` and kill worker (pane ${worker.paneId})` : '';
+  return confirm({ message: `Close ${taskId}${workerMsg}?`, default: true });
+}
+
+/**
+ * Handle worktree cleanup (merge + remove).
+ */
+async function handleWorktreeCleanup(worker: registry.Worker, taskId: string, options: CloseOptions): Promise<void> {
+  if (!worker.worktree || options.keepWorktree) return;
+  if (options.merge) {
+    console.log('🔀 Merging changes...');
+    const merged = await mergeToMain(worker.repoPath, taskId);
+    if (merged) console.log('   ✅ Merged to main');
+  }
+  console.log('🌳 Removing worktree...');
+  const removed = await removeWorktree(taskId, worker.repoPath);
+  if (removed) console.log('   ✅ Worktree removed');
+}
+
+/**
+ * Sync beads to git if applicable.
+ */
+async function maybeSyncBeads(isLocal: boolean, noSync: boolean | undefined): Promise<void> {
+  if (isLocal || noSync) return;
+  console.log('🔄 Syncing beads...');
+  console.log((await syncBeads()) ? '   ✅ Synced to git' : '   ⚠️  Sync failed (non-fatal)');
+}
+
+/**
+ * Kill and unregister all workers for a task.
+ */
+async function killAndUnregisterAll(allWorkers: registry.Worker[]): Promise<void> {
+  for (const w of allWorkers) {
+    await killWorkerTmux(w);
+    await unregisterWorker(w);
+  }
+  if (allWorkers.length > 0) console.log(`   ✅ ${allWorkers.length} worker(s) unregistered`);
+}
+
 export async function closeCommand(taskId: string, options: CloseOptions = {}): Promise<void> {
   try {
-    // Detect repo path from cwd
     const repoPath = process.cwd();
-
-    // Get backend (local vs beads)
     const backend = getBackend(repoPath);
     const isLocal = backend.kind === 'local';
 
-    // Find ALL workers for this task (supports N workers per task)
     const allWorkers = await registry.findAllByTask(taskId);
-    const workerCount = allWorkers.length;
+    const worker = await findRepresentativeWorker(allWorkers, taskId);
 
-    // Find a representative worker for worktree operations
-    let worker: registry.Worker | null = null;
-    if (useBeadsRegistry) {
-      worker = await beadsRegistry.findByTask(taskId);
-    }
-    if (!worker && allWorkers.length > 0) {
-      worker = allWorkers[0];
-    }
-
-    if (workerCount === 0) {
+    if (allWorkers.length === 0) {
       console.log(`ℹ️  No active worker for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
-    } else if (workerCount > 1) {
-      console.log(`📌 Found ${workerCount} workers for ${taskId}`);
+    } else if (allWorkers.length > 1) {
+      console.log(`📌 Found ${allWorkers.length} workers for ${taskId}`);
     }
 
-    // Confirm with user
     if (!options.yes) {
-      const workerMsg =
-        workerCount > 1 ? ` and kill ${workerCount} workers` : worker ? ` and kill worker (pane ${worker.paneId})` : '';
-      const confirmed = await confirm({
-        message: `Close ${taskId}${workerMsg}?`,
-        default: true,
-      });
-
-      if (!confirmed) {
+      if (!(await confirmClose(taskId, allWorkers.length, worker))) {
         console.log('Cancelled.');
         return;
       }
     }
 
-    // 1. Close task/issue based on backend
-    console.log(`📝 Closing ${taskId}...`);
-    let closed: boolean;
-    if (isLocal) {
-      // Local backend: mark task as done in tasks.json
-      closed = await closeLocalTask(backend, taskId);
-      if (!closed) {
-        console.error(`❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
-        // Continue with cleanup anyway
-      } else {
-        console.log('   ✅ Task marked as done');
-      }
-    } else {
-      // Beads backend: use bd close
-      closed = await closeBeadsIssue(taskId);
-      if (!closed) {
-        console.error(`❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
-        // Continue with cleanup anyway
-      } else {
-        console.log('   ✅ Issue closed');
-      }
-    }
-
-    // 2. Sync beads (unless --no-sync or using local backend)
-    if (!isLocal && !options.noSync) {
-      console.log('🔄 Syncing beads...');
-      const synced = await syncBeads();
-      if (synced) {
-        console.log('   ✅ Synced to git');
-      } else {
-        console.log('   ⚠️  Sync failed (non-fatal)');
-      }
-    }
-
-    // 3. Handle worktree
-    if (worker?.worktree && !options.keepWorktree) {
-      // Merge if requested
-      if (options.merge) {
-        console.log('🔀 Merging changes...');
-        const merged = await mergeToMain(worker.repoPath, taskId);
-        if (merged) {
-          console.log('   ✅ Merged to main');
-        }
-      }
-
-      // Remove worktree
-      console.log('🌳 Removing worktree...');
-      const removed = await removeWorktree(taskId, worker.repoPath);
-      if (removed) {
-        console.log('   ✅ Worktree removed');
-      }
-    }
-
-    // 4. Kill ALL worker windows/panes (supports N workers per task)
-    for (const w of allWorkers) {
-      if (w.windowId && w.session) {
-        // Prefer session-qualified window ID for reliable cleanup (DEC-2)
-        console.log(`💀 Killing worker window "${w.windowName || w.windowId}" (${w.id})...`);
-        try {
-          const sessionObj = await tmux.findSessionByName(w.session);
-          if (sessionObj) {
-            try {
-              await tmux.killWindowQualified(sessionObj.id, w.windowId);
-            } catch {
-              // Session-qualified kill failed (window may have moved) — fallback to direct kill
-              await tmux.killWindow(w.windowId);
-            }
-          } else {
-            // Session gone — try direct window kill as fallback
-            await tmux.killWindow(w.windowId);
-          }
-          console.log('   ✅ Window killed');
-        } catch {
-          console.log('   ℹ️  Window already gone');
-        }
-      } else if (w.windowName) {
-        // Fallback: name-based kill for workers without windowId (backward compat)
-        console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
-        try {
-          await tmux.killWindow(w.windowName);
-          console.log('   ✅ Window killed');
-        } catch {
-          console.log('   ℹ️  Window already gone');
-        }
-      } else {
-        console.log(`💀 Killing worker pane (${w.id})...`);
-        await killWorkerPane(w.paneId);
-        console.log('   ✅ Pane killed');
-      }
-
-      // 5. Unregister worker from both registries
-      if (useBeadsRegistry) {
-        try {
-          // Unbind work from agent
-          await beadsRegistry.unbindWork(w.id);
-          // Set agent state to done
-          await beadsRegistry.setAgentState(w.id, 'done');
-          // Delete agent bead
-          await beadsRegistry.deleteAgent(w.id);
-        } catch {
-          // Non-fatal if beads cleanup fails
-        }
-      }
-      await registry.unregister(w.id);
-      // Cleanup event file
-      await cleanupEventFile(w.paneId).catch(() => {});
-    }
-
-    if (allWorkers.length > 0) {
-      console.log(`   ✅ ${allWorkers.length} worker(s) unregistered`);
-    }
+    await closeTaskByBackend(backend, taskId, isLocal);
+    await maybeSyncBeads(isLocal, options.noSync);
+    if (worker) await handleWorktreeCleanup(worker, taskId, options);
+    await killAndUnregisterAll(allWorkers);
 
     console.log(`\n✅ ${taskId} closed successfully`);
   } catch (error) {

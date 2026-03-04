@@ -85,13 +85,6 @@ describe('AutoApproveEngine', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // Helper to import the engine with mocked tmux
-  async function importEngine() {
-    // We dynamically import to allow mocking per test
-    const engineModule = await import('./auto-approve-engine.js');
-    return engineModule;
-  }
-
   describe('createAutoApproveEngine', () => {
     test('creates an engine with start/stop methods', async () => {
       const engine = await import('./auto-approve-engine.js');

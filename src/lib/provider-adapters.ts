@@ -148,9 +148,9 @@ function escapeShellArg(arg: string): string {
  */
 function hasBinary(name: string): boolean {
   try {
-    // @ts-ignore — Bun.which is available at runtime
-    if (typeof (Bun as any).which === 'function') {
-      return Boolean((Bun as any).which(name));
+    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+    if (typeof BunExt.which === 'function') {
+      return Boolean(BunExt.which(name));
     }
     const { execSync } = require('node:child_process');
     execSync(`which ${name}`, { stdio: 'ignore' });
@@ -185,74 +185,54 @@ function preflightCheck(provider: ProviderName): void {
  *
  * When nativeTeam is NOT enabled, uses `claude --agent <role>` only.
  */
+function appendNativeTeamFlags(
+  parts: string[],
+  env: Record<string, string>,
+  nt: NonNullable<SpawnParams['nativeTeam']>,
+  params: SpawnParams,
+): void {
+  env.CLAUDECODE = '1';
+  env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+
+  const agentName = nt.agentName ?? params.role ?? 'worker';
+  parts.push('--agent-id', escapeShellArg(`${agentName}@${params.team}`));
+  parts.push('--agent-name', escapeShellArg(agentName));
+  parts.push('--team-name', escapeShellArg(params.team));
+
+  if (nt.color) parts.push('--agent-color', escapeShellArg(nt.color));
+  if (nt.parentSessionId) parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
+  if (nt.agentType) parts.push('--agent-type', escapeShellArg(nt.agentType));
+  if (nt.planModeRequired) parts.push('--plan-mode-required');
+  if (nt.permissionMode) parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
   const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
-  const nt = params.nativeTeam;
 
-  if (nt?.enabled) {
-    // Native teammate env vars
-    env.CLAUDECODE = '1';
-    env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
-
-    const agentName = nt.agentName ?? params.role ?? 'worker';
-    const teamName = params.team;
-    const agentId = `${agentName}@${teamName}`;
-
-    parts.push('--agent-id', escapeShellArg(agentId));
-    parts.push('--agent-name', escapeShellArg(agentName));
-    parts.push('--team-name', escapeShellArg(teamName));
-
-    if (nt.color) {
-      parts.push('--agent-color', escapeShellArg(nt.color));
-    }
-
-    if (nt.parentSessionId) {
-      parts.push('--parent-session-id', escapeShellArg(nt.parentSessionId));
-    }
-
-    if (nt.agentType) {
-      parts.push('--agent-type', escapeShellArg(nt.agentType));
-    }
-
-    if (nt.planModeRequired) {
-      parts.push('--plan-mode-required');
-    }
-
-    if (nt.permissionMode) {
-      parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
-    }
+  if (params.nativeTeam?.enabled) {
+    appendNativeTeamFlags(parts, env, params.nativeTeam, params);
   }
 
-  // Session resume/ID — mutually exclusive, resume takes precedence
   if (params.resume) {
     parts.push('--resume', escapeShellArg(params.resume));
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }
 
-  // Role routing via --agent (loads agent .md file — coexists with --agent-id)
-  if (params.role) {
-    parts.push('--agent', escapeShellArg(params.role));
-  }
+  if (params.role) parts.push('--agent', escapeShellArg(params.role));
 
-  // Forward extra args
   if (params.extraArgs) {
-    for (const arg of params.extraArgs) {
-      parts.push(escapeShellArg(arg));
-    }
+    for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));
   }
 
   return {
     command: parts.join(' '),
     provider: 'claude',
     env: Object.keys(env).length > 0 ? env : undefined,
-    meta: {
-      role: params.role,
-      skill: params.skill,
-    },
+    meta: { role: params.role, skill: params.skill },
   };
 }
 
@@ -320,6 +300,8 @@ export function buildLaunchCommand(params: SpawnParams): LaunchCommand {
     case 'codex':
       return buildCodexCommand(validated);
     default:
-      throw new Error(`Unknown provider "${(validated as any).provider}". Valid providers: claude, codex`);
+      throw new Error(
+        `Unknown provider "${(validated as unknown as { provider: string }).provider}". Valid providers: claude, codex`,
+      );
   }
 }

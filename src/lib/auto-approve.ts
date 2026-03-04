@@ -49,8 +49,6 @@ const DefaultsConfigSchema = z.object({
   bash_deny_patterns: z.array(z.string()).optional(),
 });
 
-type DefaultsConfig = z.infer<typeof DefaultsConfigSchema>;
-
 /**
  * Full auto-approve configuration schema (global config file)
  */
@@ -513,136 +511,90 @@ function matchBashPattern(command: string, patterns: string[]): string | null {
  * @param config - The merged auto-approve configuration
  * @returns Decision with action and reason
  */
-export function evaluateRequest(request: PermissionRequest, config: AutoApproveConfig): Decision {
-  const { toolName } = request;
-  const { allow, deny, bash_allow_patterns, bash_deny_patterns } = config.defaults;
-
-  // Step 1: Deny always wins - check tool-level deny list first
-  if (deny.includes(toolName)) {
-    return {
-      action: 'deny',
-      reason: `Tool "${toolName}" is in the deny list`,
-    };
-  }
-
-  // Step 2: Tool must be in the allow list to proceed
-  if (!allow.includes(toolName)) {
-    return {
-      action: 'escalate',
-      reason: `Tool "${toolName}" is not in the allow list; requires human review`,
-    };
-  }
-
-  // Step 3: Non-Bash tools - if allowed and not denied, approve
-  if (toolName !== 'Bash') {
-    return {
-      action: 'approve',
-      reason: `Tool "${toolName}" is in the allow list`,
-    };
-  }
-
-  // Step 4: Bash tool - need to evaluate the command against patterns
-  const rawCommand = getBashCommand(request);
-
-  // 4a: No command to evaluate - escalate
-  if (rawCommand === null) {
-    return {
-      action: 'escalate',
-      reason: 'Bash tool request has no command to evaluate; requires human review',
-    };
-  }
-
-  // 4b: Normalize the command to prevent whitespace/path-prefix bypass
-  const command = normalizeCommand(rawCommand);
-
-  // 4c: Check bash_deny_patterns first (deny always wins)
-  const denyPatterns = bash_deny_patterns ?? [];
-  if (denyPatterns.length > 0) {
-    const matchedDeny = matchBashPattern(command, denyPatterns);
-    if (matchedDeny) {
-      return {
-        action: 'deny',
-        reason: `Bash command matches deny pattern "${matchedDeny}": ${command}`,
-      };
-    }
-  }
-
-  // 4d: If no bash patterns configured at all, tool-level allow is sufficient
-  const allowPatterns = bash_allow_patterns ?? [];
-  if (allowPatterns.length === 0 && denyPatterns.length === 0) {
-    return {
-      action: 'approve',
-      reason: 'Bash tool is allowed and no command patterns are configured',
-    };
-  }
-
-  // 4e: Compound command detection - escalate unless the ENTIRE string matches an allow pattern
-  if (hasShellMetacharacters(command)) {
-    // For compound commands, only approve if an allow pattern matches the ENTIRE command.
-    // This prevents "bun test && rm -rf /" from being approved by a "bun test" pattern.
-    if (allowPatterns.length > 0) {
-      const matchedAllow = matchBashPattern(command, allowPatterns);
-      if (matchedAllow) {
-        // Verify the pattern actually covers the entire command string
-        try {
-          const fullMatchRegex = new RegExp(matchedAllow);
-          const match = command.match(fullMatchRegex);
-          if (match && match[0] === command) {
-            return {
-              action: 'approve',
-              reason: `Bash compound command fully matches allow pattern "${matchedAllow}": ${command}`,
-            };
-          }
-        } catch {
-          // Invalid regex - can't verify full match, escalate
-        }
-      }
-    }
-    return {
-      action: 'escalate',
-      reason: `Bash command contains shell metacharacters and does not fully match any allow pattern; requires human review: ${command}`,
-    };
-  }
-
-  // 4f: Check bash_allow_patterns (simple commands without metacharacters)
+function evaluateCompoundCommand(command: string, allowPatterns: string[]): Decision {
   if (allowPatterns.length > 0) {
     const matchedAllow = matchBashPattern(command, allowPatterns);
     if (matchedAllow) {
-      return {
-        action: 'approve',
-        reason: `Bash command matches allow pattern "${matchedAllow}": ${command}`,
-      };
+      try {
+        const match = command.match(new RegExp(matchedAllow));
+        if (match && match[0] === command) {
+          return {
+            action: 'approve',
+            reason: `Bash compound command fully matches allow pattern "${matchedAllow}": ${command}`,
+          };
+        }
+      } catch {
+        // Invalid regex - can't verify full match, escalate
+      }
+    }
+  }
+  return {
+    action: 'escalate',
+    reason: `Bash command contains shell metacharacters and does not fully match any allow pattern; requires human review: ${command}`,
+  };
+}
+
+function evaluateBashCommand(
+  request: PermissionRequest,
+  bashAllowPatterns?: string[],
+  bashDenyPatterns?: string[],
+): Decision {
+  const rawCommand = getBashCommand(request);
+  if (rawCommand === null) {
+    return { action: 'escalate', reason: 'Bash tool request has no command to evaluate; requires human review' };
+  }
+
+  const command = normalizeCommand(rawCommand);
+  const denyPatterns = bashDenyPatterns ?? [];
+  const allowPatterns = bashAllowPatterns ?? [];
+
+  if (denyPatterns.length > 0) {
+    const matchedDeny = matchBashPattern(command, denyPatterns);
+    if (matchedDeny) {
+      return { action: 'deny', reason: `Bash command matches deny pattern "${matchedDeny}": ${command}` };
     }
   }
 
-  // 4g: Command not recognized by any pattern - escalate
+  if (allowPatterns.length === 0 && denyPatterns.length === 0) {
+    return { action: 'approve', reason: 'Bash tool is allowed and no command patterns are configured' };
+  }
+
+  if (hasShellMetacharacters(command)) {
+    return evaluateCompoundCommand(command, allowPatterns);
+  }
+
+  if (allowPatterns.length > 0) {
+    const matchedAllow = matchBashPattern(command, allowPatterns);
+    if (matchedAllow) {
+      return { action: 'approve', reason: `Bash command matches allow pattern "${matchedAllow}": ${command}` };
+    }
+  }
+
   return {
     action: 'escalate',
     reason: `Bash command does not match any allow pattern; requires human review: ${command}`,
   };
 }
 
+export function evaluateRequest(request: PermissionRequest, config: AutoApproveConfig): Decision {
+  const { toolName } = request;
+  const { allow, deny, bash_allow_patterns, bash_deny_patterns } = config.defaults;
+
+  if (deny.includes(toolName)) {
+    return { action: 'deny', reason: `Tool "${toolName}" is in the deny list` };
+  }
+
+  if (!allow.includes(toolName)) {
+    return { action: 'escalate', reason: `Tool "${toolName}" is not in the allow list; requires human review` };
+  }
+
+  if (toolName !== 'Bash') {
+    return { action: 'approve', reason: `Tool "${toolName}" is in the allow list` };
+  }
+
+  return evaluateBashCommand(request, bash_allow_patterns, bash_deny_patterns);
+}
+
 // ============================================================================
 // Config Path Helpers
 // ============================================================================
-
-/**
- * Get the path to the global auto-approve config file
- */
-function getGlobalConfigPath(): string {
-  return join(getDefaultGlobalConfigDir(), 'auto-approve.yaml');
-}
-
-/**
- * Get the path to a repo's auto-approve config file
- */
-function getRepoConfigPath(repoPath: string): string {
-  return join(repoPath, '.genie', 'auto-approve.yaml');
-}
-
-/**
- * Get default auto-approve config (empty/permissive)
- */
-function getDefaultConfig(): AutoApproveConfig {
-  return AutoApproveConfigSchema.parse({});
-}

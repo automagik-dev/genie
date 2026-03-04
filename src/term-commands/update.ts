@@ -10,7 +10,7 @@
  * Status values: ready, in_progress, done, blocked
  */
 
-import { getBackend } from '../lib/task-backend.js';
+import { type TaskSummary, getBackend } from '../lib/task-backend.js';
 
 export interface UpdateOptions {
   status?: string;
@@ -22,58 +22,69 @@ export interface UpdateOptions {
 
 const VALID_STATUSES = ['ready', 'in_progress', 'done', 'blocked'];
 
+function validateUpdateOptions(options: UpdateOptions): void {
+  if (
+    options.status === undefined &&
+    options.title === undefined &&
+    options.blockedBy === undefined &&
+    options.addBlockedBy === undefined
+  ) {
+    console.error('❌ No update options provided. Use --status, --title, --blocked-by, or --add-blocked-by');
+    process.exit(1);
+  }
+
+  if (options.status && !VALID_STATUSES.includes(options.status)) {
+    console.error(`❌ Invalid status "${options.status}". Valid values: ${VALID_STATUSES.join(', ')}`);
+    process.exit(1);
+  }
+}
+
+function printUpdateSummary(
+  taskId: string,
+  existing: TaskSummary,
+  updated: TaskSummary,
+  options: UpdateOptions,
+  blockedBy?: string[],
+  addBlockedBy?: string[],
+): void {
+  console.log(`✅ Updated ${taskId}`);
+  const changes: string[] = [];
+  if (options.status) changes.push(`status: ${existing.status} → ${updated.status}`);
+  if (options.title) changes.push(`title: "${existing.title}" → "${updated.title}"`);
+  if (blockedBy !== undefined)
+    changes.push(`blockedBy: [${(existing.blockedBy || []).join(', ')}] → [${(updated.blockedBy || []).join(', ')}]`);
+  if (addBlockedBy !== undefined)
+    changes.push(`blockedBy: added ${addBlockedBy.join(', ')} → [${(updated.blockedBy || []).join(', ')}]`);
+  for (const change of changes) console.log(`   ${change}`);
+}
+
+function parseCommaList(value: string | undefined): string[] | undefined {
+  return value !== undefined
+    ? value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
+}
+
 export async function updateCommand(taskId: string, options: UpdateOptions): Promise<void> {
   try {
+    validateUpdateOptions(options);
+
     const repoPath = process.cwd();
     const backend = getBackend(repoPath);
 
-    // Validate at least one update option is provided
-    // Note: empty string for blockedBy is valid (clears the list)
-    if (
-      options.status === undefined &&
-      options.title === undefined &&
-      options.blockedBy === undefined &&
-      options.addBlockedBy === undefined
-    ) {
-      console.error('❌ No update options provided. Use --status, --title, --blocked-by, or --add-blocked-by');
-      process.exit(1);
-    }
-
-    // Validate status if provided
-    if (options.status && !VALID_STATUSES.includes(options.status)) {
-      console.error(`❌ Invalid status "${options.status}". Valid values: ${VALID_STATUSES.join(', ')}`);
-      process.exit(1);
-    }
-
-    // Check task exists
     const existing = await backend.get(taskId);
     if (!existing) {
       console.error(`❌ Task "${taskId}" not found.`);
-      if (backend.kind === 'local') {
-        console.error('   Check .genie/tasks.json');
-      } else {
-        console.error('   Run `bd list` to see available tasks.');
-      }
+      console.error(
+        backend.kind === 'local' ? '   Check .genie/tasks.json' : '   Run `bd list` to see available tasks.',
+      );
       process.exit(1);
     }
 
-    // Parse blocked-by options
-    // Note: empty string clears the list (results in [])
-    const blockedBy =
-      options.blockedBy !== undefined
-        ? options.blockedBy
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : undefined;
-
-    const addBlockedBy =
-      options.addBlockedBy !== undefined
-        ? options.addBlockedBy
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : undefined;
+    const blockedBy = parseCommaList(options.blockedBy);
+    const addBlockedBy = parseCommaList(options.addBlockedBy);
 
     // Perform update
     const updated = await backend.update(taskId, {
@@ -93,26 +104,7 @@ export async function updateCommand(taskId: string, options: UpdateOptions): Pro
       return;
     }
 
-    // Show what changed
-    console.log(`✅ Updated ${taskId}`);
-
-    const changes: string[] = [];
-    if (options.status) {
-      changes.push(`status: ${existing.status} → ${updated.status}`);
-    }
-    if (options.title) {
-      changes.push(`title: "${existing.title}" → "${updated.title}"`);
-    }
-    if (blockedBy !== undefined) {
-      changes.push(`blockedBy: [${(existing.blockedBy || []).join(', ')}] → [${(updated.blockedBy || []).join(', ')}]`);
-    }
-    if (addBlockedBy !== undefined) {
-      changes.push(`blockedBy: added ${addBlockedBy.join(', ')} → [${(updated.blockedBy || []).join(', ')}]`);
-    }
-
-    for (const change of changes) {
-      console.log(`   ${change}`);
-    }
+    printUpdateSummary(taskId, existing, updated, options, blockedBy, addBlockedBy);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`❌ Error: ${message}`);

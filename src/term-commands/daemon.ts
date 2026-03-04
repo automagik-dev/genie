@@ -110,6 +110,22 @@ export async function stopCommand(): Promise<void> {
 /**
  * Show daemon status
  */
+function printDaemonStatus(status: Awaited<ReturnType<typeof beadsRegistry.checkDaemonStatus>>): void {
+  console.log('Beads Daemon Status');
+  console.log('───────────────────');
+  console.log(`Running: ${status.running ? '✅ yes' : '❌ no'}`);
+
+  if (!status.running) {
+    console.log('\nRun `genie daemon start` to start the daemon');
+    return;
+  }
+
+  if (status.pid) console.log(`PID: ${status.pid}`);
+  if (status.lastSync) console.log(`Last sync: ${status.lastSync}`);
+  if (status.autoCommit !== undefined) console.log(`Auto-commit: ${status.autoCommit ? 'enabled' : 'disabled'}`);
+  if (status.autoPush !== undefined) console.log(`Auto-push: ${status.autoPush ? 'enabled' : 'disabled'}`);
+}
+
 export async function statusCommand(options: DaemonStatusOptions = {}): Promise<void> {
   try {
     const status = await beadsRegistry.checkDaemonStatus();
@@ -119,26 +135,7 @@ export async function statusCommand(options: DaemonStatusOptions = {}): Promise<
       return;
     }
 
-    console.log('Beads Daemon Status');
-    console.log('───────────────────');
-    console.log(`Running: ${status.running ? '✅ yes' : '❌ no'}`);
-
-    if (status.running) {
-      if (status.pid) {
-        console.log(`PID: ${status.pid}`);
-      }
-      if (status.lastSync) {
-        console.log(`Last sync: ${status.lastSync}`);
-      }
-      if (status.autoCommit !== undefined) {
-        console.log(`Auto-commit: ${status.autoCommit ? 'enabled' : 'disabled'}`);
-      }
-      if (status.autoPush !== undefined) {
-        console.log(`Auto-push: ${status.autoPush ? 'enabled' : 'disabled'}`);
-      }
-    } else {
-      console.log('\nRun `genie daemon start` to start the daemon');
-    }
+    printDaemonStatus(status);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`❌ Error: ${message}`);

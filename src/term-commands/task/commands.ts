@@ -93,6 +93,124 @@ function resolveStatus(task: Task, allTasks: Record<string, Task>): TaskStatus {
 }
 
 // ============================================================================
+function applyTaskUpdates(task: Task, options: { status?: string; title?: string; blockedBy?: string }): void {
+  if (options.status) task.status = options.status as TaskStatus;
+  if (options.title) task.title = options.title;
+  if (options.blockedBy !== undefined) {
+    task.blockedBy = options.blockedBy ? options.blockedBy.split(',').map((s) => s.trim()) : [];
+  }
+  task.updatedAt = new Date().toISOString();
+}
+
+// Local task group display
+// ============================================================================
+
+interface TaskWithEffectiveStatus extends Task {
+  effectiveStatus: string;
+}
+
+function printTaskGroup(
+  label: string,
+  tasks: TaskWithEffectiveStatus[],
+  formatLine?: (t: TaskWithEffectiveStatus) => string,
+): void {
+  if (tasks.length === 0) return;
+  console.log(`\n${label}:`);
+  const fmt = formatLine || ((t) => `  ${t.id}: ${t.title}`);
+  for (const t of tasks) {
+    console.log(fmt(t));
+  }
+}
+
+function printLocalTaskGroups(tasks: TaskWithEffectiveStatus[], showDone?: boolean): void {
+  console.log('');
+  console.log('TASKS');
+  console.log('='.repeat(60));
+
+  printTaskGroup(
+    'In Progress',
+    tasks.filter((t) => t.effectiveStatus === 'in_progress'),
+  );
+  printTaskGroup(
+    'Ready',
+    tasks.filter((t) => t.effectiveStatus === 'ready'),
+  );
+  printTaskGroup(
+    'Blocked',
+    tasks.filter((t) => t.effectiveStatus === 'blocked'),
+    (t) => `  ${t.id}: ${t.title} (blocked by: ${t.blockedBy.join(', ')})`,
+  );
+  if (showDone) {
+    printTaskGroup(
+      'Done',
+      tasks.filter((t) => t.effectiveStatus === 'done'),
+    );
+  }
+  console.log('');
+}
+
+// ============================================================================
+// Task display helpers
+// ============================================================================
+
+const STATUS_EMOJI: Record<string, string> = {
+  done: '✅',
+  in_progress: '🔄',
+  blocked: '🔴',
+};
+
+function formatTaskRow(task: ReturnType<typeof listTasks> extends Promise<(infer T)[]> ? T : never): string {
+  const id = task.id.padEnd(10).substring(0, 10);
+  const type = (task.issueType === 'epic' ? 'epic' : 'task').padEnd(4);
+  const emoji = STATUS_EMOJI[task.status] || '⚪';
+  const status = `${emoji} ${task.status}`.padEnd(10).substring(0, 10);
+  const score = task.priorityScores ? computePriorityScore(task.priorityScores).toFixed(1).padStart(5) : '  —  ';
+  const title = task.title.padEnd(48).substring(0, 48);
+  return `│ ${id} │ ${type} │ ${status} │ ${score} │ ${title} │`;
+}
+
+async function displayLocalTasks(repoPath: string, options: { all?: boolean; json?: boolean }): Promise<void> {
+  const tasks = await listTasks(repoPath);
+  const filtered = options.all ? tasks : tasks.filter((t) => t.status !== 'done');
+
+  if (options.json) {
+    console.log(JSON.stringify(filtered, null, 2));
+    return;
+  }
+
+  if (filtered.length === 0) {
+    console.log('No tasks found. Use `genie task create "<title>"` to add one.');
+    return;
+  }
+
+  console.log('');
+  console.log('┌────────────┬──────┬────────────┬───────┬──────────────────────────────────────────────────┐');
+  console.log('│ ID         │ Type │ Status     │ Score │ Title                                            │');
+  console.log('├────────────┼──────┼────────────┼───────┼──────────────────────────────────────────────────┤');
+  for (const task of filtered) {
+    console.log(formatTaskRow(task));
+  }
+  console.log('└────────────┴──────┴────────────┴───────┴──────────────────────────────────────────────────┘');
+  console.log('');
+}
+
+async function displayBeadsTasks(options: { all?: boolean }): Promise<void> {
+  try {
+    const cmd = options.all ? 'bd show --all' : 'bd ready';
+    const { stdout } = await execAsync(cmd);
+    console.log(stdout);
+  } catch (error) {
+    const err = error as { stderr?: string };
+    if (err.stderr) {
+      console.error(err.stderr);
+    } else {
+      console.error('Failed to list tasks. Make sure beads (bd) is installed.');
+    }
+    process.exit(1);
+  }
+}
+
+// ============================================================================
 // Register namespace
 // ============================================================================
 
@@ -162,61 +280,9 @@ export function registerTaskNamespace(program: Command): void {
       const backend = getBackend(repoPath);
 
       if (backend.kind === 'local') {
-        // Local backend: show tasks sorted by priority score
-        const tasks = await listTasks(repoPath);
-        const filtered = options.all ? tasks : tasks.filter((t) => t.status !== 'done');
-
-        if (options.json) {
-          console.log(JSON.stringify(filtered, null, 2));
-          return;
-        }
-
-        if (filtered.length === 0) {
-          console.log('No tasks found. Use `genie task create "<title>"` to add one.');
-          return;
-        }
-
-        console.log('');
-        console.log('┌────────────┬──────┬────────────┬───────┬──────────────────────────────────────────────────┐');
-        console.log('│ ID         │ Type │ Status     │ Score │ Title                                            │');
-        console.log('├────────────┼──────┼────────────┼───────┼──────────────────────────────────────────────────┤');
-
-        for (const task of filtered) {
-          const id = task.id.padEnd(10).substring(0, 10);
-          const type = (task.issueType === 'epic' ? 'epic' : 'task').padEnd(4);
-          const statusEmoji =
-            task.status === 'done'
-              ? '✅'
-              : task.status === 'in_progress'
-                ? '🔄'
-                : task.status === 'blocked'
-                  ? '🔴'
-                  : '⚪';
-          const status = `${statusEmoji} ${task.status}`.padEnd(10).substring(0, 10);
-          const score = task.priorityScores
-            ? computePriorityScore(task.priorityScores).toFixed(1).padStart(5)
-            : '  —  ';
-          const title = task.title.padEnd(48).substring(0, 48);
-          console.log(`│ ${id} │ ${type} │ ${status} │ ${score} │ ${title} │`);
-        }
-
-        console.log('└────────────┴──────┴────────────┴───────┴──────────────────────────────────────────────────┘');
-        console.log('');
+        await displayLocalTasks(repoPath, options);
       } else {
-        // Beads backend: delegate to bd
-        try {
-          const cmd = options.all ? 'bd show --all' : 'bd ready';
-          const { stdout } = await execAsync(cmd);
-          console.log(stdout);
-        } catch (error) {
-          const err = error as { stderr?: string };
-          if (err.stderr) {
-            console.error(err.stderr);
-          } else {
-            console.error('Failed to list tasks. Make sure beads (bd) is installed.');
-          }
-          process.exit(1);
-        }
+        await displayBeadsTasks(options);
       }
     });
 
@@ -342,44 +408,7 @@ export function registerTaskNamespace(program: Command): void {
           return;
         }
 
-        const ready = tasks.filter((t) => t.effectiveStatus === 'ready');
-        const blocked = tasks.filter((t) => t.effectiveStatus === 'blocked');
-        const inProgress = tasks.filter((t) => t.effectiveStatus === 'in_progress');
-        const done = tasks.filter((t) => t.effectiveStatus === 'done');
-
-        console.log('');
-        console.log('TASKS');
-        console.log('='.repeat(60));
-
-        if (inProgress.length > 0) {
-          console.log('\nIn Progress:');
-          for (const t of inProgress) {
-            console.log(`  ${t.id}: ${t.title}`);
-          }
-        }
-
-        if (ready.length > 0) {
-          console.log('\nReady:');
-          for (const t of ready) {
-            console.log(`  ${t.id}: ${t.title}`);
-          }
-        }
-
-        if (blocked.length > 0) {
-          console.log('\nBlocked:');
-          for (const t of blocked) {
-            console.log(`  ${t.id}: ${t.title} (blocked by: ${t.blockedBy.join(', ')})`);
-          }
-        }
-
-        if (options.all && done.length > 0) {
-          console.log('\nDone:');
-          for (const t of done) {
-            console.log(`  ${t.id}: ${t.title}`);
-          }
-        }
-
-        console.log('');
+        printLocalTaskGroups(tasks, options.all);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -405,17 +434,7 @@ export function registerTaskNamespace(program: Command): void {
           process.exit(1);
         }
 
-        if (options.status) {
-          task.status = options.status as TaskStatus;
-        }
-        if (options.title) {
-          task.title = options.title;
-        }
-        if (options.blockedBy !== undefined) {
-          task.blockedBy = options.blockedBy ? options.blockedBy.split(',').map((s) => s.trim()) : [];
-        }
-
-        task.updatedAt = new Date().toISOString();
+        applyTaskUpdates(task, options);
         await saveTasks(repoPath, data);
 
         console.log(`Task "${id}" updated.`);

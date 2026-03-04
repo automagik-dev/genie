@@ -8,7 +8,7 @@
  */
 
 import { exec as execCb } from 'node:child_process';
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -49,9 +49,13 @@ export async function ensureBeadsIssuesPath(repoPath: string): Promise<string> {
   return issuesPath;
 }
 
-function safeJsonParse(line: string): any | null {
+function safeJsonParse(line: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(line);
+    const parsed: unknown = JSON.parse(line);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -145,13 +149,4 @@ function normalizeGitRemote(url: string): string {
     u = `ssh://${userHost}/${path}`;
   }
   return u;
-}
-
-async function pathExists(p: string): Promise<boolean> {
-  try {
-    await access(p);
-    return true;
-  } catch {
-    return false;
-  }
 }

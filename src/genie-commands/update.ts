@@ -22,10 +22,6 @@ function error(message: string): void {
   console.log(`\x1b[31m✖\x1b[0m ${message}`);
 }
 
-function warn(message: string): void {
-  console.log(`\x1b[33m⚠\x1b[0m ${message}`);
-}
-
 async function runCommand(
   command: string,
   args: string[],
@@ -115,45 +111,37 @@ async function runCommandSilent(
 
 type InstallationType = 'source' | 'npm' | 'bun' | 'unknown';
 
+function detectFromBinaryPath(path: string): InstallationType | null {
+  if (path.includes('.bun')) return 'bun';
+  if (path.includes('node_modules')) return 'npm';
+  if (path === join(LOCAL_BIN, 'genie') || path.startsWith(GENIE_BIN)) return 'source';
+  return null;
+}
+
 async function detectInstallationType(): Promise<InstallationType> {
-  // First, check if install method is stored in config
+  // Check config first
   if (genieConfigExists()) {
     try {
       const config = await loadGenieConfig();
-      if (config.installMethod) {
-        return config.installMethod;
-      }
+      if (config.installMethod) return config.installMethod;
     } catch {
-      // Ignore config errors, fall through to detection
+      // Ignore config errors
     }
   }
 
-  // Fallback: Check for source installation (has .git directory)
-  if (existsSync(join(GENIE_SRC, '.git'))) {
-    return 'source';
-  }
+  // Check for source installation
+  if (existsSync(join(GENIE_SRC, '.git'))) return 'source';
 
-  // Check where genie binary is located
+  // Detect from binary location
   const result = await runCommandSilent('which', ['genie']);
-  if (result.success) {
-    const path = result.output.trim();
-    // npm/bun global installs are in node_modules or .bun directories
-    if (path.includes('.bun')) {
-      return 'bun';
-    }
-    if (path.includes('node_modules')) {
-      return 'npm';
-    }
-    // Source installs use LOCAL_BIN or GENIE_BIN
-    if (path === join(LOCAL_BIN, 'genie') || path.startsWith(GENIE_BIN)) {
-      return 'source';
-    }
-    // Default to bun for other paths if bun is available
-    const hasBun = (await runCommandSilent('which', ['bun'])).success;
-    return hasBun ? 'bun' : 'npm';
-  }
+  if (!result.success) return 'unknown';
 
-  return 'unknown';
+  const detected = detectFromBinaryPath(result.output.trim());
+  if (detected) return detected;
+
+  // Default to bun for other paths if bun is available
+  const hasBun = (await runCommandSilent('which', ['bun'])).success;
+  return hasBun ? 'bun' : 'npm';
 }
 
 async function updateViaBun(): Promise<void> {

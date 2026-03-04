@@ -105,7 +105,7 @@ export const errorPatterns: PatternMatch[] = [
 export const completionPatterns: PatternMatch[] = [
   {
     type: 'checkmark',
-    pattern: /[✓✔☑︎]/,
+    pattern: /(?:✓|✔|☑︎)/,
   },
   {
     type: 'success_message',
@@ -134,7 +134,7 @@ export const workingPatterns: PatternMatch[] = [
   {
     type: 'claude_code_working',
     // Claude Code shows tool icons when working
-    pattern: /[🛠️🔧⚙️]\s*(?:Read|Edit|Write|Bash|Glob|Grep|Task)/u,
+    pattern: /(?:🛠️|🔧|⚙️)\s*(?:Read|Edit|Write|Bash|Glob|Grep|Task)/u,
   },
   {
     type: 'claude_code_streaming',
@@ -216,7 +216,7 @@ const planFilePatterns: PatternMatch[] = [
 
 // ANSI escape code stripper
 export function stripAnsi(str: string): string {
-  // eslint-disable-next-line no-control-regex
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are control characters by definition
   return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
 }
 
@@ -245,9 +245,9 @@ export function matchPatterns(
 
   for (const pattern of patterns) {
     const regex = new RegExp(pattern.pattern.source, pattern.pattern.flags || 'g');
-    let match: RegExpMatchArray | null;
+    let match: RegExpMatchArray | null = regex.exec(cleanContent);
 
-    while ((match = regex.exec(cleanContent)) !== null) {
+    while (match !== null) {
       matches.push({
         type: pattern.type,
         match,
@@ -256,6 +256,7 @@ export function matchPatterns(
 
       // If not global, only match once
       if (!pattern.pattern.flags?.includes('g')) break;
+      match = regex.exec(cleanContent);
     }
   }
 

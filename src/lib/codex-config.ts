@@ -45,44 +45,56 @@ export function isCodexConfigured(): boolean {
  *
  * @returns 'changed' if changes were made, 'unchanged' if already configured, 'error' on failure
  */
+function ensureOtelExporter(content: string): { content: string; changed: boolean } {
+  const otelLine = `exporter = { otlp-http = { endpoint = "http://127.0.0.1:${OTEL_RELAY_PORT}/v1/traces", protocol = "binary" } }`;
+
+  if (content.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)) {
+    return { content, changed: false };
+  }
+
+  if (!content.includes('[otel]')) {
+    return { content: `${content}\n[otel]\n${otelLine}\n`, changed: true };
+  }
+
+  if (/exporter\s*=/.test(content)) {
+    return { content: content.replace(/(\[otel\][^\[]*?)exporter\s*=\s*.+/, `$1${otelLine}`), changed: true };
+  }
+
+  return { content: content.replace('[otel]', `[otel]\n${otelLine}`), changed: true };
+}
+
+function ensurePasteBurst(content: string): { content: string; changed: boolean } {
+  if (content.includes('disable_paste_burst')) {
+    return { content, changed: false };
+  }
+
+  const firstSection = content.indexOf('[');
+  if (firstSection > 0) {
+    return {
+      content: `${content.slice(0, firstSection)}disable_paste_burst = true\n${content.slice(firstSection)}`,
+      changed: true,
+    };
+  }
+  if (firstSection === 0) {
+    return { content: `disable_paste_burst = true\n${content}`, changed: true };
+  }
+  return { content: `${content}\ndisable_paste_burst = true\n`, changed: true };
+}
+
 export function ensureCodexOtelConfig(): 'changed' | 'unchanged' | 'error' {
   try {
     mkdirSync(CODEX_CONFIG_DIR, { recursive: true });
 
     let content = existsSync(CODEX_CONFIG_PATH) ? readFileSync(CODEX_CONFIG_PATH, 'utf-8') : '';
-
     let changed = false;
 
-    // 1. Ensure OTel exporter is configured
-    const otelLine = `exporter = { otlp-http = { endpoint = "http://127.0.0.1:${OTEL_RELAY_PORT}/v1/traces", protocol = "binary" } }`;
+    const otel = ensureOtelExporter(content);
+    content = otel.content;
+    changed = changed || otel.changed;
 
-    if (!content.includes(`127.0.0.1:${OTEL_RELAY_PORT}`)) {
-      if (content.includes('[otel]')) {
-        if (/exporter\s*=/.test(content)) {
-          // Replace exporter line only within the [otel] section
-          content = content.replace(/(\[otel\][^\[]*?)exporter\s*=\s*.+/, `$1${otelLine}`);
-        } else {
-          content = content.replace('[otel]', `[otel]\n${otelLine}`);
-        }
-      } else {
-        content += `\n[otel]\n${otelLine}\n`;
-      }
-      changed = true;
-    }
-
-    // 2. Ensure disable_paste_burst = true (allows reliable tmux send-keys injection)
-    if (!content.includes('disable_paste_burst')) {
-      // Add at the top level (before any section headers)
-      const firstSection = content.indexOf('[');
-      if (firstSection > 0) {
-        content = `${content.slice(0, firstSection)}disable_paste_burst = true\n${content.slice(firstSection)}`;
-      } else if (firstSection === 0) {
-        content = `disable_paste_burst = true\n${content}`;
-      } else {
-        content += '\ndisable_paste_burst = true\n';
-      }
-      changed = true;
-    }
+    const paste = ensurePasteBurst(content);
+    content = paste.content;
+    changed = changed || paste.changed;
 
     if (changed) {
       writeFileSync(CODEX_CONFIG_PATH, content);

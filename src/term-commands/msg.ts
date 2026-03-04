@@ -9,6 +9,30 @@
 import type { Command } from 'commander';
 import * as protocolRouter from '../lib/protocol-router.js';
 
+function printInbox(
+  worker: string,
+  messages: Awaited<ReturnType<typeof protocolRouter.getInbox>>,
+  unread?: boolean,
+): void {
+  if (messages.length === 0) {
+    console.log(`No ${unread ? 'unread ' : ''}messages for "${worker}".`);
+    return;
+  }
+
+  console.log('');
+  console.log(`INBOX: ${worker}`);
+  console.log('-'.repeat(60));
+
+  for (const msg of messages) {
+    const status = msg.read ? 'read' : 'UNREAD';
+    const delivered = msg.deliveredAt ? 'delivered' : 'pending';
+    const time = new Date(msg.createdAt).toLocaleTimeString();
+    console.log(`  [${status}] [${delivered}] ${time} from=${msg.from}`);
+    console.log(`    ${msg.body}`);
+    console.log('');
+  }
+}
+
 export function registerMsgNamespace(program: Command): void {
   const msg = program.command('msg').description('Mailbox-first messaging between workers');
 
@@ -58,23 +82,7 @@ export function registerMsgNamespace(program: Command): void {
           return;
         }
 
-        if (messages.length === 0) {
-          console.log(`No ${options.unread ? 'unread ' : ''}messages for "${worker}".`);
-          return;
-        }
-
-        console.log('');
-        console.log(`INBOX: ${worker}`);
-        console.log('-'.repeat(60));
-
-        for (const msg of messages) {
-          const status = msg.read ? 'read' : 'UNREAD';
-          const delivered = msg.deliveredAt ? 'delivered' : 'pending';
-          const time = new Date(msg.createdAt).toLocaleTimeString();
-          console.log(`  [${status}] [${delivered}] ${time} from=${msg.from}`);
-          console.log(`    ${msg.body}`);
-          console.log('');
-        }
+        printInbox(worker, messages, options.unread);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);

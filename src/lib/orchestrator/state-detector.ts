@@ -48,21 +48,57 @@ interface StateDetectorOptions {
 /**
  * Detect the current state of a Claude Code session from terminal output
  */
+interface BaseState {
+  timestamp: number;
+  rawOutput: string;
+}
+
+type QuestionMatchResult = ReturnType<typeof matchPatterns>;
+
+function detectQuestionState(
+  questionMatches: QuestionMatchResult,
+  hasPlanApproval: boolean,
+  baseState: BaseState,
+): ClaudeState | null {
+  if (questionMatches.length === 0 && !hasPlanApproval) return null;
+
+  const menuOptions = questionMatches
+    .filter((m) => m.type === 'claude_code_numbered_options' && m.extracted?.option)
+    .map((m) => m.extracted?.option)
+    .filter((o): o is string => o !== undefined);
+
+  if (menuOptions.length >= 2 || hasPlanApproval) {
+    return {
+      ...baseState,
+      type: 'question',
+      options: menuOptions.length > 0 ? menuOptions : undefined,
+      detail: hasPlanApproval ? 'plan_approval' : undefined,
+      confidence: 0.85,
+    };
+  }
+
+  const otherOptions = questionMatches
+    .filter((m) => m.extracted?.option && m.type !== 'claude_code_numbered_options')
+    .map((m) => m.extracted?.option)
+    .filter((o): o is string => o !== undefined);
+
+  if (otherOptions.length >= 2) {
+    return { ...baseState, type: 'question', options: otherOptions, confidence: 0.85 };
+  }
+
+  return null;
+}
+
 export function detectState(output: string, options: StateDetectorOptions = {}): ClaudeState {
   const { linesToAnalyze = 50, minConfidence = 0.3 } = options;
 
-  // Get the last N lines for analysis
   const lines = output.split('\n');
   const recentLines = lines.slice(-linesToAnalyze).join('\n');
   const cleanOutput = stripAnsi(recentLines);
 
-  const timestamp = Date.now();
-  const baseState = {
-    timestamp,
-    rawOutput: recentLines,
-  };
+  const baseState: BaseState = { timestamp: Date.now(), rawOutput: recentLines };
 
-  // Check for permission requests (highest priority - needs user action)
+  // Check for permission requests (highest priority)
   const permissionMatch = getFirstMatch(cleanOutput, permissionPatterns);
   if (permissionMatch) {
     return {
@@ -73,49 +109,16 @@ export function detectState(output: string, options: StateDetectorOptions = {}):
     };
   }
 
-  // Check for plan approval or question prompts
+  // Check for questions
   const hasPlanApproval = hasMatch(
     cleanOutput,
     questionPatterns.filter((p) => p.type === 'claude_code_plan_approval'),
   );
-
-  // Check for questions with options - only look at last 15 lines for actual menu options
-  const lastMenuLines = lines.slice(-15).join('\n');
-  const cleanMenuLines = stripAnsi(lastMenuLines);
+  const cleanMenuLines = stripAnsi(lines.slice(-15).join('\n'));
   const questionMatches = matchPatterns(cleanMenuLines, questionPatterns);
 
-  if (questionMatches.length > 0 || hasPlanApproval) {
-    // Extract options only from the numbered list at the end
-    const menuOptions = questionMatches
-      .filter((m) => m.type === 'claude_code_numbered_options' && m.extracted?.option)
-      .map((m) => m.extracted?.option)
-      .filter((o): o is string => o !== undefined);
-
-    if (menuOptions.length >= 2 || hasPlanApproval) {
-      return {
-        ...baseState,
-        type: 'question',
-        options: menuOptions.length > 0 ? menuOptions : undefined,
-        detail: hasPlanApproval ? 'plan_approval' : undefined,
-        confidence: 0.85,
-      };
-    }
-
-    // Fall back to other option types
-    const otherOptions = questionMatches
-      .filter((m) => m.extracted?.option && m.type !== 'claude_code_numbered_options')
-      .map((m) => m.extracted?.option)
-      .filter((o): o is string => o !== undefined);
-
-    if (otherOptions.length >= 2) {
-      return {
-        ...baseState,
-        type: 'question',
-        options: otherOptions,
-        confidence: 0.85,
-      };
-    }
-  }
+  const questionState = detectQuestionState(questionMatches, hasPlanApproval, baseState);
+  if (questionState) return questionState;
 
   // Check for yes/no questions
   const ynMatch = questionMatches.find((m) => m.type === 'yes_no_question');
@@ -151,55 +154,26 @@ export function detectState(output: string, options: StateDetectorOptions = {}):
     };
   }
 
-  // Check for working/thinking indicators
   if (hasMatch(cleanOutput, workingPatterns)) {
-    return {
-      ...baseState,
-      type: 'working',
-      confidence: 0.7,
-    };
+    return { ...baseState, type: 'working', confidence: 0.7 };
   }
 
-  // Check for completion indicators
   if (hasMatch(cleanOutput, completionPatterns)) {
-    return {
-      ...baseState,
-      type: 'complete',
-      confidence: 0.6,
-    };
+    return { ...baseState, type: 'complete', confidence: 0.6 };
   }
 
   // Check for idle/prompt state
-  // Look at just the last few lines for prompt detection
-  const lastFewLines = lines.slice(-5).join('\n');
-  const cleanLastLines = stripAnsi(lastFewLines);
-
+  const cleanLastLines = stripAnsi(lines.slice(-5).join('\n'));
   if (hasMatch(cleanLastLines, idlePatterns)) {
-    return {
-      ...baseState,
-      type: 'idle',
-      confidence: 0.7,
-    };
+    return { ...baseState, type: 'idle', confidence: 0.7 };
   }
 
-  // Check for common Claude Code prompt patterns more specifically
-  // Claude Code often shows a ">" prompt when waiting for input
   const trimmedLast = cleanLastLines.trim();
   if (trimmedLast.endsWith('>') || trimmedLast.match(/>\s*$/)) {
-    return {
-      ...baseState,
-      type: 'idle',
-      detail: 'prompt detected',
-      confidence: 0.65,
-    };
+    return { ...baseState, type: 'idle', detail: 'prompt detected', confidence: 0.65 };
   }
 
-  // Default: unknown state
-  return {
-    ...baseState,
-    type: 'unknown',
-    confidence: minConfidence,
-  };
+  return { ...baseState, type: 'unknown', confidence: minConfidence };
 }
 
 /**

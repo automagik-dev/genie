@@ -109,6 +109,54 @@ async function ensureWorkerAlive(
  * @param body — Message body text.
  * @returns Delivery result with message ID.
  */
+async function deliverToWorker(
+  repoPath: string,
+  from: string,
+  worker: registry.Worker,
+  body: string,
+): Promise<DeliveryResult> {
+  const message = await mailbox.send(repoPath, from, worker.id, body);
+  const delivered =
+    worker.nativeTeamEnabled && worker.team && worker.role
+      ? await writeToNativeInbox(worker, message)
+      : await injectToTmuxPane(worker, message);
+  if (delivered) await mailbox.markDelivered(repoPath, worker.id, message.id);
+  return { messageId: message.id, workerId: worker.id, delivered };
+}
+
+async function deliverViaNativeInbox(
+  repoPath: string,
+  from: string,
+  to: string,
+  body: string,
+  teamName?: string,
+): Promise<DeliveryResult | null> {
+  const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
+  if (!resolvedTeam) return null;
+
+  try {
+    const message = await mailbox.send(repoPath, from, to, body);
+    const nativeMsg: nativeTeams.NativeInboxMessage = {
+      from,
+      text: body,
+      summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+      timestamp: new Date().toISOString(),
+      color: 'blue',
+      read: false,
+    };
+    await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
+    await mailbox.markDelivered(repoPath, to, message.id);
+    return { messageId: message.id, workerId: to, delivered: true };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveWorkerFuzzy(to: string): Promise<registry.Worker[] | null> {
+  const allWorkers = await registry.list();
+  return allWorkers.filter((w) => w.id === to || w.role === to || `${w.team}:${w.role}` === to);
+}
+
 export async function sendMessage(
   repoPath: string,
   from: string,
@@ -116,106 +164,34 @@ export async function sendMessage(
   body: string,
   teamName?: string,
 ): Promise<DeliveryResult> {
-  // 1. Verify recipient exists in registry (auto-spawn if dead/suspended)
   let worker = await registry.get(to);
   const alive = await ensureWorkerAlive(worker, to);
-  if (alive?.respawned) {
-    worker = alive.worker;
+  if (alive?.respawned) worker = alive.worker;
+
+  if (worker) {
+    return deliverToWorker(repoPath, from, worker, body);
   }
-  if (!worker) {
-    // Try finding by fuzzy match (team:role pattern)
-    const allWorkers = await registry.list();
-    const matches = allWorkers.filter((w) => w.id === to || w.role === to || `${w.team}:${w.role}` === to);
 
-    if (matches.length > 1) {
-      return {
-        messageId: '',
-        workerId: to,
-        delivered: false,
-        reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map((m) => m.id).join(', ')}. Please use a unique worker ID.`,
-      };
-    }
-
-    const match = matches[0];
-
-    if (!match) {
-      // Fallback: try writing directly to native team inbox
-      // This supports sending to team-lead or other agents not in the worker registry
-      const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
-      if (resolvedTeam) {
-        try {
-          // Persist to mailbox first (DEC-7) even for native-only delivery
-          const message = await mailbox.send(repoPath, from, to, body);
-          const nativeMsg: nativeTeams.NativeInboxMessage = {
-            from,
-            text: body,
-            summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
-            timestamp: new Date().toISOString(),
-            color: 'blue',
-            read: false,
-          };
-          await nativeTeams.writeNativeInbox(resolvedTeam, to, nativeMsg);
-          await mailbox.markDelivered(repoPath, to, message.id);
-          return {
-            messageId: message.id,
-            workerId: to,
-            delivered: true,
-          };
-        } catch {
-          // Native inbox write failed — fall through to error
-        }
-      }
-
-      return {
-        messageId: '',
-        workerId: to,
-        delivered: false,
-        reason: `Worker "${to}" not found in registry`,
-      };
-    }
-
-    // Use the matched worker
-    const message = await mailbox.send(repoPath, from, match.id, body);
-
-    // Deliver based on worker type
-    let delivered = false;
-    if (match.nativeTeamEnabled && match.team && match.role) {
-      delivered = await writeToNativeInbox(match, message);
-    } else {
-      delivered = await injectToTmuxPane(match, message);
-    }
-
-    if (delivered) {
-      await mailbox.markDelivered(repoPath, match.id, message.id);
-    }
-
+  const matches = await resolveWorkerFuzzy(to);
+  if (matches && matches.length > 1) {
     return {
-      messageId: message.id,
-      workerId: match.id,
-      delivered,
+      messageId: '',
+      workerId: to,
+      delivered: false,
+      reason: `Worker "${to}" is ambiguous. Found ${matches.length} matches: ${matches.map((m) => m.id).join(', ')}. Please use a unique worker ID.`,
     };
   }
 
-  // 2. Persist to mailbox first (DEC-7)
-  const message = await mailbox.send(repoPath, from, to, body);
-
-  // 3. Deliver based on worker type
-  let delivered = false;
-  if (worker.nativeTeamEnabled && worker.team && worker.role) {
-    delivered = await writeToNativeInbox(worker, message);
-  } else {
-    delivered = await injectToTmuxPane(worker, message);
+  const match = matches?.[0];
+  if (match) {
+    return deliverToWorker(repoPath, from, match, body);
   }
 
-  if (delivered) {
-    await mailbox.markDelivered(repoPath, to, message.id);
-  }
+  // Fallback: try native team inbox for agents not in worker registry
+  const nativeResult = await deliverViaNativeInbox(repoPath, from, to, body, teamName);
+  if (nativeResult) return nativeResult;
 
-  return {
-    messageId: message.id,
-    workerId: to,
-    delivered,
-  };
+  return { messageId: '', workerId: to, delivered: false, reason: `Worker "${to}" not found in registry` };
 }
 
 /**
@@ -226,7 +202,7 @@ async function writeToNativeInbox(worker: registry.Worker, message: mailbox.Mail
   try {
     const nativeMsg = mailbox.toNativeInboxMessage(message, worker.nativeColor ?? 'blue');
     const agentName = worker.role ?? worker.id;
-    await nativeTeams.writeNativeInbox(worker.team!, agentName, nativeMsg);
+    await nativeTeams.writeNativeInbox(worker.team ?? '', agentName, nativeMsg);
     return true;
   } catch {
     // Best-effort — native inbox write failure is non-fatal
@@ -260,53 +236,8 @@ async function injectToTmuxPane(worker: registry.Worker, message: mailbox.Mailbo
 }
 
 /**
- * Attempt to push pending messages to a worker's tmux pane.
- * Called when a worker transitions to idle state.
- * For non-native workers, injects via tmux send-keys.
- */
-async function flushPending(repoPath: string, workerId: string): Promise<DeliveryResult[]> {
-  const messages = await mailbox.pending(repoPath, workerId);
-  if (messages.length === 0) return [];
-
-  const worker = await registry.get(workerId);
-  const results: DeliveryResult[] = [];
-
-  for (const msg of messages) {
-    let delivered = false;
-
-    if (worker) {
-      if (worker.nativeTeamEnabled && worker.team && worker.role) {
-        delivered = await writeToNativeInbox(worker, msg);
-      } else if (worker.paneId) {
-        delivered = await injectToTmuxPane(worker, msg);
-      }
-    }
-
-    if (delivered) {
-      await mailbox.markDelivered(repoPath, workerId, msg.id);
-    }
-
-    results.push({
-      messageId: msg.id,
-      workerId,
-      delivered,
-    });
-  }
-
-  return results;
-}
-
-/**
  * Get the inbox for a worker (all messages, with read/unread status).
  */
 export async function getInbox(repoPath: string, workerId: string): Promise<mailbox.MailboxMessage[]> {
   return mailbox.inbox(repoPath, workerId);
-}
-
-/**
- * Get unread message count for a worker.
- */
-async function unreadCount(repoPath: string, workerId: string): Promise<number> {
-  const messages = await mailbox.unread(repoPath, workerId);
-  return messages.length;
 }

@@ -108,178 +108,164 @@ function formatPath(path: string): string {
   return truncate(shortened, 50);
 }
 
+/** Context for batching reads/edits during event extraction */
+interface EventExtractionContext {
+  events: CompressedEvent[];
+  pendingReads: string[];
+  pendingEdits: string[];
+  lastReadTime: string;
+  lastEditTime: string;
+}
+
+function flushPendingReads(ctx: EventExtractionContext): void {
+  if (ctx.pendingReads.length === 0) return;
+  ctx.events.push({
+    timestamp: ctx.lastReadTime,
+    type: 'read',
+    summary:
+      ctx.pendingReads.length === 1
+        ? `Read: ${formatPath(ctx.pendingReads[0])}`
+        : `Read ${ctx.pendingReads.length} files`,
+    details: ctx.pendingReads.length > 1 ? ctx.pendingReads.map(formatPath) : undefined,
+  });
+  ctx.pendingReads.length = 0;
+}
+
+function flushPendingEdits(ctx: EventExtractionContext): void {
+  if (ctx.pendingEdits.length === 0) return;
+  ctx.events.push({
+    timestamp: ctx.lastEditTime,
+    type: 'edit',
+    summary:
+      ctx.pendingEdits.length === 1
+        ? `Edit: ${formatPath(ctx.pendingEdits[0])}`
+        : `Edit ${ctx.pendingEdits.length} files`,
+    details: ctx.pendingEdits.length > 1 ? ctx.pendingEdits.map(formatPath) : undefined,
+  });
+  ctx.pendingEdits.length = 0;
+}
+
+function flushAll(ctx: EventExtractionContext): void {
+  flushPendingReads(ctx);
+  flushPendingEdits(ctx);
+}
+
+function processToolCall(tool: { name: string; input: unknown }, timestamp: string, ctx: EventExtractionContext): void {
+  const input = tool.input as Record<string, unknown>;
+  switch (tool.name) {
+    case 'Read':
+      ctx.lastReadTime = timestamp;
+      if (input.file_path) ctx.pendingReads.push(String(input.file_path));
+      break;
+    case 'Edit':
+      flushPendingReads(ctx);
+      ctx.lastEditTime = timestamp;
+      if (input.file_path) ctx.pendingEdits.push(String(input.file_path));
+      break;
+    case 'Write':
+      flushAll(ctx);
+      ctx.events.push({
+        timestamp,
+        type: 'write',
+        summary: `Write: ${formatPath(String(input.file_path || 'unknown'))}`,
+      });
+      break;
+    case 'Bash': {
+      flushAll(ctx);
+      const cmd = String(input.command || '').replace(/\n/g, ' ');
+      ctx.events.push({ timestamp, type: 'bash', summary: `Bash: ${truncate(cmd, 60)}` });
+      break;
+    }
+    case 'AskUserQuestion': {
+      flushAll(ctx);
+      const questions = input.questions as Array<{ question?: string }> | undefined;
+      ctx.events.push({
+        timestamp,
+        type: 'question',
+        summary: `Question: ${truncate(questions?.[0]?.question || 'question', 60)}`,
+      });
+      break;
+    }
+  }
+}
+
+function processLogEntry(entry: claudeLogs.ClaudeLogEntry, ctx: EventExtractionContext): void {
+  if (entry.type === 'user' && entry.message) {
+    flushAll(ctx);
+    const text = extractTextContent(entry.message.content);
+    if (text) {
+      ctx.events.push({ timestamp: entry.timestamp, type: 'prompt', summary: truncate(text.replace(/\n/g, ' '), 80) });
+    }
+    return;
+  }
+
+  if (entry.type === 'assistant' && entry.toolCalls) {
+    for (const tool of entry.toolCalls) {
+      processToolCall(tool, entry.timestamp, ctx);
+    }
+    return;
+  }
+
+  if (entry.type === 'assistant' && entry.message && !entry.toolCalls) {
+    flushAll(ctx);
+    const text = extractTextContent(entry.message.content);
+    if (text && text.length > 100) {
+      ctx.events.push({
+        timestamp: entry.timestamp,
+        type: 'response',
+        summary: truncate(text.replace(/\n/g, ' '), 80),
+      });
+    }
+  }
+}
+
 /**
  * Extract compressed events from log entries
  */
 function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] {
-  const events: CompressedEvent[] = [];
-  const pendingReads: string[] = [];
-  const pendingEdits: string[] = [];
-  let lastReadTime = '';
-  let lastEditTime = '';
-
-  const flushReads = () => {
-    if (pendingReads.length > 0) {
-      events.push({
-        timestamp: lastReadTime,
-        type: 'read',
-        summary:
-          pendingReads.length === 1 ? `Read: ${formatPath(pendingReads[0])}` : `Read ${pendingReads.length} files`,
-        details: pendingReads.length > 1 ? pendingReads.map(formatPath) : undefined,
-      });
-      pendingReads.length = 0;
-    }
-  };
-
-  const flushEdits = () => {
-    if (pendingEdits.length > 0) {
-      events.push({
-        timestamp: lastEditTime,
-        type: 'edit',
-        summary:
-          pendingEdits.length === 1 ? `Edit: ${formatPath(pendingEdits[0])}` : `Edit ${pendingEdits.length} files`,
-        details: pendingEdits.length > 1 ? pendingEdits.map(formatPath) : undefined,
-      });
-      pendingEdits.length = 0;
-    }
+  const ctx: EventExtractionContext = {
+    events: [],
+    pendingReads: [],
+    pendingEdits: [],
+    lastReadTime: '',
+    lastEditTime: '',
   };
 
   for (const entry of entries) {
-    // User messages (prompts)
-    if (entry.type === 'user' && entry.message) {
-      flushReads();
-      flushEdits();
-      const text = extractTextContent(entry.message.content);
-      if (text) {
-        events.push({
-          timestamp: entry.timestamp,
-          type: 'prompt',
-          summary: truncate(text.replace(/\n/g, ' '), 80),
-        });
-      }
-    }
-
-    // Assistant messages with tool calls
-    if (entry.type === 'assistant' && entry.toolCalls) {
-      for (const tool of entry.toolCalls) {
-        const input = tool.input as Record<string, unknown>;
-
-        switch (tool.name) {
-          case 'Read':
-            lastReadTime = entry.timestamp;
-            if (input.file_path) {
-              pendingReads.push(String(input.file_path));
-            }
-            break;
-
-          case 'Edit':
-            flushReads(); // Flush reads before edits
-            lastEditTime = entry.timestamp;
-            if (input.file_path) {
-              pendingEdits.push(String(input.file_path));
-            }
-            break;
-
-          case 'Write':
-            flushReads();
-            flushEdits();
-            events.push({
-              timestamp: entry.timestamp,
-              type: 'write',
-              summary: `Write: ${formatPath(String(input.file_path || 'unknown'))}`,
-            });
-            break;
-
-          case 'Bash': {
-            flushReads();
-            flushEdits();
-            const cmd = String(input.command || '').replace(/\n/g, ' ');
-            events.push({
-              timestamp: entry.timestamp,
-              type: 'bash',
-              summary: `Bash: ${truncate(cmd, 60)}`,
-            });
-            break;
-          }
-
-          case 'AskUserQuestion': {
-            flushReads();
-            flushEdits();
-            const questions = input.questions as Array<{ question?: string }> | undefined;
-            const questionText = questions?.[0]?.question || 'question';
-            events.push({
-              timestamp: entry.timestamp,
-              type: 'question',
-              summary: `Question: ${truncate(questionText, 60)}`,
-            });
-            break;
-          }
-        }
-      }
-    }
-
-    // Assistant text responses (no tool calls) - only include significant ones
-    if (entry.type === 'assistant' && entry.message && !entry.toolCalls) {
-      flushReads();
-      flushEdits();
-      const text = extractTextContent(entry.message.content);
-      // Only include if it's substantial (more than a short acknowledgment)
-      if (text && text.length > 100) {
-        events.push({
-          timestamp: entry.timestamp,
-          type: 'response',
-          summary: truncate(text.replace(/\n/g, ' '), 80),
-        });
-      }
-    }
+    processLogEntry(entry, ctx);
   }
 
-  // Flush any remaining
-  flushReads();
-  flushEdits();
-
-  return events;
+  flushAll(ctx);
+  return ctx.events;
 }
 
 /**
  * Detect current worker status from last entries
  */
+function detectStatusFromEntry(entry: claudeLogs.ClaudeLogEntry): string | null {
+  if (entry.type === 'assistant' && entry.toolCalls) {
+    const lastTool = entry.toolCalls[entry.toolCalls.length - 1];
+    if (lastTool.name === 'AskUserQuestion') return 'question';
+  }
+  if (entry.type === 'progress' && entry.data) {
+    const data = entry.data as Record<string, unknown>;
+    if (data.type === 'permission_request') return 'permission';
+  }
+  return null;
+}
+
 function detectStatus(entries: claudeLogs.ClaudeLogEntry[]): string {
   if (entries.length === 0) return 'unknown';
 
-  // Check last few entries for status indicators
   const lastEntries = entries.slice(-10);
-
   for (const entry of lastEntries.reverse()) {
-    // Check for permission request
-    if (entry.type === 'assistant' && entry.toolCalls) {
-      // If there's a pending tool call, might be waiting
-      const lastTool = entry.toolCalls[entry.toolCalls.length - 1];
-      if (lastTool.name === 'AskUserQuestion') {
-        return 'question';
-      }
-    }
-
-    // Check for progress events that indicate state
-    if (entry.type === 'progress' && entry.data) {
-      const data = entry.data as Record<string, unknown>;
-      if (data.type === 'permission_request') {
-        return 'permission';
-      }
-    }
+    const status = detectStatusFromEntry(entry);
+    if (status) return status;
   }
 
-  // If last entry is user message, Claude is working
   const lastEntry = entries[entries.length - 1];
-  if (lastEntry.type === 'user') {
-    return 'working';
-  }
-
-  // If last entry is assistant, Claude is idle
-  if (lastEntry.type === 'assistant') {
-    return 'idle';
-  }
-
+  if (lastEntry.type === 'user') return 'working';
+  if (lastEntry.type === 'assistant') return 'idle';
   return 'unknown';
 }
 
@@ -365,42 +351,39 @@ function getEventIcon(type: CompressedEvent['type']): string {
 /**
  * Format full conversation for display
  */
-function formatFullConversation(entries: claudeLogs.ClaudeLogEntry[]): string {
-  const lines: string[] = [];
+function formatToolCallLine(tool: { name: string; input: unknown }): string {
+  const input = tool.input as Record<string, unknown>;
+  if (tool.name === 'Bash') return `  ${tool.name}: ${input.command}`;
+  if (tool.name === 'Read' || tool.name === 'Edit' || tool.name === 'Write')
+    return `  ${tool.name}: ${input.file_path}`;
+  return `  ${tool.name}`;
+}
 
-  for (const entry of entries) {
-    const time = formatTime(entry.timestamp);
+function formatEntryForDisplay(entry: claudeLogs.ClaudeLogEntry): string[] {
+  const time = formatTime(entry.timestamp);
 
-    if (entry.type === 'user' && entry.message) {
-      const text = extractTextContent(entry.message.content);
-      lines.push(`\n[${time}] USER:`);
-      lines.push(text);
-    }
+  if (entry.type === 'user' && entry.message) {
+    return [`\n[${time}] USER:`, extractTextContent(entry.message.content)];
+  }
 
-    if (entry.type === 'assistant') {
-      if (entry.toolCalls && entry.toolCalls.length > 0) {
-        lines.push(`\n[${time}] ASSISTANT (tools):`);
-        for (const tool of entry.toolCalls) {
-          const input = tool.input as Record<string, unknown>;
-          if (tool.name === 'Bash') {
-            lines.push(`  ${tool.name}: ${input.command}`);
-          } else if (tool.name === 'Read' || tool.name === 'Edit' || tool.name === 'Write') {
-            lines.push(`  ${tool.name}: ${input.file_path}`);
-          } else {
-            lines.push(`  ${tool.name}`);
-          }
-        }
-      } else if (entry.message) {
-        const text = extractTextContent(entry.message.content);
-        if (text) {
-          lines.push(`\n[${time}] ASSISTANT:`);
-          lines.push(text.slice(0, 500) + (text.length > 500 ? '...' : ''));
-        }
-      }
+  if (entry.type !== 'assistant') return [];
+
+  if (entry.toolCalls && entry.toolCalls.length > 0) {
+    return [`\n[${time}] ASSISTANT (tools):`, ...entry.toolCalls.map(formatToolCallLine)];
+  }
+
+  if (entry.message) {
+    const text = extractTextContent(entry.message.content);
+    if (text) {
+      return [`\n[${time}] ASSISTANT:`, text.slice(0, 500) + (text.length > 500 ? '...' : '')];
     }
   }
 
-  return lines.join('\n');
+  return [];
+}
+
+function formatFullConversation(entries: claudeLogs.ClaudeLogEntry[]): string {
+  return entries.flatMap(formatEntryForDisplay).join('\n');
 }
 
 // ============================================================================
@@ -431,83 +414,70 @@ async function findWorker(identifier: string): Promise<workerRegistry.Worker | n
   return match || null;
 }
 
+/** Resolved log context for history display */
+interface LogContext {
+  logPath: string;
+  workerId: string;
+  branch?: string;
+  duration: string;
+}
+
+async function resolveLogContext(workerIdOrName: string, options: HistoryOptions): Promise<LogContext> {
+  if (options.logFile) {
+    return { logPath: options.logFile, workerId: 'direct', duration: 'N/A' };
+  }
+
+  const worker = await findWorker(workerIdOrName);
+  if (!worker) {
+    console.error(`❌ Worker "${workerIdOrName}" not found.`);
+    console.error('   Run `genie worker list` to see active workers.');
+    process.exit(1);
+  }
+
+  const workspacePath = worker.worktree || worker.repoPath;
+  const logInfo = await claudeLogs.getLogsForPane(workspacePath);
+  if (!logInfo) {
+    console.error(`❌ No Claude logs found for worker "${worker.id}"`);
+    console.error(`   Workspace: ${workspacePath}`);
+    process.exit(1);
+  }
+
+  const elapsed = workerRegistry.getElapsedTime(worker);
+  return {
+    logPath: logInfo.logPath,
+    workerId: worker.id,
+    branch: worker.worktree ? `work/${worker.taskId}` : undefined,
+    duration: elapsed.formatted,
+  };
+}
+
+function filterSinceExchanges(entries: claudeLogs.ClaudeLogEntry[], since: number): claudeLogs.ClaudeLogEntry[] {
+  let userCount = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].type === 'user') {
+      userCount++;
+      if (userCount >= since) return entries.slice(i);
+    }
+  }
+  return entries;
+}
+
 /**
  * Main history command handler
  */
 export async function historyCommand(workerIdOrName: string, options: HistoryOptions): Promise<void> {
-  let logPath: string;
-  let workerId: string;
-  let branch: string | undefined;
-  let duration: string;
+  const { logPath, workerId, branch, duration } = await resolveLogContext(workerIdOrName, options);
 
-  // Direct log file mode (for testing/debugging)
-  if (options.logFile) {
-    logPath = options.logFile;
-    workerId = 'direct';
-    duration = 'N/A';
-  } else {
-    // Find the worker
-    const worker = await findWorker(workerIdOrName);
-
-    if (!worker) {
-      console.error(`❌ Worker "${workerIdOrName}" not found.`);
-      console.error('   Run `genie worker list` to see active workers.');
-      process.exit(1);
-    }
-
-    // Find Claude logs for this worker's workspace
-    const workspacePath = worker.worktree || worker.repoPath;
-    const logInfo = await claudeLogs.getLogsForPane(workspacePath);
-
-    if (!logInfo) {
-      console.error(`❌ No Claude logs found for worker "${worker.id}"`);
-      console.error(`   Workspace: ${workspacePath}`);
-      process.exit(1);
-    }
-
-    logPath = logInfo.logPath;
-    workerId = worker.id;
-    branch = worker.worktree ? `work/${worker.taskId}` : undefined;
-    const elapsed = workerRegistry.getElapsedTime(worker);
-    duration = elapsed.formatted;
-  }
-
-  // Read log entries
   const entries = await claudeLogs.readLogFile(logPath);
-
   if (entries.length === 0) {
     console.error(`❌ Log file is empty: ${logPath}`);
     process.exit(1);
   }
 
-  // Filter to user/assistant entries for conversation
   const conversationEntries = entries.filter((e) => e.type === 'user' || e.type === 'assistant');
+  const filteredEntries =
+    options.since && options.since > 0 ? filterSinceExchanges(conversationEntries, options.since) : conversationEntries;
 
-  // Handle --since option (last N exchanges)
-  let filteredEntries = conversationEntries;
-  if (options.since && options.since > 0) {
-    // Find last N user prompts and everything after first one
-    let userCount = 0;
-    let startIndex = conversationEntries.length;
-
-    for (let i = conversationEntries.length - 1; i >= 0; i--) {
-      if (conversationEntries[i].type === 'user') {
-        userCount++;
-        if (userCount >= options.since) {
-          startIndex = i;
-          break;
-        }
-      }
-    }
-
-    filteredEntries = conversationEntries.slice(startIndex);
-  }
-
-  // Calculate stats
-  const toolCallCount = entries.reduce((count, e) => count + (e.toolCalls?.length || 0), 0);
-  const userMessageCount = entries.filter((e) => e.type === 'user').length;
-
-  // Handle --raw option
   if (options.raw) {
     for (const entry of filteredEntries) {
       console.log(JSON.stringify(entry.raw));
@@ -515,15 +485,14 @@ export async function historyCommand(workerIdOrName: string, options: HistoryOpt
     return;
   }
 
-  // Handle --full option
   if (options.full) {
-    const output = formatFullConversation(filteredEntries);
-    console.log(output);
+    console.log(formatFullConversation(filteredEntries));
     return;
   }
 
-  // Default: compressed view
   const events = extractEvents(filteredEntries);
+  const toolCallCount = entries.reduce((count, e) => count + (e.toolCalls?.length || 0), 0);
+  const userMessageCount = entries.filter((e) => e.type === 'user').length;
 
   const stats: SessionStats = {
     workerId,
@@ -538,13 +507,10 @@ export async function historyCommand(workerIdOrName: string, options: HistoryOpt
     status: detectStatus(entries),
   };
 
-  // Handle --json option
   if (options.json) {
     console.log(JSON.stringify({ stats, events }, null, 2));
     return;
   }
 
-  // Default: formatted display
-  const output = formatEventsForDisplay(events, stats);
-  console.log(output);
+  console.log(formatEventsForDisplay(events, stats));
 }

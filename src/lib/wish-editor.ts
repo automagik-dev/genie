@@ -72,11 +72,6 @@ export function getWishPath(repoPath: string, slug: string): string {
   return join(repoPath, '.genie', 'wishes', slug, 'wish.md');
 }
 
-function getWishDir(repoPath: string, slug: string): string {
-  validateSlug(slug);
-  return join(repoPath, '.genie', 'wishes', slug);
-}
-
 // ============================================================================
 // Parsing
 // ============================================================================

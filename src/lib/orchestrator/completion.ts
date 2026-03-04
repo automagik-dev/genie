@@ -1,11 +1,3 @@
-/**
- * Completion detection methods for Claude Code sessions
- *
- * Provides multiple strategies for detecting when Claude Code
- * has finished a task, with metrics for evaluating effectiveness.
- */
-
-import * as tmux from '../tmux.js';
 import { type EventMonitor, waitForCompletion, waitForSilence } from './event-monitor.js';
 import type { ClaudeState } from './state-detector.js';
 
@@ -136,72 +128,6 @@ function stateDetectionMethod(): CompletionMethod {
           complete: true,
           state: result.state,
           reason: result.reason,
-          latencyMs,
-          method: this.name,
-        };
-      } catch (error) {
-        return {
-          complete: false,
-          reason: error instanceof Error ? error.message : 'unknown error',
-          latencyMs: Date.now() - startTime,
-          method: this.name,
-        };
-      }
-    },
-
-    recordResult(latencyMs: number, correct: boolean, falsePositive: boolean): void {
-      metrics.totalRuns++;
-      metrics.avgLatencyMs = (metrics.avgLatencyMs * (metrics.totalRuns - 1) + latencyMs) / metrics.totalRuns;
-      metrics.minLatencyMs = Math.min(metrics.minLatencyMs, latencyMs);
-      metrics.maxLatencyMs = Math.max(metrics.maxLatencyMs, latencyMs);
-
-      if (!correct) {
-        if (falsePositive) {
-          metrics.falsePositives++;
-        } else {
-          metrics.falseNegatives++;
-        }
-      }
-
-      metrics.successRate = (metrics.totalRuns - metrics.falsePositives - metrics.falseNegatives) / metrics.totalRuns;
-    },
-  };
-}
-
-/**
- * Create a completion method using tmux wait-for channel
- */
-function waitForChannelMethod(channel: string): CompletionMethod {
-  const metrics: CompletionMethodMetrics = {
-    name: `wait-for-${channel}`,
-    totalRuns: 0,
-    avgLatencyMs: 0,
-    minLatencyMs: Number.POSITIVE_INFINITY,
-    maxLatencyMs: 0,
-    falsePositives: 0,
-    falseNegatives: 0,
-    successRate: 1,
-  };
-
-  return {
-    name: `wait-for-${channel}`,
-    description: `Wait for tmux wait-for signal on channel "${channel}"`,
-    metrics,
-
-    async detect(_monitor: EventMonitor, timeoutMs = 120000): Promise<CompletionResult> {
-      const startTime = Date.now();
-
-      try {
-        await Promise.race([
-          tmux.executeTmux(`wait-for ${channel}`),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeoutMs)),
-        ]);
-
-        const latencyMs = Date.now() - startTime;
-
-        return {
-          complete: true,
-          reason: `signal received on channel "${channel}"`,
           latencyMs,
           method: this.name,
         };

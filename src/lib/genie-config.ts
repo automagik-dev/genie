@@ -5,8 +5,6 @@ import {
   type CouncilPreset,
   type GenieConfig,
   GenieConfigSchema,
-  type LoggingConfig,
-  type SessionConfig,
   type ShortcutsConfig,
   type TerminalConfig,
   type WorkerProfile,
@@ -88,15 +86,6 @@ function getDefaultGenieConfig(): GenieConfig {
 }
 
 /**
- * Update logging configuration
- */
-async function updateLoggingConfig(logging: Partial<LoggingConfig>): Promise<void> {
-  const config = await loadGenieConfig();
-  config.logging = { ...config.logging, ...logging };
-  await saveGenieConfig(config);
-}
-
-/**
  * Load genie config synchronously, returning defaults if not found
  */
 function loadGenieConfigSync(): GenieConfig {
@@ -111,29 +100,6 @@ function loadGenieConfigSync(): GenieConfig {
   } catch {
     return GenieConfigSchema.parse({});
   }
-}
-
-/**
- * Check if tmux debug logging is enabled via environment or config
- */
-function isTmuxDebugEnabled(): boolean {
-  if (process.env.GENIE_TMUX_DEBUG === '1') return true;
-  if (!genieConfigExists()) return false;
-  const config = loadGenieConfigSync();
-  return config.logging?.tmuxDebug ?? false;
-}
-
-/**
- * Expand ~ to home directory in a path
- */
-function expandPath(path: string): string {
-  if (path.startsWith('~/')) {
-    return join(homedir(), path.slice(2));
-  }
-  if (path === '~') {
-    return homedir();
-  }
-  return path;
 }
 
 /**
@@ -163,37 +129,11 @@ export function getTerminalConfig(): TerminalConfig {
 }
 
 /**
- * Update terminal configuration
- */
-async function updateTerminalConfig(partial: Partial<TerminalConfig>): Promise<void> {
-  const config = await loadGenieConfig();
-  config.terminal = { ...config.terminal, ...partial };
-  await saveGenieConfig(config);
-}
-
-/**
  * Get session name from config
  */
 export function getSessionName(): string {
   const config = loadGenieConfigSync();
   return config.session.name;
-}
-
-/**
- * Get session configuration
- */
-function getSessionConfig(): SessionConfig {
-  const config = loadGenieConfigSync();
-  return config.session;
-}
-
-/**
- * Update session configuration
- */
-async function updateSessionConfig(partial: Partial<SessionConfig>): Promise<void> {
-  const config = await loadGenieConfig();
-  config.session = { ...config.session, ...partial };
-  await saveGenieConfig(config);
 }
 
 /**
@@ -224,36 +164,11 @@ export async function resetConfig(): Promise<void> {
 }
 
 /**
- * Get shortcuts configuration
- */
-function getShortcutsConfig(): ShortcutsConfig {
-  const config = loadGenieConfigSync();
-  return config.shortcuts;
-}
-
-/**
  * Update shortcuts configuration
  */
 export async function updateShortcutsConfig(partial: Partial<ShortcutsConfig>): Promise<void> {
   const config = await loadGenieConfig();
   config.shortcuts = { ...config.shortcuts, ...partial };
-  await saveGenieConfig(config);
-}
-
-/**
- * Check if claudio integration is enabled
- */
-function isClaudioEnabled(): boolean {
-  const config = loadGenieConfigSync();
-  return config.claudio?.enabled ?? false;
-}
-
-/**
- * Update claudio configuration
- */
-async function updateClaudioConfig(enabled: boolean): Promise<void> {
-  const config = await loadGenieConfig();
-  config.claudio = { enabled };
   await saveGenieConfig(config);
 }
 
@@ -321,132 +236,4 @@ export function getFallbackCouncilPreset(config: GenieConfig): CouncilPreset {
     right: defaultProfile,
     skill: 'council',
   };
-}
-
-// ============================================================================
-// Source path detection helpers
-// ============================================================================
-
-const GENIE_PACKAGE_NAME = '@automagik/genie';
-
-/**
- * Check if a directory is the genie-cli source directory
- * by looking for package.json with the correct name
- */
-function isGenieSourceDir(dir: string): boolean {
-  try {
-    const pkgPath = join(dir, 'package.json');
-    if (!existsSync(pkgPath)) return false;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-    return pkg.name === GENIE_PACKAGE_NAME;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Find genie-cli source directory by walking up from the given path
- */
-function findSourceInParents(startDir: string): string | null {
-  let dir = startDir;
-  const root = '/';
-
-  while (dir !== root) {
-    if (isGenieSourceDir(dir)) {
-      return dir;
-    }
-    const parent = join(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  return null;
-}
-
-/**
- * Known locations where genie-cli source might be found
- */
-function getKnownSourcePaths(): string[] {
-  const home = homedir();
-  return [
-    // Common workspace patterns
-    join(home, 'workspace', 'guga', 'code', 'genie-cli'),
-    join(home, 'workspace', 'code', 'genie-cli'),
-    join(home, 'code', 'genie-cli'),
-    join(home, 'projects', 'genie-cli'),
-    join(home, 'dev', 'genie-cli'),
-    join(home, 'src', 'genie-cli'),
-    // Direct paths
-    join(home, 'genie-cli'),
-  ];
-}
-
-/**
- * Auto-detect genie-cli source directory
- *
- * Priority:
- * 1. Check if cwd is inside genie-cli source
- * 2. Check stored sourcePath in ~/.genie/config.json
- * 3. Check known paths
- *
- * Returns the source path or null if not found
- */
-function detectSourcePath(): string | null {
-  // 1. Check if cwd is inside genie-cli source
-  const cwd = process.cwd();
-  const fromCwd = findSourceInParents(cwd);
-  if (fromCwd) {
-    return fromCwd;
-  }
-
-  // 2. Check stored path in config
-  const config = loadGenieConfigSync();
-  if (config.sourcePath && existsSync(config.sourcePath)) {
-    if (isGenieSourceDir(config.sourcePath)) {
-      return config.sourcePath;
-    }
-  }
-
-  // 3. Check known paths
-  for (const knownPath of getKnownSourcePaths()) {
-    if (existsSync(knownPath) && isGenieSourceDir(knownPath)) {
-      return knownPath;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Get or detect source path, with option to save if detected
- */
-async function getOrDetectSourcePath(saveIfFound = true): Promise<string | null> {
-  const sourcePath = detectSourcePath();
-
-  if (sourcePath && saveIfFound) {
-    const config = await loadGenieConfig();
-    if (config.sourcePath !== sourcePath) {
-      config.sourcePath = sourcePath;
-      await saveGenieConfig(config);
-    }
-  }
-
-  return sourcePath;
-}
-
-/**
- * Set the source path in config
- */
-async function setSourcePath(sourcePath: string): Promise<void> {
-  const config = await loadGenieConfig();
-  config.sourcePath = sourcePath;
-  await saveGenieConfig(config);
-}
-
-/**
- * Get the stored source path from config (without auto-detection)
- */
-function getStoredSourcePath(): string | null {
-  const config = loadGenieConfigSync();
-  return config.sourcePath || null;
 }

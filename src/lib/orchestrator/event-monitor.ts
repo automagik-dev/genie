@@ -132,6 +132,50 @@ export class EventMonitor extends EventEmitter {
   /**
    * Poll for changes
    */
+  private emitStateChangeEvents(newState: ClaudeState, now: number): void {
+    this.emitEvent({ type: 'state_change', state: newState, timestamp: now });
+
+    const eventType = ({ permission: 'permission', question: 'question', error: 'error' } as const)[
+      newState.type as string
+    ];
+    if (eventType) {
+      this.emitEvent({ type: eventType, state: newState, timestamp: now });
+    }
+  }
+
+  private handleNewOutput(output: string, now: number): void {
+    const newContent = this.getNewContent(this.lastOutput, output);
+    if (newContent) {
+      this.lastOutputTime = now;
+      this.emitEvent({ type: 'output', output: newContent, timestamp: now });
+      this.emitEvent({ type: 'activity', timestamp: now });
+    }
+
+    const newState = detectState(output);
+
+    if (this.lastState && newState.type !== this.lastState.type) {
+      this.emitStateChangeEvents(newState, now);
+
+      const completion = detectCompletion(output, this.lastOutput);
+      if (completion.complete && completion.confidence > 0.6) {
+        this.emitEvent({ type: 'complete', state: newState, timestamp: now });
+      }
+    }
+
+    this.lastState = newState;
+    this.lastOutput = output;
+  }
+
+  private checkSilence(now: number): void {
+    const silenceMs = now - this.lastOutputTime;
+    if (
+      silenceMs >= this.options.silenceThresholdMs &&
+      silenceMs % this.options.silenceThresholdMs < this.options.pollIntervalMs
+    ) {
+      this.emitEvent({ type: 'silence', silenceMs, timestamp: now });
+    }
+  }
+
   private async poll(): Promise<void> {
     if (!this.paneId || !this.running) return;
 
@@ -139,87 +183,12 @@ export class EventMonitor extends EventEmitter {
       const output = await tmux.capturePaneContent(this.paneId, this.options.captureLines);
       const now = Date.now();
 
-      // Check for new output
       if (output !== this.lastOutput) {
-        const newContent = this.getNewContent(this.lastOutput, output);
-
-        if (newContent) {
-          this.lastOutputTime = now;
-          this.emitEvent({
-            type: 'output',
-            output: newContent,
-            timestamp: now,
-          });
-
-          this.emitEvent({
-            type: 'activity',
-            timestamp: now,
-          });
-        }
-
-        // Detect state from new output
-        const newState = detectState(output);
-
-        // Check for state changes
-        if (this.lastState && newState.type !== this.lastState.type) {
-          this.emitEvent({
-            type: 'state_change',
-            state: newState,
-            timestamp: now,
-          });
-
-          // Emit specific events for important state changes
-          if (newState.type === 'permission') {
-            this.emitEvent({
-              type: 'permission',
-              state: newState,
-              timestamp: now,
-            });
-          } else if (newState.type === 'question') {
-            this.emitEvent({
-              type: 'question',
-              state: newState,
-              timestamp: now,
-            });
-          } else if (newState.type === 'error') {
-            this.emitEvent({
-              type: 'error',
-              state: newState,
-              timestamp: now,
-            });
-          }
-
-          // Check for completion
-          const completion = detectCompletion(output, this.lastOutput);
-          if (completion.complete && completion.confidence > 0.6) {
-            this.emitEvent({
-              type: 'complete',
-              state: newState,
-              timestamp: now,
-            });
-          }
-        }
-
-        this.lastState = newState;
-        this.lastOutput = output;
+        this.handleNewOutput(output, now);
       } else {
-        // No change - check silence threshold
-        const silenceMs = now - this.lastOutputTime;
-
-        // Emit silence events at threshold intervals
-        if (
-          silenceMs >= this.options.silenceThresholdMs &&
-          silenceMs % this.options.silenceThresholdMs < this.options.pollIntervalMs
-        ) {
-          this.emitEvent({
-            type: 'silence',
-            silenceMs,
-            timestamp: now,
-          });
-        }
+        this.checkSilence(now);
       }
     } catch (error) {
-      // Emit error but continue polling
       this.emit('poll_error', error);
     }
   }
@@ -260,44 +229,6 @@ export class EventMonitor extends EventEmitter {
     this.emit(event.type, event);
     this.emit('event', event);
   }
-}
-
-/**
- * Wait for a specific state or condition
- */
-async function waitForState(
-  monitor: EventMonitor,
-  predicate: (state: ClaudeState) => boolean,
-  timeoutMs = 60000,
-): Promise<ClaudeState> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('Timeout waiting for state'));
-    }, timeoutMs);
-
-    const handler = (event: ClaudeEvent) => {
-      if (event.state && predicate(event.state)) {
-        cleanup();
-        resolve(event.state);
-      }
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      monitor.off('state_change', handler);
-    };
-
-    // Check current state first
-    const current = monitor.getCurrentState();
-    if (current && predicate(current)) {
-      cleanup();
-      resolve(current);
-      return;
-    }
-
-    monitor.on('state_change', handler);
-  });
 }
 
 /**

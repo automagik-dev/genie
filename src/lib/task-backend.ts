@@ -39,9 +39,8 @@ export interface TaskBackend {
 }
 
 function hasBd(): boolean {
-  // Bun.which returns undefined if not found
-  // @ts-ignore
-  return typeof (Bun as any).which === 'function' ? Boolean((Bun as any).which('bd')) : true;
+  const BunExt = Bun as unknown as { which?: (name: string) => string | null };
+  return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
 }
 
 async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number }> {
@@ -55,6 +54,38 @@ async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number
       stdout: shellErr.stdout?.toString().trim() || message,
       exitCode: shellErr.exitCode || 1,
     };
+  }
+}
+
+type BdRunner = (args: string[]) => Promise<{ stdout: string; exitCode: number }>;
+
+async function parseReadyIssues(run: BdRunner): Promise<string[]> {
+  try {
+    const { stdout, exitCode } = await run(['ready', '--json']);
+    if (exitCode !== 0 || !stdout) return [];
+    try {
+      return JSON.parse(stdout).map((issue: { id: string }) => `${issue.id}`);
+    } catch {
+      return stdout
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => l.match(/^(bd-\d+)/)?.[1])
+        .filter(Boolean) as string[];
+    }
+  } catch {
+    return [];
+  }
+}
+
+async function parseBlockedIssues(run: BdRunner): Promise<string[]> {
+  try {
+    const { stdout, exitCode } = await run(['list', '--json']);
+    if (exitCode !== 0 || !stdout) return [];
+    return JSON.parse(stdout)
+      .filter((issue: { blockedBy?: string[] }) => issue.blockedBy?.length)
+      .map((issue: { id: string; blockedBy: string[] }) => `${issue.id} (blocked by ${issue.blockedBy.join(', ')})`);
+  } catch {
+    return [];
   }
 }
 
@@ -164,64 +195,21 @@ export function getBackend(repoPath: string): TaskBackend {
     },
     async update(id, options) {
       const args = ['update', id];
-      if (options.status) {
-        args.push('--status', options.status);
-      }
-      if (options.title) {
-        args.push('--title', options.title);
-      }
-      if (options.blockedBy && options.blockedBy.length > 0) {
-        // Replace blocked-by list
-        args.push('--blocked-by', options.blockedBy.join(','));
-      }
-      if (options.addBlockedBy && options.addBlockedBy.length > 0) {
-        // Add to blocked-by (bd may not support this directly, so we get current and merge)
+      if (options.status) args.push('--status', options.status);
+      if (options.title) args.push('--title', options.title);
+      if (options.blockedBy?.length) args.push('--blocked-by', options.blockedBy.join(','));
+      if (options.addBlockedBy?.length) {
         const current = await this.get(id);
         if (current) {
-          const existing = new Set(current.blockedBy || []);
-          for (const dep of options.addBlockedBy) {
-            existing.add(dep);
-          }
-          args.push('--blocked-by', Array.from(existing).join(','));
+          const merged = new Set([...(current.blockedBy || []), ...options.addBlockedBy]);
+          args.push('--blocked-by', Array.from(merged).join(','));
         }
       }
       const { exitCode } = await runBd(args);
-      if (exitCode !== 0) return null;
-      return this.get(id);
+      return exitCode === 0 ? this.get(id) : null;
     },
     async queue() {
-      const ready: string[] = [];
-      const blocked: string[] = [];
-
-      try {
-        const { stdout, exitCode } = await runBd(['ready', '--json']);
-        if (exitCode === 0 && stdout) {
-          try {
-            const issues = JSON.parse(stdout);
-            for (const issue of issues) ready.push(`${issue.id}`);
-          } catch {
-            const lines = stdout.split('\n').filter((l) => l.trim());
-            for (const line of lines) {
-              const match = line.match(/^(bd-\d+)/);
-              if (match) ready.push(match[1]);
-            }
-          }
-        }
-      } catch {}
-
-      try {
-        const { stdout, exitCode } = await runBd(['list', '--json']);
-        if (exitCode === 0 && stdout) {
-          const issues = JSON.parse(stdout);
-          for (const issue of issues) {
-            if (issue.blockedBy && issue.blockedBy.length > 0) {
-              blocked.push(`${issue.id} (blocked by ${issue.blockedBy.join(', ')})`);
-            }
-          }
-        }
-      } catch {}
-
-      return { ready, blocked };
+      return { ready: await parseReadyIssues(runBd), blocked: await parseBlockedIssues(runBd) };
     },
   };
 }
