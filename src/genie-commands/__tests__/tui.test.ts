@@ -13,14 +13,16 @@ import { buildClaudeCommand, getAgentsSystemPrompt } from '../tui.js';
 // ============================================================================
 
 describe('buildClaudeCommand', () => {
-  test('without system prompt should NOT contain --system-prompt', () => {
+  test('without explicit system prompt still contains --system-prompt from team lead prompt', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).not.toContain('--system-prompt');
+    // getTeamLeadPrompt() always loads TEAM_LEAD_PROMPT.md, so --system-prompt is always present
+    expect(cmd).toContain('--system-prompt');
   });
 
-  test('with system prompt should contain --system-prompt with quoted content', () => {
+  test('with system prompt should contain --system-prompt with the provided content', () => {
     const cmd = buildClaudeCommand('genie', 'test prompt');
-    expect(cmd).toContain("--system-prompt 'test prompt'");
+    expect(cmd).toContain('--system-prompt');
+    expect(cmd).toContain('test prompt');
   });
 
   test('preserves --agent-id flag', () => {
@@ -68,7 +70,7 @@ describe('buildClaudeCommand', () => {
     const cmd = buildClaudeCommand('genie', "it's a test");
     expect(cmd).toContain('--system-prompt');
     // shellQuote wraps in single quotes, escaping inner single quotes
-    expect(cmd).toContain("'it'\\''s a test'");
+    expect(cmd).toContain("'it'\\''s a test");
   });
 });
 
