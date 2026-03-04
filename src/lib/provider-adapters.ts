@@ -74,6 +74,10 @@ export interface SpawnParams {
   extraArgs?: string[];
   /** Claude Code native teammate integration. */
   nativeTeam?: NativeTeamParams;
+  /** Session UUID for new sessions (emits --session-id). */
+  sessionId?: string;
+  /** Session UUID to resume (emits --resume). Mutually exclusive with sessionId. */
+  resume?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -112,6 +116,8 @@ export const spawnParamsSchema = z.object({
       agentName: z.string().optional(),
     })
     .optional(),
+  sessionId: z.string().uuid().optional(),
+  resume: z.string().uuid().optional(),
 });
 
 /**
@@ -218,6 +224,13 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
     if (nt.permissionMode) {
       parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
     }
+  }
+
+  // Session resume/ID — mutually exclusive, resume takes precedence
+  if (params.resume) {
+    parts.push('--resume', escapeShellArg(params.resume));
+  } else if (params.sessionId) {
+    parts.push('--session-id', escapeShellArg(params.sessionId));
   }
 
   // Role routing via --agent (loads agent .md file — coexists with --agent-id)
