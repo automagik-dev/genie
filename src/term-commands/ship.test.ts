@@ -1,5 +1,5 @@
 /**
- * Integration tests for term ship/push commands - Branch Protection
+ * Integration tests for genie worker ship commands - Branch Protection
  *
  * Tests:
  * 1. ship/push refuse to operate on main/master branch
@@ -71,7 +71,7 @@ async function assertNotMainBranch(repoPath: string): Promise<boolean> {
 // Tests
 // ============================================================================
 
-describe('term ship/push - branch protection', () => {
+describe('genie worker ship - branch protection', () => {
   let tempDir: string;
   let testRepo: string;
 
@@ -169,7 +169,7 @@ describe('term ship/push - branch protection', () => {
   });
 });
 
-describe('term ship/push - getCurrentBranch', () => {
+describe('genie worker ship - getCurrentBranch', () => {
   let tempDir: string;
   let testRepo: string;
 

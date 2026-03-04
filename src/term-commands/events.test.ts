@@ -1,5 +1,5 @@
 /**
- * Tests for term events command
+ * Tests for genie worker events command
  *
  * Run with: bun test src/term-commands/events.test.ts
  */

@@ -196,7 +196,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
         if (!live) {
           throw new Error(
             `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. ` +
-              `Run 'term kill ${matchingWorker.id}' to clean up.`,
+              `Run 'genie worker kill ${matchingWorker.id}' to clean up.`,
           );
         }
       }
@@ -211,7 +211,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
 
     // No worker owns this window
     throw new Error(
-      `Window "${target}" not found in worker registry.\nRun 'term workers' to list workers or 'term session window ls <session>' to list windows.`,
+      `Window "${target}" not found in worker registry.\nRun 'genie worker list' to list workers.`,
     );
   }
 
@@ -240,7 +240,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
         throw new Error(
           `Worker "${leftSide}" has no sub-pane index ${index}. ` +
             `Available: 0 (primary)${maxIndex > 0 ? `, 1-${maxIndex} (sub-panes)` : ''}. ` +
-            `Split first with: term split ${leftSide}`,
+            `Sub-pane index ${index} does not exist.`,
         );
       }
 
@@ -250,7 +250,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
         const live = await isPaneLive(paneId);
         if (!live) {
           await cleanupDeadPane(leftSide, paneId);
-          throw new Error(`Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'term kill ${leftSide}' to clean up.`);
+          throw new Error(`Worker ${leftSide}: pane ${paneId} is dead. ` + `Run 'genie worker kill ${leftSide}' to clean up.`);
         }
       }
 
@@ -285,7 +285,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
 
     // session:window not found either
     throw new Error(
-      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'term workers' to list workers or 'term session ls' to list sessions.`,
+      `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie worker list' to list workers.`,
     );
   }
 
@@ -298,7 +298,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
       const live = await isPaneLive(worker.paneId);
       if (!live) {
         await cleanupDeadPane(target, worker.paneId);
-        throw new Error(`Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'term kill ${target}' to clean up.`);
+        throw new Error(`Worker ${target}: pane ${worker.paneId} is dead. ` + `Run 'genie worker kill ${target}' to clean up.`);
       }
     }
 
@@ -311,7 +311,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
   }
 
   // ---- Nothing found ----
-  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'term workers' to list workers.`);
+  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie worker list' to list workers.`);
 }
 
 // ============================================================================

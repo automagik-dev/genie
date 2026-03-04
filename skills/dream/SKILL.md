@@ -98,13 +98,13 @@ Isolation is Codex-managed. Documented for future validation.
 ### OpenClaw
 
 ```bash
-term spawn --name "worker-<slug>" --model sonnet
+genie worker spawn --role implementor
 # Or for bead-tracked work:
 bd create "<task title>" --type task
-term work <bead-id>
+genie work <bead-id>
 ```
 
-Three-layer chain: OpenClaw -> term -> Claude Code -> Teams. Use timeouts; fall back to sequential on failure. Documented for future validation.
+Three-layer chain: OpenClaw -> genie -> Claude Code -> Teams. Use timeouts; fall back to sequential on failure.
 
 Full reference: `plugins/genie/references/dispatch-contract.md`.
 

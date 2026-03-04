@@ -142,7 +142,7 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   });
 
   const linesStr = await input({
-    message: 'Read lines (default for term read):',
+    message: 'Read lines (default for genie worker read):',
     default: String(config.terminal.readLines),
     validate: (v) => {
       const n = Number.parseInt(v, 10);

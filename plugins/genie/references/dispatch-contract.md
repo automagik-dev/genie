@@ -60,24 +60,24 @@ codex_subagent(
 
 ## OpenClaw
 
-Documented for future validation. Three-layer chain: OpenClaw → term → Claude Code → Teams.
+Documented for future validation. Three-layer chain: OpenClaw → genie → Claude Code → Teams.
 
 ```bash
-# Spawn a Claude Code instance via term
-term spawn --name "worker-<slug>" --model sonnet
+# Spawn a Claude Code worker via genie
+genie worker spawn --role implementor
 
 # Or for heavy multi-file work with bead tracking
 bd create "<task title>" --type task
-term work <bead-id>
+genie work <bead-id>
 
 # Monitor
-term workers
-term session read <session>
+genie worker list
+genie worker read <worker>
 ```
 
-- **Isolation:** Claude Code worktrees (same as CC path, initiated via term)
-- **Model:** sonnet (passed to CC via term)
-- **Coordination:** term status + bead updates
+- **Isolation:** Claude Code worktrees (same as CC path, initiated via genie)
+- **Model:** sonnet (passed to CC via genie)
+- **Coordination:** genie worker status + bead updates
 - **Risk:** 3 layers of indirection — use timeouts, fall back to sequential on failure
 
 ## Rules

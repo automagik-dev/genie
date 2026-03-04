@@ -179,7 +179,7 @@ genie hooks test
 
 **Why:** You can watch AI work in real-time
 
-**How:** Bash commands are rewritten to `term exec <session> '<command>'`
+**How:** Bash commands are rewritten to `genie worker exec <session> '<command>'`
 
 ```bash
 tmux attach -t genie
@@ -275,8 +275,8 @@ genie profiles default <name>    # Set default profile
 ### Using Profiles
 
 ```bash
-term spawn implementor --profile coding-fast   # Use specific profile
-term work bd-123 --profile autonomous          # Complex task with opus
+genie worker spawn --role implementor --profile coding-fast   # Use specific profile
+genie work bd-123 --profile autonomous                       # Complex task with opus
 ```
 
 ### Example Config
@@ -369,9 +369,7 @@ claudio launches Claude Code with custom LLM routing profiles.
 - `genie ledger validate [--repo <path>] [--json]`
   - Validates `.beads/issues.jsonl` JSONL structure (scriptable)
 
-### `term beads-validate` (deprecated)
-
-Deprecated in favor of **`genie ledger validate`**.
+### Beads Validation
 
 Validate the local Beads JSONL ledger file:
 
@@ -379,13 +377,8 @@ Validate the local Beads JSONL ledger file:
 - Checks: file exists, each non-empty line is valid JSON, and `id` is present/unique.
 
 ```bash
-# preferred
 genie ledger validate --repo .
 genie ledger validate --repo . --json
-
-# deprecated
-term beads-validate --repo .
-term beads-validate --repo . --json
 ```
 
 ```

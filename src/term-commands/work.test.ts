@@ -1,5 +1,5 @@
 /**
- * Integration tests for term work command
+ * Integration tests for genie work command
  *
  * Tests:
  * 1. Nested repo detection (--repo flag, wish.md repo field, heuristics)
@@ -90,8 +90,8 @@ import { buildEnvSourcePrefix } from './work.js';
 const KNOWN_NESTED_REPOS: Record<string, string> = {
   'genie-cli': 'code/genie-cli',
   'term-cli': 'code/genie-cli',
-  'term work': 'code/genie-cli',
-  'term ship': 'code/genie-cli',
+  'genie work': 'code/genie-cli',
+  'genie ship': 'code/genie-cli',
   'term push': 'code/genie-cli',
 };
 
@@ -166,7 +166,7 @@ async function detectTargetRepo(
 // Tests
 // ============================================================================
 
-describe('term work - nested repo detection', () => {
+describe('genie work - nested repo detection', () => {
   let tempDir: string;
   let macroRepo: string;
   let nestedRepo: string;
@@ -284,12 +284,12 @@ describe('term work - nested repo detection', () => {
       expect(result.targetRepo).toBe(nestedRepo);
     });
 
-    it('should detect genie-cli from wish title containing "term work"', async () => {
+    it('should detect genie-cli from wish title containing "genie work"', async () => {
       await createWishFile(macroRepo, 'wish-6', {
-        title: 'Improve term work command',
+        title: 'Improve genie work command',
       });
 
-      const result = await detectTargetRepo('wish-6', macroRepo, undefined, 'Improve term work command', undefined);
+      const result = await detectTargetRepo('wish-6', macroRepo, undefined, 'Improve genie work command', undefined);
 
       expect(result.detectionMethod).toBe('heuristic (matched "code/genie-cli")');
       expect(result.targetRepo).toBe(nestedRepo);
@@ -360,7 +360,7 @@ describe('term work - nested repo detection', () => {
   });
 });
 
-describe('term work - worktree creation', () => {
+describe('genie work - worktree creation', () => {
   let tempDir: string;
   let testRepo: string;
 
@@ -443,7 +443,7 @@ describe('term work - worktree creation', () => {
   });
 });
 
-describe('term work - branch naming convention', () => {
+describe('genie work - branch naming convention', () => {
   let tempDir: string;
   let testRepo: string;
 
@@ -487,7 +487,7 @@ describe('term work - branch naming convention', () => {
 
 import { findWishInDotWishes, loadWishContent, wishFileExists } from './work.js';
 
-describe('term work - wish file search in .wishes/ directory', () => {
+describe('genie work - wish file search in .wishes/ directory', () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -693,7 +693,7 @@ Not the one we're looking for.
 // .env sourcing from root repo in worktrees
 // ============================================================================
 
-describe('term work - .env sourcing in worktrees', () => {
+describe('genie work - .env sourcing in worktrees', () => {
   describe('buildEnvSourcePrefix', () => {
     it('should return empty string when workingDir equals repoPath (not a worktree)', () => {
       const repoPath = '/home/user/project';

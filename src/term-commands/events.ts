@@ -2,12 +2,12 @@
  * Events command - Stream Claude Code events from a pane
  *
  * Usage:
- *   term events <pane-id>           - Show recent events from a worker
- *   term events <pane-id> --follow  - Tail events in real-time (like tail -f)
- *   term events <pane-id> --emit    - Tail and write to .genie/events/<pane-id>.jsonl
- *   term events <pane-id> --json    - Output events as JSON
- *   term events --all               - Aggregate events from all active workers
- *   term events --all --json        - Aggregate events as JSON
+ *   genie worker events <pane-id>           - Show recent events from a worker
+ *   genie worker events <pane-id> --follow  - Tail events in real-time (like tail -f)
+ *   genie worker events <pane-id> --emit    - Tail and write to .genie/events/<pane-id>.jsonl
+ *   genie worker events <pane-id> --json    - Output events as JSON
+ *   genie worker events --all               - Aggregate events from all active workers
+ *   genie worker events --all --json        - Aggregate events as JSON
  *
  * Events are normalized into a standard format:
  *   - session_start: Claude session started

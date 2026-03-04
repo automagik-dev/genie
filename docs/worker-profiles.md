@@ -50,16 +50,16 @@ genie profiles default coding-fast
 
 ## Using Profiles
 
-### With term spawn
+### With genie worker spawn
 ```bash
-term spawn implementor --profile coding-fast
-term spawn implementor --profile safe  # For interactive work
+genie worker spawn --role implementor --profile coding-fast
+genie worker spawn --role implementor --profile safe  # For interactive work
 ```
 
-### With term work
+### With genie work
 ```bash
-term work bd-123 --profile autonomous  # Use opus for complex issue
-term work bd-123 --profile safe        # Interactive with permissions
+genie work bd-123 --profile autonomous  # Use opus for complex issue
+genie work bd-123 --profile safe        # Interactive with permissions
 ```
 
 If no `--profile` flag is provided, the `defaultWorkerProfile` is used.

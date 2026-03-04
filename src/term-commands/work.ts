@@ -2,9 +2,9 @@
  * Work command - Spawn worker bound to beads issue
  *
  * Usage:
- *   term work <bd-id>     - Work on specific beads issue
- *   term work next        - Work on next ready issue
- *   term work wish        - Create a new wish (deferred)
+ *   genie work <bd-id>     - Work on specific beads issue
+ *   genie work next        - Work on next ready issue
+ *   genie work wish        - Create a new wish (deferred)
  *
  * Options:
  *   --no-worktree         - Use shared repo instead of worktree
@@ -103,10 +103,8 @@ const WORKTREE_DIR_NAME = '.genie/worktrees';
  */
 const KNOWN_NESTED_REPOS: Record<string, string> = {
   'genie-cli': 'code/genie-cli',
-  'term-cli': 'code/genie-cli',
-  'term work': 'code/genie-cli',
-  'term ship': 'code/genie-cli',
-  'term push': 'code/genie-cli',
+  'genie work': 'code/genie-cli',
+  'genie worker': 'code/genie-cli',
 };
 
 // ============================================================================
@@ -891,7 +889,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       }
       console.log(`📋 Found: ${issue.id} - "${issue.title}"`);
     } else if (target === 'wish') {
-      console.error('❌ `term work wish` is not yet implemented. Coming in Phase 1.5.');
+      console.error('❌ `genie work wish` is not yet implemented.');
       process.exit(1);
     } else {
       // Validate and sanitize target ID before using in shell/git/file operations
@@ -932,7 +930,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
           const fs = await import('node:fs');
           if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
             console.error('   ⚠️  tasks.json does not exist. This is likely a fresh repo.');
-            console.error(`   Fix: Run \`genie term create "Your task title"\` to create the first task,`);
+            console.error(`   Fix: Run \`genie task create "Your task title"\` to create the first task,`);
             console.error('         or `bd sync` if using beads.');
           } else {
             console.error(`   Task "${target}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
@@ -1028,10 +1026,10 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
         console.log(`   Session: ${session}`);
         console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
         console.log('\nCommands:');
-        console.log('   term workers        - Check worker status');
-        console.log(`   term approve ${taskId}  - Approve permissions`);
-        console.log(`   term close ${taskId}    - Close issue when done`);
-        console.log(`   term kill ${taskId}     - Force kill worker`);
+        console.log('   genie worker list        - Check worker status');
+        console.log(`   genie worker approve     - Approve permissions`);
+        console.log(`   genie worker close ${taskId}  - Close issue when done`);
+        console.log(`   genie worker kill ${taskId}   - Force kill worker`);
 
         // Keep process alive for auto-approve monitoring
         if (resumeEngine && !options._skipAutoApproveBlock) {
@@ -1041,7 +1039,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       }
 
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
-      console.log(`   Run \`term kill ${existingWorker.id}\` first, or work on a different issue.`);
+      console.log(`   Run \`genie worker kill ${existingWorker.id}\` first, or work on a different issue.`);
       process.exit(1);
     }
 
@@ -1269,10 +1267,10 @@ When you're done, commit your changes and let me know.`;
       console.log(`   Target repo: ${targetRepo}`);
     }
     console.log('\nCommands:');
-    console.log('   term workers        - Check worker status');
-    console.log(`   term approve ${taskId}  - Approve permissions`);
-    console.log(`   term close ${taskId}    - Close issue when done`);
-    console.log(`   term kill ${taskId}     - Force kill worker`);
+    console.log('   genie worker list        - Check worker status');
+    console.log(`   genie worker approve     - Approve permissions`);
+    console.log(`   genie worker close ${taskId}  - Close issue when done`);
+    console.log(`   genie worker kill ${taskId}   - Force kill worker`);
 
     // Keep process alive for auto-approve monitoring
     if (engine && !options._skipAutoApproveBlock) {
