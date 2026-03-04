@@ -1031,7 +1031,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
         console.log(`   Claude Session: ${existingWorker.claudeSessionId}`);
         console.log('\nCommands:');
         console.log('   genie worker list        - Check worker status');
-        console.log(`   genie worker approve     - Approve permissions`);
+        console.log('   genie worker approve     - Approve permissions');
         console.log(`   genie worker close ${taskId}  - Close issue when done`);
         console.log(`   genie worker kill ${taskId}   - Force kill worker`);
 
@@ -1274,7 +1274,7 @@ When you're done, commit your changes and let me know.`;
     }
     console.log('\nCommands:');
     console.log('   genie worker list        - Check worker status');
-    console.log(`   genie worker approve     - Approve permissions`);
+    console.log('   genie worker approve     - Approve permissions');
     console.log(`   genie worker close ${taskId}  - Close issue when done`);
     console.log(`   genie worker kill ${taskId}   - Force kill worker`);
 

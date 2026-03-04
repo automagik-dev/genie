@@ -61,11 +61,11 @@ describe('idle-timeout', () => {
     mockUpdates = [];
     mockExecuteTmuxCalls = [];
     mockPaneAliveMap = {};
-    delete process.env.GENIE_IDLE_TIMEOUT_MS;
+    process.env.GENIE_IDLE_TIMEOUT_MS = undefined;
   });
 
   afterEach(() => {
-    delete process.env.GENIE_IDLE_TIMEOUT_MS;
+    process.env.GENIE_IDLE_TIMEOUT_MS = undefined;
   });
 
   describe('getIdleTimeoutMs', () => {

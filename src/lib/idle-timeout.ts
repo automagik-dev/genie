@@ -132,10 +132,14 @@ export async function runWatchdogLoop(signal?: AbortSignal): Promise<void> {
   while (!signal?.aborted) {
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, WATCHDOG_POLL_INTERVAL_MS);
-      signal?.addEventListener('abort', () => {
-        clearTimeout(timer);
-        resolve();
-      }, { once: true });
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        { once: true },
+      );
     });
     if (signal?.aborted) break;
     await poll();
