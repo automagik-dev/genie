@@ -5,7 +5,7 @@
  * Backend is auto-detected based on whether .genie/ directory exists.
  *
  * Usage:
- *   term close <task-id>   - Close task, cleanup worktree, kill worker
+ *   genie worker close <task-id>   - Close task, cleanup worktree, kill worker
  *
  * Options:
  *   --no-sync              - Skip bd sync (beads only, no-op for local)

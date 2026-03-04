@@ -2,10 +2,10 @@
  * Daemon command - Manage beads daemon
  *
  * Usage:
- *   term daemon start      - Start beads daemon (auto-commit, auto-sync)
- *   term daemon stop       - Stop beads daemon
- *   term daemon status     - Show daemon status
- *   term daemon restart    - Restart daemon
+ *   genie daemon start      - Start beads daemon (auto-commit, auto-sync)
+ *   genie daemon stop       - Stop beads daemon
+ *   genie daemon status     - Show daemon status
+ *   genie daemon restart    - Restart daemon
  *
  * Options:
  *   --auto-commit         - Enable auto-commit (default: true for start)
@@ -135,7 +135,7 @@ export async function statusCommand(options: DaemonStatusOptions = {}): Promise<
         console.log(`Auto-push: ${status.autoPush ? 'enabled' : 'disabled'}`);
       }
     } else {
-      console.log('\nRun `term daemon start` to start the daemon');
+      console.log('\nRun `genie daemon start` to start the daemon');
     }
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);

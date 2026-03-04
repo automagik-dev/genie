@@ -96,9 +96,9 @@ Termux Extra Keys (F1-F3):
   F3 → Horizontal split
 
 Commands:
-  term shortcuts --tmux     Output tmux.conf snippet
-  term shortcuts --termux   Output termux.properties snippet
-  term shortcuts --install  Install to config files
+  genie shortcuts --tmux     Output tmux.conf snippet
+  genie shortcuts --termux   Output termux.properties snippet
+  genie shortcuts --install  Install to config files
 `);
 }
 

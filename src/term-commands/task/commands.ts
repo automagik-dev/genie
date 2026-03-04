@@ -1,7 +1,7 @@
 /**
  * Task Namespace — Beads issue management + dependency-aware task management.
  *
- * Groups all task/issue management commands under `term task` / `genie task`.
+ * Groups all task/issue management commands under `genie task`.
  *
  * Commands (beads integration - main):
  *   task create <title>   - Create new beads issue
@@ -172,7 +172,7 @@ export function registerTaskNamespace(program: Command): void {
         }
 
         if (filtered.length === 0) {
-          console.log('No tasks found. Use `term feed "<idea>"` or `term create "<title>"` to add one.');
+          console.log('No tasks found. Use `genie task create "<title>"` to add one.');
           return;
         }
 

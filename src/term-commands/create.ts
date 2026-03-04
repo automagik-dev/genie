@@ -46,8 +46,7 @@ export async function createCommand(title: string, options: CreateOptions = {}):
 
     if (!options.json) {
       console.log('\nNext steps:');
-      console.log(`   term work ${task.id}           - Start working on it`);
-      console.log(`   term spawn brainstorm -t ${task.id}  - Plan with brainstorm skill`);
+      console.log(`   genie work ${task.id}           - Start working on it`);
 
       if (backend.kind === 'beads') {
         console.log(`   bd show ${task.id}             - View details`);

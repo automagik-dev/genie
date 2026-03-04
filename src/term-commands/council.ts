@@ -2,9 +2,9 @@
  * Council command - Spawn dual Claude instances for multi-model deliberation
  *
  * Usage:
- *   term council                    - Use default preset
- *   term council --preset <name>    - Use specific preset
- *   term council --skill <skill>    - Override skill (default: council)
+ *   genie council                    - Use default preset
+ *   genie council --preset <name>    - Use specific preset
+ *   genie council --skill <skill>    - Override skill (default: council)
  *
  * Options:
  *   -s, --session <name>     - Target tmux session
@@ -170,6 +170,6 @@ export async function councilCommand(options: CouncilOptions = {}): Promise<void
   console.log('\n\x1b[32m✓ Council ready\x1b[0m');
   console.log(`\n  Window: ${session}:${windowName}`);
   console.log('  Switch panes: Ctrl-B + arrow keys');
-  console.log(`  Attach: term attach ${session}:${windowName}`);
+  console.log(`  Attach: tmux attach -t ${session}:${windowName}`);
   console.log('');
 }

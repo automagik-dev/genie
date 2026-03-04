@@ -43,7 +43,7 @@ Fix and re-review must be **separate dispatches** — never combine them in one 
 |---------|-----------|-------------|-------------------|
 | Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<fix prompt>")` | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
 | Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<fix prompt>", sandbox: true)` | `codex_subagent(task: "<review prompt>", sandbox: true)` |
-| OpenClaw | `term` CLI available | `term spawn --name "fixer-<slug>" --model sonnet` | `term spawn --name "reviewer-<slug>" --model sonnet` |
+| OpenClaw | `genie` CLI available | `genie worker spawn --role fixer` | `genie worker spawn --role reviewer` |
 
 Default to **Claude Code** when detection is ambiguous.
 

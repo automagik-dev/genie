@@ -1,18 +1,32 @@
 /**
- * Workers — Show worker status (legacy) + Worker Namespace (teams).
+ * Worker Namespace — unified worker lifecycle commands.
  *
- * Legacy (term workers):
- *   term workers           - List all workers and their states
- *   term workers --json    - Output as JSON
- *
- * Teams namespace (genie worker):
- *   genie worker spawn     - Spawn a worker with provider selection
- *   genie worker list      - List all workers with provider metadata
- *   genie worker kill <id> - Force kill a worker
- *   genie worker dashboard - Live status of all workers
+ * genie worker:
+ *   spawn     - Spawn a worker with provider selection
+ *   list      - List all workers with provider metadata
+ *   kill <id> - Force kill a worker
+ *   dashboard - Live status of all workers
+ *   suspend   - Suspend a worker (kill pane, preserve session)
+ *   watchdog  - Idle timeout watchdog
+ *   approve   - Auto-approve engine management
+ *   history   - Compressed session catch-up
+ *   answer    - Answer worker question
+ *   events    - Stream Claude Code events
+ *   close     - Close task and cleanup worker
+ *   ship      - Mark done, merge, cleanup
+ *   read      - Read worker pane output
+ *   exec      - Execute command in worker pane
  */
 
 import type { Command } from 'commander';
+import * as approveCmd from './approve.js';
+import * as closeCmd from './close.js';
+import * as eventsCmd from './events.js';
+import * as execCmd from './exec.js';
+import * as historyCmd from './history.js';
+import * as orchestrateCmd from './orchestrate.js';
+import * as readCmd from './read.js';
+import * as shipCmd from './ship.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
@@ -452,7 +466,7 @@ function formatElapsed(startedAt: string): string {
 }
 
 // ============================================================================
-// Legacy Workers Command (term workers)
+// Legacy Workers Command (genie worker list)
 // ============================================================================
 
 export async function workersCommand(options: WorkersOptions = {}): Promise<void> {
@@ -569,7 +583,7 @@ export async function workersCommand(options: WorkersOptions = {}): Promise<void
     // Cleanup dead workers (optional - could prompt)
     const deadWorkers = displayData.filter((w) => !w.alive);
     if (deadWorkers.length > 0) {
-      console.log(`\n⚠️  ${deadWorkers.length} dead worker(s) detected. Run \`term kill <name>\` to clean up.`);
+      console.log(`\n⚠️  ${deadWorkers.length} dead worker(s) detected. Run \`genie worker kill <name>\` to clean up.`);
     }
   } catch (error: any) {
     console.error(`❌ Error: ${error.message}`);
@@ -1236,5 +1250,122 @@ export function registerWorkerNamespace(program: Command): void {
         console.error(`Error: ${error.message}`);
         process.exit(1);
       }
+    });
+
+  // ============================================================================
+  // Commands migrated from genie term
+  // ============================================================================
+
+  // worker approve — auto-approve engine management
+  worker
+    .command('approve [request-id]')
+    .description('Auto-approve engine management and manual approval')
+    .option('--status', 'Show pending/approved/denied requests')
+    .option('--deny <request-id>', 'Manually deny a pending request')
+    .option('--start', 'Start the auto-approve engine')
+    .option('--stop', 'Stop the auto-approve engine')
+    .action(
+      async (
+        requestId: string | undefined,
+        options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean },
+      ) => {
+        await approveCmd.approveCommand(requestId, options);
+      },
+    );
+
+  // worker history — compressed session catch-up
+  worker
+    .command('history <worker>')
+    .description('Show compressed session history for a worker (catch-up)')
+    .option('--full', 'Show full conversation without compression')
+    .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
+    .option('--json', 'Output as JSON')
+    .option('--raw', 'Output raw JSONL entries')
+    .option('--log-file <path>', 'Direct path to log file (for testing)')
+    .action(async (w: string, options: historyCmd.HistoryOptions) => {
+      await historyCmd.historyCommand(w, options);
+    });
+
+  // worker answer — answer worker question
+  worker
+    .command('answer <worker> <choice>')
+    .description('Answer a question for a worker (use "text:..." for text input)')
+    .action(async (w: string, choice: string) => {
+      await orchestrateCmd.answerQuestion(w, choice);
+    });
+
+  // worker events — stream Claude Code events
+  worker
+    .command('events [pane-id]')
+    .description('Stream Claude Code events from a pane or all workers')
+    .option('--json', 'Output events as JSON')
+    .option('-f, --follow', 'Continuous tailing (like tail -f)')
+    .option('-n, --lines <number>', 'Number of recent events to show (default: 20)', '20')
+    .option('--emit', 'Write events to .genie/events/<pane-id>.jsonl while tailing')
+    .option('--all', 'Aggregate events from all active workers')
+    .action(
+      async (
+        paneId: string | undefined,
+        options: { json?: boolean; follow?: boolean; lines?: string; emit?: boolean; all?: boolean },
+      ) => {
+        await eventsCmd.eventsCommand(paneId, {
+          json: options.json,
+          follow: options.follow,
+          lines: options.lines ? Number.parseInt(options.lines, 10) : undefined,
+          emit: options.emit,
+          all: options.all,
+        });
+      },
+    );
+
+  // worker close — close task and cleanup worker
+  worker
+    .command('close <task-id>')
+    .description('Close task/issue and cleanup worker')
+    .option('--no-sync', 'Skip bd sync (beads only)')
+    .option('--keep-worktree', "Don't remove the worktree")
+    .option('--merge', 'Merge worktree changes to main branch')
+    .option('-y, --yes', 'Skip confirmation')
+    .action(async (taskId: string, options: closeCmd.CloseOptions) => {
+      await closeCmd.closeCommand(taskId, options);
+    });
+
+  // worker ship — mark done, merge, cleanup
+  worker
+    .command('ship <task-id>')
+    .description('Mark task as done and cleanup worker')
+    .option('--keep-worktree', "Don't remove the worktree")
+    .option('--merge', 'Merge worktree changes to main branch')
+    .option('-y, --yes', 'Skip confirmation')
+    .action(async (taskId: string, options: shipCmd.ShipOptions) => {
+      await shipCmd.shipCommand(taskId, options);
+    });
+
+  // worker read — read worker pane output
+  worker
+    .command('read <target>')
+    .description('Read terminal output from a worker pane')
+    .option('-n, --lines <number>', 'Number of lines to read')
+    .option('--from <line>', 'Start line')
+    .option('--to <line>', 'End line')
+    .option('--range <range>', 'Line range (e.g., "10-20")')
+    .option('--search <text>', 'Search for text')
+    .option('--grep <pattern>', 'Grep for pattern')
+    .option('-f, --follow', 'Follow mode (like tail -f)')
+    .option('--all', 'Show all output')
+    .option('-r, --reverse', 'Reverse order')
+    .option('--json', 'Output as JSON')
+    .action(async (target: string, options: readCmd.ReadOptions) => {
+      await readCmd.readSessionLogs(target, options);
+    });
+
+  // worker exec — execute command in worker pane
+  worker
+    .command('exec <target> <command>')
+    .description('Execute command in a worker pane')
+    .option('-q, --quiet', 'Suppress output')
+    .option('-t, --timeout <ms>', 'Timeout in milliseconds')
+    .action(async (target: string, command: string, options: execCmd.ExecOptions) => {
+      await execCmd.executeInSession(target, command, options);
     });
 }

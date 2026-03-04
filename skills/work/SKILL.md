@@ -62,24 +62,24 @@ codex_subagent(
 
 Isolation and model managed by Codex runtime. Collect responses via native API.
 
-### OpenClaw (via `term`)
+### OpenClaw (via `genie`)
 
-Three-layer chain: OpenClaw → `term` → Claude Code → Teams.
+Three-layer chain: OpenClaw → `genie` → Claude Code → Teams.
 
 ```bash
 # Heavy multi-file work with bead tracking
 bd create "<task title>" --type task
-term work <bead-id>
+genie work <bead-id>
 
 # Or spawn directly
-term spawn --name "worker-<slug>" --model sonnet
+genie worker spawn --role implementor
 
 # Monitor
-term workers
-term session read <session>
+genie worker list
+genie worker read <worker>
 ```
 
-Fallback: `term work <task-name> --inline` when beads unavailable. Use timeouts — 3 layers of indirection can stall.
+Fallback when beads unavailable: use timeouts — 3 layers of indirection can stall.
 
 ## Escalation
 

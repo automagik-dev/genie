@@ -29,7 +29,7 @@ This wish addresses three bugs found during Sofia's field report.
 
 ## Success Criteria
 
-- [ ] term work handles missing tasks.json
+- [ ] genie work handles missing tasks.json
 - [x] beads LEGACY DATABASE fallback
 - [ ] actionable error messages
 

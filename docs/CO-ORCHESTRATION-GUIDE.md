@@ -9,13 +9,13 @@ The system enables multiple Claude agents to work on different tasks simultaneou
 ```
 Human (Orchestrator)
     │
-    ├── term work bd-1  ──▶  Worker 1 (Claude in pane %1)
+    ├── genie work bd-1  ──▶  Worker 1 (Claude in pane %1)
     │                              └── worktree: .worktrees/bd-1/
     │
-    ├── term work bd-2  ──▶  Worker 2 (Claude in pane %2)
+    ├── genie work bd-2  ──▶  Worker 2 (Claude in pane %2)
     │                              └── worktree: .worktrees/bd-2/
     │
-    └── term workers    ──▶  Status dashboard
+    └── genie worker list ──▶  Status dashboard
 ```
 
 ## Prerequisites
@@ -28,7 +28,7 @@ Human (Orchestrator)
 
 ```bash
 # 1. Start the beads daemon for auto-sync
-term daemon start
+genie daemon start
 
 # 2. Create issues to work on
 bd create "Implement user authentication"
@@ -36,16 +36,16 @@ bd create "Add unit tests for auth module"
 bd create "Update API documentation"
 
 # 3. Start a worker on the first issue
-term work bd-1
+genie work bd-1
 
 # 4. Check worker status
-term workers
+genie worker list
 
 # 5. When worker needs approval
-term approve bd-1
+genie worker approve
 
 # 6. When done, close the issue
-term close bd-1
+genie worker close bd-1
 ```
 
 ## Detailed Workflow
@@ -75,10 +75,10 @@ Start workers for ready issues:
 
 ```bash
 # Work on a specific issue
-term work bd-1
+genie work bd-1
 
 # Or let the system pick the next ready issue
-term work next
+genie work next
 
 # Options:
 #   --no-worktree    Use shared repo (no isolation)
@@ -86,7 +86,7 @@ term work next
 #   --prompt <msg>   Custom initial prompt
 ```
 
-**What happens when you run `term work bd-1`:**
+**What happens when you run `genie work bd-1`:**
 1. Daemon starts (if not running) for auto-sync
 2. Issue is claimed (status → in_progress)
 3. Worktree created via `bd worktree create bd-1`
@@ -99,20 +99,10 @@ term work next
 
 ```bash
 # Check all workers
-term workers
-
-# Output:
-# ┌─────────────────────────────────────────────────────────────────┐
-# │ WORKERS                                                         │
-# ├──────────┬──────────┬───────────────────────────┬──────────┬────┤
-# │ Name     │ Pane     │ Task                      │ State    │Time│
-# ├──────────┼──────────┼───────────────────────────┼──────────┼────┤
-# │ bd-1     │ %16      │ "Add login endpoint..."   │ working  │ 5m │
-# │ bd-2     │ %17      │ "Create user registra..." │ ⚠️ perm  │ 2m │
-# └──────────┴──────────┴───────────────────────────┴──────────┴────┘
+genie worker list
 
 # JSON output for scripting
-term workers --json
+genie worker list --json
 ```
 
 **Worker States:**
@@ -129,20 +119,14 @@ term workers --json
 
 **Approve permissions:**
 ```bash
-term approve bd-1        # Approve pending permission
-term approve bd-1 --deny # Deny permission
+genie worker approve           # Approve pending permission
+genie worker approve --start   # Start auto-approve engine
 ```
 
 **Answer questions:**
 ```bash
-term answer bd-1 1              # Select option 1
-term answer bd-1 "text:custom"  # Provide custom text answer
-```
-
-**Send additional instructions:**
-```bash
-# Focus the worker pane and type directly, or:
-term send <session> "Additional instructions here" --pane %16
+genie worker answer bd-1 1              # Select option 1
+genie worker answer bd-1 "text:custom"  # Provide custom text answer
 ```
 
 ### Phase 5: Closing Issues
@@ -151,7 +135,7 @@ When a worker completes its task:
 
 ```bash
 # Close issue and cleanup worker
-term close bd-1
+genie worker close bd-1
 
 # Options:
 #   --merge          Merge worktree branch to main before cleanup
@@ -172,11 +156,7 @@ term close bd-1
 If a worker is stuck or needs to be terminated:
 
 ```bash
-term kill bd-1
-
-# Options:
-#   --keep-worktree  Preserve worktree for manual inspection
-#   -y, --yes        Skip confirmation
+genie worker kill bd-1
 ```
 
 Note: This does NOT close the issue. The task remains `in_progress` in beads.
@@ -186,10 +166,10 @@ Note: This does NOT close the issue. The task remains `in_progress` in beads.
 The beads daemon auto-commits and syncs changes:
 
 ```bash
-term daemon start     # Start with auto-commit
-term daemon status    # Check if running
-term daemon stop      # Stop daemon
-term daemon restart   # Restart with fresh config
+genie daemon start     # Start with auto-commit
+genie daemon status    # Check if running
+genie daemon stop      # Stop daemon
+genie daemon restart   # Restart with fresh config
 
 # Options for start/restart:
 #   --no-auto-commit  Disable auto-commit
@@ -207,11 +187,11 @@ bd create "Implement models"                 # bd-2
 bd update bd-2 --blocked-by bd-1
 
 # Start first task
-term work bd-1
+genie work bd-1
 
 # When bd-1 completes, bd-2 becomes ready
-term close bd-1
-term work next  # Picks bd-2
+genie worker close bd-1
+genie work next  # Picks bd-2
 ```
 
 ### Pattern 2: Parallel Independent Tasks
@@ -223,44 +203,22 @@ bd create "Add settings page"
 bd create "Add notifications page"
 
 # Spawn multiple workers
-term work bd-1
-term work bd-2
-term work bd-3
+genie work bd-1
+genie work bd-2
+genie work bd-3
 
 # Monitor all
-term workers
+genie worker list
 ```
 
 ### Pattern 3: Review and Iterate
 
 ```bash
 # Worker completes, but needs revision
-# Don't close yet - send feedback
-term send genie "Please also add input validation" --pane %16
-
-# Or if already closed, reopen
+# Don't close yet — reopen and reassign
 bd update bd-1 --status open
-term work bd-1
+genie work bd-1
 ```
-
-## CLI Improvement Loop
-
-**Important:** When using this system, you may identify opportunities to improve the CLI itself. Do NOT implement these directly in your current work. Instead:
-
-1. Create an improvement issue:
-   ```bash
-   bd create "CLI: <improvement description>" --label cli-improvement
-   ```
-
-2. A dedicated `genie-cli-improver` worker handles these:
-   ```bash
-   term work <cli-improvement-issue>
-   ```
-
-3. This separation ensures:
-   - Current work stays focused
-   - CLI changes are properly isolated
-   - Improvements can be reviewed independently
 
 ## Environment Variables
 
@@ -273,8 +231,8 @@ term work bd-1
 ### Worker shows as dead but pane exists
 ```bash
 # The registry may be out of sync
-term kill <worker-id>  # Clean up registry entry
-term work <task-id>    # Start fresh
+genie worker kill <worker-id>  # Clean up registry entry
+genie work <task-id>           # Start fresh
 ```
 
 ### Worktree creation fails
@@ -293,44 +251,35 @@ bd daemon status
 bd daemon start --auto-commit
 ```
 
-### Permission loop
-If a worker keeps asking for the same permission:
-```bash
-# Check Claude's permission settings
-# Consider using --dangerously-skip-permissions for trusted repos
-```
-
 ## Best Practices
 
 1. **Clear issue titles**: Workers use titles as context
 2. **One task per worker**: Keep issues focused
 3. **Use dependencies**: `--blocked-by` prevents premature work
-4. **Review before closing**: Check worker output before `term close`
+4. **Review before closing**: Check worker output before `genie worker close`
 5. **Use worktrees**: They provide isolation and can be reviewed independently
 6. **Keep daemon running**: Ensures beads state is synced to git
-7. **Delegate CLI improvements**: Create issues, don't implement inline
 
 ## Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `term work <bd-id>` | Spawn worker for issue |
-| `term work next` | Work on next ready issue |
-| `term workers` | List all workers |
-| `term approve <id>` | Approve permission |
-| `term answer <id> <choice>` | Answer question |
-| `term send <id> <msg>` | Send message (with Enter) |
-| `term send <id> <keys> --no-enter` | Send raw keys |
-| `term watch <id>` | Watch session events in real-time |
-| `term run <id> <msg>` | Fire-and-forget with auto-approve |
-| `term info <id>` | Session info (windows/panes) |
-| `term close <id>` | Close issue and cleanup |
-| `term kill <id>` | Force kill worker |
-| `term daemon start` | Start beads daemon |
-| `term daemon stop` | Stop beads daemon |
-| `term daemon status` | Show daemon status |
-| `term orc status <id>` | Claude state (idle/busy/permission) |
-| `term orc start <id>` | Start Claude with monitoring |
+| `genie work <bd-id>` | Spawn worker for issue |
+| `genie work next` | Work on next ready issue |
+| `genie worker list` | List all workers |
+| `genie worker approve` | Approve permission / manage auto-approve |
+| `genie worker answer <id> <choice>` | Answer question |
+| `genie worker history <id>` | Compressed session catch-up |
+| `genie worker events [pane-id]` | Stream Claude Code events |
+| `genie worker close <id>` | Close issue and cleanup |
+| `genie worker ship <id>` | Mark done, merge, cleanup |
+| `genie worker kill <id>` | Force kill worker |
+| `genie worker read <id>` | Read worker pane output |
+| `genie worker exec <id> <cmd>` | Execute command in worker pane |
+| `genie daemon start` | Start beads daemon |
+| `genie daemon stop` | Stop beads daemon |
+| `genie daemon status` | Show daemon status |
+| `genie council` | Spawn dual-model deliberation |
 
 ## Architecture
 
@@ -366,10 +315,8 @@ If a worker keeps asking for the same permission:
 ## Next Steps
 
 After reading this guide:
-1. Start with `term daemon start`
+1. Start with `genie daemon start`
 2. Create a few test issues with `bd create`
-3. Try `term work <id>` to spawn your first worker
+3. Try `genie work <id>` to spawn your first worker
 4. Practice the workflow with simple tasks
 5. Scale up to multi-worker orchestration
-
-Happy co-orchestrating!

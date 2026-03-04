@@ -1,14 +1,14 @@
 /**
- * Term History Command - Session catch-up with compression
+ * Worker History Command - Session catch-up with compression
  *
  * Produces a compressed summary of a worker's session by parsing
  * Claude's JSONL logs and extracting key events.
  *
  * Usage:
- *   term history <worker>          # Compressed summary
- *   term history <worker> --full   # Full conversation
- *   term history <worker> --since 5  # Last 5 exchanges
- *   term history <worker> --json   # JSON output
+ *   genie worker history <worker>          # Compressed summary
+ *   genie worker history <worker> --full   # Full conversation
+ *   genie worker history <worker> --since 5  # Last 5 exchanges
+ *   genie worker history <worker> --json   # JSON output
  */
 
 import * as claudeLogs from '../lib/claude-logs.js';
@@ -451,7 +451,7 @@ export async function historyCommand(workerIdOrName: string, options: HistoryOpt
 
     if (!worker) {
       console.error(`❌ Worker "${workerIdOrName}" not found.`);
-      console.error('   Run `term workers` to see active workers.');
+      console.error('   Run `genie worker list` to see active workers.');
       process.exit(1);
     }
 
