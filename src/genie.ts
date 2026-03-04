@@ -2,10 +2,7 @@
 
 /**
  * genie — Single entrypoint CLI with namespaces:
- *   team, task, worker, msg, term
- *
- * DEC-1: One entrypoint (`genie`), with `genie term` as namespaced
- * low-level tmux operations. No split command surface.
+ *   team, task, worker, msg + top-level: work, daemon, council
  */
 
 import { Command } from 'commander';
@@ -32,11 +29,13 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { VERSION } from './lib/version.js';
 
+import * as councilCmd from './term-commands/council.js';
+import * as daemonCmd from './term-commands/daemon.js';
 import { registerMsgNamespace } from './term-commands/msg.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 // Provider-selectable orchestration namespaces (genie-cli-teams)
 import { registerTeamNamespace } from './term-commands/team.js';
-import { registerTermNamespace } from './term-commands/term.js';
+import * as workCmd from './term-commands/work.js';
 import { registerWorkerNamespace } from './term-commands/workers.js';
 
 const program = new Command();
@@ -174,6 +173,76 @@ registerTeamNamespace(program);
 registerWorkerNamespace(program);
 registerMsgNamespace(program);
 registerTaskNamespace(program);
-registerTermNamespace(program);
+
+// ============================================================================
+// Top-level commands (migrated from genie term)
+// ============================================================================
+
+// genie work <target> — spawn worker bound to beads issue
+program
+  .command('work <target>')
+  .description('Spawn worker bound to beads issue (target: bd-id, "next", or "wish")')
+  .option('--no-worktree', 'Use shared repo instead of worktree')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--focus', 'Focus the worker pane after spawning')
+  .option('-p, --prompt <message>', 'Custom initial prompt')
+  .option('--no-resume', 'Start fresh session even if previous exists')
+  .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
+  .option('--no-auto-approve', 'Disable auto-approve for this worker')
+  .option('--profile <name>', 'Worker profile to use')
+  .option('-n, --name <name>', 'Custom worker name (for N workers per task)')
+  .option('-r, --role <role>', 'Worker role (e.g., "main", "tests", "review")')
+  .option('--shared-worktree', 'Share worktree with existing worker on same task')
+  .action(async (target: string, options: workCmd.WorkOptions) => {
+    await workCmd.workCommand(target, options);
+  });
+
+// genie daemon — beads sync daemon
+const daemonProgram = program.command('daemon').description('Manage beads daemon for auto-sync');
+
+daemonProgram
+  .command('start')
+  .description('Start beads daemon (auto-commit, auto-sync)')
+  .option('--no-auto-commit', 'Disable auto-commit')
+  .option('--auto-push', 'Enable auto-push to remote')
+  .action(async (options: daemonCmd.DaemonStartOptions) => {
+    await daemonCmd.startCommand(options);
+  });
+
+daemonProgram
+  .command('stop')
+  .description('Stop beads daemon')
+  .action(async () => {
+    await daemonCmd.stopCommand();
+  });
+
+daemonProgram
+  .command('status')
+  .description('Show daemon status')
+  .option('--json', 'Output as JSON')
+  .action(async (options: daemonCmd.DaemonStatusOptions) => {
+    await daemonCmd.statusCommand(options);
+  });
+
+daemonProgram
+  .command('restart')
+  .description('Restart beads daemon')
+  .option('--no-auto-commit', 'Disable auto-commit')
+  .option('--auto-push', 'Enable auto-push to remote')
+  .action(async (options: daemonCmd.DaemonStartOptions) => {
+    await daemonCmd.restartCommand(options);
+  });
+
+// genie council — dual-model deliberation
+program
+  .command('council')
+  .description('Spawn dual Claude instances for multi-model deliberation')
+  .option('-s, --session <name>', 'Target tmux session')
+  .option('--preset <name>', 'Council preset to use')
+  .option('--skill <skill>', 'Skill to load on both instances')
+  .option('--no-focus', "Don't focus the new window")
+  .action(async (options: councilCmd.CouncilOptions) => {
+    await councilCmd.councilCommand(options);
+  });
 
 program.parse();

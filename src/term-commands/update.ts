@@ -2,10 +2,10 @@
  * Update command - Update task properties (status, title, blockedBy)
  *
  * Usage:
- *   term update <task-id> --status <status>
- *   term update <task-id> --title <title>
- *   term update <task-id> --blocked-by <id1,id2,...>
- *   term update <task-id> --add-blocked-by <id>
+ *   genie task update <task-id> --status <status>
+ *   genie task update <task-id> --title <title>
+ *   genie task update <task-id> --blocked-by <id1,id2,...>
+ *   genie task update <task-id> --add-blocked-by <id>
  *
  * Status values: ready, in_progress, done, blocked
  */

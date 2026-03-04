@@ -2,11 +2,11 @@
  * Approve command - Auto-approve engine management and manual approval
  *
  * Usage:
- *   term approve --status                  - Show pending/approved/denied requests
- *   term approve <request-id>              - Manually approve a pending request
- *   term approve --deny <request-id>       - Manually deny a pending request
- *   term approve --start                   - Start the auto-approve engine
- *   term approve --stop                    - Stop the auto-approve engine
+ *   genie worker approve --status                  - Show pending/approved/denied requests
+ *   genie worker approve <request-id>              - Manually approve a pending request
+ *   genie worker approve --deny <request-id>       - Manually deny a pending request
+ *   genie worker approve --start                   - Start the auto-approve engine
+ *   genie worker approve --stop                    - Stop the auto-approve engine
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -270,7 +270,7 @@ export interface ApproveCommandOptions {
 }
 
 /**
- * Main CLI command handler for `term approve`.
+ * Main CLI command handler for `genie worker approve`.
  *
  * Dispatches to the appropriate sub-function based on options:
  * - --status: show pending/approved/denied requests
@@ -352,9 +352,9 @@ export async function approveCommand(requestId: string | undefined, options: App
 
   // No option provided - show help
   console.log('Usage:');
-  console.log('  term approve --status              Show pending/approved/denied requests');
-  console.log('  term approve <request-id>          Manually approve a pending request');
-  console.log('  term approve --deny <request-id>   Manually deny a pending request');
-  console.log('  term approve --start               Start the auto-approve engine');
-  console.log('  term approve --stop                Stop the auto-approve engine');
+  console.log('  genie worker approve --status              Show pending/approved/denied requests');
+  console.log('  genie worker approve <request-id>          Manually approve a pending request');
+  console.log('  genie worker approve --deny <request-id>   Manually deny a pending request');
+  console.log('  genie worker approve --start               Start the auto-approve engine');
+  console.log('  genie worker approve --stop                Stop the auto-approve engine');
 }

@@ -73,7 +73,7 @@ Validate any artifact against its wish criteria. Dispatch as a subagent — neve
 |---------|-----------|---------|
 | Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
 | Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<review prompt>", sandbox: true)` |
-| OpenClaw | `term` CLI available | `term spawn --name "reviewer-<slug>" --model sonnet` |
+| OpenClaw | `genie` CLI available | `genie worker spawn --role reviewer` |
 
 Default to **Claude Code** when detection is ambiguous.
 
