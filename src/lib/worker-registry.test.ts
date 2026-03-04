@@ -365,7 +365,7 @@ describe('findByWindow', () => {
     const { mkdirSync: mkdirs } = await import('node:fs');
     const { join: joinPath } = await import('node:path');
     const { homedir: home } = await import('node:os');
-    const configDir = joinPath(home(), '.config', 'genie');
+    const configDir = joinPath(home(), '.genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
 
@@ -390,7 +390,7 @@ describe('findByWindow', () => {
     const { mkdirSync: mkdirs } = await import('node:fs');
     const { join: joinPath } = await import('node:path');
     const { homedir: home } = await import('node:os');
-    const configDir = joinPath(home(), '.config', 'genie');
+    const configDir = joinPath(home(), '.genie');
     mkdirs(configDir, { recursive: true });
     writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
 

@@ -733,6 +733,21 @@ async function handleWorkerSpawn(options: {
 // ============================================================================
 
 type WorkerListEntry = { worker: registry.Worker; liveState: string; lastMsg: string | null; dead: boolean };
+type StoppedEntry = { template: registry.WorkerTemplate };
+
+/** Find templates with no corresponding active worker. */
+async function collectStoppedTemplates(activeEntries: WorkerListEntry[]): Promise<StoppedEntry[]> {
+  const templates = await registry.listTemplates();
+  const activeIds = new Set(activeEntries.map((e) => e.worker.id));
+  const activeRoles = new Set(activeEntries.map((e) => e.worker.role).filter(Boolean));
+  const stopped: StoppedEntry[] = [];
+  for (const t of templates) {
+    if (!activeIds.has(t.id) && !(t.role && activeRoles.has(t.role))) {
+      stopped.push({ template: t });
+    }
+  }
+  return stopped;
+}
 
 /** Clean up a worker's native team registration. */
 async function cleanupWorkerNativeTeam(w: registry.Worker): Promise<void> {
@@ -792,17 +807,64 @@ async function processSuspendedWorker(
   return { entry: { worker: w, liveState: '\u{1F4A4} suspended', lastMsg, dead: false } };
 }
 
+function formatWorkerRow(
+  id: string,
+  provider: string,
+  team: string,
+  role: string,
+  state: string,
+  time: string,
+  lastMsg: string,
+  cwd: string,
+): string {
+  return `${id.padEnd(20).substring(0, 20)}${(provider || '-').padEnd(10)}${(team || '-').padEnd(10).substring(0, 10)}${(role || '-').padEnd(14).substring(0, 14)}${state.padEnd(16).substring(0, 16)}${time.padEnd(8)}${(lastMsg || '-').padEnd(10)}${cwd}`;
+}
+
+function printWorkerRows(entries: WorkerListEntry[], stopped: StoppedEntry[]): void {
+  for (const { worker: w, liveState, lastMsg } of entries) {
+    console.log(
+      formatWorkerRow(
+        w.id,
+        w.provider || '-',
+        w.team || '-',
+        w.role || '-',
+        liveState,
+        registry.getElapsedTime(w).formatted,
+        lastMsg ?? '-',
+        w.repoPath || '-',
+      ),
+    );
+  }
+
+  for (const { template: t } of stopped) {
+    const lastActivity = t.lastSpawnedAt ? registry.formatElapsed(new Date(t.lastSpawnedAt)) : '-';
+    console.log(
+      formatWorkerRow(
+        t.id,
+        t.provider || '-',
+        t.team || '-',
+        t.role || '-',
+        'stopped',
+        '-',
+        lastActivity,
+        t.cwd || '-',
+      ),
+    );
+  }
+}
+
 function printWorkerList(
   entries: WorkerListEntry[],
   pruned: string[],
-  options: { json?: boolean; prune?: boolean },
+  stopped: StoppedEntry[],
+  options: { json?: boolean; prune?: boolean; running?: boolean },
 ): void {
   if (options.json) {
-    printWorkerListJson(entries, pruned);
+    printWorkerListJson(entries, pruned, stopped);
     return;
   }
 
-  if (entries.length === 0 && pruned.length === 0) {
+  if (entries.length === 0 && stopped.length === 0 && pruned.length === 0) {
     console.log('No workers found.');
     console.log('  Spawn one: genie worker spawn --role implementor');
     return;
@@ -810,23 +872,20 @@ function printWorkerList(
 
   console.log('');
   console.log('WORKERS');
-  console.log('-'.repeat(90));
-  console.log(
-    `${'ID'.padEnd(20)}${'PROVIDER'.padEnd(10)}${'TEAM'.padEnd(10)}${'ROLE'.padEnd(14)}${'STATE'.padEnd(16)}${'TIME'.padEnd(8)}LAST MSG`,
-  );
-  console.log('-'.repeat(90));
+  console.log('-'.repeat(120));
+  console.log(formatWorkerRow('ID', 'PROVIDER', 'TEAM', 'ROLE', 'STATE', 'TIME', 'LAST MSG', 'CWD'));
+  console.log('-'.repeat(120));
 
-  for (const { worker: w, liveState, lastMsg } of entries) {
-    const id = w.id.padEnd(20).substring(0, 20);
-    const provider = (w.provider || '-').padEnd(10);
-    const team = (w.team || '-').padEnd(10).substring(0, 10);
-    const role = (w.role || '-').padEnd(14).substring(0, 14);
-    const state = liveState.padEnd(16).substring(0, 16);
-    const time = registry.getElapsedTime(w).formatted.padEnd(8);
-    const msg = lastMsg ?? '-';
-    console.log(`${id}${provider}${team}${role}${state}${time}${msg}`);
-  }
+  printWorkerRows(entries, stopped);
+  printWorkerListFooter(entries, pruned, stopped, options);
+}
 
+function printWorkerListFooter(
+  entries: WorkerListEntry[],
+  pruned: string[],
+  stopped: StoppedEntry[],
+  options: { prune?: boolean; running?: boolean },
+): void {
   if (pruned.length > 0) {
     console.log('');
     console.log(`Pruned ${pruned.length} dead worker(s): ${pruned.join(', ')}`);
@@ -836,10 +895,13 @@ function printWorkerList(
   if (deadCount > 0 && !options.prune) {
     console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
   }
+  if (stopped.length > 0 && !options.running) {
+    console.log(`\n${stopped.length} stopped worker(s) (templates). Use -r to hide.`);
+  }
   console.log('');
 }
 
-function printWorkerListJson(entries: WorkerListEntry[], pruned: string[]): void {
+function printWorkerListJson(entries: WorkerListEntry[], pruned: string[], stopped: StoppedEntry[]): void {
   const result: Record<string, unknown>[] = entries.map(({ worker: w, liveState, lastMsg }) => ({
     id: w.id,
     provider: w.provider,
@@ -850,6 +912,16 @@ function printWorkerListJson(entries: WorkerListEntry[], pruned: string[]): void
     elapsed: registry.getElapsedTime(w).formatted,
     lastMessage: lastMsg ?? null,
   }));
+  for (const { template: t } of stopped) {
+    result.push({
+      id: t.id,
+      provider: t.provider,
+      team: t.team,
+      role: t.role ?? null,
+      state: 'stopped',
+      lastSpawnedAt: t.lastSpawnedAt,
+    });
+  }
   if (pruned.length > 0) {
     result.push(...pruned.map((id) => ({ id, state: 'dead (pruned)' })));
   }
@@ -1007,10 +1079,11 @@ export function registerWorkerNamespace(program: Command): void {
   worker
     .command('list')
     .alias('ls')
-    .description('List all workers with provider metadata')
+    .description('List all workers (active + stopped templates)')
     .option('--json', 'Output as JSON')
     .option('--prune', 'Auto-remove dead workers from registry')
-    .action(async (options: { json?: boolean; prune?: boolean }) => {
+    .option('-r, --running', 'Show only active workers (hide stopped)')
+    .action(async (options: { json?: boolean; prune?: boolean; running?: boolean }) => {
       try {
         const workers = await registry.list();
         const entries: WorkerListEntry[] = [];
@@ -1022,7 +1095,9 @@ export function registerWorkerNamespace(program: Command): void {
           if (result.prunedId) pruned.push(result.prunedId);
         }
 
-        printWorkerList(entries, pruned, options);
+        const stopped = options.running ? [] : await collectStoppedTemplates(entries);
+
+        printWorkerList(entries, pruned, stopped, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -1046,15 +1121,23 @@ export function registerWorkerNamespace(program: Command): void {
         killWorkerPane(w);
         cleanupRelayFiles(id);
         await cleanupWorkerNativeTeam(w);
+
+        // Save last session ID into template before unregistering so
+        // ensureWorkerAlive can resume with --resume on next message.
+        if (w.claudeSessionId) {
+          const templates = await registry.listTemplates();
+          const tmpl = templates.find((t) => t.id === id || t.id === w.role || t.role === w.role);
+          if (tmpl) {
+            await registry.saveTemplate({ ...tmpl, lastSessionId: w.claudeSessionId });
+          }
+        }
+
         await registry.unregister(id);
 
-        // Remove spawn template to prevent auto-respawn of killed workers
-        if (w.role) {
-          await registry.removeTemplate(w.role).catch(() => {});
-        }
-        await registry.removeTemplate(id).catch(() => {});
+        // NOTE: templates are intentionally preserved so that
+        // ensureWorkerAlive can auto-respawn the worker on next message.
 
-        console.log(`Worker "${id}" killed and unregistered.`);
+        console.log(`Worker "${id}" killed and unregistered (template preserved).`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);

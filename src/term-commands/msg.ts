@@ -6,8 +6,50 @@
  *   genie msg inbox <worker>
  */
 
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as protocolRouter from '../lib/protocol-router.js';
+import * as registry from '../lib/worker-registry.js';
+
+/**
+ * Auto-detect the sender identity based on execution context.
+ *
+ * Detection cascade:
+ *   1. GENIE_AGENT_NAME env var (explicit override)
+ *   2. TMUX_PANE → worker registry (findByPane) → role or id
+ *   3. TMUX_PANE → native team config members (match tmuxPaneId) → name
+ *   4. Fallback: 'cli'
+ */
+async function detectSenderIdentity(teamName: string): Promise<string> {
+  const envName = process.env.GENIE_AGENT_NAME;
+  if (envName) return envName;
+
+  const paneId = process.env.TMUX_PANE;
+  if (!paneId) return 'cli';
+
+  const worker = await registry.findByPane(paneId);
+  if (worker) return worker.role ?? worker.id;
+
+  return (await findMemberByPane(teamName, paneId)) ?? 'cli';
+}
+
+/** Look up a pane ID in the native team config and return the member name. */
+async function findMemberByPane(teamName: string, paneId: string): Promise<string | null> {
+  const configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+  const sanitized = teamName.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+  const cfgPath = join(configDir, 'teams', sanitized, 'config.json');
+  try {
+    const raw = await readFile(cfgPath, 'utf-8');
+    const config = JSON.parse(raw);
+    const members: { tmuxPaneId?: string; name: string }[] = config.members ?? [];
+    const match = members.find((m) => m.tmuxPaneId === paneId);
+    return match?.name ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function printInbox(
   worker: string,
@@ -41,12 +83,13 @@ export function registerMsgNamespace(program: Command): void {
     .command('send <body>')
     .description('Send a message to a worker')
     .option('--to <worker>', 'Recipient worker ID (default: team-lead)', 'team-lead')
-    .option('--from <sender>', 'Sender ID (default: cli)', 'cli')
+    .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <team>', 'Team name (default: genie)', 'genie')
-    .action(async (body: string, options: { to: string; from: string; team: string }) => {
+    .action(async (body: string, options: { to: string; from?: string; team: string }) => {
       try {
         const repoPath = process.cwd();
-        const result = await protocolRouter.sendMessage(repoPath, options.from, options.to, body, options.team);
+        const from = options.from ?? (await detectSenderIdentity(options.team));
+        const result = await protocolRouter.sendMessage(repoPath, from, options.to, body, options.team);
 
         if (result.delivered) {
           console.log(`Message sent to "${result.workerId}".`);
