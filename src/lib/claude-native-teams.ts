@@ -455,14 +455,19 @@ export async function registerAsTeamLead(
   const leadAgentId = `team-lead@${sanitized}`;
   const existingLead = config.members.find((m) => m.agentId === leadAgentId);
 
+  const resolvedPaneId = opts?.tmuxPaneId ?? process.env.TMUX_PANE;
   if (!existingLead || !existingLead.isActive) {
     await registerNativeMember(teamName, {
       agentName: 'team-lead',
       agentType: 'general-purpose',
       color: opts?.color ?? 'blue',
-      tmuxPaneId: opts?.tmuxPaneId ?? process.env.TMUX_PANE,
+      tmuxPaneId: resolvedPaneId,
       cwd: opts?.cwd ?? process.cwd(),
     });
+  } else if (resolvedPaneId && existingLead.tmuxPaneId !== resolvedPaneId) {
+    // Update stale pane ID on existing active lead
+    existingLead.tmuxPaneId = resolvedPaneId;
+    await saveConfig(teamName, config);
   }
 
   // Ensure the team-lead inbox exists

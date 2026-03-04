@@ -2,8 +2,8 @@
  * Worker Registry — Tracks worker state with provider metadata.
  *
  * Stores provider, transport, session, window, paneId, role, and skill
- * metadata for every spawned worker. Registry is persisted to
- * `.genie/workers.json` (repo-local) or `~/.config/genie/workers.json`.
+ * metadata for every spawned worker. Registry is persisted to a single
+ * global file at `~/.genie/workers.json`.
  */
 
 import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
@@ -112,23 +112,10 @@ interface WorkerRegistry {
 // Configuration
 // ============================================================================
 
-const CONFIG_DIR = join(homedir(), '.config', 'genie');
+const GLOBAL_DIR = join(homedir(), '.genie');
 
 function getRegistryFilePath(): string {
-  const cwd = process.cwd();
-  const repoGenie = join(cwd, '.genie');
-  try {
-    const { existsSync } = require('node:fs');
-    if (process.env.GENIE_WORKER_REGISTRY === 'global') {
-      return join(CONFIG_DIR, 'workers.json');
-    }
-    if (existsSync(repoGenie)) {
-      return join(repoGenie, 'workers.json');
-    }
-  } catch {
-    // ignore
-  }
-  return join(CONFIG_DIR, 'workers.json');
+  return join(GLOBAL_DIR, 'workers.json');
 }
 
 // ============================================================================
@@ -369,6 +356,16 @@ export function getElapsedTime(worker: Worker): { ms: number; formatted: string 
   }
 
   return { ms, formatted };
+}
+
+/** Format a Date as elapsed time string (e.g., "5m", "2h 30m"). */
+export function formatElapsed(date: Date): string {
+  const ms = Date.now() - date.getTime();
+  const minutes = Math.floor(ms / 60000);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return '<1m';
 }
 
 // ============================================================================

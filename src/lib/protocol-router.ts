@@ -49,6 +49,20 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
 }
 
 /**
+ * Find an existing live (non-suspended, pane alive) worker by fuzzy match.
+ * Used when registry.get() misses because the recipient is a role name.
+ */
+async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Worker | null> {
+  const allWorkers = await registry.list();
+  for (const w of allWorkers) {
+    if (w.state === 'suspended') continue;
+    const matches = w.id === recipientId || w.role === recipientId || `${w.team}:${w.role}` === recipientId;
+    if (matches && (await isPaneAlive(w.paneId))) return w;
+  }
+  return null;
+}
+
+/**
  * Ensure a worker is alive, auto-spawning from template if needed.
  * Handles suspended workers by resuming with --resume flag.
  */
@@ -58,6 +72,13 @@ async function ensureWorkerAlive(
 ): Promise<{ worker: registry.Worker; respawned: boolean } | null> {
   if (worker && worker.state !== 'suspended' && (await isPaneAlive(worker.paneId))) {
     return { worker, respawned: false };
+  }
+
+  // When worker is null (fuzzy recipient like a role name), check if there's
+  // already a live worker matching the recipientId before attempting to spawn.
+  if (!worker) {
+    const live = await findLiveWorkerFuzzy(recipientId);
+    if (live) return { worker: live, respawned: false };
   }
 
   if (!process.env.TMUX) return null;
