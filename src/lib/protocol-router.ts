@@ -155,6 +155,14 @@ async function deliverViaNativeInbox(
   const resolvedTeam = teamName ?? (await nativeTeams.discoverTeamName());
   if (!resolvedTeam) return null;
 
+  // Verify the recipient exists as a registered native team member
+  const config = await nativeTeams.loadConfig(resolvedTeam).catch(() => null);
+  if (!config) return null;
+  const memberExists = config.members?.some(
+    (m: { name?: string; agentId?: string }) => m.name === to || m.agentId === `${to}@${resolvedTeam}`,
+  );
+  if (!memberExists) return null;
+
   try {
     const message = await mailbox.send(repoPath, from, to, body);
     const nativeMsg: nativeTeams.NativeInboxMessage = {

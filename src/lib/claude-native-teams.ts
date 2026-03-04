@@ -132,7 +132,7 @@ async function releaseLock(path: string): Promise<void> {
 // Config Operations
 // ============================================================================
 
-async function loadConfig(teamName: string): Promise<NativeTeamConfig | null> {
+export async function loadConfig(teamName: string): Promise<NativeTeamConfig | null> {
   try {
     const content = await readFile(configPath(teamName), 'utf-8');
     return JSON.parse(content);
