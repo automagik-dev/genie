@@ -327,7 +327,7 @@ describe('Error paths', () => {
     ).rejects.toThrow(/not found/i);
   });
 
-  test('error message includes suggestion to run term workers', async () => {
+  test('error message includes suggestion to run genie worker list', async () => {
     try {
       await resolveTarget('ghost-worker', {
         checkLiveness: false,
@@ -337,7 +337,7 @@ describe('Error paths', () => {
       // Should not reach here
       expect(true).toBe(false);
     } catch (error: any) {
-      expect(error.message).toMatch(/term workers|term session ls/i);
+      expect(error.message).toMatch(/genie worker list|genie worker/i);
     }
   });
 });
