@@ -44,7 +44,7 @@
     }
   },
   "files": {
-    "ignore": ["node_modules", "dist", "*.min.js", ".genie", ".worktrees", "plugins/genie/scripts"]
+    "ignore": ["node_modules", "dist", "*.min.js", ".genie", ".worktrees", ".claude", "plugins/genie/scripts"]
   },
   "overrides": [
     {

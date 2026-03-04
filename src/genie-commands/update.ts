@@ -301,7 +301,7 @@ export async function updateCommand(): Promise<void> {
     console.log();
     console.log('Install method not configured. Please reinstall genie:');
     console.log(
-      '\x1b[36m  curl -fsSL https://raw.githubusercontent.com/namastexlabs/genie-cli/main/install.sh | bash\x1b[0m',
+      '\x1b[36m  curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash\x1b[0m',
     );
     console.log();
     process.exit(1);
