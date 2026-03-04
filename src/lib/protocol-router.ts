@@ -7,11 +7,11 @@
  * (DEC-7) and then pushes to the tmux pane when the worker is idle.
  */
 
+import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import * as mailbox from './mailbox.js';
 import { detectState } from './orchestrator/index.js';
 import { capturePaneContent, executeTmux, isPaneAlive } from './tmux.js';
-import * as registry from './worker-registry.js';
 
 // ============================================================================
 // Types

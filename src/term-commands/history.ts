@@ -11,8 +11,8 @@
  *   genie worker history <worker> --json   # JSON output
  */
 
+import * as workerRegistry from '../lib/agent-registry.js';
 import * as claudeLogs from '../lib/claude-logs.js';
-import * as workerRegistry from '../lib/worker-registry.js';
 
 // ============================================================================
 // Types

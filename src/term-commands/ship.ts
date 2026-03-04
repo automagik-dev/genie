@@ -13,10 +13,10 @@
 import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { $ } from 'bun';
+import * as registry from '../lib/agent-registry.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
-import * as registry from '../lib/worker-registry.js';
 import { cleanupEventFile } from './events.js';
 
 // Use beads registry only when enabled AND bd exists on PATH

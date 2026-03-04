@@ -7,6 +7,8 @@
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as registry from './agent-registry.js';
+import type { WorkerTemplate } from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import { buildLayoutCommand, resolveLayoutMode } from './mosaic-layout.js';
 import {
@@ -16,8 +18,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import * as registry from './worker-registry.js';
-import type { WorkerTemplate } from './worker-registry.js';
+import { ensureTeamWindow } from './tmux.js';
 
 const execAsync = promisify(exec);
 
@@ -87,11 +88,22 @@ export async function spawnWorkerFromTemplate(
   const fullCommand = buildFullCommand(launch);
   const workerId = await generateWorkerId(team, template.role);
 
-  const { stdout } = await execAsync(`tmux split-window -d -P -F '#{pane_id}' ${fullCommand}`);
+  // Resolve target window: if team is set, ensure a dedicated team window
+  const session = 'genie';
+  let teamWindow: { windowId: string; windowName: string } | null = null;
+  try {
+    teamWindow = await ensureTeamWindow(session, team, repoPath);
+  } catch {
+    /* best-effort — falls back to current pane */
+  }
+
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+  const { stdout } = await execAsync(`tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${fullCommand}`);
   const paneId = stdout.trim();
 
+  const layoutTarget = teamWindow ? `${session}:${teamWindow.windowName}` : `${session}:0`;
   try {
-    await execAsync(`tmux ${buildLayoutCommand('genie:0', resolveLayoutMode())}`);
+    await execAsync(`tmux ${buildLayoutCommand(layoutTarget, resolveLayoutMode())}`);
   } catch {
     /* best-effort */
   }
@@ -103,7 +115,7 @@ export async function spawnWorkerFromTemplate(
   const workerEntry: registry.Worker = {
     id: workerId,
     paneId,
-    session: 'genie',
+    session,
     provider: template.provider,
     transport: 'tmux',
     role: template.role,
@@ -119,6 +131,10 @@ export async function spawnWorkerFromTemplate(
     nativeAgentId: `${agentName}@${team}`,
     nativeColor: spawnColor,
     parentSessionId,
+    // Team window tracking
+    window: teamWindow?.windowName,
+    windowName: teamWindow?.windowName,
+    windowId: teamWindow?.windowId,
   };
 
   await registry.register(workerEntry);
