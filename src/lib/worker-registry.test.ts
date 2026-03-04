@@ -350,9 +350,8 @@ describe('Worker type: windowId field', () => {
 describe('findByWindow', () => {
   beforeEach(() => {
     cleanTestDir();
-    // We need to set cwd to test dir so the registry path resolves correctly
-    // Use global registry to avoid cwd dependency
-    process.env.GENIE_WORKER_REGISTRY = 'global';
+    // Point GENIE_HOME to isolated temp dir so tests don't clobber real registry
+    process.env.GENIE_HOME = '/tmp/worker-registry-test-global';
   });
 
   test('findByWindow returns worker with matching windowId', async () => {
@@ -361,24 +360,16 @@ describe('findByWindow', () => {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
     };
-    // Write to global registry location
-    const { mkdirSync: mkdirs } = await import('node:fs');
-    const { join: joinPath } = await import('node:path');
-    const { homedir: home } = await import('node:os');
-    const configDir = joinPath(home(), '.genie');
-    mkdirs(configDir, { recursive: true });
-    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
+    const testDir = '/tmp/worker-registry-test-global';
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, 'workers.json'), JSON.stringify(registry, null, 2));
 
     const found = await findByWindow('@4');
     expect(found).not.toBeNull();
     expect(found!.id).toBe('bd-42');
     expect(found!.windowId).toBe('@4');
 
-    // Cleanup
-    const { unlinkSync } = await import('node:fs');
-    try {
-      unlinkSync(joinPath(configDir, 'workers.json'));
-    } catch {}
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   test('findByWindow returns null for unknown window', async () => {
@@ -387,21 +378,14 @@ describe('findByWindow', () => {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
     };
-    const { mkdirSync: mkdirs } = await import('node:fs');
-    const { join: joinPath } = await import('node:path');
-    const { homedir: home } = await import('node:os');
-    const configDir = joinPath(home(), '.genie');
-    mkdirs(configDir, { recursive: true });
-    writeFileSync(joinPath(configDir, 'workers.json'), JSON.stringify(registry, null, 2));
+    const testDir = '/tmp/worker-registry-test-global';
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, 'workers.json'), JSON.stringify(registry, null, 2));
 
     const found = await findByWindow('@999');
     expect(found).toBeNull();
 
-    // Cleanup
-    const { unlinkSync } = await import('node:fs');
-    try {
-      unlinkSync(joinPath(configDir, 'workers.json'));
-    } catch {}
+    rmSync(testDir, { recursive: true, force: true });
   });
 });
 
@@ -412,8 +396,9 @@ describe('findByWindow', () => {
 afterAll(() => {
   try {
     rmSync(TEST_DIR, { recursive: true, force: true });
+    rmSync('/tmp/worker-registry-test-global', { recursive: true, force: true });
   } catch {
     // Ignore
   }
-  process.env.GENIE_WORKER_REGISTRY = undefined;
+  process.env.GENIE_HOME = undefined;
 });
