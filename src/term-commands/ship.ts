@@ -139,7 +139,7 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 /**
  * Kill and unregister a worker, cleaning up tmux and registries.
  */
-async function cleanupWorker(worker: registry.Worker): Promise<void> {
+async function cleanupWorker(worker: registry.Agent): Promise<void> {
   if (worker.windowName) {
     console.log(`💀 Killing worker window "${worker.windowName}"...`);
     try {
@@ -171,7 +171,7 @@ async function cleanupWorker(worker: registry.Worker): Promise<void> {
 /**
  * Find the worker for a task across registries.
  */
-async function findWorkerForTask(taskId: string): Promise<registry.Worker | null> {
+async function findWorkerForTask(taskId: string): Promise<registry.Agent | null> {
   if (useBeads) {
     const w = await beadsRegistry.findByTask(taskId);
     if (w) return w;
@@ -182,7 +182,7 @@ async function findWorkerForTask(taskId: string): Promise<registry.Worker | null
 /**
  * Build ship confirmation message.
  */
-function buildShipMessage(taskId: string, title: string, worker: registry.Worker | null, merge: boolean): string {
+function buildShipMessage(taskId: string, title: string, worker: registry.Agent | null, merge: boolean): string {
   const mergeNote = merge ? ', merge to main' : '';
   if (worker) return `Ship ${taskId} "${title}"? (mark done, kill worker pane ${worker.paneId}${mergeNote})`;
   return `Ship ${taskId} "${title}"? (mark done${mergeNote})`;
@@ -191,7 +191,7 @@ function buildShipMessage(taskId: string, title: string, worker: registry.Worker
 /**
  * Handle worktree operations for ship (merge + remove).
  */
-async function handleShipWorktree(worker: registry.Worker, taskId: string, options: ShipOptions): Promise<void> {
+async function handleShipWorktree(worker: registry.Agent, taskId: string, options: ShipOptions): Promise<void> {
   if (!worker.worktree || options.keepWorktree) return;
   if (options.merge) {
     console.log('🔀 Merging changes...');

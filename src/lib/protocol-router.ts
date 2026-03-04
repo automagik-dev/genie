@@ -53,12 +53,12 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
  * Priority: exact ID > role > team:role.
  * Only returns workers with alive panes (non-suspended).
  */
-async function resolveRecipient(recipientId: string): Promise<registry.Worker[]> {
+async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> {
   const allWorkers = await registry.list();
 
-  const byId: registry.Worker[] = [];
-  const byRole: registry.Worker[] = [];
-  const byTeamRole: registry.Worker[] = [];
+  const byId: registry.Agent[] = [];
+  const byRole: registry.Agent[] = [];
+  const byTeamRole: registry.Agent[] = [];
 
   for (const w of allWorkers) {
     if (w.state === 'suspended') continue;
@@ -78,7 +78,7 @@ async function resolveRecipient(recipientId: string): Promise<registry.Worker[]>
  * Find exactly one live worker by tiered match.
  * Returns null if zero or multiple matches (ambiguous).
  */
-async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Worker | null> {
+async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent | null> {
   const matches = await resolveRecipient(recipientId);
   return matches.length === 1 ? matches[0] : null;
 }
@@ -88,9 +88,9 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Worker
  * Handles suspended workers by resuming with --resume flag.
  */
 async function ensureWorkerAlive(
-  worker: registry.Worker | null,
+  worker: registry.Agent | null,
   recipientId: string,
-): Promise<{ worker: registry.Worker; respawned: boolean } | null> {
+): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
   if (worker && worker.state !== 'suspended' && (await isPaneAlive(worker.paneId))) {
     return { worker, respawned: false };
   }
@@ -156,7 +156,7 @@ async function ensureWorkerAlive(
 async function deliverToWorker(
   repoPath: string,
   from: string,
-  worker: registry.Worker,
+  worker: registry.Agent,
   body: string,
 ): Promise<DeliveryResult> {
   const message = await mailbox.send(repoPath, from, worker.id, body);
@@ -245,7 +245,7 @@ export async function sendMessage(
  * Write a Genie mailbox message to the Claude Code native inbox.
  * Best-effort — failures here don't block the Genie mailbox write.
  */
-async function writeToNativeInbox(worker: registry.Worker, message: mailbox.MailboxMessage): Promise<boolean> {
+async function writeToNativeInbox(worker: registry.Agent, message: mailbox.MailboxMessage): Promise<boolean> {
   try {
     const nativeMsg = mailbox.toNativeInboxMessage(message, worker.nativeColor ?? 'blue');
     const agentName = worker.role ?? worker.id;
@@ -262,7 +262,7 @@ async function writeToNativeInbox(worker: registry.Worker, message: mailbox.Mail
  * Used for non-native workers (e.g., Codex) that don't have
  * Claude Code's inbox polling. Best-effort — failures are non-fatal.
  */
-async function injectToTmuxPane(worker: registry.Worker, message: mailbox.MailboxMessage): Promise<boolean> {
+async function injectToTmuxPane(worker: registry.Agent, message: mailbox.MailboxMessage): Promise<boolean> {
   if (!worker.paneId) return false;
 
   // Validate paneId to prevent shell injection

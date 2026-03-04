@@ -75,7 +75,7 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 export async function spawnWorkerFromTemplate(
   template: WorkerTemplate,
   resumeSessionId?: string,
-): Promise<{ worker: registry.Worker; paneId: string; workerId: string }> {
+): Promise<{ worker: registry.Agent; paneId: string; workerId: string }> {
   const repoPath = template.cwd ?? process.cwd();
   const team = template.team;
 
@@ -112,7 +112,7 @@ export async function spawnWorkerFromTemplate(
   const agentName = template.role ?? 'worker';
   const isClaude = template.provider === 'claude';
 
-  const workerEntry: registry.Worker = {
+  const workerEntry: registry.Agent = {
     id: workerId,
     paneId,
     session,

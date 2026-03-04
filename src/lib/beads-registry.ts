@@ -9,7 +9,7 @@
  */
 
 import { $ } from 'bun';
-import type { Worker, WorkerState } from './worker-registry.js';
+import type { Agent, AgentState } from './agent-registry.js';
 
 // ============================================================================
 // Configuration
@@ -187,7 +187,7 @@ export async function deleteAgent(agentIdOrWorkerId: string): Promise<boolean> {
 /**
  * Map our WorkerState to beads agent states
  */
-function mapToBeadsState(state: WorkerState): string {
+function mapToBeadsState(state: AgentState): string {
   switch (state) {
     case 'spawning':
       return 'spawning';
@@ -211,7 +211,7 @@ function mapToBeadsState(state: WorkerState): string {
 /**
  * Map beads agent state to WorkerState
  */
-function mapFromBeadsState(beadsState: string): WorkerState {
+function mapFromBeadsState(beadsState: string): AgentState {
   switch (beadsState) {
     case 'spawning':
       return 'spawning';
@@ -233,7 +233,7 @@ function mapFromBeadsState(beadsState: string): WorkerState {
 /**
  * Set agent state
  */
-export async function setAgentState(workerId: string, state: WorkerState): Promise<void> {
+export async function setAgentState(workerId: string, state: AgentState): Promise<void> {
   const agent = await findAgentByWorkerId(workerId);
   if (!agent) {
     throw new Error(`Agent not found for worker ${workerId}`);
@@ -307,7 +307,7 @@ interface AgentMetadata {
 /**
  * Convert agent bead to Worker interface
  */
-function agentToWorker(agent: AgentBead, metadata: AgentMetadata): Worker {
+function agentToWorker(agent: AgentBead, metadata: AgentMetadata): Agent {
   return {
     id: metadata.taskId, // Worker ID matches task ID
     paneId: metadata.paneId,
@@ -328,7 +328,7 @@ function agentToWorker(agent: AgentBead, metadata: AgentMetadata): Worker {
 /**
  * Get a worker by ID
  */
-async function getWorker(workerId: string): Promise<Worker | null> {
+async function getWorker(workerId: string): Promise<Agent | null> {
   const agent = await findAgentByWorkerId(workerId);
   if (!agent) return null;
 
@@ -345,7 +345,7 @@ async function getWorker(workerId: string): Promise<Worker | null> {
 /**
  * List all workers
  */
-export async function listWorkers(): Promise<Worker[]> {
+export async function listWorkers(): Promise<Agent[]> {
   const { stdout, exitCode } = await runBd(['list', `--label=${AGENT_LABEL}`, '--json']);
 
   if (exitCode !== 0 || !stdout) return [];
@@ -353,7 +353,7 @@ export async function listWorkers(): Promise<Worker[]> {
   const agents = parseJson<Array<AgentBead & { metadata?: AgentMetadata }>>(stdout);
   if (!agents) return [];
 
-  const workers: Worker[] = [];
+  const workers: Agent[] = [];
   for (const agent of agents) {
     if (agent.metadata) {
       workers.push(agentToWorker(agent, agent.metadata));
@@ -366,7 +366,7 @@ export async function listWorkers(): Promise<Worker[]> {
 /**
  * Find worker by task ID
  */
-export async function findByTask(taskId: string): Promise<Worker | null> {
+export async function findByTask(taskId: string): Promise<Agent | null> {
   // Worker ID typically matches task ID
   return getWorker(taskId);
 }
@@ -444,7 +444,7 @@ export async function unregister(workerId: string): Promise<void> {
 /**
  * Update worker state and send heartbeat.
  */
-export async function updateState(workerId: string, state: WorkerState): Promise<void> {
+export async function updateState(workerId: string, state: AgentState): Promise<void> {
   await setAgentState(workerId, state);
   await heartbeat(workerId);
 }

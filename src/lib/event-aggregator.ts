@@ -12,7 +12,7 @@
  */
 
 import type { NormalizedEvent } from '../term-commands/events.js';
-import type { Worker } from './worker-registry.js';
+import type { Agent } from './agent-registry.js';
 
 // ============================================================================
 // Types
@@ -53,7 +53,7 @@ export interface EventAggregator {
   /** Clear all tracked state */
   reset: () => void;
   /** Build fallback states from worker registry data (no event stream needed) */
-  buildFallbackStates: (workers: Worker[]) => WorkerDashboardState[];
+  buildFallbackStates: (workers: Agent[]) => WorkerDashboardState[];
 }
 
 // ============================================================================
@@ -169,7 +169,7 @@ export function createEventAggregator(): EventAggregator {
     workerMap.clear();
   }
 
-  function buildFallbackStates(workers: Worker[]): WorkerDashboardState[] {
+  function buildFallbackStates(workers: Agent[]): WorkerDashboardState[] {
     return workers.map((w) => {
       const lastStateChangeMs = new Date(w.lastStateChange).getTime();
       return {

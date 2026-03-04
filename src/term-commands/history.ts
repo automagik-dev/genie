@@ -393,7 +393,7 @@ function formatFullConversation(entries: claudeLogs.ClaudeLogEntry[]): string {
 /**
  * Find worker by ID or task ID
  */
-async function findWorker(identifier: string): Promise<workerRegistry.Worker | null> {
+async function findWorker(identifier: string): Promise<workerRegistry.Agent | null> {
   // Try direct ID lookup first
   let worker = await workerRegistry.get(identifier);
   if (worker) return worker;
