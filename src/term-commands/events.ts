@@ -22,9 +22,9 @@
 
 import { appendFile, mkdir, readFile, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import * as registry from '../lib/agent-registry.js';
 import { type ClaudeLogEntry, getLogsForPane, readLogFile, tailLogFile } from '../lib/claude-logs.js';
 import * as tmux from '../lib/tmux.js';
-import * as registry from '../lib/worker-registry.js';
 
 // ============================================================================
 // Types

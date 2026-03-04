@@ -1,24 +1,25 @@
 /**
- * Worker Namespace — unified worker lifecycle commands.
+ * Agent Namespace — unified agent lifecycle commands.
  *
- * genie worker:
- *   spawn     - Spawn a worker with provider selection
- *   list      - List all workers with provider metadata
- *   kill <id> - Force kill a worker
- *   dashboard - Live status of all workers
- *   suspend   - Suspend a worker (kill pane, preserve session)
+ * genie agent:
+ *   spawn     - Spawn an agent with provider selection
+ *   list      - List all agents with provider metadata
+ *   kill <id> - Force kill an agent
+ *   dashboard - Live status of all agents
+ *   suspend   - Suspend an agent (kill pane, preserve session)
  *   watchdog  - Idle timeout watchdog
  *   approve   - Auto-approve engine management
  *   history   - Compressed session catch-up
- *   answer    - Answer worker question
+ *   answer    - Answer agent question
  *   events    - Stream Claude Code events
- *   close     - Close task and cleanup worker
+ *   close     - Close task and cleanup agent
  *   ship      - Mark done, merge, cleanup
- *   read      - Read worker pane output
- *   exec      - Execute command in worker pane
+ *   read      - Read agent pane output
+ *   exec      - Execute command in agent pane
  */
 
 import type { Command } from 'commander';
+import * as registry from '../lib/agent-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import * as mailbox from '../lib/mailbox.js';
@@ -34,7 +35,6 @@ import {
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
-import * as registry from '../lib/worker-registry.js';
 import * as approveCmd from './approve.js';
 import * as closeCmd from './close.js';
 import * as eventsCmd from './events.js';
@@ -411,7 +411,7 @@ process.on('SIGINT', () => { server.close(); process.exit(0); });
 /**
  * Map display state to registry state
  */
-function mapDisplayStateToRegistry(displayState: string): registry.WorkerState | null {
+function mapDisplayStateToRegistry(displayState: string): registry.AgentState | null {
   if (displayState === 'working') return 'working';
   if (displayState === 'idle') return 'idle';
   if (displayState === '⚠️ perm') return 'permission';
@@ -425,7 +425,7 @@ function mapDisplayStateToRegistry(displayState: string): registry.WorkerState |
 // Helper: Generate Worker ID (teams)
 // ============================================================================
 
-async function getLastMessageTime(w: registry.Worker): Promise<string | null> {
+async function getLastMessageTime(w: registry.Agent): Promise<string | null> {
   try {
     const repoPath = w.repoPath ?? process.cwd();
     const messages = await mailbox.inbox(repoPath, w.id);
@@ -478,9 +478,9 @@ async function registerSpawnWorker(
   ctx: SpawnCtx,
   paneId: string,
   windowInfo?: { windowId: string; windowName: string } | null,
-): Promise<registry.Worker> {
+): Promise<registry.Agent> {
   const nt = ctx.validated.nativeTeam;
-  const workerEntry: registry.Worker = {
+  const workerEntry: registry.Agent = {
     id: ctx.workerId,
     paneId,
     session: 'genie',
@@ -537,9 +537,9 @@ function registerOtelRelayPane(workerId: string, paneId: string, agentName: stri
   wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor }));
 }
 
-function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Worker): void {
+function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Agent): void {
   const nt = ctx.validated.nativeTeam;
-  console.log(`Worker "${ctx.workerId}" spawned.`);
+  console.log(`Agent "${ctx.workerId}" spawned.`);
   console.log(`  Provider: ${ctx.launch.provider}`);
   console.log(`  Command:  ${ctx.fullCommand}`);
   console.log(`  Team:     ${ctx.validated.team}`);
@@ -631,7 +631,7 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {
   const workerEntry = await registerSpawnWorker(ctx, paneId);
   await notifySpawnJoin(ctx, paneId);
 
-  console.log(`Worker "${ctx.workerId}" starting inline...`);
+  console.log(`Agent "${ctx.workerId}" starting inline...`);
   console.log(`  Provider: ${ctx.launch.provider} | Team: ${ctx.validated.team} | Role: ${ctx.validated.role ?? '-'}`);
   if (nt?.enabled) {
     console.log(`  Native:   enabled | AgentID: ${workerEntry.nativeAgentId}`);
@@ -652,7 +652,7 @@ async function launchInlineSpawn(ctx: SpawnCtx): Promise<void> {
     await nativeTeams.clearNativeInbox(ctx.validated.team, ctx.agentName).catch(() => {});
     await nativeTeams.unregisterNativeMember(ctx.validated.team, ctx.agentName).catch(() => {});
   }
-  console.log(`\nWorker "${ctx.workerId}" session ended.`);
+  console.log(`\nAgent "${ctx.workerId}" session ended.`);
   process.exit(result.status ?? 0);
 }
 
@@ -798,7 +798,7 @@ async function handleWorkerSpawn(options: {
 // List helpers (extracted for cognitive complexity)
 // ============================================================================
 
-type WorkerListEntry = { worker: registry.Worker; liveState: string; lastMsg: string | null; dead: boolean };
+type WorkerListEntry = { worker: registry.Agent; liveState: string; lastMsg: string | null; dead: boolean };
 type StoppedEntry = { template: registry.WorkerTemplate };
 
 /** Find templates with no corresponding active worker. */
@@ -816,7 +816,7 @@ async function collectStoppedTemplates(activeEntries: WorkerListEntry[]): Promis
 }
 
 /** Clean up a worker's native team registration. */
-async function cleanupWorkerNativeTeam(w: registry.Worker): Promise<void> {
+async function cleanupWorkerNativeTeam(w: registry.Agent): Promise<void> {
   if (!w.team || !w.nativeAgentId) return;
   const agentName = w.nativeAgentId.split('@')[0];
   await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
@@ -825,7 +825,7 @@ async function cleanupWorkerNativeTeam(w: registry.Worker): Promise<void> {
 
 /** Process a single worker for the list view: returns entry or pruned ID. */
 async function processWorkerForList(
-  w: registry.Worker,
+  w: registry.Agent,
   prune?: boolean,
 ): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
   if (w.state === 'suspended') {
@@ -855,7 +855,7 @@ async function processWorkerForList(
 }
 
 async function processSuspendedWorker(
-  w: registry.Worker,
+  w: registry.Agent,
   prune?: boolean,
 ): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
   const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -934,8 +934,8 @@ function printWorkerList(
   }
 
   if (entries.length === 0 && stopped.length === 0 && pruned.length === 0) {
-    console.log('No workers found.');
-    console.log('  Spawn one: genie worker spawn --role implementor');
+    console.log('No agents found.');
+    console.log('  Spawn one: genie agent spawn --role implementor');
     return;
   }
 
@@ -957,15 +957,15 @@ function printWorkerListFooter(
 ): void {
   if (pruned.length > 0) {
     console.log('');
-    console.log(`Pruned ${pruned.length} dead worker(s): ${pruned.join(', ')}`);
+    console.log(`Pruned ${pruned.length} dead agent(s): ${pruned.join(', ')}`);
   }
 
   const deadCount = entries.filter((e) => e.dead).length;
   if (deadCount > 0 && !options.prune) {
-    console.log(`\n${deadCount} dead worker(s). Use --prune to remove.`);
+    console.log(`\n${deadCount} dead agent(s). Use --prune to remove.`);
   }
   if (stopped.length > 0 && !options.running) {
-    console.log(`\n${stopped.length} stopped worker(s) (templates). Use -r to hide.`);
+    console.log(`\n${stopped.length} stopped agent(s) (templates). Use -r to hide.`);
   }
   console.log('');
 }
@@ -1002,7 +1002,7 @@ function printWorkerListJson(entries: WorkerListEntry[], pruned: string[], stopp
 // Kill helpers (extracted for cognitive complexity)
 // ============================================================================
 
-function killWorkerPane(w: registry.Worker): void {
+function killWorkerPane(w: registry.Agent): void {
   try {
     const { execSync } = require('node:child_process');
     const currentPane = execSync("tmux display-message -p '#{pane_id}'", { encoding: 'utf-8' }).trim();
@@ -1037,7 +1037,7 @@ function cleanupRelayFiles(id: string): void {
 // Dashboard helpers (extracted for cognitive complexity)
 // ============================================================================
 
-function printDashboardJson(workers: registry.Worker[]): void {
+function printDashboardJson(workers: registry.Agent[]): void {
   const summary = {
     total: workers.length,
     byProvider: {
@@ -1073,17 +1073,17 @@ function printDashboardJson(workers: registry.Worker[]): void {
   );
 }
 
-function printDashboardText(workers: registry.Worker[], watch?: boolean): void {
+function printDashboardText(workers: registry.Agent[], watch?: boolean): void {
   console.log('');
-  console.log('WORKER DASHBOARD');
+  console.log('AGENT DASHBOARD');
   console.log('='.repeat(80));
-  console.log(`Workers: ${workers.length}`);
+  console.log(`Agents: ${workers.length}`);
   console.log(`  Claude: ${workers.filter((w) => w.provider === 'claude').length}`);
   console.log(`  Codex:  ${workers.filter((w) => w.provider === 'codex').length}`);
   console.log('');
 
   if (workers.length === 0) {
-    console.log('No active workers.');
+    console.log('No active agents.');
     return;
   }
 
@@ -1104,16 +1104,16 @@ function printDashboardText(workers: registry.Worker[], watch?: boolean): void {
 }
 
 // ============================================================================
-// Worker Namespace (genie worker — provider-selectable orchestration)
+// Agent Namespace (genie agent — provider-selectable orchestration)
 // ============================================================================
 
-export function registerWorkerNamespace(program: Command): void {
-  const worker = program.command('worker').description('Worker lifecycle (spawn, list, kill, dashboard)');
+export function registerAgentNamespace(program: Command): void {
+  const agent = program.command('agent').description('Agent lifecycle (spawn, list, kill, dashboard)');
 
-  // worker spawn
-  worker
+  // agent spawn
+  agent
     .command('spawn')
-    .description('Spawn a new worker with provider selection')
+    .description('Spawn a new agent with provider selection')
     .option('--provider <provider>', 'Provider: claude or codex', 'claude')
     .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
     .requiredOption('--role <role>', 'Worker role (e.g., implementor, tester)')
@@ -1123,7 +1123,7 @@ export function registerWorkerNamespace(program: Command): void {
     .option('--plan-mode', 'Start teammate in plan mode')
     .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
     .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
-    .option('--cwd <path>', 'Working directory for the worker (default: current directory)')
+    .option('--cwd <path>', 'Working directory for the agent (default: current directory)')
     .action(
       async (options: {
         provider: string;
@@ -1147,14 +1147,14 @@ export function registerWorkerNamespace(program: Command): void {
       },
     );
 
-  // worker list
-  worker
+  // agent list
+  agent
     .command('list')
     .alias('ls')
-    .description('List all workers (active + stopped templates)')
+    .description('List all agents (active + stopped templates)')
     .option('--json', 'Output as JSON')
-    .option('--prune', 'Auto-remove dead workers from registry')
-    .option('-r, --running', 'Show only active workers (hide stopped)')
+    .option('--prune', 'Auto-remove dead agents from registry')
+    .option('-r, --running', 'Show only active agents (hide stopped)')
     .action(async (options: { json?: boolean; prune?: boolean; running?: boolean }) => {
       try {
         const workers = await registry.list();
@@ -1177,16 +1177,16 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
-  // worker kill
-  worker
+  // agent kill
+  agent
     .command('kill <id>')
-    .description('Force kill a worker')
+    .description('Force kill an agent')
     .option('-y, --yes', 'Skip confirmation')
     .action(async (id: string, _options: { yes?: boolean }) => {
       try {
         const w = await registry.get(id);
         if (!w) {
-          console.error(`Worker "${id}" not found.`);
+          console.error(`Agent "${id}" not found.`);
           process.exit(1);
         }
 
@@ -1209,7 +1209,7 @@ export function registerWorkerNamespace(program: Command): void {
         // NOTE: templates are intentionally preserved so that
         // ensureWorkerAlive can auto-respawn the worker on next message.
 
-        console.log(`Worker "${id}" killed and unregistered (template preserved).`);
+        console.log(`Agent "${id}" killed and unregistered (template preserved).`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -1217,31 +1217,31 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
-  // worker suspend
-  worker
+  // agent suspend
+  agent
     .command('suspend <id>')
-    .description('Suspend a worker (kill pane, preserve session for resume)')
+    .description('Suspend an agent (kill pane, preserve session for resume)')
     .action(async (id: string) => {
       try {
         const w = await registry.get(id);
         if (!w) {
-          console.error(`Worker "${id}" not found.`);
+          console.error(`Agent "${id}" not found.`);
           process.exit(1);
         }
         if (w.state === 'suspended') {
-          console.log(`Worker "${id}" is already suspended.`);
+          console.log(`Agent "${id}" is already suspended.`);
           return;
         }
         const { suspendWorker } = await import('../lib/idle-timeout.js');
         const ok = await suspendWorker(id);
         if (ok) {
-          console.log(`Worker "${id}" suspended.`);
+          console.log(`Agent "${id}" suspended.`);
           if (w.claudeSessionId) {
             console.log(`  Session preserved: ${w.claudeSessionId}`);
           }
           console.log(`  Send a message to auto-resume: genie msg send ${id} "your message"`);
         } else {
-          console.error(`Failed to suspend worker "${id}".`);
+          console.error(`Failed to suspend agent "${id}".`);
           process.exit(1);
         }
       } catch (error) {
@@ -1251,10 +1251,10 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
-  // worker watchdog
-  worker
+  // agent watchdog
+  agent
     .command('watchdog')
-    .description('Start idle timeout watchdog (suspends idle workers)')
+    .description('Start idle timeout watchdog (suspends idle agents)')
     .option('--once', 'Run a single check and exit')
     .action(async (options: { once?: boolean }) => {
       try {
@@ -1271,9 +1271,9 @@ export function registerWorkerNamespace(program: Command): void {
         if (options.once) {
           const suspended = await checkIdleWorkers();
           if (suspended.length > 0) {
-            console.log(`Suspended ${suspended.length} worker(s): ${suspended.join(', ')}`);
+            console.log(`Suspended ${suspended.length} agent(s): ${suspended.join(', ')}`);
           } else {
-            console.log('No idle workers to suspend.');
+            console.log('No idle agents to suspend.');
           }
           return;
         }
@@ -1287,10 +1287,10 @@ export function registerWorkerNamespace(program: Command): void {
       }
     });
 
-  // worker dashboard
-  worker
+  // agent dashboard
+  agent
     .command('dashboard')
-    .description('Live status of all workers with provider metadata')
+    .description('Live status of all agents with provider metadata')
     .option('--json', 'Output as JSON')
     .option('-w, --watch', 'Auto-refresh every 2 seconds')
     .action(async (options: { json?: boolean; watch?: boolean }) => {
@@ -1312,8 +1312,8 @@ export function registerWorkerNamespace(program: Command): void {
   // Commands migrated from genie term
   // ============================================================================
 
-  // worker approve — auto-approve engine management
-  worker
+  // agent approve — auto-approve engine management
+  agent
     .command('approve [request-id]')
     .description('Auto-approve engine management and manual approval')
     .option('--status', 'Show pending/approved/denied requests')
@@ -1329,10 +1329,10 @@ export function registerWorkerNamespace(program: Command): void {
       },
     );
 
-  // worker history — compressed session catch-up
-  worker
+  // agent history — compressed session catch-up
+  agent
     .command('history <worker>')
-    .description('Show compressed session history for a worker (catch-up)')
+    .description('Show compressed session history for an agent (catch-up)')
     .option('--full', 'Show full conversation without compression')
     .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
     .option('--json', 'Output as JSON')
@@ -1342,23 +1342,23 @@ export function registerWorkerNamespace(program: Command): void {
       await historyCmd.historyCommand(w, options);
     });
 
-  // worker answer — answer worker question
-  worker
+  // agent answer — answer worker question
+  agent
     .command('answer <worker> <choice>')
-    .description('Answer a question for a worker (use "text:..." for text input)')
+    .description('Answer a question for an agent (use "text:..." for text input)')
     .action(async (w: string, choice: string) => {
       await orchestrateCmd.answerQuestion(w, choice);
     });
 
-  // worker events — stream Claude Code events
-  worker
+  // agent events — stream Claude Code events
+  agent
     .command('events [pane-id]')
-    .description('Stream Claude Code events from a pane or all workers')
+    .description('Stream Claude Code events from a pane or all agents')
     .option('--json', 'Output events as JSON')
     .option('-f, --follow', 'Continuous tailing (like tail -f)')
     .option('-n, --lines <number>', 'Number of recent events to show (default: 20)', '20')
     .option('--emit', 'Write events to .genie/events/<pane-id>.jsonl while tailing')
-    .option('--all', 'Aggregate events from all active workers')
+    .option('--all', 'Aggregate events from all active agents')
     .action(
       async (
         paneId: string | undefined,
@@ -1374,10 +1374,10 @@ export function registerWorkerNamespace(program: Command): void {
       },
     );
 
-  // worker close — close task and cleanup worker
-  worker
+  // agent close — close task and cleanup worker
+  agent
     .command('close <task-id>')
-    .description('Close task/issue and cleanup worker')
+    .description('Close task/issue and cleanup agent')
     .option('--no-sync', 'Skip bd sync (beads only)')
     .option('--keep-worktree', "Don't remove the worktree")
     .option('--merge', 'Merge worktree changes to main branch')
@@ -1386,10 +1386,10 @@ export function registerWorkerNamespace(program: Command): void {
       await closeCmd.closeCommand(taskId, options);
     });
 
-  // worker ship — mark done, merge, cleanup
-  worker
+  // agent ship — mark done, merge, cleanup
+  agent
     .command('ship <task-id>')
-    .description('Mark task as done and cleanup worker')
+    .description('Mark task as done and cleanup agent')
     .option('--keep-worktree', "Don't remove the worktree")
     .option('--merge', 'Merge worktree changes to main branch')
     .option('-y, --yes', 'Skip confirmation')
@@ -1397,10 +1397,10 @@ export function registerWorkerNamespace(program: Command): void {
       await shipCmd.shipCommand(taskId, options);
     });
 
-  // worker read — read worker pane output
-  worker
+  // agent read — read worker pane output
+  agent
     .command('read <target>')
-    .description('Read terminal output from a worker pane')
+    .description('Read terminal output from an agent pane')
     .option('-n, --lines <number>', 'Number of lines to read')
     .option('--from <line>', 'Start line')
     .option('--to <line>', 'End line')
@@ -1415,10 +1415,10 @@ export function registerWorkerNamespace(program: Command): void {
       await readCmd.readSessionLogs(target, options);
     });
 
-  // worker exec — execute command in worker pane
-  worker
+  // agent exec — execute command in worker pane
+  agent
     .command('exec <target> <command>')
-    .description('Execute command in a worker pane')
+    .description('Execute command in an agent pane')
     .option('-q, --quiet', 'Suppress output')
     .option('-t, --timeout <ms>', 'Timeout in milliseconds')
     .action(async (target: string, command: string, options: execCmd.ExecOptions) => {

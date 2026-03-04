@@ -9,9 +9,10 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
@@ -21,7 +22,7 @@ import {
 import * as tmux from '../lib/tmux.js';
 
 const DEFAULT_NAME = 'genie';
-const DEFAULT_WORKSPACE = join(homedir(), 'workspace');
+const _DEFAULT_WORKSPACE = join(homedir(), 'workspace');
 
 /** Shell-quote a string for safe embedding in shell commands. */
 function shellQuote(s: string): string {
@@ -36,6 +37,65 @@ export function getAgentsSystemPrompt(): string | null {
   const agentsPath = join(process.cwd(), 'AGENTS.md');
   if (existsSync(agentsPath)) {
     return readFileSync(agentsPath, 'utf-8');
+  }
+  return null;
+}
+
+/**
+ * Read the built-in TEAM_LEAD_PROMPT.md from the genie-cli package root.
+ * This prompt teaches team-leads to use genie CLI instead of native CC tools.
+ */
+export function getTeamLeadPrompt(): string | null {
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  const promptPath = join(thisDir, '..', '..', 'TEAM_LEAD_PROMPT.md');
+  if (existsSync(promptPath)) {
+    return readFileSync(promptPath, 'utf-8');
+  }
+  return null;
+}
+
+/**
+ * Convert a workspace directory path to a Claude project directory name.
+ * Claude encodes paths by replacing '/' with '-', so /home/genie/workspace → -home-genie-workspace.
+ */
+function workspaceDirToProjectDir(workspaceDir: string): string {
+  return workspaceDir.replace(/\//g, '-');
+}
+
+/**
+ * Find the most recent session ID for a given teamName + agentName from Claude's JSONL logs.
+ * Returns null if no matching session is found.
+ */
+function findLastSessionId(teamName: string, agentName: string, workspaceDir: string): string | null {
+  const projectDirName = workspaceDirToProjectDir(workspaceDir);
+  const projectDir = join(homedir(), '.claude', 'projects', projectDirName);
+
+  if (!existsSync(projectDir)) return null;
+
+  let files: { path: string; mtime: number }[];
+  try {
+    files = readdirSync(projectDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => {
+        const p = join(projectDir, f);
+        return { path: p, mtime: statSync(p).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch {
+    return null;
+  }
+
+  for (const { path } of files) {
+    try {
+      const firstLine = readFileSync(path, 'utf-8').split('\n')[0];
+      if (!firstLine) continue;
+      const data = JSON.parse(firstLine);
+      if (data.teamName === teamName && data.agentName === agentName && data.sessionId) {
+        return data.sessionId as string;
+      }
+    } catch {
+      // Skip malformed files
+    }
   }
   return null;
 }
@@ -73,7 +133,7 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  * The team lead uses agent-id "team-lead@<team>" by convention.
  * When systemPrompt is provided, --system-prompt is injected into the command.
  */
-export function buildClaudeCommand(teamName: string, systemPrompt?: string): string {
+export function buildClaudeCommand(teamName: string, systemPrompt?: string, resumeSessionId?: string): string {
   const sanitized = sanitizeTeamName(teamName);
   const qTeam = shellQuote(sanitized);
   const parts = [
@@ -87,9 +147,16 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string): str
     '--dangerously-skip-permissions',
   ];
 
-  if (systemPrompt) {
-    const sanitized = systemPrompt.replace(/\n/g, ' ');
-    parts.push(`--system-prompt ${shellQuote(sanitized)}`);
+  if (resumeSessionId) {
+    parts.push(`--resume ${shellQuote(resumeSessionId)}`);
+  }
+
+  // Combine AGENTS.md + built-in genie CLI prompt
+  const teamLeadPrompt = getTeamLeadPrompt();
+  const fullPrompt = [systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
+  if (fullPrompt) {
+    const flattened = fullPrompt.replace(/\n/g, ' ');
+    parts.push(`--system-prompt ${shellQuote(flattened)}`);
   }
 
   return parts.join(' ');
@@ -113,7 +180,11 @@ async function createTuiSession(name: string, workspaceDir: string, systemPrompt
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
 
-  const cmd = buildClaudeCommand(name, systemPrompt || undefined);
+  const resumeSessionId = findLastSessionId(name, 'team-lead', workspaceDir);
+  if (resumeSessionId) {
+    console.log(`Resuming previous session: ${resumeSessionId}`);
+  }
+  const cmd = buildClaudeCommand(name, systemPrompt || undefined, resumeSessionId || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
 }
@@ -134,7 +205,11 @@ async function focusTeamWindow(
     const target = `${sessionName}:${team}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildClaudeCommand(team, systemPrompt || undefined);
+    const resumeSessionId = findLastSessionId(team, 'team-lead', workingDir);
+    if (resumeSessionId) {
+      console.log(`Resuming previous session: ${resumeSessionId}`);
+    }
+    const cmd = buildClaudeCommand(team, systemPrompt || undefined, resumeSessionId || undefined);
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
     console.log(`Started Claude Code as team-lead@${sanitizeTeamName(team)} in ${workingDir}`);
   }
@@ -144,7 +219,7 @@ async function focusTeamWindow(
 
 export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
   const name = options.name ?? DEFAULT_NAME;
-  const workspaceDir = options.dir ?? DEFAULT_WORKSPACE;
+  const workspaceDir = options.dir ?? process.cwd();
 
   try {
     if (options.reset) {

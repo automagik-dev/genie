@@ -20,6 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
 import { $ } from 'bun';
+import * as registry from '../lib/agent-registry.js';
 import { type AutoApproveEngine, createAutoApproveEngine, sendApprovalViaTmux } from '../lib/auto-approve-engine.js';
 import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
 import * as beadsRegistry from '../lib/beads-registry.js';
@@ -30,7 +31,6 @@ import { extractPermissionDetails } from '../lib/orchestrator/state-detector.js'
 import { buildSpawnCommand } from '../lib/spawn-command.js';
 import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
-import * as registry from '../lib/worker-registry.js';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
 import type { WorkerProfile } from '../types/genie-config.js';
 import { cleanupEventFile } from './events.js';

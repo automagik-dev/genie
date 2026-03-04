@@ -6,8 +6,8 @@
  * workers preserve their Claude session ID for resume-on-message.
  */
 
+import * as registry from './agent-registry.js';
 import { executeTmux, isPaneAlive } from './tmux.js';
-import * as registry from './worker-registry.js';
 
 // ============================================================================
 // Configuration
