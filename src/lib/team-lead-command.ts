@@ -20,7 +20,7 @@ export function shellQuote(s: string): string {
  * Read the built-in TEAM_LEAD_PROMPT.md from the genie-cli package root.
  * This prompt teaches team-leads to use genie CLI instead of native CC tools.
  */
-export function getTeamLeadPrompt(): string | null {
+function getTeamLeadPrompt(): string | null {
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const promptPath = join(thisDir, '..', '..', 'TEAM_LEAD_PROMPT.md');
   if (existsSync(promptPath)) {
@@ -29,7 +29,7 @@ export function getTeamLeadPrompt(): string | null {
   return null;
 }
 
-export interface BuildTeamLeadCommandOptions {
+interface BuildTeamLeadCommandOptions {
   systemPrompt?: string;
   resumeSessionId?: string;
 }

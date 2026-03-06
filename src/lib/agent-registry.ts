@@ -311,7 +311,7 @@ export async function findAllByTask(taskId: string): Promise<Agent[]> {
 }
 
 /** Count agents for a task. */
-export async function countByTask(taskId: string): Promise<number> {
+async function countByTask(taskId: string): Promise<number> {
   const agents = await findAllByTask(taskId);
   return agents.length;
 }

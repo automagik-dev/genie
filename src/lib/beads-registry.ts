@@ -247,13 +247,9 @@ export async function setAgentState(workerId: string, state: AgentState): Promis
   }
 }
 
-/**
- * Send heartbeat for agent
- */
-export async function heartbeat(workerId: string): Promise<void> {
+async function heartbeat(workerId: string): Promise<void> {
   const agent = await findAgentByWorkerId(workerId);
-  if (!agent) return; // Silently ignore if agent doesn't exist
-
+  if (!agent) return;
   await runBd(['agent', 'heartbeat', agent.id]);
 }
 
@@ -340,27 +336,6 @@ async function getWorker(workerId: string): Promise<Agent | null> {
   if (!fullAgent?.metadata) return null;
 
   return agentToWorker(fullAgent, fullAgent.metadata);
-}
-
-/**
- * List all workers
- */
-export async function listWorkers(): Promise<Agent[]> {
-  const { stdout, exitCode } = await runBd(['list', `--label=${AGENT_LABEL}`, '--json']);
-
-  if (exitCode !== 0 || !stdout) return [];
-
-  const agents = parseJson<Array<AgentBead & { metadata?: AgentMetadata }>>(stdout);
-  if (!agents) return [];
-
-  const workers: Agent[] = [];
-  for (const agent of agents) {
-    if (agent.metadata) {
-      workers.push(agentToWorker(agent, agent.metadata));
-    }
-  }
-
-  return workers;
 }
 
 /**

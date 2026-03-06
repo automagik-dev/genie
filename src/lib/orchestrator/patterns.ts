@@ -204,35 +204,10 @@ export const toolUsePatterns: PatternMatch[] = [
   },
 ];
 
-// Plan file patterns - extract plan file paths from Claude Code output
-const planFilePatterns: PatternMatch[] = [
-  {
-    type: 'claude_plan_file',
-    // Matches: ~/.claude/plans/something.md or full paths
-    pattern: /(~\/\.claude\/plans\/[\w-]+\.md|\/[^\s]+\/\.claude\/plans\/[\w-]+\.md)/,
-    extract: (match) => ({ path: match[1] }),
-  },
-];
-
 // ANSI escape code stripper
 export function stripAnsi(str: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape codes are control characters by definition
   return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
-}
-
-// Extract plan file path from output
-export function extractPlanFile(content: string): string | null {
-  const cleanContent = stripAnsi(content);
-  const match = getFirstMatch(cleanContent, planFilePatterns);
-  if (match?.extracted?.path) {
-    // Expand ~ to home directory
-    let path = match.extracted.path;
-    if (path.startsWith('~')) {
-      path = path.replace('~', process.env.HOME || '');
-    }
-    return path;
-  }
-  return null;
 }
 
 // Match all patterns of a type against content

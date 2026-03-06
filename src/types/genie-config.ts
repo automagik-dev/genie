@@ -8,7 +8,7 @@ import { z } from 'zod';
  */
 
 // Session configuration
-export const SessionConfigSchema = z.object({
+const SessionConfigSchema = z.object({
   name: z.string().default('genie'),
   defaultWindow: z.string().default('shell'),
   autoCreate: z.boolean().default(true),
@@ -22,7 +22,7 @@ export const TerminalConfigSchema = z.object({
 });
 
 // Logging configuration
-export const LoggingConfigSchema = z.object({
+const LoggingConfigSchema = z.object({
   tmuxDebug: z.boolean().default(false),
   verbose: z.boolean().default(false),
 });
@@ -96,9 +96,7 @@ export const GenieConfigSchema = z.object({
 });
 
 // Inferred types
-export type SessionConfig = z.infer<typeof SessionConfigSchema>;
 export type TerminalConfig = z.infer<typeof TerminalConfigSchema>;
-export type LoggingConfig = z.infer<typeof LoggingConfigSchema>;
 export type ShortcutsConfig = z.infer<typeof ShortcutsConfigSchema>;
 export type WorkerProfile = z.infer<typeof WorkerProfileSchema>;
 export type CouncilPreset = z.infer<typeof CouncilPresetSchema>;
