@@ -1,13 +1,13 @@
 /**
- * Tests for worker-registry - Sub-pane expansion
- * Run with: bun test src/lib/worker-registry.test.ts
+ * Tests for agent-registry - Sub-pane expansion
+ * Run with: bun test src/lib/agent-registry.test.ts
  */
 
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { type Worker, addSubPane, findByWindow, getPane, removeSubPane } from './worker-registry.js';
+import { type Agent, addSubPane, findByWindow, getPane, removeSubPane } from './agent-registry.js';
 
 // ============================================================================
 // Test Setup
@@ -26,7 +26,7 @@ function cleanTestDir(): void {
   mkdirSync(TEST_GENIE_DIR, { recursive: true });
 }
 
-function makeWorker(overrides: Partial<Worker> = {}): Worker {
+function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
     id: 'bd-42',
     paneId: '%17',
@@ -42,29 +42,29 @@ function makeWorker(overrides: Partial<Worker> = {}): Worker {
 }
 
 // ============================================================================
-// Worker type: subPanes field
+// Agent type: subPanes field
 // ============================================================================
 
-describe('Worker type: subPanes field', () => {
+describe('Agent type: subPanes field', () => {
   beforeEach(() => {
     cleanTestDir();
     // Point registry to test dir by setting cwd
     process.env.GENIE_WORKER_REGISTRY = 'global';
   });
 
-  test('Worker type includes optional subPanes field', () => {
-    const worker: Worker = makeWorker({ subPanes: ['%22', '%23'] });
-    expect(worker.subPanes).toEqual(['%22', '%23']);
+  test('Agent type includes optional subPanes field', () => {
+    const agent: Agent = makeAgent({ subPanes: ['%22', '%23'] });
+    expect(agent.subPanes).toEqual(['%22', '%23']);
   });
 
-  test('Worker without subPanes has undefined subPanes', () => {
-    const worker: Worker = makeWorker();
-    expect(worker.subPanes).toBeUndefined();
+  test('Agent without subPanes has undefined subPanes', () => {
+    const agent: Agent = makeAgent();
+    expect(agent.subPanes).toBeUndefined();
   });
 
   test('subPanes persists through register/get cycle', async () => {
     // Use a separate test registry
-    const worker = makeWorker({ subPanes: ['%22'] });
+    const worker = makeAgent({ subPanes: ['%22'] });
 
     // We need to write directly to test the persistence
     const registry = {
@@ -89,7 +89,7 @@ describe('addSubPane', () => {
 
   test('addSubPane("bd-42", "%22") appends to worker subPanes array', async () => {
     // Write initial registry with a worker that has no subPanes
-    const worker = makeWorker();
+    const worker = makeAgent();
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -103,7 +103,7 @@ describe('addSubPane', () => {
   });
 
   test('addSubPane appends to existing subPanes', async () => {
-    const worker = makeWorker({ subPanes: ['%22'] });
+    const worker = makeAgent({ subPanes: ['%22'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -139,7 +139,7 @@ describe('getPane', () => {
   beforeEach(cleanTestDir);
 
   test('getPane("bd-42", 0) returns primary paneId', async () => {
-    const worker = makeWorker();
+    const worker = makeAgent();
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -151,7 +151,7 @@ describe('getPane', () => {
   });
 
   test('getPane("bd-42", 1) returns subPanes[0]', async () => {
-    const worker = makeWorker({ subPanes: ['%22', '%23'] });
+    const worker = makeAgent({ subPanes: ['%22', '%23'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -163,7 +163,7 @@ describe('getPane', () => {
   });
 
   test('getPane("bd-42", 2) returns subPanes[1]', async () => {
-    const worker = makeWorker({ subPanes: ['%22', '%23'] });
+    const worker = makeAgent({ subPanes: ['%22', '%23'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -175,7 +175,7 @@ describe('getPane', () => {
   });
 
   test('getPane returns null for out-of-range index', async () => {
-    const worker = makeWorker({ subPanes: ['%22'] });
+    const worker = makeAgent({ subPanes: ['%22'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -198,7 +198,7 @@ describe('getPane', () => {
   });
 
   test('getPane returns null for index > 0 when no subPanes', async () => {
-    const worker = makeWorker(); // no subPanes
+    const worker = makeAgent(); // no subPanes
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -218,7 +218,7 @@ describe('removeSubPane', () => {
   beforeEach(cleanTestDir);
 
   test('removeSubPane removes a pane from subPanes array', async () => {
-    const worker = makeWorker({ subPanes: ['%22', '%23', '%24'] });
+    const worker = makeAgent({ subPanes: ['%22', '%23', '%24'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -232,7 +232,7 @@ describe('removeSubPane', () => {
   });
 
   test('removeSubPane does nothing if pane not in subPanes', async () => {
-    const worker = makeWorker({ subPanes: ['%22'] });
+    const worker = makeAgent({ subPanes: ['%22'] });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -257,7 +257,7 @@ describe('removeSubPane', () => {
   });
 
   test('removeSubPane handles worker with no subPanes', async () => {
-    const worker = makeWorker(); // no subPanes
+    const worker = makeAgent(); // no subPanes
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -278,7 +278,7 @@ describe('loadRegistry fresh-read guarantee', () => {
 
   test('registry reads reflect disk changes between calls', async () => {
     // Write initial state
-    const worker1 = makeWorker({ id: 'w1', paneId: '%10', taskId: 'w1' });
+    const worker1 = makeAgent({ id: 'w1', paneId: '%10', taskId: 'w1' });
     writeFileSync(
       TEST_REGISTRY_PATH,
       JSON.stringify(
@@ -295,7 +295,7 @@ describe('loadRegistry fresh-read guarantee', () => {
     expect(pane1).toBe('%10');
 
     // Externally modify the file (simulates another process writing)
-    const worker2 = makeWorker({ id: 'w1', paneId: '%99', taskId: 'w1' });
+    const worker2 = makeAgent({ id: 'w1', paneId: '%99', taskId: 'w1' });
     writeFileSync(
       TEST_REGISTRY_PATH,
       JSON.stringify(
@@ -318,22 +318,22 @@ describe('loadRegistry fresh-read guarantee', () => {
 // windowId field and findByWindow
 // ============================================================================
 
-describe('Worker type: windowId field', () => {
+describe('Agent type: windowId field', () => {
   beforeEach(cleanTestDir);
 
-  test('Worker type includes optional windowId field', () => {
-    const worker: Worker = makeWorker({ windowId: '@4', windowName: 'bd-42' });
-    expect(worker.windowId).toBe('@4');
-    expect(worker.windowName).toBe('bd-42');
+  test('Agent type includes optional windowId field', () => {
+    const agent: Agent = makeAgent({ windowId: '@4', windowName: 'bd-42' });
+    expect(agent.windowId).toBe('@4');
+    expect(agent.windowName).toBe('bd-42');
   });
 
-  test('Worker without windowId has undefined windowId', () => {
-    const worker: Worker = makeWorker();
-    expect(worker.windowId).toBeUndefined();
+  test('Agent without windowId has undefined windowId', () => {
+    const agent: Agent = makeAgent();
+    expect(agent.windowId).toBeUndefined();
   });
 
   test('windowId persists through register/read cycle', async () => {
-    const worker = makeWorker({ windowId: '@7', windowName: 'bd-42' });
+    const worker = makeAgent({ windowId: '@7', windowName: 'bd-42' });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -355,7 +355,7 @@ describe('findByWindow', () => {
   });
 
   test('findByWindow returns worker with matching windowId', async () => {
-    const worker = makeWorker({ windowId: '@4', windowName: 'bd-42' });
+    const worker = makeAgent({ windowId: '@4', windowName: 'bd-42' });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
@@ -373,7 +373,7 @@ describe('findByWindow', () => {
   });
 
   test('findByWindow returns null for unknown window', async () => {
-    const worker = makeWorker({ windowId: '@4' });
+    const worker = makeAgent({ windowId: '@4' });
     const registry = {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),

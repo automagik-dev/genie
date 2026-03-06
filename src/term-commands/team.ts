@@ -5,9 +5,13 @@
  *   genie team create <name> [--blueprint <bp>]
  *   genie team list
  *   genie team delete <name>
+ *   genie team ensure <name> [--dir <path>]  — auto-spawn team-lead if not running
  */
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { Command } from 'commander';
+import { ensureTeamLead } from '../lib/team-auto-spawn.js';
 import * as teamManager from '../lib/team-manager.js';
 
 export function registerTeamNamespace(program: Command): void {
@@ -92,6 +96,26 @@ export function registerTeamNamespace(program: Command): void {
         } else {
           console.error(`Team "${name}" not found.`);
           process.exit(1);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team ensure — auto-spawn team-lead if not running
+  team
+    .command('ensure <name>')
+    .description('Ensure a team exists with an active Claude Code team-lead (non-interactive)')
+    .option('-d, --dir <path>', 'Working directory for the team-lead', join(homedir(), 'workspace'))
+    .action(async (name: string, options: { dir: string }) => {
+      try {
+        const result = await ensureTeamLead(name, options.dir);
+        if (result.created) {
+          console.log(`Team "${name}" auto-spawned in session "${result.session}", window "${result.window}"`);
+        } else {
+          console.log(`Team "${name}" already active.`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
