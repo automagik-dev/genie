@@ -1,8 +1,8 @@
 /**
- * Worker Registry — Tracks worker state with provider metadata.
+ * Agent Registry — Tracks agent state with provider metadata.
  *
  * Stores provider, transport, session, window, paneId, role, and skill
- * metadata for every spawned worker. Registry is persisted to a single
+ * metadata for every spawned agent. Registry is persisted to a single
  * global file at `~/.genie/workers.json`.
  */
 
@@ -15,8 +15,8 @@ import type { ProviderName } from './provider-adapters.js';
 // Types
 // ============================================================================
 
-export type WorkerState =
-  | 'spawning' // Worker being created
+export type AgentState =
+  | 'spawning' // Agent being created
   | 'working' // Actively producing output
   | 'idle' // At prompt, waiting for input
   | 'permission' // Waiting for permission approval
@@ -27,8 +27,8 @@ export type WorkerState =
 
 export type TransportType = 'tmux' | 'inline';
 
-export interface Worker {
-  /** Unique worker ID (usually matches taskId, e.g., "bd-42"). */
+export interface Agent {
+  /** Unique agent ID (usually matches taskId, e.g., "bd-42"). */
   id: string;
   /** tmux pane ID (e.g., "%16"). */
   paneId: string;
@@ -36,7 +36,7 @@ export interface Worker {
   session: string;
   /** Path to git worktree, null if using shared repo. */
   worktree: string | null;
-  /** Beads or local task ID this worker is bound to. */
+  /** Beads or local task ID this agent is bound to. */
   taskId?: string;
   /** Task title from beads. */
   taskTitle?: string;
@@ -44,13 +44,13 @@ export interface Worker {
   wishSlug?: string;
   /** Execution group number within wish. */
   groupNumber?: number;
-  /** ISO timestamp when worker was started. */
+  /** ISO timestamp when agent was started. */
   startedAt: string;
-  /** Current worker state. */
-  state: WorkerState;
+  /** Current agent state. */
+  state: AgentState;
   /** Last state change timestamp. */
   lastStateChange: string;
-  /** Repository path where worker operates. */
+  /** Repository path where agent operates. */
   repoPath: string;
   /** Claude session ID for resume capability. */
   claudeSessionId?: string;
@@ -58,19 +58,19 @@ export interface Worker {
   windowName?: string;
   /** tmux window ID (e.g., "@4") — used for session-qualified cleanup. */
   windowId?: string;
-  /** Worker role (e.g., "implementor", "tester", "main", "tests", "review"). */
+  /** Agent role (e.g., "implementor", "tester", "main", "tests", "review"). */
   role?: string;
-  /** Custom worker name when multiple workers on same task. */
+  /** Custom agent name when multiple agents on same task. */
   customName?: string;
   /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = bd-42:1, etc. */
   subPanes?: string[];
-  /** Provider used to launch this worker. */
+  /** Provider used to launch this agent. */
   provider?: ProviderName;
   /** Transport type (always "tmux" for now). */
   transport?: TransportType;
-  /** Skill loaded at spawn (codex workers). */
+  /** Skill loaded at spawn (codex agents). */
   skill?: string;
-  /** Team this worker belongs to. */
+  /** Team this agent belongs to. */
   team?: string;
   /** tmux window name (alias for windowName, used by teams surface). */
   window?: string;
@@ -78,11 +78,11 @@ export interface Worker {
   nativeAgentId?: string;
   /** Claude Code native teammate color. */
   nativeColor?: string;
-  /** Whether this worker uses Claude Code native teams. */
+  /** Whether this agent uses Claude Code native teams. */
   nativeTeamEnabled?: boolean;
   /** Parent session UUID for native team IPC. */
   parentSessionId?: string;
-  /** ISO timestamp when worker was suspended (pane killed, session preserved). */
+  /** ISO timestamp when agent was suspended (pane killed, session preserved). */
   suspendedAt?: string;
 }
 
@@ -102,8 +102,8 @@ export interface WorkerTemplate {
   lastSessionId?: string;
 }
 
-interface WorkerRegistry {
-  workers: Record<string, Worker>;
+interface AgentRegistry {
+  workers: Record<string, Agent>;
   templates: Record<string, WorkerTemplate>;
   lastUpdated: string;
 }
@@ -124,7 +124,7 @@ function getRegistryFilePath(): string {
 // Internal
 // ============================================================================
 
-async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
+async function loadRegistry(registryPath?: string): Promise<AgentRegistry> {
   try {
     const filePath = registryPath ?? getRegistryFilePath();
     const content = await readFile(filePath, 'utf-8');
@@ -136,7 +136,7 @@ async function loadRegistry(registryPath?: string): Promise<WorkerRegistry> {
   }
 }
 
-async function saveRegistry(registry: WorkerRegistry, registryPath?: string): Promise<void> {
+async function saveRegistry(registry: AgentRegistry, registryPath?: string): Promise<void> {
   const filePath = registryPath ?? getRegistryFilePath();
   await mkdir(dirname(filePath), { recursive: true });
   registry.lastUpdated = new Date().toISOString();
@@ -218,7 +218,7 @@ async function acquireLock(registryPath?: string): Promise<() => Promise<void>> 
   }
 }
 
-async function withRegistry<T>(fn: (reg: WorkerRegistry) => T | Promise<T>, registryPath?: string): Promise<T> {
+async function withRegistry<T>(fn: (reg: AgentRegistry) => T | Promise<T>, registryPath?: string): Promise<T> {
   const release = await acquireLock(registryPath);
   try {
     const reg = await loadRegistry(registryPath);
@@ -234,91 +234,91 @@ async function withRegistry<T>(fn: (reg: WorkerRegistry) => T | Promise<T>, regi
 // Public API
 // ============================================================================
 
-/** Register a new worker. */
-export async function register(worker: Worker): Promise<void> {
+/** Register a new agent. */
+export async function register(agent: Agent): Promise<void> {
   await withRegistry((reg) => {
-    reg.workers[worker.id] = worker;
+    reg.workers[agent.id] = agent;
   });
 }
 
-/** Unregister (remove) a worker. */
+/** Unregister (remove) an agent. */
 export async function unregister(id: string): Promise<void> {
   await withRegistry((reg) => {
     delete reg.workers[id];
   });
 }
 
-/** Get a worker by ID. */
-export async function get(id: string): Promise<Worker | null> {
+/** Get an agent by ID. */
+export async function get(id: string): Promise<Agent | null> {
   const registry = await loadRegistry();
   return registry.workers[id] ?? null;
 }
 
-/** List all workers. */
-export async function list(): Promise<Worker[]> {
+/** List all agents. */
+export async function list(): Promise<Agent[]> {
   const registry = await loadRegistry();
   return Object.values(registry.workers);
 }
 
-/** Update a worker's state. */
-export async function updateState(id: string, state: WorkerState): Promise<void> {
+/** Update an agent's state. */
+export async function updateState(id: string, state: AgentState): Promise<void> {
   await withRegistry((reg) => {
-    const worker = reg.workers[id];
-    if (worker) {
-      worker.state = state;
-      worker.lastStateChange = new Date().toISOString();
+    const agent = reg.workers[id];
+    if (agent) {
+      agent.state = state;
+      agent.lastStateChange = new Date().toISOString();
     }
   });
 }
 
-/** Update multiple worker fields. */
-export async function update(id: string, updates: Partial<Worker>): Promise<void> {
+/** Update multiple agent fields. */
+export async function update(id: string, updates: Partial<Agent>): Promise<void> {
   await withRegistry((reg) => {
-    const worker = reg.workers[id];
-    if (worker) {
-      Object.assign(worker, updates);
+    const agent = reg.workers[id];
+    if (agent) {
+      Object.assign(agent, updates);
       if (updates.state) {
-        worker.lastStateChange = new Date().toISOString();
+        agent.lastStateChange = new Date().toISOString();
       }
     }
   });
 }
 
-/** Find worker by tmux pane ID. */
-export async function findByPane(paneId: string): Promise<Worker | null> {
-  const workers = await list();
+/** Find agent by tmux pane ID. */
+export async function findByPane(paneId: string): Promise<Agent | null> {
+  const agents = await list();
   const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
-  return workers.find((w) => w.paneId === normalized) ?? null;
+  return agents.find((a) => a.paneId === normalized) ?? null;
 }
 
-/** Find worker by tmux window ID (e.g., "@4"). */
-export async function findByWindow(windowId: string): Promise<Worker | null> {
-  const workers = await list();
+/** Find agent by tmux window ID (e.g., "@4"). */
+export async function findByWindow(windowId: string): Promise<Agent | null> {
+  const agents = await list();
   const normalizedId = windowId.startsWith('@') ? windowId : `@${windowId}`;
-  return workers.find((w) => w.windowId === normalizedId) ?? null;
+  return agents.find((a) => a.windowId === normalizedId) ?? null;
 }
 
-/** Find worker by beads task ID (returns first match for backwards compat). */
-export async function findByTask(taskId: string): Promise<Worker | null> {
-  const workers = await list();
-  return workers.find((w) => w.taskId === taskId) ?? null;
+/** Find agent by beads task ID (returns first match for backwards compat). */
+export async function findByTask(taskId: string): Promise<Agent | null> {
+  const agents = await list();
+  return agents.find((a) => a.taskId === taskId) ?? null;
 }
 
-/** Find ALL workers for a beads task ID (supports N workers per task). */
-export async function findAllByTask(taskId: string): Promise<Worker[]> {
-  const workers = await list();
-  return workers.filter((w) => w.taskId === taskId);
+/** Find ALL agents for a beads task ID (supports N agents per task). */
+export async function findAllByTask(taskId: string): Promise<Agent[]> {
+  const agents = await list();
+  return agents.filter((a) => a.taskId === taskId);
 }
 
-/** Count workers for a task. */
+/** Count agents for a task. */
 export async function countByTask(taskId: string): Promise<number> {
-  const workers = await findAllByTask(taskId);
-  return workers.length;
+  const agents = await findAllByTask(taskId);
+  return agents.length;
 }
 
 /**
- * Generate a unique worker ID for a task (handles N workers per task).
- * Returns taskId for first worker, taskId-2 for second, etc.
+ * Generate a unique agent ID for a task (handles N agents per task).
+ * Returns taskId for first agent, taskId-2 for second, etc.
  */
 export async function generateWorkerId(taskId: string, customName?: string): Promise<string> {
   if (customName) {
@@ -331,18 +331,18 @@ export async function generateWorkerId(taskId: string, customName?: string): Pro
   }
 
   // Find next available suffix
-  const workers = await list();
+  const agents = await list();
   let suffix = existingCount + 1;
-  while (workers.some((w) => w.id === `${taskId}-${suffix}`)) {
+  while (agents.some((a) => a.id === `${taskId}-${suffix}`)) {
     suffix++;
   }
 
   return `${taskId}-${suffix}`;
 }
 
-/** Calculate elapsed time for a worker. */
-export function getElapsedTime(worker: Worker): { ms: number; formatted: string } {
-  const startTime = new Date(worker.startedAt).getTime();
+/** Calculate elapsed time for an agent. */
+export function getElapsedTime(agent: Agent): { ms: number; formatted: string } {
+  const startTime = new Date(agent.startedAt).getTime();
   const ms = Date.now() - startTime;
 
   const minutes = Math.floor(ms / 60000);
@@ -375,49 +375,49 @@ export function formatElapsed(date: Date): string {
 // ============================================================================
 
 /**
- * Add a sub-pane to a worker's subPanes array.
- * If the worker doesn't exist, this is a no-op.
+ * Add a sub-pane to an agent's subPanes array.
+ * If the agent doesn't exist, this is a no-op.
  */
 export async function addSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
   await withRegistry((reg) => {
-    const worker = reg.workers[workerId];
-    if (!worker) return;
-    if (!worker.subPanes) worker.subPanes = [];
-    worker.subPanes.push(paneId);
+    const agent = reg.workers[workerId];
+    if (!agent) return;
+    if (!agent.subPanes) agent.subPanes = [];
+    agent.subPanes.push(paneId);
   }, registryPath);
 }
 
 /**
- * Get a pane ID by worker ID and index.
+ * Get a pane ID by agent ID and index.
  * Index 0 = primary paneId, 1+ = subPanes[index - 1].
- * Returns null if worker not found or index out of range.
+ * Returns null if agent not found or index out of range.
  */
 export async function getPane(workerId: string, index: number, registryPath?: string): Promise<string | null> {
   const registry = await loadRegistry(registryPath);
-  const worker = registry.workers[workerId];
-  if (!worker) return null;
+  const agent = registry.workers[workerId];
+  if (!agent) return null;
 
   if (index === 0) {
-    return worker.paneId;
+    return agent.paneId;
   }
 
   const subIndex = index - 1;
-  if (!worker.subPanes || subIndex >= worker.subPanes.length || subIndex < 0) {
+  if (!agent.subPanes || subIndex >= agent.subPanes.length || subIndex < 0) {
     return null;
   }
 
-  return worker.subPanes[subIndex];
+  return agent.subPanes[subIndex];
 }
 
 /**
- * Remove a sub-pane from a worker's subPanes array (for dead pane cleanup).
- * If the worker doesn't exist or has no subPanes, this is a no-op.
+ * Remove a sub-pane from an agent's subPanes array (for dead pane cleanup).
+ * If the agent doesn't exist or has no subPanes, this is a no-op.
  */
 export async function removeSubPane(workerId: string, paneId: string, registryPath?: string): Promise<void> {
   await withRegistry((reg) => {
-    const worker = reg.workers[workerId];
-    if (!worker || !worker.subPanes) return;
-    worker.subPanes = worker.subPanes.filter((p) => p !== paneId);
+    const agent = reg.workers[workerId];
+    if (!agent || !agent.subPanes) return;
+    agent.subPanes = agent.subPanes.filter((p) => p !== paneId);
   }, registryPath);
 }
 

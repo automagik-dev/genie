@@ -1,17 +1,17 @@
 /**
- * Message Namespace — Mailbox-first messaging between workers.
+ * Send / Inbox — Mailbox-first messaging between agents.
  *
  * Commands:
- *   genie msg send --to <worker> <body>
- *   genie msg inbox <worker>
+ *   genie send --to <agent> <body>
+ *   genie inbox <agent>
  */
 
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import * as registry from '../lib/agent-registry.js';
 import * as protocolRouter from '../lib/protocol-router.js';
-import * as registry from '../lib/worker-registry.js';
 
 /**
  * Auto-detect the sender identity based on execution context.
@@ -75,14 +75,12 @@ function printInbox(
   }
 }
 
-export function registerMsgNamespace(program: Command): void {
-  const msg = program.command('msg').description('Mailbox-first messaging between workers');
-
-  // msg send
-  msg
+export function registerSendInboxCommands(program: Command): void {
+  // genie send
+  program
     .command('send <body>')
-    .description('Send a message to a worker')
-    .option('--to <worker>', 'Recipient worker ID (default: team-lead)', 'team-lead')
+    .description('Send a message to an agent')
+    .option('--to <agent>', 'Recipient agent ID (default: team-lead)', 'team-lead')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
     .option('--team <team>', 'Team name (default: genie)', 'genie')
     .action(async (body: string, options: { to: string; from?: string; team: string }) => {
@@ -105,16 +103,16 @@ export function registerMsgNamespace(program: Command): void {
       }
     });
 
-  // msg inbox
-  msg
-    .command('inbox <worker>')
-    .description('View message inbox for a worker')
+  // genie inbox
+  program
+    .command('inbox <agent>')
+    .description('View message inbox for an agent')
     .option('--json', 'Output as JSON')
     .option('--unread', 'Show only unread messages')
-    .action(async (worker: string, options: { json?: boolean; unread?: boolean }) => {
+    .action(async (agent: string, options: { json?: boolean; unread?: boolean }) => {
       try {
         const repoPath = process.cwd();
-        let messages = await protocolRouter.getInbox(repoPath, worker);
+        let messages = await protocolRouter.getInbox(repoPath, agent);
 
         if (options.unread) {
           messages = messages.filter((m) => !m.read);
@@ -125,7 +123,7 @@ export function registerMsgNamespace(program: Command): void {
           return;
         }
 
-        printInbox(worker, messages, options.unread);
+        printInbox(agent, messages, options.unread);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);

@@ -2,7 +2,7 @@
 
 /**
  * genie — Single entrypoint CLI with namespaces:
- *   team, task, worker, msg + top-level: work, daemon, council
+ *   team, task, agent + top-level: work, daemon, council, send, inbox
  */
 
 import { Command } from 'commander';
@@ -28,14 +28,14 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { VERSION } from './lib/version.js';
 
+import { registerAgentNamespace } from './term-commands/agents.js';
 import * as councilCmd from './term-commands/council.js';
 import * as daemonCmd from './term-commands/daemon.js';
-import { registerMsgNamespace } from './term-commands/msg.js';
+import { registerSendInboxCommands } from './term-commands/msg.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 // Provider-selectable orchestration namespaces (genie-cli-teams)
 import { registerTeamNamespace } from './term-commands/team.js';
 import * as workCmd from './term-commands/work.js';
-import { registerWorkerNamespace } from './term-commands/workers.js';
 
 const program = new Command();
 
@@ -146,8 +146,8 @@ ledger
 // ============================================================================
 
 registerTeamNamespace(program);
-registerWorkerNamespace(program);
-registerMsgNamespace(program);
+registerAgentNamespace(program);
+registerSendInboxCommands(program);
 registerTaskNamespace(program);
 
 // ============================================================================

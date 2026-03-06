@@ -114,10 +114,18 @@ async function ensureWorkerAlive(
   });
   if (!template) return null;
 
+  // Only resume explicitly suspended workers (idle-timeout).
+  // Dead/done workers get fresh sessions — stale --resume causes Claude
+  // to exit immediately when the old session has no pending work,
+  // which kills the pane before message delivery can happen.
+  const isSuspended = worker?.state === 'suspended';
   const resumeSessionId =
-    template.provider === 'claude' ? (worker?.claudeSessionId ?? template.lastSessionId) : undefined;
+    template.provider === 'claude' && isSuspended ? (worker?.claudeSessionId ?? template.lastSessionId) : undefined;
 
   try {
+    // Clean up ghost worker entries (dead panes) for this role before spawning
+    await cleanupDeadWorkers(recipientId, workerTeam);
+
     if (worker) {
       await registry.unregister(worker.id);
     }
@@ -133,9 +141,31 @@ async function ensureWorkerAlive(
 
     await waitForWorkerReady(result.paneId);
 
+    // Verify the pane survived startup — if Claude exited (e.g. stale resume
+    // or startup error), the pane is dead and delivery would silently fail.
+    if (!(await isPaneAlive(result.paneId))) {
+      await registry.unregister(result.worker.id);
+      return null;
+    }
+
     return { worker: result.worker, respawned: true };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Remove dead worker entries matching a role/ID to prevent ghost accumulation.
+ * Only removes workers whose tmux panes are no longer alive.
+ */
+async function cleanupDeadWorkers(recipientId: string, team?: string): Promise<void> {
+  const allWorkers = await registry.list();
+  for (const w of allWorkers) {
+    if (team && w.team !== team) continue;
+    const matches = w.role === recipientId || w.id === recipientId;
+    if (!matches) continue;
+    if (await isPaneAlive(w.paneId)) continue;
+    await registry.unregister(w.id);
   }
 }
 
@@ -228,7 +258,14 @@ export async function sendMessage(
   }
 
   // 2. No live match — try auto-spawn from template (dead/missing worker)
-  const worker = await registry.get(to);
+  // Try exact ID first, then role-based lookup (IDs are often prefixed, e.g. "genie-ideias" vs "ideias")
+  let worker = await registry.get(to);
+  if (!worker) {
+    const allWorkers = await registry.list();
+    // Prefer suspended workers (they have valid sessions to resume)
+    worker =
+      allWorkers.find((w) => w.role === to && w.state === 'suspended') ?? allWorkers.find((w) => w.role === to) ?? null;
+  }
   const alive = await ensureWorkerAlive(worker, to);
   if (alive) {
     return deliverToWorker(repoPath, from, alive.worker, body);
