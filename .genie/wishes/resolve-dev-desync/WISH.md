@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | DRAFT |
+| **Status** | SHIPPED |
 | **Slug** | `resolve-dev-desync` |
 | **Date** | 2026-03-06 |
 
