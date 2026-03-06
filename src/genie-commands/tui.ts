@@ -11,23 +11,18 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
   registerNativeMember,
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
+import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 
 const DEFAULT_NAME = 'genie';
 const _DEFAULT_WORKSPACE = join(homedir(), 'workspace');
-
-/** Shell-quote a string for safe embedding in shell commands. */
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
 
 /**
  * Get the AGENTS.md system prompt if it exists in the current directory.
@@ -37,19 +32,6 @@ export function getAgentsSystemPrompt(): string | null {
   const agentsPath = join(process.cwd(), 'AGENTS.md');
   if (existsSync(agentsPath)) {
     return readFileSync(agentsPath, 'utf-8');
-  }
-  return null;
-}
-
-/**
- * Read the built-in TEAM_LEAD_PROMPT.md from the genie-cli package root.
- * This prompt teaches team-leads to use genie CLI instead of native CC tools.
- */
-export function getTeamLeadPrompt(): string | null {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const promptPath = join(thisDir, '..', '..', 'TEAM_LEAD_PROMPT.md');
-  if (existsSync(promptPath)) {
-    return readFileSync(promptPath, 'utf-8');
   }
   return null;
 }
@@ -128,39 +110,10 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
 
 /**
  * Build the claude launch command with native team flags.
- *
- * CC requires --agent-id, --agent-name, and --team-name together.
- * The team lead uses agent-id "team-lead@<team>" by convention.
- * When systemPrompt is provided, --system-prompt is injected into the command.
+ * Delegates to the shared buildTeamLeadCommand (single source of truth).
  */
 export function buildClaudeCommand(teamName: string, systemPrompt?: string, resumeSessionId?: string): string {
-  const sanitized = sanitizeTeamName(teamName);
-  const qTeam = shellQuote(sanitized);
-  const parts = [
-    'CLAUDECODE=1',
-    'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
-    `GENIE_TEAM=${qTeam}`,
-    `GENIE_AGENT_NAME='team-lead'`,
-    'claude',
-    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
-    `--agent-name ${shellQuote('team-lead')}`,
-    `--team-name ${qTeam}`,
-    '--dangerously-skip-permissions',
-  ];
-
-  if (resumeSessionId) {
-    parts.push(`--resume ${shellQuote(resumeSessionId)}`);
-  }
-
-  // Combine AGENTS.md + built-in genie CLI prompt
-  const teamLeadPrompt = getTeamLeadPrompt();
-  const fullPrompt = [systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
-  if (fullPrompt) {
-    const flattened = fullPrompt.replace(/\n/g, ' ');
-    parts.push(`--system-prompt ${shellQuote(flattened)}`);
-  }
-
-  return parts.join(' ');
+  return buildTeamLeadCommand(teamName, { systemPrompt, resumeSessionId });
 }
 
 async function createTuiSession(name: string, workspaceDir: string, systemPrompt: string | null): Promise<void> {

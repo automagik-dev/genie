@@ -22,7 +22,7 @@ import * as protocolRouter from '../lib/protocol-router.js';
  *   3. TMUX_PANE → native team config members (match tmuxPaneId) → name
  *   4. Fallback: 'cli'
  */
-async function detectSenderIdentity(teamName: string): Promise<string> {
+export async function detectSenderIdentity(teamName: string): Promise<string> {
   const envName = process.env.GENIE_AGENT_NAME;
   if (envName) return envName;
 
