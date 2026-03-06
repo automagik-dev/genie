@@ -115,12 +115,10 @@ async function ensureWorkerAlive(
   if (!template) return null;
 
   // Only resume explicitly suspended workers (idle-timeout).
-  // Dead/done workers get fresh sessions — stale --resume causes Claude
-  // to exit immediately when the old session has no pending work,
-  // which kills the pane before message delivery can happen.
-  const isSuspended = worker?.state === 'suspended';
+  // Always resume if we have a session ID — all non-running workers are
+  // effectively suspended (dead state has no practical distinction).
   const resumeSessionId =
-    template.provider === 'claude' && isSuspended ? (worker?.claudeSessionId ?? template.lastSessionId) : undefined;
+    template.provider === 'claude' ? (worker?.claudeSessionId ?? template.lastSessionId) : undefined;
 
   try {
     // Clean up ghost worker entries (dead panes) for this role before spawning
