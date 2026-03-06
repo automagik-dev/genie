@@ -10,17 +10,12 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
+import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
 const DEFAULT_SESSION = 'genie';
-
-/** Shell-quote a string for safe embedding in shell commands. */
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}
 
 export interface EnsureTeamLeadResult {
   /** Whether a new team window was created (false = already existed) */
@@ -29,45 +24,6 @@ export interface EnsureTeamLeadResult {
   session: string;
   /** The tmux window name */
   window: string;
-}
-
-/**
- * Build the claude CLI command for a team-lead.
- * Reuses the same pattern as tui.ts buildClaudeCommand.
- */
-/** Read the built-in TEAM_LEAD_PROMPT.md from the genie-cli package root. */
-function getTeamLeadPrompt(): string | null {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const promptPath = join(thisDir, '..', '..', 'TEAM_LEAD_PROMPT.md');
-  if (existsSync(promptPath)) {
-    return readFileSync(promptPath, 'utf-8');
-  }
-  return null;
-}
-
-function buildTeamLeadCommand(teamName: string, systemPrompt?: string): string {
-  const sanitized = sanitizeTeamName(teamName);
-  const qTeam = shellQuote(sanitized);
-  const parts = [
-    'CLAUDECODE=1',
-    'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
-    `GENIE_TEAM=${qTeam}`,
-    'claude',
-    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
-    `--agent-name ${shellQuote('team-lead')}`,
-    `--team-name ${qTeam}`,
-    '--dangerously-skip-permissions',
-  ];
-
-  // Combine AGENTS.md + built-in genie CLI prompt
-  const teamLeadPrompt = getTeamLeadPrompt();
-  const fullPrompt = [systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
-  if (fullPrompt) {
-    const flattened = fullPrompt.replace(/\n/g, ' ');
-    parts.push(`--system-prompt ${shellQuote(flattened)}`);
-  }
-
-  return parts.join(' ');
 }
 
 /**
@@ -156,7 +112,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     const target = `${session}:${teamName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, systemPrompt ?? undefined);
+    const cmd = buildTeamLeadCommand(teamName, { systemPrompt: systemPrompt ?? undefined });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 
