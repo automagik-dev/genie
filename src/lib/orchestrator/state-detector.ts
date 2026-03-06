@@ -296,21 +296,3 @@ export function extractPermissionDetails(output: string): {
     file,
   };
 }
-
-/**
- * Extract question options from output
- */
-export function extractQuestionOptions(output: string): string[] {
-  const cleanOutput = stripAnsi(output);
-  const matches = matchPatterns(cleanOutput, questionPatterns);
-
-  const options: string[] = [];
-
-  for (const match of matches) {
-    if (match.extracted?.option) {
-      options.push(match.extracted.option);
-    }
-  }
-
-  return options;
-}

@@ -113,14 +113,6 @@ export async function inbox(repoPath: string, workerId: string): Promise<Mailbox
 }
 
 /**
- * Get unread messages for a worker.
- */
-export async function unread(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
-  const mailbox = await loadMailbox(repoPath, workerId);
-  return mailbox.messages.filter((m) => !m.read);
-}
-
-/**
  * Mark a message as delivered (pane injection succeeded).
  */
 export async function markDelivered(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
@@ -130,15 +122,6 @@ export async function markDelivered(repoPath: string, workerId: string, messageI
   msg.deliveredAt = new Date().toISOString();
   await saveMailbox(repoPath, mailbox);
   return true;
-}
-
-/**
- * Get pending (undelivered) messages for a worker.
- * Used by the delivery loop to push queued messages.
- */
-export async function pending(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
-  const mailbox = await loadMailbox(repoPath, workerId);
-  return mailbox.messages.filter((m) => m.deliveredAt === null);
 }
 
 /**

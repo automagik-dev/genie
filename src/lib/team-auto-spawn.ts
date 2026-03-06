@@ -17,7 +17,7 @@ import * as tmux from './tmux.js';
 
 const DEFAULT_SESSION = 'genie';
 
-export interface EnsureTeamLeadResult {
+interface EnsureTeamLeadResult {
   /** Whether a new team window was created (false = already existed) */
   created: boolean;
   /** The tmux session name */
