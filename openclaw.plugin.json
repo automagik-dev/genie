@@ -1,0 +1,12 @@
+{
+  "id": "genie",
+  "name": "Genie",
+  "description": "Skills, agents, and hooks for the Genie CLI terminal orchestration toolkit",
+  "version": "3.260302.2",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "skills": ["./plugins/genie/skills"]
+}

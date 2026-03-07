@@ -1,5 +1,0 @@
-Timestamp: 2025-11-15T20:55:43Z
-== forge/mcp listing (expect failure) ==
-ls: cannot access 'forge/mcp': No such file or directory
-
-== fastmcp references ==
