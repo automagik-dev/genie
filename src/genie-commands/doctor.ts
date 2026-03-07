@@ -8,9 +8,7 @@
 import { existsSync } from 'node:fs';
 import { $ } from 'bun';
 import { contractClaudePath, getClaudeSettingsPath } from '../lib/claude-settings.js';
-import { configExists as claudioConfigExists, getProfile as getClaudioProfile } from '../lib/config.js';
 import { genieConfigExists, getGenieConfigPath, isSetupComplete, loadGenieConfig } from '../lib/genie-config.js';
-import { hasClaudioBinary } from '../lib/spawn-command.js';
 import { checkCommand } from '../lib/system-detect.js';
 
 interface CheckResult {
@@ -157,7 +155,7 @@ async function checkConfiguration(): Promise<CheckResult[]> {
     });
   }
 
-  // Check if claudio config exists
+  // Check if claude settings exists
   const claudeSettingsPath = getClaudeSettingsPath();
   if (existsSync(claudeSettingsPath)) {
     results.push({
@@ -238,79 +236,8 @@ async function checkTmux(): Promise<CheckResult[]> {
   return results;
 }
 
-async function validateClaudioProfileRef(
-  name: string,
-  claudioProfile: string | undefined,
-  results: CheckResult[],
-): Promise<void> {
-  if (!claudioProfile) {
-    results.push({
-      name: `Profile '${name}'`,
-      status: 'warn',
-      message: 'no claudioProfile specified',
-      suggestion: 'Add claudioProfile to the profile config',
-    });
-    return;
-  }
-
-  try {
-    const profile = await getClaudioProfile(claudioProfile);
-    results.push(
-      profile
-        ? { name: `Profile '${name}'`, status: 'pass', message: `claudio:${claudioProfile}` }
-        : {
-            name: `Profile '${name}'`,
-            status: 'warn',
-            message: `claudio profile '${claudioProfile}' not found`,
-            suggestion: `Run: claudio profiles add ${claudioProfile}`,
-          },
-    );
-  } catch {
-    results.push({
-      name: `Profile '${name}'`,
-      status: 'warn',
-      message: `could not verify claudio profile '${claudioProfile}'`,
-    });
-  }
-}
-
-async function validateClaudioProfiles(
-  claudioProfiles: { name: string; claudioProfile?: string }[],
-  results: CheckResult[],
-): Promise<void> {
-  // Check claudio binary
-  results.push(
-    hasClaudioBinary()
-      ? { name: 'claudio binary', status: 'pass' }
-      : {
-          name: 'claudio binary',
-          status: 'warn',
-          message: 'not found',
-          suggestion: `${claudioProfiles.length} profile${claudioProfiles.length === 1 ? '' : 's'} use claudio. Install or switch to claude launcher.`,
-        },
-  );
-
-  if (claudioConfigExists()) {
-    results.push({ name: 'claudio config', status: 'pass', message: '~/.claudio/config.json' });
-    for (const { name, claudioProfile } of claudioProfiles) {
-      await validateClaudioProfileRef(name, claudioProfile, results);
-    }
-  } else {
-    results.push({ name: 'claudio config', status: 'warn', message: 'not found', suggestion: 'Run: claudio setup' });
-    for (const { name, claudioProfile } of claudioProfiles) {
-      results.push({
-        name: `Profile '${name}'`,
-        status: 'warn',
-        message: `requires claudio profile '${claudioProfile || 'default'}'`,
-        suggestion: 'Set up claudio first',
-      });
-    }
-  }
-}
-
 /**
  * Check worker profiles configuration
- * Validates that profiles using claudio launcher have proper dependencies
  */
 async function checkWorkerProfiles(): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
@@ -338,18 +265,6 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
     return results;
   }
 
-  // Check for profiles using claudio launcher
-  const claudioProfiles: { name: string; claudioProfile?: string }[] = [];
-  const claudeProfiles: string[] = [];
-
-  for (const [name, profile] of Object.entries(profiles)) {
-    if (profile.launcher === 'claudio') {
-      claudioProfiles.push({ name, claudioProfile: profile.claudioProfile });
-    } else {
-      claudeProfiles.push(name);
-    }
-  }
-
   // Report profile count
   const totalProfiles = Object.keys(profiles).length;
   results.push({
@@ -358,13 +273,8 @@ async function checkWorkerProfiles(): Promise<CheckResult[]> {
     message: `${totalProfiles} profile${totalProfiles === 1 ? '' : 's'}`,
   });
 
-  // If there are claudio profiles, verify claudio binary and config
-  if (claudioProfiles.length > 0) {
-    await validateClaudioProfiles(claudioProfiles, results);
-  }
-
-  // Report claude profiles (always valid)
-  for (const name of claudeProfiles) {
+  // Report claude profiles
+  for (const name of Object.keys(profiles)) {
     results.push({
       name: `Profile '${name}'`,
       status: 'pass',

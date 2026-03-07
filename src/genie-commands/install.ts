@@ -287,7 +287,7 @@ export async function installCommand(options: InstallOptions): Promise<void> {
     console.log('\x1b[32m✅ All prerequisites are installed!\x1b[0m');
     console.log();
     await promptForSetup(options);
-    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
+    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mgenie --help\x1b[0m to get started.');
     console.log();
     return;
   }
@@ -326,7 +326,7 @@ export async function installCommand(options: InstallOptions): Promise<void> {
 
   if (allRequiredOk) {
     await promptForSetup(options);
-    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mclaudio --help\x1b[0m to get started.');
+    console.log('Run \x1b[36mterm --help\x1b[0m or \x1b[36mgenie --help\x1b[0m to get started.');
   } else {
     console.log('\x1b[31mSome required prerequisites could not be installed.\x1b[0m');
     console.log('Please install them manually and run this command again.');

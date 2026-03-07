@@ -1,8 +1,7 @@
 # Worker Profiles
 
 Worker profiles configure how genie-cli spawns Claude Code workers. Each profile bundles:
-- **Launcher**: `claude` (direct) or `claudio` (via LLM router)
-- **Claudio Profile**: Which claudio model routing profile to use (if using claudio)
+- **Launcher**: `claude` (direct Claude Code invocation)
 - **Claude Args**: CLI arguments passed to Claude Code
 
 ## Default Profiles
@@ -11,8 +10,8 @@ The template config (`templates/genie-config.template.json`) includes these prof
 
 | Profile | Launcher | Purpose |
 |---------|----------|---------|
-| `coding-fast` | claudio | Fast autonomous workers via LLM router (default) |
-| `autonomous` | claudio | Opus-level autonomous workers for complex tasks |
+| `coding-fast` | claude | Fast autonomous workers (default) |
+| `autonomous` | claude | Opus-level autonomous workers for complex tasks |
 | `safe` | claude | Interactive workers with permission prompts |
 | `interactive` | claude | Direct claude, no special flags |
 
@@ -27,8 +26,6 @@ genie profiles list
 ```bash
 genie profiles add my-profile
 # Interactive prompts for:
-# - Launcher (claude or claudio)
-# - Claudio profile name (if claudio)
 # - Claude args (space-separated)
 ```
 
@@ -72,8 +69,7 @@ Profiles are stored in `~/.genie/config.json`:
 {
   "workerProfiles": {
     "my-profile": {
-      "launcher": "claudio",
-      "claudioProfile": "coding-fast",
+      "launcher": "claude",
       "claudeArgs": ["--dangerously-skip-permissions", "--model", "sonnet"]
     }
   },
@@ -85,8 +81,7 @@ Profiles are stored in `~/.genie/config.json`:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `launcher` | `"claude"` \| `"claudio"` | Yes | Which binary to invoke |
-| `claudioProfile` | string | No | Claudio profile name (required if launcher is claudio) |
+| `launcher` | `"claude"` | Yes | Which binary to invoke |
 | `claudeArgs` | string[] | Yes | Arguments passed to Claude Code |
 
 ### Common Claude Args
@@ -99,19 +94,6 @@ Profiles are stored in `~/.genie/config.json`:
 | `--model opus` | Use Opus model |
 | `--model sonnet` | Use Sonnet model |
 | `--allowedTools Read,Grep,Glob` | Restrict to specific tools |
-
-## Claudio Integration
-
-When using `claudio` launcher, the worker goes through your LLM router:
-
-1. Claudio reads its config from `~/.claudio/config.json`
-2. Uses the specified `claudioProfile` for model routing
-3. Passes `claudeArgs` through to Claude Code
-
-This enables:
-- Custom model routing (use different models for opus/sonnet/haiku)
-- API URL customization (use local or proxy endpoints)
-- Profile-based model selection without changing genie config
 
 ## First-Time Setup
 

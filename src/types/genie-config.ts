@@ -38,11 +38,6 @@ export const ShortcutsConfigSchema = z.object({
   shellInstalled: z.boolean().default(false),
 });
 
-// Claudio integration configuration
-const ClaudioConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-});
-
 // Codex integration configuration
 const CodexConfigSchema = z.object({
   configured: z.boolean().default(false),
@@ -51,10 +46,8 @@ const CodexConfigSchema = z.object({
 // Worker profile configuration
 // Defines how to launch a Claude worker
 export const WorkerProfileSchema = z.object({
-  /** Which binary to invoke: 'claude' (direct) or 'claudio' (via LLM router) */
-  launcher: z.enum(['claude', 'claudio']),
-  /** Claudio profile name (required if launcher is 'claudio') */
-  claudioProfile: z.string().optional(),
+  /** Which binary to invoke */
+  launcher: z.literal('claude'),
   /** CLI arguments passed to Claude Code */
   claudeArgs: z.array(z.string()),
 });
@@ -78,7 +71,6 @@ export const GenieConfigSchema = z.object({
   logging: LoggingConfigSchema.default({}),
   shell: ShellConfigSchema.default({}),
   shortcuts: ShortcutsConfigSchema.default({}),
-  claudio: ClaudioConfigSchema.optional(),
   codex: CodexConfigSchema.optional(),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
   setupComplete: z.boolean().default(false),

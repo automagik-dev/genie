@@ -2,7 +2,6 @@
  * Spawn Command Builder
  *
  * Builds command strings for spawning Claude workers based on WorkerProfile configuration.
- * Supports both direct `claude` invocation and `claudio` (LLM router) invocation.
  */
 
 // ============================================================================
@@ -14,10 +13,8 @@
  * Defines how to launch a Claude worker
  */
 export interface WorkerProfile {
-  /** Which binary to invoke: 'claude' (direct) or 'claudio' (via LLM router) */
-  launcher: 'claude' | 'claudio';
-  /** Claudio profile name (required if launcher is 'claudio') */
-  claudioProfile?: string;
+  /** Which binary to invoke */
+  launcher: 'claude';
   /** CLI arguments passed to Claude Code */
   claudeArgs: string[];
 }
@@ -46,18 +43,6 @@ function escapeForShell(str: string): string {
   return str.replace(/'/g, "'\\''");
 }
 
-/**
- * Check if claudio binary is available on PATH
- */
-export function hasClaudioBinary(): boolean {
-  const BunExt = Bun as unknown as { which?: (name: string) => string | null };
-  if (typeof BunExt.which === 'function') {
-    return Boolean(BunExt.which('claudio'));
-  }
-  // Fallback: assume available (will fail at runtime if not)
-  return true;
-}
-
 // ============================================================================
 // Main Function
 // ============================================================================
@@ -69,17 +54,11 @@ export function hasClaudioBinary(): boolean {
  * @param options - SpawnOptions with sessionId, resume, and beadsDir
  * @returns Command string ready to be passed to tmux.executeCommand()
  * @throws Error if no profile is provided
- * @throws Error if claudio launcher is specified but claudio binary is not found
  *
  * @example
  * // Claude profile
  * buildSpawnCommand({ launcher: 'claude', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
  * // Returns: "claude '--dangerously-skip-permissions' --session-id 'abc'"
- *
- * @example
- * // Claudio profile
- * buildSpawnCommand({ launcher: 'claudio', claudioProfile: 'coding-fast', claudeArgs: ['--dangerously-skip-permissions'] }, { sessionId: 'abc' })
- * // Returns: "claudio launch 'coding-fast' -- '--dangerously-skip-permissions' --session-id 'abc'"
  */
 export function buildSpawnCommand(profile: WorkerProfile | undefined, options: SpawnOptions): string {
   if (!profile) {
@@ -95,37 +74,15 @@ export function buildSpawnCommand(profile: WorkerProfile | undefined, options: S
     parts.push(`BEADS_DIR='${escapeForShell(options.beadsDir)}'`);
   }
 
-  // 2. Build command based on launcher type
-  if (profile.launcher === 'claudio') {
-    // 3. Claudio launcher: claudio launch <profile> -- <args>
-    // Verify claudio binary is available
-    if (!hasClaudioBinary()) {
-      throw new Error(
-        'claudio binary not found on PATH. ' +
-          'Install claudio or use a "claude" launcher profile instead. ' +
-          'See: https://github.com/automagik/claudio',
-      );
-    }
-    parts.push('claudio');
-    parts.push('launch');
-    parts.push(`'${escapeForShell(profile.claudioProfile || 'default')}'`);
-    parts.push('--');
+  // 2. Build command
+  parts.push('claude');
 
-    // Add claude args (escaped for shell safety)
-    for (const arg of profile.claudeArgs) {
-      parts.push(`'${escapeForShell(arg)}'`);
-    }
-  } else {
-    // 4. Claude launcher: claude <args>
-    parts.push('claude');
-
-    // Add claude args (escaped for shell safety)
-    for (const arg of profile.claudeArgs) {
-      parts.push(`'${escapeForShell(arg)}'`);
-    }
+  // Add claude args (escaped for shell safety)
+  for (const arg of profile.claudeArgs) {
+    parts.push(`'${escapeForShell(arg)}'`);
   }
 
-  // 5. Add session-id or resume flag
+  // 3. Add session-id or resume flag
   // sessionId takes precedence over resume
   if (options.sessionId) {
     parts.push('--session-id');

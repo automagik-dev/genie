@@ -592,10 +592,10 @@ offer_claude_plugin() {
         else
             # Marketplace mode
             claude plugin marketplace add automagik-dev/genie 2>/dev/null || true
-            if claude plugin install genie@namastexlabs 2>/dev/null; then
+            if claude plugin install genie@automagik 2>/dev/null; then
                 success "Genie Claude Code plugin installed"
             else
-                warn "Plugin install failed — try: /plugin install genie@namastexlabs"
+                warn "Plugin install failed — try: /plugin install genie@automagik"
             fi
         fi
     fi
@@ -672,7 +672,7 @@ To complete Genie setup, ask the user which integrations to enable:
 1. **Claude Code Plugin** — Adds skills, agents, and hooks to Claude Code
    Commands:
    claude plugin marketplace add automagik-dev/genie
-   claude plugin install genie@namastexlabs
+   claude plugin install genie@automagik
 
 2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
    Command:
@@ -775,7 +775,7 @@ run_uninstall() {
     # Try claude plugin uninstall for marketplace-installed plugins
     if check_command claude && claude plugin list 2>/dev/null | grep -q "genie"; then
         if confirm "Unregister Claude Code plugin from marketplace?"; then
-            claude plugin uninstall genie@namastexlabs 2>/dev/null || true
+            claude plugin uninstall genie@automagik 2>/dev/null || true
             success "Claude Code plugin unregistered"
             removed_something=true
         else

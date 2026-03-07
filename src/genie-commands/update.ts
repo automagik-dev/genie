@@ -225,8 +225,8 @@ async function updateSource(): Promise<void> {
     await mkdir(GENIE_BIN, { recursive: true });
     await mkdir(LOCAL_BIN, { recursive: true });
 
-    const binaries = ['genie.js', 'term.js', 'claudio.js'];
-    const names = ['genie', 'term', 'claudio'];
+    const binaries = ['genie.js', 'term.js'];
+    const names = ['genie', 'term'];
 
     for (let i = 0; i < binaries.length; i++) {
       const src = join(GENIE_SRC, 'dist', binaries[i]);
