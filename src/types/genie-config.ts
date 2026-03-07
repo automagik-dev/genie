@@ -45,12 +45,15 @@ const CodexConfigSchema = z.object({
 
 // Worker profile configuration
 // Defines how to launch a Claude worker
-export const WorkerProfileSchema = z.object({
-  /** Which binary to invoke */
-  launcher: z.literal('claude'),
-  /** CLI arguments passed to Claude Code */
-  claudeArgs: z.array(z.string()),
-});
+// Uses preprocess to migrate legacy "claudio" launcher values to "claude"
+export const WorkerProfileSchema = z
+  .object({
+    /** Which binary to invoke */
+    launcher: z.preprocess((val) => (val === 'claudio' ? 'claude' : val), z.literal('claude')),
+    /** CLI arguments passed to Claude Code */
+    claudeArgs: z.array(z.string()),
+  })
+  .passthrough();
 
 // Council preset configuration
 // Defines a pair of profiles for dual-model deliberation
