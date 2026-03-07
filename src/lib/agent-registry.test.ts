@@ -348,10 +348,18 @@ describe('Agent type: windowId field', () => {
 });
 
 describe('findByWindow', () => {
+  const GLOBAL_TEST_DIR = '/tmp/worker-registry-test-global';
+
   beforeEach(() => {
-    cleanTestDir();
+    // Clean both test dirs and any stale lock files
+    try {
+      rmSync(GLOBAL_TEST_DIR, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
+    mkdirSync(GLOBAL_TEST_DIR, { recursive: true });
     // Point GENIE_HOME to isolated temp dir so tests don't clobber real registry
-    process.env.GENIE_HOME = '/tmp/worker-registry-test-global';
+    process.env.GENIE_HOME = GLOBAL_TEST_DIR;
   });
 
   test('findByWindow returns worker with matching windowId', async () => {
@@ -360,16 +368,12 @@ describe('findByWindow', () => {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
     };
-    const testDir = '/tmp/worker-registry-test-global';
-    mkdirSync(testDir, { recursive: true });
-    writeFileSync(join(testDir, 'workers.json'), JSON.stringify(registry, null, 2));
+    writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
 
     const found = await findByWindow('@4');
     expect(found).not.toBeNull();
     expect(found!.id).toBe('bd-42');
     expect(found!.windowId).toBe('@4');
-
-    rmSync(testDir, { recursive: true, force: true });
   });
 
   test('findByWindow returns null for unknown window', async () => {
@@ -378,14 +382,10 @@ describe('findByWindow', () => {
       workers: { [worker.id]: worker },
       lastUpdated: new Date().toISOString(),
     };
-    const testDir = '/tmp/worker-registry-test-global';
-    mkdirSync(testDir, { recursive: true });
-    writeFileSync(join(testDir, 'workers.json'), JSON.stringify(registry, null, 2));
+    writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
 
     const found = await findByWindow('@999');
     expect(found).toBeNull();
-
-    rmSync(testDir, { recursive: true, force: true });
   });
 });
 
