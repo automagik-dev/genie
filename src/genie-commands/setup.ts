@@ -25,7 +25,6 @@ import type { GenieConfig } from '../types/genie-config.js';
 export interface SetupOptions {
   quick?: boolean;
   shortcuts?: boolean;
-  claudio?: boolean;
   codex?: boolean;
   terminal?: boolean;
   session?: boolean;
@@ -210,41 +209,6 @@ async function configureShortcuts(config: GenieConfig, quick: boolean): Promise<
 }
 
 // ============================================================================
-// Claudio Integration
-// ============================================================================
-
-async function configureClaudio(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
-  printSection('5. Claudio Integration', 'LLM router profile management');
-
-  const claudeCheck = await checkCommand('claude');
-
-  if (!claudeCheck.exists) {
-    console.log('  \x1b[33m!\x1b[0m Claude Code CLI not found. Skipping claudio integration.');
-    return config;
-  }
-
-  if (quick) {
-    console.log('  Skipped in quick mode. Run \x1b[36mclaudio setup\x1b[0m to configure.');
-    return config;
-  }
-
-  const enableClaudio = await confirm({
-    message: 'Configure Claudio API profiles?',
-    default: false,
-  });
-
-  if (enableClaudio) {
-    config.claudio = { enabled: true };
-    console.log();
-    console.log('  Run \x1b[36mclaudio setup\x1b[0m to configure API profiles.');
-  } else {
-    console.log('  Skipped. Run \x1b[36mclaudio setup\x1b[0m later.');
-  }
-
-  return config;
-}
-
-// ============================================================================
 // Codex Integration
 // ============================================================================
 
@@ -255,7 +219,7 @@ function printCodexResult(result: 'changed' | 'unchanged' | 'error'): void {
 }
 
 async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
-  printSection('6. Codex Integration', 'Configure OpenAI Codex for genie workers');
+  printSection('5. Codex Integration', 'Configure OpenAI Codex for genie workers');
 
   const codexCheck = await checkCommand('codex');
   if (!codexCheck.exists) {
@@ -302,7 +266,7 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
 // ============================================================================
 
 async function configureDebug(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
-  printSection('7. Debug Options', 'Logging and debugging settings');
+  printSection('6. Debug Options', 'Logging and debugging settings');
 
   if (quick) {
     console.log('  Using defaults: tmuxDebug=false, verbose=false');
@@ -339,7 +303,6 @@ async function showSummaryAndSave(config: GenieConfig): Promise<void> {
   console.log(
     `  Shortcuts: ${config.shortcuts.tmuxInstalled ? '\x1b[32minstalled\x1b[0m' : '\x1b[2mnot installed\x1b[0m'}`,
   );
-  console.log(`  Claudio: ${config.claudio?.enabled ? '\x1b[32menabled\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Codex:   ${config.codex?.configured ? '\x1b[32mconfigured\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
   console.log();
@@ -375,7 +338,7 @@ function printNextSteps(): void {
   console.log();
   console.log('\x1b[1mNext Steps:\x1b[0m');
   console.log();
-  console.log('  Start a session:  \x1b[36mclaudio launch\x1b[0m');
+  console.log('  Start a session:  \x1b[36mgenie tui\x1b[0m');
   console.log('  Watch AI work:    \x1b[36mtmux attach -t genie\x1b[0m');
   console.log('  Check health:     \x1b[36mgenie doctor\x1b[0m');
   console.log();
@@ -427,13 +390,6 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
     return;
   }
 
-  if (options.claudio) {
-    printHeader();
-    await configureClaudio(config, false);
-    await markSetupComplete();
-    return;
-  }
-
   if (options.codex) {
     printHeader();
     config = await configureCodex(config, false);
@@ -458,7 +414,6 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick);
-  config = await configureClaudio(config, quick);
   config = await configureCodex(config, quick);
   config = await configureDebug(config, quick);
 

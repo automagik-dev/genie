@@ -5,7 +5,7 @@
  * how Claude Code workers are spawned (launcher, args, etc.)
  */
 
-import { confirm, input, select } from '@inquirer/prompts';
+import { confirm, input } from '@inquirer/prompts';
 import { loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 import type { WorkerProfile } from '../types/genie-config.js';
 
@@ -29,25 +29,17 @@ export async function profilesListCommand(): Promise<void> {
   // Header
   const nameWidth = 20;
   const launcherWidth = 12;
-  const claudioWidth = 20;
-  console.log(
-    `  ${'Name'.padEnd(nameWidth)}${'Launcher'.padEnd(launcherWidth)}${'Claudio Profile'.padEnd(claudioWidth)}Claude Args`,
-  );
-  console.log(
-    `  ${'-'.repeat(nameWidth - 2)}  ${'-'.repeat(launcherWidth - 2)}  ${'-'.repeat(claudioWidth - 2)}  ${'-'.repeat(30)}`,
-  );
+  console.log(`  ${'Name'.padEnd(nameWidth)}${'Launcher'.padEnd(launcherWidth)}Claude Args`);
+  console.log(`  ${'-'.repeat(nameWidth - 2)}  ${'-'.repeat(launcherWidth - 2)}  ${'-'.repeat(30)}`);
 
   // Rows
   for (const name of profileNames) {
     const profile = profiles[name];
     const isDefault = config.defaultWorkerProfile === name;
     const marker = isDefault ? '*' : ' ';
-    const claudioProfile = profile.claudioProfile || '-';
     const args = profile.claudeArgs.join(' ') || '-';
 
-    console.log(
-      `  ${marker}${name.padEnd(nameWidth - 1)}${profile.launcher.padEnd(launcherWidth)}${claudioProfile.padEnd(claudioWidth)}${args}`,
-    );
+    console.log(`  ${marker}${name.padEnd(nameWidth - 1)}${profile.launcher.padEnd(launcherWidth)}${args}`);
   }
 
   console.log('');
@@ -72,23 +64,7 @@ export async function profilesAddCommand(name: string): Promise<void> {
 
   console.log(`\nCreating worker profile: ${name}\n`);
 
-  // Prompt for launcher
-  const launcher = (await select({
-    message: 'Launcher:',
-    choices: [
-      { value: 'claude', name: 'claude - Direct Claude Code' },
-      { value: 'claudio', name: 'claudio - Via LLM router (custom models)' },
-    ],
-  })) as 'claude' | 'claudio';
-
-  // Prompt for claudio profile if using claudio
-  let claudioProfile: string | undefined;
-  if (launcher === 'claudio') {
-    claudioProfile = await input({
-      message: 'Claudio profile name (from ~/.claudio/config.json):',
-      default: 'coding-fast',
-    });
-  }
+  const launcher = 'claude' as const;
 
   // Prompt for claude args
   const claudeArgsStr = await input({
@@ -103,10 +79,6 @@ export async function profilesAddCommand(name: string): Promise<void> {
     launcher,
     claudeArgs,
   };
-  if (claudioProfile) {
-    profile.claudioProfile = claudioProfile;
-  }
-
   // Save
   if (!config.workerProfiles) {
     config.workerProfiles = {};
@@ -190,18 +162,11 @@ export async function profilesShowCommand(name: string): Promise<void> {
 
   console.log(`\n\x1b[1mProfile: ${name}\x1b[0m${isDefault ? ' (default)' : ''}\n`);
   console.log(`  Launcher:        ${profile.launcher}`);
-  if (profile.claudioProfile) {
-    console.log(`  Claudio Profile: ${profile.claudioProfile}`);
-  }
   console.log(`  Claude Args:     ${profile.claudeArgs.join(' ') || '(none)'}`);
 
   // Show example spawn command
   console.log('\n  \x1b[2mSpawn command preview:\x1b[0m');
-  if (profile.launcher === 'claudio') {
-    console.log(`  claudio launch ${profile.claudioProfile || 'default'} -- ${profile.claudeArgs.join(' ')}`);
-  } else {
-    console.log(`  claude ${profile.claudeArgs.join(' ')}`);
-  }
+  console.log(`  claude ${profile.claudeArgs.join(' ')}`);
   console.log('');
 }
 
