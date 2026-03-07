@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, copyFile, mkdir } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { genieConfigExists, loadGenieConfig } from '../lib/genie-config.js';
@@ -225,8 +225,8 @@ async function updateSource(): Promise<void> {
     await mkdir(GENIE_BIN, { recursive: true });
     await mkdir(LOCAL_BIN, { recursive: true });
 
-    const binaries = ['genie.js', 'term.js', 'claudio.js'];
-    const names = ['genie', 'term', 'claudio'];
+    const binaries = ['genie.js', 'term.js'];
+    const names = ['genie', 'term'];
 
     for (let i = 0; i < binaries.length; i++) {
       const src = join(GENIE_SRC, 'dist', binaries[i]);
@@ -239,6 +239,18 @@ async function updateSource(): Promise<void> {
 
       // Symlink to LOCAL_BIN
       await symlinkOrCopy(binDest, linkDest);
+    }
+
+    // Clean up legacy claudio binaries from previous installs
+    for (const legacy of ['claudio.js', 'claudio']) {
+      const legacyBin = join(GENIE_BIN, legacy);
+      const legacyLink = join(LOCAL_BIN, legacy);
+      try {
+        await unlink(legacyBin);
+      } catch {}
+      try {
+        await unlink(legacyLink);
+      } catch {}
     }
 
     success('Binaries installed');

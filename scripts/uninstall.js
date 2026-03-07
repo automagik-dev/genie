@@ -22,7 +22,7 @@ const GENIE_DIR = join(HOME, '.genie');
 const MARKER = join(GENIE_DIR, '.install-version');
 const BIN_DIR = join(HOME, '.local', 'bin');
 const CLAUDE_DIR = join(HOME, '.claude');
-const PLUGIN_CACHE = join(CLAUDE_DIR, 'plugins', 'cache', 'namastexlabs');
+const PLUGIN_CACHE = join(CLAUDE_DIR, 'plugins', 'cache', 'automagik');
 const INSTALLED_PLUGINS = join(CLAUDE_DIR, 'installed_plugins.json');
 const CODEX_SKILLS_LINK = join(HOME, '.agents', 'skills', 'genie');
 
@@ -139,6 +139,6 @@ if (DRY_RUN) {
   log('Dry run complete. Run without --dry-run to actually remove files.');
 } else {
   log('Uninstall complete. Restart Claude Code and run:');
-  log('  /plugin install namastexlabs/genie');
+  log('  /plugin install genie@automagik');
 }
 log('');

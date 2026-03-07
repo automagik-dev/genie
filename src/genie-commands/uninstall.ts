@@ -17,7 +17,7 @@ import { contractPath, getGenieDir } from '../lib/genie-config.js';
 const LOCAL_BIN = join(homedir(), '.local', 'bin');
 
 // Symlinks that may have been created by source install
-const SYMLINKS = ['genie', 'claudio', 'term'];
+const SYMLINKS = ['genie', 'term'];
 
 /**
  * Check if a path is a symlink pointing to genie bin

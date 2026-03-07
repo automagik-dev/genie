@@ -214,18 +214,6 @@ The pipeline is the product:
 | `genie shortcuts` | View available shortcuts |
 | `genie ledger` | View execution ledger |
 
-### `claudio` CLI
-
-Launch agents with LLM routing profiles.
-
-| Command | Description |
-|---------|-------------|
-| `claudio` | Launch with default profile |
-| `claudio setup` | Configure claudio |
-| `claudio profiles` | Manage LLM routing profiles |
-| `claudio models` | List available models |
-| `claudio config` | View/edit configuration |
-
 </details>
 
 ---
@@ -250,8 +238,7 @@ Example config (`~/.genie/config.json`):
 {
   "workerProfiles": {
     "coding-fast": {
-      "launcher": "claudio",
-      "claudioProfile": "coding-fast",
+      "launcher": "claude",
       "claudeArgs": ["--dangerously-skip-permissions"]
     },
     "safe": {
@@ -297,7 +284,6 @@ Both consume the same skills directory. One source of truth.
 | File | Purpose |
 |------|---------|
 | `~/.genie/config.json` | Hook presets, worker profiles, session settings |
-| `~/.claudio/config.json` | LLM routing profiles (API URL, model mappings) |
 | `~/.claude/settings.json` | Claude Code settings (hooks registered here) |
 
 </details>

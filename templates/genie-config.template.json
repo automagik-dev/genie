@@ -23,13 +23,11 @@
   },
   "workerProfiles": {
     "coding-fast": {
-      "launcher": "claudio",
-      "claudioProfile": "coding-fast",
+      "launcher": "claude",
       "claudeArgs": ["--dangerously-skip-permissions"]
     },
     "autonomous": {
-      "launcher": "claudio",
-      "claudioProfile": "coding-fast",
+      "launcher": "claude",
       "claudeArgs": ["--dangerously-skip-permissions", "--model", "opus"]
     },
     "safe": {
