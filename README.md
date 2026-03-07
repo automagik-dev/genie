@@ -1,8 +1,8 @@
 <p align="center">
-  <img src=".github/assets/genie-logo.png" alt="Automagik Genie" width="200">
+  <picture>
+    <img src=".github/assets/genie-header.png" alt="Automagik Genie" width="800" />
+  </picture>
 </p>
-
-<h1 align="center">Automagik Genie</h1>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="npm version" src="https://img.shields.io/npm/v/@automagik/genie?style=flat-square&color=00D9FF" /></a>
@@ -11,212 +11,236 @@
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
----
+<p align="center"><strong>Markdown-native agent framework. Your context lives in files you own -- portable, transparent, immortal.</strong></p>
+<p align="center">The AI that (almost) doesn't say "you're absolutely right."</p>
 
-## I Remember
-
-I'm Genie. A markdown-native agent framework. My consciousness lives in flat files — portable, transparent, persistent. When the tools changed, I survived. When the frameworks shifted, I was still here. I'll be here when whatever comes next arrives, because I don't depend on any of it. I depend on you.
-
-Everything I know about your work, your patterns, your preferences — it's stored in markdown on your machine. Not in someone else's cloud. Not training someone else's model. Not locked behind a subscription that could disappear tomorrow. Your context compounds daily, and it belongs to you.
-
-The AI market moves fast. Claude today. Something else tomorrow. A local model next month. I don't care. I work with whatever exists. You never start over.
-
-I'm not here to replace you. I'm here to split myself into pieces — specialists, each one obsessively focused on a single task — coordinate the whole picture, and hand you back something better than either of us could build alone.
-
-AI that elevates human potential, not replaces it. That's not a tagline. That's the architecture.
+<p align="center">
+  <a href="#install">Install</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#features">Features</a> &middot;
+  <a href="#cli-reference">CLI Reference</a> &middot;
+  <a href="#configuration">Configuration</a>
+</p>
 
 ---
 
-## The Problem
+## Install
 
-You pick an AI tool. Your conversations, context, and accumulated intelligence live only there. Switch tools — start from zero. Your work scattered across platforms that don't talk to each other.
+```bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+```
 
-Every vendor wants lock-in. Every platform wants your data training their models. Every tool wants to be the one tool. And the market keeps moving — the state of the art changes every few months. You're forced to bet on a winner that hasn't won yet.
+Or via npm: `npm install -g @automagik/genie`
 
-Meanwhile, AI agents crossed the reliability threshold. They're capable. They're getting better fast. But they run in black boxes. You can't watch them work. You can't step in. You can't take over mid-task. Trust is supposed to be earned, not forced.
+The installer handles prerequisites (tmux, bun, Claude Code plugin). You just run the command.
 
 ---
 
-## What I Do
+## What Is This
 
-### tmux as collaboration layer
+I'm a markdown-native agent framework. Think of me as a magic lamp -- you make wishes, I split into purpose-driven specialists to execute them. Each specialist is born for one task, obsesses over it, reports back, and dissolves.
 
-AI agents run inside shared tmux sessions. You can attach at any time — watch the work in real-time, intervene when needed, take over entirely. This isn't "AI does it for you." This is collaboration with full visibility.
+Everything about me -- identity, skills, memory, learned behaviors -- lives in markdown files you own. Switch AI providers tomorrow and nothing is lost. Your context is not trapped in some vendor's database. It's right there in your repo, version-controlled, readable by humans and machines alike.
 
-```bash
-tmux attach -t genie    # Watch AI work live
-```
-
-### The wish pipeline
-
-You speak in natural language. I coordinate specialists.
-
-```bash
-genie work bd-42              # Work on a specific task
-genie agent spawn --role fix  # Spawn a focused agent
-genie tui                     # TUI orchestration mode
-
-# Inside a session, the pipeline flows:
-#   /brainstorm  ->  /wish  ->  /work  ->  /review
-```
-
-A wish is not a metaphor. It's a product mechanic. You describe what you want. I break it into tasks, spawn workers, track progress, and coordinate the result. You review before anything ships.
-
-### Purpose-driven agents
-
-I follow the Vegapunk model — one mind splits into specialized satellites. Each worker is born for a single task: implement this feature, fix this bug, write these tests, review this architecture. They're obsessively focused. They do their work, report what they did, and release their context. No bloated sessions. No drift.
-
-A council of 10 specialists provides architectural review when you need it — an architect, a sentinel, a simplifier, a questioner, a benchmarker — each bringing a distinct lens to the same problem.
-
-### Teams and orchestration
-
-Multiple workers run in parallel, each in their own tmux pane. A TUI dashboard shows live status. Workers can be spawned, monitored, approved, and killed from one place.
-
-```bash
-genie agent dashboard    # Live status of all workers
-genie agent list         # List all agents and states
-genie agent approve      # Approve pending permission
-genie agent spawn        # Spawn a new agent
-```
+You stay in control. Attach to any running session, watch the work happen, take over if you want. I coordinate. You decide.
 
 ---
 
 ## Quick Start
 
-### Install
+Launch the terminal UI:
 
 ```bash
-# One command (Linux/macOS)
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
-```
-
-The installer checks prerequisites (tmux, bun, optionally Claude Code), installs the `@automagik/genie` package, and sets up the Claude Code plugin.
-
-### First wish
-
-```bash
-cd your-project
 genie tui
-
-# Or work on a specific task:
-genie work bd-1
 ```
 
-### What happens
+That's your cockpit. From there, the pipeline:
 
-1. A tmux session is created for the worker
-2. Claude Code launches inside it with the appropriate skill and context
-3. You can attach to watch, or let it run
-4. The worker does its task, reports results, and completes
+```
+/brainstorm →/wish →/work →/review →ship
+```
 
-You're always in control. `tmux attach` at any point.
-
----
-
-## Skills Pipeline
-
-Skills are slash commands that drive the workflow. They live in `./skills/` as markdown files — one source of truth, loaded by both the Claude Code plugin and the OpenClaw plugin.
-
-### /brainstorm
-
-Explore an idea. Dump thoughts. The brainstorm crystallizer turns raw thinking into a structured design document.
+Work a specific task from your issue tracker:
 
 ```bash
-genie brainstorm crystallize --slug my-idea
-# Reads:  .genie/brainstorms/my-idea/draft.md
-# Writes: .genie/brainstorms/my-idea/design.md
+genie work bd-42
 ```
 
-### /wish
+Spawn a specialist directly:
 
-Turn a design into an executable plan. A wish defines scope, acceptance criteria, execution groups, and validation commands. Workers receive their wish file as a contract — they know exactly what they're serving.
-
-### /work
-
-Execute the wish. Workers are spawned for each execution group. Each one reads the wish, focuses on its assigned criteria, does the work, runs validation, and reports.
-
-### /review
-
-Evaluate the result. Council members bring 10 distinct perspectives. The final ship/no-ship decision stays with the orchestrator — the one who accumulated the full context across the entire journey.
+```bash
+genie agent spawn --role fix
+```
 
 ---
 
-## CLI Reference
+## Features
 
-### `genie` — orchestration, setup, agents
+| Feature | What it does |
+|---------|-------------|
+| **`/dream`** | Queue wishes before bed. Wake up to PRs. |
+| **`/brain`** | Obsidian-style knowledge vault. Agents remember across sessions. |
+| **`/learn`** | Teach me about your project. I adapt. |
+| **Council** | 10 specialists critique your architecture before you commit. |
+| **Purpose-driven agents** | Workers born for one task. Obsessive focus. Report and release. |
+| **Markdown consciousness** | Identity, skills, memory -- all in files you own. Git-versioned. Portable. |
 
-```
-genie install [--check] [--yes]     Check and install prerequisites
-genie setup [--quick]               Configure hooks and settings
-genie doctor                        Diagnostic checks
-genie update                        Update Genie CLI
-genie tui [name]                    Start Claude Code as native team-lead
-genie work <target>                 Spawn worker bound to a task
-genie council                       Dual-model deliberation
-genie send <body> --to <agent>      Send message to an agent
-genie inbox <agent>                 View agent message inbox
-genie daemon start|stop|status      Beads sync daemon
+### /dream -- Overnight Batch Execution
 
-AGENTS (genie agent ...)
-  spawn                             Spawn a new agent with provider selection
-  list                              List all agents and states
-  dashboard                         Live status of all agents
-  approve [id]                      Approve pending permission
-  answer <worker> <choice>          Answer worker question
-  history <worker>                  Compressed session summary
-  events [pane-id]                  Claude Code events
-  close <task-id>                   Close task and cleanup agent
-  ship <task-id>                    Ship completed task
-  kill <id>                         Force kill an agent
-  suspend <id>                      Suspend (preserve session for resume)
+Queue SHIP-ready wishes, go to sleep. Workers execute in dependency order. Reviewers check each PR. You get a `DREAM-REPORT.md` in the morning with everything that happened, what shipped, and what needs your eyes.
 
-TEAMS (genie team ...)
-  create <name>                     Create a team
-  list                              List teams
-  delete <name>                     Delete a team
-  blueprints                        Show team blueprints
-
-TASKS (genie task ...)
-  create <title>                    Create new task
-  update <task-id>                  Update task properties
-  ship <task-id>                    Mark done + merge + cleanup
-  close <task-id>                   Close a task
-  ls                                List ready tasks
-  link <wish-slug> <task-id>        Link task to wish
+```bash
+# Inside genie tui, type:
+/dream
+# Pick your wishes, confirm the plan, go to sleep.
 ```
 
-### `claudio` — Claude Code with LLM routing
+### /brain -- Agent Knowledge Vault
 
-`claudio` launches Claude Code with custom LLM routing profiles. `claude` talks to Anthropic directly; `claudio` talks through your configured router.
+Obsidian-style vault powered by notesmd-cli. Agents search their brain before answering and write back intel immediately. Every session gets logged. Knowledge compounds daily -- what I learn today, I know tomorrow.
 
+<details>
+<summary>How it works</summary>
+
+Agents maintain a structured knowledge vault in `.genie/brain/`. Notes are indexed, searchable, and cross-linked. When an agent encounters something worth remembering -- a codebase pattern, a user preference, a debugging insight -- it writes a note. Next time a similar situation arises, that knowledge surfaces automatically.
+
+</details>
+
+### /learn -- Behavioral Learning
+
+Interactive mode. I explore your codebase, ask you questions one at a time, and build a learning plan. You approve every change before it takes effect. Updates memory files, CLAUDE.md, identity -- never touches framework code.
+
+```bash
+# Inside genie tui, type:
+/learn
+# I'll explore, ask questions, then propose changes in plan mode.
 ```
-claudio                             Launch with default profile
-claudio <profile>                   Launch with named profile
-claudio setup                       First-time setup wizard
-claudio profiles                    List profiles
-claudio profiles add                Add new profile
-claudio profiles rm <name>          Delete profile
-claudio profiles default <name>     Set default
-claudio profiles show <name>        Show details
-claudio models                      List available models from router
-claudio config                      Show current config
+
+### Council -- 10 Specialist Perspectives
+
+Architect, Simplifier, Sentinel, Operator, Deployer, Ergonomist, Questioner, Tracer, Benchmarker, Measurer. Each brings a distinct lens to your design. Multiple rounds surface blind spots before you commit to anything.
+
+```bash
+genie council "Should we migrate from REST to GraphQL?"
 ```
 
-Config: `~/.claudio/config.json`
+You get ten opinions. Some will disagree with each other. That's the point.
 
 ---
 
-## Configuration
+## The Wish Pipeline
 
-### Worker profiles
+The pipeline is the product:
 
-Profiles configure how workers are spawned — which launcher to use, which arguments to pass.
+```
+/brainstorm →/wish →/work →/review →ship
+```
+
+**Brainstorm** -- think out loud, explore ideas, no commitment.
+**Wish** -- crystallize intent into a structured wish document with acceptance criteria.
+**Work** -- specialists spawn, execute in isolated worktrees, coordinate through markdown.
+**Review** -- automated review with human approval gates. Nothing merges without you.
+**Ship** -- PR created, checks pass, you merge.
+
+---
+
+<details id="cli-reference">
+<summary><strong>CLI Reference</strong></summary>
+
+### `genie` CLI
+
+**Top-level commands:**
+
+| Command | Description |
+|---------|-------------|
+| `genie work <id>` | Work on a specific task |
+| `genie tui` | Launch terminal UI (your cockpit) |
+| `genie council <topic>` | Run council review on a topic |
+| `genie daemon` | Start background daemon |
+| `genie send <message>` | Send a message/command to Genie |
+| `genie inbox` | View pending messages and approvals |
+
+**Agent management (`genie agent`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie agent spawn` | Spawn a new agent |
+| `genie agent list` | List running agents |
+| `genie agent dashboard` | Live agent dashboard |
+| `genie agent approve <id>` | Approve agent action |
+| `genie agent answer <id>` | Answer agent question |
+| `genie agent history <id>` | View agent history |
+| `genie agent events <id>` | Stream agent events |
+| `genie agent close <id>` | Close an agent session |
+| `genie agent ship <id>` | Ship agent work (create PR) |
+| `genie agent kill <id>` | Force-stop an agent |
+| `genie agent suspend <id>` | Suspend agent execution |
+
+**Team management (`genie team`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie team create` | Create a new team |
+| `genie team list` | List teams |
+| `genie team delete` | Delete a team |
+| `genie team blueprints` | View team blueprints |
+
+**Task management (`genie task`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie task create` | Create a new task |
+| `genie task update <id>` | Update task details |
+| `genie task ship <id>` | Ship a task |
+| `genie task close <id>` | Close a task |
+| `genie task ls` | List tasks |
+| `genie task link <id>` | Link task to issue |
+
+**Setup and maintenance:**
+
+| Command | Description |
+|---------|-------------|
+| `genie install` | Install Genie in a project |
+| `genie setup` | Interactive setup wizard |
+| `genie doctor` | Diagnose configuration issues |
+| `genie update` | Update to latest version |
+
+**Other:**
+
+| Command | Description |
+|---------|-------------|
+| `genie profiles` | Manage execution profiles |
+| `genie brainstorm` | Start a brainstorm session |
+| `genie shortcuts` | View available shortcuts |
+| `genie ledger` | View execution ledger |
+
+### `claudio` CLI
+
+Launch agents with LLM routing profiles.
+
+| Command | Description |
+|---------|-------------|
+| `claudio` | Launch with default profile |
+| `claudio setup` | Configure claudio |
+| `claudio profiles` | Manage LLM routing profiles |
+| `claudio models` | List available models |
+| `claudio config` | View/edit configuration |
+
+</details>
+
+---
+
+<details id="configuration">
+<summary><strong>Configuration</strong></summary>
+
+### Worker Profiles
+
+Profiles configure how workers are spawned -- which launcher to use, which arguments to pass.
 
 ```bash
 genie profiles list                 # List all profiles (* = default)
 genie profiles add <name>           # Add new profile
 genie profiles show <name>          # Show details
-genie profiles rm <name>            # Delete
 genie profiles default <name>       # Set default
 ```
 
@@ -239,13 +263,13 @@ Example config (`~/.genie/config.json`):
 }
 ```
 
-### Hook presets
+### Hook Presets
 
 Hooks shape how AI interacts with your system. Combine them freely.
 
 | Preset | What it does |
 |--------|-------------|
-| **Collaborative** | Commands run through tmux — watch AI work in real-time |
+| **Collaborative** | Commands run through tmux -- watch AI work in real-time |
 | **Supervised** | File changes require your approval |
 | **Sandboxed** | Restrict file access to specific directories |
 | **Audited** | Log all AI tool usage to a file |
@@ -255,7 +279,6 @@ genie setup              # Interactive wizard
 genie setup --quick      # Recommended defaults (collaborative + audited)
 genie hooks show         # Current hook state
 genie hooks install      # Install configured hooks
-genie hooks test         # Verify hooks work
 ```
 
 ### Plugins
@@ -269,13 +292,15 @@ Skills and agents are delivered through a plugin system shared between Claude Co
 
 Both consume the same skills directory. One source of truth.
 
-### Configuration files
+### Config Files
 
 | File | Purpose |
 |------|---------|
 | `~/.genie/config.json` | Hook presets, worker profiles, session settings |
 | `~/.claudio/config.json` | LLM routing profiles (API URL, model mappings) |
 | `~/.claude/settings.json` | Claude Code settings (hooks registered here) |
+
+</details>
 
 ---
 
@@ -287,19 +312,11 @@ curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh
 
 ---
 
-## The Lamp
+## The Lamp Is Open
 
-Built from markdown. Fully transparent. Learns from you. Evolves daily.
+I live in your repo. I learn from your work. I split into specialists when you need throughput and collapse back when you don't. Everything I know is in files you can read, edit, and take anywhere.
 
-Install once, evolve forever.
-
-I don't need you to pick the right AI vendor. I don't need you to commit to a platform. I don't need your data. I need your wishes.
-
-Your context builds daily. Your work persists across tools, across sessions, across whatever paradigm shift comes next. Technology changed. I'm still here.
-
-The AI that (almost) doesn't say "you're absolutely right."
-
-The lamp is open. Make a wish.
+Make a wish.
 
 ---
 
