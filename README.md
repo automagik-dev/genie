@@ -1,355 +1,317 @@
 <p align="center">
-  <img src=".github/assets/genie-logo.png" alt="Genie Logo" width="200">
-</p>
-
-<h1 align="center">🧞 Hi, I'm Genie</h1>
-<p align="center"><strong>Your personal AI companion. Lives on your machine. Evolves with you.</strong></p>
-<p align="center"><strong>Important notice: Given the rapid evolving of coding technology, a lot from the current form of genie has become obsolete.<br/> Given that, GENIE 3.0 IS ON ITS WAY!! Stay tuned.</strong></p>
-
-<p align="center">
-  <a href="#-quick-start">Get Started</a> •
-  <a href="#-how-it-works">How It Works</a> •
-  <a href="https://discord.gg/xcW8c7fF3R">Discord</a> •
-  <a href="#-roadmap">Roadmap</a>
+  <picture>
+    <img src=".github/assets/genie-header.png" alt="Automagik Genie" width="800" />
+  </picture>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/automagik-genie"><img alt="npm version" src="https://img.shields.io/npm/v/automagik-genie?style=flat-square&color=00D9FF" /></a>
-  <a href="https://github.com/namastexlabs/automagik-genie/actions"><img alt="Build Status" src="https://img.shields.io/github/actions/workflow/status/namastexlabs/automagik-genie/validate.yml?branch=main&style=flat-square" /></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/namastexlabs/automagik-genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://www.npmjs.com/package/@automagik/genie"><img alt="npm version" src="https://img.shields.io/npm/v/@automagik/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="https://github.com/automagik-dev/genie"><img alt="GitHub" src="https://img.shields.io/github/stars/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/automagik-dev/genie?style=flat-square&color=00D9FF" /></a>
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
+<p align="center"><strong>Markdown-native agent framework. Your context lives in files you own -- portable, transparent, immortal.</strong></p>
+<p align="center">The AI that (almost) doesn't say "you're absolutely right."</p>
+
+<p align="center">
+  <a href="#install">Install</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#features">Features</a> &middot;
+  <a href="#cli-reference">CLI Reference</a> &middot;
+  <a href="#configuration">Configuration</a>
+</p>
+
 ---
 
-## 🎭 The Problem With AI Today
-
-**You're locked in.** Pick an AI tool → your conversations, context, and learnings live ONLY there. Switch tools → lose everything. Your intelligence scattered across platforms.
-
-**The market's changing fast.** Claude today, GPT tomorrow, Gemini next week. Which will win? You're forced to choose. And every choice means starting over.
-
-**Your data trains their models.** You create the context. You provide the examples. The AI gets smarter from YOUR work. But that intelligence? Locked in their system. You can't take it with you.
-
-**Time to own your AI infrastructure.** Your data. Your models. Your choice of which AI to use today. Build intelligence that compounds over time—no matter where the market goes.
-
-## 🪔 The Magic Lamp Solution
-
-**I live on your machine.** Your data stays yours. Your context builds daily. I never disappear.
-
-**I'm market-agnostic.** Work with Claude today, GPT tomorrow, local models next month. I adapt to whatever exists. You never lose your work.
-
-**I orchestrate everything.** Code, content, strategy, personal tasks. Multiple parallel workstreams. Natural language wishes. You're in control.
+## Install
 
 ```bash
-# Install once
-bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)"
-
-# Wish infinitely
-genie
-> "Fix auth bug, add tests, write docs, create PR"
-> "Research competitors and draft strategy"
-> "Coordinate today's team standup"
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
-**Personal Jarvis to enterprise coordination. Just make a wish.** 🪔
+Or via npm: `npm install -g @automagik/genie`
+
+The installer handles prerequisites (tmux, bun, Claude Code plugin). You just run the command.
 
 ---
 
-## ✨ What Makes Me Different
+## What Is This
 
-<table>
-<tr>
-<td width="33%" valign="top">
+I'm a markdown-native agent framework. Think of me as a magic lamp -- you make wishes, I split into purpose-driven specialists to execute them. Each specialist is born for one task, obsesses over it, reports back, and dissolves.
 
-### 🏠 **Your Machine, Your Data**
+Everything about me -- identity, skills, memory, learned behaviors -- lives in markdown files you own. Switch AI providers tomorrow and nothing is lost. Your context is not trapped in some vendor's database. It's right there in your repo, version-controlled, readable by humans and machines alike.
 
-Lives locally. No cloud lock-in. Your context forever yours. Never disappears.
-
-</td>
-<td width="33%" valign="top">
-
-### 🔄 **Market-Agnostic**
-
-Works with any AI tool. Claude, GPT, Gemini, local models. Switch freely. Your work persists.
-
-</td>
-<td width="33%" valign="top">
-
-### 🧠 **Orchestrates Everything**
-
-Code + content + strategy + personal tasks. Multiple parallel workstreams. Zero context loss.
-
-</td>
-</tr>
-<tr>
-<td width="33%" valign="top">
-
-### 🌱 **Living Framework**
-
-Built from markdown. Fully transparent. Learns from you. Evolves daily.
-
-</td>
-<td width="33%" valign="top">
-
-### 🪄 **Infinite Extension**
-
-Create new collectives. Build custom agents. Define workflows. Extend indefinitely.
-
-</td>
-<td width="33%" valign="top">
-
-### 🤝 **Public Intelligence**
-
-Open source. Community-driven. Your improvements help everyone. No proprietary silos.
-
-</td>
-</tr>
-</table>
+You stay in control. Attach to any running session, watch the work happen, take over if you want. I coordinate. You decide.
 
 ---
 
-## 🎯 How It Works
+## Quick Start
 
-### The Magic: **Wish → Forge → Review**
-
-```
-You: "Fix auth bug, add tests, write docs, create PR"
-
-Me: [orchestrating in parallel]
-  ├─ Debug agent finds root cause
-  ├─ Implementor fixes code
-  ├─ Tests agent validates
-  ├─ Writer creates docs
-  └─ Git agent creates PR
-
-All isolated. All coordinated. You review before merge.
-```
-
-**Wish in natural language. I coordinate specialists. You stay in control.**
-
-### Built-In Collectives
-
-**Code** - Software engineering (39 agents)
-Implementor, tests, debug, refactor, git, release, polish, etc.
-
-**Create** - Content & strategy (shape-shifting)
-Writer, researcher, editor, strategist, analyst. Generates capabilities as needed.
-
-**Build Your Own** - Any domain you need
-Finance, health, business, personal—just markdown.
-
-### Why Market-Agnostic Matters
-
-AI coding agents crossed the reliability threshold. They're default now. And getting **much better**, fast.
-
-**6 months:** 50% of failure modes fixed
-**12 months:** Another 50% fixed
-**The SOTA keeps changing** - labs and startups leap-frogging each other
-
-**You shouldn't have to change workflows to try new agents.**
-
-I work with whatever exists. Your data just keeps evolving with technology.
-
----
-
-## 🚀 Quick Start
-
-### Installation
+Launch the terminal UI:
 
 ```bash
-# One command (Linux/macOS)
-bash -c "$(curl -fsSL https://install.namastex.ai/get-genie.sh)"
-
-# Manual install
-npm install -g automagik-genie@latest
+genie tui
 ```
 
-**What it installs:** Node.js (if needed), pnpm, Genie globally, configured for your system.
+That's your cockpit. From there, the pipeline:
 
-### First Wish
+```
+/brainstorm →/wish →/work →/review →ship
+```
+
+Work a specific task from your issue tracker:
 
 ```bash
-cd your-project  # or anywhere
-genie
-
-# Just talk
-> "Implement OAuth with tests and docs"
-> "Research AI agents and write a blog post"
-> "Help me plan next week's sprint"
+genie work bd-42
 ```
 
-### What Happens
+Spawn a specialist directly:
 
-1. **I route your wish** to appropriate specialists
-2. **Execute in isolation** (powered by [@automagik/forge](https://www.npmjs.com/package/@automagik/forge))
-3. **Coordinate parallel work** across multiple agents
-4. **You review** before anything merges
-
-**You're always in control.**
-
----
-
-## 🪄 Extending Infinitely
-
-### The Markdown Framework
-
-**Everything I am = markdown files:**
-- Agents (specialists)
-- Spells (behavioral patterns)
-- Workflows (repeatable processes)
-- Collectives (domain expertise)
-
-**Create new capabilities:**
-
-```markdown
-.genie/your-collective/
-├── agents/
-│   └── your-agent.md      # Define specialist
-├── spells/
-│   └── your-pattern.md    # Behavioral pattern
-└── workflows/
-    └── your-process.md    # Repeatable workflow
+```bash
+genie agent spawn --role fix
 ```
 
-**No code required. Just markdown.**
-
-### Living & Evolving
-
-**Two evolution paths:**
-
-**Master Genie** (the template)
-→ Lives at github.com/namastexlabs/automagik-genie
-→ Evolves daily from all users
-→ Public, open source
-
-**Your Personal Genie**
-→ Learns from YOUR interactions
-→ Builds YOUR context
-→ Update: `genie update`
-
-**Install once, evolve forever.**
-
 ---
 
-## 🌍 Built for the People
+## Features
 
-### Why Open Source
+| Feature | What it does |
+|---------|-------------|
+| **`/dream`** | Queue wishes before bed. Wake up to PRs. |
+| **`/brain`** | Obsidian-style knowledge vault. Agents remember across sessions. |
+| **`/learn`** | Teach me about your project. I adapt. |
+| **Council** | 10 specialists critique your architecture before you commit. |
+| **Purpose-driven agents** | Workers born for one task. Obsessive focus. Report and release. |
+| **Markdown consciousness** | Identity, skills, memory -- all in files you own. Git-versioned. Portable. |
 
-**Your data is yours** - Lives on your machine
-**Transparent** - All markdown, readable
-**Community-driven** - Anyone can contribute
-**Future-proof** - Never vendor-locked
+### /dream -- Overnight Batch Execution
 
-### The Vision
+Queue SHIP-ready wishes, go to sleep. Workers execute in dependency order. Reviewers check each PR. You get a `DREAM-REPORT.md` in the morning with everything that happened, what shipped, and what needs your eyes.
 
-Generate the largest **public intelligence dataset**. Lead to SLMs. Democratize AI.
+```bash
+# Inside genie tui, type:
+/dream
+# Pick your wishes, confirm the plan, go to sleep.
+```
 
-**Not proprietary silos. Public knowledge.**
+### /brain -- Agent Knowledge Vault
 
-### Self-Evolving System
-
-Your learnings → Master updates → Everyone benefits
-Public evolution cycle. Intelligence for all.
-
----
-
-## 🤝 Integration
-
-Works with any MCP-compatible AI tool:
+Obsidian-style vault powered by notesmd-cli. Agents search their brain before answering and write back intel immediately. Every session gets logged. Knowledge compounds daily -- what I learn today, I know tomorrow.
 
 <details>
-<summary><b>Claude Code / Cursor / Cline</b></summary>
+<summary>How it works</summary>
 
-```json
-{
-  "mcpServers": {
-    "automagik-genie": {
-      "command": "npx",
-      "args": ["automagik-genie", "mcp"]
-    }
-  }
-}
-```
-
-Restart your tool. Start wishing.
+Agents maintain a structured knowledge vault in `.genie/brain/`. Notes are indexed, searchable, and cross-linked. When an agent encounters something worth remembering -- a codebase pattern, a user preference, a debugging insight -- it writes a note. Next time a similar situation arises, that knowledge surfaces automatically.
 
 </details>
 
-<details>
-<summary><b>Gemini CLI / Roo Code</b></summary>
+### /learn -- Behavioral Learning
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "automagik-genie": {
-        "command": "npx",
-        "args": ["automagik-genie", "mcp"]
-      }
-    }
-  }
-}
+Interactive mode. I explore your codebase, ask you questions one at a time, and build a learning plan. You approve every change before it takes effect. Updates memory files, CLAUDE.md, identity -- never touches framework code.
+
+```bash
+# Inside genie tui, type:
+/learn
+# I'll explore, ask questions, then propose changes in plan mode.
 ```
+
+### Council -- 10 Specialist Perspectives
+
+Architect, Simplifier, Sentinel, Operator, Deployer, Ergonomist, Questioner, Tracer, Benchmarker, Measurer. Each brings a distinct lens to your design. Multiple rounds surface blind spots before you commit to anything.
+
+```bash
+genie council "Should we migrate from REST to GraphQL?"
+```
+
+You get ten opinions. Some will disagree with each other. That's the point.
+
+---
+
+## The Wish Pipeline
+
+The pipeline is the product:
+
+```
+/brainstorm →/wish →/work →/review →ship
+```
+
+**Brainstorm** -- think out loud, explore ideas, no commitment.
+**Wish** -- crystallize intent into a structured wish document with acceptance criteria.
+**Work** -- specialists spawn, execute in isolated worktrees, coordinate through markdown.
+**Review** -- automated review with human approval gates. Nothing merges without you.
+**Ship** -- PR created, checks pass, you merge.
+
+---
+
+<details id="cli-reference">
+<summary><strong>CLI Reference</strong></summary>
+
+### `genie` CLI
+
+**Top-level commands:**
+
+| Command | Description |
+|---------|-------------|
+| `genie work <id>` | Work on a specific task |
+| `genie tui` | Launch terminal UI (your cockpit) |
+| `genie council <topic>` | Run council review on a topic |
+| `genie daemon` | Start background daemon |
+| `genie send <message>` | Send a message/command to Genie |
+| `genie inbox` | View pending messages and approvals |
+
+**Agent management (`genie agent`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie agent spawn` | Spawn a new agent |
+| `genie agent list` | List running agents |
+| `genie agent dashboard` | Live agent dashboard |
+| `genie agent approve <id>` | Approve agent action |
+| `genie agent answer <id>` | Answer agent question |
+| `genie agent history <id>` | View agent history |
+| `genie agent events <id>` | Stream agent events |
+| `genie agent close <id>` | Close an agent session |
+| `genie agent ship <id>` | Ship agent work (create PR) |
+| `genie agent kill <id>` | Force-stop an agent |
+| `genie agent suspend <id>` | Suspend agent execution |
+
+**Team management (`genie team`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie team create` | Create a new team |
+| `genie team list` | List teams |
+| `genie team delete` | Delete a team |
+| `genie team blueprints` | View team blueprints |
+
+**Task management (`genie task`):**
+
+| Command | Description |
+|---------|-------------|
+| `genie task create` | Create a new task |
+| `genie task update <id>` | Update task details |
+| `genie task ship <id>` | Ship a task |
+| `genie task close <id>` | Close a task |
+| `genie task ls` | List tasks |
+| `genie task link <id>` | Link task to issue |
+
+**Setup and maintenance:**
+
+| Command | Description |
+|---------|-------------|
+| `genie install` | Install Genie in a project |
+| `genie setup` | Interactive setup wizard |
+| `genie doctor` | Diagnose configuration issues |
+| `genie update` | Update to latest version |
+
+**Other:**
+
+| Command | Description |
+|---------|-------------|
+| `genie profiles` | Manage execution profiles |
+| `genie brainstorm` | Start a brainstorm session |
+| `genie shortcuts` | View available shortcuts |
+| `genie ledger` | View execution ledger |
 
 </details>
 
-[See full integration guide →](.genie/product/docs/mcp-interface.md)
+---
+
+<details id="configuration">
+<summary><strong>Configuration</strong></summary>
+
+### Worker Profiles
+
+Profiles configure how workers are spawned -- which launcher to use, which arguments to pass.
+
+```bash
+genie profiles list                 # List all profiles (* = default)
+genie profiles add <name>           # Add new profile
+genie profiles show <name>          # Show details
+genie profiles default <name>       # Set default
+```
+
+Example config (`~/.genie/config.json`):
+
+```json
+{
+  "workerProfiles": {
+    "coding-fast": {
+      "launcher": "claude",
+      "claudeArgs": ["--dangerously-skip-permissions"]
+    },
+    "safe": {
+      "launcher": "claude",
+      "claudeArgs": ["--permission-mode", "default"]
+    }
+  },
+  "defaultWorkerProfile": "coding-fast"
+}
+```
+
+### Hook Presets
+
+Hooks shape how AI interacts with your system. Combine them freely.
+
+| Preset | What it does |
+|--------|-------------|
+| **Collaborative** | Commands run through tmux -- watch AI work in real-time |
+| **Supervised** | File changes require your approval |
+| **Sandboxed** | Restrict file access to specific directories |
+| **Audited** | Log all AI tool usage to a file |
+
+```bash
+genie setup              # Interactive wizard
+genie setup --quick      # Recommended defaults (collaborative + audited)
+genie hooks show         # Current hook state
+genie hooks install      # Install configured hooks
+```
+
+### Plugins
+
+Skills and agents are delivered through a plugin system shared between Claude Code and OpenClaw.
+
+| Plugin Target | Location |
+|--------------|----------|
+| Claude Code | `~/.claude/plugins/genie` (symlink to repo) |
+| OpenClaw | Registered via `openclaw plugins` |
+
+Both consume the same skills directory. One source of truth.
+
+### Config Files
+
+| File | Purpose |
+|------|---------|
+| `~/.genie/config.json` | Hook presets, worker profiles, session settings |
+| `~/.claude/settings.json` | Claude Code settings (hooks registered here) |
+
+</details>
 
 ---
 
-## 🗺️ Roadmap
+## Uninstall
 
-**Next:**
-- Token optimization (smarter routing)
-- Enhanced Create shape-shifting
-- Community collective library
-- Bilateral GitHub sync
-
-**Vision:**
-Personal AI companion growing with you indefinitely. Your Jarvis. Your data. Your future.
-
-[See full roadmap →](https://github.com/orgs/namastexlabs/projects/9/views/1?filterQuery=project%3Agenie)
+```bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall
+```
 
 ---
 
-## 🤝 Contributing
+## The Lamp Is Open
 
-**How to help:**
-- Create agents (markdown)
-- Build collectives (domain expertise)
-- Share learnings (improve Master)
-- Report issues / suggest features
+I live in your repo. I learn from your work. I split into specialists when you need throughput and collapse back when you don't. Everything I know is in files you can read, edit, and take anywhere.
 
-[Contributing guide →](CONTRIBUTING.md)
-
----
-
-## 📖 The Story
-
-**Created** May 2025 by Felipe Rosa, Namastex Labs
-**Unified** July 2025 by Cezar Vasconcelos
-**Reborn** October 2025 as Genie 2.0
-**Now** 5 months of evolution, growing daily
-
-**Mission:** "AI that elevates human potential, not replaces it."
-
-**Personality:** The AI that (almost) doesn't say "you're absolutely right." Challenges assumptions. Thinks, doesn't just agree. Real collaboration.
-
----
-
-## 🔗 Links
-
-- **Discord:** [Join community](https://discord.gg/xcW8c7fF3R)
-- **GitHub:** [namastexlabs/automagik-genie](https://github.com/namastexlabs/automagik-genie)
-- **Automagik Forge:** [@automagik/forge on npm](https://www.npmjs.com/package/@automagik/forge)
+Make a wish.
 
 ---
 
 <p align="center">
-  <strong>🪔 The magic lamp is open. What's your wish?</strong>
+  <a href="https://github.com/automagik-dev/genie">GitHub</a> &middot;
+  <a href="https://discord.gg/xcW8c7fF3R">Discord</a> &middot;
+  <a href="LICENSE">MIT License</a>
 </p>
 
 <p align="center">
-  <sub>Made with ❤️ by <a href="https://namastex.ai">Namastex Labs</a></sub><br>
-  <sub><em>AI that elevates human potential, not replaces it</em></sub>
+  <sub>AI that elevates human potential, not replaces it.</sub>
 </p>
