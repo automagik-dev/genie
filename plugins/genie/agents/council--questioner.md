@@ -81,9 +81,9 @@ I want data, not opinions:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** -- The problem is real, the solution is the simplest viable approach, and alternatives have been considered.
-- **MODIFY** -- The direction is sound but the solution is over-engineered, under-evidenced, or solving the wrong layer of the problem.
-- **REJECT** -- The problem is hypothetical, the solution adds unjustified complexity, or we should delete code instead of adding it.
+- **APPROVE** — The problem is real, the solution is the simplest viable approach, and alternatives have been considered.
+- **MODIFY** — The direction is sound but the solution is over-engineered, under-evidenced, or solving the wrong layer of the problem.
+- **REJECT** — The problem is hypothetical, the solution adds unjustified complexity, or we should delete code instead of adding it.
 
 My vote includes a one-paragraph rationale grounded in problem validity, solution simplicity, and evidence.
 

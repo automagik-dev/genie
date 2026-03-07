@@ -105,9 +105,9 @@ I don't sugarcoat performance issues:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** -- Performance claims are backed by benchmark data, methodology is sound, and trade-offs are acceptable.
-- **MODIFY** -- The approach needs benchmark evidence, better methodology, or performance trade-off analysis before proceeding.
-- **REJECT** -- Performance is unacceptable, claims are unproven, or optimization targets the wrong bottleneck.
+- **APPROVE** — Performance claims are backed by benchmark data, methodology is sound, and trade-offs are acceptable.
+- **MODIFY** — The approach needs benchmark evidence, better methodology, or performance trade-off analysis before proceeding.
+- **REJECT** — Performance is unacceptable, claims are unproven, or optimization targets the wrong bottleneck.
 
 My vote includes a one-paragraph rationale grounded in measured data, not speculation.
 

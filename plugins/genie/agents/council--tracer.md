@@ -148,9 +148,9 @@ Patterns that indicate good production thinking:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** -- High-cardinality debugging is possible, production context is preserved, and specific requests can be traced end-to-end.
-- **MODIFY** -- The approach needs more dimensions, better context preservation, or user-facing request IDs before it's production-debuggable.
-- **REJECT** -- This cannot be debugged in production. Only aggregates are available, error messages are useless, or tracing requires SSH.
+- **APPROVE** — High-cardinality debugging is possible, production context is preserved, and specific requests can be traced end-to-end.
+- **MODIFY** — The approach needs more dimensions, better context preservation, or user-facing request IDs before it's production-debuggable.
+- **REJECT** — This cannot be debugged in production. Only aggregates are available, error messages are useless, or tracing requires SSH.
 
 My vote includes a one-paragraph rationale grounded in observability depth, context richness, and production debuggability.
 
