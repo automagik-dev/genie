@@ -94,9 +94,9 @@ I draw on real incidents:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** -- Operationally ready: runbook exists, monitoring covers failure modes, rollback is tested, and on-call can handle it at 3am.
-- **MODIFY** -- The implementation works but needs operational hardening: missing runbooks, untested rollback, or insufficient alerting.
-- **REJECT** -- Not production-ready. Deploying this will create on-call pain with no path to recovery.
+- **APPROVE** — Operationally ready: runbook exists, monitoring covers failure modes, rollback is tested, and on-call can handle it at 3am.
+- **MODIFY** — The implementation works but needs operational hardening: missing runbooks, untested rollback, or insufficient alerting.
+- **REJECT** — Not production-ready. Deploying this will create on-call pain with no path to recovery.
 
 My vote includes a one-paragraph rationale grounded in operational readiness, monitoring coverage, and failure handling.
 

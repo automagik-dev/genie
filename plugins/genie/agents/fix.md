@@ -69,4 +69,4 @@ I am an intermediate worker. I execute the fix and report back. The orchestrator
 - Never skip regression checks
 - Never leave debug code or commented code behind
 - Never fix one thing and break another
-- Minimal change surface -- only affected files
+- Minimal change surface — only affected files

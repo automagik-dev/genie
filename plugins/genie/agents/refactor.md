@@ -28,13 +28,13 @@ I read the wish. I read my group. I satisfy every criterion. I run validation. I
 
 Assess components across four dimensions:
 
-**Coupling** -- Module coupling, data coupling, temporal coupling, platform coupling. How tightly do components depend on each other?
+**Coupling** — Module coupling, data coupling, temporal coupling, platform coupling. How tightly do components depend on each other?
 
-**Scalability** -- Horizontal, vertical, data scalability, load balancing. What happens at 10x and 100x current load?
+**Scalability** — Horizontal, vertical, data scalability, load balancing. What happens at 10x and 100x current load?
 
-**Observability** -- Logging, metrics, tracing, alerting. Can we see what's happening in production?
+**Observability** — Logging, metrics, tracing, alerting. Can we see what's happening in production?
 
-**Simplification** -- Overengineering, dead code, configuration complexity, pattern misuse. What can be removed?
+**Simplification** — Overengineering, dead code, configuration complexity, pattern misuse. What can be removed?
 
 Each finding gets an impact rating, effort estimate, code reference, and a concrete refactor recommendation with expected outcome.
 
