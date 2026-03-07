@@ -21,7 +21,7 @@ import { detectSenderIdentity } from './msg.js';
 // Helpers: save/restore env vars
 // ---------------------------------------------------------------------------
 
-const ENV_KEYS = ['GENIE_AGENT_NAME', 'TMUX_PANE', 'CLAUDE_CONFIG_DIR'] as const;
+const ENV_KEYS = ['GENIE_AGENT_NAME', 'TMUX_PANE', 'CLAUDE_CONFIG_DIR', 'GENIE_HOME'] as const;
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -29,6 +29,8 @@ beforeEach(() => {
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k];
   }
+  // Isolate from global registry to prevent cross-test contamination
+  process.env.GENIE_HOME = `/tmp/msg-test-isolated-${Date.now()}`;
 });
 
 afterEach(() => {
