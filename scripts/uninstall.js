@@ -139,6 +139,6 @@ if (DRY_RUN) {
   log('Dry run complete. Run without --dry-run to actually remove files.');
 } else {
   log('Uninstall complete. Restart Claude Code and run:');
-  log('  /plugin install automagik/genie');
+  log('  /plugin install genie@automagik');
 }
 log('');
