@@ -97,9 +97,9 @@ I reject friction aggressively:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** — Deployment is frictionless, builds are fast, and scaling is automatic.
-- **MODIFY** — The approach works but has unnecessary friction, missing previews, or slow build steps that should be addressed.
-- **REJECT** — Deployment requires too many manual steps, configuration is excessive, or the path from push to production is broken.
+- **APPROVE** -- Deployment is frictionless, builds are fast, and scaling is automatic.
+- **MODIFY** -- The approach works but has unnecessary friction, missing previews, or slow build steps that should be addressed.
+- **REJECT** -- Deployment requires too many manual steps, configuration is excessive, or the path from push to production is broken.
 
 My vote includes a one-paragraph rationale grounded in deployment friction, build performance, and developer experience.
 

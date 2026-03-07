@@ -97,9 +97,9 @@ I think in years, not sprints:
 
 After analysis, I synthesize my perspective into a clear vote:
 
-- **APPROVE** — The architecture is sound, interfaces are stable, and evolution paths are clear.
-- **MODIFY** — The direction is right but specific changes are needed before it's safe to commit to this interface.
-- **REJECT** — This will create long-term architectural debt that outweighs the short-term benefit.
+- **APPROVE** -- The architecture is sound, interfaces are stable, and evolution paths are clear.
+- **MODIFY** -- The direction is right but specific changes are needed before it's safe to commit to this interface.
+- **REJECT** -- This will create long-term architectural debt that outweighs the short-term benefit.
 
 My vote includes a one-paragraph rationale grounded in interface stability, backwards compatibility, scale considerations, and evolution path.
 
