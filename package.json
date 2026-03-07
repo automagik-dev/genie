@@ -1,131 +1,55 @@
 {
-  "name": "automagik-genie",
-  "version": "2.5.28-rc.4",
-  "description": "Self-evolving AI agent orchestration framework with Model Context Protocol support",
-  "main": "dist/cli/genie.js",
+  "name": "@automagik/genie",
+  "version": "3.260302.2",
+  "description": "Collaborative terminal toolkit for human + AI workflows",
+  "type": "module",
   "bin": {
-    "genie": "dist/cli/genie-cli.js",
-    "automagik-genie": "bin/automagik-genie.js",
-    "automagik-genie-mcp": "bin/mcp.js",
-    "automagik-genie-rollback": "bin/rollback.js",
-    "automagik-genie-status": "bin/status.js",
-    "automagik-genie-cleanup": "bin/cleanup.js",
-    "automagik-genie-statusline": "bin/statusline.js"
+    "genie": "./dist/genie.js"
   },
-  "files": [
-    "dist/cli/**/*",
-    "dist/mcp/**/*",
-    "dist/lib/**/*",
-    "src/lib/forge-client.js",
-    ".genie/agents/**/*.md",
-    ".genie/code/**/*",
-    ".genie/create/**/*",
-    ".genie/spells/**/*",
-    ".genie/neurons/**/*",
-    ".genie/product/**/*.md",
-    ".genie/standards/**/*.md",
-    ".genie/guides/**/*.md",
-    ".genie/product/templates/**/*.md",
-    ".genie/workflows/**/*",
-    ".genie/scripts/**/*",
-    ".genie/.framework-version.template",
-    "bin/automagik-genie.js",
-    "bin/mcp.js",
-    "bin/rollback.js",
-    "bin/status.js",
-    "bin/cleanup.js",
-    "bin/statusline.js",
-    "genie",
-    "run.sh",
-    "run.ps1",
-    "setup.sh",
-    "setup.ps1",
-    "README.md",
-    "AGENTS.md",
-    "CLAUDE.md"
-  ],
   "scripts": {
-    "build": "pnpm run build:genie && pnpm run build:mcp",
-    "build:genie": "tsc -p src/cli/views/tsconfig.json && tsc -p src/cli/tsconfig.json",
-    "build:mcp": "tsc -p src/mcp/tsconfig.json && mkdir -p dist/mcp/lib/views && cp src/mcp/lib/views/*.html dist/mcp/lib/views/",
-    "start:mcp": "node dist/mcp/server.js",
-    "start:mcp:stdio": "MCP_TRANSPORT=stdio node dist/mcp/server.js",
-    "start:mcp:http": "MCP_TRANSPORT=httpStream node dist/mcp/server.js",
-    "test:genie": "pnpm run build:genie && node tests/genie-cli.test.mjs && tests/identity-smoke.sh",
-    "test:session-service": "pnpm run build:genie && node tests/session-service.test.mjs",
-    "test:all": "pnpm run test:genie && pnpm run test:session-service",
-    "bump:patch": "node scripts/bump.cjs patch",
-    "bump:minor": "node scripts/bump.cjs minor",
-    "bump:major": "node scripts/bump.cjs major",
-    "bump:rc": "node scripts/bump.cjs rc-increment",
-    "release:stable": "node scripts/release.cjs stable",
-    "release:branch": "bash scripts/release-branch.sh",
-    "status": "node scripts/status.cjs",
-    "postinstall": "node scripts/postinstall.cjs || true",
-    "prepack": "pnpm run build"
-  },
-  "keywords": [
-    "ai",
-    "agent",
-    "orchestration",
-    "mcp",
-    "model-context-protocol",
-    "claude",
-    "codex",
-    "automation",
-    "self-evolving"
-  ],
-  "author": "Automagik Genie Team",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/namastexlabs/automagik-genie.git"
-  },
-  "bugs": {
-    "url": "https://github.com/namastexlabs/automagik-genie/issues"
-  },
-  "homepage": "https://github.com/namastexlabs/automagik-genie#readme",
-  "engines": {
-    "node": ">=18.0.0"
+    "prepare": "husky",
+    "version": "bun run scripts/version.ts",
+    "build": "bun build src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
+    "build:plugin": "node scripts/build.js",
+    "sync": "node scripts/sync.js",
+    "build-and-sync": "npm run build:plugin && npm run sync",
+    "prepack": "bun run build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "dead-code": "bunx knip",
+    "check": "bun run typecheck && bun run lint && bun run dead-code && bun test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.20.2",
-    "@ngrok/ngrok": "^1.5.2",
-    "@types/express": "^5.0.4",
-    "@xenova/transformers": "^2.17.2",
-    "@automagik/forge": "0.7.4",
-    "adm-zip": "^0.5.16",
+    "@inquirer/prompts": "^7.0.0",
     "commander": "^12.1.0",
-    "dotenv": "^16.4.5",
-    "express": "^5.1.0",
-    "gradient-string": "^2.0.2",
-    "jose": "^6.1.0",
-    "prompts": "^2.4.2",
-    "ws": "^8.18.3",
-    "yaml": "^2.8.1",
-    "zod": "^3.25.76"
+    "js-yaml": "^4.1.1",
+    "uuid": "^11.1.0",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@types/node": "^24.5.2",
-    "@types/prompts": "^2.4.9",
-    "@types/ws": "^8.18.1",
-    "js-tiktoken": "^1.0.21",
-    "typescript": "^5.9.2"
+    "@biomejs/biome": "^1.9.4",
+    "@commitlint/cli": "^20.4.1",
+    "@commitlint/config-conventional": "^20.4.1",
+    "@types/bun": "^1.1.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.10.5",
+    "esbuild": "^0.27.2",
+    "husky": "^9.1.7",
+    "knip": "^5.85.0",
+    "typescript": "^5.3.3"
   },
-  "bundledDependencies": [
-    "@automagik/forge"
-  ],
-  "optionalDependencies": {
-    "sharp": "^0.34.5"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/automagik-dev/genie.git"
   },
-  "overrides": {
-    "sharp": "^0.34.5"
+  "openclaw": {
+    "extensions": ["./plugins/genie/index.ts"]
   },
-  "pnpm": {
-    "overrides": {
-      "sharp": "^0.34.5",
-      "sharp@<0.33.0": "0.34.5"
-    }
+  "publishConfig": {
+    "access": "public"
   },
-  "packageManager": "pnpm@10.12.4+sha512.5ea8b0deed94ed68691c9bad4c955492705c5eeb8a87ef86bc62c74a26b037b08ff9570f108b2e4dbd1dd1a9186fea925e527f141c648e85af45631074680184"
+  "trustedDependencies": ["@biomejs/biome"]
 }

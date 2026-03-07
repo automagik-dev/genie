@@ -1,231 +1,100 @@
-name: 🚀 Unified Release
+name: Release
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      action:
-        description: 'Release action'
-        required: true
-        type: choice
-        options:
-          - 'bump-rc'
-          - 'promote-to-stable'
-          - 'manual-tag'
-        default: 'bump-rc'
-      tag:
-        description: 'Version tag for manual-tag (e.g., v1.2.3)'
-        required: false
-        type: string
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.bump_rc.outputs.version || steps.tag_push.outputs.version || steps.manual.outputs.version }}
-      released: ${{ steps.bump_rc.outputs.released || steps.tag_push.outputs.released || steps.manual.outputs.released }}
-
+    name: Create Release
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🔧 Setup Release Environment
-        uses: ./.github/actions/setup-release
-
-      - name: 🔍 Determine Release Type
-        id: detect
+      - name: Read version from package.json
+        id: pkg
         run: |
-          EVENT="${{ github.event_name }}"
-          REF="${{ github.ref }}"
+          VERSION=$(jq -r '.version' package.json)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version from package.json: ${VERSION}"
 
-          # Determine action based on trigger
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            # Manual dispatch: use input action
-            ACTION="${{ github.event.inputs.action }}"
-          elif [[ "$REF" == refs/tags/* ]]; then
-            # Tag push: re-publish existing tag
-            ACTION="tag-push"
-          elif [ "$REF" = "refs/heads/main" ]; then
-            # Push to main: check commit message
-            COMMIT_MSG=$(git log -1 --pretty=%B)
+      - name: Check if release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          TAG="v${{ steps.pkg.outputs.version }}"
 
-            # Skip automated commits (prevent infinite loop)
-            if echo "$COMMIT_MSG" | grep -Eq "^chore: pre-release|^chore:.*sync dev"; then
-              echo "Skipping automated commit: $COMMIT_MSG"
-              ACTION="skip"
-            else
-              # Default: bump RC for all other commits (PR merges, direct pushes)
-              echo "Triggering RC bump for commit: $COMMIT_MSG"
-              ACTION="bump-rc"
-            fi
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists — skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            ACTION="skip"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "action=$ACTION" >> $GITHUB_OUTPUT
-          echo "🎯 Release action: $ACTION"
-
-      - name: ⏭️ Skip if Not Needed
-        if: steps.detect.outputs.action == 'skip'
-        run: echo "✅ No release needed for this event"
-
-      - name: 📌 Bump RC
-        if: steps.detect.outputs.action == 'bump-rc'
-        id: bump_rc
+      - name: Find previous release tag
+        id: prev
+        if: steps.exists.outputs.skip != 'true'
         env:
-          GENIE_SKIP_ADVISORY_SMOKE: "1"
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
-          # Checkout main branch (ensure we're not in detached HEAD)
-          git checkout main
-          git pull origin main
+          TAG="v${{ steps.pkg.outputs.version }}"
+          PREV=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -v "^${TAG}$" | head -1)
+          echo "tag=${PREV:-}" >> "$GITHUB_OUTPUT"
+          echo "Previous release tag: ${PREV:-none}"
 
-          # Clean conflicting RC tags (from previous failed runs)
-          CURRENT=$(node -p "require('./package.json').version")
-          if [[ $CURRENT =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([0-9]+)$ ]]; then
-            BASE="${BASH_REMATCH[1]}"
-            RC_NUM="${BASH_REMATCH[2]}"
-            NEXT_RC=$((RC_NUM + 1))
-            NEXT_TAG="v${BASE}-rc.${NEXT_RC}"
-            echo "🧹 Cleaning conflicting tag: $NEXT_TAG"
-            git tag -d "$NEXT_TAG" 2>/dev/null || true
-            git push origin ":refs/tags/$NEXT_TAG" 2>/dev/null || true
-          fi
-
-          # Bump RC version and publish
-          echo "🚀 Bumping RC version..."
-          node scripts/unified-release.cjs \
-            --bump rc \
-            --publish \
-            --github-release
-
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "released=true" >> $GITHUB_OUTPUT
-          echo "✅ Released v$VERSION"
-
-      - name: 📌 Tag Push (Publish Existing)
-        if: steps.detect.outputs.action == 'tag-push'
-        id: tag_push
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.ref }}"
-          VERSION=${TAG#refs/tags/v}
-
-          echo "📦 Re-publishing existing tag: v$VERSION"
-          node scripts/unified-release.cjs \
-            --tag "v$VERSION" \
-            --publish \
-            --github-release \
-            --skip-tests
-
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "released=true" >> $GITHUB_OUTPUT
-          echo "✅ Published v$VERSION"
-
-      - name: 🎯 Manual Dispatch
-        if: steps.detect.outputs.action == 'promote-to-stable' || steps.detect.outputs.action == 'manual-tag'
-        id: manual
-        env:
-          GENIE_SKIP_ADVISORY_SMOKE: "1"
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ACTION="${{ github.event.inputs.action }}"
-
-          if [ "$ACTION" = "promote-to-stable" ]; then
-            echo "🎉 Promoting RC to stable..."
-            node scripts/unified-release.cjs --promote --publish --github-release
-          elif [ "$ACTION" = "manual-tag" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-            echo "📌 Publishing manual tag: $TAG"
-            node scripts/unified-release.cjs --tag "$TAG" --publish --github-release --skip-tests
-          fi
-
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "released=true" >> $GITHUB_OUTPUT
-          echo "✅ Released v$VERSION"
-
-      - name: ✅ Release Summary
-        if: success() && (steps.bump_rc.outputs.released == 'true' || steps.tag_push.outputs.released == 'true' || steps.manual.outputs.released == 'true')
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "🎉 Successfully released v$VERSION"
-          echo "📦 Install: npm install automagik-genie@$(echo $VERSION | grep -q 'rc' && echo 'next' || echo 'latest')"
-          echo "🔗 Release: https://github.com/${{ github.repository }}/releases/tag/v$VERSION"
-
-  sync-dev:
-    name: Sync dev with main
-    runs-on: ubuntu-latest
-    needs: release
-    if: success() && needs.release.outputs.released == 'true'
-
-    steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: cliff
+        if: steps.exists.outputs.skip != 'true'
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: main
+          config: cliff.toml
+          args: ${{ steps.prev.outputs.tag && format('{0}..HEAD', steps.prev.outputs.tag) || '' }}
+        env:
+          GITHUB_REPO: ${{ github.repository }}
 
-      - name: 🔧 Configure Git
+      - name: Create release
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="v${{ steps.pkg.outputs.version }}"
+          gh release create "${TAG}" \
+            --target "${{ github.sha }}" \
+            --title "${TAG}" \
+            --notes "$RELEASE_NOTES"
 
-      - name: 🔄 Sync dev branch
+      - name: Setup Bun
+        if: steps.exists.outputs.skip != 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        if: steps.exists.outputs.skip != 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI
+        if: steps.exists.outputs.skip != 'true'
+        run: bun run build
+
+      - name: Publish to npm
+        if: steps.exists.outputs.skip != 'true'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Fetch all branches
-          git fetch origin dev main
-
-          # Checkout dev
-          git checkout dev
-
-          # Merge main into dev (fast-forward if possible)
-          # This preserves dev's commit history while bringing in any changes from main
-          if git merge-base --is-ancestor origin/main dev; then
-            echo "✅ Dev already contains all commits from main"
-            exit 0
-          else
-            git merge origin/main --no-edit || {
-              echo "❌ Merge conflict detected"
-              echo "This should not happen - main should always be mergeable into dev"
-              exit 1
-            }
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "ERROR: NPM_TOKEN secret is not set. Cannot publish to npm." >&2
+            exit 1
           fi
-
-          # Push synced dev
-          git push origin dev
-
-      - name: ✅ Report Success
-        if: success()
-        run: |
-          echo "✅ Dev branch synced successfully with main"
-          echo "Main commit: $(git rev-parse origin/main)"
-          echo "Dev commit: $(git rev-parse dev)"
-
-      - name: ⚠️ Report Failure
-        if: failure()
-        run: |
-          echo "❌ Failed to sync dev branch"
-          echo "You may need to manually resolve conflicts"
-          exit 1
+          bun publish --access public

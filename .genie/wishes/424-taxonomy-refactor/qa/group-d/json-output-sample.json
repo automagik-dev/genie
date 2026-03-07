@@ -1,8 +1,0 @@
-{
-  "task_id": "d87e5841-9434-496e-9105-194c33b5d0fc",
-  "task_url": "http://localhost:8887/projects/dd860606-f5c1-4c1b-a48d-29c6888c3ba2/tasks/d87e5841-9434-496e-9105-194c33b5d0fc/attempts/d87e5841-9434-496e-9105-194c33b5d0fc?view=diffs",
-  "agent": "browser-test",
-  "executor": "OPENCODE:DEFAULT",
-  "status": "started",
-  "message": "Task running in background"
-}
