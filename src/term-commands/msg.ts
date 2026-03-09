@@ -11,7 +11,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as registry from '../lib/agent-registry.js';
-import * as protocolRouter from '../lib/protocol-router.js';
+import type * as protocolRouterTypes from '../lib/protocol-router.js';
+
+// Lazy-load protocol-router to avoid pulling in the full tmux dependency
+// chain at module-evaluation time (fixes flaky bun module-resolution errors in CI).
+let _protocolRouter: typeof protocolRouterTypes | undefined;
+async function getProtocolRouter(): Promise<typeof protocolRouterTypes> {
+  if (!_protocolRouter) {
+    _protocolRouter = await import('../lib/protocol-router.js');
+  }
+  return _protocolRouter;
+}
 
 /**
  * Auto-detect the sender identity based on execution context.
@@ -53,7 +63,7 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 
 function printInbox(
   worker: string,
-  messages: Awaited<ReturnType<typeof protocolRouter.getInbox>>,
+  messages: Awaited<ReturnType<typeof protocolRouterTypes.getInbox>>,
   unread?: boolean,
 ): void {
   if (messages.length === 0) {
@@ -85,6 +95,7 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--team <team>', 'Team name (default: genie)', 'genie')
     .action(async (body: string, options: { to: string; from?: string; team: string }) => {
       try {
+        const protocolRouter = await getProtocolRouter();
         const repoPath = process.cwd();
         const from = options.from ?? (await detectSenderIdentity(options.team));
         const result = await protocolRouter.sendMessage(repoPath, from, options.to, body, options.team);
@@ -111,6 +122,7 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--unread', 'Show only unread messages')
     .action(async (agent: string, options: { json?: boolean; unread?: boolean }) => {
       try {
+        const protocolRouter = await getProtocolRouter();
         const repoPath = process.cwd();
         let messages = await protocolRouter.getInbox(repoPath, agent);
 
