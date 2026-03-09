@@ -28,6 +28,7 @@ import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { VERSION } from './lib/version.js';
 
+import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { registerAgentNamespace } from './term-commands/agents.js';
 import * as councilCmd from './term-commands/council.js';
 import * as daemonCmd from './term-commands/daemon.js';
@@ -148,6 +149,7 @@ registerTeamNamespace(program);
 registerAgentNamespace(program);
 registerSendInboxCommands(program);
 registerTaskNamespace(program);
+registerHookNamespace(program);
 
 // ============================================================================
 // Top-level commands (migrated from genie term)

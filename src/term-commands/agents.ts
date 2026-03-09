@@ -747,6 +747,15 @@ async function handleWorkerSpawn(options: {
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, repoPath, options);
   if (nativeTeam) params.nativeTeam = nativeTeam;
 
+  // 2b. Inject hook dispatch into team settings.json (idempotent)
+  try {
+    const { injectTeamHooks } = await import('../hooks/inject.js');
+    const injected = await injectTeamHooks(team);
+    if (injected) console.log(`  Hooks:    injected genie hook dispatch into team "${team}"`);
+  } catch (err) {
+    console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
+  }
+
   // Session ID only for Claude
   const claudeSessionId = params.provider === 'claude' ? crypto.randomUUID() : undefined;
   if (claudeSessionId) params.sessionId = claudeSessionId;

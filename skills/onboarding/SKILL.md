@@ -1,0 +1,401 @@
+---
+name: onboarding
+description: "Interactive first-run onboarding — validate workspace, welcome new users/agents, gather preferences, inject hooks, and configure a ready-to-work environment."
+---
+
+# /onboarding — Welcome to Genie
+
+The **single canonical entry point** for new users and freshly-cloned agents. Validates the workspace structure, gathers identity and preferences interactively, injects hooks, and scaffolds a complete working environment.
+
+This skill replaces the fragmented `install-workspace.sh` → `apply-blank-init.sh` → `genie tui` chain with one unified, validated flow.
+
+## When to Use
+- First-time `genie` launch (no AGENTS.md exists)
+- User explicitly invokes `/onboarding`
+- New agent clone needs workspace configuration
+- `genie-blank-init` detects a blank persona and hands off here
+- After a fresh `git clone` of a genie-managed repo
+- When `genie tui` starts without required workspace files
+
+## Flow
+
+### Phase 0: Workspace Validation (Silent)
+
+Before any user interaction, validate the workspace structure. Fix gaps silently — only report what was created in the final summary.
+
+**Required structure:**
+
+```
+<workspace>/
+├── .genie/
+│   ├── wishes/          # Planning documents
+│   ├── brainstorms/     # Exploration notes
+│   └── brainstorm.md    # Jar index
+├── .claude/             # Claude Code config
+├── memory/              # Session continuity
+├── AGENTS.md            # Workspace identity (created in Phase 4)
+```
+
+**Validation steps:**
+
+```bash
+# Create genie workspace directories
+mkdir -p .genie/wishes .genie/brainstorms
+
+# Create brainstorm jar if missing
+[ -f .genie/brainstorm.md ] || cat > .genie/brainstorm.md << 'EOF'
+# Brainstorm Jar
+## Raw
+## Simmering
+## Ready
+## Poured
+EOF
+
+# Create Claude Code config dir
+mkdir -p .claude
+
+# Create memory directory
+mkdir -p memory
+```
+
+**If AGENTS.md already exists:**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "An AGENTS.md already exists in this workspace. What would you like to do?",
+    header: "Existing Configuration Found",
+    options: [
+      "Reconfigure from scratch",
+      "Keep existing and only fix missing pieces",
+      "Cancel onboarding"
+    ]
+  }]
+})
+```
+
+If "Cancel" — exit gracefully. If "Keep existing" — skip to Phase 3 (integrations) and Phase 4c-4d only.
+
+### Phase 1: Welcome
+
+Display the ASCII art banner. Then introduce yourself warmly in 2-3 sentences — explain that you'll walk them through a quick setup.
+
+```
+              /\
+             /  \
+            / /\ \
+           / /  \ \
+          / / /\ \ \
+         /_/ /  \_\_\
+             \/
+
+        ██████  ███████ ███    ██ ██ ███████
+       ██       ██      ████   ██ ██ ██
+       ██   ███ █████   ██ ██  ██ ██ █████
+       ██    ██ ██      ██  ██ ██ ██ ██
+        ██████  ███████ ██   ████ ██ ███████
+
+                    )
+                   ( )
+                  (   )
+                   ) (
+                    |
+               _.--' '--._
+              /            \
+             |    ~~~~~~    |
+              \            /
+               '-.______.-'
+                \________/
+```
+
+### Phase 2: Identity (AskUserQuestion)
+
+Use `AskUserQuestion` for each prompt. One question per step — never batch.
+
+**Step 1 — Name**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "What should I call you?",
+    header: "Your Name"
+  }]
+})
+```
+
+Free-text response. Store as `$USER_NAME`.
+
+**Step 2 — Role**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "What best describes your work?",
+    header: "Your Role",
+    options: [
+      "Software Development",
+      "DevOps / Infrastructure",
+      "Data Engineering / Analytics",
+      "Product / Design",
+      "Security / Compliance",
+      "Research / Exploration",
+      "Other (I'll describe it)"
+    ]
+  }]
+})
+```
+
+If "Other" is selected, follow up with a free-text question asking them to describe their role. Store as `$USER_ROLE`.
+
+**Step 3 — Work Style**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "How do you prefer to work with AI?",
+    header: "Work Style",
+    options: [
+      "Autonomous — do the work, show me results",
+      "Collaborative — let's think together, then you execute",
+      "Supervised — check with me before each step"
+    ]
+  }]
+})
+```
+
+Store as `$WORK_STYLE`. This maps to the agent's autonomy level in AGENTS.md.
+
+### Phase 3: Integrations (AskUserQuestion)
+
+**Step 4 — Integrations**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Which integrations do you want to set up now? (You can add more later)",
+    header: "Integrations",
+    options: [
+      "GitHub (repos, PRs, issues)",
+      "Telegram (notifications, commands)",
+      "None for now"
+    ],
+    multiSelect: true
+  }]
+})
+```
+
+Store selections as `$INTEGRATIONS[]`.
+
+**Step 5 — GitHub Setup** (only if GitHub selected)
+
+Check if `gh` CLI is authenticated (`gh auth status`). If yes, confirm the authenticated account. If not, tell the user to run `gh auth login` and offer to wait or skip.
+
+**Step 6 — Telegram Setup** (only if Telegram selected)
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "What's your Telegram bot token? (from @BotFather)",
+    header: "Telegram Bot Token"
+  }]
+})
+```
+
+Validate the token format (numeric:alphanumeric). If valid, store securely. If the user doesn't have one yet, explain how to get one from @BotFather and offer to skip for now.
+
+### Phase 4: Configure Environment
+
+Based on gathered answers, execute these configuration steps. Report each step briefly as you go.
+
+**4a. Create AGENTS.md**
+
+Write a personalized AGENTS.md using this template, substituting gathered values:
+
+```markdown
+# AGENTS.md — $USER_NAME's Workspace
+
+## Identity
+- **Name:** $USER_NAME
+- **Role:** $USER_ROLE
+- **Style:** $WORK_STYLE_DESCRIPTION
+
+## Preferences
+- Work style: $WORK_STYLE
+- Active integrations: $INTEGRATIONS_LIST
+
+## Conventions
+- Use Bun exclusively (never npm/yarn/pnpm)
+- Conventional commits: type(scope): description
+- Branch workflow: dev (working) → main (production)
+
+## Agent Commands (genie CLI)
+- Spawn agent: `genie agent spawn --role <role>`
+- List agents: `genie agent list`
+- Send message: `genie send "<text>" --to <agent>`
+- Kill agent: `genie agent kill <id>`
+- Manage teams: `genie team ensure <name>`
+
+## Session Protocol
+1. Read this file at session start
+2. Check memory/ for recent context
+3. Work on assigned tasks
+4. Push changes before ending session
+```
+
+Adapt the template to the user's role:
+- **Software Development**: add git workflow, testing, and PR conventions
+- **DevOps / Infrastructure**: add deployment, monitoring, and infra conventions
+- **Data Engineering**: add pipeline, schema, and data quality conventions
+- **Other roles**: keep it generic but include the basics
+
+**4b. Configure Default Team** (if integrations selected)
+
+```bash
+genie team ensure default
+```
+
+**4c. Inject Hooks (CRITICAL)**
+
+This step is **mandatory** — hooks must be injected during onboarding, not deferred to first worker spawn.
+
+```bash
+genie hook install
+```
+
+This writes `genie hook dispatch` entries into `~/.claude/settings.json`, ensuring all Claude Code events are routed through the genie CLI from the very first session — including TUI startup.
+
+**Why this matters:** Without this step, a team-lead spawned via `genie tui` has NO hooks until its first worker is spawned (via `injectTeamHooks`). This means the first session runs "deaf" — no event routing, no protocol dispatch, no auto-spawn. Onboarding fixes this by front-loading hook injection.
+
+**Verify hooks were injected:**
+
+```bash
+genie hook status
+```
+
+If `genie` is not in PATH, warn the user and add to the summary as a manual step.
+
+**4d. Initialize Memory**
+
+Write an initial `memory/YYYY-MM-DD.md` entry noting the onboarding completion:
+
+```markdown
+# YYYY-MM-DD
+
+## Onboarding
+- Workspace initialized for $USER_NAME ($USER_ROLE)
+- Work style: $WORK_STYLE
+- Integrations: $INTEGRATIONS_LIST
+- Hooks: installed via `genie hook install`
+- Workspace structure validated and created
+```
+
+### Phase 5: Summary
+
+Present a clear summary of everything configured:
+
+```
+Setup Complete!
+
+  Name:         $USER_NAME
+  Role:         $USER_ROLE
+  Work Style:   $WORK_STYLE
+  Integrations: $INTEGRATIONS_LIST
+
+Files created/validated:
+  .genie/wishes/         (planning)
+  .genie/brainstorms/    (exploration)
+  .genie/brainstorm.md   (jar index)
+  memory/                (session continuity)
+  AGENTS.md              (workspace persona)
+
+Hooks:
+  genie hook dispatch    (installed globally)
+
+Next steps:
+  - Run /brainstorm to explore an idea
+  - Run /wish to plan a task
+  - Run /work to execute
+```
+
+End with a brief, friendly message welcoming them and suggesting their first action based on their role.
+
+## AskUserQuestion Protocol
+
+**When to use AskUserQuestion:**
+- Gathering user input (name, role, preferences, tokens)
+- Presenting choices with defined options
+- Any question where you need the user's answer to proceed
+
+**When to just speak (no AskUserQuestion):**
+- Showing the welcome banner
+- Explaining what you're doing during configuration
+- Presenting the final summary
+- Providing guidance or next steps
+- Error messages or status updates
+
+**Rules for AskUserQuestion:**
+- One question per call — never batch multiple questions
+- Always include a `header` for context
+- Use `options` when choices are predefined
+- Use `multiSelect: true` only for integration selection
+- Free-text (no options) for name and tokens
+
+## CLI Command Reference
+
+**IMPORTANT:** The genie CLI uses `genie agent`, NOT `genie worker`. The worker→agent rename is complete. Always use:
+
+| Action | Correct Command | WRONG (deprecated) |
+|--------|----------------|---------------------|
+| Spawn agent | `genie agent spawn --role <role>` | ~~genie worker spawn~~ |
+| List agents | `genie agent list` | ~~genie worker list~~ |
+| Kill agent | `genie agent kill <id>` | ~~genie worker kill~~ |
+| Agent history | `genie agent history <name>` | ~~genie worker history~~ |
+| Send message | `genie send "<text>" --to <agent>` | ~~genie msg send~~ |
+| Manage teams | `genie team ensure <name>` | (same) |
+| Install hooks | `genie hook install` | (none) |
+
+If the generated AGENTS.md or any documentation references `genie worker`, replace with `genie agent`.
+
+## Known Issues
+
+### System Prompt Flattening (BUG — do not fix here)
+
+`buildTeamLeadCommand()` in `src/lib/team-lead-command.ts` does `fullPrompt.replace(/\n/g, ' ')` which destroys all markdown formatting in the system prompt (AGENTS.md content, TEAM_LEAD_PROMPT.md content). This means:
+- Tables render as unformatted text
+- Code blocks lose structure
+- Headers lose hierarchy
+- Lists become run-on sentences
+
+**Impact on onboarding:** The AGENTS.md created by onboarding will have its formatting destroyed when injected as system prompt via TUI. This is a known bug to be fixed separately — do NOT attempt to work around it in the AGENTS.md template (e.g., by avoiding markdown). Write proper markdown; the bug is in the prompt builder, not the content.
+
+**Tracked for fix:** `buildTeamLeadCommand()` should preserve newlines or use a proper escaping strategy.
+
+### TEAM_LEAD_PROMPT.md Outdated References
+
+`TEAM_LEAD_PROMPT.md` still references `genie worker spawn/list/kill/etc.` instead of `genie agent`. This means team-leads spawned via TUI receive outdated instructions. The onboarding skill uses the correct `genie agent` commands — but the system prompt injected into team-leads will still say `genie worker` until TEAM_LEAD_PROMPT.md is updated.
+
+## Error Handling
+
+| Scenario | Action |
+|----------|--------|
+| AGENTS.md already exists | Ask if reconfigure, keep existing, or cancel |
+| `gh` CLI not installed | Skip GitHub setup, note in summary |
+| Telegram token invalid | Offer retry or skip, don't block |
+| User selects "None" for integrations | Skip Phase 3 steps 5-6 entirely |
+| `genie` CLI not in PATH | Warn, skip hook/team setup, add manual steps to summary |
+| `.genie/` partially exists | Validate and fill gaps, don't overwrite existing files |
+| Hook injection fails | Warn with manual fallback: `genie hook install` |
+| Workspace is read-only | Error clearly — onboarding cannot proceed without write access |
+
+## Rules
+- One question per message. Never batch questions in a single AskUserQuestion call.
+- Never skip the welcome banner — first impressions matter.
+- Never store secrets (tokens, keys) in plain text files — use environment variables or secure storage.
+- Always offer "skip" or "none" as an escape — never force a choice.
+- Respect existing configuration — ask before overwriting AGENTS.md.
+- Keep the tone warm but efficient — friendly without being verbose.
+- If the user seems experienced, adapt — offer to fast-track with sensible defaults.
+- The entire onboarding should complete in under 2 minutes of user time.
+- Always use `genie agent` commands, NEVER `genie worker` (deprecated).
+- Hook injection is mandatory — never defer to first worker spawn.
+- Validate workspace structure before user interaction — fix silently, report in summary.
