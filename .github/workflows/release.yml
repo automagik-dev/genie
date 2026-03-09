@@ -48,8 +48,14 @@ jobs:
         run: |
           TAG="v${{ steps.pkg.outputs.version }}"
           PREV=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -v "^${TAG}$" | head -1)
-          echo "tag=${PREV:-}" >> "$GITHUB_OUTPUT"
-          echo "Previous release tag: ${PREV:-none}"
+          # Verify the tag is reachable from HEAD (same history line)
+          if [ -n "$PREV" ] && git merge-base --is-ancestor "$PREV" HEAD 2>/dev/null; then
+            echo "tag=${PREV}" >> "$GITHUB_OUTPUT"
+            echo "Previous release tag: ${PREV}"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "Previous release tag not reachable from HEAD — treating as initial release"
+          fi
 
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4
@@ -65,13 +71,13 @@ jobs:
         if: steps.exists.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
         run: |
           TAG="v${{ steps.pkg.outputs.version }}"
-          NOTES="${{ steps.cliff.outputs.content }}"
-          if [ -z "$NOTES" ]; then
-            NOTES="Initial release of genie v3 CLI."
+          if [ -z "$RELEASE_NOTES" ]; then
+            RELEASE_NOTES="Initial release of genie v3 CLI."
           fi
-          printf '%s' "$NOTES" > /tmp/release-notes.md
+          printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
           gh release create "${TAG}" \
             --target "${{ github.sha }}" \
             --title "${TAG}" \
