@@ -113,6 +113,8 @@ CONFIG="$HOME/.genie/statusline/${TEAM}/${AGENT_NAME}.json"
 [ ! -f "$CONFIG" ] && CONFIG="$HOME/.genie/statusline/_defaults.json"
 [ ! -f "$CONFIG" ] && exit 0
 
+_esc_sed() { printf '%s\n' "$1" | sed -e 's/[&/\]/\\&/g'; }
+
 COOLDOWN_DIR="$HOME/.genie/statusline/.cooldowns"
 mkdir -p "$COOLDOWN_DIR"
 NOW=$(date +%s)
@@ -142,8 +144,8 @@ while IFS= read -r trigger; do
   FIRED=false
   case "$WHEN" in
     *context_pct*)
-      THRESHOLD=$(echo "$WHEN" | grep -oP '\d+')
-      OP=$(echo "$WHEN" | grep -oP '>=|<=|>|<|==')
+      THRESHOLD=$(echo "$WHEN" | grep -oE '[0-9]+')
+      OP=$(echo "$WHEN" | grep -oE '>=|<=|>|<|==')
       case "$OP" in
         ">=") [ "$PCT" -ge "$THRESHOLD" ] && FIRED=true ;;
         ">")  [ "$PCT" -gt "$THRESHOLD" ] && FIRED=true ;;
@@ -153,14 +155,14 @@ while IFS= read -r trigger; do
       esac
       ;;
     *cost*)
-      THRESHOLD=$(echo "$WHEN" | grep -oP '[\d.]+')
+      THRESHOLD=$(echo "$WHEN" | grep -oE '[0-9.]+')
       # Compare as integers (cents)
       COST_CENTS=$(printf '%.0f' "$(echo "$COST * 100" | bc 2>/dev/null || echo 0)")
       THRESH_CENTS=$(printf '%.0f' "$(echo "$THRESHOLD * 100" | bc 2>/dev/null || echo 0)")
       [ "$COST_CENTS" -ge "$THRESH_CENTS" ] 2>/dev/null && FIRED=true
       ;;
     *duration_min*)
-      THRESHOLD=$(echo "$WHEN" | grep -oP '\d+')
+      THRESHOLD=$(echo "$WHEN" | grep -oE '[0-9]+')
       [ "$DURATION_MIN" -ge "$THRESHOLD" ] && FIRED=true
       ;;
   esac
@@ -169,11 +171,11 @@ while IFS= read -r trigger; do
     # Interpolate message
     MSG=$(echo "$MSG" | sed \
       -e "s/{pct}/$PCT/g" \
-      -e "s/{cost}/${COST_FMT}/g" \
-      -e "s/{model}/$MODEL/g" \
-      -e "s/{agent}/$AGENT_NAME/g" \
-      -e "s/{team}/$TEAM/g" \
-      -e "s/{branch}/$BRANCH/g" \
+      -e "s/{cost}/$(_esc_sed "$COST_FMT")/g" \
+      -e "s/{model}/$(_esc_sed "$MODEL")/g" \
+      -e "s/{agent}/$(_esc_sed "$AGENT_NAME")/g" \
+      -e "s/{team}/$(_esc_sed "$TEAM")/g" \
+      -e "s/{branch}/$(_esc_sed "$BRANCH")/g" \
       -e "s/{duration}/${DURATION_MIN}m/g")
 
     # Execute action

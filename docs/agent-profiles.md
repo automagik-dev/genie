@@ -1,6 +1,6 @@
-# Worker Profiles
+# Agent Profiles
 
-Worker profiles configure how genie-cli spawns Claude Code agents. Each profile bundles:
+Agent profiles configure how genie-cli spawns Claude Code agents. Each profile bundles:
 - **Launcher**: `claude` (direct Claude Code invocation)
 - **Claude Args**: CLI arguments passed to Claude Code
 

@@ -76,7 +76,7 @@ genie agent spawn --role implementor
 
 # Monitor
 genie agent list
-genie agent read <worker>
+genie agent read <agent>
 ```
 
 Fallback when beads unavailable: use timeouts — 3 layers of indirection can stall.

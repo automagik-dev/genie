@@ -72,7 +72,7 @@ genie work <bead-id>
 
 # Monitor
 genie agent list
-genie agent read <worker>
+genie agent read <agent>
 ```
 
 - **Isolation:** Claude Code worktrees (same as CC path, initiated via genie)
