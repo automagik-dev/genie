@@ -274,7 +274,51 @@ genie hook status
 
 If `genie` is not in PATH, warn the user and add to the summary as a manual step.
 
-**4d. Initialize Memory**
+**4d. Validate tmux Configuration**
+
+Genie uses tmux heavily for agent orchestration (panes, windows, sessions). Incorrect tmux settings will cause silent failures.
+
+**Check base-index:**
+
+```bash
+tmux show-option -gv base-index 2>/dev/null
+tmux show-option -gv pane-base-index 2>/dev/null
+```
+
+| Setting | Expected | Why |
+|---------|----------|-----|
+| `base-index` | `0` | Genie targets windows as `session:0` — a non-zero base-index breaks window resolution |
+| `pane-base-index` | `0` | Fallback pane targets use `.0` format (`session:team.0`) |
+
+**If either is NOT 0:**
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Your tmux base-index is not 0. Genie requires base-index 0 to work correctly. Should I fix your tmux config?",
+    header: "tmux Configuration Issue",
+    options: [
+      "Yes, update my ~/.tmux.conf",
+      "No, I'll fix it manually later"
+    ]
+  }]
+})
+```
+
+If "Yes", append to `~/.tmux.conf`:
+
+```bash
+cat >> ~/.tmux.conf << 'EOF'
+
+# Genie requires base-index 0 for window/pane targeting
+set -g base-index 0
+setw -g pane-base-index 0
+EOF
+```
+
+**If tmux is not installed:** Warn the user — tmux is required for agent orchestration. Suggest installation but don't block onboarding (non-interactive features still work).
+
+**4e. Initialize Memory**
 
 Write an initial `memory/YYYY-MM-DD.md` entry noting the onboarding completion:
 
@@ -310,6 +354,10 @@ Files created/validated:
 
 Hooks:
   genie hook dispatch    (installed globally)
+
+tmux:
+  base-index             0 (verified/fixed)
+  pane-base-index        0 (verified/fixed)
 
 Next steps:
   - Run /brainstorm to explore an idea
@@ -356,6 +404,67 @@ End with a brief, friendly message welcoming them and suggesting their first act
 
 If the generated AGENTS.md or any documentation references `genie worker`, replace with `genie agent`.
 
+## tmux Best Practices
+
+Genie orchestrates agents via tmux sessions, windows, and panes. These settings ensure reliable operation.
+
+### Required Settings
+
+These MUST be set for genie to function correctly:
+
+```bash
+# ~/.tmux.conf — Required by genie
+set -g base-index 0          # Windows start at 0 (genie targets session:0)
+setw -g pane-base-index 0    # Panes start at 0 (genie targets team.0)
+```
+
+**Why:** Genie resolves windows/panes using `:0` and `.0` suffixes. If `base-index` is 1, commands like `tmux rename-window -t session:0` silently fail or target the wrong window.
+
+### Recommended Settings
+
+These improve the genie + tmux experience:
+
+```bash
+# ~/.tmux.conf — Recommended for genie users
+set -g mouse on              # Click between agent panes, scroll output
+set -g history-limit 50000   # More scrollback for long agent sessions
+set -g renumber-windows on   # Keep window numbers contiguous after kills
+set -g default-terminal "screen-256color"  # Proper color support
+
+# Don't let tmux rename windows — genie sets meaningful names (team, agent)
+setw -g automatic-rename off
+
+# Status bar shows agent activity
+set -g status-interval 5     # Refresh every 5s
+
+# Prefix key (default is Ctrl-b, some prefer Ctrl-a)
+# set -g prefix C-a
+# unbind C-b
+# bind C-a send-prefix
+```
+
+### Useful Shortcuts for Agent Management
+
+| Shortcut | Action |
+|----------|--------|
+| `prefix + w` | List all windows (see all agents) |
+| `prefix + s` | List all sessions |
+| `prefix + d` | Detach (agents keep running) |
+| `prefix + [` | Enter scroll mode (navigate agent output) |
+| `prefix + z` | Zoom pane (fullscreen one agent) |
+| `prefix + q` | Show pane numbers |
+| `prefix + !` | Break pane into its own window |
+
+### Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `window not found` after spawn | `base-index` is not 0 | Set `base-index 0` in tmux.conf, restart tmux |
+| Agent panes show in wrong order | `pane-base-index` is not 0 | Set `pane-base-index 0` |
+| Window names keep changing | `automatic-rename on` | Set `automatic-rename off` |
+| Can't scroll agent output | Mouse mode off | Set `mouse on` or use `prefix + [` |
+| Agent output truncated | Low history limit | Set `history-limit 50000` |
+
 ## Known Issues
 
 ### System Prompt Flattening (BUG — do not fix here)
@@ -386,6 +495,9 @@ If the generated AGENTS.md or any documentation references `genie worker`, repla
 | `.genie/` partially exists | Validate and fill gaps, don't overwrite existing files |
 | Hook injection fails | Warn with manual fallback: `genie hook install` |
 | Workspace is read-only | Error clearly — onboarding cannot proceed without write access |
+| tmux not installed | Warn — required for agent orchestration. Suggest install, don't block |
+| `base-index` is not 0 | AskUserQuestion to auto-fix `~/.tmux.conf` or skip |
+| `~/.tmux.conf` is read-only | Provide the lines to add manually, don't block |
 
 ## Rules
 - One question per message. Never batch questions in a single AskUserQuestion call.
