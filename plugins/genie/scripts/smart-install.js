@@ -6,7 +6,6 @@ import { execSync, spawnSync } from 'node:child_process';
  * Ensures required dependencies are installed:
  * - Bun runtime (auto-installs if missing)
  * - tmux (guides user if missing - can't auto-install)
- * - beads (auto-installs if missing via npm)
  * - genie CLI (installed globally via bun)
  *
  * Also handles:
@@ -26,10 +25,6 @@ const IS_WINDOWS = process.platform === 'win32';
 const BUN_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), '.bun', 'bin', 'bun.exe')]
   : [join(homedir(), '.bun', 'bin', 'bun'), '/usr/local/bin/bun', '/opt/homebrew/bin/bun'];
-
-const BEADS_COMMON_PATHS = IS_WINDOWS
-  ? [join(homedir(), 'AppData', 'Roaming', 'npm', 'bd.cmd')]
-  : [join(homedir(), '.local', 'bin', 'bd'), '/usr/local/bin/bd', '/opt/homebrew/bin/bd'];
 
 const GENIE_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), '.bun', 'bin', 'genie.exe')]
@@ -127,47 +122,6 @@ function getTmuxVersion() {
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Check if beads (bd) is installed
- */
-function getBeadsPath() {
-  try {
-    const result = spawnSync('bd', ['--version'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS,
-    });
-    if (result.status === 0) return 'bd';
-  } catch {
-    // Not in PATH
-  }
-  return BEADS_COMMON_PATHS.find(existsSync) || null;
-}
-
-function isBeadsInstalled() {
-  return getBeadsPath() !== null;
-}
-
-/**
- * Install beads via npm (non-fatal — warns and continues if unavailable)
- */
-function installBeads() {
-  console.error('Installing beads (bd)...');
-  try {
-    execSync('npm install -g @anthropic-ai/bd', { stdio: 'inherit', shell: true });
-    if (!isBeadsInstalled()) {
-      console.error('Warning: beads installation completed but bd not found in PATH.');
-      return false;
-    }
-    console.error('beads installed');
-    return true;
-  } catch {
-    console.error('Warning: beads (bd) not available — skipping. Install manually later:');
-    console.error('  npm install -g @anthropic-ai/bd');
-    return false;
   }
 }
 
@@ -318,7 +272,7 @@ function installGenieCli() {
 // Main execution
 try {
   // Quick check: if everything is already installed, exit silently
-  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
+  if (isBunInstalled() && isTmuxInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
     process.exit(0);
   }
 
@@ -349,18 +303,13 @@ try {
     // Don't exit — let the rest of the chain run
   }
 
-  // 3. Check/install beads (optional — non-fatal)
-  if (!isBeadsInstalled()) {
-    installBeads();
-  }
-
-  // 4. Install plugin dependencies if needed
+  // 3. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
     console.error('Dependencies installed');
   }
 
-  // 5. Install or upgrade genie CLI via bun global (non-fatal)
+  // 4. Install or upgrade genie CLI via bun global (non-fatal)
   if (genieCliNeedsInstall()) {
     try {
       installGenieCli();
