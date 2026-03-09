@@ -237,32 +237,33 @@ export async function ensureTeamWindow(
 }
 
 /**
- * Map agent color names to tmux hex colors for pane border styling.
- * Uses the same palette as ClaudeTeamColor from provider-adapters.
+ * Map agent color names to subtle tmux background tints.
+ * Uses dark tints that are visible but don't overpower terminal content.
+ * Palette matches ClaudeTeamColor from provider-adapters.
  */
-const TMUX_COLOR_MAP: Record<string, string> = {
-  blue: '#5b8def',
-  green: '#5bef8d',
-  yellow: '#efdb5b',
-  red: '#ef5b5b',
-  cyan: '#5bdeef',
-  orange: '#ef9a5b',
-  purple: '#a85bef',
-  pink: '#ef5bb8',
+const TMUX_BG_TINT_MAP: Record<string, string> = {
+  blue: '#0d0d1f',
+  green: '#0d1f0d',
+  yellow: '#1f1f0d',
+  red: '#1f0d0d',
+  cyan: '#0d1f1f',
+  orange: '#1f150d',
+  purple: '#150d1f',
+  pink: '#1f0d15',
 };
 
 /**
- * Apply agent color to a tmux pane's border.
- * Makes the pane visually identifiable by agent color.
+ * Apply agent color to a tmux pane via focus hooks.
+ * When the pane is focused, a subtle background tint shows the agent color.
+ * When unfocused, background resets to default.
  */
 export async function applyPaneColor(paneId: string, color: string): Promise<void> {
-  const hex = TMUX_COLOR_MAP[color] ?? TMUX_COLOR_MAP.blue;
+  const bg = TMUX_BG_TINT_MAP[color] ?? TMUX_BG_TINT_MAP.blue;
   try {
-    await executeTmux(`select-pane -t '${paneId}' -P 'fg=default,bg=default'`);
-    await executeTmux(`set-option -p -t '${paneId}' pane-border-style 'fg=${hex}'`);
-    await executeTmux(`set-option -p -t '${paneId}' pane-active-border-style 'fg=${hex},bold'`);
+    await executeTmux(`set-hook -t '${paneId}' pane-focus-in "select-pane -P 'bg=${bg}'"`);
+    await executeTmux(`set-hook -t '${paneId}' pane-focus-out "select-pane -P 'bg=default'"`);
   } catch {
-    /* best-effort — tmux < 3.2 may not support per-pane styles */
+    /* best-effort — tmux < 3.2 may not support pane hooks */
   }
 }
 
