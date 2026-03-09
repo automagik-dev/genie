@@ -7,7 +7,7 @@
     "genie": "./dist/genie.js"
   },
   "scripts": {
-    "prepare": "node -e \"if(!process.env.CI)require('child_process').execSync('husky',{stdio:'inherit'})\"",
+    "prepare": "test \"$CI\" = true || husky",
     "version": "bun run scripts/version.ts",
     "build": "bun build src/genie.ts --outdir dist --target bun --minify && chmod +x dist/*.js",
     "build:plugin": "node scripts/build.js",
