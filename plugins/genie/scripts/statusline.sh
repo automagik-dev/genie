@@ -23,6 +23,8 @@ input=$(cat)
 # === Parse session data ===
 MODEL=$(echo "$input" | jq -r '.model.display_name // "?"')
 PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+TOKENS_USED=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
+TOKENS_MAX=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 COST=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
 DURATION_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
 AGENT_NAME="${GENIE_AGENT_NAME:-}"
@@ -30,6 +32,22 @@ WORKTREE=$(echo "$input" | jq -r '.worktree.name // empty')
 
 DURATION_MIN=$((DURATION_MS / 60000))
 COST_FMT=$(printf '$%.2f' "$COST")
+
+# === Format token counts (e.g. 45k, 120k, 1.2M) ===
+fmt_tokens() {
+  local n=$1
+  if [ "$n" -ge 1000000 ]; then
+    local m=$((n / 1000))
+    printf '%s.%sM' "$((m / 1000))" "$(( (m % 1000) / 100 ))"
+  elif [ "$n" -ge 1000 ]; then
+    printf '%sk' "$((n / 1000))"
+  else
+    printf '%s' "$n"
+  fi
+}
+
+USED_FMT=$(fmt_tokens "$TOKENS_USED")
+MAX_FMT=$(fmt_tokens "$TOKENS_MAX")
 
 # === Colors ===
 GREEN='\033[32m'
@@ -40,15 +58,20 @@ DIM='\033[2m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-# === Context bar ===
+# === Context bar (token-based) ===
 BAR_WIDTH=12
-FILLED=$((PCT * BAR_WIDTH / 100))
+if [ "$TOKENS_MAX" -gt 0 ]; then
+  FILLED=$((TOKENS_USED * BAR_WIDTH / TOKENS_MAX))
+else
+  FILLED=0
+fi
+[ "$FILLED" -gt "$BAR_WIDTH" ] && FILLED=$BAR_WIDTH
 EMPTY=$((BAR_WIDTH - FILLED))
 BAR=$(printf "%${FILLED}s" | tr ' ' '=')
 [ "$EMPTY" -gt 0 ] && BAR="${BAR}$(printf "%${EMPTY}s" | tr ' ' '-')"
 
-if [ "$PCT" -ge 80 ]; then BAR_COLOR="$RED"
-elif [ "$PCT" -ge 50 ]; then BAR_COLOR="$YELLOW"
+if [ "$TOKENS_USED" -ge $((TOKENS_MAX * 80 / 100)) ]; then BAR_COLOR="$RED"
+elif [ "$TOKENS_USED" -ge $((TOKENS_MAX * 50 / 100)) ]; then BAR_COLOR="$YELLOW"
 else BAR_COLOR="$GREEN"; fi
 
 # === Git branch ===
@@ -66,7 +89,7 @@ fi
 
 # === Build display line ===
 LINE="${BOLD}${MODEL}${RESET}"
-LINE="${LINE} ${DIM}|${RESET} ${BAR_COLOR}[${BAR}] ${PCT}%${RESET}"
+LINE="${LINE} ${DIM}|${RESET} ${BAR_COLOR}[${BAR}] ${USED_FMT}/${MAX_FMT}${RESET}"
 
 [ "$AGENTS_COUNT" -gt 0 ] && LINE="${LINE} ${DIM}|${RESET} ${CYAN}${AGENTS_COUNT} agents${RESET}"
 [ -n "$AGENT_NAME" ] && LINE="${LINE} ${DIM}|${RESET} ${CYAN}@${AGENT_NAME}${RESET}"
