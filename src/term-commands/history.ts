@@ -429,7 +429,7 @@ async function resolveLogContext(workerIdOrName: string, options: HistoryOptions
 
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
-    console.error(`❌ Worker "${workerIdOrName}" not found.`);
+    console.error(`❌ Agent "${workerIdOrName}" not found.`);
     console.error('   Run `genie agent list` to see active agents.');
     process.exit(1);
   }
@@ -437,7 +437,7 @@ async function resolveLogContext(workerIdOrName: string, options: HistoryOptions
   const workspacePath = worker.worktree || worker.repoPath;
   const logInfo = await claudeLogs.getLogsForPane(workspacePath);
   if (!logInfo) {
-    console.error(`❌ No Claude logs found for worker "${worker.id}"`);
+    console.error(`❌ No Claude logs found for agent "${worker.id}"`);
     console.error(`   Workspace: ${workspacePath}`);
     process.exit(1);
   }

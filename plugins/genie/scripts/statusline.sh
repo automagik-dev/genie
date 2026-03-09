@@ -113,8 +113,6 @@ CONFIG="$HOME/.genie/statusline/${TEAM}/${AGENT_NAME}.json"
 [ ! -f "$CONFIG" ] && CONFIG="$HOME/.genie/statusline/_defaults.json"
 [ ! -f "$CONFIG" ] && exit 0
 
-_esc_sed() { printf '%s\n' "$1" | sed -e 's/[&/\]/\\&/g'; }
-
 COOLDOWN_DIR="$HOME/.genie/statusline/.cooldowns"
 mkdir -p "$COOLDOWN_DIR"
 NOW=$(date +%s)
@@ -168,15 +166,25 @@ while IFS= read -r trigger; do
   esac
 
   if [ "$FIRED" = true ]; then
-    # Interpolate message
-    MSG=$(echo "$MSG" | sed \
-      -e "s/{pct}/$PCT/g" \
-      -e "s/{cost}/$(_esc_sed "$COST_FMT")/g" \
-      -e "s/{model}/$(_esc_sed "$MODEL")/g" \
-      -e "s/{agent}/$(_esc_sed "$AGENT_NAME")/g" \
-      -e "s/{team}/$(_esc_sed "$TEAM")/g" \
-      -e "s/{branch}/$(_esc_sed "$BRANCH")/g" \
-      -e "s/{duration}/${DURATION_MIN}m/g")
+    # Interpolate message using awk to avoid sed injection from untrusted variables
+    MSG=$(printf '%s' "$MSG" | awk \
+      -v pct="$PCT" \
+      -v cost="$COST_FMT" \
+      -v model="$MODEL" \
+      -v agent="$AGENT_NAME" \
+      -v team="$TEAM" \
+      -v branch="$BRANCH" \
+      -v duration="${DURATION_MIN}m" \
+      '{
+        gsub(/{pct}/, pct)
+        gsub(/{cost}/, cost)
+        gsub(/{model}/, model)
+        gsub(/{agent}/, agent)
+        gsub(/{team}/, team)
+        gsub(/{branch}/, branch)
+        gsub(/{duration}/, duration)
+        print
+      }')
 
     # Execute action
     case "$ACTION" in

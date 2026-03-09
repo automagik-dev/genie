@@ -51,16 +51,18 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
     }
 
     // Respawn via genie agent spawn (non-blocking fork)
-    const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
     const args = ['agent', 'spawn', '--provider', template.provider, '--team', template.team];
     if (template.role) args.push('--role', template.role);
     if (template.skill) args.push('--skill', template.skill);
     if (template.cwd) args.push('--cwd', template.cwd);
     if (template.lastSessionId) args.push('--resume', template.lastSessionId);
+    if (template.extraArgs) args.push(...template.extraArgs);
 
     // Run synchronously with short timeout — we need the pane up before
-    // CC delivers the message
-    execFileSync('genie', args, {
+    // CC delivers the message. Uses spawnSync with argv array (no shell)
+    // to prevent command injection.
+    spawnSync('genie', args, {
       timeout: 10_000,
       stdio: 'ignore',
       env: { ...process.env, GENIE_TEAM: teamName },

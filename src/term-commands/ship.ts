@@ -141,7 +141,7 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
  */
 async function cleanupWorker(worker: registry.Agent): Promise<void> {
   if (worker.windowName) {
-    console.log(`💀 Killing worker window "${worker.windowName}"...`);
+    console.log(`💀 Killing agent window "${worker.windowName}"...`);
     try {
       await tmux.killWindow(worker.windowName);
       console.log('   ✅ Window killed');
@@ -149,7 +149,7 @@ async function cleanupWorker(worker: registry.Agent): Promise<void> {
       console.log('   ℹ️  Window already gone');
     }
   } else {
-    console.log('💀 Killing worker pane...');
+    console.log('💀 Killing agent pane...');
     await killWorkerPane(worker.paneId);
     console.log('   ✅ Pane killed');
   }
@@ -165,7 +165,7 @@ async function cleanupWorker(worker: registry.Agent): Promise<void> {
   }
   await registry.unregister(worker.id);
   await cleanupEventFile(worker.paneId).catch(() => {});
-  console.log('   ✅ Worker unregistered');
+  console.log('   ✅ Agent unregistered');
 }
 
 /**
@@ -184,7 +184,7 @@ async function findWorkerForTask(taskId: string): Promise<registry.Agent | null>
  */
 function buildShipMessage(taskId: string, title: string, worker: registry.Agent | null, merge: boolean): string {
   const mergeNote = merge ? ', merge to main' : '';
-  if (worker) return `Ship ${taskId} "${title}"? (mark done, kill worker pane ${worker.paneId}${mergeNote})`;
+  if (worker) return `Ship ${taskId} "${title}"? (mark done, kill agent pane ${worker.paneId}${mergeNote})`;
   return `Ship ${taskId} "${title}"? (mark done${mergeNote})`;
 }
 

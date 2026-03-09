@@ -77,14 +77,27 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
   // Check if already injected (avoid unnecessary writes)
   const existingHooks = settings.hooks as HooksConfig | undefined;
   if (existingHooks) {
-    const firstEvent = DISPATCHED_EVENTS[0];
-    const existing = existingHooks[firstEvent];
-    if (existing?.[0]?.hooks?.[0]?.command === DISPATCH_COMMAND) {
+    const allInjected = DISPATCHED_EVENTS.every((event) => {
+      const existing = existingHooks[event];
+      return existing?.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+    });
+    if (allInjected) {
       return false; // already injected
     }
   }
 
-  settings.hooks = hooksConfig;
+  // Merge genie hook entries into existing hooks (preserve user-defined hooks)
+  const mergedHooks: HooksConfig = existingHooks ? { ...existingHooks } : {};
+  for (const event of DISPATCHED_EVENTS) {
+    const genieEntry = hooksConfig[event][0];
+    const existingEntries = mergedHooks[event] ?? [];
+    // Only add if not already present
+    const alreadyPresent = existingEntries.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+    if (!alreadyPresent) {
+      mergedHooks[event] = [...existingEntries, genieEntry];
+    }
+  }
+  settings.hooks = mergedHooks;
 
   // Ensure parent directory exists
   const dir = join(settingsPath, '..');
@@ -116,9 +129,11 @@ export async function isTeamHooked(teamName: string): Promise<boolean> {
     const hooks = settings.hooks as HooksConfig | undefined;
     if (!hooks) return false;
 
-    const firstEvent = DISPATCHED_EVENTS[0];
-    const existing = hooks[firstEvent];
-    return existing?.[0]?.hooks?.[0]?.command === DISPATCH_COMMAND;
+    // Check ALL dispatched events, not just the first one
+    return DISPATCHED_EVENTS.every((event) => {
+      const existing = hooks[event];
+      return existing?.some((m) => m.hooks?.some((h) => h.command === DISPATCH_COMMAND));
+    });
   } catch {
     return false;
   }
