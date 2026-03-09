@@ -10,8 +10,18 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import * as registry from '../lib/agent-registry.js';
+import type * as registryTypes from '../lib/agent-registry.js';
 import type * as protocolRouterTypes from '../lib/protocol-router.js';
+
+// Lazy-load agent-registry to avoid pulling in the full module
+// at evaluation time (fixes flaky bun module-resolution errors in CI).
+let _registry: typeof registryTypes | undefined;
+async function getRegistry(): Promise<typeof registryTypes> {
+  if (!_registry) {
+    _registry = await import('../lib/agent-registry.js');
+  }
+  return _registry;
+}
 
 // Lazy-load protocol-router to avoid pulling in the full tmux dependency
 // chain at module-evaluation time (fixes flaky bun module-resolution errors in CI).
@@ -39,6 +49,7 @@ export async function detectSenderIdentity(teamName: string): Promise<string> {
   const paneId = process.env.TMUX_PANE;
   if (!paneId) return 'cli';
 
+  const registry = await getRegistry();
   const worker = await registry.findByPane(paneId);
   if (worker) return worker.role ?? worker.id;
 
