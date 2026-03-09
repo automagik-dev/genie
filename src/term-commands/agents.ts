@@ -588,9 +588,13 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     process.exit(1);
   }
 
-  // Apply layout to team window (or fallback to window 0)
+  // Apply layout to team window (or fallback to first window in session)
   const session = 'genie';
-  const layoutTarget = teamWindow ? `${session}:${teamWindow.windowName}` : `${session}:0`;
+  let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
+  if (!teamWindow) {
+    const wins = await tmux.listWindows(session);
+    layoutTarget = wins[0] ? wins[0].id : `${session}:`;
+  }
   try {
     execSync(`tmux ${buildLayoutCommand(layoutTarget, ctx.layoutMode)}`, { stdio: 'ignore' });
   } catch {

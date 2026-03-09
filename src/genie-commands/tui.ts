@@ -127,9 +127,17 @@ async function createTuiSession(name: string, workspaceDir: string, systemPrompt
     process.exit(1);
   }
 
-  // Name the main window and lock the name
-  await tmux.executeTmux(`rename-window -t ${shellQuote(`${name}:0`)} ${shellQuote(name)}`);
-  await tmux.executeTmux(`set-window-option -t ${shellQuote(`${name}:0`)} automatic-rename off`);
+  // Get the initial window ID (respects user's base-index setting — don't hardcode :0)
+  const windows = await tmux.listWindows(name);
+  const firstWindow = windows[0];
+  if (!firstWindow) {
+    console.error(`Failed to find initial window in session "${name}"`);
+    process.exit(1);
+  }
+
+  // Name the main window and lock the name using window ID
+  await tmux.executeTmux(`rename-window -t ${shellQuote(firstWindow.id)} ${shellQuote(name)}`);
+  await tmux.executeTmux(`set-window-option -t ${shellQuote(firstWindow.id)} automatic-rename off`);
 
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
