@@ -3,10 +3,10 @@
  */
 
 /** Events that block execution until handlers complete. */
-export type BlockingEvent = 'PreToolUse' | 'UserPromptSubmit' | 'TeammateIdle' | 'TaskCompleted' | 'PermissionRequest';
+type BlockingEvent = 'PreToolUse' | 'UserPromptSubmit' | 'TeammateIdle' | 'TaskCompleted' | 'PermissionRequest';
 
 /** Events that are fire-and-forget. */
-export type NonBlockingEvent =
+type NonBlockingEvent =
   | 'PostToolUse'
   | 'PostToolUseFailure'
   | 'SessionStart'

@@ -7,7 +7,7 @@
  * 3. Unknown first arg treated as team name (catch-all)
  */
 
-export interface ShortcutResult {
+interface ShortcutResult {
   /** The (potentially rewritten) CLI args (without argv[0] and argv[1]) */
   args: string[];
   /** Whether the args were rewritten (tui via shortcut — skip deprecation warning) */

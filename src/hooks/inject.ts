@@ -36,10 +36,6 @@ function teamSettingsPath(teamName: string): string {
   return join(claudeConfigDir(), 'teams', sanitized, 'settings.json');
 }
 
-function globalSettingsPath(): string {
-  return join(claudeConfigDir(), 'settings.json');
-}
-
 function buildHooksConfig(): HooksConfig {
   const hooks: HooksConfig = {};
 
@@ -104,15 +100,6 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
  */
 export async function injectTeamHooks(teamName: string): Promise<boolean> {
   const path = teamSettingsPath(teamName);
-  return injectIntoFile(path);
-}
-
-/**
- * Inject hook dispatch config into the global settings.json.
- * Called via `genie hook install` for standalone CC sessions.
- */
-export async function injectGlobalHooks(): Promise<boolean> {
-  const path = globalSettingsPath();
   return injectIntoFile(path);
 }
 

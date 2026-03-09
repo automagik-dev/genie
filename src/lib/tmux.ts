@@ -327,7 +327,7 @@ export async function applyPaneColor(paneId: string, color: string, windowId?: s
  * Called when a team window is resolved (created or found) to survive tmux restarts.
  * Only installs the hook if pane-colors.json exists and has entries for panes in this window.
  */
-export async function rehydratePaneColorHook(windowId: string): Promise<void> {
+async function rehydratePaneColorHook(windowId: string): Promise<void> {
   const { existsSync } = require('node:fs');
   try {
     if (!existsSync(PANE_COLORS_PATH) || !existsSync(PANE_COLOR_SCRIPT)) return;
