@@ -1,5 +1,5 @@
 {
-  "name": "genie",
+  "name": "automagik-genie",
   "version": "3.260302.2",
   "description": "Human-AI partnership for Claude Code. Share a terminal, orchestrate workers, evolve together. Brainstorm ideas, turn them into wishes, execute with /work, validate with /review, and ship as one team.",
   "author": {
@@ -7,5 +7,9 @@
   },
   "repository": "https://github.com/automagik-dev/genie",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"]
+  "keywords": ["workflow", "orchestration", "collaboration", "claude-code", "tmux", "agents"],
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json",
+  "agents": "./agents",
+  "settings": "./settings.json"
 }

@@ -1,5 +1,5 @@
 {
-  "description": "Genie CLI hooks - setup, wish validation, session context, and completion awareness",
+  "description": "Genie plugin hooks — setup, onboarding, dispatch, wish validation, and completion awareness",
   "hooks": {
     "SessionStart": [
       {
@@ -12,6 +12,11 @@
           },
           {
             "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/first-run-check.cjs",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-context.cjs",
             "timeout": 10
           }
@@ -19,6 +24,16 @@
       }
     ],
     "PreToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "genie hook dispatch",
+            "timeout": 15
+          }
+        ]
+      },
       {
         "matcher": "Write",
         "hooks": [
