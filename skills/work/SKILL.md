@@ -72,11 +72,11 @@ bd create "<task title>" --type task
 genie work <bead-id>
 
 # Or spawn directly
-genie worker spawn --role implementor
+genie agent spawn --role implementor
 
 # Monitor
-genie worker list
-genie worker read <worker>
+genie agent list
+genie agent read <worker>
 ```
 
 Fallback when beads unavailable: use timeouts — 3 layers of indirection can stall.

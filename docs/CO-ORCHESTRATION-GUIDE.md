@@ -15,7 +15,7 @@ Human (Orchestrator)
     ├── genie work bd-2  ──▶  Worker 2 (Claude in pane %2)
     │                              └── worktree: .worktrees/bd-2/
     │
-    └── genie worker list ──▶  Status dashboard
+    └── genie agent list ──▶  Status dashboard
 ```
 
 ## Prerequisites
@@ -39,13 +39,13 @@ bd create "Update API documentation"
 genie work bd-1
 
 # 4. Check worker status
-genie worker list
+genie agent list
 
 # 5. When worker needs approval
-genie worker approve
+genie agent approve
 
 # 6. When done, close the issue
-genie worker close bd-1
+genie agent close bd-1
 ```
 
 ## Detailed Workflow
@@ -99,10 +99,10 @@ genie work next
 
 ```bash
 # Check all workers
-genie worker list
+genie agent list
 
 # JSON output for scripting
-genie worker list --json
+genie agent list --json
 ```
 
 **Worker States:**
@@ -119,14 +119,14 @@ genie worker list --json
 
 **Approve permissions:**
 ```bash
-genie worker approve           # Approve pending permission
-genie worker approve --start   # Start auto-approve engine
+genie agent approve           # Approve pending permission
+genie agent approve --start   # Start auto-approve engine
 ```
 
 **Answer questions:**
 ```bash
-genie worker answer bd-1 1              # Select option 1
-genie worker answer bd-1 "text:custom"  # Provide custom text answer
+genie agent answer bd-1 1              # Select option 1
+genie agent answer bd-1 "text:custom"  # Provide custom text answer
 ```
 
 ### Phase 5: Closing Issues
@@ -135,7 +135,7 @@ When a worker completes its task:
 
 ```bash
 # Close issue and cleanup worker
-genie worker close bd-1
+genie agent close bd-1
 
 # Options:
 #   --merge          Merge worktree branch to main before cleanup
@@ -156,7 +156,7 @@ genie worker close bd-1
 If a worker is stuck or needs to be terminated:
 
 ```bash
-genie worker kill bd-1
+genie agent kill bd-1
 ```
 
 Note: This does NOT close the issue. The task remains `in_progress` in beads.
@@ -190,7 +190,7 @@ bd update bd-2 --blocked-by bd-1
 genie work bd-1
 
 # When bd-1 completes, bd-2 becomes ready
-genie worker close bd-1
+genie agent close bd-1
 genie work next  # Picks bd-2
 ```
 
@@ -208,7 +208,7 @@ genie work bd-2
 genie work bd-3
 
 # Monitor all
-genie worker list
+genie agent list
 ```
 
 ### Pattern 3: Review and Iterate
@@ -231,7 +231,7 @@ genie work bd-1
 ### Worker shows as dead but pane exists
 ```bash
 # The registry may be out of sync
-genie worker kill <worker-id>  # Clean up registry entry
+genie agent kill <worker-id>  # Clean up registry entry
 genie work <task-id>           # Start fresh
 ```
 
@@ -256,7 +256,7 @@ bd daemon start --auto-commit
 1. **Clear issue titles**: Workers use titles as context
 2. **One task per worker**: Keep issues focused
 3. **Use dependencies**: `--blocked-by` prevents premature work
-4. **Review before closing**: Check worker output before `genie worker close`
+4. **Review before closing**: Check worker output before `genie agent close`
 5. **Use worktrees**: They provide isolation and can be reviewed independently
 6. **Keep daemon running**: Ensures beads state is synced to git
 
@@ -266,16 +266,16 @@ bd daemon start --auto-commit
 |---------|-------------|
 | `genie work <bd-id>` | Spawn worker for issue |
 | `genie work next` | Work on next ready issue |
-| `genie worker list` | List all workers |
-| `genie worker approve` | Approve permission / manage auto-approve |
-| `genie worker answer <id> <choice>` | Answer question |
-| `genie worker history <id>` | Compressed session catch-up |
-| `genie worker events [pane-id]` | Stream Claude Code events |
-| `genie worker close <id>` | Close issue and cleanup |
-| `genie worker ship <id>` | Mark done, merge, cleanup |
-| `genie worker kill <id>` | Force kill worker |
-| `genie worker read <id>` | Read worker pane output |
-| `genie worker exec <id> <cmd>` | Execute command in worker pane |
+| `genie agent list` | List all workers |
+| `genie agent approve` | Approve permission / manage auto-approve |
+| `genie agent answer <id> <choice>` | Answer question |
+| `genie agent history <id>` | Compressed session catch-up |
+| `genie agent events [pane-id]` | Stream Claude Code events |
+| `genie agent close <id>` | Close issue and cleanup |
+| `genie agent ship <id>` | Mark done, merge, cleanup |
+| `genie agent kill <id>` | Force kill worker |
+| `genie agent read <id>` | Read worker pane output |
+| `genie agent exec <id> <cmd>` | Execute command in worker pane |
 | `genie daemon start` | Start beads daemon |
 | `genie daemon stop` | Stop beads daemon |
 | `genie daemon status` | Show daemon status |

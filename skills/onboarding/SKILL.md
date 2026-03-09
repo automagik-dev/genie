@@ -256,7 +256,7 @@ genie team ensure default
 
 **4c. Inject Hooks (CRITICAL)**
 
-This step is **mandatory** — hooks must be injected during onboarding, not deferred to first worker spawn.
+This step is **mandatory** — hooks must be injected during onboarding, not deferred to first agent spawn.
 
 ```bash
 genie hook install
@@ -264,7 +264,7 @@ genie hook install
 
 This writes `genie hook dispatch` entries into `~/.claude/settings.json`, ensuring all Claude Code events are routed through the genie CLI from the very first session — including TUI startup.
 
-**Why this matters:** Without this step, a team-lead spawned via `genie tui` has NO hooks until its first worker is spawned (via `injectTeamHooks`). This means the first session runs "deaf" — no event routing, no protocol dispatch, no auto-spawn. Onboarding fixes this by front-loading hook injection.
+**Why this matters:** Without this step, a team-lead spawned via `genie tui` has NO hooks until its first agent is spawned (via `injectTeamHooks`). This means the first session runs "deaf" — no event routing, no protocol dispatch, no auto-spawn. Onboarding fixes this by front-loading hook injection.
 
 **Verify hooks were injected:**
 
@@ -481,7 +481,7 @@ set -g status-interval 5     # Refresh every 5s
 
 ### TEAM_LEAD_PROMPT.md Outdated References
 
-`TEAM_LEAD_PROMPT.md` still references `genie worker spawn/list/kill/etc.` instead of `genie agent`. This means team-leads spawned via TUI receive outdated instructions. The onboarding skill uses the correct `genie agent` commands — but the system prompt injected into team-leads will still say `genie worker` until TEAM_LEAD_PROMPT.md is updated.
+`TEAM_LEAD_PROMPT.md` has been updated to use `genie agent spawn/list/kill/etc.` — consistent with the onboarding skill and all other documentation.
 
 ## Error Handling
 
@@ -509,5 +509,5 @@ set -g status-interval 5     # Refresh every 5s
 - If the user seems experienced, adapt — offer to fast-track with sensible defaults.
 - The entire onboarding should complete in under 2 minutes of user time.
 - Always use `genie agent` commands, NEVER `genie worker` (deprecated).
-- Hook injection is mandatory — never defer to first worker spawn.
+- Hook injection is mandatory — never defer to first agent spawn.
 - Validate workspace structure before user interaction — fix silently, report in summary.

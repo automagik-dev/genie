@@ -2,7 +2,7 @@
  * Ship command - Mark task as done and cleanup worker
  *
  * Usage:
- *   genie worker ship <task-id>     - Mark done, cleanup worktree, kill worker
+ *   genie agent ship <task-id>     - Mark done, cleanup worktree, kill agent
  *
  * Options:
  *   --keep-worktree        - Don't remove the worktree

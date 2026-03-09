@@ -1,5 +1,5 @@
 /**
- * Tests for genie worker history command
+ * Tests for genie agent history command
  */
 
 import { describe, expect, test } from 'bun:test';

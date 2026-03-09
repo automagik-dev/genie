@@ -1252,7 +1252,7 @@ export function registerAgentNamespace(program: Command): void {
           if (w.claudeSessionId) {
             console.log(`  Session preserved: ${w.claudeSessionId}`);
           }
-          console.log(`  Send a message to auto-resume: genie msg send ${id} "your message"`);
+          console.log(`  Send a message to auto-resume: genie send ${id} "your message"`);
         } else {
           console.error(`Failed to suspend agent "${id}".`);
           process.exit(1);

@@ -141,7 +141,7 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   });
 
   const linesStr = await input({
-    message: 'Read lines (default for genie worker read):',
+    message: 'Read lines (default for genie agent read):',
     default: String(config.terminal.readLines),
     validate: (v) => {
       const n = Number.parseInt(v, 10);
@@ -219,7 +219,7 @@ function printCodexResult(result: 'changed' | 'unchanged' | 'error'): void {
 }
 
 async function configureCodex(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
-  printSection('5. Codex Integration', 'Configure OpenAI Codex for genie workers');
+  printSection('5. Codex Integration', 'Configure OpenAI Codex for genie agents');
 
   const codexCheck = await checkCommand('codex');
   if (!codexCheck.exists) {
@@ -236,7 +236,7 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
   }
 
   console.log();
-  console.log('  Genie needs to configure codex for worker communication:');
+  console.log('  Genie needs to configure codex for agent communication:');
   console.log('    \x1b[36mdisable_paste_burst\x1b[0m \u2192 Reliable tmux command injection');
   console.log('    \x1b[36mOTel exporter\x1b[0m       \u2192 Telemetry relay for state detection');
   console.log(`  Config: \x1b[2m${contractPath(getCodexConfigPath())}\x1b[0m`);
@@ -249,7 +249,7 @@ async function configureCodex(config: GenieConfig, quick: boolean): Promise<Geni
     return config;
   }
 
-  const enableCodex = await confirm({ message: 'Configure Codex for genie worker integration?', default: true });
+  const enableCodex = await confirm({ message: 'Configure Codex for genie agent integration?', default: true });
   if (enableCodex) {
     const result = ensureCodexOtelConfig();
     printCodexResult(result);

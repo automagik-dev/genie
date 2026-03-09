@@ -103,7 +103,7 @@ interface BeadsIssue {
 const KNOWN_NESTED_REPOS: Record<string, string> = {
   'genie-cli': 'code/genie-cli',
   'genie work': 'code/genie-cli',
-  'genie worker': 'code/genie-cli',
+  'genie agent': 'code/genie-cli',
 };
 
 // ============================================================================
@@ -1155,10 +1155,10 @@ function printWorkerStatus(
     console.log(`   Target repo: ${extra.targetRepo}`);
   }
   console.log('\nCommands:');
-  console.log('   genie worker list        - Check worker status');
-  console.log('   genie worker approve     - Approve permissions');
-  console.log(`   genie worker close ${taskId}  - Close issue when done`);
-  console.log(`   genie worker kill ${taskId}   - Force kill worker`);
+  console.log('   genie agent list        - Check agent status');
+  console.log('   genie agent approve     - Approve permissions');
+  console.log(`   genie agent close ${taskId}  - Close issue when done`);
+  console.log(`   genie agent kill ${taskId}   - Force kill agent`);
 }
 
 /**
@@ -1258,7 +1258,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       const resumed = await resumeExistingWorker(existingWorker, taskId, options, workerProfile);
       if (resumed) return;
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
-      console.log(`   Run \`genie worker kill ${existingWorker.id}\` first, or work on a different issue.`);
+      console.log(`   Run \`genie agent kill ${existingWorker.id}\` first, or work on a different issue.`);
       process.exit(1);
     }
 

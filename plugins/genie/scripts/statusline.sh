@@ -67,7 +67,6 @@ fi
 # === Build display line ===
 LINE="${BOLD}${MODEL}${RESET}"
 LINE="${LINE} ${DIM}|${RESET} ${BAR_COLOR}[${BAR}] ${PCT}%${RESET}"
-LINE="${LINE} ${DIM}|${RESET} ${DIM}${COST_FMT}${RESET}"
 
 [ "$AGENTS_COUNT" -gt 0 ] && LINE="${LINE} ${DIM}|${RESET} ${CYAN}${AGENTS_COUNT} agents${RESET}"
 [ -n "$AGENT_NAME" ] && LINE="${LINE} ${DIM}|${RESET} ${CYAN}@${AGENT_NAME}${RESET}"
