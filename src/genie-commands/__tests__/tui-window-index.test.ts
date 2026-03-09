@@ -52,45 +52,8 @@ mock.module(tmuxModulePath, () => ({
   killSession: async () => {},
 }));
 
-// Also register mock with the relative specifier that tui.ts uses when importing,
-// in case Bun resolves the specifier from the importer's directory rather than
-// canonicalizing to an absolute path.
-mock.module('../../lib/tmux.js', () => ({
-  createSession: async (name: string) => {
-    mockTmuxCalls.push(`createSession:${name}`);
-    return { id: '$1', name, attached: false, windows: 1 };
-  },
-  listWindows: async (sessionId: string) => {
-    mockTmuxCalls.push(`listWindows:${sessionId}`);
-    return [{ id: mockWindowId, name: 'bash', active: true, sessionId }];
-  },
-  findSessionByName: async (name: string) => {
-    mockTmuxCalls.push(`findSessionByName:${name}`);
-    if (mockSessionExists) {
-      return { id: '$1', name, attached: false, windows: 1 };
-    }
-    if (mockTmuxCalls.some((c) => c.startsWith('createSession:'))) {
-      return { id: '$1', name, attached: false, windows: 1 };
-    }
-    return null;
-  },
-  executeTmux: async (cmd: string) => {
-    mockTmuxCalls.push(`executeTmux:${cmd}`);
-    return '';
-  },
-  ensureTeamWindow: async () => ({ windowId: '@1', windowName: 'team', paneId: '%0', created: false }),
-  killSession: async () => {},
-}));
-
 // Mock claude-native-teams (avoid filesystem side effects)
 mock.module(nativeTeamsModulePath, () => ({
-  ensureNativeTeam: async () => {},
-  registerNativeMember: async () => {},
-  sanitizeTeamName: (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, '_'),
-  deleteNativeTeam: async () => {},
-}));
-
-mock.module('../../lib/claude-native-teams.js', () => ({
   ensureNativeTeam: async () => {},
   registerNativeMember: async () => {},
   sanitizeTeamName: (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, '_'),
