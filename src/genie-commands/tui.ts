@@ -19,9 +19,19 @@ import {
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
 import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
-import * as tmux from '../lib/tmux.js';
+import * as tmuxDefault from '../lib/tmux.js';
 
 const DEFAULT_NAME = 'genie';
+
+/**
+ * Internal dependency container — allows tests to swap tmux/native-teams
+ * implementations without mock.module (which corrupts Bun's module cache).
+ * Prefixed with _ to signal internal use only.
+ */
+export const _deps = {
+  tmux: tmuxDefault as typeof tmuxDefault,
+  nativeTeams: { ensureNativeTeam, registerNativeMember, deleteNativeTeam, sanitizeTeamName },
+};
 const _DEFAULT_WORKSPACE = join(homedir(), 'workspace');
 
 /**
@@ -98,9 +108,9 @@ export interface TuiOptions {
  * CC recognizes itself as leader because --team-name is passed without --agent-id.
  */
 async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise<void> {
-  await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
+  await _deps.nativeTeams.ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
 
-  await registerNativeMember(teamName, {
+  await _deps.nativeTeams.registerNativeMember(teamName, {
     agentName: 'team-lead',
     agentType: 'general-purpose',
     color: 'blue',
@@ -118,17 +128,17 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string, resu
 
 async function createTuiSession(name: string, workspaceDir: string, systemPrompt: string | null): Promise<void> {
   await ensureNativeTeamForLeader(name, workspaceDir);
-  console.log(`Native team "${name}" ready at ~/.claude/teams/${sanitizeTeamName(name)}/`);
+  console.log(`Native team "${name}" ready at ~/.claude/teams/${_deps.nativeTeams.sanitizeTeamName(name)}/`);
 
   console.log(`Creating session "${name}"...`);
-  const session = await tmux.createSession(name);
+  const session = await _deps.tmux.createSession(name);
   if (!session) {
     console.error(`Failed to create session "${name}"`);
     process.exit(1);
   }
 
   // Get the initial window ID (respects user's base-index setting — don't hardcode :0)
-  const windows = await tmux.listWindows(name);
+  const windows = await _deps.tmux.listWindows(name);
   const firstWindow = windows[0];
   if (!firstWindow) {
     console.error(`Failed to find initial window in session "${name}"`);
@@ -136,19 +146,19 @@ async function createTuiSession(name: string, workspaceDir: string, systemPrompt
   }
 
   // Name the main window and lock the name using window ID
-  await tmux.executeTmux(`rename-window -t ${shellQuote(firstWindow.id)} ${shellQuote(name)}`);
-  await tmux.executeTmux(`set-window-option -t ${shellQuote(firstWindow.id)} automatic-rename off`);
+  await _deps.tmux.executeTmux(`rename-window -t ${shellQuote(firstWindow.id)} ${shellQuote(name)}`);
+  await _deps.tmux.executeTmux(`set-window-option -t ${shellQuote(firstWindow.id)} automatic-rename off`);
 
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
-  await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
+  await _deps.tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cdCmd)} Enter`);
 
   const resumeSessionId = findLastSessionId(name, 'team-lead', workspaceDir);
   if (resumeSessionId) {
     console.log(`Resuming previous session: ${resumeSessionId}`);
   }
   const cmd = buildClaudeCommand(name, systemPrompt || undefined, resumeSessionId || undefined);
-  await tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as team-lead@${sanitizeTeamName(name)} in ${workspaceDir}`);
+  await _deps.tmux.executeTmux(`send-keys -t ${shellQuote(name)} ${shellQuote(cmd)} Enter`);
+  console.log(`Started Claude Code as team-lead@${_deps.nativeTeams.sanitizeTeamName(name)} in ${workspaceDir}`);
 }
 
 /** Focus (or create) a team window within an existing session. */
@@ -158,7 +168,7 @@ async function focusTeamWindow(
   workingDir: string,
   systemPrompt: string | null,
 ): Promise<void> {
-  const teamWindow = await tmux.ensureTeamWindow(sessionName, team, workingDir);
+  const teamWindow = await _deps.tmux.ensureTeamWindow(sessionName, team, workingDir);
   if (teamWindow.created) {
     console.log(`Created team window "${team}"`);
 
@@ -166,16 +176,16 @@ async function focusTeamWindow(
     await ensureNativeTeamForLeader(team, workingDir);
     const target = `${sessionName}:${team}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
-    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
+    await _deps.tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
     const resumeSessionId = findLastSessionId(team, 'team-lead', workingDir);
     if (resumeSessionId) {
       console.log(`Resuming previous session: ${resumeSessionId}`);
     }
     const cmd = buildClaudeCommand(team, systemPrompt || undefined, resumeSessionId || undefined);
-    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-    console.log(`Started Claude Code as team-lead@${sanitizeTeamName(team)} in ${workingDir}`);
+    await _deps.tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
+    console.log(`Started Claude Code as team-lead@${_deps.nativeTeams.sanitizeTeamName(team)} in ${workingDir}`);
   }
-  await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${team}`)}`);
+  await _deps.tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${team}`)}`);
   console.log(`Focused team window "${team}"`);
 }
 
@@ -186,15 +196,15 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
 
   try {
     if (options.reset) {
-      const existing = await tmux.findSessionByName(name);
+      const existing = await _deps.tmux.findSessionByName(name);
       if (existing) {
         console.log(`Resetting session "${name}"...`);
-        await tmux.killSession(name);
+        await _deps.tmux.killSession(name);
       }
-      await deleteNativeTeam(name);
+      await _deps.nativeTeams.deleteNativeTeam(name);
     }
 
-    let session = await tmux.findSessionByName(name);
+    let session = await _deps.tmux.findSessionByName(name);
     const systemPrompt = getAgentsSystemPrompt();
     if (!systemPrompt) {
       console.warn('Warning: No AGENTS.md found in current directory. Launching without --system-prompt.');
@@ -202,7 +212,7 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
 
     if (!session) {
       await createTuiSession(name, workspaceDir, systemPrompt);
-      session = await tmux.findSessionByName(name);
+      session = await _deps.tmux.findSessionByName(name);
     } else {
       console.log(`Session "${name}" already exists`);
     }

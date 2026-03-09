@@ -3,28 +3,30 @@
  * the actual window ID from listWindows instead of hardcoding ':0'.
  *
  * Covers: https://github.com/automagik-dev/genie/issues/519
+ *
+ * Uses _deps injection instead of mock.module to avoid corrupting
+ * Bun's module cache (which caused flaky CI failures in other test files).
+ *
  * Run with: bun test src/genie-commands/__tests__/tui-window-index.test.ts
  */
 
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import { resolve } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { _deps, tuiCommand } from '../tui.js';
 
 // ============================================================================
-// Mock setup — must be before imports
+// Mock setup via _deps injection (no mock.module needed)
 // ============================================================================
 
 let mockTmuxCalls: string[] = [];
 let mockSessionExists = false;
 let mockWindowId = '@0'; // default window ID
 
-// Use absolute paths for mock.module to ensure reliable resolution in CI.
-// Bun's mock.module with relative paths can fail when the module cache
-// resolves specifiers differently across test runners.
-const tmuxModulePath = resolve(import.meta.dir, '../../lib/tmux.js');
-const nativeTeamsModulePath = resolve(import.meta.dir, '../../lib/claude-native-teams.js');
+// Save originals to restore after tests
+const originalTmux = _deps.tmux;
+const originalNativeTeams = _deps.nativeTeams;
 
-// Mock tmux module
-mock.module(tmuxModulePath, () => ({
+// Mock implementations
+const mockTmux = {
   createSession: async (name: string) => {
     mockTmuxCalls.push(`createSession:${name}`);
     return { id: '$1', name, attached: false, windows: 1 };
@@ -50,23 +52,20 @@ mock.module(tmuxModulePath, () => ({
   },
   ensureTeamWindow: async () => ({ windowId: '@1', windowName: 'team', paneId: '%0', created: false }),
   killSession: async () => {},
-}));
+} as unknown as typeof originalTmux;
 
-// Mock claude-native-teams (avoid filesystem side effects)
-mock.module(nativeTeamsModulePath, () => ({
+const mockNativeTeams = {
   ensureNativeTeam: async () => {},
   registerNativeMember: async () => {},
   sanitizeTeamName: (name: string) => name.replace(/[^a-zA-Z0-9_-]/g, '_'),
   deleteNativeTeam: async () => {},
-}));
+} as unknown as typeof originalNativeTeams;
 
 // Mock child_process.spawnSync to prevent actual tmux attach
+import { mock } from 'bun:test';
 mock.module('node:child_process', () => ({
   spawnSync: (..._args: unknown[]) => ({ status: 0 }),
 }));
-
-// Import after mocks
-const { tuiCommand } = await import('../tui.js');
 
 // ============================================================================
 // Tests
@@ -77,6 +76,15 @@ describe('TUI window targeting (issue #519)', () => {
     mockTmuxCalls = [];
     mockSessionExists = false;
     mockWindowId = '@0';
+    // Inject mocks
+    _deps.tmux = mockTmux;
+    _deps.nativeTeams = mockNativeTeams;
+  });
+
+  afterEach(() => {
+    // Restore originals
+    _deps.tmux = originalTmux;
+    _deps.nativeTeams = originalNativeTeams;
   });
 
   test('uses window ID from listWindows, not hardcoded :0', async () => {
