@@ -158,9 +158,9 @@ export async function spawnWorkerFromTemplate(
     read: false,
   });
 
-  // Apply agent color to tmux pane border
+  // Apply agent color to tmux pane border (focus-driven)
   if (spawnColor) {
-    await applyPaneColor(paneId, spawnColor);
+    await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);
   }
 
   return { worker: workerEntry, paneId, workerId };
