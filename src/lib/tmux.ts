@@ -237,6 +237,36 @@ export async function ensureTeamWindow(
 }
 
 /**
+ * Map agent color names to tmux hex colors for pane border styling.
+ * Uses the same palette as ClaudeTeamColor from provider-adapters.
+ */
+const TMUX_COLOR_MAP: Record<string, string> = {
+  blue: '#5b8def',
+  green: '#5bef8d',
+  yellow: '#efdb5b',
+  red: '#ef5b5b',
+  cyan: '#5bdeef',
+  orange: '#ef9a5b',
+  purple: '#a85bef',
+  pink: '#ef5bb8',
+};
+
+/**
+ * Apply agent color to a tmux pane's border.
+ * Makes the pane visually identifiable by agent color.
+ */
+export async function applyPaneColor(paneId: string, color: string): Promise<void> {
+  const hex = TMUX_COLOR_MAP[color] ?? TMUX_COLOR_MAP.blue;
+  try {
+    await executeTmux(`select-pane -t '${paneId}' -P 'fg=default,bg=default'`);
+    await executeTmux(`set-option -p -t '${paneId}' pane-border-style 'fg=${hex}'`);
+    await executeTmux(`set-option -p -t '${paneId}' pane-active-border-style 'fg=${hex},bold'`);
+  } catch {
+    /* best-effort — tmux < 3.2 may not support per-pane styles */
+  }
+}
+
+/**
  * Kill a tmux session by ID
  */
 export async function killSession(sessionId: string): Promise<void> {

@@ -604,6 +604,11 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
 
+  // Apply agent color to tmux pane border
+  if (ctx.spawnColor && paneId !== 'inline') {
+    await tmux.applyPaneColor(paneId, ctx.spawnColor);
+  }
+
   // Save spawn template for auto-respawn on message delivery
   await registry.saveTemplate({
     id: ctx.validated.role ?? ctx.workerId,

@@ -18,7 +18,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { ensureTeamWindow, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
@@ -157,6 +157,11 @@ export async function spawnWorkerFromTemplate(
     color: spawnColor ?? 'blue',
     read: false,
   });
+
+  // Apply agent color to tmux pane border
+  if (spawnColor) {
+    await applyPaneColor(paneId, spawnColor);
+  }
 
   return { worker: workerEntry, paneId, workerId };
 }
