@@ -102,6 +102,7 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: "0"
         run: |
           if [ -z "$NPM_TOKEN" ]; then
             echo "ERROR: NPM_TOKEN secret is not set. Cannot publish to npm." >&2
