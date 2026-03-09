@@ -29,7 +29,7 @@ jobs:
       - name: Check if release already exists
         id: exists
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.pkg.outputs.version }}"
 
@@ -44,7 +44,7 @@ jobs:
         id: prev
         if: steps.exists.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.pkg.outputs.version }}"
           PREV=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -v "^${TAG}$" | head -1)
@@ -54,21 +54,24 @@ jobs:
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4
         id: cliff
-        if: steps.exists.outputs.skip != 'true'
+        if: steps.exists.outputs.skip != 'true' && steps.prev.outputs.tag != ''
         with:
           config: cliff.toml
-          args: ${{ steps.prev.outputs.tag && format('{0}..HEAD', steps.prev.outputs.tag) || 'HEAD~20..HEAD' }}
+          args: ${{ format('{0}..HEAD', steps.prev.outputs.tag) }}
         env:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Create release
         if: steps.exists.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.pkg.outputs.version }}"
-          printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
+          NOTES="${{ steps.cliff.outputs.content }}"
+          if [ -z "$NOTES" ]; then
+            NOTES="Initial release of genie v3 CLI."
+          fi
+          printf '%s' "$NOTES" > /tmp/release-notes.md
           gh release create "${TAG}" \
             --target "${{ github.sha }}" \
             --title "${TAG}" \
