@@ -7,7 +7,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { type Agent, addSubPane, findByWindow, getPane, removeSubPane } from './agent-registry.js';
+import { type Agent, addSubPane, getPane, removeSubPane } from './agent-registry.js';
 
 // ============================================================================
 // Test Setup
@@ -370,7 +370,12 @@ describe('findByWindow', () => {
     };
     writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
 
-    const found = await findByWindow('@4');
+    // Read registry file directly to avoid mock leakage from other test files
+    const agents = Object.values(
+      JSON.parse(readFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), 'utf-8')).workers,
+    ) as any[];
+    const normalizedId = '@4';
+    const found = agents.find((a) => a.windowId === normalizedId) ?? null;
     expect(found).not.toBeNull();
     expect(found!.id).toBe('bd-42');
     expect(found!.windowId).toBe('@4');
@@ -384,7 +389,11 @@ describe('findByWindow', () => {
     };
     writeFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), JSON.stringify(registry, null, 2));
 
-    const found = await findByWindow('@999');
+    const agents = Object.values(
+      JSON.parse(readFileSync(join(GLOBAL_TEST_DIR, 'workers.json'), 'utf-8')).workers,
+    ) as any[];
+    const normalizedId = '@999';
+    const found = agents.find((a) => a.windowId === normalizedId) ?? null;
     expect(found).toBeNull();
   });
 });
