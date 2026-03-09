@@ -53,10 +53,11 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain("--agent-name 'team-lead'");
   });
 
-  test('with system prompt appends --system-prompt flag', () => {
+  test('with system prompt references file via $(cat)', () => {
     const cmd = buildClaudeCommand('genie', 'test prompt');
     expect(cmd).toContain('--system-prompt');
-    expect(cmd).toContain('test prompt');
+    expect(cmd).toContain('$(cat');
+    expect(cmd).toContain('.genie/prompts/genie.md');
   });
 
   test('without explicit system prompt still includes --system-prompt from team-lead prompt', () => {
@@ -72,10 +73,12 @@ describe('buildClaudeCommand', () => {
     expect(cmd).not.toContain('--resume');
   });
 
-  test('system prompt with single quotes is properly escaped', () => {
-    const cmd = buildClaudeCommand('genie', "it's a test");
+  test('system prompt is persisted to file, not inlined', () => {
+    const cmd = buildClaudeCommand('genie', "it's a test with a very long prompt");
     expect(cmd).toContain('--system-prompt');
-    expect(cmd).toContain("'it'\\''s a test");
+    // Prompt content NOT in the command — only the $(cat) reference
+    expect(cmd).not.toContain('very long prompt');
+    expect(cmd).toContain('$(cat');
   });
 });
 

@@ -333,6 +333,48 @@ Write an initial `memory/YYYY-MM-DD.md` entry noting the onboarding completion:
 - Workspace structure validated and created
 ```
 
+### Phase 4f: Omni Plugin (Optional)
+
+Check if the Omni v2 plugin is installed. If the user wants to connect agents to messaging channels (WhatsApp, Telegram, Discord, Slack), the Omni plugin provides the skills for that.
+
+**Detection:**
+
+```bash
+# Check if omni plugin is loaded (look for omni skills in current session)
+claude plugin list 2>/dev/null | grep -q omni
+# Or check if omni CLI is available
+command -v omni >/dev/null 2>&1
+```
+
+**If Omni is NOT installed:**
+
+Use AskUserQuestion:
+```
+header: "Omni v2 — Connect agents to messaging channels"
+question: "Want to connect genie agents to WhatsApp, Telegram, Discord, or Slack? The Omni plugin adds channel management and agent routing skills."
+options: ["Yes, install Omni plugin", "Skip for now"]
+```
+
+If "Yes":
+```bash
+# 1. Add the marketplace (if not already added)
+claude plugin marketplace add https://github.com/automagik-dev/omni.git
+
+# 2. Install the plugin
+claude plugin install omni@automagik-dev
+
+# 3. Restart Claude Code to load the plugin
+```
+
+Tell the user to restart Claude Code after install for the plugin to take effect.
+
+**If Omni IS installed:**
+
+Suggest the agent setup skill:
+```
+Omni plugin detected! To connect an agent to a channel, run /omni-agent-setup
+```
+
 ### Phase 5: Summary
 
 Present a clear summary of everything configured:
@@ -363,6 +405,7 @@ Next steps:
   - Run /brainstorm to explore an idea
   - Run /wish to plan a task
   - Run /work to execute
+  - Run /omni-agent-setup to connect an agent to a channel (if Omni installed)
 ```
 
 End with a brief, friendly message welcoming them and suggesting their first action based on their role.

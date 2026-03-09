@@ -1,20 +1,27 @@
 /**
- * Team shortcut routing: resolves `genie <team>` -> `genie tui <team>`
+ * Team shortcut routing: resolves `genie [team]` -> `genie _open [team]`
+ *
+ * UX: `genie` opens default team "main", `genie <name>` opens that team.
+ * Internally dispatches to hidden `_open` command.
  *
  * Priority:
- * 1. --team flag always routes to tui (for disambiguation)
+ * 1. --team flag always routes to _open (for disambiguation)
  * 2. Known subcommands take priority over team names
- * 3. Unknown first arg treated as team name (catch-all)
+ * 3. No args -> open default team "main"
+ * 4. Unknown first arg treated as team name (catch-all)
  */
 
 interface ShortcutResult {
   /** The (potentially rewritten) CLI args (without argv[0] and argv[1]) */
   args: string[];
-  /** Whether the args were rewritten (tui via shortcut — skip deprecation warning) */
+  /** Whether the args were rewritten (team shortcut) */
   isShortcut: boolean;
   /** Warning message if first arg collides with a known subcommand */
   collisionWarning: string | null;
 }
+
+/** Default team name when `genie` is invoked with no arguments. */
+export const DEFAULT_TEAM = 'main';
 
 /**
  * Resolve team shortcut from raw CLI args.
@@ -30,16 +37,16 @@ export function resolveTeamShortcut(
 ): ShortcutResult {
   const firstArg = rawArgs[0];
 
-  // No args -> no rewrite (show help)
+  // No args -> open default team
   if (!firstArg) {
-    return { args: rawArgs, isShortcut: false, collisionWarning: null };
+    return { args: ['_open', DEFAULT_TEAM], isShortcut: true, collisionWarning: null };
   }
 
-  // 1. Global --team flag: genie --team <name> [...rest] -> genie tui <name> [...rest]
+  // 1. Global --team flag: genie --team <name> [...rest] -> genie _open <name> [...rest]
   if (firstArg === '--team' && rawArgs.length >= 2) {
     const teamName = rawArgs[1];
     return {
-      args: ['tui', teamName, ...rawArgs.slice(2)],
+      args: ['_open', teamName, ...rawArgs.slice(2)],
       isShortcut: true,
       collisionWarning: null,
     };
@@ -50,7 +57,7 @@ export function resolveTeamShortcut(
       return { args: rawArgs, isShortcut: false, collisionWarning: null };
     }
     return {
-      args: ['tui', teamName, ...rawArgs.slice(1)],
+      args: ['_open', teamName, ...rawArgs.slice(1)],
       isShortcut: true,
       collisionWarning: null,
     };
@@ -72,7 +79,7 @@ export function resolveTeamShortcut(
 
   // 3. Unknown first arg -> treat as team name
   return {
-    args: ['tui', ...rawArgs],
+    args: ['_open', ...rawArgs],
     isShortcut: true,
     collisionWarning: null,
   };

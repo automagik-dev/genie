@@ -180,6 +180,7 @@ async function focusTeamWindow(
 }
 
 export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
+  // Session is always "genie". Each team is a window inside it.
   const name = options.name ?? DEFAULT_NAME;
   const workspaceDir = options.dir ?? process.cwd();
 

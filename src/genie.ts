@@ -79,21 +79,13 @@ program.command('update').description('Update Genie CLI to the latest version').
 // Uninstall command - remove genie CLI
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
-// Track whether tui was invoked via team shortcut (skip deprecation warning)
-let tuiViaShortcut = false;
-
-// TUI command - attach to master genie session
+// Internal handler for team opening (hidden — user invokes via `genie` or `genie <team>`)
 program
-  .command('tui [name]')
-  .description('Start Claude Code as native team-lead (default: "genie" in ~/workspace)')
+  .command('_open [team]', { hidden: true })
   .option('-r, --reset', 'Kill existing session and start fresh')
-  .option('-d, --dir <path>', 'Working directory (default: ~/workspace)')
-  .option('-t, --team <team>', 'Focus (or create) a dedicated team window')
-  .action(async (name: string | undefined, options: TuiOptions) => {
-    if (!tuiViaShortcut) {
-      console.warn('\u26a0 "genie tui" is deprecated. Use "genie <team>" instead.');
-    }
-    if (name) options.team = name;
+  .option('-d, --dir <path>', 'Working directory (default: cwd)')
+  .action(async (team: string | undefined, options: TuiOptions) => {
+    if (team) options.team = team;
     await tuiCommand(options);
   });
 
@@ -259,7 +251,6 @@ if (shortcutResult.collisionWarning) {
   console.warn(shortcutResult.collisionWarning);
 }
 
-tuiViaShortcut = shortcutResult.isShortcut;
 process.argv = [...process.argv.slice(0, 2), ...shortcutResult.args];
 
 program.parse();

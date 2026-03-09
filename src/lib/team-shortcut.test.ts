@@ -1,11 +1,11 @@
 /**
- * Tests for team shortcut routing: genie <team> -> genie tui <team>
+ * Tests for team shortcut routing: genie [team] -> genie _open [team]
  *
  * Run with: bun test src/lib/team-shortcut.test.ts
  */
 
 import { describe, expect, test } from 'bun:test';
-import { resolveTeamShortcut } from './team-shortcut.js';
+import { DEFAULT_TEAM, resolveTeamShortcut } from './team-shortcut.js';
 
 const KNOWN_COMMANDS = new Set([
   'install',
@@ -13,7 +13,7 @@ const KNOWN_COMMANDS = new Set([
   'doctor',
   'update',
   'uninstall',
-  'tui',
+  '_open',
   'shortcuts',
   'profiles',
   'brainstorm',
@@ -32,26 +32,46 @@ const KNOWN_COMMANDS = new Set([
 
 describe('resolveTeamShortcut', () => {
   // =========================================================================
-  // Catch-all: unknown arg -> tui
+  // Catch-all: unknown arg -> _open <team>
   // =========================================================================
 
-  test('unknown first arg routes to tui', () => {
+  test('unknown first arg routes to _open', () => {
     const result = resolveTeamShortcut(['myteam'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam']);
+    expect(result.args).toEqual(['_open', 'myteam']);
     expect(result.isShortcut).toBe(true);
     expect(result.collisionWarning).toBeNull();
   });
 
-  test('unknown first arg with extra flags routes to tui', () => {
-    const result = resolveTeamShortcut(['myteam', '--reset'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam', '--reset']);
+  test('"main" is treated as team name, not command', () => {
+    const result = resolveTeamShortcut(['main'], KNOWN_COMMANDS);
+    expect(result.args).toEqual(['_open', 'main']);
     expect(result.isShortcut).toBe(true);
   });
 
-  test('unknown first arg with dir option routes to tui', () => {
-    const result = resolveTeamShortcut(['myteam', '-d', '/tmp/workspace'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam', '-d', '/tmp/workspace']);
+  test('unknown first arg with extra flags', () => {
+    const result = resolveTeamShortcut(['myteam', '--reset'], KNOWN_COMMANDS);
+    expect(result.args).toEqual(['_open', 'myteam', '--reset']);
     expect(result.isShortcut).toBe(true);
+  });
+
+  test('unknown first arg with dir option', () => {
+    const result = resolveTeamShortcut(['myteam', '-d', '/tmp/workspace'], KNOWN_COMMANDS);
+    expect(result.args).toEqual(['_open', 'myteam', '-d', '/tmp/workspace']);
+    expect(result.isShortcut).toBe(true);
+  });
+
+  // =========================================================================
+  // No args -> default team
+  // =========================================================================
+
+  test('no args opens default team', () => {
+    const result = resolveTeamShortcut([], KNOWN_COMMANDS);
+    expect(result.args).toEqual(['_open', DEFAULT_TEAM]);
+    expect(result.isShortcut).toBe(true);
+  });
+
+  test('DEFAULT_TEAM is "main"', () => {
+    expect(DEFAULT_TEAM).toBe('main');
   });
 
   // =========================================================================
@@ -76,38 +96,32 @@ describe('resolveTeamShortcut', () => {
     expect(result.isShortcut).toBe(false);
   });
 
-  test('explicit "tui" command is not rewritten', () => {
-    const result = resolveTeamShortcut(['tui', 'myteam'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam']);
-    expect(result.isShortcut).toBe(false);
-  });
-
   // =========================================================================
   // --team flag (disambiguation)
   // =========================================================================
 
-  test('--team flag routes to tui', () => {
+  test('--team flag routes to _open', () => {
     const result = resolveTeamShortcut(['--team', 'myteam'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam']);
+    expect(result.args).toEqual(['_open', 'myteam']);
     expect(result.isShortcut).toBe(true);
   });
 
   test('--team flag overrides subcommand collision', () => {
     const result = resolveTeamShortcut(['--team', 'agent'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'agent']);
+    expect(result.args).toEqual(['_open', 'agent']);
     expect(result.isShortcut).toBe(true);
     expect(result.collisionWarning).toBeNull();
   });
 
-  test('--team=name syntax routes to tui', () => {
+  test('--team=name syntax routes to _open', () => {
     const result = resolveTeamShortcut(['--team=agent'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'agent']);
+    expect(result.args).toEqual(['_open', 'agent']);
     expect(result.isShortcut).toBe(true);
   });
 
   test('--team flag preserves remaining args', () => {
     const result = resolveTeamShortcut(['--team', 'myteam', '--reset', '-d', '/tmp'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['tui', 'myteam', '--reset', '-d', '/tmp']);
+    expect(result.args).toEqual(['_open', 'myteam', '--reset', '-d', '/tmp']);
     expect(result.isShortcut).toBe(true);
   });
 
@@ -130,7 +144,7 @@ describe('resolveTeamShortcut', () => {
     expect(result.collisionWarning).toBeNull();
   });
 
-  test('no collision check for unknown commands (they route to tui)', () => {
+  test('no collision check for unknown commands (they route to _open)', () => {
     const teamExists = () => true;
     const result = resolveTeamShortcut(['myteam'], KNOWN_COMMANDS, teamExists);
     expect(result.isShortcut).toBe(true);
@@ -140,12 +154,6 @@ describe('resolveTeamShortcut', () => {
   // =========================================================================
   // Edge cases
   // =========================================================================
-
-  test('no args -> no rewrite (show help)', () => {
-    const result = resolveTeamShortcut([], KNOWN_COMMANDS);
-    expect(result.args).toEqual([]);
-    expect(result.isShortcut).toBe(false);
-  });
 
   test('--help flag is not treated as team name', () => {
     const result = resolveTeamShortcut(['--help'], KNOWN_COMMANDS);
