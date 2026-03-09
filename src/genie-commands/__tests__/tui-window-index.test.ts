@@ -53,12 +53,6 @@ mock.module('../../lib/claude-native-teams.js', () => ({
   deleteNativeTeam: async () => {},
 }));
 
-// Mock team-lead-command
-mock.module('../../lib/team-lead-command.js', () => ({
-  buildTeamLeadCommand: (teamName: string) => `claude --team-name '${teamName}'`,
-  shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
-}));
-
 // Mock child_process.spawnSync to prevent actual tmux attach
 mock.module('node:child_process', () => ({
   spawnSync: (..._args: unknown[]) => ({ status: 0 }),
