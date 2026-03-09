@@ -152,20 +152,22 @@ function isBeadsInstalled() {
 }
 
 /**
- * Install beads via npm
+ * Install beads via npm (non-fatal — warns and continues if unavailable)
  */
 function installBeads() {
   console.error('Installing beads (bd)...');
   try {
     execSync('npm install -g @anthropic-ai/bd', { stdio: 'inherit', shell: true });
     if (!isBeadsInstalled()) {
-      throw new Error('beads installation completed but bd not found.');
+      console.error('Warning: beads installation completed but bd not found in PATH.');
+      return false;
     }
     console.error('beads installed');
-  } catch (error) {
-    console.error('Failed to install beads. Please install manually:');
+    return true;
+  } catch {
+    console.error('Warning: beads (bd) not available — skipping. Install manually later:');
     console.error('  npm install -g @anthropic-ai/bd');
-    throw error;
+    return false;
   }
 }
 
@@ -320,17 +322,19 @@ try {
     process.exit(0);
   }
 
-  // 1. Check/install Bun
+  // 1. Check/install Bun (required — fatal if fails)
   if (!isBunInstalled()) {
     installBun();
   }
 
-  // 2. Check tmux - REQUIRED, but can't auto-install
+  // 2. Check tmux (required for agent orchestration — fatal)
   if (!isTmuxInstalled()) {
     console.error('');
-    console.error('ERROR: tmux is required but not installed.');
+    console.error('WARNING: tmux is not installed.');
+    console.error('tmux is required for agent orchestration (genie agent spawn, teams, etc.).');
+    console.error('Non-interactive features still work without it.');
     console.error('');
-    console.error('Please install tmux manually:');
+    console.error('Install tmux:');
     if (process.platform === 'darwin') {
       console.error('  brew install tmux');
     } else if (process.platform === 'linux') {
@@ -342,11 +346,10 @@ try {
       console.error('  Inside WSL: sudo apt install tmux');
     }
     console.error('');
-    console.error('Then restart Claude Code.');
-    process.exit(2); // Exit code 2 = blocking error for Claude to process
+    // Don't exit — let the rest of the chain run
   }
 
-  // 3. Check/install beads
+  // 3. Check/install beads (optional — non-fatal)
   if (!isBeadsInstalled()) {
     installBeads();
   }
@@ -357,11 +360,19 @@ try {
     console.error('Dependencies installed');
   }
 
-  // 5. Install or upgrade genie CLI via bun global
+  // 5. Install or upgrade genie CLI via bun global (non-fatal)
   if (genieCliNeedsInstall()) {
-    installGenieCli();
+    try {
+      installGenieCli();
+    } catch (e) {
+      console.error(`Warning: genie CLI install/upgrade failed: ${e.message}`);
+      console.error('The plugin will still work. Install genie CLI manually later.');
+    }
   }
 } catch (e) {
-  console.error('Installation failed:', e.message);
-  process.exit(1);
+  // Only Bun install failure reaches here — everything else is graceful
+  console.error('Critical installation failed:', e.message);
+  console.error('Continuing anyway to let remaining hooks run...');
+  // Exit 0 so the hook chain continues (first-run-check, session-context)
+  process.exit(0);
 }
