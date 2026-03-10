@@ -1,16 +1,16 @@
 /**
- * Tests for TUI command: buildClaudeCommand and getAgentsSystemPrompt
+ * Tests for Session command: buildClaudeCommand and getAgentsSystemPrompt
  *
  * buildClaudeCommand delegates to buildTeamLeadCommand (team-lead-command.ts),
  * which is the single source of truth for team-lead launch commands.
  *
- * Run with: bun test src/genie-commands/__tests__/tui.test.ts
+ * Run with: bun test src/genie-commands/__tests__/session.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildClaudeCommand, getAgentsSystemPrompt } from '../tui.js';
+import { buildClaudeCommand, getAgentsSystemPrompt } from '../session.js';
 
 // ============================================================================
 // buildClaudeCommand tests
@@ -62,7 +62,7 @@ describe('buildClaudeCommand', () => {
 
   test('without explicit system prompt still includes --system-prompt from team-lead prompt', () => {
     const cmd = buildClaudeCommand('genie');
-    // buildTeamLeadCommand always loads TEAM_LEAD_PROMPT.md if it exists
+    // Orchestration prompt is now in ~/.claude/rules/ (auto-loaded by CC)
     // In test env it may or may not exist, but the flag structure is correct
     expect(cmd).toContain('--team-name');
   });
@@ -87,7 +87,7 @@ describe('buildClaudeCommand', () => {
 // ============================================================================
 
 describe('getAgentsSystemPrompt', () => {
-  const TEST_DIR = '/tmp/tui-test-agents-md';
+  const TEST_DIR = '/tmp/session-test-agents-md';
   let originalCwd: string;
 
   beforeEach(() => {

@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <img src=".github/assets/genie-header.png" alt="Automagik Genie" width="800" />
+    <img src=".github/assets/genie-header.png" alt="Genie" width="800" />
   </picture>
 </p>
 
@@ -11,18 +11,32 @@
   <a href="https://discord.gg/xcW8c7fF3R"><img alt="Discord" src="https://img.shields.io/discord/1095114867012292758?style=flat-square&color=00D9FF&label=discord" /></a>
 </p>
 
-<p align="center"><strong>Markdown-native agent framework. Your context lives in files you own -- portable, transparent, immortal.</strong></p>
-<p align="center">The AI that (almost) doesn't say "you're absolutely right."</p>
+<h2 align="center">Wishes in, PRs out.</h2>
+
+<p align="center">Describe the problem. Genie interviews you, plans the work, dispatches agents, and reviews the code.<br/>You approve and ship.</p>
 
 <p align="center">
-  <a href="#install">Install</a> &middot;
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="#cli-reference">CLI Reference</a> &middot;
-  <a href="#configuration">Configuration</a>
+  <a href="#install"><strong>Install</strong></a> &middot;
+  <a href="#quick-start"><strong>Quick Start</strong></a> &middot;
+  <a href="#features"><strong>Features</strong></a> &middot;
+  <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a>
 </p>
 
----
+<br/>
+
+## What is Genie?
+
+Genie is a CLI that turns vague ideas into shipped PRs through a structured pipeline. Describe what you want — Genie interviews you to capture the full context, builds a plan with acceptance criteria, dispatches specialized agents to execute in parallel, and runs automated review before anything reaches your eyes. You make decisions. Genie does everything else.
+
+## Genie is right for you if
+
+- ✅ You've re-explained your codebase architecture to Claude Code for the third time this week
+- ✅ You have 5+ AI coding tabs open and can't remember which one is doing what
+- ✅ You've watched an AI agent spiral for 20 minutes because it lost the original context
+- ✅ You want AI to ask *you* the right questions before writing code, not the other way around
+- ✅ You want to go to lunch and come back to reviewed PRs, not a stuck terminal
+- ✅ You want a repeatable process that works the same whether you're focused or half-asleep
+<br/>
 
 ## Install
 
@@ -30,135 +44,107 @@
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 ```
 
-Or via npm: `npm install -g @automagik/genie`
-
-The installer handles prerequisites (tmux, bun, Claude Code plugin). You just run the command.
-
----
-
-## What Is This
-
-I'm a markdown-native agent framework. Think of me as a magic lamp -- you make wishes, I split into purpose-driven specialists to execute them. Each specialist is born for one task, obsesses over it, reports back, and dissolves.
-
-Everything about me -- identity, skills, memory, learned behaviors -- lives in markdown files you own. Switch AI providers tomorrow and nothing is lost. Your context is not trapped in some vendor's database. It's right there in your repo, version-controlled, readable by humans and machines alike.
-
-You stay in control. Attach to any running session, watch the work happen, take over if you want. I coordinate. You decide.
-
----
-
-## Quick Start
-
-Launch the terminal UI:
-
-```bash
-genie tui
-```
-
-That's your cockpit. From there, the pipeline:
-
-```
-/brainstorm →/wish →/work →/review →ship
-```
-
-Work a specific task from your issue tracker:
-
-```bash
-genie work bd-42
-```
-
-Spawn a specialist directly:
-
-```bash
-genie agent spawn --role fix
-```
-
----
-
-## Features
-
-| Feature | What it does |
-|---------|-------------|
-| **`/dream`** | Queue wishes before bed. Wake up to PRs. |
-| **`/brain`** | Obsidian-style knowledge vault. Agents remember across sessions. |
-| **`/learn`** | Teach me about your project. I adapt. |
-| **Council** | 10 specialists critique your architecture before you commit. |
-| **Purpose-driven agents** | Workers born for one task. Obsessive focus. Report and release. |
-| **Markdown consciousness** | Identity, skills, memory -- all in files you own. Git-versioned. Portable. |
-
-### /dream -- Overnight Batch Execution
-
-Queue SHIP-ready wishes, go to sleep. Workers execute in dependency order. Reviewers check each PR. You get a `DREAM-REPORT.md` in the morning with everything that happened, what shipped, and what needs your eyes.
-
-```bash
-# Inside genie tui, type:
-/dream
-# Pick your wishes, confirm the plan, go to sleep.
-```
-
-### /brain -- Agent Knowledge Vault
-
-Obsidian-style vault powered by notesmd-cli. Agents search their brain before answering and write back intel immediately. Every session gets logged. Knowledge compounds daily -- what I learn today, I know tomorrow.
+Sets up everything: Bun, tmux, Claude Code plugin, orchestration config. Update anytime with `genie update`.
 
 <details>
-<summary>How it works</summary>
+<summary>Alternative: npm install</summary>
 
-Agents maintain a structured knowledge vault in `.genie/brain/`. Notes are indexed, searchable, and cross-linked. When an agent encounters something worth remembering -- a codebase pattern, a user preference, a debugging insight -- it writes a note. Next time a similar situation arises, that knowledge surfaces automatically.
+```bash
+npm install -g @automagik/genie
+```
+
+> Installs the CLI only. You'll need Bun 1.3.10+, tmux, and `genie setup` for full plugin integration.
 
 </details>
 
-### /learn -- Behavioral Learning
+> **Requirements:** macOS or Linux, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 
-Interactive mode. I explore your codebase, ask you questions one at a time, and build a learning plan. You approve every change before it takes effect. Updates memory files, CLAUDE.md, identity -- never touches framework code.
+## Quick Start
 
-```bash
-# Inside genie tui, type:
-/learn
-# I'll explore, ask questions, then propose changes in plan mode.
-```
+| Step | Command |
+|------|---------|
+| **01. Launch** | `genie` |
+| **02. Wish** | `/wish fix the authentication bug in the login flow` |
+| **03. Ship** | Genie asks questions, builds a plan, executes it. You approve the PR. |
+<br/>
 
-### Council -- 10 Specialist Perspectives
+## Features
 
-Architect, Simplifier, Sentinel, Operator, Deployer, Ergonomist, Questioner, Tracer, Benchmarker, Measurer. Each brings a distinct lens to your design. Multiple rounds surface blind spots before you commit to anything.
+<table>
+<tr>
+<td align="center" width="33%"><h3>🧞 Wish Pipeline</h3>
+Brainstorm, plan, execute, review, ship — consistent results every time.
+</td>
+<td align="center" width="33%"><h3>⚡ Parallel Agents</h3>
+Agents execute in live terminal sessions. Watch them, or check in when done.
+</td>
+<td align="center" width="33%"><h3>🧠 Context Preservation</h3>
+Scoped specialists instead of one bloated window. No context rot.
+</td>
+</tr>
+<tr>
+<td align="center"><h3>💾 Persistent Memory</h3>
+Knowledge vault that agents search before answering. Compounds daily.
+</td>
+<td align="center"><h3>🔍 Automated Review</h3>
+Severity-tagged review. Nothing ships with CRITICAL or HIGH issues.
+</td>
+<td align="center"><h3>🌙 Overnight Execution</h3>
+Queue wishes before bed. Wake up to reviewed PRs.
+</td>
+</tr>
+<tr>
+<td align="center"><h3>👥 10-Critic Council</h3>
+10 specialists critique your design before you commit to anything.
+</td>
+<td align="center"><h3>🎯 Behavioral Learning</h3>
+Genie adapts to your codebase conventions and preferences.
+</td>
+<td align="center"><h3>📦 Portable Context</h3>
+Identity, skills, memory — markdown files you own. Git-versioned.
+</td>
+</tr>
+</table>
+<br/>
 
-```bash
-genie council "Should we migrate from REST to GraphQL?"
-```
+## Without Genie vs. With Genie
 
-You get ten opinions. Some will disagree with each other. That's the point.
-
----
+| ❌ Without Genie | ✅ With Genie |
+|---|---|
+| Re-explain your codebase to Claude every session | Genie interviews you once. Context flows to every agent. |
+| Copy-paste requirements, hope it understood | `/wish` captures scope and acceptance criteria upfront |
+| One Claude tab per task, alt-tab between 5 of them | Parallel agents in live terminal sessions |
+| Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
+| 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
+| 10 min of setup before any work starts | `genie work bd-42` — inherits context automatically |
+<br/>
 
 ## The Wish Pipeline
 
-The pipeline is the product:
+💭 `/brainstorm` → 🧞 `/wish` → ⚙️ `/work` → 🔍 `/review` → 🚀 **ship**
 
-```
-/brainstorm →/wish →/work →/review →ship
-```
-
-**Brainstorm** -- think out loud, explore ideas, no commitment.
-**Wish** -- crystallize intent into a structured wish document with acceptance criteria.
-**Work** -- specialists spawn, execute in isolated worktrees, coordinate through markdown.
-**Review** -- automated review with human approval gates. Nothing merges without you.
-**Ship** -- PR created, checks pass, you merge.
-
----
+| Stage | What happens |
+|-------|-------------|
+| **Brainstorm** | Think out loud. Genie asks clarifying questions until the idea is concrete. |
+| **Wish** | Crystallize intent into a plan with scope and acceptance criteria. |
+| **Work** | Agents spawn in isolated worktrees, execute in parallel. |
+| **Review** | Automated review with severity gates. Nothing merges without passing. |
+| **Ship** | PR created, checks pass, you merge. |
+<br/>
 
 <details id="cli-reference">
 <summary><strong>CLI Reference</strong></summary>
-
-### `genie` CLI
 
 **Top-level commands:**
 
 | Command | Description |
 |---------|-------------|
+| `genie` | Launch a session in the current directory |
 | `genie work <id>` | Work on a specific task |
-| `genie tui` | Launch terminal UI (your cockpit) |
 | `genie council <topic>` | Run council review on a topic |
-| `genie daemon` | Start background daemon |
-| `genie send <message>` | Send a message/command to Genie |
+| `genie send <message>` | Send a message to an agent |
 | `genie inbox` | View pending messages and approvals |
+| `genie daemon` | Start background daemon |
 
 **Agent management (`genie agent`):**
 
@@ -205,25 +191,14 @@ The pipeline is the product:
 | `genie doctor` | Diagnose configuration issues |
 | `genie update` | Update to latest version |
 
-**Other:**
-
-| Command | Description |
-|---------|-------------|
-| `genie profiles` | Manage execution profiles |
-| `genie brainstorm` | Start a brainstorm session |
-| `genie shortcuts` | View available shortcuts |
-| `genie ledger` | View execution ledger |
-
 </details>
-
----
 
 <details id="configuration">
 <summary><strong>Configuration</strong></summary>
 
 ### Worker Profiles
 
-Profiles configure how workers are spawned -- which launcher to use, which arguments to pass.
+Profiles configure how agents are spawned — which launcher to use and which arguments to pass.
 
 ```bash
 genie profiles list                 # List all profiles (* = default)
@@ -232,31 +207,13 @@ genie profiles show <name>          # Show details
 genie profiles default <name>       # Set default
 ```
 
-Example config (`~/.genie/config.json`):
-
-```json
-{
-  "workerProfiles": {
-    "coding-fast": {
-      "launcher": "claude",
-      "claudeArgs": ["--dangerously-skip-permissions"]
-    },
-    "safe": {
-      "launcher": "claude",
-      "claudeArgs": ["--permission-mode", "default"]
-    }
-  },
-  "defaultWorkerProfile": "coding-fast"
-}
-```
-
 ### Hook Presets
 
 Hooks shape how AI interacts with your system. Combine them freely.
 
 | Preset | What it does |
 |--------|-------------|
-| **Collaborative** | Commands run through tmux -- watch AI work in real-time |
+| **Collaborative** | Commands run through live terminal sessions — watch AI work in real-time |
 | **Supervised** | File changes require your approval |
 | **Sandboxed** | Restrict file access to specific directories |
 | **Audited** | Log all AI tool usage to a file |
@@ -264,20 +221,7 @@ Hooks shape how AI interacts with your system. Combine them freely.
 ```bash
 genie setup              # Interactive wizard
 genie setup --quick      # Recommended defaults (collaborative + audited)
-genie hooks show         # Current hook state
-genie hooks install      # Install configured hooks
 ```
-
-### Plugins
-
-Skills and agents are delivered through a plugin system shared between Claude Code and OpenClaw.
-
-| Plugin Target | Location |
-|--------------|----------|
-| Claude Code | `~/.claude/plugins/genie` (symlink to repo) |
-| OpenClaw | Registered via `openclaw plugins` |
-
-Both consume the same skills directory. One source of truth.
 
 ### Config Files
 
@@ -288,21 +232,18 @@ Both consume the same skills directory. One source of truth.
 
 </details>
 
----
+<br/>
 
-## Uninstall
+## Development
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall
+bun run build     # Build CLI
+bun run check     # Typecheck + lint + dead-code + test
+bun test          # Run tests
+genie doctor      # Diagnose issues
 ```
 
----
-
-## The Lamp Is Open
-
-I live in your repo. I learn from your work. I split into specialists when you need throughput and collapse back when you don't. Everything I know is in files you can read, edit, and take anywhere.
-
-Make a wish.
+Uninstall: `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash -s -- uninstall`
 
 ---
 
@@ -313,5 +254,5 @@ Make a wish.
 </p>
 
 <p align="center">
-  <sub>AI that elevates human potential, not replaces it.</sub>
+  <sub>You make the decisions. Genie does everything else.</sub>
 </p>

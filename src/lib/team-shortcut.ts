@@ -1,14 +1,13 @@
 /**
  * Team shortcut routing: resolves `genie [team]` -> `genie _open [team]`
  *
- * UX: `genie` opens default team "main", `genie <name>` opens that team.
+ * UX: `genie` derives window name from cwd, `genie <name>` opens that team.
  * Internally dispatches to hidden `_open` command.
  *
  * Priority:
- * 1. --team flag always routes to _open (for disambiguation)
- * 2. Known subcommands take priority over team names
- * 3. No args -> open default team "main"
- * 4. Unknown first arg treated as team name (catch-all)
+ * 1. Known subcommands take priority over team names
+ * 2. No args -> open session (window name derived from cwd at runtime)
+ * 3. Unknown first arg treated as team name (catch-all)
  */
 
 interface ShortcutResult {
@@ -19,9 +18,6 @@ interface ShortcutResult {
   /** Warning message if first arg collides with a known subcommand */
   collisionWarning: string | null;
 }
-
-/** Default team name when `genie` is invoked with no arguments. */
-export const DEFAULT_TEAM = 'main';
 
 /**
  * Resolve team shortcut from raw CLI args.
@@ -37,30 +33,9 @@ export function resolveTeamShortcut(
 ): ShortcutResult {
   const firstArg = rawArgs[0];
 
-  // No args -> open default team
+  // No args -> open session (window name derived from cwd by sessionCommand)
   if (!firstArg) {
-    return { args: ['_open', DEFAULT_TEAM], isShortcut: true, collisionWarning: null };
-  }
-
-  // 1. Global --team flag: genie --team <name> [...rest] -> genie _open <name> [...rest]
-  if (firstArg === '--team' && rawArgs.length >= 2) {
-    const teamName = rawArgs[1];
-    return {
-      args: ['_open', teamName, ...rawArgs.slice(2)],
-      isShortcut: true,
-      collisionWarning: null,
-    };
-  }
-  if (firstArg.startsWith('--team=')) {
-    const teamName = firstArg.slice('--team='.length);
-    if (!teamName) {
-      return { args: rawArgs, isShortcut: false, collisionWarning: null };
-    }
-    return {
-      args: ['_open', teamName, ...rawArgs.slice(1)],
-      isShortcut: true,
-      collisionWarning: null,
-    };
+    return { args: ['_open'], isShortcut: true, collisionWarning: null };
   }
 
   // Skip flags (e.g., --help, --version, -h)
@@ -68,16 +43,16 @@ export function resolveTeamShortcut(
     return { args: rawArgs, isShortcut: false, collisionWarning: null };
   }
 
-  // 2. Known subcommand takes priority
+  // 1. Known subcommand takes priority
   if (knownCommands.has(firstArg)) {
     let collisionWarning: string | null = null;
     if (teamExists?.(firstArg)) {
-      collisionWarning = `Warning: "${firstArg}" is a subcommand. To open team "${firstArg}", use: genie --team ${firstArg}`;
+      collisionWarning = `Warning: "${firstArg}" is a subcommand and also a team name. The subcommand takes priority.`;
     }
     return { args: rawArgs, isShortcut: false, collisionWarning };
   }
 
-  // 3. Unknown first arg -> treat as team name
+  // 2. Unknown first arg -> treat as team name
   return {
     args: ['_open', ...rawArgs],
     isShortcut: true,

@@ -382,7 +382,7 @@ export function isInsideClaudeCode(): boolean {
  * Discover the team name for the current Claude Code session.
  *
  * Strategy:
- *   1. Check GENIE_TEAM env var (set by genie tui)
+ *   1. Check GENIE_TEAM env var (set by genie session)
  *   2. Find session ID, scan team configs to match leadSessionId
  */
 export async function discoverTeamName(cwd?: string): Promise<string | null> {

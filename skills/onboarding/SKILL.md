@@ -7,7 +7,7 @@ description: "Interactive first-run onboarding — validate workspace, welcome n
 
 The **single canonical entry point** for new users and freshly-cloned agents. Validates the workspace structure, gathers identity and preferences interactively, injects hooks, and scaffolds a complete working environment.
 
-This skill replaces the fragmented `install-workspace.sh` → `apply-blank-init.sh` → `genie tui` chain with one unified, validated flow.
+This skill replaces the fragmented `install-workspace.sh` → `apply-blank-init.sh` → `genie` chain with one unified, validated flow.
 
 ## When to Use
 - First-time `genie` launch (no AGENTS.md exists)
@@ -15,7 +15,7 @@ This skill replaces the fragmented `install-workspace.sh` → `apply-blank-init.
 - New agent clone needs workspace configuration
 - `genie-blank-init` detects a blank persona and hands off here
 - After a fresh `git clone` of a genie-managed repo
-- When `genie tui` starts without required workspace files
+- When `genie` starts without required workspace files
 
 ## Flow
 
@@ -264,7 +264,7 @@ genie hook install
 
 This writes `genie hook dispatch` entries into `~/.claude/settings.json`, ensuring all Claude Code events are routed through the genie CLI from the very first session — including TUI startup.
 
-**Why this matters:** Without this step, a team-lead spawned via `genie tui` has NO hooks until its first agent is spawned (via `injectTeamHooks`). This means the first session runs "deaf" — no event routing, no protocol dispatch, no auto-spawn. Onboarding fixes this by front-loading hook injection.
+**Why this matters:** Without this step, a team-lead spawned via `genie` has NO hooks until its first agent is spawned (via `injectTeamHooks`). This means the first session runs "deaf" — no event routing, no protocol dispatch, no auto-spawn. Onboarding fixes this by front-loading hook injection.
 
 **Verify hooks were injected:**
 
@@ -496,7 +496,7 @@ set -g status-interval 5     # Refresh every 5s
 | `prefix + [` | Enter scroll mode (navigate agent output) |
 | `prefix + z` | Zoom pane (fullscreen one agent) |
 | `prefix + q` | Show pane numbers |
-| `prefix + !` | Break pane into its own window |
+| `prefix` + `!` | Break pane into its own window |
 
 ### Troubleshooting
 
