@@ -19,34 +19,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read version from package.json
-        id: pkg
-        run: |
-          VERSION=$(jq -r '.version' package.json)
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Version from package.json: ${VERSION}"
-
-      - name: Check if release already exists
-        id: exists
+      - name: Resolve version
+        id: ver
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v${{ steps.pkg.outputs.version }}"
+          BASE=$(jq -r '.version' package.json)
+          TAG="v${BASE}"
 
           if gh release view "${TAG}" > /dev/null 2>&1; then
-            echo "Release ${TAG} already exists — skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} already exists — deriving hotfix version."
+            TODAY=$(date -u +%y%m%d)
+            EXISTING=$(gh release list --limit 100 --json tagName \
+              -q "[.[].tagName | select(startswith(\"v3.${TODAY}.\"))] | length")
+            BUILD=$((EXISTING + 1))
+            VERSION="3.${TODAY}.${BUILD}"
+            echo "Hotfix version: v${VERSION}"
+            echo "hotfix=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            VERSION="${BASE}"
+            echo "hotfix=false" >> "$GITHUB_OUTPUT"
           fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Find previous release tag
         id: prev
-        if: steps.exists.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v${{ steps.pkg.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
           PREV=$(gh release list --limit 50 --json tagName -q '.[].tagName' | grep -v "^${TAG}$" | head -1)
           # Verify the tag is reachable from HEAD (same history line)
           if [ -n "$PREV" ] && git merge-base --is-ancestor "$PREV" HEAD 2>/dev/null; then
@@ -60,7 +63,7 @@ jobs:
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4
         id: cliff
-        if: steps.exists.outputs.skip != 'true' && steps.prev.outputs.tag != ''
+        if: steps.prev.outputs.tag != ''
         with:
           config: cliff.toml
           args: ${{ format('{0}..HEAD', steps.prev.outputs.tag) }}
@@ -68,12 +71,11 @@ jobs:
           GITHUB_REPO: ${{ github.repository }}
 
       - name: Create release
-        if: steps.exists.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_NOTES: ${{ steps.cliff.outputs.content }}
         run: |
-          TAG="v${{ steps.pkg.outputs.version }}"
+          TAG="${{ steps.ver.outputs.tag }}"
           if [ -z "$RELEASE_NOTES" ]; then
             RELEASE_NOTES="Initial release of genie v3 CLI."
           fi
@@ -84,21 +86,25 @@ jobs:
             --notes-file /tmp/release-notes.md
 
       - name: Setup Bun
-        if: steps.exists.outputs.skip != 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        if: steps.exists.outputs.skip != 'true'
         run: bun install --frozen-lockfile
 
+      - name: Patch version for hotfix
+        if: steps.ver.outputs.hotfix == 'true'
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          echo "Patched package.json to ${VERSION}"
+
       - name: Build CLI
-        if: steps.exists.outputs.skip != 'true'
         run: bun run build
 
       - name: Publish to npm
-        if: steps.exists.outputs.skip != 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
