@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
+import { loadGenieConfigSync } from './genie-config.js';
 
 const PROMPTS_DIR = join(homedir(), '.genie', 'prompts');
 
@@ -41,6 +42,8 @@ function persistSystemPrompt(teamName: string, systemPrompt?: string): string | 
 interface BuildTeamLeadCommandOptions {
   systemPrompt?: string;
   resumeSessionId?: string;
+  /** Override promptMode instead of reading from config (useful for testing) */
+  promptMode?: 'append' | 'system';
 }
 
 /**
@@ -74,7 +77,9 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   // Write prompt to file, reference via $(cat) to avoid arg-list-too-long
   const promptPath = persistSystemPrompt(sanitized, options?.systemPrompt);
   if (promptPath) {
-    parts.push(`--system-prompt "$(cat ${shellQuote(promptPath)})"`);
+    const resolvedPromptMode = options?.promptMode ?? loadGenieConfigSync().promptMode;
+    const promptFlag = resolvedPromptMode === 'system' ? '--system-prompt' : '--append-system-prompt';
+    parts.push(`${promptFlag} "$(cat ${shellQuote(promptPath)})"`);
   }
 
   return parts.join(' ');
