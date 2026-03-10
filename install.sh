@@ -158,16 +158,10 @@ check_and_repair_symlink() {
         local target
         target=$(readlink "$PLUGIN_SYMLINK" 2>/dev/null || echo "unknown")
         warn "Broken symlink detected: $PLUGIN_SYMLINK -> $target"
-        warn "The symlink target no longer exists"
-        echo
-        if confirm "Repair broken symlink?"; then
-            rm -f "$PLUGIN_SYMLINK"
-            success "Broken symlink removed (will be recreated during install)"
-            return 0
-        else
-            warn "Keeping broken symlink (this may cause issues)"
-            return 1
-        fi
+        warn "The symlink target no longer exists — auto-repairing"
+        rm -f "$PLUGIN_SYMLINK"
+        success "Broken symlink removed (will be recreated during install)"
+        return 0
     fi
 
     return 0
@@ -659,31 +653,29 @@ offer_claude_plugin() {
         return 0
     fi
 
-    info "Adds skills, agents, and hooks to Claude Code"
-    if confirm "Install Genie plugin for Claude Code?"; then
-        if [[ -n "$LOCAL_PATH" ]]; then
-            # Local mode: symlink the plugin directory
-            local plugin_dir="$PKG_DIR/plugins/genie"
-            if [[ -d "$plugin_dir" ]]; then
-                mkdir -p "$CLAUDE_PLUGINS_DIR"
-                rm -f "$PLUGIN_SYMLINK"
-                ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
-                if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
-                    success "Genie Claude Code plugin linked"
-                else
-                    warn "Failed to create valid symlink for Claude Code plugin"
-                fi
+    info "Installing Genie plugin for Claude Code..."
+    if [[ -n "$LOCAL_PATH" ]]; then
+        # Local mode: symlink the plugin directory
+        local plugin_dir="$PKG_DIR/plugins/genie"
+        if [[ -d "$plugin_dir" ]]; then
+            mkdir -p "$CLAUDE_PLUGINS_DIR"
+            rm -f "$PLUGIN_SYMLINK"
+            ln -sf "$plugin_dir" "$PLUGIN_SYMLINK"
+            if verify_symlink "$PLUGIN_SYMLINK" "$plugin_dir"; then
+                success "Genie Claude Code plugin linked"
             else
-                warn "Plugin directory not found: $plugin_dir"
+                warn "Failed to create valid symlink for Claude Code plugin"
             fi
         else
-            # Marketplace mode
-            claude plugin marketplace add automagik-dev/genie 2>/dev/null || true
-            if claude plugin install genie@automagik 2>/dev/null; then
-                success "Genie Claude Code plugin installed"
-            else
-                warn "Plugin install failed — try: /plugin install genie@automagik"
-            fi
+            warn "Plugin directory not found: $plugin_dir"
+        fi
+    else
+        # Marketplace mode
+        claude plugin marketplace add automagik-dev/genie 2>/dev/null || true
+        if claude plugin install genie@automagik 2>/dev/null; then
+            success "Genie Claude Code plugin installed"
+        else
+            warn "Plugin install failed — try: /plugin install genie@automagik"
         fi
     fi
 }
@@ -709,22 +701,20 @@ offer_openclaw_plugin() {
         return 1
     fi
 
-    info "Adds skills globally to OpenClaw"
-    if confirm "Install Genie plugin for OpenClaw?"; then
-        if $DEV_MODE; then
-            log "Linking OpenClaw plugin (dev mode)..."
-            if openclaw plugins install -l "$PKG_DIR"; then
-                success "OpenClaw plugin linked"
-            else
-                warn "OpenClaw plugin link failed"
-            fi
+    info "Installing Genie plugin for OpenClaw..."
+    if $DEV_MODE; then
+        log "Linking OpenClaw plugin (dev mode)..."
+        if openclaw plugins install -l "$PKG_DIR"; then
+            success "OpenClaw plugin linked"
         else
-            log "Installing OpenClaw plugin (copy mode)..."
-            if openclaw plugins install "$PKG_DIR"; then
-                success "OpenClaw plugin installed"
-            else
-                warn "OpenClaw plugin install failed"
-            fi
+            warn "OpenClaw plugin link failed"
+        fi
+    else
+        log "Installing OpenClaw plugin (copy mode)..."
+        if openclaw plugins install "$PKG_DIR"; then
+            success "OpenClaw plugin installed"
+        else
+            warn "OpenClaw plugin install failed"
         fi
     fi
 }
@@ -736,13 +726,161 @@ offer_codex_skills() {
         return 1
     fi
 
-    info "Adds genie skills (/brainstorm, /wish, /work, etc.) to Codex/OpenCode"
-    if confirm "Install Genie skills for Codex?"; then
-        mkdir -p "$CODEX_SKILLS_DIR"
-        local target="$CODEX_SKILLS_DIR/genie"
-        ln -sf "$skills_source" "$target"
-        success "Codex skills linked: $target -> $skills_source"
+    info "Installing Genie skills for Codex/OpenCode..."
+    mkdir -p "$CODEX_SKILLS_DIR"
+    local target="$CODEX_SKILLS_DIR/genie"
+    ln -sf "$skills_source" "$target"
+    success "Codex skills linked: $target -> $skills_source"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Orchestration Prompt Injection
+# ─────────────────────────────────────────────────────────────────────────────
+
+inject_orchestration_prompt() {
+    local rules_dir="$HOME/.claude/rules"
+    local rules_file="$rules_dir/genie-orchestration.md"
+
+    mkdir -p "$rules_dir"
+
+    cat > "$rules_file" <<'ORCHESTRATION_EOF'
+<GENIE_CLI>
+# Genie CLI — MANDATORY Agent Orchestration
+
+You are a team-lead in a **genie-managed environment**. ALL agent spawning, messaging, and team management MUST go through the genie CLI via Bash.
+
+## CRITICAL: NEVER Use These Native Tools
+
+NEVER use the `Agent` tool to spawn agents or subagents. Use `genie agent spawn` instead.
+NEVER use `SendMessage` to communicate with agents. Use `genie send` instead.
+NEVER use `TeamCreate` or `TeamDelete`. Use `genie team ensure` / `genie team delete` instead.
+
+If you catch yourself about to use Agent, SendMessage, TeamCreate, or TeamDelete — STOP and use the genie CLI equivalent below.
+
+## Agents
+
+```bash
+# Spawn an agent (ALWAYS use this instead of Agent tool)
+genie agent spawn --role <role>                    # implementor, tests, review, fix, refactor
+genie agent spawn --role <role> --skill <skill>    # With specific skill
+
+# Monitor
+genie agent list                           # List all agents
+genie agent dashboard                      # Live dashboard
+genie agent history <agent>                # Session history
+genie agent read <agent> --follow          # Tail terminal output
+
+# Control
+genie agent kill <id>                      # Force kill
+genie agent suspend <id>                   # Suspend (preserves session)
+genie agent exec <agent> "<cmd>"           # Run command in agent pane
+genie agent answer <agent> <choice>        # Answer prompt (1-9 or text:...)
+```
+
+## Messaging
+
+```bash
+# Send message to an agent (ALWAYS use this instead of SendMessage)
+genie send "<text>" --to <agent>            # Send to specific agent
+genie inbox <agent>                         # View agent inbox
+genie inbox <agent> --unread                # Unread only
+```
+
+## Teams
+
+```bash
+genie team ensure <name>                    # Ensure team exists (creates if needed)
+genie team list                             # List teams
+genie team delete <name>                    # Delete team
+```
+
+## Typical Flow
+
+```bash
+# 1. Spawn an agent
+genie agent spawn --role implementor
+
+# 2. Monitor
+genie agent list
+
+# 3. Send instructions
+genie send "Implement endpoint X" --to <agent-name>
+
+# 4. Check progress
+genie agent history <agent-name>
+
+# 5. Shut down
+genie agent kill <agent-id>
+```
+</GENIE_CLI>
+ORCHESTRATION_EOF
+
+    success "Orchestration prompt written to $rules_file"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default Config Creation
+# ─────────────────────────────────────────────────────────────────────────────
+
+create_default_config() {
+    local config_file="$GENIE_HOME/config.json"
+
+    if [[ -f "$config_file" ]]; then
+        info "Config already exists: $config_file"
+        return 0
     fi
+
+    mkdir -p "$GENIE_HOME"
+    cat > "$config_file" <<'CONFIG_EOF'
+{
+  "version": 2,
+  "promptMode": "append",
+  "session": { "name": "genie", "defaultWindow": "shell", "autoCreate": true },
+  "terminal": { "execTimeout": 120000, "readLines": 100, "worktreeBase": ".worktrees" },
+  "logging": { "tmuxDebug": false, "verbose": false },
+  "shell": { "preference": "auto" },
+  "shortcuts": { "tmuxInstalled": false, "shellInstalled": false },
+  "setupComplete": false
+}
+CONFIG_EOF
+
+    success "Default config created: $config_file"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# tmux Installation and Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+install_tmux_if_needed() {
+    if check_command tmux; then
+        success "tmux found"
+        return 0
+    fi
+
+    log "Installing tmux..."
+    if install_package "tmux" && check_command tmux; then
+        success "tmux installed"
+    else
+        warn "tmux could not be installed — agent orchestration may not work"
+    fi
+}
+
+configure_tmux_defaults() {
+    local tmux_conf="$HOME/.tmux.conf"
+
+    if [[ -f "$tmux_conf" ]] && grep -q "base-index" "$tmux_conf"; then
+        info "tmux base-index already configured"
+        return 0
+    fi
+
+    cat >> "$tmux_conf" <<'TMUX_EOF'
+
+# Genie defaults (required for agent orchestration)
+set -g base-index 0
+setw -g pane-base-index 0
+TMUX_EOF
+
+    success "tmux defaults written to $tmux_conf"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -754,26 +892,19 @@ output_agent_prompt() {
     printf 'package_dir=%s\n' "$PKG_DIR"
     cat <<'AGENT_EOF'
 
-To complete Genie setup, ask the user which integrations to enable:
+Genie has been installed successfully.
 
-1. **Claude Code Plugin** — Adds skills, agents, and hooks to Claude Code
-   Commands:
-   claude plugin marketplace add automagik-dev/genie
-   claude plugin install genie@automagik
+Next steps for the user:
 
-2. **OpenClaw Plugin** — Adds skills globally to OpenClaw
-   Command:
-AGENT_EOF
-    printf '   openclaw plugins install %s\n' "$PKG_DIR"
-    cat <<'AGENT_EOF'
+  genie              Launch genie
 
-3. **Codex/OpenCode Skills** — Adds skills to ~/.agents/skills/genie
-   Command:
-AGENT_EOF
-    printf '   mkdir -p %s && ln -sf %s/skills %s/genie\n' "$CODEX_SKILLS_DIR" "$PKG_DIR" "$CODEX_SKILLS_DIR"
-    cat <<'AGENT_EOF'
+First time? Genie will suggest /onboarding to set up your workspace.
 
-Ask the user which integrations they want, then run the corresponding commands.
+Integrations installed automatically:
+- Claude Code plugin (if claude was found in PATH)
+- Orchestration prompt written to ~/.claude/rules/genie-orchestration.md
+- Default config created at ~/.genie/config.json
+- tmux defaults configured in ~/.tmux.conf
 AGENT_EOF
 }
 
@@ -791,6 +922,7 @@ run_install() {
     fi
 
     install_bun_if_needed
+    install_tmux_if_needed
 
     # ─── Genie CLI Install/Update ───
     header "Installing Genie CLI..."
@@ -806,23 +938,29 @@ run_install() {
     fi
     log "Package directory: $PKG_DIR"
 
+    # ─── Orchestration Prompt ───
+    header "Configuring Claude Code..."
+    inject_orchestration_prompt
+
+    # ─── Default Config ───
+    create_default_config
+
+    # ─── tmux Defaults ───
+    configure_tmux_defaults
+
     # ─── Plugin Integrations ───
-    if $INTERACTIVE; then
-        header "Plugin Integrations"
-        echo -e "${DIM}────────────────────────────────────${NC}"
+    header "Installing Integrations..."
+    echo -e "${DIM}────────────────────────────────────${NC}"
 
-        offer_claude_plugin
-        echo
+    offer_claude_plugin
+    echo
 
-        offer_openclaw_plugin
-        echo
+    offer_openclaw_plugin
+    echo
 
-        offer_codex_skills
+    offer_codex_skills
 
-        print_success
-    else
-        output_agent_prompt
-    fi
+    print_success
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1021,28 +1159,19 @@ verify_installation() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 print_success() {
-    local verification_passed=true
-
     # Run verification to check if commands are accessible
-    if ! verify_installation; then
-        verification_passed=false
-    fi
+    verify_installation || true
 
     echo
     echo -e "${DIM}────────────────────────────────────${NC}"
-    echo -e "${GREEN}${BOLD}Genie CLI installed successfully!${NC}"
+    echo -e "${GREEN}${BOLD}✔ Genie installed successfully!${NC}"
     echo -e "${DIM}────────────────────────────────────${NC}"
     echo
-
-    if $verification_passed; then
-        echo -e "  Get started:"
-        echo -e "    ${DIM}genie --help${NC}"
-        echo
-    else
-        echo -e "  ${YELLOW}After restarting your terminal, verify with:${NC}"
-        echo -e "    ${DIM}genie --help${NC}"
-        echo
-    fi
+    echo -e "  Get started:"
+    echo -e "    ${BOLD}genie${NC}              Launch genie"
+    echo
+    echo -e "  First time? Genie will suggest ${DIM}/onboarding${NC} to set up your workspace."
+    echo
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
