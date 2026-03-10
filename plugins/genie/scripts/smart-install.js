@@ -6,7 +6,6 @@ import { execSync, spawnSync } from 'node:child_process';
  * Ensures required dependencies are installed:
  * - Bun runtime (auto-installs if missing)
  * - tmux (guides user if missing - can't auto-install)
- * - beads (auto-installs if missing via npm)
  * - genie CLI (installed globally via bun)
  *
  * Also handles:
@@ -26,10 +25,6 @@ const IS_WINDOWS = process.platform === 'win32';
 const BUN_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), '.bun', 'bin', 'bun.exe')]
   : [join(homedir(), '.bun', 'bin', 'bun'), '/usr/local/bin/bun', '/opt/homebrew/bin/bun'];
-
-const BEADS_COMMON_PATHS = IS_WINDOWS
-  ? [join(homedir(), 'AppData', 'Roaming', 'npm', 'bd.cmd')]
-  : [join(homedir(), '.local', 'bin', 'bd'), '/usr/local/bin/bd', '/opt/homebrew/bin/bd'];
 
 const GENIE_COMMON_PATHS = IS_WINDOWS
   ? [join(homedir(), '.bun', 'bin', 'genie.exe')]
@@ -127,45 +122,6 @@ function getTmuxVersion() {
     return result.status === 0 ? result.stdout.trim() : null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Check if beads (bd) is installed
- */
-function getBeadsPath() {
-  try {
-    const result = spawnSync('bd', ['--version'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: IS_WINDOWS,
-    });
-    if (result.status === 0) return 'bd';
-  } catch {
-    // Not in PATH
-  }
-  return BEADS_COMMON_PATHS.find(existsSync) || null;
-}
-
-function isBeadsInstalled() {
-  return getBeadsPath() !== null;
-}
-
-/**
- * Install beads via npm
- */
-function installBeads() {
-  console.error('Installing beads (bd)...');
-  try {
-    execSync('npm install -g @anthropic-ai/bd', { stdio: 'inherit', shell: true });
-    if (!isBeadsInstalled()) {
-      throw new Error('beads installation completed but bd not found.');
-    }
-    console.error('beads installed');
-  } catch (error) {
-    console.error('Failed to install beads. Please install manually:');
-    console.error('  npm install -g @anthropic-ai/bd');
-    throw error;
   }
 }
 
@@ -316,21 +272,23 @@ function installGenieCli() {
 // Main execution
 try {
   // Quick check: if everything is already installed, exit silently
-  if (isBunInstalled() && isTmuxInstalled() && isBeadsInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
+  if (isBunInstalled() && isTmuxInstalled() && !needsInstall() && !genieCliNeedsInstall()) {
     process.exit(0);
   }
 
-  // 1. Check/install Bun
+  // 1. Check/install Bun (required — fatal if fails)
   if (!isBunInstalled()) {
     installBun();
   }
 
-  // 2. Check tmux - REQUIRED, but can't auto-install
+  // 2. Check tmux (required for agent orchestration — fatal)
   if (!isTmuxInstalled()) {
     console.error('');
-    console.error('ERROR: tmux is required but not installed.');
+    console.error('WARNING: tmux is not installed.');
+    console.error('tmux is required for agent orchestration (genie agent spawn, teams, etc.).');
+    console.error('Non-interactive features still work without it.');
     console.error('');
-    console.error('Please install tmux manually:');
+    console.error('Install tmux:');
     if (process.platform === 'darwin') {
       console.error('  brew install tmux');
     } else if (process.platform === 'linux') {
@@ -342,26 +300,28 @@ try {
       console.error('  Inside WSL: sudo apt install tmux');
     }
     console.error('');
-    console.error('Then restart Claude Code.');
-    process.exit(2); // Exit code 2 = blocking error for Claude to process
+    // Don't exit — let the rest of the chain run
   }
 
-  // 3. Check/install beads
-  if (!isBeadsInstalled()) {
-    installBeads();
-  }
-
-  // 4. Install plugin dependencies if needed
+  // 3. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
     console.error('Dependencies installed');
   }
 
-  // 5. Install or upgrade genie CLI via bun global
+  // 4. Install or upgrade genie CLI via bun global (non-fatal)
   if (genieCliNeedsInstall()) {
-    installGenieCli();
+    try {
+      installGenieCli();
+    } catch (e) {
+      console.error(`Warning: genie CLI install/upgrade failed: ${e.message}`);
+      console.error('The plugin will still work. Install genie CLI manually later.');
+    }
   }
 } catch (e) {
-  console.error('Installation failed:', e.message);
-  process.exit(1);
+  // Only Bun install failure reaches here — everything else is graceful
+  console.error('Critical installation failed:', e.message);
+  console.error('Continuing anyway to let remaining hooks run...');
+  // Exit 0 so the hook chain continues (first-run-check, session-context)
+  process.exit(0);
 }

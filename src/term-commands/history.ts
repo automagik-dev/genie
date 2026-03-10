@@ -5,10 +5,10 @@
  * Claude's JSONL logs and extracting key events.
  *
  * Usage:
- *   genie worker history <worker>          # Compressed summary
- *   genie worker history <worker> --full   # Full conversation
- *   genie worker history <worker> --since 5  # Last 5 exchanges
- *   genie worker history <worker> --json   # JSON output
+ *   genie agent history <agent>          # Compressed summary
+ *   genie agent history <agent> --full   # Full conversation
+ *   genie agent history <agent> --since 5  # Last 5 exchanges
+ *   genie agent history <agent> --json   # JSON output
  */
 
 import * as workerRegistry from '../lib/agent-registry.js';
@@ -429,15 +429,15 @@ async function resolveLogContext(workerIdOrName: string, options: HistoryOptions
 
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
-    console.error(`❌ Worker "${workerIdOrName}" not found.`);
-    console.error('   Run `genie worker list` to see active workers.');
+    console.error(`❌ Agent "${workerIdOrName}" not found.`);
+    console.error('   Run `genie agent list` to see active agents.');
     process.exit(1);
   }
 
   const workspacePath = worker.worktree || worker.repoPath;
   const logInfo = await claudeLogs.getLogsForPane(workspacePath);
   if (!logInfo) {
-    console.error(`❌ No Claude logs found for worker "${worker.id}"`);
+    console.error(`❌ No Claude logs found for agent "${worker.id}"`);
     console.error(`   Workspace: ${workspacePath}`);
     process.exit(1);
   }

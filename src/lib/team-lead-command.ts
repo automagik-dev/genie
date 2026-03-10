@@ -4,12 +4,18 @@
  * Both `tui.ts` and `team-auto-spawn.ts` need to build the same claude CLI
  * command for launching a team-lead. This module prevents drift between the
  * two implementations (which previously caused GENIE_AGENT_NAME regressions).
+ *
+ * System prompt is written to ~/.genie/prompts/<team>.md and loaded via
+ * $(cat path) to avoid "argument list too long" errors in tmux send-keys.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sanitizeTeamName } from './claude-native-teams.js';
+
+const PROMPTS_DIR = join(homedir(), '.genie', 'prompts');
 
 /** Shell-quote a string for safe embedding in shell commands. */
 export function shellQuote(s: string): string {
@@ -29,6 +35,21 @@ function getTeamLeadPrompt(): string | null {
   return null;
 }
 
+/**
+ * Write the combined system prompt to ~/.genie/prompts/<team>.md.
+ * Returns the file path, or null if there's no prompt to write.
+ */
+function persistSystemPrompt(teamName: string, systemPrompt?: string): string | null {
+  const teamLeadPrompt = getTeamLeadPrompt();
+  const fullPrompt = [systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
+  if (!fullPrompt) return null;
+
+  mkdirSync(PROMPTS_DIR, { recursive: true });
+  const promptPath = join(PROMPTS_DIR, `${sanitizeTeamName(teamName)}.md`);
+  writeFileSync(promptPath, fullPrompt, 'utf-8');
+  return promptPath;
+}
+
 interface BuildTeamLeadCommandOptions {
   systemPrompt?: string;
   resumeSessionId?: string;
@@ -40,6 +61,8 @@ interface BuildTeamLeadCommandOptions {
  * Sets all required env vars (including GENIE_AGENT_NAME) and CLI flags.
  * CC requires --agent-id, --agent-name, and --team-name together.
  * The team lead uses agent-id "team-lead@<team>" by convention.
+ *
+ * System prompt is loaded from file via $(cat) to keep the command short.
  */
 export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCommandOptions): string {
   const sanitized = sanitizeTeamName(teamName);
@@ -60,12 +83,10 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     parts.push(`--resume ${shellQuote(options.resumeSessionId)}`);
   }
 
-  // Combine AGENTS.md + built-in genie CLI prompt
-  const teamLeadPrompt = getTeamLeadPrompt();
-  const fullPrompt = [options?.systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
-  if (fullPrompt) {
-    const flattened = fullPrompt.replace(/\n/g, ' ');
-    parts.push(`--system-prompt ${shellQuote(flattened)}`);
+  // Write prompt to file, reference via $(cat) to avoid arg-list-too-long
+  const promptPath = persistSystemPrompt(sanitized, options?.systemPrompt);
+  if (promptPath) {
+    parts.push(`--system-prompt "$(cat ${shellQuote(promptPath)})"`);
   }
 
   return parts.join(' ');

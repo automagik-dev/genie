@@ -124,18 +124,22 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('abc-123');
   });
 
-  test('includes --system-prompt when systemPrompt provided', async () => {
+  test('includes --system-prompt via $(cat) when systemPrompt provided', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt' });
     expect(cmd).toContain('--system-prompt');
-    expect(cmd).toContain('test prompt');
+    expect(cmd).toContain('$(cat');
+    expect(cmd).toContain('.genie/prompts/genie.md');
+    // Prompt content is in the file, NOT inlined in the command
+    expect(cmd).not.toContain('test prompt');
   });
 
-  test('flattens newlines in system prompt', async () => {
+  test('system prompt is persisted to file, not flattened inline', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'line one\nline two' });
-    expect(cmd).not.toContain('\n');
-    expect(cmd).toContain('line one line two');
+    // Command references file, does not contain prompt text
+    expect(cmd).toContain('$(cat');
+    expect(cmd).not.toContain('line one');
   });
 });
 

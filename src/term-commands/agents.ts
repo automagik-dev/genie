@@ -588,9 +588,13 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     process.exit(1);
   }
 
-  // Apply layout to team window (or fallback to window 0)
+  // Apply layout to team window (or fallback to first window in session)
   const session = 'genie';
-  const layoutTarget = teamWindow ? `${session}:${teamWindow.windowName}` : `${session}:0`;
+  let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
+  if (!teamWindow) {
+    const wins = await tmux.listWindows(session);
+    layoutTarget = wins[0] ? wins[0].id : `${session}:`;
+  }
   try {
     execSync(`tmux ${buildLayoutCommand(layoutTarget, ctx.layoutMode)}`, { stdio: 'ignore' });
   } catch {
@@ -599,6 +603,11 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
 
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
+
+  // Apply agent color to tmux pane border (focus-driven)
+  if (ctx.spawnColor && paneId !== 'inline') {
+    await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
+  }
 
   // Save spawn template for auto-respawn on message delivery
   await registry.saveTemplate({
@@ -746,6 +755,15 @@ async function handleWorkerSpawn(options: {
   const repoPath = options.cwd ?? process.cwd();
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, repoPath, options);
   if (nativeTeam) params.nativeTeam = nativeTeam;
+
+  // 2b. Inject hook dispatch into team settings.json (idempotent)
+  try {
+    const { injectTeamHooks } = await import('../hooks/inject.js');
+    const injected = await injectTeamHooks(team);
+    if (injected) console.log(`  Hooks:    injected genie hook dispatch into team "${team}"`);
+  } catch (err) {
+    console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
+  }
 
   // Session ID only for Claude
   const claudeSessionId = params.provider === 'claude' ? crypto.randomUUID() : undefined;
@@ -1239,7 +1257,7 @@ export function registerAgentNamespace(program: Command): void {
           if (w.claudeSessionId) {
             console.log(`  Session preserved: ${w.claudeSessionId}`);
           }
-          console.log(`  Send a message to auto-resume: genie msg send ${id} "your message"`);
+          console.log(`  Send a message to auto-resume: genie send ${id} "your message"`);
         } else {
           console.error(`Failed to suspend agent "${id}".`);
           process.exit(1);

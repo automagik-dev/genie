@@ -22,16 +22,16 @@ export type ProviderName = 'claude' | 'codex';
 /** Colors available for Claude Code native teammate UI. */
 export type ClaudeTeamColor = 'blue' | 'green' | 'yellow' | 'red' | 'cyan' | 'orange' | 'purple' | 'pink';
 
-/** Rotating palette for auto-assigning teammate colors. */
+/** Rotating palette for auto-assigning teammate colors (matches CC internal DG order). */
 export const CLAUDE_TEAM_COLORS: ClaudeTeamColor[] = [
+  'red',
   'blue',
   'green',
   'yellow',
-  'red',
-  'cyan',
-  'orange',
   'purple',
+  'orange',
   'pink',
+  'cyan',
 ];
 
 /** Parameters for Claude Code native teammate integration. */

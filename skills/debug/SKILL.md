@@ -39,7 +39,7 @@ Debug must run in **isolation** — the subagent must not modify any source file
 |---------|-----------|---------------|
 | Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<debug prompt>")` |
 | Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<debug prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie worker spawn --role debugger` |
+| OpenClaw | `genie` CLI available | `genie agent spawn --role debugger` |
 
 Default to **Claude Code** when detection is ambiguous.
 

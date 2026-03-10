@@ -2,12 +2,12 @@
  * Events command - Stream Claude Code events from a pane
  *
  * Usage:
- *   genie worker events <pane-id>           - Show recent events from a worker
- *   genie worker events <pane-id> --follow  - Tail events in real-time (like tail -f)
- *   genie worker events <pane-id> --emit    - Tail and write to .genie/events/<pane-id>.jsonl
- *   genie worker events <pane-id> --json    - Output events as JSON
- *   genie worker events --all               - Aggregate events from all active workers
- *   genie worker events --all --json        - Aggregate events as JSON
+ *   genie agent events <pane-id>           - Show recent events from an agent
+ *   genie agent events <pane-id> --follow  - Tail events in real-time (like tail -f)
+ *   genie agent events <pane-id> --emit    - Tail and write to .genie/events/<pane-id>.jsonl
+ *   genie agent events <pane-id> --json    - Output events as JSON
+ *   genie agent events --all               - Aggregate events from all active agents
+ *   genie agent events --all --json        - Aggregate events as JSON
  *
  * Events are normalized into a standard format:
  *   - session_start: Claude session started
@@ -407,7 +407,7 @@ export async function eventsCommand(paneId: string | undefined, options: EventsO
     }
 
     if (!paneId) {
-      console.error('Error: pane-id is required (or use --all for all workers)');
+      console.error('Error: pane-id is required (or use --all for all agents)');
       process.exit(1);
     }
 
@@ -437,7 +437,7 @@ async function eventsAllCommand(options: EventsOptions): Promise<void> {
     if (options.json) {
       console.log('[]');
     } else {
-      console.log('No active workers found.');
+      console.log('No active agents found.');
     }
     return;
   }
@@ -457,7 +457,7 @@ async function eventsAllCommand(options: EventsOptions): Promise<void> {
     console.log(JSON.stringify(recentEvents, null, 2));
   } else {
     if (recentEvents.length === 0) {
-      console.log('No events found from active workers.');
+      console.log('No events found from active agents.');
       console.log('Hint: Use --emit flag when tailing to write events to files.');
     } else {
       for (const event of recentEvents) {

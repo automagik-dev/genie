@@ -5,7 +5,7 @@
  * Backend is auto-detected based on whether .genie/ directory exists.
  *
  * Usage:
- *   genie worker close <task-id>   - Close task, cleanup worktree, kill worker
+ *   genie agent close <task-id>   - Close task, cleanup worktree, kill agent
  *
  * Options:
  *   --no-sync              - Skip bd sync (beads only, no-op for local)
@@ -166,7 +166,7 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
  */
 async function killWorkerTmux(w: registry.Agent): Promise<void> {
   if (w.windowId && w.session) {
-    console.log(`💀 Killing worker window "${w.windowName || w.windowId}" (${w.id})...`);
+    console.log(`💀 Killing agent window "${w.windowName || w.windowId}" (${w.id})...`);
     try {
       const sessionObj = await tmux.findSessionByName(w.session);
       if (sessionObj) {
@@ -185,7 +185,7 @@ async function killWorkerTmux(w: registry.Agent): Promise<void> {
     return;
   }
   if (w.windowName) {
-    console.log(`💀 Killing worker window "${w.windowName}" (${w.id})...`);
+    console.log(`💀 Killing agent window "${w.windowName}" (${w.id})...`);
     try {
       await tmux.killWindow(w.windowName);
       console.log('   ✅ Window killed');
@@ -194,7 +194,7 @@ async function killWorkerTmux(w: registry.Agent): Promise<void> {
     }
     return;
   }
-  console.log(`💀 Killing worker pane (${w.id})...`);
+  console.log(`💀 Killing agent pane (${w.id})...`);
   await killWorkerPane(w.paneId);
   console.log('   ✅ Pane killed');
 }
@@ -250,7 +250,7 @@ async function findRepresentativeWorker(allWorkers: registry.Agent[], taskId: st
  */
 async function confirmClose(taskId: string, workerCount: number, worker: registry.Agent | null): Promise<boolean> {
   const workerMsg =
-    workerCount > 1 ? ` and kill ${workerCount} workers` : worker ? ` and kill worker (pane ${worker.paneId})` : '';
+    workerCount > 1 ? ` and kill ${workerCount} agents` : worker ? ` and kill agent (pane ${worker.paneId})` : '';
   return confirm({ message: `Close ${taskId}${workerMsg}?`, default: true });
 }
 
@@ -286,7 +286,7 @@ async function killAndUnregisterAll(allWorkers: registry.Agent[]): Promise<void>
     await killWorkerTmux(w);
     await unregisterWorker(w);
   }
-  if (allWorkers.length > 0) console.log(`   ✅ ${allWorkers.length} worker(s) unregistered`);
+  if (allWorkers.length > 0) console.log(`   ✅ ${allWorkers.length} agent(s) unregistered`);
 }
 
 export async function closeCommand(taskId: string, options: CloseOptions = {}): Promise<void> {
@@ -299,9 +299,9 @@ export async function closeCommand(taskId: string, options: CloseOptions = {}): 
     const worker = await findRepresentativeWorker(allWorkers, taskId);
 
     if (allWorkers.length === 0) {
-      console.log(`ℹ️  No active worker for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
+      console.log(`ℹ️  No active agent for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
     } else if (allWorkers.length > 1) {
-      console.log(`📌 Found ${allWorkers.length} workers for ${taskId}`);
+      console.log(`📌 Found ${allWorkers.length} agents for ${taskId}`);
     }
 
     if (!options.yes) {

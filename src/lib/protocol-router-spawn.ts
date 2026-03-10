@@ -18,7 +18,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { ensureTeamWindow } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
@@ -101,7 +101,11 @@ export async function spawnWorkerFromTemplate(
   const { stdout } = await execAsync(`tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${fullCommand}`);
   const paneId = stdout.trim();
 
-  const layoutTarget = teamWindow ? `${session}:${teamWindow.windowName}` : `${session}:0`;
+  let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
+  if (!teamWindow) {
+    const wins = await listWindows(session);
+    layoutTarget = wins[0] ? wins[0].id : `${session}:`;
+  }
   try {
     await execAsync(`tmux ${buildLayoutCommand(layoutTarget, resolveLayoutMode())}`);
   } catch {
@@ -153,6 +157,11 @@ export async function spawnWorkerFromTemplate(
     color: spawnColor ?? 'blue',
     read: false,
   });
+
+  // Apply agent color to tmux pane border (focus-driven)
+  if (spawnColor) {
+    await applyPaneColor(paneId, spawnColor, teamWindow?.windowId);
+  }
 
   return { worker: workerEntry, paneId, workerId };
 }

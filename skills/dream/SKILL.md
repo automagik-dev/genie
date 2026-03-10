@@ -98,7 +98,7 @@ Isolation is Codex-managed. Documented for future validation.
 ### OpenClaw
 
 ```bash
-genie worker spawn --role implementor
+genie agent spawn --role implementor
 # Or for bead-tracked work:
 bd create "<task title>" --type task
 genie work <bead-id>

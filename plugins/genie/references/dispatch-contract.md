@@ -64,20 +64,20 @@ Documented for future validation. Three-layer chain: OpenClaw → genie → Clau
 
 ```bash
 # Spawn a Claude Code worker via genie
-genie worker spawn --role implementor
+genie agent spawn --role implementor
 
 # Or for heavy multi-file work with bead tracking
 bd create "<task title>" --type task
 genie work <bead-id>
 
 # Monitor
-genie worker list
-genie worker read <worker>
+genie agent list
+genie agent read <agent>
 ```
 
 - **Isolation:** Claude Code worktrees (same as CC path, initiated via genie)
 - **Model:** sonnet (passed to CC via genie)
-- **Coordination:** genie worker status + bead updates
+- **Coordination:** genie agent status + bead updates
 - **Risk:** 3 layers of indirection — use timeouts, fall back to sequential on failure
 
 ## Rules

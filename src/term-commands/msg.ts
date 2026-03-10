@@ -50,7 +50,9 @@ export async function detectSenderIdentity(teamName: string): Promise<string> {
   if (!paneId) return 'cli';
 
   const registry = await getRegistry();
-  const worker = await registry.findByPane(paneId);
+  // Guard against Bun's flaky module resolution where dynamic import()
+  // occasionally returns a partial module object missing some exports.
+  const worker = typeof registry.findByPane === 'function' ? await registry.findByPane(paneId) : null;
   if (worker) return worker.role ?? worker.id;
 
   return (await findMemberByPane(teamName, paneId)) ?? 'cli';

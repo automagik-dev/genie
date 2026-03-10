@@ -221,6 +221,8 @@ export async function ensureTeamWindow(
     } catch {
       /* best-effort */
     }
+    // Rehydrate pane color hook (survives tmux restarts)
+    await rehydratePaneColorHook(existing.id);
     const panes = await listPanes(existing.id);
     const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
     return { windowId: existing.id, windowName: teamName, paneId, created: false };
@@ -231,9 +233,109 @@ export async function ensureTeamWindow(
     throw new Error(`Failed to create team window "${teamName}" in session "${session}"`);
   }
 
+  // Install pane color hook on new window
+  await rehydratePaneColorHook(newWindow.id);
   const panes = await listPanes(newWindow.id);
   const paneId = panes.length > 0 ? panes[0].id : `${session}:${teamName}.0`;
   return { windowId: newWindow.id, windowName: teamName, paneId, created: true };
+}
+
+/**
+ * Map agent color names to tmux hex colors for active border styling.
+ * Palette matches ClaudeTeamColor from provider-adapters.
+ */
+const TMUX_COLOR_MAP: Record<string, string> = {
+  red: '#b83030',
+  blue: '#2a6cb8',
+  green: '#20a050',
+  yellow: '#b8a020',
+  purple: '#7830b8',
+  orange: '#b86820',
+  pink: '#b83078',
+  cyan: '#20a0a0',
+};
+
+const PANE_COLORS_PATH = `${require('node:os').homedir()}/.genie/pane-colors.json`;
+const PANE_COLOR_SCRIPT = `${require('node:os').homedir()}/.genie/tmux-pane-color.sh`;
+
+/**
+ * Ensure the pane-color router script exists.
+ * This script is called by the tmux pane-focus-in hook and reads
+ * ~/.genie/pane-colors.json to resolve pane_id → border color.
+ */
+function ensurePaneColorScript(): void {
+  const { existsSync, writeFileSync, mkdirSync, chmodSync } = require('node:fs');
+  const { dirname } = require('node:path');
+
+  if (existsSync(PANE_COLOR_SCRIPT)) return;
+
+  mkdirSync(dirname(PANE_COLOR_SCRIPT), { recursive: true });
+  writeFileSync(
+    PANE_COLOR_SCRIPT,
+    `#!/bin/bash
+# Genie tmux pane color router — maps focused pane to agent border color
+PANE_ID="$1"
+MAP="$HOME/.genie/pane-colors.json"
+[ -f "$MAP" ] || exit 0
+COLOR=$(jq -r --arg p "$PANE_ID" '.[$p] // empty' "$MAP" 2>/dev/null)
+[ -z "$COLOR" ] && COLOR="default"
+tmux set-option -w pane-active-border-style "fg=$COLOR"
+`,
+  );
+  chmodSync(PANE_COLOR_SCRIPT, 0o755);
+}
+
+/**
+ * Register a pane→color mapping and install the window focus hook.
+ * When any pane in the window gains focus, the active border color
+ * changes to match that agent's assigned color.
+ */
+export async function applyPaneColor(paneId: string, color: string, windowId?: string): Promise<void> {
+  const hex = TMUX_COLOR_MAP[color] ?? TMUX_COLOR_MAP.blue;
+  const { readFileSync, writeFileSync, existsSync, mkdirSync } = require('node:fs');
+  const { dirname } = require('node:path');
+
+  try {
+    // 1. Ensure script exists
+    ensurePaneColorScript();
+
+    // 2. Update pane-colors.json
+    let map: Record<string, string> = {};
+    if (existsSync(PANE_COLORS_PATH)) {
+      try {
+        map = JSON.parse(readFileSync(PANE_COLORS_PATH, 'utf-8'));
+      } catch {
+        map = {};
+      }
+    } else {
+      mkdirSync(dirname(PANE_COLORS_PATH), { recursive: true });
+    }
+    map[paneId] = hex;
+    writeFileSync(PANE_COLORS_PATH, JSON.stringify(map, null, 2));
+
+    // 3. Install window hook (idempotent — overwrites previous)
+    if (windowId) {
+      await executeTmux(`set-hook -w -t '${windowId}' pane-focus-in "run-shell '${PANE_COLOR_SCRIPT} #{pane_id}'"`);
+    }
+  } catch {
+    /* best-effort — don't break spawn if tmux styling fails */
+  }
+}
+
+/**
+ * Rehydrate the pane-focus-in color hook on a window.
+ * Called when a team window is resolved (created or found) to survive tmux restarts.
+ * Only installs the hook if pane-colors.json exists and has entries for panes in this window.
+ */
+async function rehydratePaneColorHook(windowId: string): Promise<void> {
+  const { existsSync } = require('node:fs');
+  try {
+    if (!existsSync(PANE_COLORS_PATH) || !existsSync(PANE_COLOR_SCRIPT)) return;
+    ensurePaneColorScript();
+    await executeTmux(`set-hook -w -t '${windowId}' pane-focus-in "run-shell '${PANE_COLOR_SCRIPT} #{pane_id}'"`);
+  } catch {
+    /* best-effort */
+  }
 }
 
 /**

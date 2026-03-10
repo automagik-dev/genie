@@ -1,6 +1,6 @@
-# Worker Profiles
+# Agent Profiles
 
-Worker profiles configure how genie-cli spawns Claude Code workers. Each profile bundles:
+Agent profiles configure how genie-cli spawns Claude Code agents. Each profile bundles:
 - **Launcher**: `claude` (direct Claude Code invocation)
 - **Claude Args**: CLI arguments passed to Claude Code
 
@@ -47,10 +47,10 @@ genie profiles default coding-fast
 
 ## Using Profiles
 
-### With genie worker spawn
+### With genie agent spawn
 ```bash
-genie worker spawn --role implementor --profile coding-fast
-genie worker spawn --role implementor --profile safe  # For interactive work
+genie agent spawn --role implementor --profile coding-fast
+genie agent spawn --role implementor --profile safe  # For interactive work
 ```
 
 ### With genie work
