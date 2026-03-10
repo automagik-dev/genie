@@ -195,7 +195,7 @@ async function createSession(
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-  const resumeSessionId = findLastSessionId(windowName, 'team-lead', workspaceDir);
+  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workspaceDir);
   if (resumeSessionId) {
     console.log(`Resuming previous session: ${resumeSessionId}`);
   }
@@ -223,7 +223,7 @@ async function focusTeamWindow(
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const resumeSessionId = findLastSessionId(windowName, 'team-lead', workingDir);
+    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workingDir);
     if (resumeSessionId) {
       console.log(`Resuming previous session: ${resumeSessionId}`);
     }

@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { shellQuote } from './team-lead-command.js';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
 // Basic interfaces for tmux objects
@@ -98,7 +99,7 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
  */
 export async function getWindowEnv(target: string, varName: string): Promise<string | null> {
   try {
-    const output = await executeTmux(`show-environment -t '${target}' '${varName}'`);
+    const output = await executeTmux(`show-environment -t ${shellQuote(target)} ${shellQuote(varName)}`);
     // Output format: "VARNAME=value"
     const prefix = `${varName}=`;
     if (output?.startsWith(prefix)) {
@@ -115,7 +116,7 @@ export async function getWindowEnv(target: string, varName: string): Promise<str
  * Uses `tmux set-environment -t <target> <varName> <value>`.
  */
 export async function setWindowEnv(target: string, varName: string, value: string): Promise<void> {
-  await executeTmux(`set-environment -t '${target}' '${varName}' '${value}'`);
+  await executeTmux(`set-environment -t ${shellQuote(target)} ${shellQuote(varName)} ${shellQuote(value)}`);
 }
 
 /**
