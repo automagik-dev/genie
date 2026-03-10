@@ -5,6 +5,9 @@
  *   team, task, agent + top-level: work, daemon, council, send, inbox
  */
 
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { doctorCommand } from './genie-commands/doctor.js';
@@ -26,8 +29,11 @@ import {
 import { type TuiOptions, tuiCommand } from './genie-commands/tui.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
+import { sanitizeTeamName } from './lib/claude-native-teams.js';
+import { resolveTeamShortcut } from './lib/team-shortcut.js';
 import { VERSION } from './lib/version.js';
 
+import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { registerAgentNamespace } from './term-commands/agents.js';
 import * as councilCmd from './term-commands/council.js';
 import * as daemonCmd from './term-commands/daemon.js';
@@ -73,15 +79,13 @@ program.command('update').description('Update Genie CLI to the latest version').
 // Uninstall command - remove genie CLI
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
-// TUI command - attach to master genie session
+// Internal handler for team opening (hidden — user invokes via `genie` or `genie <team>`)
 program
-  .command('tui [name]')
-  .description('Start Claude Code as native team-lead (default: "genie" in ~/workspace)')
+  .command('_open [team]', { hidden: true })
   .option('-r, --reset', 'Kill existing session and start fresh')
-  .option('-d, --dir <path>', 'Working directory (default: ~/workspace)')
-  .option('-t, --team <team>', 'Focus (or create) a dedicated team window')
-  .action(async (name: string | undefined, options: TuiOptions) => {
-    if (name) options.team = name;
+  .option('-d, --dir <path>', 'Working directory (default: cwd)')
+  .action(async (team: string | undefined, options: TuiOptions) => {
+    if (team) options.team = team;
     await tuiCommand(options);
   });
 
@@ -148,6 +152,7 @@ registerTeamNamespace(program);
 registerAgentNamespace(program);
 registerSendInboxCommands(program);
 registerTaskNamespace(program);
+registerHookNamespace(program);
 
 // ============================================================================
 // Top-level commands (migrated from genie term)
@@ -219,5 +224,33 @@ program
   .action(async (options: councilCmd.CouncilOptions) => {
     await councilCmd.councilCommand(options);
   });
+
+// ============================================================================
+// Team shortcut routing: genie <team> -> genie tui <team>
+// ============================================================================
+
+// Collect all registered subcommand names (+ aliases)
+const knownCommands = new Set<string>();
+for (const cmd of program.commands) {
+  knownCommands.add(cmd.name());
+  for (const alias of cmd.aliases()) {
+    knownCommands.add(alias);
+  }
+}
+knownCommands.add('help');
+
+const shortcutResult = resolveTeamShortcut(process.argv.slice(2), knownCommands, (name) => {
+  try {
+    return existsSync(join(homedir(), '.claude', 'teams', sanitizeTeamName(name)));
+  } catch {
+    return false;
+  }
+});
+
+if (shortcutResult.collisionWarning) {
+  console.warn(shortcutResult.collisionWarning);
+}
+
+process.argv = [...process.argv.slice(0, 2), ...shortcutResult.args];
 
 program.parse();

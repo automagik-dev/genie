@@ -26,7 +26,7 @@ Audit existing documentation, identify gaps, generate what's missing, and valida
 |---------|-----------|---------|
 | Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<docs prompt>")` |
 | Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<docs prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie worker spawn --role docs` |
+| OpenClaw | `genie` CLI available | `genie agent spawn --role docs` |
 
 Default to **Claude Code** when detection is ambiguous.
 
