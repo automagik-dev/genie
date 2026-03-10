@@ -1,3 +1,5 @@
+<!-- SOURCE OF TRUTH: This content is injected into ~/.claude/rules/genie-orchestration.md
+     by install.sh and smart-install.js. Edits here must be copied to both scripts. -->
 <GENIE_CLI>
 # Genie CLI — MANDATORY Agent Orchestration
 

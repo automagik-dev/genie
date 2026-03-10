@@ -240,6 +240,175 @@ function genieCliNeedsInstall() {
   return installed !== pluginVersion;
 }
 
+const ORCHESTRATION_PROMPT = `<GENIE_CLI>
+# Genie CLI — MANDATORY Agent Orchestration
+
+You are a team-lead in a **genie-managed environment**. ALL agent spawning, messaging, and team management MUST go through the genie CLI via Bash.
+
+## CRITICAL: NEVER Use These Native Tools
+
+NEVER use the \`Agent\` tool to spawn agents or subagents. Use \`genie agent spawn\` instead.
+NEVER use \`SendMessage\` to communicate with agents. Use \`genie send\` instead.
+NEVER use \`TeamCreate\` or \`TeamDelete\`. Use \`genie team ensure\` / \`genie team delete\` instead.
+
+If you catch yourself about to use Agent, SendMessage, TeamCreate, or TeamDelete — STOP and use the genie CLI equivalent below.
+
+## Agents
+
+\`\`\`bash
+# Spawn an agent (ALWAYS use this instead of Agent tool)
+genie agent spawn --role <role>                    # implementor, tests, review, fix, refactor
+genie agent spawn --role <role> --skill <skill>    # With specific skill
+
+# Monitor
+genie agent list                           # List all agents
+genie agent dashboard                      # Live dashboard
+genie agent history <agent>                # Session history
+genie agent read <agent> --follow          # Tail terminal output
+
+# Control
+genie agent kill <id>                      # Force kill
+genie agent suspend <id>                   # Suspend (preserves session)
+genie agent exec <agent> "<cmd>"           # Run command in agent pane
+genie agent answer <agent> <choice>        # Answer prompt (1-9 or text:...)
+\`\`\`
+
+## Messaging
+
+\`\`\`bash
+# Send message to an agent (ALWAYS use this instead of SendMessage)
+genie send "<text>" --to <agent>            # Send to specific agent
+genie inbox <agent>                         # View agent inbox
+genie inbox <agent> --unread                # Unread only
+\`\`\`
+
+## Teams
+
+\`\`\`bash
+genie team ensure <name>                    # Ensure team exists (creates if needed)
+genie team list                             # List teams
+genie team delete <name>                    # Delete team
+\`\`\`
+
+## Typical Flow
+
+\`\`\`bash
+# 1. Spawn an agent
+genie agent spawn --role implementor
+
+# 2. Monitor
+genie agent list
+
+# 3. Send instructions
+genie send "Implement endpoint X" --to <agent-name>
+
+# 4. Check progress
+genie agent history <agent-name>
+
+# 5. Shut down
+genie agent kill <agent-id>
+\`\`\`
+</GENIE_CLI>
+`;
+
+/**
+ * Read the current marker version (before installDeps overwrites it).
+ * Returns the version string or null if not found.
+ */
+function getMarkerVersion() {
+  try {
+    if (existsSync(MARKER)) {
+      const marker = JSON.parse(readFileSync(MARKER, 'utf-8'));
+      return marker.version || null;
+    }
+  } catch {
+    // Ignore
+  }
+  return null;
+}
+
+/**
+ * Inject the orchestration prompt into ~/.claude/rules/genie-orchestration.md
+ * Only writes/rewrites if the plugin version changed.
+ * @param {string|null} oldVersion - marker version captured before installDeps ran
+ */
+function injectOrchestrationPrompt(oldVersion) {
+  const rulesDir = join(homedir(), '.claude', 'rules');
+  const destFile = join(rulesDir, 'genie-orchestration.md');
+
+  if (!existsSync(rulesDir)) {
+    mkdirSync(rulesDir, { recursive: true });
+  }
+
+  let pluginVersion = null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
+    pluginVersion = pkg.version || null;
+  } catch {
+    // Ignore
+  }
+
+  const fileExists = existsSync(destFile);
+  const versionChanged = !fileExists || oldVersion !== pluginVersion;
+
+  if (versionChanged) {
+    writeFileSync(destFile, ORCHESTRATION_PROMPT, 'utf-8');
+    console.error('Orchestration prompt written to ~/.claude/rules/genie-orchestration.md');
+  }
+}
+
+/**
+ * Create default ~/.genie/config.json with schema v2 defaults if missing.
+ */
+function createDefaultConfig() {
+  const configPath = join(GENIE_DIR, 'config.json');
+  if (!existsSync(configPath)) {
+    if (!existsSync(GENIE_DIR)) {
+      mkdirSync(GENIE_DIR, { recursive: true });
+    }
+    writeFileSync(configPath, JSON.stringify({
+      version: 2,
+      promptMode: 'append',
+      session: { name: 'genie', defaultWindow: 'shell', autoCreate: true },
+      terminal: { execTimeout: 120000, readLines: 100, worktreeBase: '.worktrees' },
+      logging: { tmuxDebug: false, verbose: false },
+      shell: { preference: 'auto' },
+      shortcuts: { tmuxInstalled: false, shellInstalled: false },
+      setupComplete: false,
+    }, null, 2), 'utf-8');
+    console.error('Created default ~/.genie/config.json');
+  }
+}
+
+/**
+ * Ensure tmux base-index defaults are set in ~/.tmux.conf
+ * Only runs when version changes (or file missing).
+ * @param {string|null} oldVersion - marker version captured before installDeps ran
+ */
+function ensureTmuxDefaults(oldVersion) {
+  let pluginVersion = null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
+    pluginVersion = pkg.version || null;
+  } catch {
+    // Ignore
+  }
+
+  if (oldVersion === pluginVersion) return;
+
+  const tmuxConf = join(homedir(), '.tmux.conf');
+  let contents = '';
+  if (existsSync(tmuxConf)) {
+    contents = readFileSync(tmuxConf, 'utf-8');
+  }
+
+  if (!contents.includes('base-index 0')) {
+    const append = '\n# Genie defaults\nset -g base-index 0\nsetw -g pane-base-index 0\n';
+    writeFileSync(tmuxConf, contents + append, 'utf-8');
+    console.error('Added tmux base-index defaults to ~/.tmux.conf');
+  }
+}
+
 /**
  * Install or upgrade genie CLI globally via bun
  */
@@ -303,10 +472,34 @@ try {
     // Don't exit — let the rest of the chain run
   }
 
+  // Capture marker version BEFORE installDeps overwrites it
+  const oldVersion = getMarkerVersion();
+
   // 3. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
     console.error('Dependencies installed');
+  }
+
+  // 3a. Inject orchestration prompt (idempotent — checks version marker)
+  try {
+    injectOrchestrationPrompt(oldVersion);
+  } catch (e) {
+    console.error(`Warning: Could not write orchestration prompt: ${e.message}`);
+  }
+
+  // 3b. Create default config if missing (idempotent — never overwrites)
+  try {
+    createDefaultConfig();
+  } catch (e) {
+    console.error(`Warning: Could not create default config: ${e.message}`);
+  }
+
+  // 3c. Ensure tmux base-index defaults (idempotent — checks version marker)
+  try {
+    ensureTmuxDefaults(oldVersion);
+  } catch (e) {
+    console.error(`Warning: Could not update ~/.tmux.conf: ${e.message}`);
   }
 
   // 4. Install or upgrade genie CLI via bun global (non-fatal)

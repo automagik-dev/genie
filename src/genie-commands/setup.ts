@@ -7,7 +7,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { confirm, input } from '@inquirer/prompts';
+import { confirm, input, select } from '@inquirer/prompts';
 import { ensureCodexOtelConfig, getCodexConfigPath, isCodexConfigured } from '../lib/codex-config.js';
 import {
   contractPath,
@@ -53,34 +53,6 @@ function printSection(title: string, description?: string): void {
     console.log(`\x1b[2m${description}\x1b[0m`);
   }
   console.log();
-}
-
-// ============================================================================
-// Prerequisites Check (read-only)
-// ============================================================================
-
-async function checkPrerequisites(): Promise<void> {
-  printSection('1. Prerequisites Check', 'Checking required tools...');
-
-  const checks = [
-    { name: 'tmux', required: true },
-    { name: 'bun', required: true },
-    { name: 'claude', required: false, displayName: 'Claude Code CLI' },
-    { name: 'codex', required: false, displayName: 'OpenAI Codex CLI' },
-    { name: 'jq', required: false },
-  ];
-
-  for (const check of checks) {
-    const result = await checkCommand(check.name);
-    const displayName = check.displayName || check.name;
-    if (result.exists) {
-      console.log(`  \x1b[32m\u2713\x1b[0m ${displayName} ${result.version ? `(${result.version})` : ''}`);
-    } else if (check.required) {
-      console.log(`  \x1b[31m\u2717\x1b[0m ${displayName} \x1b[2m(required)\x1b[0m`);
-    } else {
-      console.log(`  \x1b[33m!\x1b[0m ${displayName} \x1b[2m(optional)\x1b[0m`);
-    }
-  }
 }
 
 // ============================================================================
@@ -292,6 +264,35 @@ async function configureDebug(config: GenieConfig, quick: boolean): Promise<Geni
 }
 
 // ============================================================================
+// Prompt Mode Configuration
+// ============================================================================
+
+async function configurePromptMode(config: GenieConfig, quick: boolean): Promise<GenieConfig> {
+  printSection('7. Prompt Mode', 'Controls how genie injects system prompts into Claude Code');
+
+  if (quick) {
+    console.log(`  Using default: promptMode="${config.promptMode}"`);
+    return config;
+  }
+
+  console.log('  append  — Uses --append-system-prompt (preserves Claude Code default system prompt)');
+  console.log('  system  — Uses --system-prompt (replaces Claude Code default system prompt)');
+  console.log();
+
+  const promptMode = await select({
+    message: 'Prompt mode:',
+    choices: [
+      { name: 'append (recommended — preserves CC default)', value: 'append' as const },
+      { name: 'system (replaces CC default)', value: 'system' as const },
+    ],
+    default: config.promptMode,
+  });
+
+  config.promptMode = promptMode;
+  return config;
+}
+
+// ============================================================================
 // Summary and Save
 // ============================================================================
 
@@ -305,6 +306,7 @@ async function showSummaryAndSave(config: GenieConfig): Promise<void> {
   );
   console.log(`  Codex:   ${config.codex?.configured ? '\x1b[32mconfigured\x1b[0m' : '\x1b[2mnot configured\x1b[0m'}`);
   console.log(`  Debug: tmux=${config.logging.tmuxDebug}, verbose=${config.logging.verbose}`);
+  console.log(`  Prompt mode: \x1b[36m${config.promptMode}\x1b[0m`);
   console.log();
 
   // Save config
@@ -410,12 +412,12 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
   }
 
   // Run all sections
-  await checkPrerequisites();
   config = await configureSession(config, quick);
   config = await configureTerminal(config, quick);
   config = await configureShortcuts(config, quick);
   config = await configureCodex(config, quick);
   config = await configureDebug(config, quick);
+  config = await configurePromptMode(config, quick);
 
   // Save and show summary
   await showSummaryAndSave(config);

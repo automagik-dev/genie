@@ -88,6 +88,8 @@ export const GenieConfigSchema = z.object({
   councilPresets: z.record(z.string(), CouncilPresetSchema).optional(),
   // Default council preset name
   defaultCouncilPreset: z.string().optional(),
+  // Controls whether --system-prompt (replace CC default) or --append-system-prompt (preserve CC default) is used
+  promptMode: z.enum(['append', 'system']).default('append'),
 });
 
 // Inferred types
