@@ -51,7 +51,7 @@ You stay in control. Attach to any running session, watch the work happen, take 
 Launch the terminal UI:
 
 ```bash
-genie tui
+genie
 ```
 
 That's your cockpit. From there, the pipeline:
@@ -90,7 +90,7 @@ genie agent spawn --role fix
 Queue SHIP-ready wishes, go to sleep. Workers execute in dependency order. Reviewers check each PR. You get a `DREAM-REPORT.md` in the morning with everything that happened, what shipped, and what needs your eyes.
 
 ```bash
-# Inside genie tui, type:
+# Inside genie, type:
 /dream
 # Pick your wishes, confirm the plan, go to sleep.
 ```
@@ -111,7 +111,7 @@ Agents maintain a structured knowledge vault in `.genie/brain/`. Notes are index
 Interactive mode. I explore your codebase, ask you questions one at a time, and build a learning plan. You approve every change before it takes effect. Updates memory files, CLAUDE.md, identity -- never touches framework code.
 
 ```bash
-# Inside genie tui, type:
+# Inside genie, type:
 /learn
 # I'll explore, ask questions, then propose changes in plan mode.
 ```
@@ -154,7 +154,7 @@ The pipeline is the product:
 | Command | Description |
 |---------|-------------|
 | `genie work <id>` | Work on a specific task |
-| `genie tui` | Launch terminal UI (your cockpit) |
+| `genie` | Launch terminal UI (your cockpit) |
 | `genie council <topic>` | Run council review on a topic |
 | `genie daemon` | Start background daemon |
 | `genie send <message>` | Send a message/command to Genie |

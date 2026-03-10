@@ -151,12 +151,12 @@ describe('buildTeamLeadCommand (shared module)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Verify tui.ts delegates to shared module
+// Verify session.ts delegates to shared module
 // ---------------------------------------------------------------------------
 
-describe('tui.ts: delegates to shared buildTeamLeadCommand', () => {
-  test('tui buildClaudeCommand sets GENIE_AGENT_NAME=team-lead', async () => {
-    const { buildClaudeCommand } = await import('../genie-commands/tui.js');
+describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
+  test('session buildClaudeCommand sets GENIE_AGENT_NAME=team-lead', async () => {
+    const { buildClaudeCommand } = await import('../genie-commands/session.js');
     const cmd = buildClaudeCommand('genie');
     expect(cmd).toContain("GENIE_AGENT_NAME='team-lead'");
   });
