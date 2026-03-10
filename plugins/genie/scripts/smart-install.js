@@ -312,26 +312,32 @@ genie agent kill <agent-id>
 `;
 
 /**
+ * Read the current marker version (before installDeps overwrites it).
+ * Returns the version string or null if not found.
+ */
+function getMarkerVersion() {
+  try {
+    if (existsSync(MARKER)) {
+      const marker = JSON.parse(readFileSync(MARKER, 'utf-8'));
+      return marker.version || null;
+    }
+  } catch {
+    // Ignore
+  }
+  return null;
+}
+
+/**
  * Inject the orchestration prompt into ~/.claude/rules/genie-orchestration.md
  * Only writes/rewrites if the plugin version changed.
+ * @param {string|null} oldVersion - marker version captured before installDeps ran
  */
-function injectOrchestrationPrompt() {
+function injectOrchestrationPrompt(oldVersion) {
   const rulesDir = join(homedir(), '.claude', 'rules');
   const destFile = join(rulesDir, 'genie-orchestration.md');
 
   if (!existsSync(rulesDir)) {
     mkdirSync(rulesDir, { recursive: true });
-  }
-
-  // Check version: only rewrite if version changed or file missing
-  let currentVersion = null;
-  try {
-    if (existsSync(MARKER)) {
-      const marker = JSON.parse(readFileSync(MARKER, 'utf-8'));
-      currentVersion = marker.version || null;
-    }
-  } catch {
-    // Ignore
   }
 
   let pluginVersion = null;
@@ -343,7 +349,7 @@ function injectOrchestrationPrompt() {
   }
 
   const fileExists = existsSync(destFile);
-  const versionChanged = !fileExists || currentVersion !== pluginVersion;
+  const versionChanged = !fileExists || oldVersion !== pluginVersion;
 
   if (versionChanged) {
     writeFileSync(destFile, ORCHESTRATION_PROMPT, 'utf-8');
@@ -360,7 +366,16 @@ function createDefaultConfig() {
     if (!existsSync(GENIE_DIR)) {
       mkdirSync(GENIE_DIR, { recursive: true });
     }
-    writeFileSync(configPath, JSON.stringify({ version: 2, promptMode: 'append', setupComplete: false }), 'utf-8');
+    writeFileSync(configPath, JSON.stringify({
+      version: 2,
+      promptMode: 'append',
+      session: { name: 'genie', defaultWindow: 'shell', autoCreate: true },
+      terminal: { execTimeout: 120000, readLines: 100, worktreeBase: '.worktrees' },
+      logging: { tmuxDebug: false, verbose: false },
+      shell: { preference: 'auto' },
+      shortcuts: { tmuxInstalled: false, shellInstalled: false },
+      setupComplete: false,
+    }, null, 2), 'utf-8');
     console.error('Created default ~/.genie/config.json');
   }
 }
@@ -368,19 +383,9 @@ function createDefaultConfig() {
 /**
  * Ensure tmux base-index defaults are set in ~/.tmux.conf
  * Only runs when version changes (or file missing).
+ * @param {string|null} oldVersion - marker version captured before installDeps ran
  */
-function ensureTmuxDefaults() {
-  // Guard: only run on version change
-  let currentVersion = null;
-  try {
-    if (existsSync(MARKER)) {
-      const marker = JSON.parse(readFileSync(MARKER, 'utf-8'));
-      currentVersion = marker.version || null;
-    }
-  } catch {
-    // Ignore
-  }
-
+function ensureTmuxDefaults(oldVersion) {
   let pluginVersion = null;
   try {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
@@ -389,7 +394,7 @@ function ensureTmuxDefaults() {
     // Ignore
   }
 
-  if (currentVersion === pluginVersion) return;
+  if (oldVersion === pluginVersion) return;
 
   const tmuxConf = join(homedir(), '.tmux.conf');
   let contents = '';
@@ -467,6 +472,9 @@ try {
     // Don't exit — let the rest of the chain run
   }
 
+  // Capture marker version BEFORE installDeps overwrites it
+  const oldVersion = getMarkerVersion();
+
   // 3. Install plugin dependencies if needed
   if (needsInstall()) {
     installDeps();
@@ -475,7 +483,7 @@ try {
 
   // 3a. Inject orchestration prompt (idempotent — checks version marker)
   try {
-    injectOrchestrationPrompt();
+    injectOrchestrationPrompt(oldVersion);
   } catch (e) {
     console.error(`Warning: Could not write orchestration prompt: ${e.message}`);
   }
@@ -489,7 +497,7 @@ try {
 
   // 3c. Ensure tmux base-index defaults (idempotent — checks version marker)
   try {
-    ensureTmuxDefaults();
+    ensureTmuxDefaults(oldVersion);
   } catch (e) {
     console.error(`Warning: Could not update ~/.tmux.conf: ${e.message}`);
   }
