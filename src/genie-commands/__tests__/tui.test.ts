@@ -55,7 +55,7 @@ describe('buildClaudeCommand', () => {
 
   test('with system prompt references file via $(cat)', () => {
     const cmd = buildClaudeCommand('genie', 'test prompt');
-    expect(cmd).toContain('--system-prompt');
+    expect(cmd).toContain('--append-system-prompt');
     expect(cmd).toContain('$(cat');
     expect(cmd).toContain('.genie/prompts/genie.md');
   });
@@ -75,7 +75,7 @@ describe('buildClaudeCommand', () => {
 
   test('system prompt is persisted to file, not inlined', () => {
     const cmd = buildClaudeCommand('genie', "it's a test with a very long prompt");
-    expect(cmd).toContain('--system-prompt');
+    expect(cmd).toContain('--append-system-prompt');
     // Prompt content NOT in the command — only the $(cat) reference
     expect(cmd).not.toContain('very long prompt');
     expect(cmd).toContain('$(cat');

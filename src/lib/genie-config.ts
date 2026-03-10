@@ -88,7 +88,7 @@ function getDefaultGenieConfig(): GenieConfig {
 /**
  * Load genie config synchronously, returning defaults if not found
  */
-function loadGenieConfigSync(): GenieConfig {
+export function loadGenieConfigSync(): GenieConfig {
   if (!existsSync(GENIE_CONFIG_FILE)) {
     return GenieConfigSchema.parse({});
   }
