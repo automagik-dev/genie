@@ -688,7 +688,7 @@ genie agent read <agent> --follow          # Tail terminal output
 # Control
 genie agent kill <id>                      # Force kill
 genie agent suspend <id>                   # Suspend (preserves session)
-genie agent exec <agent> "<cmd>"           # Run command in agent pane
+genie agent exec <agent> '<cmd>'           # Run command in agent pane
 genie agent answer <agent> <choice>        # Answer prompt (1-9 or text:...)
 ```
 
@@ -696,7 +696,7 @@ genie agent answer <agent> <choice>        # Answer prompt (1-9 or text:...)
 
 ```bash
 # Send message to an agent (ALWAYS use this instead of SendMessage)
-genie send "<text>" --to <agent>            # Send to specific agent
+genie send '<text>' --to <agent>            # Send to specific agent
 genie inbox <agent>                         # View agent inbox
 genie inbox <agent> --unread                # Unread only
 ```
@@ -719,7 +719,7 @@ genie agent spawn --role implementor
 genie agent list
 
 # 3. Send instructions
-genie send "Implement endpoint X" --to <agent-name>
+genie send 'Implement endpoint X' --to <agent-name>
 
 # 4. Check progress
 genie agent history <agent-name>

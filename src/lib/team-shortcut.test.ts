@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_TEAM, resolveTeamShortcut } from './team-shortcut.js';
+import { resolveTeamShortcut } from './team-shortcut.js';
 
 const KNOWN_COMMANDS = new Set([
   'install',
@@ -61,17 +61,13 @@ describe('resolveTeamShortcut', () => {
   });
 
   // =========================================================================
-  // No args -> default team
+  // No args -> open session (window name derived from cwd at runtime)
   // =========================================================================
 
-  test('no args opens default team', () => {
+  test('no args opens session without team arg', () => {
     const result = resolveTeamShortcut([], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['_open', DEFAULT_TEAM]);
+    expect(result.args).toEqual(['_open']);
     expect(result.isShortcut).toBe(true);
-  });
-
-  test('DEFAULT_TEAM is "main"', () => {
-    expect(DEFAULT_TEAM).toBe('main');
   });
 
   // =========================================================================
@@ -97,35 +93,6 @@ describe('resolveTeamShortcut', () => {
   });
 
   // =========================================================================
-  // --team flag (disambiguation)
-  // =========================================================================
-
-  test('--team flag routes to _open', () => {
-    const result = resolveTeamShortcut(['--team', 'myteam'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['_open', 'myteam']);
-    expect(result.isShortcut).toBe(true);
-  });
-
-  test('--team flag overrides subcommand collision', () => {
-    const result = resolveTeamShortcut(['--team', 'agent'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['_open', 'agent']);
-    expect(result.isShortcut).toBe(true);
-    expect(result.collisionWarning).toBeNull();
-  });
-
-  test('--team=name syntax routes to _open', () => {
-    const result = resolveTeamShortcut(['--team=agent'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['_open', 'agent']);
-    expect(result.isShortcut).toBe(true);
-  });
-
-  test('--team flag preserves remaining args', () => {
-    const result = resolveTeamShortcut(['--team', 'myteam', '--reset', '-d', '/tmp'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['_open', 'myteam', '--reset', '-d', '/tmp']);
-    expect(result.isShortcut).toBe(true);
-  });
-
-  // =========================================================================
   // Collision warnings
   // =========================================================================
 
@@ -135,7 +102,6 @@ describe('resolveTeamShortcut', () => {
     expect(result.args).toEqual(['agent', 'spawn']);
     expect(result.isShortcut).toBe(false);
     expect(result.collisionWarning).toContain('is a subcommand');
-    expect(result.collisionWarning).toContain('genie --team agent');
   });
 
   test('no warning when known command has no team collision', () => {
@@ -170,18 +136,6 @@ describe('resolveTeamShortcut', () => {
   test('-V flag is not treated as team name', () => {
     const result = resolveTeamShortcut(['-V'], KNOWN_COMMANDS);
     expect(result.args).toEqual(['-V']);
-    expect(result.isShortcut).toBe(false);
-  });
-
-  test('--team with no value -> no rewrite', () => {
-    const result = resolveTeamShortcut(['--team'], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['--team']);
-    expect(result.isShortcut).toBe(false);
-  });
-
-  test('--team= with empty value -> no rewrite', () => {
-    const result = resolveTeamShortcut(['--team='], KNOWN_COMMANDS);
-    expect(result.args).toEqual(['--team=']);
     expect(result.isShortcut).toBe(false);
   });
 });

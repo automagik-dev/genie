@@ -13,8 +13,8 @@ import { join } from 'node:path';
 // The tmux-dependent parts are integration-tested separately
 
 // ============================================================================
-// Unit tests for buildTeamLeadCommand (tested via tui.ts buildClaudeCommand)
-// The auto-spawn module reuses the same pattern, tested in tui.test.ts
+// Unit tests for buildTeamLeadCommand (tested via session.ts buildClaudeCommand)
+// The auto-spawn module reuses the same pattern, tested in session.test.ts
 // ============================================================================
 
 // ============================================================================
