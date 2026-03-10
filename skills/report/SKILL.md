@@ -153,7 +153,7 @@ For each evidence section that was skipped, include a note explaining why (e.g.,
 ### Phase 6: Create GitHub Issue
 
 1. Check `gh auth status` — verify GitHub CLI is authenticated.
-2. If authenticated: run `gh issue create --title "<title>" --body "<report body>"` with labels.
+2. If authenticated: run `gh issue create --title '<title>' --body '<report body>'` with labels. Always use single quotes and escape internal single quotes to prevent shell injection from user-provided text.
 3. **Labels:** `bug` + auto-detected area labels based on affected files:
    - Files in `src/auth/` or `lib/auth/` -> `area:auth`
    - Files in `src/ui/` or `components/` -> `area:ui`
