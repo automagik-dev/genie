@@ -1,7 +1,7 @@
 /**
  * Team Lead Command Builder — Single source of truth for team-lead launch commands.
  *
- * Both `tui.ts` and `team-auto-spawn.ts` need to build the same claude CLI
+ * Both `session.ts` and `team-auto-spawn.ts` need to build the same claude CLI
  * command for launching a team-lead. This module prevents drift between the
  * two implementations (which previously caused GENIE_AGENT_NAME regressions).
  *

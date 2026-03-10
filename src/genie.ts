@@ -19,13 +19,13 @@ import {
   profilesRmCommand,
   profilesShowCommand,
 } from './genie-commands/profiles.js';
+import { type SessionOptions, sessionCommand } from './genie-commands/session.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
   shortcutsShowCommand,
   shortcutsUninstallCommand,
 } from './genie-commands/shortcuts.js';
-import { type TuiOptions, tuiCommand } from './genie-commands/tui.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
 import { sanitizeTeamName } from './lib/claude-native-teams.js';
@@ -70,14 +70,14 @@ program.command('update').description('Update Genie CLI to the latest version').
 // Uninstall command - remove genie CLI
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
-// Internal handler for team opening (hidden — user invokes via `genie` or `genie <team>`)
+// Internal handler for session opening (hidden -- user invokes via `genie` or `genie <team>`)
 program
   .command('_open [team]', { hidden: true })
   .option('-r, --reset', 'Kill existing session and start fresh')
   .option('-d, --dir <path>', 'Working directory (default: cwd)')
-  .action(async (team: string | undefined, options: TuiOptions) => {
+  .action(async (team: string | undefined, options: SessionOptions) => {
     if (team) options.team = team;
-    await tuiCommand(options);
+    await sessionCommand(options);
   });
 
 // Shortcuts command group - manage tmux keyboard shortcuts
@@ -217,7 +217,7 @@ program
   });
 
 // ============================================================================
-// Team shortcut routing: genie <team> -> genie tui <team>
+// Team shortcut routing: genie <team> -> genie _open <team>
 // ============================================================================
 
 // Collect all registered subcommand names (+ aliases)

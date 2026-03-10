@@ -735,7 +735,7 @@ async function handleWorkerSpawn(options: {
   // 1. Resolve team name from flag, env, or session discovery
   const team = options.team || (await nativeTeams.discoverTeamName());
   if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie tui session)');
+    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
     process.exit(1);
   }
 
