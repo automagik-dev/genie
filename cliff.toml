@@ -37,8 +37,8 @@ body = """
 - [@vasconceloscezar](https://github.com/vasconceloscezar)
 {% elif name == "Felipe Rosa" -%}
 - [@namastex888](https://github.com/namastex888)
-{% elif name == "Automagik Genie" -%}
-- [@automagik-genie](https://github.com/automagik-genie) 🤖
+{% elif name == "Genie" -%}
+- [@genie](https://github.com/genie) 🤖
 {% else -%}
 - {{ name }}
 {% endif -%}

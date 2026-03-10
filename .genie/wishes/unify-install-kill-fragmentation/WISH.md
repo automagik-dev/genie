@@ -19,7 +19,7 @@ Four redundant installers and three onboarding paths cause silent failures and c
 - `smart-install.js`: add orchestration prompt injection + config defaults (for marketplace installs)
 - New setting `promptMode: 'append' | 'system'` in GenieConfigSchema
 - `buildTeamLeadCommand`: read `promptMode`, use correct CLI flag, stop loading TEAM_LEAD_PROMPT.md from filesystem
-- `tui.ts`: fix misleading warning about missing system prompt
+- `session.ts`: fix misleading warning about missing system prompt
 - `setup.ts`: remove prereqs phase, add `promptMode` config phase
 - Delete `genie install` command (install.ts) and CLI router entry
 - Delete `install-genie-cli.sh`
@@ -185,9 +185,9 @@ grep -n 'base-index' install.sh && echo "PASS" || echo "FAIL"
 grep -n 'promptMode' install.sh && echo "PASS" || echo "FAIL"
 ```
 
-### Group E: smart-install.js maintenance mode + tui.ts warning fix
+### Group E: smart-install.js maintenance mode + session.ts warning fix
 
-**Goal:** smart-install.js gains orchestration prompt injection for marketplace installs. Fix misleading tui.ts warning.
+**Goal:** smart-install.js gains orchestration prompt injection for marketplace installs. Fix misleading session.ts warning.
 
 **Deliverables:**
 1. In `smart-install.js`:
@@ -195,20 +195,20 @@ grep -n 'promptMode' install.sh && echo "PASS" || echo "FAIL"
    - Only rewrite if plugin version changed (use existing version marker)
    - Add function to create `~/.genie/config.json` with defaults if not exists
    - Add tmux base-index check/fix for `~/.tmux.conf`
-2. In `src/genie-commands/tui.ts`:
+2. In `src/genie-commands/session.ts`:
    - Change warning at lines 199-200: AGENTS.md is informational, not a problem
    - Remove "Launching without --system-prompt" wording (orchestration is in rules/ now, always present)
 
 **Acceptance criteria:**
 - smart-install.js writes `~/.claude/rules/genie-orchestration.md` on first run or version change
 - smart-install.js creates default config if missing
-- tui.ts warning no longer says "Launching without --system-prompt"
+- session.ts warning no longer says "Launching without --system-prompt"
 - `bun run check` passes
 
 **Validation:**
 ```bash
 grep -n 'genie-orchestration' plugins/genie/scripts/smart-install.js && echo "PASS" || echo "FAIL"
-grep -n 'without --system-prompt' src/genie-commands/tui.ts && echo "FAIL: old warning" || echo "PASS"
+grep -n 'without --system-prompt' src/genie-commands/session.ts && echo "FAIL: old warning" || echo "PASS"
 bun run check
 bun run build
 grep -c 'MANDATORY Agent Orchestration' dist/genie.js || true  # Should be 0 (no longer inlined in bundle)

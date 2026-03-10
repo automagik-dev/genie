@@ -340,7 +340,7 @@ function printNextSteps(): void {
   console.log();
   console.log('\x1b[1mNext Steps:\x1b[0m');
   console.log();
-  console.log('  Start a session:  \x1b[36mgenie tui\x1b[0m');
+  console.log('  Start a session:  \x1b[36mgenie\x1b[0m');
   console.log('  Watch AI work:    \x1b[36mtmux attach -t genie\x1b[0m');
   console.log('  Check health:     \x1b[36mgenie doctor\x1b[0m');
   console.log();

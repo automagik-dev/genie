@@ -92,6 +92,33 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
 }
 
 /**
+ * Get a tmux environment variable for a specific window target.
+ * Uses `tmux show-environment -t <target> <varName>` which returns "VAR=value".
+ * Returns null if the variable is not set or the target doesn't exist.
+ */
+export async function getWindowEnv(target: string, varName: string): Promise<string | null> {
+  try {
+    const output = await executeTmux(`show-environment -t '${target}' '${varName}'`);
+    // Output format: "VARNAME=value"
+    const prefix = `${varName}=`;
+    if (output?.startsWith(prefix)) {
+      return output.slice(prefix.length).trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set a tmux environment variable scoped to a specific window target.
+ * Uses `tmux set-environment -t <target> <varName> <value>`.
+ */
+export async function setWindowEnv(target: string, varName: string, value: string): Promise<void> {
+  await executeTmux(`set-environment -t '${target}' '${varName}' '${value}'`);
+}
+
+/**
  * List windows in a session
  */
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
