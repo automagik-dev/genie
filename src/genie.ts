@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { doctorCommand } from './genie-commands/doctor.js';
-import { installCommand } from './genie-commands/install.js';
 import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
 import {
   profilesAddCommand,
@@ -46,14 +45,6 @@ import * as workCmd from './term-commands/work.js';
 const program = new Command();
 
 program.name('genie').description('Genie CLI - Setup and utilities for AI-assisted development').version(VERSION);
-
-// Install command - check/install prerequisites
-program
-  .command('install')
-  .description('Verify and install prerequisites')
-  .option('--check', 'Only check prerequisites, do not install')
-  .option('--yes', 'Auto-approve all installations')
-  .action(installCommand);
 
 // Setup command - configure genie settings
 program

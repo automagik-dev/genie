@@ -9,11 +9,11 @@
  * $(cat path) to avoid "argument list too long" errors in tmux send-keys.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
+import { loadGenieConfigSync } from './genie-config.js';
 
 const PROMPTS_DIR = join(homedir(), '.genie', 'prompts');
 
@@ -23,36 +23,27 @@ export function shellQuote(s: string): string {
 }
 
 /**
- * Read the built-in TEAM_LEAD_PROMPT.md from the genie-cli package root.
- * This prompt teaches team-leads to use genie CLI instead of native CC tools.
- */
-function getTeamLeadPrompt(): string | null {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const promptPath = join(thisDir, '..', '..', 'TEAM_LEAD_PROMPT.md');
-  if (existsSync(promptPath)) {
-    return readFileSync(promptPath, 'utf-8');
-  }
-  return null;
-}
-
-/**
- * Write the combined system prompt to ~/.genie/prompts/<team>.md.
+ * Write the system prompt (AGENTS.md content) to ~/.genie/prompts/<team>.md.
  * Returns the file path, or null if there's no prompt to write.
+ *
+ * Note: The team-lead orchestration prompt is now injected into
+ * ~/.claude/rules/genie-orchestration.md by install.sh at install time,
+ * so Claude Code auto-loads it every session without runtime path resolution.
  */
 function persistSystemPrompt(teamName: string, systemPrompt?: string): string | null {
-  const teamLeadPrompt = getTeamLeadPrompt();
-  const fullPrompt = [systemPrompt, teamLeadPrompt].filter(Boolean).join('\n\n');
-  if (!fullPrompt) return null;
+  if (!systemPrompt) return null;
 
   mkdirSync(PROMPTS_DIR, { recursive: true });
   const promptPath = join(PROMPTS_DIR, `${sanitizeTeamName(teamName)}.md`);
-  writeFileSync(promptPath, fullPrompt, 'utf-8');
+  writeFileSync(promptPath, systemPrompt, 'utf-8');
   return promptPath;
 }
 
 interface BuildTeamLeadCommandOptions {
   systemPrompt?: string;
   resumeSessionId?: string;
+  /** Override promptMode instead of reading from config (useful for testing) */
+  promptMode?: 'append' | 'system';
 }
 
 /**
@@ -86,7 +77,9 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   // Write prompt to file, reference via $(cat) to avoid arg-list-too-long
   const promptPath = persistSystemPrompt(sanitized, options?.systemPrompt);
   if (promptPath) {
-    parts.push(`--system-prompt "$(cat ${shellQuote(promptPath)})"`);
+    const resolvedPromptMode = options?.promptMode ?? loadGenieConfigSync().promptMode;
+    const promptFlag = resolvedPromptMode === 'system' ? '--system-prompt' : '--append-system-prompt';
+    parts.push(`${promptFlag} "$(cat ${shellQuote(promptPath)})"`);
   }
 
   return parts.join(' ');

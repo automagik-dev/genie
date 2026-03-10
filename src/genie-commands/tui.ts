@@ -197,7 +197,7 @@ export async function tuiCommand(options: TuiOptions = {}): Promise<void> {
     let session = await tmux.findSessionByName(name);
     const systemPrompt = getAgentsSystemPrompt();
     if (!systemPrompt) {
-      console.warn('Warning: No AGENTS.md found in current directory. Launching without --system-prompt.');
+      console.warn('Info: No AGENTS.md found in current directory. Team-lead will use orchestration rules only.');
     }
 
     if (!session) {
