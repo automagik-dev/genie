@@ -16,13 +16,13 @@
 <p align="center">Describe the problem. Genie interviews you, plans the work, dispatches agents, and reviews the code.<br/>You approve and ship.</p>
 
 <p align="center">
-  <a href="#install">Install</a> &middot;
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="https://discord.gg/xcW8c7fF3R">Discord</a>
+  <a href="#install"><strong>Install</strong></a> &middot;
+  <a href="#quick-start"><strong>Quick Start</strong></a> &middot;
+  <a href="#features"><strong>Features</strong></a> &middot;
+  <a href="https://discord.gg/xcW8c7fF3R"><strong>Discord</strong></a>
 </p>
 
----
+<br/>
 
 ## What is Genie?
 
@@ -30,51 +30,86 @@ Genie is a CLI that turns vague ideas into shipped PRs through a structured pipe
 
 ## Genie is right for you if
 
-- You've re-explained your codebase architecture to Claude Code for the third time this week
-- You have 5+ AI coding tabs open and can't remember which one is doing what
-- You've watched an AI agent spiral for 20 minutes because it lost the original context
-- You want AI to ask *you* the right questions before writing code, not the other way around
-- You want to go to lunch and come back to reviewed PRs, not a stuck terminal
-- You want a repeatable process that works the same whether you're focused or half-asleep
-
----
+- ✅ You've re-explained your codebase architecture to Claude Code for the third time this week
+- ✅ You have 5+ AI coding tabs open and can't remember which one is doing what
+- ✅ You've watched an AI agent spiral for 20 minutes because it lost the original context
+- ✅ You want AI to ask *you* the right questions before writing code, not the other way around
+- ✅ You want to go to lunch and come back to reviewed PRs, not a stuck terminal
+- ✅ You want a repeatable process that works the same whether you're focused or half-asleep
+<br/>
 
 ## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
+```
+
+Sets up everything: Bun, tmux, Claude Code plugin, orchestration config. Update anytime with `genie update`.
+
+<details>
+<summary>Alternative: npm install</summary>
 
 ```bash
 npm install -g @automagik/genie
 ```
 
-Or via install script: `curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash`
+> Installs the CLI only. You'll need Bun 1.3.10+, tmux, and `genie setup` for full plugin integration.
 
-> **Requirements:** macOS or Linux, [Bun](https://bun.sh) 1.3.10+, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+</details>
+
+> **Requirements:** macOS or Linux, [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 
 ## Quick Start
 
 | Step | Command |
 |------|---------|
-| **1. Launch** | `genie` |
-| **2. Wish** | `/wish fix the authentication bug in the login flow` |
-| **3. Ship** | Genie asks questions, builds a plan, executes it. You approve the PR. |
-
----
+| **01. Launch** | `genie` |
+| **02. Wish** | `/wish fix the authentication bug in the login flow` |
+| **03. Ship** | Genie asks questions, builds a plan, executes it. You approve the PR. |
+<br/>
 
 ## Features
 
-| | | |
-|:---:|:---:|:---:|
-| **Wish Pipeline** | **Parallel Agents** | **Context Preservation** |
-| Brainstorm, plan, execute, review, ship — consistent results every time. | Agents execute in live terminal sessions. Watch them, or check in when done. | Scoped specialists instead of one bloated window. No context rot. |
-| **Persistent Memory** | **Automated Review** | **Overnight Execution** |
-| Knowledge vault that agents search before answering. Compounds daily. | Severity-tagged review. Nothing ships with CRITICAL or HIGH issues. | Queue wishes before bed. Wake up to reviewed PRs. |
-| **10-Critic Council** | **Behavioral Learning** | **Portable Context** |
-| 10 specialists critique your design before you commit to anything. | Genie adapts to your codebase conventions and preferences. | Identity, skills, memory — markdown files you own. Git-versioned. |
-
----
+<table>
+<tr>
+<td align="center" width="33%"><h3>🧞 Wish Pipeline</h3>
+Brainstorm, plan, execute, review, ship — consistent results every time.
+</td>
+<td align="center" width="33%"><h3>⚡ Parallel Agents</h3>
+Agents execute in live terminal sessions. Watch them, or check in when done.
+</td>
+<td align="center" width="33%"><h3>🧠 Context Preservation</h3>
+Scoped specialists instead of one bloated window. No context rot.
+</td>
+</tr>
+<tr>
+<td align="center"><h3>💾 Persistent Memory</h3>
+Knowledge vault that agents search before answering. Compounds daily.
+</td>
+<td align="center"><h3>🔍 Automated Review</h3>
+Severity-tagged review. Nothing ships with CRITICAL or HIGH issues.
+</td>
+<td align="center"><h3>🌙 Overnight Execution</h3>
+Queue wishes before bed. Wake up to reviewed PRs.
+</td>
+</tr>
+<tr>
+<td align="center"><h3>👥 10-Critic Council</h3>
+10 specialists critique your design before you commit to anything.
+</td>
+<td align="center"><h3>🎯 Behavioral Learning</h3>
+Genie adapts to your codebase conventions and preferences.
+</td>
+<td align="center"><h3>📦 Portable Context</h3>
+Identity, skills, memory — markdown files you own. Git-versioned.
+</td>
+</tr>
+</table>
+<br/>
 
 ## Without Genie vs. With Genie
 
-| Without | With |
+| ❌ Without Genie | ✅ With Genie |
 |---|---|
 | Re-explain your codebase to Claude every session | Genie interviews you once. Context flows to every agent. |
 | Copy-paste requirements, hope it understood | `/wish` captures scope and acceptance criteria upfront |
@@ -82,12 +117,11 @@ Or via install script: `curl -fsSL https://raw.githubusercontent.com/automagik-d
 | Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
 | 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
 | 10 min of setup before any work starts | `genie work bd-42` — inherits context automatically |
-
----
+<br/>
 
 ## The Wish Pipeline
 
-`/brainstorm` → `/wish` → `/work` → `/review` → **ship**
+💭 `/brainstorm` → 🧞 `/wish` → ⚙️ `/work` → 🔍 `/review` → 🚀 **ship**
 
 | Stage | What happens |
 |-------|-------------|
@@ -96,8 +130,7 @@ Or via install script: `curl -fsSL https://raw.githubusercontent.com/automagik-d
 | **Work** | Agents spawn in isolated worktrees, execute in parallel. |
 | **Review** | Automated review with severity gates. Nothing merges without passing. |
 | **Ship** | PR created, checks pass, you merge. |
-
----
+<br/>
 
 <details id="cli-reference">
 <summary><strong>CLI Reference</strong></summary>
@@ -199,7 +232,7 @@ genie setup --quick      # Recommended defaults (collaborative + audited)
 
 </details>
 
----
+<br/>
 
 ## Development
 
