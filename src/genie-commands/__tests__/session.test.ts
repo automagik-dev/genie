@@ -62,7 +62,7 @@ describe('buildClaudeCommand', () => {
 
   test('without explicit system prompt still includes --system-prompt from team-lead prompt', () => {
     const cmd = buildClaudeCommand('genie');
-    // buildTeamLeadCommand always loads TEAM_LEAD_PROMPT.md if it exists
+    // Orchestration prompt is now in ~/.claude/rules/ (auto-loaded by CC)
     // In test env it may or may not exist, but the flag structure is correct
     expect(cmd).toContain('--team-name');
   });
