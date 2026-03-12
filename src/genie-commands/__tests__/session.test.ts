@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { buildClaudeCommand, getAgentsSystemPrompt, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
@@ -152,7 +152,6 @@ describe('sanitizeWindowName', () => {
   test('handles directory basename with dot (simulates basename of /home/user/ravi.bot)', () => {
     // In production, basename() is called before sanitizeWindowName,
     // so we test the basename result directly.
-    const { basename } = require('node:path');
     const dirBasename = basename('/home/user/ravi.bot');
     expect(sanitizeWindowName(dirBasename)).toBe('ravi-bot');
   });
