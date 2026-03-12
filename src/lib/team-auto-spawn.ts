@@ -89,7 +89,7 @@ async function isTeamActive(teamName: string): Promise<boolean> {
 export async function ensureTeamLead(teamName: string, workingDir: string): Promise<EnsureTeamLeadResult> {
   // Fast path: team already active
   if (await isTeamActive(teamName)) {
-    return { created: false, session: DEFAULT_SESSION, window: sanitizeTeamName(teamName) };
+    return { created: false, session: DEFAULT_SESSION, window: sanitizeWindowName(teamName) };
   }
 
   // Create native team structure
@@ -118,5 +118,5 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 
-  return { created: teamWindow.created, session, window: sanitizeTeamName(teamName) };
+  return { created: teamWindow.created, session, window: windowName };
 }
