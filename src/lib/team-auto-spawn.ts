@@ -11,6 +11,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { sanitizeWindowName } from '../genie-commands/session.js';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
 import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
@@ -103,13 +104,14 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   // Ensure tmux session exists
   const session = await ensureSession();
 
-  // Create team window
-  const teamWindow = await tmux.ensureTeamWindow(session, teamName, workingDir);
+  // Create team window (sanitize dots — tmux interprets '.' as pane separator)
+  const windowName = sanitizeWindowName(teamName);
+  const teamWindow = await tmux.ensureTeamWindow(session, windowName, workingDir);
 
   if (teamWindow.created) {
     // Launch Claude Code in the new window
     const systemPrompt = getSystemPrompt(workingDir);
-    const target = `${session}:${teamName}`;
+    const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
     const cmd = buildTeamLeadCommand(teamName, { systemPrompt: systemPrompt ?? undefined });
