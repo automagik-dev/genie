@@ -1,41 +1,39 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Agent } from './agent-registry.js';
+import type { IdleDeps } from './idle-timeout.js';
+import { WATCHDOG_POLL_INTERVAL_MS, checkIdleWorkers, getIdleTimeoutMs, suspendWorker } from './idle-timeout.js';
 
 // ============================================================================
-// Mock setup — must be before imports
+// Mock deps — injected directly, no mock.module needed
 // ============================================================================
 
-const mockWorkers: any[] = [];
-let mockUpdates: Array<{ id: string; updates: any }> = [];
+let mockWorkers: Agent[] = [];
+let mockUpdates: Array<{ id: string; updates: Partial<Agent> }> = [];
 let mockExecuteTmuxCalls: string[] = [];
 let mockPaneAliveMap: Record<string, boolean> = {};
 
-mock.module('./agent-registry.js', () => ({
-  list: async () => mockWorkers,
-  get: async (id: string) => mockWorkers.find((w) => w.id === id) ?? null,
-  update: async (id: string, updates: any) => {
-    mockUpdates.push({ id, updates });
-    const w = mockWorkers.find((w) => w.id === id);
-    if (w) Object.assign(w, updates);
-  },
-}));
-
-mock.module('./tmux.js', () => ({
-  executeTmux: async (cmd: string) => {
-    mockExecuteTmuxCalls.push(cmd);
-  },
-  isPaneAlive: async (paneId: string) => mockPaneAliveMap[paneId] ?? false,
-}));
-
-// Import after mocks
-const { suspendWorker, checkIdleWorkers, getIdleTimeoutMs, WATCHDOG_POLL_INTERVAL_MS } = await import(
-  './idle-timeout.js'
-);
+function makeDeps(): IdleDeps {
+  return {
+    registryGet: async (id: string) => mockWorkers.find((w) => w.id === id) ?? null,
+    registryList: async () => mockWorkers,
+    registryUpdate: async (id: string, updates: Partial<Agent>) => {
+      mockUpdates.push({ id, updates });
+      const w = mockWorkers.find((w) => w.id === id);
+      if (w) Object.assign(w, updates);
+    },
+    executeTmux: async (cmd: string) => {
+      mockExecuteTmuxCalls.push(cmd);
+      return '';
+    },
+    isPaneAlive: async (paneId: string) => mockPaneAliveMap[paneId] ?? false,
+  };
+}
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-function makeWorker(overrides: Partial<any> = {}): any {
+function makeWorker(overrides: Partial<Agent> = {}): Agent {
   return {
     id: `test-worker-${Math.random().toString(36).slice(2, 8)}`,
     paneId: `%${Math.floor(Math.random() * 100)}`,
@@ -48,7 +46,7 @@ function makeWorker(overrides: Partial<any> = {}): any {
     transport: 'tmux',
     team: 'test-team',
     ...overrides,
-  };
+  } as Agent;
 }
 
 // ============================================================================
@@ -57,7 +55,7 @@ function makeWorker(overrides: Partial<any> = {}): any {
 
 describe('idle-timeout', () => {
   beforeEach(() => {
-    mockWorkers.length = 0;
+    mockWorkers = [];
     mockUpdates = [];
     mockExecuteTmuxCalls = [];
     mockPaneAliveMap = {};
@@ -107,14 +105,14 @@ describe('idle-timeout', () => {
 
   describe('suspendWorker', () => {
     test('returns false for non-existent worker', async () => {
-      const result = await suspendWorker('nonexistent');
+      const result = await suspendWorker('nonexistent', makeDeps());
       expect(result).toBe(false);
     });
 
     test('returns true for already-suspended worker', async () => {
       const w = makeWorker({ state: 'suspended' });
       mockWorkers.push(w);
-      const result = await suspendWorker(w.id);
+      const result = await suspendWorker(w.id, makeDeps());
       expect(result).toBe(true);
       expect(mockExecuteTmuxCalls).toHaveLength(0);
     });
@@ -123,7 +121,7 @@ describe('idle-timeout', () => {
       const w = makeWorker({ paneId: '%42' });
       mockWorkers.push(w);
 
-      const result = await suspendWorker(w.id);
+      const result = await suspendWorker(w.id, makeDeps());
       expect(result).toBe(true);
       expect(mockExecuteTmuxCalls).toContain("kill-pane -t '%42'");
       expect(mockUpdates).toEqual(
@@ -140,7 +138,7 @@ describe('idle-timeout', () => {
       const w = makeWorker({ paneId: 'inline' });
       mockWorkers.push(w);
 
-      const result = await suspendWorker(w.id);
+      const result = await suspendWorker(w.id, makeDeps());
       expect(result).toBe(true);
       expect(mockExecuteTmuxCalls).toHaveLength(0);
     });
@@ -149,10 +147,10 @@ describe('idle-timeout', () => {
       const w = makeWorker();
       mockWorkers.push(w);
 
-      await suspendWorker(w.id);
+      await suspendWorker(w.id, makeDeps());
       const update = mockUpdates.find((u) => u.id === w.id);
       expect(update?.updates.suspendedAt).toBeDefined();
-      const ts = new Date(update?.updates.suspendedAt).getTime();
+      const ts = new Date(update?.updates.suspendedAt as string).getTime();
       expect(ts).toBeGreaterThan(Date.now() - 5000);
     });
   });
@@ -164,7 +162,7 @@ describe('idle-timeout', () => {
       mockWorkers.push(w);
       mockPaneAliveMap[w.paneId] = true;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toHaveLength(0);
     });
 
@@ -174,7 +172,7 @@ describe('idle-timeout', () => {
       mockWorkers.push(w);
       mockPaneAliveMap[w.paneId] = true;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toHaveLength(0);
     });
 
@@ -186,7 +184,7 @@ describe('idle-timeout', () => {
       });
       mockWorkers.push(w);
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toHaveLength(0);
     });
 
@@ -198,7 +196,7 @@ describe('idle-timeout', () => {
       mockWorkers.push(w);
       mockPaneAliveMap[w.paneId] = true;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toHaveLength(0);
     });
 
@@ -210,7 +208,7 @@ describe('idle-timeout', () => {
       mockWorkers.push(w);
       mockPaneAliveMap[w.paneId] = true;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toContain(w.id);
     });
 
@@ -222,7 +220,7 @@ describe('idle-timeout', () => {
       mockWorkers.push(w);
       mockPaneAliveMap[w.paneId] = false;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toContain(w.id);
       // Should not have kill-pane call (pane already dead, goes direct update path)
       expect(mockExecuteTmuxCalls.filter((c) => c.includes('kill-pane'))).toHaveLength(0);
@@ -244,7 +242,7 @@ describe('idle-timeout', () => {
       mockPaneAliveMap['%10'] = true;
       mockPaneAliveMap['%11'] = true;
 
-      const result = await checkIdleWorkers();
+      const result = await checkIdleWorkers(makeDeps());
       expect(result).toHaveLength(2);
       expect(result).toContain('worker-1');
       expect(result).toContain('worker-2');
