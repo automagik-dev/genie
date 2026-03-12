@@ -10,6 +10,7 @@ let mockExecuteTmuxCalls: string[] = [];
 let mockPaneAliveMap: Record<string, boolean> = {};
 
 mock.module('./agent-registry.js', () => ({
+  // Used by idle-timeout
   list: async () => mockWorkers,
   get: async (id: string) => mockWorkers.find((w) => w.id === id) ?? null,
   update: async (id: string, updates: any) => {
@@ -17,13 +18,51 @@ mock.module('./agent-registry.js', () => ({
     const w = mockWorkers.find((w) => w.id === id);
     if (w) Object.assign(w, updates);
   },
+  // Stubs for all other exports — Bun mock.module replaces the entire module cache,
+  // so missing exports cause "Export named 'X' not found" in unrelated test files.
+  register: async () => {},
+  unregister: async () => {},
+  updateState: async () => {},
+  findByPane: async () => null,
+  findByWindow: async () => null,
+  findByTask: async () => null,
+  findAllByTask: async () => [],
+  generateWorkerId: async () => 'stub-id',
+  getElapsedTime: () => ({ ms: 0, formatted: '0s' }),
+  formatElapsed: () => '0s',
+  addSubPane: async () => {},
+  getPane: async () => null,
+  removeSubPane: async () => {},
+  saveTemplate: async () => {},
+  removeTemplate: async () => {},
+  listTemplates: async () => [],
 }));
 
 mock.module('./tmux.js', () => ({
+  // Used by idle-timeout
   executeTmux: async (cmd: string) => {
     mockExecuteTmuxCalls.push(cmd);
   },
   isPaneAlive: async (paneId: string) => mockPaneAliveMap[paneId] ?? false,
+  // Stubs for all other exports — prevent Bun mock.module cache corruption
+  listSessions: async () => [],
+  findSessionByName: async () => null,
+  getWindowEnv: async () => null,
+  setWindowEnv: async () => {},
+  listWindows: async () => [],
+  listPanes: async () => [],
+  capturePaneContent: async () => '',
+  createSession: async () => null,
+  createWindow: async () => null,
+  findWindowByName: async () => null,
+  ensureTeamWindow: async () => ({ windowId: '', created: false }),
+  applyPaneColor: async () => {},
+  killSession: async () => {},
+  killWindow: async () => {},
+  killWindowQualified: async () => {},
+  killPane: async () => {},
+  executeCommand: async () => ({ success: false, output: '' }),
+  runCommandSync: async () => ({ success: false, output: '' }),
 }));
 
 // Import after mocks
