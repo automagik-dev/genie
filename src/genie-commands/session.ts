@@ -235,11 +235,20 @@ async function focusTeamWindow(
   console.log(`Focused team window "${windowName}"`);
 }
 
+/**
+ * Sanitize a window name for tmux targeting.
+ * tmux uses '.' as a pane separator in targets (session:window.pane),
+ * so dots in window names cause "can't find pane" errors.
+ */
+function sanitizeWindowName(name: string): string {
+  return name.replace(/\./g, '-');
+}
+
 async function deriveWindowName(sessionName: string, workspaceDir: string, team?: string): Promise<string> {
-  if (team) return team;
+  if (team) return sanitizeWindowName(team);
   const existingSession = await tmux.findSessionByName(sessionName);
-  if (existingSession) return resolveWindowName(sessionName, workspaceDir);
-  return basename(workspaceDir);
+  if (existingSession) return sanitizeWindowName(await resolveWindowName(sessionName, workspaceDir));
+  return sanitizeWindowName(basename(workspaceDir));
 }
 
 async function handleReset(sessionName: string, windowName: string): Promise<void> {
