@@ -138,7 +138,10 @@ export function buildClaudeCommand(teamName: string, systemPrompt?: string, resu
  * 6. If no window exists -> use the base name
  */
 async function resolveWindowName(sessionName: string, cwd: string): Promise<string> {
-  const baseName = basename(cwd);
+  // Sanitize before lookup so collision detection matches what tmux actually stores.
+  // Without this, dotted folders (e.g. "foo.bar") bypass disambiguation because
+  // findWindowByName looks for "foo.bar" while the existing window is "foo-bar".
+  const baseName = sanitizeWindowName(basename(cwd));
   const existing = await tmux.findWindowByName(sessionName, baseName);
 
   if (!existing) {
