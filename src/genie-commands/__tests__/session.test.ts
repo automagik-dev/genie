@@ -163,4 +163,22 @@ describe('sanitizeWindowName', () => {
   test('handles name that is only dots', () => {
     expect(sanitizeWindowName('...')).toBe('---');
   });
+
+  test('sanitize is idempotent (double-sanitize is safe)', () => {
+    // resolveWindowName now pre-sanitizes, deriveWindowName sanitizes again.
+    // This must be safe (no-op on already-sanitized names).
+    const once = sanitizeWindowName('foo.bar');
+    const twice = sanitizeWindowName(once);
+    expect(twice).toBe(once);
+    expect(twice).toBe('foo-bar');
+  });
+
+  test('dotted folder collides with dashed folder after sanitize', () => {
+    // Regression: "foo.bar" and "foo-bar" must produce the same window name
+    // so that collision detection in resolveWindowName works correctly.
+    // Before the fix, resolveWindowName looked up "foo.bar" (unsanitized),
+    // missed the existing "foo-bar" window, and returned a name that
+    // sanitized back to "foo-bar" — attaching to the wrong project.
+    expect(sanitizeWindowName('foo.bar')).toBe(sanitizeWindowName('foo-bar'));
+  });
 });
