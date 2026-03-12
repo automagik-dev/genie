@@ -240,7 +240,7 @@ async function focusTeamWindow(
  * tmux uses '.' as a pane separator in targets (session:window.pane),
  * so dots in window names cause "can't find pane" errors.
  */
-function sanitizeWindowName(name: string): string {
+export function sanitizeWindowName(name: string): string {
   return name.replace(/\./g, '-');
 }
 

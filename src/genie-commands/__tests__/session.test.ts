@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildClaudeCommand, getAgentsSystemPrompt } from '../session.js';
+import { buildClaudeCommand, getAgentsSystemPrompt, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
 // buildClaudeCommand tests
@@ -113,5 +113,55 @@ describe('getAgentsSystemPrompt', () => {
     process.chdir(TEST_DIR);
     const result = getAgentsSystemPrompt();
     expect(result).toBe(content);
+  });
+});
+
+// ============================================================================
+// sanitizeWindowName tests — regression for tmux dot-to-dash fix
+//
+// tmux uses '.' as a pane separator in targets (session:window.pane).
+// Folder/team names containing dots (e.g. "ravi.bot") cause tmux errors
+// like "can't find pane: bot". sanitizeWindowName replaces '.' with '-'.
+// ============================================================================
+
+describe('sanitizeWindowName', () => {
+  test('replaces dot with dash in team name (e.g. ravi.bot -> ravi-bot)', () => {
+    expect(sanitizeWindowName('ravi.bot')).toBe('ravi-bot');
+  });
+
+  test('leaves names without dots unchanged', () => {
+    expect(sanitizeWindowName('my-team')).toBe('my-team');
+    expect(sanitizeWindowName('genie')).toBe('genie');
+    expect(sanitizeWindowName('api-server')).toBe('api-server');
+  });
+
+  test('replaces multiple dots (e.g. my.cool.app -> my-cool-app)', () => {
+    expect(sanitizeWindowName('my.cool.app')).toBe('my-cool-app');
+  });
+
+  test('handles leading and trailing dots', () => {
+    expect(sanitizeWindowName('.hidden')).toBe('-hidden');
+    expect(sanitizeWindowName('trailing.')).toBe('trailing-');
+    expect(sanitizeWindowName('.both.')).toBe('-both-');
+  });
+
+  test('handles consecutive dots', () => {
+    expect(sanitizeWindowName('a..b')).toBe('a--b');
+  });
+
+  test('handles directory basename with dot (simulates basename of /home/user/ravi.bot)', () => {
+    // In production, basename() is called before sanitizeWindowName,
+    // so we test the basename result directly.
+    const { basename } = require('node:path');
+    const dirBasename = basename('/home/user/ravi.bot');
+    expect(sanitizeWindowName(dirBasename)).toBe('ravi-bot');
+  });
+
+  test('returns empty string for empty input', () => {
+    expect(sanitizeWindowName('')).toBe('');
+  });
+
+  test('handles name that is only dots', () => {
+    expect(sanitizeWindowName('...')).toBe('---');
   });
 });
