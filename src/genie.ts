@@ -29,6 +29,7 @@ import { registerAgentNamespace } from './term-commands/agents.js';
 import * as councilCmd from './term-commands/council.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
+import { registerDispatchCommands } from './term-commands/dispatch.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 // Provider-selectable orchestration namespaces (genie-cli-teams)
@@ -104,6 +105,7 @@ registerDirNamespace(program);
 registerSendInboxCommands(program);
 registerTaskNamespace(program);
 registerStateCommands(program);
+registerDispatchCommands(program);
 registerHookNamespace(program);
 
 // ============================================================================
