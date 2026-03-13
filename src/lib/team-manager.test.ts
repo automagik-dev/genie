@@ -8,15 +8,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
-import {
-  createTeam,
-  disbandTeam,
-  fireAgent,
-  getTeam,
-  hireAgent,
-  listMembers,
-  listTeams,
-} from './team-manager.js';
+import { createTeam, disbandTeam, fireAgent, getTeam, hireAgent, listMembers, listTeams } from './team-manager.js';
 
 // ============================================================================
 // Test Setup
