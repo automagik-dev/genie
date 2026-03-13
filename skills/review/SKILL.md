@@ -7,6 +7,15 @@ description: "Validate plans, execution, or PRs against wish criteria — return
 
 Validate any artifact against its wish criteria. Dispatch as a subagent — never review your own work inline.
 
+## Context Injection
+
+This skill receives its scope from the dispatch layer:
+- **Target** — what is being reviewed (wish draft, completed work, or PR diff)
+- **Wish path** — `.genie/wishes/<slug>/WISH.md` in the shared worktree
+- **Injected criteria** — acceptance criteria extracted from the wish
+
+If context is injected, use it directly. Do not re-parse for information already provided.
+
 ## When to Use
 - Before `/work` — validate a wish plan is ready for execution
 - After `/work` — verify implementation meets acceptance criteria
@@ -20,6 +29,13 @@ Validate any artifact against its wish criteria. Dispatch as a subagent — neve
 5. **Tag gaps** — classify every unmet criterion by severity.
 6. **Return verdict** — one of SHIP, FIX-FIRST, or BLOCKED (see Verdicts).
 7. **Write next steps** — exact fixes, files, and commands for each gap.
+
+## Council Participation
+
+When a council team is active, the review can incorporate council perspectives:
+- Post review findings to team chat for council input via `genie chat post --team <team>`
+- Council members may surface risks or blind spots missed by the standard checklist
+- Council input is advisory — the verdict is still determined by the checklist
 
 ## Pipelines
 
@@ -69,13 +85,10 @@ Validate any artifact against its wish criteria. Dispatch as a subagent — neve
 
 **The reviewer must not be the implementor.** Always dispatch review as a separate subagent.
 
-| Runtime | Detection | Pattern |
-|---------|-----------|---------|
-| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
-| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<review prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie agent spawn --role reviewer` |
-
-Default to **Claude Code** when detection is ambiguous.
+```bash
+# Spawn a reviewer subagent
+genie spawn reviewer
+```
 
 ## Rules
 - Never mark PASS without evidence — verify, don't assume.

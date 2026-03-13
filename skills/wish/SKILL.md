@@ -12,6 +12,13 @@ Convert a validated idea into an executable wish document at `.genie/wishes/<slu
 - User wants to scope, decompose, or formalize a feature/change.
 - Prior `/brainstorm` output exists and needs to become actionable.
 
+## Shared Worktree
+
+This skill is collaborative and operates on the shared worktree:
+- All wish artifacts live in `.genie/wishes/` within the shared worktree
+- State group definitions are written to the shared worktree so other agents and skills can read them
+- When invoked via dispatch, acknowledges injected context (brainstorm design, file path + extracted section)
+
 ## Flow
 1. **Gate check:** if no prior brainstorm/design context, ask: "Run /brainstorm first, or draft the wish directly?"
 2. **Align intent:** ask one question at a time until success criteria are clear.
