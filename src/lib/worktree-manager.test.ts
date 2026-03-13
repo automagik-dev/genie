@@ -10,13 +10,7 @@ import { join } from 'node:path';
 import { $ } from 'bun';
 
 // Will be imported after implementation
-import {
-  BeadsWorktreeManager,
-  GitWorktreeManager,
-  type WorktreeInfo,
-  getWorktreeManager,
-  isBdAvailable,
-} from './worktree-manager.js';
+import { GitWorktreeManager, type WorktreeInfo, getWorktreeManager } from './worktree-manager.js';
 
 // ============================================================================
 // Test Setup
@@ -176,26 +170,6 @@ describe('GitWorktreeManager', () => {
 });
 
 // ============================================================================
-// BeadsWorktreeManager Tests (mocked)
-// ============================================================================
-
-describe('BeadsWorktreeManager', () => {
-  // These tests mock bd since it may not be available
-  test('create() should call bd worktree create', async () => {
-    // Skip if bd not available
-    if (!(await isBdAvailable())) {
-      console.log('Skipping BeadsWorktreeManager tests - bd not available');
-      return;
-    }
-
-    // If bd is available, this would test actual bd integration
-    // For now we just verify the class exists
-    const manager = new BeadsWorktreeManager();
-    expect(manager).toBeDefined();
-  });
-});
-
-// ============================================================================
 // Factory Function Tests
 // ============================================================================
 
@@ -203,7 +177,6 @@ describe('getWorktreeManager', () => {
   test('should return a WorktreeManagerInterface', async () => {
     const manager = await getWorktreeManager(TEST_REPO);
 
-    // Verify it implements the interface
     expect(typeof manager.create).toBe('function');
     expect(typeof manager.remove).toBe('function');
     expect(typeof manager.list).toBe('function');
@@ -213,21 +186,5 @@ describe('getWorktreeManager', () => {
   test('GitWorktreeManager can be created directly', () => {
     const manager = new GitWorktreeManager(TEST_REPO);
     expect(manager).toBeInstanceOf(GitWorktreeManager);
-  });
-
-  test('BeadsWorktreeManager can be created directly', () => {
-    const manager = new BeadsWorktreeManager();
-    expect(manager).toBeInstanceOf(BeadsWorktreeManager);
-  });
-});
-
-// ============================================================================
-// isBdAvailable Tests
-// ============================================================================
-
-describe('isBdAvailable', () => {
-  test('should return boolean', async () => {
-    const result = await isBdAvailable();
-    expect(typeof result).toBe('boolean');
   });
 });

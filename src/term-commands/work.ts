@@ -1,9 +1,9 @@
 /**
- * Work command - Spawn worker bound to beads issue
+ * Work command - Spawn worker bound to task
  *
  * Usage:
- *   genie work <bd-id>     - Work on specific beads issue
- *   genie work next        - Work on next ready issue
+ *   genie work <task-id>   - Work on specific task
+ *   genie work next        - Work on next ready task
  *   genie work wish        - Create a new wish (deferred)
  *
  * Options:
@@ -19,11 +19,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join, resolve } from 'node:path';
-import { $ } from 'bun';
 import * as registry from '../lib/agent-registry.js';
 import { type AutoApproveEngine, createAutoApproveEngine, sendApprovalViaTmux } from '../lib/auto-approve-engine.js';
 import { loadFullAutoApproveConfig } from '../lib/auto-approve.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
 import type { PermissionRequest } from '../lib/event-listener.js';
 import { getDefaultWorkerProfile, getSessionName, getWorkerProfile, loadGenieConfig } from '../lib/genie-config.js';
 import { EventMonitor } from '../lib/orchestrator/index.js';
@@ -34,15 +32,6 @@ import * as tmux from '../lib/tmux.js';
 import { getWorktreeManager } from '../lib/worktree-manager.js';
 import type { WorkerProfile } from '../types/genie-config.js';
 import { cleanupEventFile } from './events.js';
-
-// Use beads registry only when enabled AND bd exists on PATH
-// (macro repos like blanco may run without bd)
-const useBeads =
-  beadsRegistry.isBeadsRegistryEnabled() &&
-  (() => {
-    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
-    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
-  })();
 
 // ============================================================================
 // Types
@@ -132,19 +121,6 @@ export function buildEnvSourcePrefix(workingDir: string, repoPath: string): stri
 // ============================================================================
 
 /**
- * Run bd command and parse output
- */
-async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number }> {
-  try {
-    const result = await $`bd ${args}`.quiet();
-    return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error) {
-    const shellErr = error as { stdout?: Buffer; exitCode?: number };
-    return { stdout: shellErr.stdout?.toString().trim() || '', exitCode: shellErr.exitCode || 1 };
-  }
-}
-
-/**
  * Validate and sanitize a task ID for safe use in shell commands, git branch names, and file paths.
  * Returns the sanitized ID or null if the input is fundamentally unsafe.
  */
@@ -153,7 +129,7 @@ function sanitizeTaskId(raw: string): string | null {
   // Strip leading/trailing whitespace
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  // Only allow alphanumeric, hyphens, underscores, dots, and slashes (for bd-style IDs like "genie-8bu")
+  // Only allow alphanumeric, hyphens, underscores, dots, and slashes
   // Reject anything that could be shell metacharacters or git-invalid
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$/.test(trimmed)) return null;
   // Reject prototype pollution keys
@@ -164,97 +140,22 @@ function sanitizeTaskId(raw: string): string | null {
 }
 
 /**
- * Parse raw beads issue JSON into a BeadsIssue object.
- */
-function parseBeadsIssue(data: unknown): BeadsIssue | null {
-  if (!data || typeof data !== 'object') return null;
-  const d = data as Record<string, unknown>;
-  return {
-    id: d.id as string,
-    title: (d.title as string) || (d.description as string)?.substring(0, 50) || 'Untitled',
-    status: d.status as string,
-    description: d.description as string | undefined,
-    blockedBy: (d.blockedBy as string[]) || [],
-  };
-}
-
-/**
- * Get a beads issue by ID.
- */
-async function getBeadsIssue(id: string): Promise<BeadsIssue | null> {
-  const { stdout, exitCode } = await runBd(['show', id, '--json']);
-
-  if (exitCode === 0 && stdout) {
-    try {
-      const parsed = JSON.parse(stdout);
-      const issue = Array.isArray(parsed) ? parsed[0] : parsed;
-      return parseBeadsIssue(issue);
-    } catch {
-      // JSON parse failed
-    }
-  }
-
-  return null;
-}
-
-/**
- * Parse beads `bd ready --json` output into a BeadsIssue.
- * Falls back to line-based parsing when JSON is invalid.
- */
-async function parseBeadsReadyOutput(stdout: string): Promise<BeadsIssue | null> {
-  try {
-    const issues = JSON.parse(stdout);
-    if (!Array.isArray(issues) || issues.length === 0) return null;
-    const issue = issues[0];
-    return {
-      id: issue.id,
-      title: issue.title || issue.description?.substring(0, 50) || 'Untitled',
-      status: issue.status,
-      description: issue.description,
-      blockedBy: issue.blockedBy || [],
-    };
-  } catch {
-    // JSON parse failed — try line-based fallback
-    const lines = stdout.split('\n').filter((l) => l.trim());
-    if (lines.length === 0) return null;
-    const match = lines[0].match(/^(bd-\d+)/);
-    return match ? getBeadsIssue(match[1]) : null;
-  }
-}
-
-/**
- * Get next ready beads issue
+ * Get next ready task
  */
 async function getNextReadyIssue(repoPath: string): Promise<BeadsIssue | null> {
-  // If local backend is active, use its queue and synthesize a BeadsIssue-like object.
   const backend = getBackend(repoPath);
-  if (backend.kind === 'local') {
-    const q = await backend.queue();
-    if (q.ready.length === 0) return null;
-    const id = q.ready[0];
-    const t = await backend.get(id);
-    if (!t) return null;
-    return {
-      id: t.id,
-      title: t.title,
-      status: t.status,
-      description: t.description,
-      blockedBy: t.blockedBy || [],
-    };
-  }
-
-  // beads backend
-  const { stdout, exitCode } = await runBd(['ready', '--json']);
-  if (exitCode !== 0 || !stdout) return null;
-  return parseBeadsReadyOutput(stdout);
-}
-
-/**
- * Mark beads issue as in_progress
- */
-async function claimIssue(id: string): Promise<boolean> {
-  const { exitCode } = await runBd(['update', id, '--status', 'in_progress']);
-  return exitCode === 0;
+  const q = await backend.queue();
+  if (q.ready.length === 0) return null;
+  const id = q.ready[0];
+  const t = await backend.get(id);
+  if (!t) return null;
+  return {
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    description: t.description,
+    blockedBy: t.blockedBy || [],
+  };
 }
 
 /**
@@ -733,7 +634,7 @@ function resolveToolFromPermission(
 
 /**
  * Start monitoring worker state and update registry
- * Updates both beads and JSON registry during transition
+ * Updates registry during state transitions
  */
 function startWorkerMonitoring(workerId: string, session: string, paneId: string, engine?: AutoApproveEngine): void {
   const monitor = new EventMonitor(session, {
@@ -807,10 +708,6 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
     }
 
     try {
-      // Update both registries during transition
-      if (useBeads) {
-        await beadsRegistry.updateState(workerId, newState);
-      }
       await registry.updateState(workerId, newState);
     } catch {
       // Ignore errors in background monitoring
@@ -819,9 +716,6 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
 
   monitor.on('poll_error', () => {
     // Pane may have been killed - unregister worker
-    if (useBeads) {
-      beadsRegistry.unregister(workerId).catch(() => {});
-    }
     registry.unregister(workerId).catch(() => {});
     // Cleanup event file
     cleanupEventFile(paneId).catch(() => {});
@@ -840,17 +734,7 @@ function startWorkerMonitoring(workerId: string, session: string, paneId: string
 // workCommand helpers
 // ============================================================================
 
-/**
- * Ensure beads daemon is running for auto-sync.
- */
-async function ensureBeadsDaemon(): Promise<void> {
-  if (!useBeads) return;
-  const daemonStatus = await beadsRegistry.checkDaemonStatus();
-  if (daemonStatus.running) return;
-  console.log('🔄 Starting beads daemon for auto-sync...');
-  const started = await beadsRegistry.startDaemon({ autoCommit: true });
-  console.log(started ? '   ✅ Daemon started' : '   ⚠️  Daemon failed to start (non-fatal)');
-}
+// No daemon needed — state machine is file-based
 
 /**
  * Load and validate worker profile from config.
@@ -873,38 +757,30 @@ async function resolveWorkerProfile(profileName?: string): Promise<WorkerProfile
 }
 
 /**
- * Resolve a specific task ID target to a BeadsIssue.
- * Checks local backend first, then falls back to beads.
+ * Resolve a specific task ID target.
  */
 async function resolveSpecificTarget(target: string, repoPath: string): Promise<BeadsIssue> {
   const sanitized = sanitizeTaskId(target);
   if (!sanitized) {
     console.error(`❌ Invalid task ID: "${target}"`);
-    console.error('   Task IDs must be alphanumeric with hyphens/underscores (e.g., "bd-123", "wish-1").');
+    console.error('   Task IDs must be alphanumeric with hyphens/underscores (e.g., "wish-1").');
     console.error('   Got characters that are unsafe for git branches or shell commands.');
     process.exit(1);
   }
 
-  // Check local backend first
   const backend = getBackend(repoPath);
-  if (backend.kind === 'local') {
-    const localTask = await backend.get(sanitized);
-    if (localTask) {
-      return {
-        id: localTask.id,
-        title: localTask.title,
-        status: localTask.status,
-        description: localTask.description,
-        blockedBy: localTask.blockedBy || [],
-      };
-    }
+  const localTask = await backend.get(sanitized);
+  if (localTask) {
+    return {
+      id: localTask.id,
+      title: localTask.title,
+      status: localTask.status,
+      description: localTask.description,
+      blockedBy: localTask.blockedBy || [],
+    };
   }
 
-  // Fall back to beads
-  const issue = await getBeadsIssue(sanitized);
-  if (issue) return issue;
-
-  // Not found — print backend-specific error
+  // Not found
   printTargetNotFoundError(sanitized, repoPath);
   process.exit(1);
 }
@@ -913,20 +789,13 @@ async function resolveSpecificTarget(target: string, repoPath: string): Promise<
  * Print error message when a target task is not found.
  */
 async function printTargetNotFoundError(taskTarget: string, repoPath: string): Promise<void> {
-  const backend = getBackend(repoPath);
-  if (backend.kind !== 'local') {
-    console.error(`❌ Issue "${taskTarget}" not found. Run \`bd list\` to see issues.`);
-    return;
-  }
-  console.error(`❌ Issue "${taskTarget}" not found in local task registry.`);
+  console.error(`❌ Task "${taskTarget}" not found.`);
   console.error(`   File: ${join(repoPath, '.genie', 'tasks.json')}`);
   const fs = await import('node:fs');
   if (!fs.existsSync(join(repoPath, '.genie', 'tasks.json'))) {
-    console.error('   ⚠️  tasks.json does not exist. This is likely a fresh repo.');
-    console.error('   Fix: Run `genie task create "Your task title"` to create the first task,');
-    console.error('         or `bd sync` if using beads.');
+    console.error('   tasks.json does not exist. Run `genie task create "Your task title"` to create the first task.');
   } else {
-    console.error(`   Task "${taskTarget}" is not in tasks.json. Run \`bd list\` to see available tasks.`);
+    console.error(`   Task "${taskTarget}" is not in tasks.json.`);
   }
 }
 
@@ -940,7 +809,7 @@ async function resolveTarget(target: string, repoPath: string): Promise<BeadsIss
     console.log('🔍 Finding next ready issue...');
     const issue = await getNextReadyIssue(repoPath);
     if (!issue) {
-      console.log('ℹ️  No ready issues. Run `bd ready` to see the queue.');
+      console.log('ℹ️  No ready tasks.');
       return null;
     }
     console.log(`📋 Found: ${issue.id} - "${issue.title}"`);
@@ -989,24 +858,15 @@ async function resumeExistingWorker(
     state: 'spawning',
     lastStateChange: new Date().toISOString(),
   });
-  if (useBeads) {
-    await beadsRegistry.setAgentState(existingWorker.id, 'spawning').catch(() => {});
-  }
-
   // Launch Claude in the pane
-  const beadsDir = join(existingWorker.repoPath, '.genie');
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
   const resumeCmd = buildSpawnCommand(workerProfile, {
     resume: existingWorker.claudeSessionId,
-    beadsDir,
   });
   const resumeEnvPrefix = buildEnvSourcePrefix(workingDir, existingWorker.repoPath);
   await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${resumeEnvPrefix}${resumeCmd}`, true, false);
 
   // Update state to working
-  if (useBeads) {
-    await beadsRegistry.setAgentState(existingWorker.id, 'working').catch(() => {});
-  }
   await registry.updateState(existingWorker.id, 'working');
 
   // Auto-approve + monitoring
@@ -1036,25 +896,15 @@ async function claimTaskOrExit(taskId: string, repoPath: string): Promise<void> 
   console.log(`📝 Claiming ${taskId}...`);
   const backend = getBackend(repoPath);
   let claimed = false;
-  let claimError: string | undefined;
 
   try {
-    claimed = await (backend.kind === 'local' ? backend.claim(taskId) : claimIssue(taskId));
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    claimError = message || String(err);
+    claimed = await backend.claim(taskId);
+  } catch {
+    // Claim failed
   }
 
   if (claimed) return;
 
-  if (backend.kind === 'beads') {
-    console.error(`❌ Failed to claim ${taskId}.${claimError ? ` Reason: ${claimError}` : ''}`);
-    console.error('   The issue may not exist or is already claimed.');
-    console.error(`   Run \`bd show ${taskId}\` to check status.`);
-    process.exit(1);
-  }
-
-  // Local backend
   const task = await backend.get(taskId);
   if (!task) {
     console.error(`❌ Task "${taskId}" not found in .genie/tasks.json.`);
@@ -1065,39 +915,6 @@ async function claimTaskOrExit(taskId: string, repoPath: string): Promise<void> 
     console.error('   Task may already be in_progress or done.');
   }
   process.exit(1);
-}
-
-/**
- * Register worker in beads registry (non-fatal on error).
- */
-async function registerInBeads(
-  taskId: string,
-  opts: {
-    paneId: string;
-    session: string;
-    worktree: string | null;
-    repoPath: string;
-    taskTitle: string;
-    claudeSessionId: string;
-  },
-): Promise<void> {
-  if (!useBeads) return;
-  try {
-    await beadsRegistry.ensureAgent(taskId, {
-      paneId: opts.paneId,
-      session: opts.session,
-      worktree: opts.worktree,
-      repoPath: opts.repoPath,
-      taskId,
-      taskTitle: opts.taskTitle,
-      claudeSessionId: opts.claudeSessionId,
-    });
-    await beadsRegistry.bindWork(taskId, taskId);
-    await beadsRegistry.setAgentState(taskId, 'spawning');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`⚠️  Beads registration failed: ${message} (non-fatal)`);
-  }
 }
 
 /**
@@ -1122,7 +939,7 @@ async function buildWorkerPrompt(
 
   return (
     options.prompt ||
-    `Work on beads issue ${taskId}: "${issue.title}"
+    `Work on task ${taskId}: "${issue.title}"
 
 ## Description
 ${issue.description || 'No description provided.'}
@@ -1194,9 +1011,8 @@ async function spawnAndSendPrompt(
   workerProfile: WorkerProfile | undefined,
 ): Promise<void> {
   const escapedPrompt = prompt.replace(/'/g, "'\\''");
-  const beadsDir = join(repoPath, '.genie');
   const escapedWorkingDir = workingDir.replace(/'/g, "'\\''");
-  const spawnCmd = buildSpawnCommand(workerProfile, { sessionId: claudeSessionId, beadsDir });
+  const spawnCmd = buildSpawnCommand(workerProfile, { sessionId: claudeSessionId });
   const spawnEnvPrefix = buildEnvSourcePrefix(workingDir, repoPath);
   await tmux.executeCommand(paneId, `cd '${escapedWorkingDir}' && ${spawnEnvPrefix}${spawnCmd}`, true, false);
   console.log(`   Session ID: ${claudeSessionId}`);
@@ -1210,8 +1026,7 @@ async function spawnAndSendPrompt(
  * Find an existing worker for a task across registries.
  */
 async function findExistingWorker(taskId: string): Promise<registry.Agent | null> {
-  const beadsWorker = useBeads ? await beadsRegistry.findByTask(taskId) : null;
-  return beadsWorker || (await registry.findByTask(taskId));
+  return registry.findByTask(taskId);
 }
 
 /**
@@ -1243,7 +1058,6 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
   try {
     const repoPath = process.cwd();
 
-    await ensureBeadsDaemon();
     const workerProfile = await resolveWorkerProfile(options.profile);
 
     // 1. Resolve target
@@ -1308,14 +1122,6 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       role: options.role,
       customName: options.name,
     };
-    await registerInBeads(taskId, {
-      paneId,
-      session,
-      worktree: worktreePath,
-      repoPath: targetRepo,
-      taskTitle: issue.title,
-      claudeSessionId,
-    });
     await registry.register(worker);
 
     // 8. Spawn Claude + send prompt
@@ -1323,7 +1129,6 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
     await spawnAndSendPrompt(paneId, workingDir, repoPath, claudeSessionId, prompt, workerProfile);
 
     // 9. Update state to working
-    if (useBeads) await beadsRegistry.setAgentState(taskId, 'working').catch(() => {});
     await registry.updateState(taskId, 'working');
 
     // 10. Auto-approve + monitoring

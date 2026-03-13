@@ -1395,8 +1395,7 @@ export function registerAgentNamespace(program: Command): void {
   // agent close — close task and cleanup worker
   agent
     .command('close <task-id>')
-    .description('Close task/issue and cleanup agent')
-    .option('--no-sync', 'Skip bd sync (beads only)')
+    .description('Close task and cleanup agent')
     .option('--keep-worktree', "Don't remove the worktree")
     .option('--merge', 'Merge worktree changes to main branch')
     .option('-y, --yes', 'Skip confirmation')

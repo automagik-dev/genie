@@ -1,8 +1,7 @@
 /**
  * Create command - Create a task.
  *
- * - In repos with beads (bd), creates a beads issue (bd-123)
- * - In repos with a tracked .genie/ (macro repo like blanco), creates a local wish task (wish-42)
+ * Creates a local wish task in .genie/tasks.json.
  */
 
 import { getBackend } from '../lib/task-backend.js';
@@ -50,11 +49,7 @@ export async function createCommand(title: string, options: CreateOptions = {}):
     if (!options.json) {
       console.log('\nNext steps:');
       console.log(`   genie work ${task.id}           - Start working on it`);
-      console.log(
-        backend.kind === 'beads'
-          ? `   bd show ${task.id}             - View details`
-          : '   (Local tasks live in .genie/tasks.json)',
-      );
+      console.log('   (Tasks live in .genie/tasks.json)');
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -28,7 +28,7 @@ export type AgentState =
 export type TransportType = 'tmux' | 'inline';
 
 export interface Agent {
-  /** Unique agent ID (usually matches taskId, e.g., "bd-42"). */
+  /** Unique agent ID (usually matches taskId, e.g., "wish-42"). */
   id: string;
   /** tmux pane ID (e.g., "%16"). */
   paneId: string;
@@ -36,9 +36,9 @@ export interface Agent {
   session: string;
   /** Path to git worktree, null if using shared repo. */
   worktree: string | null;
-  /** Beads or local task ID this agent is bound to. */
+  /** Task ID this agent is bound to. */
   taskId?: string;
-  /** Task title from beads. */
+  /** Task title. */
   taskTitle?: string;
   /** Associated wish slug (if from decompose). */
   wishSlug?: string;
@@ -62,7 +62,7 @@ export interface Agent {
   role?: string;
   /** Custom agent name when multiple agents on same task. */
   customName?: string;
-  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = bd-42:1, etc. */
+  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = wish-42:1, etc. */
   subPanes?: string[];
   /** Provider used to launch this agent. */
   provider?: ProviderName;
@@ -298,13 +298,13 @@ export async function findByWindow(windowId: string): Promise<Agent | null> {
   return agents.find((a) => a.windowId === normalizedId) ?? null;
 }
 
-/** Find agent by beads task ID (returns first match for backwards compat). */
+/** Find agent by task ID (returns first match). */
 export async function findByTask(taskId: string): Promise<Agent | null> {
   const agents = await list();
   return agents.find((a) => a.taskId === taskId) ?? null;
 }
 
-/** Find ALL agents for a beads task ID (supports N agents per task). */
+/** Find ALL agents for a task ID (supports N agents per task). */
 export async function findAllByTask(taskId: string): Promise<Agent[]> {
   const agents = await list();
   return agents.filter((a) => a.taskId === taskId);

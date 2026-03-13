@@ -1,14 +1,10 @@
 /**
- * Close command - Close task/issue and cleanup worker
- *
- * Supports both local wishes (.genie/tasks.json) and beads issues.
- * Backend is auto-detected based on whether .genie/ directory exists.
+ * Close command - Close task and cleanup worker
  *
  * Usage:
  *   genie agent close <task-id>   - Close task, cleanup worktree, kill agent
  *
  * Options:
- *   --no-sync              - Skip bd sync (beads only, no-op for local)
  *   --keep-worktree        - Don't remove the worktree
  *   --merge                - Merge worktree changes to main branch
  *   -y, --yes              - Skip confirmation
@@ -18,25 +14,15 @@ import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { $ } from 'bun';
 import * as registry from '../lib/agent-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
-import { type TaskBackend, getBackend } from '../lib/task-backend.js';
+import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
 import { cleanupEventFile } from './events.js';
-
-// Use beads registry only when enabled AND bd exists on PATH
-const useBeadsRegistry =
-  beadsRegistry.isBeadsRegistryEnabled() &&
-  (() => {
-    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
-    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
-  })();
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface CloseOptions {
-  noSync?: boolean;
   keepWorktree?: boolean;
   merge?: boolean;
   yes?: boolean;
@@ -46,55 +32,14 @@ export interface CloseOptions {
 // Configuration
 // ============================================================================
 
-// Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/**
- * Run bd command
- */
-async function runBd(args: string[]): Promise<{ stdout: string; exitCode: number }> {
-  try {
-    const result = await $`bd ${args}`.quiet();
-    return { stdout: result.stdout.toString().trim(), exitCode: 0 };
-  } catch (error) {
-    const shellErr = error as { stdout?: Buffer; exitCode?: number };
-    return { stdout: shellErr.stdout?.toString().trim() || '', exitCode: shellErr.exitCode || 1 };
-  }
-}
-
-/**
- * Close beads issue via `bd close`
- */
-async function closeBeadsIssue(taskId: string): Promise<boolean> {
-  const { exitCode } = await runBd(['close', taskId]);
-  return exitCode === 0;
-}
-
-/**
- * Close local wish by marking it as done
- */
-async function closeLocalTask(backend: TaskBackend, taskId: string): Promise<boolean> {
-  return backend.markDone(taskId);
-}
-
-/**
- * Sync beads to git
- */
-async function syncBeads(): Promise<boolean> {
-  const { exitCode } = await runBd(['sync']);
-  return exitCode === 0;
-}
-
-/**
- * Merge worktree branch to main
- */
 async function mergeToMain(repoPath: string, branchName: string): Promise<boolean> {
   try {
-    // Get current branch
     const currentResult = await $`git -C ${repoPath} branch --show-current`.quiet();
     const currentBranch = currentResult.stdout.toString().trim();
 
@@ -103,7 +48,6 @@ async function mergeToMain(repoPath: string, branchName: string): Promise<boolea
       return true;
     }
 
-    // Checkout main and merge
     console.log(`   Switching to ${currentBranch}...`);
     await $`git -C ${repoPath} checkout ${currentBranch}`.quiet();
 
@@ -118,42 +62,22 @@ async function mergeToMain(repoPath: string, branchName: string): Promise<boolea
   }
 }
 
-/**
- * Remove worktree
- * Checks .genie/worktrees first, then bd worktree
- */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
-  // First, check .genie/worktrees location
   const inProjectWorktree = join(repoPath, WORKTREE_DIR_NAME, taskId);
   try {
     await $`git -C ${repoPath} worktree remove ${inProjectWorktree} --force`.quiet();
     return true;
   } catch {
-    // Worktree may not exist at this location, continue checking
+    return true;
   }
-
-  // Try bd worktree when beads registry is enabled
-  if (useBeadsRegistry) {
-    try {
-      const removed = await beadsRegistry.removeWorktree(taskId);
-      if (removed) return true;
-    } catch {
-      // Fall through
-    }
-  }
-
-  return true; // Already doesn't exist
 }
 
-/**
- * Kill worker pane
- */
 async function killWorkerPane(paneId: string): Promise<boolean> {
   try {
     await tmux.killPane(paneId);
     return true;
   } catch {
-    return false; // Pane may already be gone
+    return false;
   }
 }
 
@@ -161,9 +85,6 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 // Worker Cleanup Helpers
 // ============================================================================
 
-/**
- * Kill a single worker's window or pane via tmux.
- */
 async function killWorkerTmux(w: registry.Agent): Promise<void> {
   if (w.windowId && w.session) {
     console.log(`💀 Killing agent window "${w.windowName || w.windowId}" (${w.id})...`);
@@ -199,64 +120,29 @@ async function killWorkerTmux(w: registry.Agent): Promise<void> {
   console.log('   ✅ Pane killed');
 }
 
-/**
- * Unregister a worker from all registries and clean up event files.
- */
 async function unregisterWorker(w: registry.Agent): Promise<void> {
-  if (useBeadsRegistry) {
-    try {
-      await beadsRegistry.unbindWork(w.id);
-      await beadsRegistry.setAgentState(w.id, 'done');
-      await beadsRegistry.deleteAgent(w.id);
-    } catch {
-      /* Non-fatal */
-    }
-  }
   await registry.unregister(w.id);
   await cleanupEventFile(w.paneId).catch(() => {});
 }
 
-/**
- * Close a task using the appropriate backend.
- */
-async function closeTaskByBackend(backend: TaskBackend, taskId: string, isLocal: boolean): Promise<void> {
+async function closeTaskByBackend(taskId: string): Promise<void> {
+  const repoPath = process.cwd();
+  const backend = getBackend(repoPath);
   console.log(`📝 Closing ${taskId}...`);
-  if (isLocal) {
-    const closed = await closeLocalTask(backend, taskId);
-    console.log(closed ? '   ✅ Task marked as done' : `❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
-  } else {
-    const closed = await closeBeadsIssue(taskId);
-    console.log(closed ? '   ✅ Issue closed' : `❌ Failed to close ${taskId}. Check \`bd show ${taskId}\`.`);
-  }
+  const closed = await backend.markDone(taskId);
+  console.log(closed ? '   ✅ Task marked as done' : `❌ Failed to close ${taskId}. Check .genie/tasks.json.`);
 }
 
 // ============================================================================
 // Main Command
 // ============================================================================
 
-/**
- * Find representative worker for a task.
- */
-async function findRepresentativeWorker(allWorkers: registry.Agent[], taskId: string): Promise<registry.Agent | null> {
-  if (useBeadsRegistry) {
-    const w = await beadsRegistry.findByTask(taskId);
-    if (w) return w;
-  }
-  return allWorkers.length > 0 ? allWorkers[0] : null;
-}
-
-/**
- * Prompt user to confirm closing a task.
- */
 async function confirmClose(taskId: string, workerCount: number, worker: registry.Agent | null): Promise<boolean> {
   const workerMsg =
     workerCount > 1 ? ` and kill ${workerCount} agents` : worker ? ` and kill agent (pane ${worker.paneId})` : '';
   return confirm({ message: `Close ${taskId}${workerMsg}?`, default: true });
 }
 
-/**
- * Handle worktree cleanup (merge + remove).
- */
 async function handleWorktreeCleanup(worker: registry.Agent, taskId: string, options: CloseOptions): Promise<void> {
   if (!worker.worktree || options.keepWorktree) return;
   if (options.merge) {
@@ -269,18 +155,6 @@ async function handleWorktreeCleanup(worker: registry.Agent, taskId: string, opt
   if (removed) console.log('   ✅ Worktree removed');
 }
 
-/**
- * Sync beads to git if applicable.
- */
-async function maybeSyncBeads(isLocal: boolean, noSync: boolean | undefined): Promise<void> {
-  if (isLocal || noSync) return;
-  console.log('🔄 Syncing beads...');
-  console.log((await syncBeads()) ? '   ✅ Synced to git' : '   ⚠️  Sync failed (non-fatal)');
-}
-
-/**
- * Kill and unregister all workers for a task.
- */
 async function killAndUnregisterAll(allWorkers: registry.Agent[]): Promise<void> {
   for (const w of allWorkers) {
     await killWorkerTmux(w);
@@ -291,15 +165,11 @@ async function killAndUnregisterAll(allWorkers: registry.Agent[]): Promise<void>
 
 export async function closeCommand(taskId: string, options: CloseOptions = {}): Promise<void> {
   try {
-    const repoPath = process.cwd();
-    const backend = getBackend(repoPath);
-    const isLocal = backend.kind === 'local';
-
     const allWorkers = await registry.findAllByTask(taskId);
-    const worker = await findRepresentativeWorker(allWorkers, taskId);
+    const worker = allWorkers.length > 0 ? allWorkers[0] : null;
 
     if (allWorkers.length === 0) {
-      console.log(`ℹ️  No active agent for ${taskId}. Closing ${isLocal ? 'task' : 'issue'} only.`);
+      console.log(`ℹ️  No active agent for ${taskId}. Closing task only.`);
     } else if (allWorkers.length > 1) {
       console.log(`📌 Found ${allWorkers.length} agents for ${taskId}`);
     }
@@ -311,8 +181,7 @@ export async function closeCommand(taskId: string, options: CloseOptions = {}): 
       }
     }
 
-    await closeTaskByBackend(backend, taskId, isLocal);
-    await maybeSyncBeads(isLocal, options.noSync);
+    await closeTaskByBackend(taskId);
     if (worker) await handleWorktreeCleanup(worker, taskId, options);
     await killAndUnregisterAll(allWorkers);
 

@@ -14,18 +14,9 @@ import { join } from 'node:path';
 import { confirm } from '@inquirer/prompts';
 import { $ } from 'bun';
 import * as registry from '../lib/agent-registry.js';
-import * as beadsRegistry from '../lib/beads-registry.js';
 import { getBackend } from '../lib/task-backend.js';
 import * as tmux from '../lib/tmux.js';
 import { cleanupEventFile } from './events.js';
-
-// Use beads registry only when enabled AND bd exists on PATH
-const useBeads =
-  beadsRegistry.isBeadsRegistryEnabled() &&
-  (() => {
-    const BunExt = Bun as unknown as { which?: (name: string) => string | null };
-    return typeof BunExt.which === 'function' ? Boolean(BunExt.which('bd')) : true;
-  })();
 
 // ============================================================================
 // Types
@@ -41,25 +32,17 @@ export interface ShipOptions {
 // Configuration
 // ============================================================================
 
-// Worktrees are created inside the project at .genie/worktrees/<taskId>
 const WORKTREE_DIR_NAME = '.genie/worktrees';
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/**
- * Get the current branch name
- */
 async function getCurrentBranch(repoPath: string): Promise<string> {
   const result = await $`git -C ${repoPath} branch --show-current`.quiet();
   return result.stdout.toString().trim();
 }
 
-/**
- * Check if current branch is main/master and exit if so
- * Used to prevent accidental pushes to protected branches
- */
 async function assertNotMainBranch(repoPath: string): Promise<void> {
   const branch = await getCurrentBranch(repoPath);
   if (branch === 'main' || branch === 'master') {
@@ -69,27 +52,21 @@ async function assertNotMainBranch(repoPath: string): Promise<void> {
   }
 }
 
-/**
- * Merge worktree branch to main
- */
 async function mergeToMain(repoPath: string, branchName: string): Promise<boolean> {
   try {
-    // Get main branch name (could be main or master)
     let mainBranch = 'main';
     try {
       const result = await $`git -C ${repoPath} symbolic-ref refs/remotes/origin/HEAD`.quiet();
       const ref = result.stdout.toString().trim();
       mainBranch = ref.replace('refs/remotes/origin/', '');
     } catch {
-      // Default to main if we can't detect
+      // Default to main
     }
 
-    // Get current branch
     const currentResult = await $`git -C ${repoPath} branch --show-current`.quiet();
     const currentBranch = currentResult.stdout.toString().trim();
 
     if (currentBranch === branchName) {
-      // We're on the worktree branch, need to switch to main first
       console.log(`   Switching to ${mainBranch}...`);
       await $`git -C ${repoPath} checkout ${mainBranch}`.quiet();
     }
@@ -105,30 +82,22 @@ async function mergeToMain(repoPath: string, branchName: string): Promise<boolea
   }
 }
 
-/**
- * Remove worktree
- */
 async function removeWorktree(taskId: string, repoPath: string): Promise<boolean> {
   const worktreePath = join(repoPath, WORKTREE_DIR_NAME, taskId);
-
   try {
     await $`git -C ${repoPath} worktree remove ${worktreePath} --force`.quiet();
     return true;
   } catch {
-    // Worktree may already be removed
     return true;
   }
 }
 
-/**
- * Kill worker pane
- */
 async function killWorkerPane(paneId: string): Promise<boolean> {
   try {
     await tmux.killPane(paneId);
     return true;
   } catch {
-    return false; // Pane may already be gone
+    return false;
   }
 }
 
@@ -136,9 +105,6 @@ async function killWorkerPane(paneId: string): Promise<boolean> {
 // Main Command
 // ============================================================================
 
-/**
- * Kill and unregister a worker, cleaning up tmux and registries.
- */
 async function cleanupWorker(worker: registry.Agent): Promise<void> {
   if (worker.windowName) {
     console.log(`💀 Killing agent window "${worker.windowName}"...`);
@@ -154,43 +120,17 @@ async function cleanupWorker(worker: registry.Agent): Promise<void> {
     console.log('   ✅ Pane killed');
   }
 
-  if (useBeads) {
-    try {
-      await beadsRegistry.unbindWork(worker.id);
-      await beadsRegistry.setAgentState(worker.id, 'done');
-      await beadsRegistry.deleteAgent(worker.id);
-    } catch {
-      /* Non-fatal */
-    }
-  }
   await registry.unregister(worker.id);
   await cleanupEventFile(worker.paneId).catch(() => {});
   console.log('   ✅ Agent unregistered');
 }
 
-/**
- * Find the worker for a task across registries.
- */
-async function findWorkerForTask(taskId: string): Promise<registry.Agent | null> {
-  if (useBeads) {
-    const w = await beadsRegistry.findByTask(taskId);
-    if (w) return w;
-  }
-  return registry.findByTask(taskId);
-}
-
-/**
- * Build ship confirmation message.
- */
 function buildShipMessage(taskId: string, title: string, worker: registry.Agent | null, merge: boolean): string {
   const mergeNote = merge ? ', merge to main' : '';
   if (worker) return `Ship ${taskId} "${title}"? (mark done, kill agent pane ${worker.paneId}${mergeNote})`;
   return `Ship ${taskId} "${title}"? (mark done${mergeNote})`;
 }
 
-/**
- * Handle worktree operations for ship (merge + remove).
- */
 async function handleShipWorktree(worker: registry.Agent, taskId: string, options: ShipOptions): Promise<void> {
   if (!worker.worktree || options.keepWorktree) return;
   if (options.merge) {
@@ -209,11 +149,11 @@ export async function shipCommand(taskId: string, options: ShipOptions = {}): Pr
     const backend = getBackend(repoPath);
     await assertNotMainBranch(repoPath);
 
-    const worker = await findWorkerForTask(taskId);
+    const worker = await registry.findByTask(taskId);
     const task = await backend.get(taskId);
     if (!task) {
       console.error(`❌ Task "${taskId}" not found.`);
-      console.error(backend.kind === 'local' ? '   Check .genie/tasks.json' : `   Run \`bd show ${taskId}\` to check.`);
+      console.error('   Check .genie/tasks.json');
       process.exit(1);
     }
 

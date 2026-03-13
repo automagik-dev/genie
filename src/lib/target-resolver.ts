@@ -140,7 +140,7 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
 /**
  * Resolve a target string to a tmux pane ID using a 3-level resolution chain.
  *
- * @param target - The target string (e.g., "%17", "bd-42", "bd-42:1", "genie:OMNI")
+ * @param target - The target string (e.g., "%17", "wish-42", "wish-42:1", "genie:OMNI")
  * @param options - Optional overrides for testing
  * @returns ResolvedTarget with paneId and metadata
  * @throws Error with prescriptive message if target cannot be resolved
@@ -306,8 +306,8 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
  * Format a human-readable label from a resolved target.
  *
  * Examples:
- *   worker "bd-42" pane %17, session "genie"  -> "bd-42 (pane %17, session genie)"
- *   worker "bd-42:1" pane %22, session "genie" -> "bd-42:1 (pane %22, session genie)"
+ *   worker "wish-42" pane %17, session "genie"  -> "wish-42 (pane %17, session genie)"
+ *   worker "wish-42:1" pane %22, session "genie" -> "wish-42:1 (pane %22, session genie)"
  *   raw pane "%17"                             -> "%17 (pane %17)"
  */
 export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: string): string {

@@ -60,7 +60,7 @@ export interface NormalizedEvent {
   paneId?: string;
   /** Wish slug (e.g., "wish-21") */
   wishId?: string;
-  /** Task/beads ID (e.g., "bd-123") */
+  /** Task ID */
   taskId?: string;
 
   // Tool call specific fields
