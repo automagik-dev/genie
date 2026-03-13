@@ -124,29 +124,29 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('abc-123');
   });
 
-  test('includes --append-system-prompt via $(cat) when systemPrompt provided (default promptMode)', async () => {
+  test('includes --append-system-prompt-file when systemPrompt provided (default promptMode)', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt' });
-    expect(cmd).toContain('--append-system-prompt');
-    expect(cmd).toContain('$(cat');
+    expect(cmd).toContain('--append-system-prompt-file');
     expect(cmd).toContain('.genie/prompts/genie.md');
     // Prompt content is in the file, NOT inlined in the command
     expect(cmd).not.toContain('test prompt');
   });
 
-  test('system prompt is persisted to file, not flattened inline', async () => {
+  test('system prompt is persisted to file, referenced by path', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'line one\nline two' });
-    // Command references file, does not contain prompt text
-    expect(cmd).toContain('$(cat');
+    // Command references file path, does not contain prompt text
+    expect(cmd).toContain('--append-system-prompt-file');
+    expect(cmd).toContain('.genie/prompts/genie.md');
     expect(cmd).not.toContain('line one');
   });
 
-  test('uses --system-prompt flag when promptMode is "system"', async () => {
+  test('uses --system-prompt-file flag when promptMode is "system"', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt', promptMode: 'system' });
-    expect(cmd).toContain('--system-prompt');
-    expect(cmd).not.toContain('--append-system-prompt');
+    expect(cmd).toContain('--system-prompt-file');
+    expect(cmd).not.toContain('--append-system-prompt-file');
   });
 });
 
