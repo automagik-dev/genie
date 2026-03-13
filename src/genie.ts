@@ -2,16 +2,21 @@
 
 /**
  * genie — Single entrypoint CLI with namespaces:
- *   team, task, agent + top-level: work, daemon, council, send, inbox
+ *   team, task, agent + top-level: work, council, send, inbox, done, status
  */
 
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { doctorCommand } from './genie-commands/doctor.js';
-import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
+import {
+  profilesAddCommand,
+  profilesDefaultCommand,
+  profilesListCommand,
+  profilesRmCommand,
+  profilesShowCommand,
+} from './genie-commands/profiles.js';
 import { type SessionOptions, sessionCommand } from './genie-commands/session.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
@@ -28,9 +33,9 @@ import { VERSION } from './lib/version.js';
 import { registerHookNamespace } from './hooks/dispatch-command.js';
 import { registerAgentNamespace } from './term-commands/agents.js';
 import * as councilCmd from './term-commands/council.js';
-import * as daemonCmd from './term-commands/daemon.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
+import { registerStateCommands } from './term-commands/state.js';
 import { registerTaskNamespace } from './term-commands/task/commands.js';
 // Provider-selectable orchestration namespaces (genie-cli-teams)
 import { registerTeamNamespace } from './term-commands/team.js';
@@ -89,29 +94,21 @@ shortcuts
 
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
-// Brainstorm command group
-const brainstorm = program.command('brainstorm').description('Brainstorm utilities (file-based helpers)');
+// Profiles command group - manage worker profiles
+const profiles = program.command('profiles').description('Manage worker profiles for Claude Code spawning');
 
-brainstorm
-  .command('crystallize')
-  .description('Crystallize a brainstorm draft into design.md and upsert .beads/issues.jsonl')
-  .requiredOption('--slug <slug>', 'Brainstorm slug (kebab-case)')
-  .option('--file <path>', 'Input draft markdown path (default: .genie/brainstorms/<slug>/draft.md)')
-  .option('-r, --repo <path>', 'Repo path (default: cwd)')
-  .option('--title <title>', 'Issue title (default: slug)')
-  .option('--depends-on <ids>', 'Comma-separated dependency IDs (default: hq-roadmap)')
-  .option('--status <status>', 'Issue status (open|closed)', 'open')
-  .action(brainstormCrystallizeCommand);
+// Make 'list' the default action for bare `genie profiles`
+profiles.action(profilesListCommand);
 
-// Ledger command group
-const ledger = program.command('ledger').description('Ledger utilities (beads JSONL validation)');
+profiles.command('list').description('List all configured worker profiles').action(profilesListCommand);
 
-ledger
-  .command('validate')
-  .description('Validate local .beads/issues.jsonl JSONL structure (scriptable)')
-  .option('-r, --repo <path>', 'Repo path (default: cwd)')
-  .option('--json', 'Output JSON')
-  .action(ledgerValidateCommand);
+profiles.command('add <name>').description('Create a new worker profile interactively').action(profilesAddCommand);
+
+profiles.command('rm <name>').description('Delete a worker profile').action(profilesRmCommand);
+
+profiles.command('show <name>').description('Show details of a worker profile').action(profilesShowCommand);
+
+profiles.command('default [name]').description('Get or set the default worker profile').action(profilesDefaultCommand);
 
 // ============================================================================
 // Provider-selectable orchestration namespaces (genie-cli-teams)
@@ -122,16 +119,17 @@ registerAgentNamespace(program);
 registerDirNamespace(program);
 registerSendInboxCommands(program);
 registerTaskNamespace(program);
+registerStateCommands(program);
 registerHookNamespace(program);
 
 // ============================================================================
 // Top-level commands (migrated from genie term)
 // ============================================================================
 
-// genie work <target> — spawn worker bound to beads issue
+// genie work <target> — spawn worker bound to task
 program
   .command('work <target>')
-  .description('Spawn worker bound to beads issue (target: bd-id, "next", or "wish")')
+  .description('Spawn worker bound to task (target: task-id, "next", or "wish")')
   .option('--no-worktree', 'Use shared repo instead of worktree')
   .option('-s, --session <name>', 'Target tmux session')
   .option('--focus', 'Focus the worker pane after spawning')
@@ -145,42 +143,6 @@ program
   .option('--shared-worktree', 'Share worktree with existing worker on same task')
   .action(async (target: string, options: workCmd.WorkOptions) => {
     await workCmd.workCommand(target, options);
-  });
-
-// genie daemon — beads sync daemon
-const daemonProgram = program.command('daemon').description('Manage beads daemon for auto-sync');
-
-daemonProgram
-  .command('start')
-  .description('Start beads daemon (auto-commit, auto-sync)')
-  .option('--no-auto-commit', 'Disable auto-commit')
-  .option('--auto-push', 'Enable auto-push to remote')
-  .action(async (options: daemonCmd.DaemonStartOptions) => {
-    await daemonCmd.startCommand(options);
-  });
-
-daemonProgram
-  .command('stop')
-  .description('Stop beads daemon')
-  .action(async () => {
-    await daemonCmd.stopCommand();
-  });
-
-daemonProgram
-  .command('status')
-  .description('Show daemon status')
-  .option('--json', 'Output as JSON')
-  .action(async (options: daemonCmd.DaemonStatusOptions) => {
-    await daemonCmd.statusCommand(options);
-  });
-
-daemonProgram
-  .command('restart')
-  .description('Restart beads daemon')
-  .option('--no-auto-commit', 'Disable auto-commit')
-  .option('--auto-push', 'Enable auto-push to remote')
-  .action(async (options: daemonCmd.DaemonStartOptions) => {
-    await daemonCmd.restartCommand(options);
   });
 
 // genie council — dual-model deliberation

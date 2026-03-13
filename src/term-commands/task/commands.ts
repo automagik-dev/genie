@@ -1,30 +1,25 @@
 /**
- * Task Namespace — Beads issue management + dependency-aware task management.
+ * Task Namespace — Task management with dependency tracking.
  *
- * Groups all task/issue management commands under `genie task`.
+ * Groups all task management commands under `genie task`.
  *
- * Commands (beads integration - main):
- *   task create <title>   - Create new beads issue
- *   task update <id>      - Update task properties
- *   task ship <id>        - Mark done + merge + cleanup
- *   task close <id>       - Close + cleanup
- *   task ls               - List ready tasks (= bd ready)
- *   task link             - Link task to wish
- *   task unlink           - Unlink task from wish
- *
- * Commands (dependency-aware - teams):
+ * Commands:
+ *   task create <title>        - Create new task
+ *   task update <id>           - Update task properties
+ *   task ship <id>             - Mark done + merge + cleanup
+ *   task close <id>            - Close + cleanup
+ *   task ls                    - List ready tasks
+ *   task link                  - Link task to wish
+ *   task unlink                - Unlink task from wish
  *   task create-local <title>  - Create a local dependency-tracked task
  *   task list-local            - List local tasks with ready/blocked
  *   task update-local <id>     - Update local task properties
  *
- * Group F: Tasks differentiate "ready" vs "blocked" based on
- * dependency resolution.
+ * Tasks differentiate "ready" vs "blocked" based on dependency resolution.
  */
 
-import { exec } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import type { Command } from 'commander';
 import { computePriorityScore, listTasks } from '../../lib/local-tasks.js';
 import { getBackend } from '../../lib/task-backend.js';
@@ -32,8 +27,6 @@ import * as closeCmd from '../close.js';
 import * as createCmd from '../create.js';
 import * as shipCmd from '../ship.js';
 import * as updateCmd from '../update.js';
-
-const execAsync = promisify(exec);
 
 // ============================================================================
 // Types (dependency-aware tasks from genie-cli-teams)
@@ -194,21 +187,7 @@ async function displayLocalTasks(repoPath: string, options: { all?: boolean; jso
   console.log('');
 }
 
-async function displayBeadsTasks(options: { all?: boolean }): Promise<void> {
-  try {
-    const cmd = options.all ? 'bd show --all' : 'bd ready';
-    const { stdout } = await execAsync(cmd);
-    console.log(stdout);
-  } catch (error) {
-    const err = error as { stderr?: string };
-    if (err.stderr) {
-      console.error(err.stderr);
-    } else {
-      console.error('Failed to list tasks. Make sure beads (bd) is installed.');
-    }
-    process.exit(1);
-  }
-}
+// displayBeadsTasks removed — only local task display remains
 
 // ============================================================================
 // Register namespace
@@ -218,12 +197,12 @@ async function displayBeadsTasks(options: { all?: boolean }): Promise<void> {
  * Register the `task` namespace with all subcommands
  */
 export function registerTaskNamespace(program: Command): void {
-  const taskProgram = program.command('task').description('Task/issue management (beads + dependency-aware)');
+  const taskProgram = program.command('task').description('Task management (dependency-aware)');
 
   // task create
   taskProgram
     .command('create <title>')
-    .description('Create a new beads issue')
+    .description('Create a new task')
     .option('-d, --description <text>', 'Issue description')
     .option('-p, --parent <id>', 'Parent issue ID (creates dependency)')
     .option('--wish <slug>', 'Link to a wish document')
@@ -260,7 +239,7 @@ export function registerTaskNamespace(program: Command): void {
   taskProgram
     .command('close <task-id>')
     .description('Close task/issue and cleanup worker')
-    .option('--no-sync', 'Skip bd sync (beads only)')
+    .option('--no-sync', 'Skip sync')
     .option('--keep-worktree', "Don't remove the worktree")
     .option('--merge', 'Merge worktree changes to main branch')
     .option('-y, --yes', 'Skip confirmation')
@@ -268,44 +247,37 @@ export function registerTaskNamespace(program: Command): void {
       await closeCmd.closeCommand(taskId, options);
     });
 
-  // task ls (wrapper for bd ready)
+  // task ls
   taskProgram
     .command('ls')
     .alias('ready')
-    .description('List ready tasks (wrapper for bd ready)')
+    .description('List ready tasks')
     .option('--all', 'Show all tasks, not just ready')
     .option('--json', 'Output as JSON')
     .action(async (options: { all?: boolean; json?: boolean }) => {
       const repoPath = process.cwd();
-      const backend = getBackend(repoPath);
-
-      if (backend.kind === 'local') {
-        await displayLocalTasks(repoPath, options);
-      } else {
-        await displayBeadsTasks(options);
-      }
+      await displayLocalTasks(repoPath, options);
     });
 
   // task link <wish> <task-id> - Link a task to a wish
   taskProgram
     .command('link <wish-slug> <task-id>')
-    .description('Link a beads task to a wish document')
+    .description('Link a task to a wish document')
     .action(async (wishSlug: string, taskId: string) => {
       const { linkTask, wishExists } = await import('../../lib/wish-tasks.js');
       const repoPath = process.cwd();
 
-      // Verify wish exists
       if (!(await wishExists(repoPath, wishSlug))) {
         console.error(`❌ Wish "${wishSlug}" not found in .genie/wishes/`);
         process.exit(1);
       }
 
-      // Get task title from beads
+      // Get task title from local tasks
       let taskTitle = taskId;
       try {
-        const { stdout } = await execAsync(`bd show ${taskId} --json 2>/dev/null`);
-        const issue = JSON.parse(stdout);
-        taskTitle = issue.title || taskId;
+        const taskBackend = getBackend(repoPath);
+        const task = await taskBackend.get(taskId);
+        if (task) taskTitle = task.title;
       } catch {
         // Use taskId as fallback title
       }
@@ -317,7 +289,7 @@ export function registerTaskNamespace(program: Command): void {
   // task unlink <wish> <task-id> - Unlink a task from a wish
   taskProgram
     .command('unlink <wish-slug> <task-id>')
-    .description('Unlink a beads task from a wish document')
+    .description('Unlink a task from a wish document')
     .action(async (wishSlug: string, taskId: string) => {
       const { unlinkTask } = await import('../../lib/wish-tasks.js');
       const repoPath = process.cwd();

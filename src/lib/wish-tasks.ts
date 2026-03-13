@@ -1,7 +1,7 @@
 /**
  * Wish-Task Linking
  *
- * Manages the relationship between wishes and beads tasks.
+ * Manages the relationship between wishes and tasks.
  * Stores links in .genie/wishes/<slug>/tasks.json
  */
 
@@ -13,7 +13,7 @@ import { join } from 'node:path';
 // ============================================================================
 
 interface LinkedTask {
-  /** Beads task ID (e.g., "bd-42") */
+  /** Task ID (e.g., "wish-42") */
   id: string;
   /** Task title */
   title: string;
