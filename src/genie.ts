@@ -5,9 +5,6 @@
  *   team, task, agent + top-level: work, council, send, inbox, done, status
  */
 
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import {
@@ -17,7 +14,6 @@ import {
   profilesRmCommand,
   profilesShowCommand,
 } from './genie-commands/profiles.js';
-import { type SessionOptions, sessionCommand } from './genie-commands/session.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -26,8 +22,6 @@ import {
 } from './genie-commands/shortcuts.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
-import { sanitizeTeamName } from './lib/claude-native-teams.js';
-import { resolveTeamShortcut } from './lib/team-shortcut.js';
 import { VERSION } from './lib/version.js';
 
 import { registerHookNamespace } from './hooks/dispatch-command.js';
@@ -68,16 +62,6 @@ program.command('update').description('Update Genie CLI to the latest version').
 
 // Uninstall command - remove genie CLI
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
-
-// Internal handler for session opening (hidden -- user invokes via `genie` or `genie <team>`)
-program
-  .command('_open [team]', { hidden: true })
-  .option('-r, --reset', 'Kill existing session and start fresh')
-  .option('-d, --dir <path>', 'Working directory (default: cwd)')
-  .action(async (team: string | undefined, options: SessionOptions) => {
-    if (team) options.team = team;
-    await sessionCommand(options);
-  });
 
 // Shortcuts command group - manage tmux keyboard shortcuts
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
@@ -156,33 +140,5 @@ program
   .action(async (options: councilCmd.CouncilOptions) => {
     await councilCmd.councilCommand(options);
   });
-
-// ============================================================================
-// Team shortcut routing: genie <team> -> genie _open <team>
-// ============================================================================
-
-// Collect all registered subcommand names (+ aliases)
-const knownCommands = new Set<string>();
-for (const cmd of program.commands) {
-  knownCommands.add(cmd.name());
-  for (const alias of cmd.aliases()) {
-    knownCommands.add(alias);
-  }
-}
-knownCommands.add('help');
-
-const shortcutResult = resolveTeamShortcut(process.argv.slice(2), knownCommands, (name) => {
-  try {
-    return existsSync(join(homedir(), '.claude', 'teams', sanitizeTeamName(name)));
-  } catch {
-    return false;
-  }
-});
-
-if (shortcutResult.collisionWarning) {
-  console.warn(shortcutResult.collisionWarning);
-}
-
-process.argv = [...process.argv.slice(0, 2), ...shortcutResult.args];
 
 program.parse();
