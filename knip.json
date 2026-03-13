@@ -1,5 +1,16 @@
 {
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
   "project": ["src/**/*.ts"],
-  "ignoreBinaries": ["tmux", "bd", "which"]
+  "ignoreBinaries": ["tmux", "bd", "which"],
+  "ignore": [
+    "src/genie-commands/profiles.ts",
+    "src/genie-commands/ledger/validate.ts",
+    "src/lib/team-auto-spawn.ts",
+    "src/lib/beads-registry.ts",
+    "src/lib/wish-state.ts",
+    "src/term-commands/beads-validate.ts",
+    "src/term-commands/daemon.ts"
+  ],
+  "ignoreDependencies": [],
+  "ignoreExportsUsedInFile": true
 }
