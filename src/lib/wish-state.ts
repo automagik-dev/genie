@@ -19,7 +19,7 @@ import { z } from 'zod';
 // ============================================================================
 
 export const GroupStatusSchema = z.enum(['blocked', 'ready', 'in_progress', 'done']);
-export type GroupStatus = z.infer<typeof GroupStatusSchema>;
+type GroupStatus = z.infer<typeof GroupStatusSchema>;
 
 export const GroupStateSchema = z.object({
   status: GroupStatusSchema,

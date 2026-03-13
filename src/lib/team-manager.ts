@@ -295,12 +295,3 @@ export async function listMembers(repoPath: string, teamName: string): Promise<s
   if (!config) return null;
   return config.members;
 }
-
-// ============================================================================
-// Legacy compatibility — used by protocol-router-spawn.ts and agents.ts
-// ============================================================================
-
-/** @deprecated — use getTeam() directly. Kept for backward compat with existing callers. */
-export async function deleteTeam(repoPath: string, name: string): Promise<boolean> {
-  return disbandTeam(repoPath, name);
-}
