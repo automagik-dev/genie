@@ -27,12 +27,14 @@ async function createTempGitRepo(basePath: string, name: string): Promise<string
   await $`git -C ${repoPath} init`.quiet();
   await $`git -C ${repoPath} config user.email "test@test.com"`.quiet();
   await $`git -C ${repoPath} config user.name "Test User"`.quiet();
+  // Disable hooks in test repos to avoid commitlint/husky interference
+  await $`git -C ${repoPath} config core.hooksPath /dev/null`.quiet();
 
   // Create initial commit
   const readme = join(repoPath, 'README.md');
   await writeFile(readme, '# Test Repo');
   await $`git -C ${repoPath} add .`.quiet();
-  await $`git -C ${repoPath} commit -m "Initial commit"`.quiet();
+  await $`git -C ${repoPath} commit -m "chore: initial commit"`.quiet();
 
   return repoPath;
 }

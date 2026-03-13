@@ -21,12 +21,17 @@ import {
 } from './local-tasks.js';
 
 let tempDir: string;
+let savedEnv: string | undefined;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'local-tasks-test-'));
+  savedEnv = process.env.TERM_USE_LOCAL_TASKS;
+  process.env.TERM_USE_LOCAL_TASKS = undefined;
 });
 
 afterEach(async () => {
+  if (savedEnv !== undefined) process.env.TERM_USE_LOCAL_TASKS = savedEnv;
+  else process.env.TERM_USE_LOCAL_TASKS = undefined;
   await rm(tempDir, { recursive: true, force: true });
 });
 
