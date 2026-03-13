@@ -229,7 +229,7 @@ Write a personalized AGENTS.md using this template, substituting gathered values
 - Branch workflow: dev (working) → main (production)
 
 ## Agent Commands (genie CLI)
-- Spawn agent: `genie agent spawn --role <role>`
+- Spawn agent: `genie spawn <role>`
 - List agents: `genie agent list`
 - Send message: `genie send "<text>" --to <agent>`
 - Kill agent: `genie agent kill <id>`
@@ -433,11 +433,11 @@ End with a brief, friendly message welcoming them and suggesting their first act
 
 ## CLI Command Reference
 
-**IMPORTANT:** The genie CLI uses `genie agent`, NOT `genie worker`. The worker→agent rename is complete. Always use:
+**IMPORTANT:** The genie CLI uses `genie spawn` for agent creation and `genie agent` for management. The worker→agent rename is complete. Always use:
 
 | Action | Correct Command | WRONG (deprecated) |
 |--------|----------------|---------------------|
-| Spawn agent | `genie agent spawn --role <role>` | ~~genie worker spawn~~ |
+| Spawn agent | `genie spawn <role>` | ~~genie worker spawn~~ |
 | List agents | `genie agent list` | ~~genie worker list~~ |
 | Kill agent | `genie agent kill <id>` | ~~genie worker kill~~ |
 | Agent history | `genie agent history <name>` | ~~genie worker history~~ |
@@ -445,7 +445,7 @@ End with a brief, friendly message welcoming them and suggesting their first act
 | Manage teams | `genie team ensure <name>` | (same) |
 | Install hooks | `genie hook install` | (none) |
 
-If the generated AGENTS.md or any documentation references `genie worker`, replace with `genie agent`.
+If the generated AGENTS.md or any documentation references `genie worker`, replace with the correct `genie spawn`/`genie agent` commands.
 
 ## tmux Best Practices
 
@@ -524,7 +524,7 @@ set -g status-interval 5     # Refresh every 5s
 
 ### TEAM_LEAD_PROMPT.md Outdated References
 
-`TEAM_LEAD_PROMPT.md` has been updated to use `genie agent spawn/list/kill/etc.` — consistent with the onboarding skill and all other documentation.
+`TEAM_LEAD_PROMPT.md` has been updated to use `genie spawn/agent list/agent kill/etc.` — consistent with the onboarding skill and all other documentation.
 
 ## Error Handling
 
@@ -551,6 +551,6 @@ set -g status-interval 5     # Refresh every 5s
 - Keep the tone warm but efficient — friendly without being verbose.
 - If the user seems experienced, adapt — offer to fast-track with sensible defaults.
 - The entire onboarding should complete in under 2 minutes of user time.
-- Always use `genie agent` commands, NEVER `genie worker` (deprecated).
+- Always use `genie spawn` for spawning and `genie agent` for management, NEVER `genie worker` (deprecated).
 - Hook injection is mandatory — never defer to first agent spawn.
 - Validate workspace structure before user interaction — fix silently, report in summary.
