@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(genie *)",
+      "Bash(bd *)",
+      "Bash(term *)",
+      "Bash(tmux *)",
+      "Bash(make *)",
+      "Bash(bun *)",
+      "Bash(git *)"
+    ]
+  }
+}
