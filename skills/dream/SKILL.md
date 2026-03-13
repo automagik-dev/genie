@@ -12,7 +12,7 @@ Pick SHIP-ready wishes, build a dependency-ordered execution plan, spawn paralle
 - Multiple SHIP-ready wishes exist in `.genie/brainstorm.md` under `Poured`
 
 ## Flow
-1. **Pick wishes** from `.genie/brainstorm.md`.
+1. **Pick wishes** from `.genie/brainstorm.md` in the shared worktree.
 2. **Generate DREAM.md** with dependency-ordered execution plan.
 3. **Human confirms** DREAM.md (may edit before run).
 4. **Phase 1 — Execute:** spawn workers per wish, collect outcomes.
@@ -47,75 +47,35 @@ Pick SHIP-ready wishes, build a dependency-ordered execution plan, spawn paralle
 |-------|-------|
 | `slug` | wish identifier |
 | `branch` | `feat/<slug>` |
-| `worktree_path` | `/tmp/dream-worktrees/<slug>` |
 | `wish_path` | `.genie/wishes/<slug>/WISH.md` |
-| `worker_prompt` | self-contained instructions (wish_path, branch, worktree_path, CI command, reporting format) |
+| `worker_prompt` | self-contained instructions (wish_path, branch, CI command, reporting format) |
 | `depends_on` | upstream slugs from WISH.md |
 | `merge_order` | integer from topological layering |
 
-4. Write to `.genie/DREAM.md` in the target repository (not the skills repo).
+4. Write to `.genie/DREAM.md` in the shared worktree.
 5. Present for human confirmation before execution.
 
 ## Dispatch
 
-Runtime-specific dispatch. Detect runtime, then use the matching pattern. Default: Claude Code.
-
-| Signal | Runtime | Dispatch path |
-|--------|---------|---------------|
-| `Task` tool available with `isolation: "worktree"` | Claude Code | Teams + worktrees |
-| Codex environment (`CODEX_ENV` or native subagent API) | Codex | Native subagents |
-| Neither above, `term` CLI available | OpenClaw | term -> Claude Code -> Teams |
-
-### Claude Code (primary)
-
-```
-TeamCreate("dream-<date>")
-
-Task(
-  model: "sonnet",
-  isolation: "worktree",
-  prompt: "<worker_prompt from DREAM.md>",
-  run_in_background: true
-)
-```
-
-- Parallel tasks: multiple `Task` calls with `run_in_background: true` in one message.
-- Review tasks: separate `Task` (different subagent from implementor).
-- Coordination: `SendMessage` for inter-agent communication.
-- Cleanup: `TeamDelete` after all workers report.
-
-### Codex
-
-```
-codex_subagent(
-  task: "<worker_prompt from DREAM.md>",
-  sandbox: true
-)
-```
-
-Isolation is Codex-managed. Documented for future validation.
-
-### OpenClaw
+All dispatch uses `genie spawn`. Create a team per dream session for isolation.
 
 ```bash
-genie agent spawn --role implementor
-# Or for bead-tracked work:
-bd create "<task title>" --type task
-genie work <bead-id>
+# Create a team for this dream session
+genie team ensure dream-<date>
+
+# Spawn workers
+genie spawn implementor    # one per wish
+genie spawn reviewer       # one per PR (separate from implementor)
+genie spawn fixer          # for FIX-FIRST gaps (separate from both)
 ```
-
-Three-layer chain: OpenClaw -> genie -> Claude Code -> Teams. Use timeouts; fall back to sequential on failure.
-
-Full reference: `plugins/genie/references/dispatch-contract.md`.
 
 ## Phase 1: Execute
 
-1. Detect runtime (see Dispatch above).
-2. Create team context (Claude Code: `TeamCreate("dream-<date>")`).
-3. For each wish in DREAM.md, ordered by `merge_order` layer:
+1. Create team context: `genie team ensure dream-<date>`.
+2. For each wish in DREAM.md, ordered by `merge_order` layer:
    - Same-layer wishes dispatch in parallel.
-   - Dispatch one worker per wish using the runtime's dispatch pattern, passing `worker_prompt` from DREAM.md.
-4. Collect outcomes via `SendMessage` (Claude Code) or runtime-equivalent.
+   - Dispatch one worker per wish via `genie spawn implementor`, passing `worker_prompt` from DREAM.md.
+3. Collect outcomes via `genie send`/`genie broadcast`.
 
 ### Worker Contract
 
@@ -123,13 +83,13 @@ Each worker executes independently:
 
 1. Read WISH.md from `wish_path`.
 2. Self-refine task prompt via `/refine` (see Worker Self-Refinement below).
-3. Checkout branch in worktree: `cd <worktree_path> && git checkout -b <branch>`.
+3. Checkout branch: `git checkout -b <branch>`.
 4. Implement all execution groups from WISH.md.
 5. CI fix loop (max 3 retries):
    - Run CI. If fail: fix, `sleep 5`, retry.
    - After 3 failures: mark BLOCKED.
-6. Only after CI green: `gh pr create --base <base_branch>`.
-7. Report to lead:
+6. Only after CI green: `gh pr create --base dev`.
+7. Report to lead via `genie send`:
    - Success: `DONE: PR at <url>. CI: green. Groups: N/N.`
    - Failure: `BLOCKED: <reason>. Groups: N/N.`
 
@@ -148,22 +108,19 @@ Workers NEVER overwrite WISH.md -- the refined prompt is runtime context only.
 
 **Trigger:** all execute workers have reported `DONE` or `BLOCKED`.
 
-1. Dispatch one reviewer per open PR from Phase 1 using the runtime's dispatch pattern (see Dispatch above). Skip `BLOCKED` wishes.
-   - Reviewer must be a **separate subagent** from the implementor (enforced by dispatch contract).
+1. Dispatch one reviewer per open PR from Phase 1 via `genie spawn reviewer`. Skip `BLOCKED` wishes.
+   - Reviewer must be a **separate subagent** from the implementor.
 2. Reviewer loop (max 2 loops per PR):
    - Run `/review` against wish acceptance criteria.
-   - `FIX-FIRST`: dispatch fix subagent (separate from both implementor and reviewer), re-run `/review`.
+   - `FIX-FIRST`: dispatch `genie spawn fixer` (separate from both implementor and reviewer), re-run `/review`.
    - Architectural issue: escalate immediately (no fix attempt), record in report.
    - `SHIP`: mark review-complete.
-     - Update wish: set `**Status:** SHIPPED` in `.genie/wishes/<slug>/WISH.md`.
-     - Close bead: `bd close <slug>` (if unavailable, log warning -- non-blocking).
 3. Cleanup:
-   - `git worktree remove <worktree_path>` for each wish.
-   - `TeamDelete` (Claude Code) or runtime-equivalent to tear down team context.
+   - `genie team delete dream-<date>` to tear down team context.
 
 ## DREAM-REPORT.md
 
-Write to `.genie/DREAM-REPORT.md` with this structure:
+Write to `.genie/DREAM-REPORT.md` in the shared worktree with this structure:
 
 ### Reviewed PRs
 
@@ -179,6 +136,7 @@ Write to `.genie/DREAM-REPORT.md` with this structure:
 ## Rules
 - Never early-stop: if a wish returns BLOCKED, record reason and continue with remaining wishes.
 - Never skip Phase 2 -- every DONE PR must be reviewed.
-- Orchestrator never executes wish work directly -- always dispatch workers.
+- Orchestrator never executes wish work directly -- always dispatch workers via `genie spawn`.
 - Do not expand scope beyond what WISH.md defines.
 - Always write DREAM-REPORT.md, even if all wishes BLOCKED.
+- **No state management** — this skill does NOT write `Status: SHIPPED` or close tracking artifacts. State transitions are handled by the orchestration layer.
