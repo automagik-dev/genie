@@ -5,10 +5,10 @@
  * Claude's JSONL logs and extracting key events.
  *
  * Usage:
- *   genie agent history <agent>          # Compressed summary
- *   genie agent history <agent> --full   # Full conversation
- *   genie agent history <agent> --since 5  # Last 5 exchanges
- *   genie agent history <agent> --json   # JSON output
+ *   genie history <agent>          # Compressed summary
+ *   genie history <agent> --full   # Full conversation
+ *   genie history <agent> --since 5  # Last 5 exchanges
+ *   genie history <agent> --json   # JSON output
  */
 
 import * as workerRegistry from '../lib/agent-registry.js';
@@ -430,7 +430,7 @@ async function resolveLogContext(workerIdOrName: string, options: HistoryOptions
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
     console.error(`❌ Agent "${workerIdOrName}" not found.`);
-    console.error('   Run `genie agent list` to see active agents.');
+    console.error('   Run `genie ls` to see agents.');
     process.exit(1);
   }
 

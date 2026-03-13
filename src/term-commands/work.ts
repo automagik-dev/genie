@@ -972,10 +972,9 @@ function printWorkerStatus(
     console.log(`   Target repo: ${extra.targetRepo}`);
   }
   console.log('\nCommands:');
-  console.log('   genie agent list        - Check agent status');
-  console.log('   genie agent approve     - Approve permissions');
-  console.log(`   genie agent close ${taskId}  - Close issue when done`);
-  console.log(`   genie agent kill ${taskId}   - Force kill agent`);
+  console.log('   genie ls                - Check agent status');
+  console.log(`   genie kill ${taskId}         - Force kill agent`);
+  console.log(`   genie stop ${taskId}         - Stop agent (preserve session)`);
 }
 
 /**
@@ -1072,7 +1071,7 @@ export async function workCommand(target: string, options: WorkOptions = {}): Pr
       const resumed = await resumeExistingWorker(existingWorker, taskId, options, workerProfile);
       if (resumed) return;
       console.error(`❌ ${taskId} already has a worker (pane ${existingWorker.paneId})`);
-      console.log(`   Run \`genie agent kill ${existingWorker.id}\` first, or work on a different issue.`);
+      console.log(`   Run \`genie kill ${existingWorker.id}\` first, or work on a different issue.`);
       process.exit(1);
     }
 
