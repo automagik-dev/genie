@@ -15,7 +15,7 @@ const KNOWN_COMMANDS = new Set([
   'uninstall',
   '_open',
   'shortcuts',
-  'profiles',
+  'dir',
   'brainstorm',
   'ledger',
   'team',

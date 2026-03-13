@@ -2,16 +2,12 @@
  * Team Namespace — CRUD for team lifecycle.
  *
  * Commands:
- *   genie team create <name> [--blueprint <bp>]
- *   genie team list
- *   genie team delete <name>
- *   genie team ensure <name> [--dir <path>]  — auto-spawn team-lead if not running
+ *   genie team create <name>
+ *   genie team list / ls
+ *   genie team delete / rm <name>
  */
 
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import type { Command } from 'commander';
-import { ensureTeamLead } from '../lib/team-auto-spawn.js';
 import * as teamManager from '../lib/team-manager.js';
 
 export function registerTeamNamespace(program: Command): void {
@@ -20,19 +16,12 @@ export function registerTeamNamespace(program: Command): void {
   // team create
   team
     .command('create <name>')
-    .description('Create a new team (optionally from a blueprint)')
-    .option('-b, --blueprint <name>', 'Blueprint to use (work, dream, review, fix, debug)')
-    .action(async (name: string, options: { blueprint?: string }) => {
+    .description('Create a new team')
+    .action(async (name: string) => {
       try {
         const repoPath = process.cwd();
-        const config = await teamManager.createTeam(repoPath, name, options.blueprint);
+        const config = await teamManager.createTeam(repoPath, name);
         console.log(`Team "${config.name}" created.`);
-        if (config.blueprint) {
-          console.log(`  Blueprint: ${config.blueprint}`);
-        }
-        if (config.roles.length > 0) {
-          console.log(`  Roles: ${config.roles.map((r) => r.name).join(', ')}`);
-        }
         if (config.nativeTeamsEnabled) {
           console.log('  Native teams: enabled (CC detected)');
           console.log(`  Session: ${config.nativeTeamParentSessionId ?? '(pending)'}`);
@@ -61,7 +50,7 @@ export function registerTeamNamespace(program: Command): void {
         }
 
         if (teams.length === 0) {
-          console.log('No teams found. Create one with: genie team create <name> --blueprint work');
+          console.log('No teams found. Create one with: genie team create <name>');
           return;
         }
 
@@ -69,10 +58,8 @@ export function registerTeamNamespace(program: Command): void {
         console.log('TEAMS');
         console.log('-'.repeat(60));
         for (const t of teams) {
-          const roles = t.roles.map((r) => r.name).join(', ') || '(no roles)';
-          const bp = t.blueprint ? ` [${t.blueprint}]` : '';
-          console.log(`  ${t.name}${bp}`);
-          console.log(`    Roles: ${roles}`);
+          console.log(`  ${t.name}`);
+          console.log(`    Created: ${t.createdAt}`);
         }
         console.log('');
       } catch (error) {
@@ -101,42 +88,6 @@ export function registerTeamNamespace(program: Command): void {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
         process.exit(1);
-      }
-    });
-
-  // team ensure — auto-spawn team-lead if not running
-  team
-    .command('ensure <name>')
-    .description('Ensure a team exists with an active Claude Code team-lead (non-interactive)')
-    .option('-d, --dir <path>', 'Working directory for the team-lead', join(homedir(), 'workspace'))
-    .action(async (name: string, options: { dir: string }) => {
-      try {
-        const result = await ensureTeamLead(name, options.dir);
-        if (result.created) {
-          console.log(`Team "${name}" auto-spawned in session "${result.session}", window "${result.window}"`);
-        } else {
-          console.log(`Team "${name}" already active.`);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
-
-  // team blueprints
-  team
-    .command('blueprints')
-    .description('List available blueprints')
-    .action(() => {
-      const names = teamManager.listBlueprints();
-      console.log('Available blueprints:');
-      for (const name of names) {
-        const bp = teamManager.getBlueprint(name);
-        if (bp) {
-          const roles = bp.roles.map((r) => r.name).join(', ');
-          console.log(`  ${name}: ${roles}`);
-        }
       }
     });
 }
