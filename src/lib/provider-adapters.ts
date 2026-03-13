@@ -66,6 +66,12 @@ export interface SpawnParams {
   sessionId?: string;
   /** Session UUID to resume (emits --resume). Mutually exclusive with sessionId. */
   resume?: string;
+  /** Path to a system prompt file (AGENTS.md). Emits --system-prompt-file or --append-system-prompt-file. */
+  systemPromptFile?: string;
+  /** How to inject the system prompt file: 'system' replaces CC default, 'append' adds to it. */
+  promptMode?: 'system' | 'append';
+  /** Model override (e.g., 'sonnet', 'opus'). Emits --model flag. */
+  model?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -106,6 +112,9 @@ const spawnParamsSchema = z.object({
     .optional(),
   sessionId: z.string().uuid().optional(),
   resume: z.string().uuid().optional(),
+  systemPromptFile: z.string().optional(),
+  promptMode: z.enum(['system', 'append']).optional(),
+  model: z.string().optional(),
 });
 
 /**
@@ -212,6 +221,13 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   }
 
   if (params.role) parts.push('--agent', escapeShellArg(params.role));
+
+  if (params.model) parts.push('--model', escapeShellArg(params.model));
+
+  if (params.systemPromptFile) {
+    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
+    parts.push(flag, escapeShellArg(params.systemPromptFile));
+  }
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));

@@ -19,6 +19,7 @@
  */
 
 import type { Command } from 'commander';
+import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
@@ -720,10 +721,10 @@ async function resolveNativeTeam(
   return { parentSessionId, spawnColor, nativeTeam };
 }
 
-async function handleWorkerSpawn(options: {
+interface SpawnOptions {
   provider: string;
   team: string;
-  role?: string;
+  model?: string;
   skill?: string;
   layout?: string;
   color?: string;
@@ -731,32 +732,59 @@ async function handleWorkerSpawn(options: {
   permissionMode?: string;
   extraArgs?: string[];
   cwd?: string;
-}): Promise<void> {
-  // 1. Resolve team name from flag, env, or session discovery
-  const team = options.team || (await nativeTeams.discoverTeamName());
-  if (!team) {
-    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+}
+
+/** Resolve agent from directory, returning entry + derived CWD/identity/model. */
+async function resolveAgentForSpawn(
+  name: string,
+  options: SpawnOptions,
+): Promise<{
+  entry: directory.DirectoryEntry;
+  repoPath: string;
+  identityPath: string | null;
+  model: string | undefined;
+}> {
+  const resolved = await directory.resolve(name);
+  if (!resolved) {
+    console.error(`Error: Agent "${name}" not found in directory or built-ins.`);
+    console.error(`  Register with: genie dir add ${name} --dir <path>`);
+    console.error('  Or use a built-in: implementor, tester, reviewer, debugger, ...');
     process.exit(1);
   }
+  const entry = resolved.entry;
+  return {
+    entry,
+    repoPath: options.cwd ?? (entry.dir || undefined) ?? process.cwd(),
+    identityPath: entry.dir ? directory.loadIdentity(entry) : null,
+    model: options.model ?? entry.model,
+  };
+}
 
-  // 1a. Reject if a live worker with the same role already exists in this team
-  if (options.role) await rejectDuplicateRole(team, options.role);
-
-  // 1b. Validate spawn parameters (Group A contract)
+/** Build SpawnParams from resolved agent + options. */
+async function buildSpawnParams(
+  name: string,
+  team: string,
+  options: SpawnOptions,
+  agent: Awaited<ReturnType<typeof resolveAgentForSpawn>>,
+): Promise<{ params: SpawnParams; parentSessionId: string; spawnColor: ClaudeTeamColor }> {
   const params: SpawnParams = {
     provider: options.provider as ProviderName,
     team,
-    role: options.role,
+    role: name,
     skill: options.skill,
     extraArgs: options.extraArgs,
+    model: agent.model,
+    systemPromptFile: agent.identityPath ?? undefined,
+    promptMode: agent.entry.promptMode,
   };
 
-  // 2. Ensure native team infrastructure + Claude flags.
-  const repoPath = options.cwd ?? process.cwd();
-  const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, repoPath, options);
+  const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {
+    ...options,
+    role: name,
+  });
   if (nativeTeam) params.nativeTeam = nativeTeam;
 
-  // 2b. Inject hook dispatch into team settings.json (idempotent)
+  // Inject hook dispatch into team settings.json (idempotent)
   try {
     const { injectTeamHooks } = await import('../hooks/inject.js');
     const injected = await injectTeamHooks(team);
@@ -765,19 +793,36 @@ async function handleWorkerSpawn(options: {
     console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
   }
 
-  // Session ID only for Claude
   const claudeSessionId = params.provider === 'claude' ? crypto.randomUUID() : undefined;
   if (claudeSessionId) params.sessionId = claudeSessionId;
+
+  return { params, parentSessionId, spawnColor };
+}
+
+async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
+  // 1. Resolve agent from directory or built-ins
+  const agent = await resolveAgentForSpawn(name, options);
+
+  // 2. Resolve team
+  const team = options.team || (await nativeTeams.discoverTeamName());
+  if (!team) {
+    console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
+    process.exit(1);
+  }
+  await rejectDuplicateRole(team, name);
+
+  // 3. Build params
+  const { params, parentSessionId, spawnColor } = await buildSpawnParams(name, team, options, agent);
 
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
-  const workerId = await generateWorkerId(validated.team, validated.role);
+  const workerId = await generateWorkerId(validated.team, name);
 
   const insideTmux = Boolean(process.env.TMUX);
   const nt = validated.nativeTeam;
   const now = new Date().toISOString();
-  const agentName = nt?.agentName ?? validated.role ?? 'worker';
+  const agentName = nt?.agentName ?? name;
 
   // OTel relay for non-native workers (Codex)
   let otelRelayActive = false;
@@ -797,12 +842,12 @@ async function handleWorkerSpawn(options: {
     agentName,
     spawnColor,
     parentSessionId,
-    claudeSessionId,
+    claudeSessionId: params.sessionId,
     otelRelayActive,
     now,
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
-    cwd: repoPath,
+    cwd: agent.repoPath,
   };
 
   if (insideTmux) {
@@ -953,7 +998,7 @@ function printWorkerList(
 
   if (entries.length === 0 && stopped.length === 0 && pruned.length === 0) {
     console.log('No agents found.');
-    console.log('  Spawn one: genie agent spawn --role implementor');
+    console.log('  Spawn one: genie agent spawn implementor');
     return;
   }
 
@@ -1130,33 +1175,36 @@ export function registerAgentNamespace(program: Command): void {
 
   // agent spawn
   agent
-    .command('spawn')
-    .description('Spawn a new agent with provider selection')
+    .command('spawn <name>')
+    .description('Spawn a new agent by name (resolves from directory or built-ins)')
     .option('--provider <provider>', 'Provider: claude or codex', 'claude')
     .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
-    .requiredOption('--role <role>', 'Worker role (e.g., implementor, tester)')
+    .option('--model <model>', 'Model override (e.g., sonnet, opus)')
     .option('--skill <skill>', 'Skill to load (optional)')
     .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
     .option('--color <color>', 'Teammate pane border color')
     .option('--plan-mode', 'Start teammate in plan mode')
     .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
     .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
-    .option('--cwd <path>', 'Working directory for the agent (default: current directory)')
+    .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
     .action(
-      async (options: {
-        provider: string;
-        team: string;
-        role?: string;
-        skill?: string;
-        layout?: string;
-        color?: string;
-        planMode?: boolean;
-        permissionMode?: string;
-        extraArgs?: string[];
-        cwd?: string;
-      }) => {
+      async (
+        name: string,
+        options: {
+          provider: string;
+          team: string;
+          model?: string;
+          skill?: string;
+          layout?: string;
+          color?: string;
+          planMode?: boolean;
+          permissionMode?: string;
+          extraArgs?: string[];
+          cwd?: string;
+        },
+      ) => {
         try {
-          await handleWorkerSpawn(options);
+          await handleWorkerSpawn(name, options);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           console.error(`Error: ${message}`);
