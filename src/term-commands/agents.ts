@@ -10,6 +10,7 @@
 
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
+import { getBuiltin } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
@@ -653,7 +654,7 @@ export interface SpawnOptions {
   cwd?: string;
 }
 
-/** Resolve agent from directory, returning entry + derived CWD/identity/model. */
+/** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPrompt. */
 async function resolveAgentForSpawn(
   name: string,
   options: SpawnOptions,
@@ -662,6 +663,7 @@ async function resolveAgentForSpawn(
   repoPath: string;
   identityPath: string | null;
   model: string | undefined;
+  systemPrompt: string | undefined;
 }> {
   const resolved = await directory.resolve(name);
   if (!resolved) {
@@ -671,11 +673,20 @@ async function resolveAgentForSpawn(
     process.exit(1);
   }
   const entry = resolved.entry;
+
+  // For built-in agents, look up their inline system prompt
+  let systemPrompt: string | undefined;
+  if (resolved.builtin) {
+    const builtin = getBuiltin(name);
+    systemPrompt = builtin?.systemPrompt;
+  }
+
   return {
     entry,
     repoPath: options.cwd ?? (entry.dir || undefined) ?? process.cwd(),
     identityPath: entry.dir ? directory.loadIdentity(entry) : null,
     model: options.model ?? entry.model,
+    systemPrompt,
   };
 }
 
@@ -694,6 +705,7 @@ async function buildSpawnParams(
     extraArgs: options.extraArgs,
     model: agent.model,
     systemPromptFile: agent.identityPath ?? undefined,
+    systemPrompt: agent.systemPrompt,
     promptMode: agent.entry.promptMode,
   };
 
