@@ -97,7 +97,7 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
  * Uses `tmux show-environment -t <target> <varName>` which returns "VAR=value".
  * Returns null if the variable is not set or the target doesn't exist.
  */
-export async function getWindowEnv(target: string, varName: string): Promise<string | null> {
+async function getWindowEnv(target: string, varName: string): Promise<string | null> {
   try {
     const output = await executeTmux(`show-environment -t ${shellQuote(target)} ${shellQuote(varName)}`);
     // Output format: "VARNAME=value"
@@ -115,7 +115,7 @@ export async function getWindowEnv(target: string, varName: string): Promise<str
  * Set a tmux environment variable scoped to a specific window target.
  * Uses `tmux set-environment -t <target> <varName> <value>`.
  */
-export async function setWindowEnv(target: string, varName: string, value: string): Promise<void> {
+async function setWindowEnv(target: string, varName: string, value: string): Promise<void> {
   await executeTmux(`set-environment -t ${shellQuote(target)} ${shellQuote(varName)} ${shellQuote(value)}`);
 }
 
@@ -369,7 +369,7 @@ async function rehydratePaneColorHook(windowId: string): Promise<void> {
 /**
  * Kill a tmux session by ID
  */
-export async function killSession(sessionId: string): Promise<void> {
+async function killSession(sessionId: string): Promise<void> {
   await executeTmux(`kill-session -t '${sessionId}'`);
 }
 
