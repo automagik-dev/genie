@@ -1,31 +1,18 @@
 /**
- * Agent Namespace — unified agent lifecycle commands.
+ * Agent lifecycle — top-level command handlers.
  *
- * genie agent:
- *   spawn     - Spawn an agent with provider selection
- *   list      - List all agents with provider metadata
- *   kill <id> - Force kill an agent
- *   dashboard - Live status of all agents
- *   suspend   - Suspend an agent (kill pane, preserve session)
- *   watchdog  - Idle timeout watchdog
- *   approve   - Auto-approve engine management
- *   history   - Compressed session catch-up
- *   answer    - Answer agent question
- *   events    - Stream Claude Code events
- *   close     - Close task and cleanup agent
- *   ship      - Mark done, merge, cleanup
- *   read      - Read agent pane output
- *   exec      - Execute command in agent pane
+ * Exported handlers (registered in genie.ts as top-level commands):
+ *   handleWorkerSpawn  - genie spawn <name>
+ *   handleWorkerKill   - genie kill <name>
+ *   handleWorkerStop   - genie stop <name>
+ *   handleLsCommand    - genie ls
  */
 
-import type { Command } from 'commander';
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
-import * as mailbox from '../lib/mailbox.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
-import { detectState } from '../lib/orchestrator/index.js';
 import {
   type ClaudeTeamColor,
   type ProviderName,
@@ -36,49 +23,10 @@ import {
 import * as teamManager from '../lib/team-manager.js';
 import * as tmux from '../lib/tmux.js';
 import { isPaneAlive } from '../lib/tmux.js';
-import * as approveCmd from './approve.js';
-import * as closeCmd from './close.js';
-import * as eventsCmd from './events.js';
-import * as execCmd from './exec.js';
-import * as historyCmd from './history.js';
-import * as orchestrateCmd from './orchestrate.js';
-import * as readCmd from './read.js';
-import * as shipCmd from './ship.js';
 
 // ============================================================================
-// Helper Functions (legacy)
+// Helper Functions
 // ============================================================================
-
-/**
- * Get current state from pane output
- */
-async function getCurrentState(paneId: string): Promise<string> {
-  try {
-    const output = await tmux.capturePaneContent(paneId, 30);
-    const state = detectState(output);
-
-    // Map to display format
-    switch (state.type) {
-      case 'working':
-      case 'tool_use':
-        return 'working';
-      case 'idle':
-        return 'idle';
-      case 'permission':
-        return '⚠️ perm';
-      case 'question':
-        return '⚠️ question';
-      case 'error':
-        return '❌ error';
-      case 'complete':
-        return '✅ done';
-      default:
-        return state.type;
-    }
-  } catch {
-    return 'unknown';
-  }
-}
 
 /** Check if a process is alive by PID file. */
 function isRelayAlive(pidFile: string): boolean {
@@ -409,38 +357,9 @@ process.on('SIGINT', () => { server.close(); process.exit(0); });
   }
 }
 
-/**
- * Map display state to registry state
- */
-function mapDisplayStateToRegistry(displayState: string): registry.AgentState | null {
-  if (displayState === 'working') return 'working';
-  if (displayState === 'idle') return 'idle';
-  if (displayState === '⚠️ perm') return 'permission';
-  if (displayState === '⚠️ question') return 'question';
-  if (displayState === '❌ error') return 'error';
-  if (displayState === '✅ done') return 'done';
-  return null;
-}
-
 // ============================================================================
 // Helper: Generate Worker ID (teams)
 // ============================================================================
-
-async function getLastMessageTime(w: registry.Agent): Promise<string | null> {
-  try {
-    const repoPath = w.repoPath ?? process.cwd();
-    const messages = await mailbox.inbox(repoPath, w.id);
-    if (messages.length === 0) return null;
-    const last = messages[messages.length - 1];
-    const ago = Date.now() - new Date(last.createdAt).getTime();
-    const mins = Math.floor(ago / 60000);
-    if (mins < 1) return '<1m ago';
-    if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
-  } catch {
-    return null;
-  }
-}
 
 async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
@@ -858,25 +777,8 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
 }
 
 // ============================================================================
-// List helpers (extracted for cognitive complexity)
+// Kill helpers
 // ============================================================================
-
-type WorkerListEntry = { worker: registry.Agent; liveState: string; lastMsg: string | null; dead: boolean };
-type StoppedEntry = { template: registry.WorkerTemplate };
-
-/** Find templates with no corresponding active worker. */
-async function collectStoppedTemplates(activeEntries: WorkerListEntry[]): Promise<StoppedEntry[]> {
-  const templates = await registry.listTemplates();
-  const activeIds = new Set(activeEntries.map((e) => e.worker.id));
-  const activeRoles = new Set(activeEntries.map((e) => e.worker.role).filter(Boolean));
-  const stopped: StoppedEntry[] = [];
-  for (const t of templates) {
-    if (!activeIds.has(t.id) && !(t.role && activeRoles.has(t.role))) {
-      stopped.push({ template: t });
-    }
-  }
-  return stopped;
-}
 
 /** Clean up a worker's native team registration. */
 async function cleanupWorkerNativeTeam(w: registry.Agent): Promise<void> {
@@ -885,185 +787,6 @@ async function cleanupWorkerNativeTeam(w: registry.Agent): Promise<void> {
   await nativeTeams.clearNativeInbox(w.team, agentName).catch(() => {});
   await nativeTeams.unregisterNativeMember(w.team, agentName).catch(() => {});
 }
-
-/** Process a single worker for the list view: returns entry or pruned ID. */
-async function processWorkerForList(
-  w: registry.Agent,
-  prune?: boolean,
-): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
-  if (w.state === 'suspended') {
-    return processSuspendedWorker(w, prune);
-  }
-
-  const paneAlive = await isPaneAlive(w.paneId);
-
-  if (paneAlive) {
-    const liveState = await getCurrentState(w.paneId);
-    const mapped = mapDisplayStateToRegistry(liveState);
-    if (mapped && mapped !== w.state) {
-      await registry.updateState(w.id, mapped);
-    }
-    const lastMsg = await getLastMessageTime(w);
-    return { entry: { worker: w, liveState, lastMsg, dead: false } };
-  }
-
-  if (prune) {
-    await cleanupWorkerNativeTeam(w);
-    await registry.unregister(w.id);
-    return { prunedId: w.id };
-  }
-
-  const lastMsg = await getLastMessageTime(w);
-  return { entry: { worker: w, liveState: '\u{1F480} dead', lastMsg, dead: true } };
-}
-
-async function processSuspendedWorker(
-  w: registry.Agent,
-  prune?: boolean,
-): Promise<{ entry?: WorkerListEntry; prunedId?: string }> {
-  const SUSPEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
-  const suspendedAge = w.suspendedAt ? Date.now() - new Date(w.suspendedAt).getTime() : Number.POSITIVE_INFINITY;
-
-  if (prune && suspendedAge > SUSPEND_EXPIRY_MS) {
-    await cleanupWorkerNativeTeam(w);
-    if (w.role) await registry.removeTemplate(w.role).catch(() => {});
-    await registry.removeTemplate(w.id).catch(() => {});
-    await registry.unregister(w.id);
-    return { prunedId: w.id };
-  }
-
-  const lastMsg = await getLastMessageTime(w);
-  return { entry: { worker: w, liveState: '\u{1F4A4} suspended', lastMsg, dead: false } };
-}
-
-function formatWorkerRow(
-  id: string,
-  provider: string,
-  team: string,
-  role: string,
-  window: string,
-  state: string,
-  time: string,
-  lastMsg: string,
-  cwd: string,
-): string {
-  return `${id.padEnd(20).substring(0, 20)}${(provider || '-').padEnd(10)}${(team || '-').padEnd(10).substring(0, 10)}${(role || '-').padEnd(14).substring(0, 14)}${(window || '-').padEnd(12).substring(0, 12)}${state.padEnd(16).substring(0, 16)}${time.padEnd(8)}${(lastMsg || '-').padEnd(10)}${cwd}`;
-}
-
-function printWorkerRows(entries: WorkerListEntry[], stopped: StoppedEntry[]): void {
-  for (const { worker: w, liveState, lastMsg } of entries) {
-    console.log(
-      formatWorkerRow(
-        w.id,
-        w.provider || '-',
-        w.team || '-',
-        w.role || '-',
-        w.window || w.windowName || '-',
-        liveState,
-        registry.getElapsedTime(w).formatted,
-        lastMsg ?? '-',
-        w.repoPath || '-',
-      ),
-    );
-  }
-
-  for (const { template: t } of stopped) {
-    const lastActivity = t.lastSpawnedAt ? registry.formatElapsed(new Date(t.lastSpawnedAt)) : '-';
-    console.log(
-      formatWorkerRow(
-        t.id,
-        t.provider || '-',
-        t.team || '-',
-        t.role || '-',
-        '-',
-        'stopped',
-        '-',
-        lastActivity,
-        t.cwd || '-',
-      ),
-    );
-  }
-}
-
-function printWorkerList(
-  entries: WorkerListEntry[],
-  pruned: string[],
-  stopped: StoppedEntry[],
-  options: { json?: boolean; prune?: boolean; running?: boolean },
-): void {
-  if (options.json) {
-    printWorkerListJson(entries, pruned, stopped);
-    return;
-  }
-
-  if (entries.length === 0 && stopped.length === 0 && pruned.length === 0) {
-    console.log('No agents found.');
-    console.log('  Spawn one: genie agent spawn implementor');
-    return;
-  }
-
-  console.log('');
-  console.log('WORKERS');
-  console.log('-'.repeat(132));
-  console.log(formatWorkerRow('ID', 'PROVIDER', 'TEAM', 'ROLE', 'WINDOW', 'STATE', 'TIME', 'LAST MSG', 'CWD'));
-  console.log('-'.repeat(132));
-
-  printWorkerRows(entries, stopped);
-  printWorkerListFooter(entries, pruned, stopped, options);
-}
-
-function printWorkerListFooter(
-  entries: WorkerListEntry[],
-  pruned: string[],
-  stopped: StoppedEntry[],
-  options: { prune?: boolean; running?: boolean },
-): void {
-  if (pruned.length > 0) {
-    console.log('');
-    console.log(`Pruned ${pruned.length} dead agent(s): ${pruned.join(', ')}`);
-  }
-
-  const deadCount = entries.filter((e) => e.dead).length;
-  if (deadCount > 0 && !options.prune) {
-    console.log(`\n${deadCount} dead agent(s). Use --prune to remove.`);
-  }
-  if (stopped.length > 0 && !options.running) {
-    console.log(`\n${stopped.length} stopped agent(s) (templates). Use -r to hide.`);
-  }
-  console.log('');
-}
-
-function printWorkerListJson(entries: WorkerListEntry[], pruned: string[], stopped: StoppedEntry[]): void {
-  const result: Record<string, unknown>[] = entries.map(({ worker: w, liveState, lastMsg }) => ({
-    id: w.id,
-    provider: w.provider,
-    transport: w.transport,
-    team: w.team,
-    role: w.role,
-    window: w.window || w.windowName || null,
-    state: liveState,
-    elapsed: registry.getElapsedTime(w).formatted,
-    lastMessage: lastMsg ?? null,
-  }));
-  for (const { template: t } of stopped) {
-    result.push({
-      id: t.id,
-      provider: t.provider,
-      team: t.team,
-      role: t.role ?? null,
-      state: 'stopped',
-      lastSpawnedAt: t.lastSpawnedAt,
-    });
-  }
-  if (pruned.length > 0) {
-    result.push(...pruned.map((id) => ({ id, state: 'dead (pruned)' })));
-  }
-  console.log(JSON.stringify(result, null, 2));
-}
-
-// ============================================================================
-// Kill helpers (extracted for cognitive complexity)
-// ============================================================================
 
 function killWorkerPane(w: registry.Agent): void {
   try {
@@ -1097,396 +820,156 @@ function cleanupRelayFiles(id: string): void {
 }
 
 // ============================================================================
-// Dashboard helpers (extracted for cognitive complexity)
+// Name resolution — resolve agent name to running worker
 // ============================================================================
 
-function printDashboardJson(workers: registry.Agent[]): void {
-  const summary = {
-    total: workers.length,
-    byProvider: {
-      claude: workers.filter((w) => w.provider === 'claude').length,
-      codex: workers.filter((w) => w.provider === 'codex').length,
-    },
-    byState: {
-      spawning: workers.filter((w) => w.state === 'spawning').length,
-      working: workers.filter((w) => w.state === 'working').length,
-      idle: workers.filter((w) => w.state === 'idle').length,
-      done: workers.filter((w) => w.state === 'done').length,
-      suspended: workers.filter((w) => w.state === 'suspended').length,
-    },
-  };
-  console.log(
-    JSON.stringify(
-      {
-        summary,
-        workers: workers.map((w) => ({
-          id: w.id,
-          provider: w.provider,
-          team: w.team,
-          role: w.role,
-          skill: w.skill,
-          state: w.state,
-          paneId: w.paneId,
-          transport: w.transport,
-        })),
-      },
-      null,
-      2,
-    ),
-  );
+/** Resolve an agent name to a running worker entry. */
+async function resolveWorkerByName(name: string): Promise<registry.Agent> {
+  // Try exact ID match
+  const exact = await registry.get(name);
+  if (exact) return exact;
+
+  const workers = await registry.list();
+
+  // Try matching by role
+  const byRole = workers.filter((w) => w.role === name);
+  if (byRole.length === 1) return byRole[0];
+  if (byRole.length > 1) {
+    console.error(`Multiple agents with role "${name}". Specify full ID:`);
+    for (const w of byRole) console.error(`  ${w.id} (team: ${w.team})`);
+    process.exit(1);
+  }
+
+  // Try matching by ID suffix (e.g., "implementor" matches "genie-implementor")
+  const bySuffix = workers.filter((w) => w.id.endsWith(`-${name}`));
+  if (bySuffix.length === 1) return bySuffix[0];
+  if (bySuffix.length > 1) {
+    console.error(`Multiple agents matching "${name}". Specify full ID:`);
+    for (const w of bySuffix) console.error(`  ${w.id}`);
+    process.exit(1);
+  }
+
+  console.error(`Agent "${name}" not found.`);
+  console.error('  Run `genie ls` to see agents.');
+  process.exit(1);
 }
 
-function printDashboardText(workers: registry.Agent[], watch?: boolean): void {
-  console.log('');
-  console.log('AGENT DASHBOARD');
-  console.log('='.repeat(80));
-  console.log(`Agents: ${workers.length}`);
-  console.log(`  Claude: ${workers.filter((w) => w.provider === 'claude').length}`);
-  console.log(`  Codex:  ${workers.filter((w) => w.provider === 'codex').length}`);
-  console.log('');
+// ============================================================================
+// Exported top-level command handlers
+// ============================================================================
 
-  if (workers.length === 0) {
-    console.log('No active agents.');
+/**
+ * genie kill <name> — Force kill an agent by name.
+ */
+export async function handleWorkerKill(name: string): Promise<void> {
+  const w = await resolveWorkerByName(name);
+
+  killWorkerPane(w);
+  cleanupRelayFiles(w.id);
+  await cleanupWorkerNativeTeam(w);
+
+  // Save last session ID into template before unregistering so
+  // ensureWorkerAlive can resume with --resume on next message.
+  if (w.claudeSessionId) {
+    const templates = await registry.listTemplates();
+    const tmpl = templates.find((t) => t.id === w.id || t.id === w.role || t.role === w.role);
+    if (tmpl) {
+      await registry.saveTemplate({ ...tmpl, lastSessionId: w.claudeSessionId });
+    }
+  }
+
+  await registry.unregister(w.id);
+  console.log(`Agent "${w.id}" killed and unregistered (template preserved).`);
+}
+
+/**
+ * genie stop <name> — Stop an agent (kill pane, preserve session for resume).
+ */
+export async function handleWorkerStop(name: string): Promise<void> {
+  const w = await resolveWorkerByName(name);
+
+  if (w.state === 'suspended') {
+    console.log(`Agent "${w.id}" is already stopped.`);
     return;
   }
 
-  for (const w of workers) {
-    const elapsed = registry.getElapsedTime(w).formatted;
-    console.log(
-      `  [${w.provider || 'claude'}] ${w.id} (${w.team || 'default'}/${w.role || 'default'}) — ${w.state} — ${elapsed}`,
-    );
-    if (w.skill) console.log(`    Skill: ${w.skill}`);
-    console.log(`    Pane: ${w.paneId} | Session: ${w.session} | Transport: ${w.transport || 'tmux'}`);
-  }
-
-  console.log('');
-
-  if (watch) {
-    console.log('Watch mode: would auto-refresh every 2s (tmux required)');
+  const { suspendWorker } = await import('../lib/idle-timeout.js');
+  const ok = await suspendWorker(w.id);
+  if (ok) {
+    console.log(`Agent "${w.id}" stopped.`);
+    if (w.claudeSessionId) {
+      console.log(`  Session preserved: ${w.claudeSessionId}`);
+    }
+    console.log(`  Send a message to auto-resume: genie send '...' --to ${w.id}`);
+  } else {
+    console.error(`Failed to stop agent "${w.id}".`);
+    process.exit(1);
   }
 }
 
-// ============================================================================
-// Agent Namespace (genie agent — provider-selectable orchestration)
-// ============================================================================
+/**
+ * genie ls — Smart view of registered agents with runtime status.
+ */
+export async function handleLsCommand(options: { json?: boolean }): Promise<void> {
+  const dirEntries = await directory.ls();
+  const workers = await registry.list();
 
-export function registerAgentNamespace(program: Command): void {
-  const agent = program.command('agent').description('Agent lifecycle (spawn, list, kill, dashboard)');
+  // Build status map: name → running worker info
+  const statusMap = new Map<string, { state: string; team: string }>();
+  for (const w of workers) {
+    const name = w.role || w.id;
+    const alive = await isPaneAlive(w.paneId);
+    if (alive) {
+      statusMap.set(name, { state: w.state, team: w.team || '-' });
+    }
+  }
 
-  // agent spawn
-  agent
-    .command('spawn <name>')
-    .description('Spawn a new agent by name (resolves from directory or built-ins)')
-    .option('--provider <provider>', 'Provider: claude or codex', 'claude')
-    .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
-    .option('--model <model>', 'Model override (e.g., sonnet, opus)')
-    .option('--skill <skill>', 'Skill to load (optional)')
-    .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
-    .option('--color <color>', 'Teammate pane border color')
-    .option('--plan-mode', 'Start teammate in plan mode')
-    .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
-    .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
-    .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
-    .action(
-      async (
-        name: string,
-        options: {
-          provider: string;
-          team: string;
-          model?: string;
-          skill?: string;
-          layout?: string;
-          color?: string;
-          planMode?: boolean;
-          permissionMode?: string;
-          extraArgs?: string[];
-          cwd?: string;
-        },
-      ) => {
-        try {
-          await handleWorkerSpawn(name, options);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Error: ${message}`);
-          process.exit(1);
-        }
-      },
-    );
+  type LsEntry = { name: string; dir: string; status: string; team: string; model: string };
+  const entries: LsEntry[] = [];
 
-  // agent list
-  agent
-    .command('list')
-    .alias('ls')
-    .description('List all agents (active + stopped templates)')
-    .option('--json', 'Output as JSON')
-    .option('--prune', 'Auto-remove dead agents from registry')
-    .option('-r, --running', 'Show only active agents (hide stopped)')
-    .action(async (options: { json?: boolean; prune?: boolean; running?: boolean }) => {
-      try {
-        const workers = await registry.list();
-        const entries: WorkerListEntry[] = [];
-        const pruned: string[] = [];
-
-        for (const w of workers) {
-          const result = await processWorkerForList(w, options.prune);
-          if (result.entry) entries.push(result.entry);
-          if (result.prunedId) pruned.push(result.prunedId);
-        }
-
-        const stopped = options.running ? [] : await collectStoppedTemplates(entries);
-
-        printWorkerList(entries, pruned, stopped, options);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
+  // Add directory entries with runtime status
+  for (const entry of dirEntries) {
+    const running = statusMap.get(entry.name);
+    entries.push({
+      name: entry.name,
+      dir: entry.dir || '-',
+      status: running ? running.state : 'offline',
+      team: running?.team || '-',
+      model: entry.model || '-',
     });
+    statusMap.delete(entry.name);
+  }
 
-  // agent kill
-  agent
-    .command('kill <id>')
-    .description('Force kill an agent')
-    .option('-y, --yes', 'Skip confirmation')
-    .action(async (id: string, _options: { yes?: boolean }) => {
-      try {
-        const w = await registry.get(id);
-        if (!w) {
-          console.error(`Agent "${id}" not found.`);
-          process.exit(1);
-        }
-
-        killWorkerPane(w);
-        cleanupRelayFiles(id);
-        await cleanupWorkerNativeTeam(w);
-
-        // Save last session ID into template before unregistering so
-        // ensureWorkerAlive can resume with --resume on next message.
-        if (w.claudeSessionId) {
-          const templates = await registry.listTemplates();
-          const tmpl = templates.find((t) => t.id === id || t.id === w.role || t.role === w.role);
-          if (tmpl) {
-            await registry.saveTemplate({ ...tmpl, lastSessionId: w.claudeSessionId });
-          }
-        }
-
-        await registry.unregister(id);
-
-        // NOTE: templates are intentionally preserved so that
-        // ensureWorkerAlive can auto-respawn the worker on next message.
-
-        console.log(`Agent "${id}" killed and unregistered (template preserved).`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
+  // Add running built-in agents not in the directory
+  for (const [name, info] of statusMap) {
+    entries.push({
+      name,
+      dir: '(built-in)',
+      status: info.state,
+      team: info.team,
+      model: '-',
     });
+  }
 
-  // agent suspend
-  agent
-    .command('suspend <id>')
-    .description('Suspend an agent (kill pane, preserve session for resume)')
-    .action(async (id: string) => {
-      try {
-        const w = await registry.get(id);
-        if (!w) {
-          console.error(`Agent "${id}" not found.`);
-          process.exit(1);
-        }
-        if (w.state === 'suspended') {
-          console.log(`Agent "${id}" is already suspended.`);
-          return;
-        }
-        const { suspendWorker } = await import('../lib/idle-timeout.js');
-        const ok = await suspendWorker(id);
-        if (ok) {
-          console.log(`Agent "${id}" suspended.`);
-          if (w.claudeSessionId) {
-            console.log(`  Session preserved: ${w.claudeSessionId}`);
-          }
-          console.log(`  Send a message to auto-resume: genie send ${id} "your message"`);
-        } else {
-          console.error(`Failed to suspend agent "${id}".`);
-          process.exit(1);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
+  if (options.json) {
+    console.log(JSON.stringify(entries, null, 2));
+    return;
+  }
 
-  // agent watchdog
-  agent
-    .command('watchdog')
-    .description('Start idle timeout watchdog (suspends idle agents)')
-    .option('--once', 'Run a single check and exit')
-    .action(async (options: { once?: boolean }) => {
-      try {
-        const { checkIdleWorkers, runWatchdogLoop, getIdleTimeoutMs } = await import('../lib/idle-timeout.js');
-        const timeoutMs = getIdleTimeoutMs();
+  if (entries.length === 0) {
+    console.log('No agents registered. Use `genie dir add <name> --dir <path>` to register one.');
+    return;
+  }
 
-        if (timeoutMs === 0) {
-          console.log('Idle timeout is disabled (GENIE_IDLE_TIMEOUT_MS=0).');
-          return;
-        }
+  console.log('');
+  console.log(formatLsRow('NAME', 'DIR', 'STATUS', 'TEAM', 'MODEL'));
+  console.log('-'.repeat(94));
+  for (const e of entries) {
+    console.log(formatLsRow(e.name, e.dir, e.status, e.team, e.model));
+  }
+  console.log('');
+}
 
-        console.log(`Idle timeout: ${Math.round(timeoutMs / 60000)}m`);
-
-        if (options.once) {
-          const suspended = await checkIdleWorkers();
-          if (suspended.length > 0) {
-            console.log(`Suspended ${suspended.length} agent(s): ${suspended.join(', ')}`);
-          } else {
-            console.log('No idle agents to suspend.');
-          }
-          return;
-        }
-
-        console.log('Starting watchdog loop (Ctrl+C to stop)...');
-        await runWatchdogLoop();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
-
-  // agent dashboard
-  agent
-    .command('dashboard')
-    .description('Live status of all agents with provider metadata')
-    .option('--json', 'Output as JSON')
-    .option('-w, --watch', 'Auto-refresh every 2 seconds')
-    .action(async (options: { json?: boolean; watch?: boolean }) => {
-      try {
-        const workers = await registry.list();
-        if (options.json) {
-          printDashboardJson(workers);
-        } else {
-          printDashboardText(workers, options.watch);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Error: ${message}`);
-        process.exit(1);
-      }
-    });
-
-  // ============================================================================
-  // Commands migrated from genie term
-  // ============================================================================
-
-  // agent approve — auto-approve engine management
-  agent
-    .command('approve [request-id]')
-    .description('Auto-approve engine management and manual approval')
-    .option('--status', 'Show pending/approved/denied requests')
-    .option('--deny <request-id>', 'Manually deny a pending request')
-    .option('--start', 'Start the auto-approve engine')
-    .option('--stop', 'Stop the auto-approve engine')
-    .action(
-      async (
-        requestId: string | undefined,
-        options: { status?: boolean; deny?: string; start?: boolean; stop?: boolean },
-      ) => {
-        await approveCmd.approveCommand(requestId, options);
-      },
-    );
-
-  // agent history — compressed session catch-up
-  agent
-    .command('history <worker>')
-    .description('Show compressed session history for an agent (catch-up)')
-    .option('--full', 'Show full conversation without compression')
-    .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
-    .option('--json', 'Output as JSON')
-    .option('--raw', 'Output raw JSONL entries')
-    .option('--log-file <path>', 'Direct path to log file (for testing)')
-    .action(async (w: string, options: historyCmd.HistoryOptions) => {
-      await historyCmd.historyCommand(w, options);
-    });
-
-  // agent answer — answer worker question
-  agent
-    .command('answer <worker> <choice>')
-    .description('Answer a question for an agent (use "text:..." for text input)')
-    .action(async (w: string, choice: string) => {
-      await orchestrateCmd.answerQuestion(w, choice);
-    });
-
-  // agent events — stream Claude Code events
-  agent
-    .command('events [pane-id]')
-    .description('Stream Claude Code events from a pane or all agents')
-    .option('--json', 'Output events as JSON')
-    .option('-f, --follow', 'Continuous tailing (like tail -f)')
-    .option('-n, --lines <number>', 'Number of recent events to show (default: 20)', '20')
-    .option('--emit', 'Write events to .genie/events/<pane-id>.jsonl while tailing')
-    .option('--all', 'Aggregate events from all active agents')
-    .action(
-      async (
-        paneId: string | undefined,
-        options: { json?: boolean; follow?: boolean; lines?: string; emit?: boolean; all?: boolean },
-      ) => {
-        await eventsCmd.eventsCommand(paneId, {
-          json: options.json,
-          follow: options.follow,
-          lines: options.lines ? Number.parseInt(options.lines, 10) : undefined,
-          emit: options.emit,
-          all: options.all,
-        });
-      },
-    );
-
-  // agent close — close task and cleanup worker
-  agent
-    .command('close <task-id>')
-    .description('Close task and cleanup agent')
-    .option('--keep-worktree', "Don't remove the worktree")
-    .option('--merge', 'Merge worktree changes to main branch')
-    .option('-y, --yes', 'Skip confirmation')
-    .action(async (taskId: string, options: closeCmd.CloseOptions) => {
-      await closeCmd.closeCommand(taskId, options);
-    });
-
-  // agent ship — mark done, merge, cleanup
-  agent
-    .command('ship <task-id>')
-    .description('Mark task as done and cleanup agent')
-    .option('--keep-worktree', "Don't remove the worktree")
-    .option('--merge', 'Merge worktree changes to main branch')
-    .option('-y, --yes', 'Skip confirmation')
-    .action(async (taskId: string, options: shipCmd.ShipOptions) => {
-      await shipCmd.shipCommand(taskId, options);
-    });
-
-  // agent read — read worker pane output
-  agent
-    .command('read <target>')
-    .description('Read terminal output from an agent pane')
-    .option('-n, --lines <number>', 'Number of lines to read')
-    .option('--from <line>', 'Start line')
-    .option('--to <line>', 'End line')
-    .option('--range <range>', 'Line range (e.g., "10-20")')
-    .option('--search <text>', 'Search for text')
-    .option('--grep <pattern>', 'Grep for pattern')
-    .option('-f, --follow', 'Follow mode (like tail -f)')
-    .option('--all', 'Show all output')
-    .option('-r, --reverse', 'Reverse order')
-    .option('--json', 'Output as JSON')
-    .action(async (target: string, options: readCmd.ReadOptions) => {
-      await readCmd.readSessionLogs(target, options);
-    });
-
-  // agent exec — execute command in worker pane
-  agent
-    .command('exec <target> <command>')
-    .description('Execute command in an agent pane')
-    .option('-q, --quiet', 'Suppress output')
-    .option('-t, --timeout <ms>', 'Timeout in milliseconds')
-    .action(async (target: string, command: string, options: execCmd.ExecOptions) => {
-      await execCmd.executeInSession(target, command, options);
-    });
+function formatLsRow(name: string, dir: string, status: string, team: string, model: string): string {
+  return `${name.padEnd(20).substring(0, 20)}${dir.padEnd(40).substring(0, 40)}${status.padEnd(12).substring(0, 12)}${team.padEnd(12).substring(0, 12)}${model}`;
 }

@@ -25,6 +25,8 @@ export function shellQuote(s: string): string {
 interface BuildTeamLeadCommandOptions {
   systemPrompt?: string;
   resumeSessionId?: string;
+  /** Set session ID for a new session (mutually exclusive with resumeSessionId) */
+  sessionId?: string;
   /** Override promptMode instead of reading from config (useful for testing) */
   promptMode?: 'append' | 'system';
 }
@@ -56,6 +58,8 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
 
   if (options?.resumeSessionId) {
     parts.push(`--resume ${shellQuote(options.resumeSessionId)}`);
+  } else if (options?.sessionId) {
+    parts.push(`--session-id ${shellQuote(options.sessionId)}`);
   }
 
   // Write prompt to file, reference via --*-system-prompt-file
