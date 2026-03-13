@@ -721,7 +721,7 @@ async function resolveNativeTeam(
   return { parentSessionId, spawnColor, nativeTeam };
 }
 
-interface SpawnOptions {
+export interface SpawnOptions {
   provider: string;
   team: string;
   model?: string;
@@ -799,7 +799,7 @@ async function buildSpawnParams(
   return { params, parentSessionId, spawnColor };
 }
 
-async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
+export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
   // 1. Resolve agent from directory or built-ins
   const agent = await resolveAgentForSpawn(name, options);
 
