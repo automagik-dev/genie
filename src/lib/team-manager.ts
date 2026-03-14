@@ -1,13 +1,14 @@
 /**
  * Team Manager — CRUD for team lifecycle with git worktree integration.
  *
- * Teams are stored as JSON files in `.genie/teams/<safe-name>.json`.
+ * Teams are stored as JSON files in `~/.genie/teams/<safe-name>.json` (global).
  * Each team owns a git worktree at `<worktreeBase>/<team-name>`.
  * Team name IS the branch name (conventional prefixes: feat/, fix/, chore/, etc.).
  */
 
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
@@ -42,11 +43,15 @@ export interface TeamConfig {
 }
 
 // ============================================================================
-// Paths
+// Paths — global team storage at ~/.genie/teams/
 // ============================================================================
 
-function teamsDir(repoPath: string): string {
-  return join(repoPath, '.genie', 'teams');
+function getGenieDir(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
+
+function teamsDir(): string {
+  return join(getGenieDir(), 'teams');
 }
 
 /** Sanitize team name for use as a filename (slashes become dashes). */
@@ -54,9 +59,9 @@ function safeFileName(name: string): string {
   return name.replace(/\//g, '--');
 }
 
-function teamFilePath(repoPath: string, name: string): string {
+function teamFilePath(name: string): string {
   const safeName = safeFileName(path.basename(name) === name ? name : name);
-  return join(teamsDir(repoPath), `${safeName}.json`);
+  return join(teamsDir(), `${safeName}.json`);
 }
 
 /** Resolve the worktree base directory from config. */
@@ -66,6 +71,38 @@ function getWorktreeBase(repoPath: string): string {
   // If relative, resolve against repo path
   if (path.isAbsolute(base)) return base;
   return join(repoPath, base);
+}
+
+// ============================================================================
+// Branch Name Validation
+// ============================================================================
+
+/**
+ * Validate that a team name is a valid git branch name.
+ * Follows `git check-ref-format` rules for refs/heads/<name>.
+ */
+export function validateBranchName(name: string): void {
+  const errors: string[] = [];
+
+  if (/\s/.test(name)) errors.push('contains spaces');
+  if (name.includes('..')) errors.push('contains ".."');
+  if (name.includes('~')) errors.push('contains "~"');
+  if (name.includes('^')) errors.push('contains "^"');
+  if (name.includes(':')) errors.push('contains ":"');
+  if (name.includes('?')) errors.push('contains "?"');
+  if (name.includes('*')) errors.push('contains "*"');
+  if (name.includes('[')) errors.push('contains "["');
+  if (name.includes('\\')) errors.push('contains "\\"');
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: validating git ref format
+  if (/[\x00-\x1f\x7f]/.test(name)) errors.push('contains control characters');
+  if (name.endsWith('.lock')) errors.push('ends with ".lock"');
+  if (name.endsWith('/')) errors.push('ends with "/"');
+  if (name.endsWith('.')) errors.push('ends with "."');
+  if (name.startsWith('-')) errors.push('starts with "-"');
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid team name '${name}': must be a valid git branch name (${errors.join(', ')})`);
+  }
 }
 
 // ============================================================================
@@ -142,15 +179,17 @@ async function ensureWorktree(
  * Create a new team with a git worktree.
  *
  * Idempotent — if the team already exists, returns existing config.
- * Steps: git pull on baseBranch → git worktree add → persist config.
+ * Steps: validate name → git pull on baseBranch → git worktree add → persist config.
  */
 export async function createTeam(name: string, repo: string, baseBranch = 'dev'): Promise<TeamConfig> {
+  validateBranchName(name);
+
   const repoPath = path.resolve(repo);
-  const dir = teamsDir(repoPath);
+  const dir = teamsDir();
   await mkdir(dir, { recursive: true });
 
   // Idempotent: return existing team if it already exists
-  const filePath = teamFilePath(repoPath, name);
+  const filePath = teamFilePath(name);
   if (existsSync(filePath)) {
     const content = await readFile(filePath, 'utf-8');
     return JSON.parse(content);
@@ -191,8 +230,8 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
  *
  * Special case: if agentName is "council", hires all 10 built-in council members.
  */
-export async function hireAgent(teamName: string, agentName: string, repoPath: string): Promise<string[]> {
-  const config = await getTeam(repoPath, teamName);
+export async function hireAgent(teamName: string, agentName: string): Promise<string[]> {
+  const config = await getTeam(teamName);
   if (!config) {
     throw new Error(`Team "${teamName}" not found.`);
   }
@@ -212,7 +251,7 @@ export async function hireAgent(teamName: string, agentName: string, repoPath: s
     added = [agentName];
   }
 
-  const filePath = teamFilePath(repoPath, teamName);
+  const filePath = teamFilePath(teamName);
   await writeFile(filePath, JSON.stringify(config, null, 2));
   return added;
 }
@@ -221,8 +260,8 @@ export async function hireAgent(teamName: string, agentName: string, repoPath: s
  * Remove an agent from a team's members list.
  * Returns true if the agent was removed, false if not found.
  */
-export async function fireAgent(teamName: string, agentName: string, repoPath: string): Promise<boolean> {
-  const config = await getTeam(repoPath, teamName);
+export async function fireAgent(teamName: string, agentName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
   if (!config) {
     throw new Error(`Team "${teamName}" not found.`);
   }
@@ -231,7 +270,7 @@ export async function fireAgent(teamName: string, agentName: string, repoPath: s
   if (idx === -1) return false;
 
   config.members.splice(idx, 1);
-  const filePath = teamFilePath(repoPath, teamName);
+  const filePath = teamFilePath(teamName);
   await writeFile(filePath, JSON.stringify(config, null, 2));
 
   // Best-effort kill running agent
@@ -248,8 +287,8 @@ export async function fireAgent(teamName: string, agentName: string, repoPath: s
  * Disband a team: remove git worktree and delete team config.
  * Returns true if the team was found and disbanded.
  */
-export async function disbandTeam(repoPath: string, teamName: string): Promise<boolean> {
-  const config = await getTeam(repoPath, teamName);
+export async function disbandTeam(teamName: string): Promise<boolean> {
+  const config = await getTeam(teamName);
   if (!config) return false;
 
   // Clean up native teams if enabled
@@ -271,6 +310,7 @@ export async function disbandTeam(repoPath: string, teamName: string): Promise<b
   }
 
   // Remove git worktree
+  const repoPath = config.repo;
   if (config.worktreePath && existsSync(config.worktreePath)) {
     try {
       await $`git -C ${repoPath} worktree remove ${config.worktreePath} --force`.quiet();
@@ -286,7 +326,7 @@ export async function disbandTeam(repoPath: string, teamName: string): Promise<b
   }
 
   // Delete team config file
-  const filePath = teamFilePath(repoPath, teamName);
+  const filePath = teamFilePath(teamName);
   try {
     await unlink(filePath);
   } catch {
@@ -297,18 +337,18 @@ export async function disbandTeam(repoPath: string, teamName: string): Promise<b
 }
 
 /** Get a team by name. Returns null if not found. */
-export async function getTeam(repoPath: string, name: string): Promise<TeamConfig | null> {
+export async function getTeam(name: string): Promise<TeamConfig | null> {
   try {
-    const content = await readFile(teamFilePath(repoPath, name), 'utf-8');
+    const content = await readFile(teamFilePath(name), 'utf-8');
     return JSON.parse(content);
   } catch {
     return null;
   }
 }
 
-/** List all teams in a repo. */
-export async function listTeams(repoPath: string): Promise<TeamConfig[]> {
-  const dir = teamsDir(repoPath);
+/** List all teams globally. */
+export async function listTeams(): Promise<TeamConfig[]> {
+  const dir = teamsDir();
   try {
     const files = await readdir(dir);
     const teams: TeamConfig[] = [];
@@ -328,8 +368,8 @@ export async function listTeams(repoPath: string): Promise<TeamConfig[]> {
 }
 
 /** List members of a team. Returns null if team not found. */
-export async function listMembers(repoPath: string, teamName: string): Promise<string[] | null> {
-  const config = await getTeam(repoPath, teamName);
+export async function listMembers(teamName: string): Promise<string[] | null> {
+  const config = await getTeam(teamName);
   if (!config) return null;
   return config.members;
 }

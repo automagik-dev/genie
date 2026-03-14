@@ -22,8 +22,8 @@ import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
-async function resolveParentSession(repoPath: string, team: string): Promise<string> {
-  const teamConfig = await teamManager.getTeam(repoPath, team);
+async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
+  const teamConfig = await teamManager.getTeam(team);
   if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
   return (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
 }
