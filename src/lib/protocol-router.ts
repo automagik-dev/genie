@@ -5,6 +5,12 @@
  * messages between workers regardless of whether they are backed
  * by Claude or Codex. Delivery goes through the mailbox first
  * (DEC-7) and then pushes to the tmux pane when the worker is idle.
+ *
+ * Resolution order (directory-first):
+ *   1. Directory by name → built-in by name
+ *   2. Worker registry (ID > role > team:role)
+ *   3. Auto-spawn: if agent offline + in directory/registry → spawn → deliver
+ *   4. Native inbox fallback
  */
 
 import * as registry from './agent-registry.js';
@@ -232,6 +238,14 @@ async function deliverViaNativeInbox(
   }
 }
 
+/**
+ * Send a message to a recipient using directory-first resolution.
+ *
+ * Resolution order:
+ *   1. Live workers (ID > role > team:role)
+ *   2. Agent directory + worker registry → auto-spawn from template
+ *   3. Native team inbox fallback
+ */
 export async function sendMessage(
   repoPath: string,
   from: string,
@@ -255,8 +269,13 @@ export async function sendMessage(
     };
   }
 
-  // 2. No live match — try auto-spawn from template (dead/missing worker)
-  // Try exact ID first, then role-based lookup (IDs are often prefixed, e.g. "genie-ideias" vs "ideias")
+  // 2. No live match — directory-first resolution for auto-spawn
+  // Check agent directory to validate recipient exists (enables spawn for
+  // agents registered in directory but not yet spawned in this session).
+  const { resolve } = await import('./agent-directory.js');
+  const dirResolved = await resolve(to);
+
+  // Also check worker registry for session context (provides claudeSessionId for resume)
   let worker = await registry.get(to);
   if (!worker) {
     const allWorkers = await registry.list();
@@ -264,9 +283,13 @@ export async function sendMessage(
     worker =
       allWorkers.find((w) => w.role === to && w.state === 'suspended') ?? allWorkers.find((w) => w.role === to) ?? null;
   }
-  const alive = await ensureWorkerAlive(worker, to);
-  if (alive) {
-    return deliverToWorker(repoPath, from, alive.worker, body);
+
+  // Try auto-spawn if agent is known via directory OR registry
+  if (dirResolved || worker) {
+    const alive = await ensureWorkerAlive(worker, to);
+    if (alive) {
+      return deliverToWorker(repoPath, from, alive.worker, body);
+    }
   }
 
   // 3. Fallback: try native team inbox for agents not in worker registry

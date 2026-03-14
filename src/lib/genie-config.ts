@@ -2,12 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
-  type CouncilPreset,
   type GenieConfig,
   GenieConfigSchema,
   type ShortcutsConfig,
   type TerminalConfig,
-  type WorkerProfile,
 } from '../types/genie-config.js';
 
 const GENIE_DIR = join(homedir(), '.genie');
@@ -129,14 +127,6 @@ export function getTerminalConfig(): TerminalConfig {
 }
 
 /**
- * Get session name from config
- */
-export function getSessionName(): string {
-  const config = loadGenieConfigSync();
-  return config.session.name;
-}
-
-/**
  * Check if setup has been completed
  */
 export function isSetupComplete(): boolean {
@@ -176,64 +166,6 @@ export async function updateShortcutsConfig(partial: Partial<ShortcutsConfig>): 
 // Worker Profile helpers
 // ============================================================================
 
-/**
- * Get a worker profile by name
- * @param config - The genie config object
- * @param profileName - Name of the profile to get
- * @returns The WorkerProfile if found, undefined otherwise
- */
-export function getWorkerProfile(config: GenieConfig, profileName: string): WorkerProfile | undefined {
-  return config.workerProfiles?.[profileName];
-}
-
-/**
- * Get the default worker profile
- * @param config - The genie config object
- * @returns The default WorkerProfile if configured, undefined otherwise
- */
-export function getDefaultWorkerProfile(config: GenieConfig): WorkerProfile | undefined {
-  if (!config.defaultWorkerProfile) {
-    return undefined;
-  }
-  return getWorkerProfile(config, config.defaultWorkerProfile);
-}
-
 // ============================================================================
 // Council preset helpers
 // ============================================================================
-
-/**
- * Get a council preset by name
- * @param config - The genie config object
- * @param presetName - The preset name to look up
- * @returns The CouncilPreset if found, undefined otherwise
- */
-export function getCouncilPreset(config: GenieConfig, presetName: string): CouncilPreset | undefined {
-  return config.councilPresets?.[presetName];
-}
-
-/**
- * Get the default council preset
- * @param config - The genie config object
- * @returns The default CouncilPreset if configured, undefined otherwise
- */
-export function getDefaultCouncilPreset(config: GenieConfig): CouncilPreset | undefined {
-  if (!config.defaultCouncilPreset) {
-    return undefined;
-  }
-  return getCouncilPreset(config, config.defaultCouncilPreset);
-}
-
-/**
- * Get the fallback council preset when none is configured
- * Uses existing worker profiles with sensible defaults
- */
-export function getFallbackCouncilPreset(config: GenieConfig): CouncilPreset {
-  // Use default worker profile for both if available, otherwise 'coding-fast'
-  const defaultProfile = config.defaultWorkerProfile || 'coding-fast';
-  return {
-    left: defaultProfile,
-    right: defaultProfile,
-    skill: 'council',
-  };
-}

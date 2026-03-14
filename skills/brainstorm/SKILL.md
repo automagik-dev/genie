@@ -12,9 +12,16 @@ Collaborate on fuzzy ideas until they are concrete enough for `/wish`.
 - Requirements are ambiguous and need interactive refinement
 - User explicitly invokes `/brainstorm`
 
+## Context Injection
+
+This skill is multi-agent aware and operates on the shared worktree:
+- All brainstorm artifacts live in `.genie/` within the shared worktree (not the repo root)
+- When invoked via dispatch, acknowledges injected context (file path + extracted section) and uses it as seed
+- Multiple agents can read brainstorm state concurrently; writes are coordinated by the orchestrator
+
 ## Flow
-1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` for an existing entry matching this slug/topic — use as seed if found.
-2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately. Create `.genie/brainstorm.md` if missing (see Jar).
+1. **Read context:** scan current code, docs, conventions. Check `.genie/brainstorm.md` in the shared worktree for an existing entry matching this slug/topic — use as seed if found. If context was injected from dispatch, use it directly.
+2. **Init persistence:** create `.genie/brainstorms/<slug>/DRAFT.md` immediately in the shared worktree. Create `.genie/brainstorm.md` if missing (see Jar).
 3. **Clarify intent:** one question at a time, prefer multiple-choice.
 4. **Show WRS bar** after every exchange (see WRS).
 5. **Persist draft** when WRS changes OR every 2 minutes — whichever comes first.

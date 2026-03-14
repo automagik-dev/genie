@@ -1,83 +1,81 @@
 # Co-Orchestration Guide: AI-Human Software Development
 
-This guide explains how to use genie-cli's worker orchestration system for collaborative software development between humans and AI agents.
+This guide explains how to use genie's worker orchestration system for collaborative software development between humans and AI agents.
 
 ## Overview
 
-The system enables multiple Claude agents to work on different tasks simultaneously, each in isolated git worktrees, while a human orchestrates and reviews their work. All state is tracked in beads for unified visibility.
+The system enables multiple Claude agents to work on different tasks simultaneously, each in isolated git worktrees, while a human orchestrates and reviews their work. All state is tracked through the wish pipeline for unified visibility.
 
 ```
 Human (Orchestrator)
     │
-    ├── genie work bd-1  ──▶  Worker 1 (Claude in pane %1)
-    │                              └── worktree: .worktrees/bd-1/
+    ├── genie work wish-1  ──▶  Worker 1 (Claude in pane %1)
+    │                              └── worktree: .worktrees/wish-1/
     │
-    ├── genie work bd-2  ──▶  Worker 2 (Claude in pane %2)
-    │                              └── worktree: .worktrees/bd-2/
+    ├── genie work wish-2  ──▶  Worker 2 (Claude in pane %2)
+    │                              └── worktree: .worktrees/wish-2/
     │
-    └── genie agent list ──▶  Status dashboard
+    └── genie ls           ──▶  Status dashboard
 ```
 
 ## Prerequisites
 
 1. **tmux session**: You must be in a tmux session
-2. **beads initialized**: Run `bd init` in your repo if not already done
+2. **genie installed**: Run `genie setup` in your repo if not already done
 3. **Claude CLI**: The `claude` command must be available
 
 ## Quick Start
 
 ```bash
-# 1. Start the beads daemon for auto-sync
+# 1. Start the genie daemon for auto-sync
 genie daemon start
 
-# 2. Create issues to work on
-bd create "Implement user authentication"
-bd create "Add unit tests for auth module"
-bd create "Update API documentation"
+# 2. Create wishes to work on (via the /wish skill in a genie session)
+# /wish "Implement user authentication"
+# /wish "Add unit tests for auth module"
+# /wish "Update API documentation"
 
-# 3. Start a worker on the first issue
-genie work bd-1
+# 3. Start a worker on the first wish
+genie work wish-1
 
 # 4. Check worker status
-genie agent list
+genie ls
 
 # 5. When worker needs approval
-genie agent approve
+genie approve
 
-# 6. When done, close the issue
-genie agent close bd-1
+# 6. When done, close the wish
+genie close wish-1
 ```
 
 ## Detailed Workflow
 
-### Phase 1: Planning & Issue Creation
+### Phase 1: Planning & Wish Creation
 
-Before spawning workers, create well-defined issues in beads:
+Before spawning workers, create well-defined wishes using the `/wish` skill:
 
 ```bash
-# Create issues with clear titles
-bd create "Add login endpoint with JWT tokens"
-bd create "Create user registration form"
-bd create "Write integration tests for auth flow"
+# Launch a genie session
+genie
 
-# Set dependencies if needed
-bd update bd-2 --blocked-by bd-1
-bd update bd-3 --blocked-by bd-1,bd-2
+# Inside the session, use the /wish skill to create wishes:
+# /wish "Add login endpoint with JWT tokens"
+# /wish "Create user registration form"
+# /wish "Write integration tests for auth flow"
 
-# View the queue
-bd ready      # Shows issues ready to work on
-bd list       # Shows all issues with status
+# Wishes are managed through the wish state machine:
+# brainstorm → wish → plan → work → review → ship
 ```
 
 ### Phase 2: Spawning Workers
 
-Start workers for ready issues:
+Start workers for ready wishes:
 
 ```bash
-# Work on a specific issue
-genie work bd-1
+# Work on a specific wish
+genie work wish-1
 
-# Or let the system pick the next ready issue
+# Or let the system pick the next ready wish
 genie work next
 
 # Options:
@@ -86,23 +84,22 @@ genie work next
 #   --prompt <msg>   Custom initial prompt
 ```
 
-**What happens when you run `genie work bd-1`:**
+**What happens when you run `genie work wish-1`:**
 1. Daemon starts (if not running) for auto-sync
-2. Issue is claimed (status → in_progress)
-3. Worktree created via `bd worktree create bd-1`
+2. Wish is claimed (status → in_progress)
+3. Worktree created for the wish
 4. New tmux pane spawned in the worktree directory
 5. Claude CLI launched with initial prompt
-6. Agent bead created to track the worker
-7. Work bound to agent via slot system
+6. Work bound to agent via slot system
 
 ### Phase 3: Monitoring Workers
 
 ```bash
 # Check all workers
-genie agent list
+genie ls
 
 # JSON output for scripting
-genie agent list --json
+genie ls --json
 ```
 
 **Worker States:**
@@ -119,51 +116,49 @@ genie agent list --json
 
 **Approve permissions:**
 ```bash
-genie agent approve           # Approve pending permission
-genie agent approve --start   # Start auto-approve engine
+genie approve           # Approve pending permission
+genie approve --start   # Start auto-approve engine
 ```
 
 **Answer questions:**
 ```bash
-genie agent answer bd-1 1              # Select option 1
-genie agent answer bd-1 "text:custom"  # Provide custom text answer
+genie answer wish-1 1              # Select option 1
+genie answer wish-1 "text:custom"  # Provide custom text answer
 ```
 
-### Phase 5: Closing Issues
+### Phase 5: Closing Wishes
 
 When a worker completes its task:
 
 ```bash
-# Close issue and cleanup worker
-genie agent close bd-1
+# Close wish and cleanup worker
+genie close wish-1
 
 # Options:
 #   --merge          Merge worktree branch to main before cleanup
 #   --keep-worktree  Don't delete the worktree
-#   --no-sync        Skip bd sync
 #   -y, --yes        Skip confirmation
 ```
 
 **What happens:**
-1. Issue closed in beads (status → done)
-2. Beads synced to git
+1. Wish closed (status → done)
+2. State synced
 3. Worktree removed (unless --keep-worktree)
 4. Worker pane killed
-5. Agent bead deleted
 
 ### Phase 6: Force Killing Workers
 
 If a worker is stuck or needs to be terminated:
 
 ```bash
-genie agent kill bd-1
+genie kill wish-1
 ```
 
-Note: This does NOT close the issue. The task remains `in_progress` in beads.
+Note: This does NOT close the wish. The task remains `in_progress`.
 
 ## Daemon Management
 
-The beads daemon auto-commits and syncs changes:
+The daemon auto-commits and syncs changes:
 
 ```bash
 genie daemon start     # Start with auto-commit
@@ -181,105 +176,80 @@ genie daemon restart   # Restart with fresh config
 ### Pattern 1: Sequential Dependencies
 
 ```bash
-# Create dependent tasks
-bd create "Design database schema"           # bd-1
-bd create "Implement models"                 # bd-2
-bd update bd-2 --blocked-by bd-1
+# Create dependent wishes via /wish skill, then work sequentially
+genie work wish-1
 
-# Start first task
-genie work bd-1
-
-# When bd-1 completes, bd-2 becomes ready
-genie agent close bd-1
-genie work next  # Picks bd-2
+# When wish-1 completes, wish-2 becomes ready
+genie close wish-1
+genie work next  # Picks wish-2
 ```
 
 ### Pattern 2: Parallel Independent Tasks
 
 ```bash
-# Create independent tasks
-bd create "Add user profile page"
-bd create "Add settings page"
-bd create "Add notifications page"
-
-# Spawn multiple workers
-genie work bd-1
-genie work bd-2
-genie work bd-3
+# Create independent wishes, then spawn multiple workers
+genie work wish-1
+genie work wish-2
+genie work wish-3
 
 # Monitor all
-genie agent list
+genie ls
 ```
 
 ### Pattern 3: Review and Iterate
 
 ```bash
 # Worker completes, but needs revision
-# Don't close yet — reopen and reassign
-bd update bd-1 --status open
-genie work bd-1
+# Reopen and reassign
+genie work wish-1
 ```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TERM_USE_BEADS_REGISTRY` | `true` | Set to `false` to use JSON registry fallback |
 
 ## Troubleshooting
 
 ### Worker shows as dead but pane exists
 ```bash
 # The registry may be out of sync
-genie agent kill <worker-id>  # Clean up registry entry
-genie work <task-id>           # Start fresh
+genie kill <worker-id>  # Clean up registry entry
+genie work <wish-id>    # Start fresh
 ```
 
 ### Worktree creation fails
 ```bash
 # Check if branch already exists
-git branch -a | grep <task-id>
+git branch -a | grep <wish-id>
 
 # Remove orphaned worktree
-git worktree remove .worktrees/<task-id> --force
-```
-
-### Daemon won't start
-```bash
-# Check bd daemon directly
-bd daemon status
-bd daemon start --auto-commit
+git worktree remove .worktrees/<wish-id> --force
 ```
 
 ## Best Practices
 
-1. **Clear issue titles**: Workers use titles as context
-2. **One task per worker**: Keep issues focused
-3. **Use dependencies**: `--blocked-by` prevents premature work
-4. **Review before closing**: Check worker output before `genie agent close`
+1. **Clear wish titles**: Workers use titles as context
+2. **One task per worker**: Keep wishes focused
+3. **Use the wish pipeline**: `/brainstorm` → `/wish` → `/work` → `/review` → ship
+4. **Review before closing**: Check worker output before `genie close`
 5. **Use worktrees**: They provide isolation and can be reviewed independently
-6. **Keep daemon running**: Ensures beads state is synced to git
+6. **Keep daemon running**: Ensures state is synced to git
 
 ## Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `genie work <bd-id>` | Spawn worker for issue |
-| `genie work next` | Work on next ready issue |
-| `genie agent list` | List all workers |
-| `genie agent approve` | Approve permission / manage auto-approve |
-| `genie agent answer <id> <choice>` | Answer question |
-| `genie agent history <id>` | Compressed session catch-up |
-| `genie agent events [pane-id]` | Stream Claude Code events |
-| `genie agent close <id>` | Close issue and cleanup |
-| `genie agent ship <id>` | Mark done, merge, cleanup |
-| `genie agent kill <id>` | Force kill worker |
-| `genie agent read <id>` | Read worker pane output |
-| `genie agent exec <id> <cmd>` | Execute command in worker pane |
-| `genie daemon start` | Start beads daemon |
-| `genie daemon stop` | Stop beads daemon |
+| `genie work <wish-id>` | Spawn worker for wish |
+| `genie work next` | Work on next ready wish |
+| `genie ls` | List all workers |
+| `genie approve` | Approve permission / manage auto-approve |
+| `genie answer <id> <choice>` | Answer question |
+| `genie history <id>` | Compressed session catch-up |
+| `genie events [pane-id]` | Stream Claude Code events |
+| `genie close <id>` | Close wish and cleanup |
+| `genie ship <id>` | Mark done, merge, cleanup |
+| `genie kill <id>` | Force kill worker |
+| `genie read <id>` | Read worker pane output |
+| `genie exec <id> <cmd>` | Execute command in worker pane |
+| `genie daemon start` | Start daemon |
+| `genie daemon stop` | Stop daemon |
 | `genie daemon status` | Show daemon status |
-| `genie council` | Spawn dual-model deliberation |
 
 ## Architecture
 
@@ -295,19 +265,19 @@ bd daemon start --auto-commit
 │         ▼                ▼                ▼                     │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
 │  │ .worktrees/ │  │ .worktrees/ │  │ .worktrees/ │             │
-│  │   bd-1/     │  │   bd-2/     │  │   bd-3/     │             │
+│  │   wish-1/   │  │   wish-2/   │  │   wish-3/   │             │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘             │
 │         │                │                │                     │
 │         └────────────────┼────────────────┘                     │
 │                          ▼                                      │
 │                   ┌─────────────┐                               │
 │                   │   .genie/   │  ◀── Shared via redirect     │
-│                   │ issues.jsonl│                               │
+│                   │   wishes/   │                               │
 │                   └──────┬──────┘                               │
 │                          │                                      │
 │                          ▼                                      │
 │                   ┌─────────────┐                               │
-│                   │ bd daemon   │  ◀── Auto-commit & sync      │
+│                   │ genie daemon│  ◀── Auto-commit & sync      │
 │                   └─────────────┘                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -316,7 +286,7 @@ bd daemon start --auto-commit
 
 After reading this guide:
 1. Start with `genie daemon start`
-2. Create a few test issues with `bd create`
+2. Launch a session with `genie` and create wishes via `/wish`
 3. Try `genie work <id>` to spawn your first worker
 4. Practice the workflow with simple tasks
 5. Scale up to multi-worker orchestration

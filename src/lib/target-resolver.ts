@@ -140,7 +140,7 @@ async function defaultDeriveSession(paneId: string): Promise<string | null> {
 /**
  * Resolve a target string to a tmux pane ID using a 3-level resolution chain.
  *
- * @param target - The target string (e.g., "%17", "bd-42", "bd-42:1", "genie:OMNI")
+ * @param target - The target string (e.g., "%17", "wish-42", "wish-42:1", "genie:OMNI")
  * @param options - Optional overrides for testing
  * @returns ResolvedTarget with paneId and metadata
  * @throws Error with prescriptive message if target cannot be resolved
@@ -184,13 +184,13 @@ async function resolveWindowId(
 ): Promise<ResolvedTarget> {
   const matchingWorker = Object.values(workers).find((w) => w.windowId === target);
   if (!matchingWorker) {
-    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie agent list' to list workers.`);
+    throw new Error(`Window "${target}" not found in worker registry.\nRun 'genie ls' to list agents.`);
   }
   if (opts.checkLiveness) {
     await assertLive(
       matchingWorker.paneId,
       opts.isPaneLive,
-      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie agent kill ${matchingWorker.id}' to clean up.`,
+      `Window ${target}: worker ${matchingWorker.id} pane ${matchingWorker.paneId} is dead. Run 'genie kill ${matchingWorker.id}' to clean up.`,
     );
   }
   return {
@@ -257,7 +257,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
         await assertLive(
           paneId,
           isPaneLive,
-          `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie agent kill ${leftSide}' to clean up.`,
+          `Worker ${leftSide}: pane ${paneId} is dead. Run 'genie kill ${leftSide}' to clean up.`,
           () => cleanupDeadPane(leftSide, paneId),
         );
       }
@@ -268,7 +268,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     const sessionWindowResult = await tmuxLookup(leftSide, rightSide);
     if (!sessionWindowResult) {
       throw new Error(
-        `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie agent list' to list workers.`,
+        `Target "${target}" not found. No worker "${leftSide}" in registry and no tmux session:window "${leftSide}:${rightSide}" found.\nRun 'genie ls' to list agents.`,
       );
     }
     if (checkLiveness) {
@@ -288,14 +288,14 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
       await assertLive(
         worker.paneId,
         isPaneLive,
-        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie agent kill ${target}' to clean up.`,
+        `Worker ${target}: pane ${worker.paneId} is dead. Run 'genie kill ${target}' to clean up.`,
         () => cleanupDeadPane(target, worker.paneId),
       );
     }
     return { paneId: worker.paneId, session: worker.session, workerId: target, resolvedVia: 'worker' };
   }
 
-  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie agent list' to list workers.`);
+  throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie ls' to list agents.`);
 }
 
 // ============================================================================
@@ -306,8 +306,8 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
  * Format a human-readable label from a resolved target.
  *
  * Examples:
- *   worker "bd-42" pane %17, session "genie"  -> "bd-42 (pane %17, session genie)"
- *   worker "bd-42:1" pane %22, session "genie" -> "bd-42:1 (pane %22, session genie)"
+ *   worker "wish-42" pane %17, session "genie"  -> "wish-42 (pane %17, session genie)"
+ *   worker "wish-42:1" pane %22, session "genie" -> "wish-42:1 (pane %22, session genie)"
  *   raw pane "%17"                             -> "%17 (pane %17)"
  */
 export function formatResolvedLabel(resolved: ResolvedTarget, originalTarget: string): string {

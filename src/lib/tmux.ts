@@ -1,5 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
-import { shellQuote } from './team-lead-command.js';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
 // Basic interfaces for tmux objects
@@ -23,21 +21,6 @@ interface TmuxPane {
   active: boolean;
   title: string;
 }
-
-interface CommandExecution {
-  id: string;
-  paneId: string;
-  command: string;
-  status: 'pending' | 'completed' | 'error';
-  startTime: Date;
-  result?: string;
-  exitCode?: number;
-  rawMode?: boolean;
-}
-
-type ShellType = 'bash' | 'zsh' | 'fish';
-
-const shellConfig: { type: ShellType } = { type: 'bash' };
 
 /**
  * Execute a tmux command and return the result
@@ -90,33 +73,6 @@ export async function findSessionByName(name: string): Promise<TmuxSession | nul
   } catch (_error) {
     return null;
   }
-}
-
-/**
- * Get a tmux environment variable for a specific window target.
- * Uses `tmux show-environment -t <target> <varName>` which returns "VAR=value".
- * Returns null if the variable is not set or the target doesn't exist.
- */
-export async function getWindowEnv(target: string, varName: string): Promise<string | null> {
-  try {
-    const output = await executeTmux(`show-environment -t ${shellQuote(target)} ${shellQuote(varName)}`);
-    // Output format: "VARNAME=value"
-    const prefix = `${varName}=`;
-    if (output?.startsWith(prefix)) {
-      return output.slice(prefix.length).trim();
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Set a tmux environment variable scoped to a specific window target.
- * Uses `tmux set-environment -t <target> <varName> <value>`.
- */
-export async function setWindowEnv(target: string, varName: string, value: string): Promise<void> {
-  await executeTmux(`set-environment -t ${shellQuote(target)} ${shellQuote(varName)} ${shellQuote(value)}`);
 }
 
 /**
@@ -197,6 +153,7 @@ export async function capturePaneContent(paneId: string, lines = 200, includeCol
 /**
  * Create a new tmux session
  */
+/** @public - used in team-auto-spawn.ts (knip-ignored file) */
 export async function createSession(name: string): Promise<TmuxSession | null> {
   await executeTmux(`new-session -d -s "${name}" -e LC_ALL=C.UTF-8 -e LANG=C.UTF-8`);
   return findSessionByName(name);
@@ -367,35 +324,6 @@ async function rehydratePaneColorHook(windowId: string): Promise<void> {
 }
 
 /**
- * Kill a tmux session by ID
- */
-export async function killSession(sessionId: string): Promise<void> {
-  await executeTmux(`kill-session -t '${sessionId}'`);
-}
-
-/**
- * Kill a tmux window by ID
- */
-export async function killWindow(windowId: string): Promise<void> {
-  await executeTmux(`kill-window -t '${windowId}'`);
-}
-
-/**
- * Kill a tmux window using session-qualified targeting.
- * Uses `sessionId:windowId` format to avoid ambiguity across sessions.
- */
-export async function killWindowQualified(sessionId: string, windowId: string): Promise<void> {
-  await executeTmux(`kill-window -t '${sessionId}:${windowId}'`);
-}
-
-/**
- * Kill a tmux pane by ID
- */
-export async function killPane(paneId: string): Promise<void> {
-  await executeTmux(`kill-pane -t '${paneId}'`);
-}
-
-/**
  * Check if a tmux pane is still alive by attempting a minimal capture.
  * Returns false for invalid pane IDs ('inline', empty, non-%N format).
  */
@@ -408,165 +336,4 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// Map to track ongoing command executions
-const activeCommands = new Map<string, CommandExecution>();
-
-const startMarkerText = 'TMUX_MCP_START';
-const endMarkerPrefix = 'TMUX_MCP_DONE_';
-
-// Execute a command in a tmux pane and track its execution
-export async function executeCommand(
-  paneId: string,
-  command: string,
-  rawMode?: boolean,
-  noEnter?: boolean,
-): Promise<string> {
-  // Generate unique ID for this command execution
-  const commandId = uuidv4();
-
-  let fullCommand: string;
-  if (rawMode || noEnter) {
-    fullCommand = command;
-  } else {
-    const endMarkerText = getEndMarkerText();
-    fullCommand = `echo "${startMarkerText}"; ${command}; echo "${endMarkerText}"`;
-  }
-
-  // Store command in tracking map
-  activeCommands.set(commandId, {
-    id: commandId,
-    paneId,
-    command,
-    status: 'pending',
-    startTime: new Date(),
-    rawMode: rawMode || noEnter,
-  });
-
-  // Send the command to the tmux pane
-  if (noEnter) {
-    // Check if this is a special key (e.g., Up, Down, Left, Right, Escape, Tab, etc.)
-    // Special keys in tmux are typically capitalized or have special names
-    const specialKeys = [
-      'Up',
-      'Down',
-      'Left',
-      'Right',
-      'Escape',
-      'Tab',
-      'Enter',
-      'Space',
-      'BSpace',
-      'Delete',
-      'Home',
-      'End',
-      'PageUp',
-      'PageDown',
-      'F1',
-      'F2',
-      'F3',
-      'F4',
-      'F5',
-      'F6',
-      'F7',
-      'F8',
-      'F9',
-      'F10',
-      'F11',
-      'F12',
-    ];
-
-    if (specialKeys.includes(fullCommand)) {
-      // Send special key as-is
-      await executeTmux(`send-keys -t '${paneId}' ${fullCommand}`);
-    } else {
-      // For regular text, send each character individually to ensure proper processing
-      // This handles both single characters (like 'q', 'f') and strings (like 'beam')
-      for (const char of fullCommand) {
-        await executeTmux(`send-keys -t '${paneId}' '${char.replace(/'/g, "'\\''")}'`);
-      }
-    }
-  } else {
-    await executeTmux(`send-keys -t '${paneId}' '${fullCommand.replace(/'/g, "'\\''")}' Enter`);
-  }
-
-  return commandId;
-}
-
-function getEndMarkerText(): string {
-  return shellConfig.type === 'fish' ? `${endMarkerPrefix}$status` : `${endMarkerPrefix}$?`;
-}
-
-/**
- * Run a command synchronously in a tmux pane using wait-for.
- *
- * Uses tmux wait-for for proper synchronization (no polling).
- * Output is captured via tee so it's visible in the pane AND returned.
- *
- * @returns {output: string, exitCode: number}
- */
-export async function runCommandSync(
-  paneId: string,
-  command: string,
-  timeoutMs = 120000,
-): Promise<{ output: string; exitCode: number }> {
-  const id = uuidv4().substring(0, 8);
-  const outFile = `/tmp/genie-${id}.out`;
-  const exitFile = `/tmp/genie-${id}.exit`;
-  const channel = `genie-${id}`;
-
-  // Escape single quotes in command for shell embedding
-  const escapedCommand = command.replace(/'/g, "'\\''");
-
-  // Wrap command using tee for output capture:
-  // - Run command, pipe through tee (visible in terminal AND saved to file)
-  // - Capture exit code via PIPESTATUS
-  // - Signal completion via wait-for
-  const fullCommand = `{ ${escapedCommand}; } 2>&1 | tee ${outFile}; echo \${PIPESTATUS[0]} > ${exitFile}; tmux wait-for -S ${channel}`;
-
-  // Send command to pane
-  await executeTmux(`send-keys -t '${paneId}' '${fullCommand.replace(/'/g, "'\\''")}' Enter`);
-
-  // Wait for completion (blocks until signaled, with timeout)
-  try {
-    await Promise.race([
-      executeTmux(`wait-for ${channel}`),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Command timed out')), timeoutMs)),
-    ]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message === 'Command timed out') {
-      // Clean up on timeout
-      try {
-        await executeTmux(`wait-for -S ${channel}`); // Unblock any waiters
-      } catch {}
-      return { output: '', exitCode: 124 };
-    }
-    throw error;
-  }
-
-  // Read output and exit code from files
-  let output = '';
-  let exitCode = 0;
-
-  try {
-    const { readFile, unlink } = await import('node:fs/promises');
-
-    output = await readFile(outFile, 'utf-8');
-    // Clean up output
-    output = output.trim();
-
-    const exitStr = await readFile(exitFile, 'utf-8');
-    exitCode = Number.parseInt(exitStr.trim(), 10) || 0;
-
-    // Clean up temp files
-    await unlink(outFile).catch(() => {});
-    await unlink(exitFile).catch(() => {});
-  } catch (err) {
-    // If files don't exist, command may have failed to start
-    console.error('Failed to read command output:', err);
-  }
-
-  return { output, exitCode };
 }

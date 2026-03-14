@@ -14,7 +14,7 @@ Resolve FIX-FIRST gaps from `/review`. Dispatch a fix subagent, re-review, repea
 ## Flow
 1. **Parse gaps:** extract gap list from FIX-FIRST verdict — severity, files, failing checks.
 2. **Dispatch fixer:** send gaps + original wish criteria to fix subagent.
-3. **Re-review:** dispatch `/review` to validate the fix against the same pipeline.
+3. **Re-review:** dispatch review subagent to validate the fix against the same pipeline.
 4. **Evaluate verdict:**
 
 | Verdict | Condition | Action |
@@ -39,13 +39,13 @@ Remaining gaps:
 
 Fix and re-review must be **separate dispatches** — never combine them in one subagent.
 
-| Runtime | Detection | Fix dispatch | Re-review dispatch |
-|---------|-----------|-------------|-------------------|
-| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<fix prompt>")` | `Task(model: "sonnet", isolation: "worktree", prompt: "<review prompt>")` |
-| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<fix prompt>", sandbox: true)` | `codex_subagent(task: "<review prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie agent spawn --role fixer` | `genie agent spawn --role reviewer` |
+```bash
+# Spawn a fixer subagent
+genie spawn fixer
 
-Default to **Claude Code** when detection is ambiguous.
+# Spawn a reviewer subagent (separate from fixer)
+genie spawn reviewer
+```
 
 ## Rules
 - Never fix and review in the same session — always separate subagents.
