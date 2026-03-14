@@ -8,4 +8,3 @@
 // Re-export all public APIs
 export * from './patterns.js';
 export * from './state-detector.js';
-export * from './event-monitor.js';

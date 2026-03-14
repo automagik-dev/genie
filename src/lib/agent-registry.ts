@@ -260,17 +260,6 @@ export async function list(): Promise<Agent[]> {
   return Object.values(registry.workers);
 }
 
-/** Update an agent's state. */
-export async function updateState(id: string, state: AgentState): Promise<void> {
-  await withRegistry((reg) => {
-    const agent = reg.workers[id];
-    if (agent) {
-      agent.state = state;
-      agent.lastStateChange = new Date().toISOString();
-    }
-  });
-}
-
 /** Update multiple agent fields. */
 export async function update(id: string, updates: Partial<Agent>): Promise<void> {
   await withRegistry((reg) => {
@@ -302,42 +291,6 @@ export async function findByWindow(windowId: string): Promise<Agent | null> {
 export async function findByTask(taskId: string): Promise<Agent | null> {
   const agents = await list();
   return agents.find((a) => a.taskId === taskId) ?? null;
-}
-
-/** Find ALL agents for a task ID (supports N agents per task). */
-export async function findAllByTask(taskId: string): Promise<Agent[]> {
-  const agents = await list();
-  return agents.filter((a) => a.taskId === taskId);
-}
-
-/** Count agents for a task. */
-async function countByTask(taskId: string): Promise<number> {
-  const agents = await findAllByTask(taskId);
-  return agents.length;
-}
-
-/**
- * Generate a unique agent ID for a task (handles N agents per task).
- * Returns taskId for first agent, taskId-2 for second, etc.
- */
-export async function generateWorkerId(taskId: string, customName?: string): Promise<string> {
-  if (customName) {
-    return customName;
-  }
-
-  const existingCount = await countByTask(taskId);
-  if (existingCount === 0) {
-    return taskId;
-  }
-
-  // Find next available suffix
-  const agents = await list();
-  let suffix = existingCount + 1;
-  while (agents.some((a) => a.id === `${taskId}-${suffix}`)) {
-    suffix++;
-  }
-
-  return `${taskId}-${suffix}`;
 }
 
 /** Calculate elapsed time for an agent. */
