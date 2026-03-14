@@ -70,7 +70,7 @@ async function startNamedSession(name: string): Promise<void> {
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
-  if (result.status) process.exit(result.status);
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 // ============================================================================

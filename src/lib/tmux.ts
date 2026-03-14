@@ -107,7 +107,7 @@ export async function setWindowEnv(target: string, varName: string, value: strin
  * Kill a tmux session by ID
  */
 export async function killSession(sessionId: string): Promise<void> {
-  await executeTmux(`kill-session -t '${sessionId}'`);
+  await executeTmux(`kill-session -t ${shellQuote(sessionId)}`);
 }
 
 /**
