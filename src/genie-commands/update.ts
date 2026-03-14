@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { genieConfigExists, loadGenieConfig } from '../lib/genie-config.js';
+import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
@@ -144,26 +144,26 @@ async function detectInstallationType(): Promise<InstallationType> {
   return hasBun ? 'bun' : 'npm';
 }
 
-async function updateViaBun(): Promise<void> {
-  log('Updating via bun...');
-  const result = await runCommand('bun', ['install', '-g', '@automagik/genie@latest']);
+async function updateViaBun(channel: string): Promise<void> {
+  log(`Updating via bun (channel: ${channel})...`);
+  const result = await runCommand('bun', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
     process.exit(1);
   }
   console.log();
-  success('Genie CLI updated!');
+  success(`Genie CLI updated (${channel})!`);
 }
 
-async function updateViaNpm(): Promise<void> {
-  log('Updating via npm...');
-  const result = await runCommand('npm', ['install', '-g', '@automagik/genie@latest']);
+async function updateViaNpm(channel: string): Promise<void> {
+  log(`Updating via npm (channel: ${channel})...`);
+  const result = await runCommand('npm', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via npm');
     process.exit(1);
   }
   console.log();
-  success('Genie CLI updated!');
+  success(`Genie CLI updated (${channel})!`);
 }
 
 async function updateSource(): Promise<void> {
@@ -286,14 +286,50 @@ async function symlinkOrCopy(src: string, dest: string): Promise<void> {
   }
 }
 
-export async function updateCommand(): Promise<void> {
+async function resolveChannel(options: { next?: boolean; stable?: boolean }): Promise<string> {
+  // Explicit flags override everything
+  if (options.next) return 'next';
+  if (options.stable) return 'latest';
+
+  // Read saved channel from config
+  if (genieConfigExists()) {
+    try {
+      const config = await loadGenieConfig();
+      if (config.updateChannel) return config.updateChannel;
+    } catch {
+      // Ignore config errors
+    }
+  }
+
+  return 'latest';
+}
+
+async function persistChannel(channel: string): Promise<void> {
+  try {
+    const config = await loadGenieConfig();
+    config.updateChannel = channel as 'latest' | 'next';
+    await saveGenieConfig(config);
+  } catch {
+    // Non-fatal — channel preference lost but update still works
+  }
+}
+
+export async function updateCommand(options: { next?: boolean; stable?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
   console.log('\x1b[2m────────────────────────────────────\x1b[0m');
   console.log();
 
+  const channel = await resolveChannel(options);
+
+  // Persist channel when explicitly switching
+  if (options.next || options.stable) {
+    await persistChannel(channel);
+  }
+
   const installType = await detectInstallationType();
   log(`Detected installation: ${installType}`);
+  log(`Channel: ${channel}${channel === 'next' ? ' (dev builds)' : ' (stable)'}`);
   console.log();
 
   if (installType === 'unknown') {
@@ -312,10 +348,10 @@ export async function updateCommand(): Promise<void> {
       await updateSource();
       break;
     case 'bun':
-      await updateViaBun();
+      await updateViaBun(channel);
       break;
     case 'npm':
-      await updateViaNpm();
+      await updateViaNpm(channel);
       break;
   }
 }
