@@ -44,7 +44,6 @@ import * as orchestrateCmd from './term-commands/orchestrate.js';
 import * as readCmd from './term-commands/read.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
-import * as workCmd from './term-commands/work.js';
 
 const program = new Command();
 
@@ -224,25 +223,6 @@ program
       console.error(`Error: ${message}`);
       process.exit(1);
     }
-  });
-
-// genie work <target> — spawn worker bound to task
-program
-  .command('work <target>')
-  .description('Spawn worker bound to task (target: task-id, "next", or "wish")')
-  .option('--no-worktree', 'Use shared repo instead of worktree')
-  .option('-s, --session <name>', 'Target tmux session')
-  .option('--focus', 'Focus the worker pane after spawning')
-  .option('-p, --prompt <message>', 'Custom initial prompt')
-  .option('--no-resume', 'Start fresh session even if previous exists')
-  .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
-  .option('--no-auto-approve', 'Disable auto-approve for this worker')
-  .option('--profile <name>', 'Worker profile to use')
-  .option('-n, --name <name>', 'Custom worker name (for N workers per task)')
-  .option('-r, --role <role>', 'Worker role (e.g., "main", "tests", "review")')
-  .option('--shared-worktree', 'Share worktree with existing worker on same task')
-  .action(async (target: string, options: workCmd.WorkOptions) => {
-    await workCmd.workCommand(target, options);
   });
 
 // ============================================================================
