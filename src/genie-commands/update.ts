@@ -303,28 +303,39 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
-function resolveGlobalPkgDir(): string | null {
-  // Bun global install location
-  const bunPath = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
-  if (existsSync(bunPath)) return bunPath;
+async function resolveGlobalPkgDir(installType: InstallationType): Promise<string | null> {
+  // Prefer the package manager that was actually used for this update
+  if (installType === 'bun') {
+    const bunPath = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+    if (existsSync(bunPath)) return bunPath;
+  }
 
-  // npm global install location (try common paths)
-  const npmPaths = [
-    join(homedir(), '.npm-global', 'lib', 'node_modules', '@automagik', 'genie'),
-    '/usr/local/lib/node_modules/@automagik/genie',
-    '/usr/lib/node_modules/@automagik/genie',
-  ];
-  for (const p of npmPaths) {
-    if (existsSync(p)) return p;
+  if (installType === 'npm') {
+    // Dynamic resolution via npm root -g (handles nvm/fnm/volta)
+    const npmRootResult = await runCommandSilent('npm', ['root', '-g']);
+    if (npmRootResult.success) {
+      const npmPath = join(npmRootResult.output.trim(), '@automagik', 'genie');
+      if (existsSync(npmPath)) return npmPath;
+    }
+  }
+
+  // Fallback: try both regardless of installType
+  const bunFallback = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+  if (existsSync(bunFallback)) return bunFallback;
+
+  const npmRootFallback = await runCommandSilent('npm', ['root', '-g']);
+  if (npmRootFallback.success) {
+    const npmPath = join(npmRootFallback.output.trim(), '@automagik', 'genie');
+    if (existsSync(npmPath)) return npmPath;
   }
 
   return null;
 }
 
-async function syncPlugin(): Promise<void> {
+async function syncPlugin(installType: InstallationType): Promise<void> {
   log('Syncing Claude Code plugin...');
 
-  const globalPkgDir = resolveGlobalPkgDir();
+  const globalPkgDir = await resolveGlobalPkgDir(installType);
   if (!globalPkgDir) {
     log('Could not find installed package — skipping plugin sync');
     return;
@@ -452,11 +463,11 @@ export async function updateCommand(options: { next?: boolean; stable?: boolean 
       break;
     case 'bun':
       await updateViaBun(channel);
-      await syncPlugin();
+      await syncPlugin(installType);
       break;
     case 'npm':
       await updateViaNpm(channel);
-      await syncPlugin();
+      await syncPlugin(installType);
       break;
   }
 }
