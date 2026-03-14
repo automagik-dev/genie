@@ -45,6 +45,9 @@ yarn-error.log*
 # Worker worktrees
 .genie/worktrees/
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # Worker registry (contains session IDs)
 .genie/workers.json
 
