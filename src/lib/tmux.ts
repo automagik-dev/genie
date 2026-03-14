@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import { executeTmux as wrapperExecuteTmux } from './tmux-wrapper.js';
 
 // Basic interfaces for tmux objects
@@ -22,21 +21,6 @@ interface TmuxPane {
   active: boolean;
   title: string;
 }
-
-interface CommandExecution {
-  id: string;
-  paneId: string;
-  command: string;
-  status: 'pending' | 'completed' | 'error';
-  startTime: Date;
-  result?: string;
-  exitCode?: number;
-  rawMode?: boolean;
-}
-
-type ShellType = 'bash' | 'zsh' | 'fish';
-
-const shellConfig: { type: ShellType } = { type: 'bash' };
 
 /**
  * Execute a tmux command and return the result
@@ -169,6 +153,7 @@ export async function capturePaneContent(paneId: string, lines = 200, includeCol
 /**
  * Create a new tmux session
  */
+/** @public - used in team-auto-spawn.ts (knip-ignored file) */
 export async function createSession(name: string): Promise<TmuxSession | null> {
   await executeTmux(`new-session -d -s "${name}" -e LC_ALL=C.UTF-8 -e LANG=C.UTF-8`);
   return findSessionByName(name);
@@ -351,92 +336,4 @@ export async function isPaneAlive(paneId: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-// Map to track ongoing command executions
-const activeCommands = new Map<string, CommandExecution>();
-
-const startMarkerText = 'TMUX_MCP_START';
-const endMarkerPrefix = 'TMUX_MCP_DONE_';
-
-// Execute a command in a tmux pane and track its execution
-export async function executeCommand(
-  paneId: string,
-  command: string,
-  rawMode?: boolean,
-  noEnter?: boolean,
-): Promise<string> {
-  // Generate unique ID for this command execution
-  const commandId = uuidv4();
-
-  let fullCommand: string;
-  if (rawMode || noEnter) {
-    fullCommand = command;
-  } else {
-    const endMarkerText = getEndMarkerText();
-    fullCommand = `echo "${startMarkerText}"; ${command}; echo "${endMarkerText}"`;
-  }
-
-  // Store command in tracking map
-  activeCommands.set(commandId, {
-    id: commandId,
-    paneId,
-    command,
-    status: 'pending',
-    startTime: new Date(),
-    rawMode: rawMode || noEnter,
-  });
-
-  // Send the command to the tmux pane
-  if (noEnter) {
-    // Check if this is a special key (e.g., Up, Down, Left, Right, Escape, Tab, etc.)
-    // Special keys in tmux are typically capitalized or have special names
-    const specialKeys = [
-      'Up',
-      'Down',
-      'Left',
-      'Right',
-      'Escape',
-      'Tab',
-      'Enter',
-      'Space',
-      'BSpace',
-      'Delete',
-      'Home',
-      'End',
-      'PageUp',
-      'PageDown',
-      'F1',
-      'F2',
-      'F3',
-      'F4',
-      'F5',
-      'F6',
-      'F7',
-      'F8',
-      'F9',
-      'F10',
-      'F11',
-      'F12',
-    ];
-
-    if (specialKeys.includes(fullCommand)) {
-      // Send special key as-is
-      await executeTmux(`send-keys -t '${paneId}' ${fullCommand}`);
-    } else {
-      // For regular text, send each character individually to ensure proper processing
-      // This handles both single characters (like 'q', 'f') and strings (like 'beam')
-      for (const char of fullCommand) {
-        await executeTmux(`send-keys -t '${paneId}' '${char.replace(/'/g, "'\\''")}'`);
-      }
-    }
-  } else {
-    await executeTmux(`send-keys -t '${paneId}' '${fullCommand.replace(/'/g, "'\\''")}' Enter`);
-  }
-
-  return commandId;
-}
-
-function getEndMarkerText(): string {
-  return shellConfig.type === 'fish' ? `${endMarkerPrefix}$status` : `${endMarkerPrefix}$?`;
 }

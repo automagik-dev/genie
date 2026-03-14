@@ -6,7 +6,6 @@ import {
   GenieConfigSchema,
   type ShortcutsConfig,
   type TerminalConfig,
-  type WorkerProfile,
 } from '../types/genie-config.js';
 
 const GENIE_DIR = join(homedir(), '.genie');
@@ -128,14 +127,6 @@ export function getTerminalConfig(): TerminalConfig {
 }
 
 /**
- * Get session name from config
- */
-export function getSessionName(): string {
-  const config = loadGenieConfigSync();
-  return config.session.name;
-}
-
-/**
  * Check if setup has been completed
  */
 export function isSetupComplete(): boolean {
@@ -174,28 +165,6 @@ export async function updateShortcutsConfig(partial: Partial<ShortcutsConfig>): 
 // ============================================================================
 // Worker Profile helpers
 // ============================================================================
-
-/**
- * Get a worker profile by name
- * @param config - The genie config object
- * @param profileName - Name of the profile to get
- * @returns The WorkerProfile if found, undefined otherwise
- */
-export function getWorkerProfile(config: GenieConfig, profileName: string): WorkerProfile | undefined {
-  return config.workerProfiles?.[profileName];
-}
-
-/**
- * Get the default worker profile
- * @param config - The genie config object
- * @returns The default WorkerProfile if configured, undefined otherwise
- */
-export function getDefaultWorkerProfile(config: GenieConfig): WorkerProfile | undefined {
-  if (!config.defaultWorkerProfile) {
-    return undefined;
-  }
-  return getWorkerProfile(config, config.defaultWorkerProfile);
-}
 
 // ============================================================================
 // Council preset helpers

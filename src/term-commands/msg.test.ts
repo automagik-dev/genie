@@ -326,13 +326,13 @@ describe('provider-adapters: GENIE_AGENT_NAME for workers', () => {
     expect(result.env!.GENIE_AGENT_NAME).toBe('implementor');
   });
 
-  test('buildClaudeCommand without nativeTeam does NOT set GENIE_AGENT_NAME', async () => {
+  test('buildClaudeCommand without nativeTeam still sets GENIE_AGENT_NAME from role', async () => {
     const { buildClaudeCommand } = await import('../lib/provider-adapters.js');
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'genie',
       role: 'implementor',
     });
-    expect(result.env?.GENIE_AGENT_NAME).toBeUndefined();
+    expect(result.env?.GENIE_AGENT_NAME).toBe('implementor');
   });
 });

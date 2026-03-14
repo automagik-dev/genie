@@ -10,10 +10,10 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import path, { join } from 'node:path';
 import { $ } from 'bun';
+import * as registry from './agent-registry.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
-import * as registry from './agent-registry.js';
 
 // ============================================================================
 // Types
