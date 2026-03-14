@@ -13,6 +13,7 @@ import { $ } from 'bun';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
+import * as registry from './agent-registry.js';
 
 // ============================================================================
 // Types
@@ -65,6 +66,27 @@ function getWorktreeBase(repoPath: string): string {
   // If relative, resolve against repo path
   if (path.isAbsolute(base)) return base;
   return join(repoPath, base);
+}
+
+// ============================================================================
+// Agent Kill Helper
+// ============================================================================
+
+/** Best-effort kill all running workers matching a given agent name (by role or id). */
+async function killWorkersByName(agentName: string): Promise<void> {
+  const workers = await registry.list();
+  const matches = workers.filter((w) => w.role === agentName || w.id === agentName);
+  for (const w of matches) {
+    try {
+      if (w.paneId && w.paneId !== 'inline') {
+        const { execSync } = require('node:child_process');
+        execSync(`tmux kill-pane -t ${w.paneId}`, { stdio: 'ignore' });
+      }
+    } catch {
+      // Pane may already be gone
+    }
+    await registry.unregister(w.id);
+  }
 }
 
 // ============================================================================
@@ -212,6 +234,13 @@ export async function fireAgent(teamName: string, agentName: string, repoPath: s
   const filePath = teamFilePath(repoPath, teamName);
   await writeFile(filePath, JSON.stringify(config, null, 2));
 
+  // Best-effort kill running agent
+  try {
+    await killWorkersByName(agentName);
+  } catch {
+    // Agent may not be running — ignore
+  }
+
   return true;
 }
 
@@ -229,6 +258,15 @@ export async function disbandTeam(repoPath: string, teamName: string): Promise<b
       await nativeTeamsManager.deleteNativeTeam(teamName);
     } catch {
       // Best-effort
+    }
+  }
+
+  // Kill all running team members
+  for (const member of config.members) {
+    try {
+      await killWorkersByName(member);
+    } catch {
+      // Best-effort — continue with other members
     }
   }
 
