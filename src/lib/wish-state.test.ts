@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type GroupDefinition, completeGroup, createState, getGroupState, getState, startGroup } from './wish-state.js';
+import {
+  type GroupDefinition,
+  completeGroup,
+  createState,
+  getGroupState,
+  getState,
+  resetGroup,
+  startGroup,
+} from './wish-state.js';
 
 describe('wish-state', () => {
   let cwd: string;
@@ -181,7 +189,9 @@ describe('wish-state', () => {
       await startGroup('test-wish', '1', 'agent-a', cwd);
       await completeGroup('test-wish', '1', cwd);
 
-      await expect(completeGroup('test-wish', '1', cwd)).rejects.toThrow('already done');
+      await expect(completeGroup('test-wish', '1', cwd)).rejects.toThrow(
+        'Cannot complete group "1": must be in_progress (currently done)',
+      );
     });
 
     test('refuses when group not found', async () => {
@@ -198,16 +208,17 @@ describe('wish-state', () => {
       expect(groupState?.status).toBe('blocked');
 
       await expect(completeGroup('test-wish', '2', cwd)).rejects.toThrow(
-        'Cannot complete group "2": it is blocked (dependencies not met)',
+        'Cannot complete group "2": must be in_progress (currently blocked)',
       );
     });
 
-    test('allows completing a ready group (skip in_progress)', async () => {
+    test('rejects ready groups (must be in_progress)', async () => {
       await createState('test-wish', sampleGroups, cwd);
 
-      // Group 1 is ready, complete directly without starting
-      const result = await completeGroup('test-wish', '1', cwd);
-      expect(result.status).toBe('done');
+      // Group 1 is ready but not in_progress
+      await expect(completeGroup('test-wish', '1', cwd)).rejects.toThrow(
+        'Cannot complete group "1": must be in_progress (currently ready)',
+      );
     });
   });
 
@@ -280,6 +291,122 @@ describe('wish-state', () => {
       for (const group of Object.values(state?.groups ?? {})) {
         expect(group.status).toBe('done');
       }
+    });
+  });
+
+  // ============================================================================
+  // Validation: cycle detection, dangling deps, self-deps
+  // ============================================================================
+
+  describe('createState validation', () => {
+    test('rejects self-dependency', async () => {
+      const groups: GroupDefinition[] = [{ name: 'a', dependsOn: ['a'] }];
+      await expect(createState('self-dep', groups, cwd)).rejects.toThrow('Group "a" depends on itself');
+    });
+
+    test('rejects dangling dependency', async () => {
+      const groups: GroupDefinition[] = [{ name: 'a', dependsOn: ['nonexistent'] }];
+      await expect(createState('dangling', groups, cwd)).rejects.toThrow(
+        'Group "a" depends on non-existent group "nonexistent"',
+      );
+    });
+
+    test('rejects cyclic dependencies (A→B→A)', async () => {
+      const groups: GroupDefinition[] = [
+        { name: 'a', dependsOn: ['b'] },
+        { name: 'b', dependsOn: ['a'] },
+      ];
+      await expect(createState('cycle', groups, cwd)).rejects.toThrow('Dependency cycle detected');
+    });
+
+    test('rejects larger cycle (A→B→C→A)', async () => {
+      const groups: GroupDefinition[] = [
+        { name: 'a', dependsOn: ['c'] },
+        { name: 'b', dependsOn: ['a'] },
+        { name: 'c', dependsOn: ['b'] },
+      ];
+      await expect(createState('big-cycle', groups, cwd)).rejects.toThrow('Dependency cycle detected');
+    });
+
+    test('allows valid DAG', async () => {
+      const groups: GroupDefinition[] = [
+        { name: 'a' },
+        { name: 'b', dependsOn: ['a'] },
+        { name: 'c', dependsOn: ['a'] },
+        { name: 'd', dependsOn: ['b', 'c'] },
+      ];
+      const state = await createState('valid-dag', groups, cwd);
+      expect(state.groups.a.status).toBe('ready');
+      expect(state.groups.d.status).toBe('blocked');
+    });
+  });
+
+  // ============================================================================
+  // resetGroup
+  // ============================================================================
+
+  describe('resetGroup', () => {
+    test('resets in_progress group to ready', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      const result = await resetGroup('test-wish', '1', cwd);
+
+      expect(result.status).toBe('ready');
+      expect(result.assignee).toBeUndefined();
+      expect(result.startedAt).toBeUndefined();
+    });
+
+    test('persists reset to disk', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await resetGroup('test-wish', '1', cwd);
+
+      const state = await getState('test-wish', cwd);
+      expect(state?.groups['1'].status).toBe('ready');
+      expect(state?.groups['1'].assignee).toBeUndefined();
+    });
+
+    test('rejects reset of ready group', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      await expect(resetGroup('test-wish', '1', cwd)).rejects.toThrow(
+        'Cannot reset: must be in_progress (currently ready)',
+      );
+    });
+
+    test('rejects reset of blocked group', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      await expect(resetGroup('test-wish', '2', cwd)).rejects.toThrow(
+        'Cannot reset: must be in_progress (currently blocked)',
+      );
+    });
+
+    test('rejects reset of done group', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await completeGroup('test-wish', '1', cwd);
+
+      await expect(resetGroup('test-wish', '1', cwd)).rejects.toThrow(
+        'Cannot reset: must be in_progress (currently done)',
+      );
+    });
+
+    test('rejects reset of nonexistent group', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      await expect(resetGroup('test-wish', 'nonexistent', cwd)).rejects.toThrow('not found');
+    });
+
+    test('allows re-start after reset', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await resetGroup('test-wish', '1', cwd);
+
+      const result = await startGroup('test-wish', '1', 'agent-b', cwd);
+      expect(result.status).toBe('in_progress');
+      expect(result.assignee).toBe('agent-b');
     });
   });
 });

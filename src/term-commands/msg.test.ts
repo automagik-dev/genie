@@ -124,6 +124,8 @@ describe('checkSendScope', () => {
     tempDir = await mkdtemp(join(tmpdir(), 'scope-test-'));
     // Create .genie/teams directory
     await mkdir(join(tempDir, '.genie', 'teams'), { recursive: true });
+    // Point GENIE_HOME to tempDir/.genie so listTeams() finds team files written here
+    process.env.GENIE_HOME = join(tempDir, '.genie');
   });
 
   afterEach(async () => {

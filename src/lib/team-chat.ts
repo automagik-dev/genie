@@ -8,6 +8,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
+import { acquireLock } from './file-lock.js';
 
 // ============================================================================
 // Types
@@ -51,20 +52,25 @@ export async function postMessage(
   sender: string,
   body: string,
 ): Promise<ChatMessage> {
-  const msg: ChatMessage = {
-    id: `chat-${uuidv4()}`,
-    sender,
-    body,
-    timestamp: new Date().toISOString(),
-  };
-
+  // Ensure chat directory exists before acquiring lock (lock file needs parent dir)
   const dir = chatDir(repoPath);
   await mkdir(dir, { recursive: true });
+  const release = await acquireLock(chatFilePath(repoPath, teamName));
+  try {
+    const msg: ChatMessage = {
+      id: `chat-${uuidv4()}`,
+      sender,
+      body,
+      timestamp: new Date().toISOString(),
+    };
 
-  const filePath = chatFilePath(repoPath, teamName);
-  await appendFile(filePath, `${JSON.stringify(msg)}\n`);
+    const filePath = chatFilePath(repoPath, teamName);
+    await appendFile(filePath, `${JSON.stringify(msg)}\n`);
 
-  return msg;
+    return msg;
+  } finally {
+    await release();
+  }
 }
 
 /**

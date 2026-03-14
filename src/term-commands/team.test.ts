@@ -14,6 +14,7 @@ import { $ } from 'bun';
 
 const TEST_DIR = '/tmp/team-cli-test';
 const TEST_REPO = join(TEST_DIR, 'test-repo');
+const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
 
 // Path to the genie CLI entrypoint
 const GENIE_BIN = join(import.meta.dir, '..', 'genie.ts');
@@ -26,6 +27,7 @@ async function setupTestRepo(): Promise<void> {
   }
 
   await mkdir(TEST_REPO, { recursive: true });
+  await mkdir(TEST_GENIE_HOME, { recursive: true });
   await $`git -C ${TEST_REPO} init`.quiet();
   await $`git -C ${TEST_REPO} config user.email "test@test.com"`.quiet();
   await $`git -C ${TEST_REPO} config user.name "Test"`.quiet();
@@ -67,7 +69,10 @@ async function cleanupTestRepo(): Promise<void> {
 /** Run genie CLI command and return stdout. */
 async function genie(...args: string[]): Promise<{ stdout: string; exitCode: number }> {
   try {
-    const result = await $`bun ${GENIE_BIN} ${args}`.quiet().cwd(TEST_REPO);
+    const result = await $`bun ${GENIE_BIN} ${args}`
+      .quiet()
+      .cwd(TEST_REPO)
+      .env({ ...process.env, GENIE_HOME: TEST_GENIE_HOME });
     return { stdout: result.stdout.toString(), exitCode: 0 };
   } catch (err: unknown) {
     const shellErr = err as { stdout?: Buffer; exitCode?: number };

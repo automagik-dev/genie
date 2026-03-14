@@ -158,4 +158,22 @@ export function registerStateCommands(program: Command): void {
     .action(async (slug: string) => {
       await statusCommand(slug);
     });
+
+  program
+    .command('reset <ref>')
+    .description('Reset an in-progress group back to ready (format: <slug>#<group>)')
+    .action(async (ref: string) => {
+      try {
+        const { slug, group } = parseRef(ref);
+        const result = await wishState.resetGroup(slug, group);
+        console.log(`🔄 Group "${group}" reset to ready in wish "${slug}"`);
+        if (result.status === 'ready') {
+          console.log('   Status: ready (assignee cleared)');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`❌ ${message}`);
+        process.exit(1);
+      }
+    });
 }
