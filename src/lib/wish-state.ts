@@ -10,9 +10,10 @@
  *   in_progress → done (via completeGroup, recalculates dependents)
  */
 
-import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { acquireLock } from './file-lock.js';
 
 // ============================================================================
 // Schemas
@@ -47,71 +48,8 @@ export interface GroupDefinition {
 }
 
 // ============================================================================
-// File Locking — prevents concurrent state file races
+// State locking
 // ============================================================================
-
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_RETRY_MS = 50;
-const LOCK_STALE_MS = 10000;
-
-async function tryCleanStaleLock(lockPath: string): Promise<boolean> {
-  try {
-    const lockStat = await stat(lockPath);
-    if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
-      try {
-        await unlink(lockPath);
-      } catch {
-        /* race with other cleanup */
-      }
-      return true;
-    }
-  } catch {
-    return true; // lock gone, retry
-  }
-  return false;
-}
-
-async function tryCreateLock(lockPath: string): Promise<(() => Promise<void>) | null> {
-  try {
-    const handle = await open(lockPath, 'wx');
-    await handle.writeFile(String(process.pid));
-    await handle.close();
-    return async () => {
-      try {
-        await unlink(lockPath);
-      } catch {
-        /* already removed */
-      }
-    };
-  } catch (err) {
-    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (errCode !== 'EEXIST') throw err;
-    return null;
-  }
-}
-
-async function acquireLock(statePath: string): Promise<() => Promise<void>> {
-  const lockPath = `${statePath}.lock`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (true) {
-    const release = await tryCreateLock(lockPath);
-    if (release) return release;
-
-    const cleaned = await tryCleanStaleLock(lockPath);
-    if (cleaned) continue;
-
-    if (Date.now() > deadline) {
-      try {
-        await unlink(lockPath);
-      } catch {
-        throw new Error(`State lock timeout: could not remove stale lock at ${lockPath}`);
-      }
-      continue;
-    }
-    await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
-  }
-}
 
 async function withStateLock<T>(statePath: string, fn: (state: WishState) => T | Promise<T>): Promise<T> {
   const release = await acquireLock(statePath);
@@ -174,6 +112,75 @@ function recalculateDependents(state: WishState): void {
 }
 
 // ============================================================================
+// Validation
+// ============================================================================
+
+/** Check for self-dependencies and references to non-existent groups. */
+function validateGroupRefs(groups: GroupDefinition[]): void {
+  const groupNames = new Set(groups.map((g) => g.name));
+
+  for (const group of groups) {
+    if (group.dependsOn?.includes(group.name)) {
+      throw new Error(`Group "${group.name}" depends on itself`);
+    }
+    for (const dep of group.dependsOn ?? []) {
+      if (!groupNames.has(dep)) {
+        throw new Error(`Group "${group.name}" depends on non-existent group "${dep}"`);
+      }
+    }
+  }
+}
+
+/** Detect dependency cycles using Kahn's topological sort algorithm. */
+function detectCycles(groups: GroupDefinition[]): void {
+  const inDegree: Record<string, number> = {};
+  const adjacency: Record<string, string[]> = {};
+
+  for (const group of groups) {
+    inDegree[group.name] = (group.dependsOn ?? []).length;
+    adjacency[group.name] = [];
+  }
+  for (const group of groups) {
+    for (const dep of group.dependsOn ?? []) {
+      adjacency[dep].push(group.name);
+    }
+  }
+
+  const queue: string[] = Object.entries(inDegree)
+    .filter(([, deg]) => deg === 0)
+    .map(([name]) => name);
+  let processed = 0;
+
+  while (queue.length > 0) {
+    const node = queue.shift();
+    if (!node) break;
+    processed++;
+    for (const neighbor of adjacency[node]) {
+      inDegree[neighbor]--;
+      if (inDegree[neighbor] === 0) {
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  if (processed !== groups.length) {
+    const remaining = Object.entries(inDegree)
+      .filter(([, deg]) => deg > 0)
+      .map(([name]) => name);
+    throw new Error(`Dependency cycle detected among groups: ${remaining.join(', ')}`);
+  }
+}
+
+/**
+ * Validate group definitions: no self-deps, no dangling deps, no cycles.
+ * Throws on the first violation found.
+ */
+function validateGroups(groups: GroupDefinition[]): void {
+  validateGroupRefs(groups);
+  detectCycles(groups);
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -182,6 +189,8 @@ function recalculateDependents(state: WishState): void {
  * Groups with no dependencies start as `ready`. Others start as `blocked`.
  */
 export async function createState(slug: string, groups: GroupDefinition[], cwd?: string): Promise<WishState> {
+  validateGroups(groups);
+
   const statePath = getStatePath(slug, cwd);
   await mkdir(dirname(statePath), { recursive: true });
 
@@ -261,12 +270,8 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
       throw new Error(`Group "${groupName}" not found in wish "${slug}"`);
     }
 
-    if (group.status === 'done') {
-      throw new Error(`Group "${groupName}" is already done`);
-    }
-
-    if (group.status === 'blocked') {
-      throw new Error(`Cannot complete group "${groupName}": it is blocked (dependencies not met)`);
+    if (group.status !== 'in_progress') {
+      throw new Error(`Cannot complete group "${groupName}": must be in_progress (currently ${group.status})`);
     }
 
     group.status = 'done';
@@ -280,8 +285,24 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
 }
 
 /**
- * Read current state for a wish.
+ * Reset an in-progress group back to ready.
+ * Clears assignee and startedAt. Only valid from in_progress status.
  */
+export async function resetGroup(slug: string, groupName: string, cwd?: string): Promise<GroupState> {
+  const statePath = getStatePath(slug, cwd);
+  return withStateLock(statePath, (state) => {
+    const group = state.groups[groupName];
+    if (!group) throw new Error(`Group "${groupName}" not found`);
+    if (group.status !== 'in_progress')
+      throw new Error(`Cannot reset: must be in_progress (currently ${group.status})`);
+    group.status = 'ready';
+    group.assignee = undefined;
+    group.startedAt = undefined;
+    return { ...group };
+  });
+}
+
+/** Read current state. Lockless by design — reads are eventually consistent. */
 export async function getState(slug: string, cwd?: string): Promise<WishState | null> {
   const statePath = getStatePath(slug, cwd);
   return loadState(statePath);

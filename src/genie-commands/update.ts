@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { genieConfigExists, loadGenieConfig } from '../lib/genie-config.js';
+import { genieConfigExists, loadGenieConfig, saveGenieConfig } from '../lib/genie-config.js';
 
 const GENIE_HOME = process.env.GENIE_HOME || join(homedir(), '.genie');
 const GENIE_SRC = join(GENIE_HOME, 'src');
@@ -144,26 +144,26 @@ async function detectInstallationType(): Promise<InstallationType> {
   return hasBun ? 'bun' : 'npm';
 }
 
-async function updateViaBun(): Promise<void> {
-  log('Updating via bun...');
-  const result = await runCommand('bun', ['install', '-g', '@automagik/genie@latest']);
+async function updateViaBun(channel: string): Promise<void> {
+  log(`Updating via bun (channel: ${channel})...`);
+  const result = await runCommand('bun', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
     process.exit(1);
   }
   console.log();
-  success('Genie CLI updated!');
+  success(`Genie CLI updated (${channel})!`);
 }
 
-async function updateViaNpm(): Promise<void> {
-  log('Updating via npm...');
-  const result = await runCommand('npm', ['install', '-g', '@automagik/genie@latest']);
+async function updateViaNpm(channel: string): Promise<void> {
+  log(`Updating via npm (channel: ${channel})...`);
+  const result = await runCommand('npm', ['install', '-g', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via npm');
     process.exit(1);
   }
   console.log();
-  success('Genie CLI updated!');
+  success(`Genie CLI updated (${channel})!`);
 }
 
 async function updateSource(): Promise<void> {
@@ -286,14 +286,164 @@ async function symlinkOrCopy(src: string, dest: string): Promise<void> {
   }
 }
 
-export async function updateCommand(): Promise<void> {
+// ============================================================================
+// Plugin Sync — update Claude Code plugin cache after CLI update
+// ============================================================================
+
+function copyDirSync(src: string, dest: string): void {
+  mkdirSync(dest, { recursive: true });
+  for (const entry of readdirSync(src, { withFileTypes: true })) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+async function resolveGlobalPkgDir(installType: InstallationType): Promise<string | null> {
+  // Prefer the package manager that was actually used for this update
+  if (installType === 'bun') {
+    const bunPath = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+    if (existsSync(bunPath)) return bunPath;
+  }
+
+  if (installType === 'npm') {
+    // Dynamic resolution via npm root -g (handles nvm/fnm/volta)
+    const npmRootResult = await runCommandSilent('npm', ['root', '-g']);
+    if (npmRootResult.success) {
+      const npmPath = join(npmRootResult.output.trim(), '@automagik', 'genie');
+      if (existsSync(npmPath)) return npmPath;
+    }
+  }
+
+  // Fallback: try both regardless of installType
+  const bunFallback = join(homedir(), '.bun', 'install', 'global', 'node_modules', '@automagik', 'genie');
+  if (existsSync(bunFallback)) return bunFallback;
+
+  const npmRootFallback = await runCommandSilent('npm', ['root', '-g']);
+  if (npmRootFallback.success) {
+    const npmPath = join(npmRootFallback.output.trim(), '@automagik', 'genie');
+    if (existsSync(npmPath)) return npmPath;
+  }
+
+  return null;
+}
+
+async function syncPlugin(installType: InstallationType): Promise<void> {
+  log('Syncing Claude Code plugin...');
+
+  const globalPkgDir = await resolveGlobalPkgDir(installType);
+  if (!globalPkgDir) {
+    log('Could not find installed package — skipping plugin sync');
+    return;
+  }
+
+  const pluginSrc = join(globalPkgDir, 'plugins', 'genie');
+  if (!existsSync(pluginSrc)) {
+    log('Plugin source not found in package — skipping plugin sync');
+    return;
+  }
+
+  // Read version from installed package
+  let version: string;
+  try {
+    const pkg = JSON.parse(readFileSync(join(globalPkgDir, 'package.json'), 'utf-8'));
+    version = pkg.version;
+  } catch {
+    log('Could not read package version — skipping plugin sync');
+    return;
+  }
+
+  // Copy to Claude Code plugin cache
+  const claudePlugins = join(homedir(), '.claude', 'plugins');
+  const cacheDir = join(claudePlugins, 'cache', 'automagik', 'genie', version);
+
+  try {
+    // Clean existing cache dir if it exists (stale version)
+    if (existsSync(cacheDir)) {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+    copyDirSync(pluginSrc, cacheDir);
+  } catch (err) {
+    error(`Failed to copy plugin: ${err}`);
+    return;
+  }
+
+  // Update installed_plugins.json registry
+  const registryPath = join(claudePlugins, 'installed_plugins.json');
+  try {
+    if (existsSync(registryPath)) {
+      const registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+      const entries = registry.plugins?.['genie@automagik'];
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          if (entry.scope === 'user') {
+            entry.installPath = cacheDir;
+            entry.version = version;
+            entry.lastUpdated = new Date().toISOString();
+          }
+        }
+        writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+      }
+    }
+  } catch (err) {
+    log(`Registry update failed (non-fatal): ${err}`);
+  }
+
+  success(`Plugin synced to v${version}`);
+}
+
+// ============================================================================
+// Channel Management
+// ============================================================================
+
+async function resolveChannel(options: { next?: boolean; stable?: boolean }): Promise<string> {
+  // Explicit flags override everything
+  if (options.next) return 'next';
+  if (options.stable) return 'latest';
+
+  // Read saved channel from config
+  if (genieConfigExists()) {
+    try {
+      const config = await loadGenieConfig();
+      if (config.updateChannel) return config.updateChannel;
+    } catch {
+      // Ignore config errors
+    }
+  }
+
+  return 'latest';
+}
+
+async function persistChannel(channel: string): Promise<void> {
+  try {
+    const config = await loadGenieConfig();
+    config.updateChannel = channel as 'latest' | 'next';
+    await saveGenieConfig(config);
+  } catch {
+    // Non-fatal — channel preference lost but update still works
+  }
+}
+
+export async function updateCommand(options: { next?: boolean; stable?: boolean } = {}): Promise<void> {
   console.log();
   console.log('\x1b[1m🧞 Genie CLI Update\x1b[0m');
   console.log('\x1b[2m────────────────────────────────────\x1b[0m');
   console.log();
 
+  const channel = await resolveChannel(options);
+
+  // Persist channel when explicitly switching
+  if (options.next || options.stable) {
+    await persistChannel(channel);
+  }
+
   const installType = await detectInstallationType();
   log(`Detected installation: ${installType}`);
+  log(`Channel: ${channel}${channel === 'next' ? ' (dev builds)' : ' (stable)'}`);
   console.log();
 
   if (installType === 'unknown') {
@@ -312,10 +462,12 @@ export async function updateCommand(): Promise<void> {
       await updateSource();
       break;
     case 'bun':
-      await updateViaBun();
+      await updateViaBun(channel);
+      await syncPlugin(installType);
       break;
     case 'npm':
-      await updateViaNpm();
+      await updateViaNpm(channel);
+      await syncPlugin(installType);
       break;
   }
 }

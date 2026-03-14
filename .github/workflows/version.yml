@@ -81,3 +81,18 @@ jobs:
 
           git tag "v${VERSION}"
           git push --atomic origin HEAD:refs/heads/dev "refs/tags/v${VERSION}"
+
+      - name: Build CLI
+        run: bun run build
+
+      - name: Publish dev release to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          HUSKY: "0"
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "⚠️ NPM_TOKEN not set — skipping dev publish"
+            exit 0
+          fi
+          bun publish --access public --tag next

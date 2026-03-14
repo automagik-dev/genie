@@ -502,7 +502,8 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
 
   let paneId: string;
   try {
-    const splitCmd = `tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+    const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
     paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
@@ -614,10 +615,10 @@ async function rejectDuplicateRole(team: string, role: string): Promise<void> {
 /** Resolve parent session ID and set up native team infrastructure. */
 async function resolveNativeTeam(
   team: string,
-  repoPath: string,
+  _repoPath: string,
   options: { provider: string; role?: string; color?: string; planMode?: boolean; permissionMode?: string },
 ): Promise<{ parentSessionId: string; spawnColor: ClaudeTeamColor; nativeTeam?: SpawnParams['nativeTeam'] }> {
-  const teamConfig = await teamManager.getTeam(repoPath, team);
+  const teamConfig = await teamManager.getTeam(team);
   let parentSessionId = teamConfig?.nativeTeamParentSessionId;
   if (!parentSessionId) {
     parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
@@ -732,7 +733,7 @@ async function buildSpawnParams(
 
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
   // 1. Resolve agent from directory or built-ins
-  const agent = await resolveAgentForSpawn(name, options);
+  let agent = await resolveAgentForSpawn(name, options);
 
   // 2. Resolve team
   const team = options.team || (await nativeTeams.discoverTeamName());
@@ -741,6 +742,12 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     process.exit(1);
   }
   await rejectDuplicateRole(team, name);
+
+  // 2b. Override CWD with team worktree path if available
+  const teamConfig = await teamManager.getTeam(team);
+  if (teamConfig?.worktreePath) {
+    agent = { ...agent, repoPath: teamConfig.worktreePath };
+  }
 
   // 3. Build params
   const { params, parentSessionId, spawnColor } = await buildSpawnParams(name, team, options, agent);

@@ -12,6 +12,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path, { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { NativeInboxMessage } from './claude-native-teams.js';
+import { acquireLock } from './file-lock.js';
 
 // ============================================================================
 // Types
@@ -86,22 +87,29 @@ function generateMessageId(): string {
  * This persists BEFORE any delivery attempt (DEC-7).
  */
 export async function send(repoPath: string, from: string, to: string, body: string): Promise<MailboxMessage> {
-  const mailbox = await loadMailbox(repoPath, to);
+  // Ensure mailbox directory exists before acquiring lock (lock file needs parent dir)
+  await mkdir(mailboxDir(repoPath), { recursive: true });
+  const release = await acquireLock(mailboxFilePath(repoPath, to));
+  try {
+    const mailbox = await loadMailbox(repoPath, to);
 
-  const message: MailboxMessage = {
-    id: generateMessageId(),
-    from,
-    to,
-    body,
-    createdAt: new Date().toISOString(),
-    read: false,
-    deliveredAt: null,
-  };
+    const message: MailboxMessage = {
+      id: generateMessageId(),
+      from,
+      to,
+      body,
+      createdAt: new Date().toISOString(),
+      read: false,
+      deliveredAt: null,
+    };
 
-  mailbox.messages.push(message);
-  await saveMailbox(repoPath, mailbox);
+    mailbox.messages.push(message);
+    await saveMailbox(repoPath, mailbox);
 
-  return message;
+    return message;
+  } finally {
+    await release();
+  }
 }
 
 /**
@@ -116,12 +124,18 @@ export async function inbox(repoPath: string, workerId: string): Promise<Mailbox
  * Mark a message as delivered (pane injection succeeded).
  */
 export async function markDelivered(repoPath: string, workerId: string, messageId: string): Promise<boolean> {
-  const mailbox = await loadMailbox(repoPath, workerId);
-  const msg = mailbox.messages.find((m) => m.id === messageId);
-  if (!msg) return false;
-  msg.deliveredAt = new Date().toISOString();
-  await saveMailbox(repoPath, mailbox);
-  return true;
+  await mkdir(mailboxDir(repoPath), { recursive: true });
+  const release = await acquireLock(mailboxFilePath(repoPath, workerId));
+  try {
+    const mailbox = await loadMailbox(repoPath, workerId);
+    const msg = mailbox.messages.find((m) => m.id === messageId);
+    if (!msg) return false;
+    msg.deliveredAt = new Date().toISOString();
+    await saveMailbox(repoPath, mailbox);
+    return true;
+  } finally {
+    await release();
+  }
 }
 
 /**

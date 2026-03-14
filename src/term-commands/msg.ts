@@ -105,11 +105,11 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
  * Enforce team scope: if sender is in a team, recipient must be in the same team.
  * Returns an error message if scope is violated, null if OK.
  */
-export async function checkSendScope(repoPath: string, sender: string, recipient: string): Promise<string | null> {
+export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
   if (sender === 'cli') return null;
 
   const teamManager = await getTeamManager();
-  const teams = await teamManager.listTeams(repoPath);
+  const teams = await teamManager.listTeams();
 
   // Find teams where sender is a member
   let senderTeams = teams.filter((t) => t.members.includes(sender));
@@ -140,9 +140,9 @@ export async function checkSendScope(repoPath: string, sender: string, recipient
 /**
  * Find the team for a given agent (for broadcast and chat auto-detection).
  */
-async function findAgentTeam(repoPath: string, agentName: string): Promise<teamManagerTypes.TeamConfig | null> {
+async function findAgentTeam(_repoPath: string, agentName: string): Promise<teamManagerTypes.TeamConfig | null> {
   const teamManager = await getTeamManager();
-  const teams = await teamManager.listTeams(repoPath);
+  const teams = await teamManager.listTeams();
 
   // Check membership
   const memberTeam = teams.find((t) => t.members.includes(agentName));
