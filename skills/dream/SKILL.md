@@ -61,7 +61,7 @@ All dispatch uses `genie spawn`. Create a team per dream session for isolation.
 
 ```bash
 # Create a team for this dream session
-genie team ensure dream-<date>
+genie team create dream-<date>
 
 # Spawn workers
 genie spawn implementor    # one per wish
@@ -71,7 +71,7 @@ genie spawn fixer          # for FIX-FIRST gaps (separate from both)
 
 ## Phase 1: Execute
 
-1. Create team context: `genie team ensure dream-<date>`.
+1. Create team context: `genie team create dream-<date>`.
 2. For each wish in DREAM.md, ordered by `merge_order` layer:
    - Same-layer wishes dispatch in parallel.
    - Dispatch one worker per wish via `genie spawn implementor`, passing `worker_prompt` from DREAM.md.
@@ -116,7 +116,7 @@ Workers NEVER overwrite WISH.md -- the refined prompt is runtime context only.
    - Architectural issue: escalate immediately (no fix attempt), record in report.
    - `SHIP`: mark review-complete.
 3. Cleanup:
-   - `genie team delete dream-<date>` to tear down team context.
+   - `genie team disband dream-<date>` to tear down team context.
 
 ## DREAM-REPORT.md
 
