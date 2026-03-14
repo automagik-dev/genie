@@ -14,6 +14,12 @@ Convene a panel of 10 specialist perspectives to brainstorm, critique, and vote 
 - During `/review` to surface risks and blind spots
 - Deadlocked discussions needing fresh angles
 
+### Auto-Invocation Triggers
+
+The council can be triggered automatically by other skills:
+- **During `/review`**: when an architecture decision has significant tradeoffs, `/review` may invoke `/council` to get specialist input before rendering a verdict.
+- **During `/brainstorm`**: when the Decisions dimension stays unfilled (░) after 2+ exchanges, `/brainstorm` suggests running `/council` to break the deadlock.
+
 ## Mode Detection
 
 Before running the council flow, detect which mode to use:
@@ -24,7 +30,7 @@ Before running the council flow, detect which mode to use:
 
 ## Lightweight Mode (Default)
 
-When no council members are hired in the team, simulate all perspectives in a single session.
+When no council members are hired in the team, simulate all perspectives in a single session. One agent plays all roles — faster, lower cost, good for most decisions.
 
 ### Flow
 
@@ -37,7 +43,17 @@ When no council members are hired in the team, simulate all perspectives in a si
 
 ## Full Spawn Mode
 
-When council members are hired in the team, use the team chat channel for real multi-agent deliberation.
+When council members are hired in the team, real agents deliberate via `genie chat` and reach consensus. Higher-quality than lightweight mode since each member runs in its own context with its own reasoning.
+
+### Setup
+
+Hire council members into the team before invoking:
+
+```bash
+genie team hire council
+```
+
+This adds specialist agents (e.g., `council-questioner`, `council-architect`) to the current team.
 
 ### Flow
 
@@ -54,17 +70,18 @@ When council members are hired in the team, use the team chat channel for real m
    ```bash
    genie chat read --team <team> --since <topic-post-timestamp>
    ```
-5. Once all consulted members have responded (or after a reasonable wait), the leader synthesizes:
+5. **Timeout:** if a council member hasn't responded within 2 minutes, proceed with "no response" in the tally. Do not block indefinitely.
+6. Once all consulted members have responded (or timeout reached), the leader synthesizes:
    - Collect all perspectives from team chat
    - Tally votes
    - Produce the synthesized recommendation
-6. Present the advisory to the user using the same output format
+7. Present the advisory to the user using the same output format
 
 ### Notes on Full Spawn Mode
 
 - Council members respond independently — each applies their own lens prompt
 - The leader (session running `/council`) acts as moderator and synthesizer
-- If a council member hasn't responded, note them as "no response" in the tally
+- If a council member hasn't responded after timeout, note them as "no response" in the tally
 - Full spawn mode produces higher-quality reviews since each member runs in its own context
 
 ## Council Members
