@@ -8,7 +8,16 @@ import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { $ } from 'bun';
-import { createTeam, disbandTeam, fireAgent, getTeam, hireAgent, listMembers, listTeams } from './team-manager.js';
+import {
+  createTeam,
+  disbandTeam,
+  fireAgent,
+  getTeam,
+  hireAgent,
+  listMembers,
+  listTeams,
+  validateBranchName,
+} from './team-manager.js';
 
 // ============================================================================
 // Test Setup
@@ -16,6 +25,7 @@ import { createTeam, disbandTeam, fireAgent, getTeam, hireAgent, listMembers, li
 
 const TEST_DIR = '/tmp/team-manager-test';
 const TEST_REPO = join(TEST_DIR, 'test-repo');
+const TEST_GENIE_HOME = join(TEST_DIR, 'genie-home');
 
 async function setupTestRepo(): Promise<void> {
   try {
@@ -25,6 +35,7 @@ async function setupTestRepo(): Promise<void> {
   }
 
   await mkdir(TEST_REPO, { recursive: true });
+  await mkdir(TEST_GENIE_HOME, { recursive: true });
   await $`git -C ${TEST_REPO} init`.quiet();
   await $`git -C ${TEST_REPO} config user.email "test@test.com"`.quiet();
   await $`git -C ${TEST_REPO} config user.name "Test"`.quiet();
@@ -36,6 +47,9 @@ async function setupTestRepo(): Promise<void> {
 
   // Create dev branch (current branch acts as dev)
   await $`git -C ${TEST_REPO} branch dev`.quiet();
+
+  // Point GENIE_HOME to test directory for global team storage
+  process.env.GENIE_HOME = TEST_GENIE_HOME;
 }
 
 async function cleanupTestRepo(): Promise<void> {
@@ -65,6 +79,8 @@ async function cleanupTestRepo(): Promise<void> {
   } catch {
     // Ignore
   }
+
+  process.env.GENIE_HOME = undefined;
 }
 
 // ============================================================================
@@ -78,6 +94,31 @@ describe('Team Manager', () => {
 
   afterAll(async () => {
     await cleanupTestRepo();
+  });
+
+  describe('validateBranchName', () => {
+    test('accepts valid branch names', () => {
+      expect(() => validateBranchName('feat/auth-bug')).not.toThrow();
+      expect(() => validateBranchName('fix/thing')).not.toThrow();
+      expect(() => validateBranchName('chore/cleanup')).not.toThrow();
+    });
+
+    test('rejects names with spaces', () => {
+      expect(() => validateBranchName('spaces here')).toThrow('must be a valid git branch name');
+      expect(() => validateBranchName('spaces here')).toThrow('contains spaces');
+    });
+
+    test('rejects names with ..', () => {
+      expect(() => validateBranchName('feat..test')).toThrow('contains ".."');
+    });
+
+    test('rejects names starting with -', () => {
+      expect(() => validateBranchName('-bad')).toThrow('starts with "-"');
+    });
+
+    test('rejects names ending with .lock', () => {
+      expect(() => validateBranchName('feat/test.lock')).toThrow('ends with ".lock"');
+    });
   });
 
   describe('createTeam', () => {
@@ -107,26 +148,36 @@ describe('Team Manager', () => {
       const result = await $`git -C ${config.worktreePath} branch --show-current`.quiet();
       expect(result.stdout.toString().trim()).toBe('feat/branched');
     });
+
+    test('stores config at global GENIE_HOME/teams/', async () => {
+      await createTeam('feat/global-check', TEST_REPO, 'dev');
+      const configPath = join(TEST_GENIE_HOME, 'teams', 'feat--global-check.json');
+      expect(existsSync(configPath)).toBe(true);
+    });
+
+    test('rejects invalid branch names', async () => {
+      await expect(createTeam('spaces here', TEST_REPO, 'dev')).rejects.toThrow('must be a valid git branch name');
+    });
   });
 
   describe('getTeam', () => {
     test('returns team config for existing team', async () => {
       await createTeam('feat/get-test', TEST_REPO, 'dev');
-      const config = await getTeam(TEST_REPO, 'feat/get-test');
+      const config = await getTeam('feat/get-test');
 
       expect(config).not.toBeNull();
       expect(config!.name).toBe('feat/get-test');
     });
 
     test('returns null for non-existent team', async () => {
-      const config = await getTeam(TEST_REPO, 'nonexistent');
+      const config = await getTeam('nonexistent');
       expect(config).toBeNull();
     });
   });
 
   describe('listTeams', () => {
-    test('lists all teams', async () => {
-      const teams = await listTeams(TEST_REPO);
+    test('lists all teams globally', async () => {
+      const teams = await listTeams();
       expect(teams.length).toBeGreaterThan(0);
 
       const names = teams.map((t) => t.name);
@@ -137,73 +188,73 @@ describe('Team Manager', () => {
   describe('hireAgent', () => {
     test('adds agent to team members', async () => {
       await createTeam('feat/hire-test', TEST_REPO, 'dev');
-      const added = await hireAgent('feat/hire-test', 'implementor', TEST_REPO);
+      const added = await hireAgent('feat/hire-test', 'implementor');
 
       expect(added).toEqual(['implementor']);
 
-      const config = await getTeam(TEST_REPO, 'feat/hire-test');
+      const config = await getTeam('feat/hire-test');
       expect(config!.members).toContain('implementor');
     });
 
     test('returns empty array for duplicate hire', async () => {
       await createTeam('feat/hire-dup', TEST_REPO, 'dev');
-      await hireAgent('feat/hire-dup', 'tester', TEST_REPO);
-      const added = await hireAgent('feat/hire-dup', 'tester', TEST_REPO);
+      await hireAgent('feat/hire-dup', 'tester');
+      const added = await hireAgent('feat/hire-dup', 'tester');
 
       expect(added).toEqual([]);
     });
 
     test('hire council adds all 10 council members', async () => {
       await createTeam('feat/hire-council', TEST_REPO, 'dev');
-      const added = await hireAgent('feat/hire-council', 'council', TEST_REPO);
+      const added = await hireAgent('feat/hire-council', 'council');
 
       expect(added.length).toBe(10);
       expect(added).toContain('council-questioner');
       expect(added).toContain('council-architect');
 
-      const config = await getTeam(TEST_REPO, 'feat/hire-council');
+      const config = await getTeam('feat/hire-council');
       expect(config!.members.length).toBe(10);
     });
 
     test('throws for non-existent team', async () => {
-      expect(hireAgent('nonexistent', 'agent', TEST_REPO)).rejects.toThrow('not found');
+      expect(hireAgent('nonexistent', 'agent')).rejects.toThrow('not found');
     });
   });
 
   describe('fireAgent', () => {
     test('removes agent from team members', async () => {
       await createTeam('feat/fire-test', TEST_REPO, 'dev');
-      await hireAgent('feat/fire-test', 'reviewer', TEST_REPO);
+      await hireAgent('feat/fire-test', 'reviewer');
 
-      const removed = await fireAgent('feat/fire-test', 'reviewer', TEST_REPO);
+      const removed = await fireAgent('feat/fire-test', 'reviewer');
       expect(removed).toBe(true);
 
-      const config = await getTeam(TEST_REPO, 'feat/fire-test');
+      const config = await getTeam('feat/fire-test');
       expect(config!.members).not.toContain('reviewer');
     });
 
     test('returns false for agent not in team', async () => {
       await createTeam('feat/fire-miss', TEST_REPO, 'dev');
-      const removed = await fireAgent('feat/fire-miss', 'nobody', TEST_REPO);
+      const removed = await fireAgent('feat/fire-miss', 'nobody');
       expect(removed).toBe(false);
     });
 
     test('throws for non-existent team', async () => {
-      expect(fireAgent('nonexistent', 'agent', TEST_REPO)).rejects.toThrow('not found');
+      expect(fireAgent('nonexistent', 'agent')).rejects.toThrow('not found');
     });
   });
 
   describe('listMembers', () => {
     test('returns members of existing team', async () => {
       await createTeam('feat/list-members', TEST_REPO, 'dev');
-      await hireAgent('feat/list-members', 'debugger', TEST_REPO);
+      await hireAgent('feat/list-members', 'debugger');
 
-      const members = await listMembers(TEST_REPO, 'feat/list-members');
+      const members = await listMembers('feat/list-members');
       expect(members).toEqual(['debugger']);
     });
 
     test('returns null for non-existent team', async () => {
-      const members = await listMembers(TEST_REPO, 'nonexistent');
+      const members = await listMembers('nonexistent');
       expect(members).toBeNull();
     });
   });
@@ -213,19 +264,19 @@ describe('Team Manager', () => {
       const config = await createTeam('feat/disband-test', TEST_REPO, 'dev');
       const worktreePath = config.worktreePath;
 
-      const disbanded = await disbandTeam(TEST_REPO, 'feat/disband-test');
+      const disbanded = await disbandTeam('feat/disband-test');
       expect(disbanded).toBe(true);
 
       // Worktree should be gone
       expect(existsSync(worktreePath)).toBe(false);
 
       // Team config should be gone
-      const team = await getTeam(TEST_REPO, 'feat/disband-test');
+      const team = await getTeam('feat/disband-test');
       expect(team).toBeNull();
     });
 
     test('returns false for non-existent team', async () => {
-      const disbanded = await disbandTeam(TEST_REPO, 'nonexistent');
+      const disbanded = await disbandTeam('nonexistent');
       expect(disbanded).toBe(false);
     });
   });

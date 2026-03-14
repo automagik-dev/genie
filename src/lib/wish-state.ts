@@ -10,9 +10,10 @@
  *   in_progress → done (via completeGroup, recalculates dependents)
  */
 
-import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
+import { acquireLock } from './file-lock.js';
 
 // ============================================================================
 // Schemas
@@ -47,71 +48,8 @@ export interface GroupDefinition {
 }
 
 // ============================================================================
-// File Locking — prevents concurrent state file races
+// State locking
 // ============================================================================
-
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_RETRY_MS = 50;
-const LOCK_STALE_MS = 10000;
-
-async function tryCleanStaleLock(lockPath: string): Promise<boolean> {
-  try {
-    const lockStat = await stat(lockPath);
-    if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
-      try {
-        await unlink(lockPath);
-      } catch {
-        /* race with other cleanup */
-      }
-      return true;
-    }
-  } catch {
-    return true; // lock gone, retry
-  }
-  return false;
-}
-
-async function tryCreateLock(lockPath: string): Promise<(() => Promise<void>) | null> {
-  try {
-    const handle = await open(lockPath, 'wx');
-    await handle.writeFile(String(process.pid));
-    await handle.close();
-    return async () => {
-      try {
-        await unlink(lockPath);
-      } catch {
-        /* already removed */
-      }
-    };
-  } catch (err) {
-    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (errCode !== 'EEXIST') throw err;
-    return null;
-  }
-}
-
-async function acquireLock(statePath: string): Promise<() => Promise<void>> {
-  const lockPath = `${statePath}.lock`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (true) {
-    const release = await tryCreateLock(lockPath);
-    if (release) return release;
-
-    const cleaned = await tryCleanStaleLock(lockPath);
-    if (cleaned) continue;
-
-    if (Date.now() > deadline) {
-      try {
-        await unlink(lockPath);
-      } catch {
-        throw new Error(`State lock timeout: could not remove stale lock at ${lockPath}`);
-      }
-      continue;
-    }
-    await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
-  }
-}
 
 async function withStateLock<T>(statePath: string, fn: (state: WishState) => T | Promise<T>): Promise<T> {
   const release = await acquireLock(statePath);
