@@ -230,6 +230,14 @@ program
 // ============================================================================
 
 const args = process.argv.slice(2);
+
+// Default command: genie (no args) or genie --reset
+if (args.length === 0 || args.every((a) => a === '--reset')) {
+  const { sessionCommand } = await import('./genie-commands/session.js');
+  await sessionCommand({ reset: args.includes('--reset') });
+  process.exit(0);
+}
+
 const sessionIdx = args.indexOf('--session');
 if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
   const sessionName = args[sessionIdx + 1];
