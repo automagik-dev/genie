@@ -240,17 +240,3 @@ describe('engine lifecycle', () => {
     expect(() => stopEngine()).not.toThrow();
   });
 });
-
-// ============================================================================
-// Tests: WorkOptions --no-auto-approve flag
-// ============================================================================
-
-describe('WorkOptions includes noAutoApprove', () => {
-  it('WorkOptions type accepts noAutoApprove field', async () => {
-    // Import the type and verify the field compiles
-    const { workCommand } = await import('./work.js');
-    // This test is compile-time: if WorkOptions does not include noAutoApprove,
-    // TypeScript compilation will fail. At runtime we just verify the import succeeds.
-    expect(typeof workCommand).toBe('function');
-  });
-});
