@@ -6,9 +6,10 @@
  * global file at `~/.genie/workers.json`.
  */
 
-import { mkdir, open, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { acquireLock } from './file-lock.js';
 import type { ProviderName } from './provider-adapters.js';
 
 // ============================================================================
@@ -144,82 +145,12 @@ async function saveRegistry(registry: AgentRegistry, registryPath?: string): Pro
 }
 
 // ============================================================================
-// File Locking — prevents concurrent load/modify/save races
+// Locked read-modify-write
 // ============================================================================
 
-const LOCK_TIMEOUT_MS = 5000;
-const LOCK_RETRY_MS = 50;
-const LOCK_STALE_MS = 10000;
-
-async function tryCleanStaleLock(lockPath: string): Promise<boolean> {
-  try {
-    const lockStat = await stat(lockPath);
-    if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
-      try {
-        await unlink(lockPath);
-      } catch {
-        /* race with other cleanup */
-      }
-      return true;
-    }
-  } catch {
-    return true; // lock gone, retry
-  }
-  return false;
-}
-
-function createReleaseFn(lockPath: string): () => Promise<void> {
-  return async () => {
-    try {
-      await unlink(lockPath);
-    } catch {
-      /* already removed */
-    }
-  };
-}
-
-async function tryCreateLock(lockPath: string): Promise<(() => Promise<void>) | null> {
-  try {
-    const handle = await open(lockPath, 'wx');
-    await handle.writeFile(String(process.pid));
-    await handle.close();
-    return createReleaseFn(lockPath);
-  } catch (err) {
-    const errCode = err instanceof Error && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
-    if (errCode !== 'EEXIST') throw err;
-    return null;
-  }
-}
-
-async function forceRemoveLock(lockPath: string): Promise<void> {
-  try {
-    await unlink(lockPath);
-  } catch {
-    throw new Error(`Registry lock timeout: could not remove stale lock at ${lockPath}`);
-  }
-}
-
-async function acquireLock(registryPath?: string): Promise<() => Promise<void>> {
-  const lockPath = `${registryPath ?? getRegistryFilePath()}.lock`;
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-
-  while (true) {
-    const release = await tryCreateLock(lockPath);
-    if (release) return release;
-
-    const cleaned = await tryCleanStaleLock(lockPath);
-    if (cleaned) continue;
-
-    if (Date.now() > deadline) {
-      await forceRemoveLock(lockPath);
-      continue;
-    }
-    await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
-  }
-}
-
 async function withRegistry<T>(fn: (reg: AgentRegistry) => T | Promise<T>, registryPath?: string): Promise<T> {
-  const release = await acquireLock(registryPath);
+  const filePath = registryPath ?? getRegistryFilePath();
+  const release = await acquireLock(filePath);
   try {
     const reg = await loadRegistry(registryPath);
     const result = await fn(reg);

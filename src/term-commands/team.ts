@@ -45,14 +45,13 @@ export function registerTeamNamespace(program: Command): void {
     .option('--team <name>', 'Team name (auto-detects from leader context if omitted)')
     .action(async (agent: string, options: { team?: string }) => {
       try {
-        const repoPath = process.cwd();
-        const teamName = options.team ?? (await autoDetectTeam(repoPath));
+        const teamName = options.team ?? (await autoDetectTeam());
         if (!teamName) {
           console.error('Error: Could not detect team. Use --team <name> to specify.');
           process.exit(1);
         }
 
-        const added = await teamManager.hireAgent(teamName, agent, repoPath);
+        const added = await teamManager.hireAgent(teamName, agent);
         if (added.length === 0) {
           console.log(`Agent "${agent}" is already a member of "${teamName}".`);
         } else if (agent === 'council') {
@@ -77,14 +76,13 @@ export function registerTeamNamespace(program: Command): void {
     .option('--team <name>', 'Team name (auto-detects from leader context if omitted)')
     .action(async (agent: string, options: { team?: string }) => {
       try {
-        const repoPath = process.cwd();
-        const teamName = options.team ?? (await autoDetectTeam(repoPath));
+        const teamName = options.team ?? (await autoDetectTeam());
         if (!teamName) {
           console.error('Error: Could not detect team. Use --team <name> to specify.');
           process.exit(1);
         }
 
-        const removed = await teamManager.fireAgent(teamName, agent, repoPath);
+        const removed = await teamManager.fireAgent(teamName, agent);
         if (removed) {
           console.log(`Fired "${agent}" from team "${teamName}".`);
         } else {
@@ -106,11 +104,10 @@ export function registerTeamNamespace(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (name: string | undefined, options: { json?: boolean }) => {
       try {
-        const repoPath = process.cwd();
         if (name) {
-          await printMembers(repoPath, name, options.json);
+          await printMembers(name, options.json);
         } else {
-          await printTeams(repoPath, options.json);
+          await printTeams(options.json);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -125,8 +122,7 @@ export function registerTeamNamespace(program: Command): void {
     .description('Disband a team: kill members, remove worktree, delete config')
     .action(async (name: string) => {
       try {
-        const repoPath = process.cwd();
-        const disbanded = await teamManager.disbandTeam(repoPath, name);
+        const disbanded = await teamManager.disbandTeam(name);
         if (disbanded) {
           console.log(`Team "${name}" disbanded.`);
         } else {
@@ -146,19 +142,19 @@ export function registerTeamNamespace(program: Command): void {
 // ============================================================================
 
 /** Auto-detect team name from GENIE_TEAM env var. */
-async function autoDetectTeam(repoPath: string): Promise<string | null> {
+async function autoDetectTeam(): Promise<string | null> {
   const envTeam = process.env.GENIE_TEAM;
   if (envTeam) return envTeam;
 
-  const teams = await teamManager.listTeams(repoPath);
+  const teams = await teamManager.listTeams();
   if (teams.length === 1) return teams[0].name;
 
   return null;
 }
 
 /** Print members of a specific team. */
-async function printMembers(repoPath: string, name: string, json?: boolean): Promise<void> {
-  const members = await teamManager.listMembers(repoPath, name);
+async function printMembers(name: string, json?: boolean): Promise<void> {
+  const members = await teamManager.listMembers(name);
   if (members === null) {
     console.error(`Team "${name}" not found.`);
     process.exit(1);
@@ -184,8 +180,8 @@ async function printMembers(repoPath: string, name: string, json?: boolean): Pro
 }
 
 /** Print all teams. */
-async function printTeams(repoPath: string, json?: boolean): Promise<void> {
-  const teams = await teamManager.listTeams(repoPath);
+async function printTeams(json?: boolean): Promise<void> {
+  const teams = await teamManager.listTeams();
 
   if (json) {
     console.log(JSON.stringify(teams, null, 2));
