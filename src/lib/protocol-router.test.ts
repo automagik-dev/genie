@@ -30,8 +30,8 @@ beforeEach(async () => {
   }
   process.env.GENIE_HOME = join(tempDir, '.genie-home');
   // Disable tmux to prevent auto-spawn attempts
-  delete process.env.TMUX;
-  delete process.env.TMUX_PANE;
+  process.env.TMUX = undefined as unknown as string;
+  process.env.TMUX_PANE = undefined as unknown as string;
 });
 
 afterEach(async () => {

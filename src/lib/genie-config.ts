@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
-  type CouncilPreset,
   type GenieConfig,
   GenieConfigSchema,
   type ShortcutsConfig,
@@ -201,39 +200,3 @@ export function getDefaultWorkerProfile(config: GenieConfig): WorkerProfile | un
 // ============================================================================
 // Council preset helpers
 // ============================================================================
-
-/**
- * Get a council preset by name
- * @param config - The genie config object
- * @param presetName - The preset name to look up
- * @returns The CouncilPreset if found, undefined otherwise
- */
-export function getCouncilPreset(config: GenieConfig, presetName: string): CouncilPreset | undefined {
-  return config.councilPresets?.[presetName];
-}
-
-/**
- * Get the default council preset
- * @param config - The genie config object
- * @returns The default CouncilPreset if configured, undefined otherwise
- */
-export function getDefaultCouncilPreset(config: GenieConfig): CouncilPreset | undefined {
-  if (!config.defaultCouncilPreset) {
-    return undefined;
-  }
-  return getCouncilPreset(config, config.defaultCouncilPreset);
-}
-
-/**
- * Get the fallback council preset when none is configured
- * Uses existing worker profiles with sensible defaults
- */
-export function getFallbackCouncilPreset(config: GenieConfig): CouncilPreset {
-  // Use default worker profile for both if available, otherwise 'coding-fast'
-  const defaultProfile = config.defaultWorkerProfile || 'coding-fast';
-  return {
-    left: defaultProfile,
-    right: defaultProfile,
-    skill: 'council',
-  };
-}

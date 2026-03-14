@@ -284,7 +284,7 @@ export async function update(id: string, updates: Partial<Agent>): Promise<void>
   });
 }
 
-/** Find agent by tmux pane ID. */
+/** Find agent by tmux pane ID. @public - used via dynamic namespace import in msg.ts */
 export async function findByPane(paneId: string): Promise<Agent | null> {
   const agents = await list();
   const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
@@ -360,16 +360,6 @@ export function getElapsedTime(agent: Agent): { ms: number; formatted: string } 
   return { ms, formatted };
 }
 
-/** Format a Date as elapsed time string (e.g., "5m", "2h 30m"). */
-export function formatElapsed(date: Date): string {
-  const ms = Date.now() - date.getTime();
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) return `${hours}h ${minutes % 60}m`;
-  if (minutes > 0) return `${minutes}m`;
-  return '<1m';
-}
-
 // ============================================================================
 // Sub-Pane Helpers
 // ============================================================================
@@ -429,13 +419,6 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   await withRegistry((reg) => {
     reg.templates[template.id] = template;
-  });
-}
-
-/** Remove a template by ID. */
-export async function removeTemplate(id: string): Promise<void> {
-  await withRegistry((reg) => {
-    delete reg.templates[id];
   });
 }
 

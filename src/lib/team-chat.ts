@@ -71,11 +71,7 @@ export async function postMessage(
  * Read messages from a team's chat channel.
  * Optionally filter messages since a given timestamp.
  */
-export async function readMessages(
-  repoPath: string,
-  teamName: string,
-  since?: string,
-): Promise<ChatMessage[]> {
+export async function readMessages(repoPath: string, teamName: string, since?: string): Promise<ChatMessage[]> {
   const filePath = chatFilePath(repoPath, teamName);
 
   let content: string;

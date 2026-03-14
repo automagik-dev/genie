@@ -18,12 +18,7 @@ import { join } from 'node:path';
 import * as wishState from '../lib/wish-state.js';
 import { parseRef } from './state.js';
 
-import {
-  buildContextPrompt,
-  extractGroup,
-  extractWishContext,
-  writeContextFile,
-} from './dispatch.js';
+import { buildContextPrompt, extractGroup, extractWishContext, writeContextFile } from './dispatch.js';
 
 // ============================================================================
 // Sample WISH.md content for testing
@@ -465,9 +460,7 @@ describe('dispatch commands - state machine integration', () => {
     );
 
     // Group 2 should be blocked (group 1 not done)
-    expect(() => wishState.startGroup('test-wish-2', '2', 'agent-b', tempDir)).toThrow(
-      'dependency "1" is ready',
-    );
+    expect(() => wishState.startGroup('test-wish-2', '2', 'agent-b', tempDir)).toThrow('dependency "1" is ready');
   });
 
   it('should allow starting group 2 after group 1 is done', async () => {
@@ -506,8 +499,6 @@ describe('dispatch commands - state machine integration', () => {
     await wishState.startGroup('test-wish-4', '2', 'agent-b', tempDir);
 
     // Group 3 should be blocked (group 2 is in_progress, not done)
-    expect(() => wishState.startGroup('test-wish-4', '3', 'agent-c', tempDir)).toThrow(
-      'dependency "2" is in_progress',
-    );
+    expect(() => wishState.startGroup('test-wish-4', '3', 'agent-c', tempDir)).toThrow('dependency "2" is in_progress');
   });
 });

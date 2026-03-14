@@ -325,51 +325,49 @@ export function registerSendInboxCommands(program: Command): void {
     .option('--since <timestamp>', 'Show messages since timestamp (read mode)')
     .option('--json', 'Output as JSON')
     .option('--from <sender>', 'Sender ID (auto-detected from context)')
-    .action(
-      async (args: string[], options: { team?: string; since?: string; json?: boolean; from?: string }) => {
-        try {
-          const repoPath = process.cwd();
-          const from = options.from ?? (await detectSenderIdentity());
+    .action(async (args: string[], options: { team?: string; since?: string; json?: boolean; from?: string }) => {
+      try {
+        const repoPath = process.cwd();
+        const from = options.from ?? (await detectSenderIdentity());
 
-          // Determine team name
-          let teamName = options.team;
-          if (!teamName) {
-            const team = await findAgentTeam(repoPath, from);
-            if (team) {
-              teamName = team.name;
-            } else {
-              teamName = process.env.GENIE_TEAM;
-            }
-            if (!teamName) {
-              console.error('Error: Could not auto-detect team. Use --team <name>.');
-              process.exit(1);
-            }
-          }
-
-          const teamChat = await getTeamChat();
-
-          if (args.length === 0 || args[0] === 'read') {
-            // Read mode
-            const messages = await teamChat.readMessages(repoPath, teamName, options.since);
-
-            if (options.json) {
-              console.log(JSON.stringify(messages, null, 2));
-              return;
-            }
-
-            printChatMessages(teamName, messages);
+        // Determine team name
+        let teamName = options.team;
+        if (!teamName) {
+          const team = await findAgentTeam(repoPath, from);
+          if (team) {
+            teamName = team.name;
           } else {
-            // Post mode
-            const body = args.join(' ');
-            const msg = await teamChat.postMessage(repoPath, teamName, from, body);
-            console.log(`Posted to "${teamName}" channel.`);
-            console.log(`  ID: ${msg.id}`);
+            teamName = process.env.GENIE_TEAM;
           }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.error(`Error: ${message}`);
-          process.exit(1);
+          if (!teamName) {
+            console.error('Error: Could not auto-detect team. Use --team <name>.');
+            process.exit(1);
+          }
         }
-      },
-    );
+
+        const teamChat = await getTeamChat();
+
+        if (args.length === 0 || args[0] === 'read') {
+          // Read mode
+          const messages = await teamChat.readMessages(repoPath, teamName, options.since);
+
+          if (options.json) {
+            console.log(JSON.stringify(messages, null, 2));
+            return;
+          }
+
+          printChatMessages(teamName, messages);
+        } else {
+          // Post mode
+          const body = args.join(' ');
+          const msg = await teamChat.postMessage(repoPath, teamName, from, body);
+          console.log(`Posted to "${teamName}" channel.`);
+          console.log(`  ID: ${msg.id}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
 }
