@@ -24,7 +24,7 @@ This skill is collaborative and operates on the shared worktree:
 2. **Align intent:** ask one question at a time until success criteria are clear.
 3. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
 4. **Decompose into groups:** split into small, loosely coupled execution groups.
-5. **Write wish:** create `.genie/wishes/<slug>/WISH.md` from `references/wish-template.md`.
+5. **Write wish:** create `.genie/wishes/<slug>/WISH.md` using the Wish Template below.
 6. **Add verification:** every group gets acceptance criteria + a validation command.
 7. **Link tasks:** create linked tasks and declare dependencies.
 8. **Handoff:** reply `Wish documented. Run /work to execute.`
@@ -41,6 +41,66 @@ This skill is collaborative and operates on the shared worktree:
 | Execution Groups | Yes | Goal, deliverables, acceptance criteria, validation command |
 | Dependencies | No | `depends-on` / `blocks` using slug or `repo/slug` |
 | Assumptions / Risks | No | Flag what could invalidate the plan |
+
+## Wish Template
+
+Use this structure when writing `WISH.md`:
+
+```markdown
+# Wish: <Title>
+
+| Field | Value |
+|-------|-------|
+| **Status** | DRAFT |
+| **Slug** | `<slug>` |
+| **Date** | YYYY-MM-DD |
+| **Design** | [DESIGN.md](../../brainstorms/<slug>/DESIGN.md) |
+
+## Summary
+2-3 sentences: what this wish delivers and why it matters.
+
+## Scope
+### IN
+- Concrete deliverable 1
+- Concrete deliverable 2
+
+### OUT
+- Explicit exclusion 1 (OUT cannot be empty)
+
+## Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Choice 1 | Why this over alternatives |
+
+## Success Criteria
+- [ ] Testable criterion 1
+- [ ] Testable criterion 2
+
+## Execution Groups
+
+### Group 1: <Name>
+**Goal:** One sentence.
+**Deliverables:**
+1. Deliverable with acceptance criteria
+2. Deliverable with acceptance criteria
+
+**Acceptance criteria:**
+- Criterion with validation command
+
+**Validation:**
+\```bash
+# Command that exits 0 on success
+\```
+
+**depends-on:** none | Group N
+
+---
+
+## Assumptions / Risks
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Risk 1 | Low/Medium/High | How to handle |
+```
 
 ## Rules
 - No implementation during `/wish` — planning only.

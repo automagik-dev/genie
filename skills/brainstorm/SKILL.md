@@ -76,7 +76,7 @@ Brainstorm index at `.genie/brainstorm.md`. Tracks all topics across sessions.
 
 Triggered automatically when WRS = 100.
 
-1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` (use `references/design-template.md`).
+1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` using the Design Template below.
 2. Update `.genie/brainstorm.md` — move item to Poured with wish link.
 3. Run `genie brainstorm crystallize`.
 
@@ -95,6 +95,48 @@ Design validated (WRS {score}/100). Run /wish to turn this into an executable pl
 ```
 
 Note any cross-repo or cross-agent dependencies — these become `depends-on`/`blocks` fields in the wish.
+
+## Design Template
+
+Use this structure when writing `DESIGN.md` at crystallize:
+
+```markdown
+# Design: <Title>
+
+| Field | Value |
+|-------|-------|
+| **Slug** | `<slug>` |
+| **Date** | YYYY-MM-DD |
+| **WRS** | 100/100 |
+
+## Problem
+One-sentence problem statement.
+
+## Scope
+### IN
+- Concrete deliverable 1
+- Concrete deliverable 2
+
+### OUT
+- Explicit exclusion 1
+
+## Approach
+Chosen approach with rationale. Reference alternatives considered.
+
+## Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Choice 1 | Why this over alternatives |
+
+## Risks & Assumptions
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| Risk 1 | Low/Medium/High | How to handle |
+
+## Success Criteria
+- [ ] Testable criterion 1
+- [ ] Testable criterion 2
+```
 
 ## Rules
 - One question per message. Never batch questions.
