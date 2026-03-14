@@ -3,7 +3,7 @@
  *
  * When an agent sends a message to a recipient that doesn't have a live
  * tmux pane, this handler attempts to respawn them from their saved
- * template (created during the original `genie agent spawn`).
+ * template (created during the original `genie spawn`).
  *
  * Resolution order (directory-aware):
  *   1. Check worker registry for live pane → skip if alive
@@ -78,9 +78,9 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
       return;
     }
 
-    // Respawn via genie agent spawn (non-blocking fork)
+    // Respawn via genie spawn (non-blocking fork)
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
-    const args = ['agent', 'spawn', '--provider', template.provider, '--team', template.team];
+    const args = ['spawn', '--provider', template.provider, '--team', template.team];
     if (template.role) args.push('--role', template.role);
     if (template.skill) args.push('--skill', template.skill);
     if (template.cwd) args.push('--cwd', template.cwd);

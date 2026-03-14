@@ -17,7 +17,7 @@ export async function identityInject(payload: HookPayload): Promise<HandlerResul
   const msgType = input.type as string | undefined;
   if (msgType !== 'message' && msgType !== 'broadcast') return;
 
-  // Resolve agent name from env (set by genie agent spawn via GENIE_AGENT_NAME)
+  // Resolve agent name from env (set by genie spawn via GENIE_AGENT_NAME)
   const agentName = process.env.GENIE_AGENT_NAME;
   if (!agentName) return;
 
