@@ -70,7 +70,7 @@ async function startNamedSession(name: string): Promise<void> {
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
-  process.exit(result.status ?? 0);
+  if (result.status) process.exit(result.status);
 }
 
 // ============================================================================
@@ -230,6 +230,14 @@ program
 // ============================================================================
 
 const args = process.argv.slice(2);
+
+// Default command: genie (no args) or genie --reset
+if (args.length === 0 || args.every((a) => a === '--reset')) {
+  const { sessionCommand } = await import('./genie-commands/session.js');
+  await sessionCommand({ reset: args.includes('--reset') });
+  process.exit(0);
+}
+
 const sessionIdx = args.indexOf('--session');
 if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
   const sessionName = args[sessionIdx + 1];
@@ -237,10 +245,13 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
   const otherArgs = args.filter((_: string, i: number) => i !== sessionIdx && i !== sessionIdx + 1);
   const hasSubcommand = otherArgs.some((a: string) => !a.startsWith('-'));
   if (!hasSubcommand) {
-    startNamedSession(sessionName).catch((err) => {
+    try {
+      await startNamedSession(sessionName);
+      process.exit(0);
+    } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
-    });
+    }
   } else {
     program.parse();
   }

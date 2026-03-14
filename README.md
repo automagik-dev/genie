@@ -116,7 +116,7 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | One Claude tab per task, alt-tab between 5 of them | Parallel agents in live terminal sessions |
 | Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
 | 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
-| 10 min of setup before any work starts | `genie work wish-42` — inherits context automatically |
+| 10 min of setup before any work starts | `genie work eng auth-bug#1` — inherits context automatically |
 <br/>
 
 ## The Wish Pipeline
@@ -135,76 +135,89 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 <details id="cli-reference">
 <summary><strong>CLI Reference</strong></summary>
 
-**Top-level commands:**
+**Entry point:**
 
 | Command | Description |
 |---------|-------------|
-| `genie` | Launch a session in the current directory |
-| `genie work <id>` | Work on a specific task |
-| `/council` | Run council review on a topic (skill, not CLI command) |
-| `genie send <message>` | Send a message to an agent |
-| `genie inbox` | View pending messages and approvals |
-| `genie daemon` | Start background daemon |
+| `genie` | Persistent session in current directory |
+| `genie --session <name>` | Named/resumed leader session |
 
-**Agent management:**
+**Dispatch (lifecycle orchestration):**
 
 | Command | Description |
 |---------|-------------|
-| `genie spawn` | Spawn a new agent |
-| `genie ls` | List running agents |
-| `genie dashboard` | Live agent dashboard |
-| `genie approve <id>` | Approve agent action |
-| `genie answer <id>` | Answer agent question |
-| `genie history <id>` | View agent history |
-| `genie events <id>` | Stream agent events |
-| `genie close <id>` | Close an agent session |
-| `genie ship <id>` | Ship agent work (create PR) |
-| `genie kill <id>` | Force-stop an agent |
-| `genie suspend <id>` | Suspend agent execution |
+| `genie brainstorm <agent> <slug>` | Spawn agent with brainstorm context |
+| `genie wish <agent> <slug>` | Spawn agent with design for wish creation |
+| `genie work <agent> <slug>#<group>` | Check deps, set in\_progress, spawn with context |
+| `genie review <agent> <slug>#<group>` | Spawn agent with review scope |
+| `genie done <slug>#<group>` | Mark group done, unblock dependents |
+| `genie status <slug>` | Show wish group states |
 
-**Team management (`genie team`):**
+**Agent lifecycle:**
 
 | Command | Description |
 |---------|-------------|
-| `genie team create` | Create a new team |
-| `genie team list` | List teams |
-| `genie team delete` | Delete a team |
-| `genie team blueprints` | View team blueprints |
+| `genie spawn <name>` | Spawn registered agent or built-in role |
+| `genie kill <name>` | Force kill agent |
+| `genie stop <name>` | Stop current run, keep pane alive |
+| `genie ls` | List agents, teams, state |
+| `genie history <name>` | Compressed session timeline |
+| `genie read <name>` | Tail agent pane output |
+| `genie answer <name> <choice>` | Answer agent prompt |
 
-**Task management (`genie task`):**
-
-| Command | Description |
-|---------|-------------|
-| `genie task create` | Create a new task |
-| `genie task update <id>` | Update task details |
-| `genie task ship <id>` | Ship a task |
-| `genie task close <id>` | Close a task |
-| `genie task ls` | List tasks |
-| `genie task link <id>` | Link task to issue |
-
-**Setup and maintenance:**
+**Messaging:**
 
 | Command | Description |
 |---------|-------------|
-| `genie install` | Install Genie in a project |
+| `genie send '<msg>' --to <name>` | Direct message (scoped to own team) |
+| `genie broadcast '<msg>'` | Leader to all team members |
+| `genie chat '<msg>'` | Team group channel |
+| `genie chat read` | Read team channel history |
+| `genie inbox [<name>]` | View inbox |
+
+**Directory (agent registry):**
+
+| Command | Description |
+|---------|-------------|
+| `genie dir add <name>` | Register agent (`--dir`, `--prompt-mode`, `--model`, `--roles`) |
+| `genie dir rm <name>` | Remove agent from directory |
+| `genie dir ls [<name>]` | List all or show single entry |
+| `genie dir edit <name>` | Update entry fields |
+
+**Team (dynamic collaboration):**
+
+| Command | Description |
+|---------|-------------|
+| `genie team create <name> --repo <path>` | Form team + worktree |
+| `genie team hire <agent>` | Add agent to team |
+| `genie team hire council` | Hire all 10 council members |
+| `genie team fire <agent>` | Remove agent from team |
+| `genie team ls [<name>]` | List teams or team members |
+| `genie team disband <name>` | Kill members, cleanup worktree |
+
+**Infrastructure:**
+
+| Command | Description |
+|---------|-------------|
 | `genie setup` | Interactive setup wizard |
 | `genie doctor` | Diagnose configuration issues |
 | `genie update` | Update to latest version |
+| `genie shortcuts show\|install\|uninstall` | tmux keyboard shortcuts |
 
 </details>
 
 <details id="configuration">
 <summary><strong>Configuration</strong></summary>
 
-### Worker Profiles
+### Agent Directory
 
-Profiles configure how agents are spawned — which launcher to use and which arguments to pass.
+Register agents with a directory path, prompt mode, and optional model.
 
 ```bash
-genie profiles list                 # List all profiles (* = default)
-genie profiles add <name>           # Add new profile
-genie profiles show <name>          # Show details
-genie profiles default <name>       # Set default
+genie dir add my-agent --dir /path/to/agent --prompt-mode append
+genie dir ls                          # List all registered agents
+genie dir edit my-agent --model opus  # Update config
+genie dir rm my-agent                 # Remove registration
 ```
 
 ### Hook Presets
