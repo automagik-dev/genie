@@ -262,9 +262,9 @@ genie spawn <role>                         # Spawn agent (implementor, tests, re
 genie kill <name>                          # Force kill agent
 genie stop <name>                          # Graceful stop
 genie ls                                   # List all agents
-genie agent history <name>                 # Session history
-genie agent read <name> --follow           # Tail terminal output
-genie agent answer <name> <choice>         # Answer prompt (1-9 or text:...)
+genie history <name>                       # Session history
+genie read <name> --follow                 # Tail terminal output
+genie answer <name> <choice>               # Answer prompt (1-9 or text:...)
 \`\`\`
 
 ### Messaging
@@ -279,7 +279,7 @@ genie inbox [agent]                        # View message inbox
 ### Teams
 
 \`\`\`bash
-genie team create <name>                   # Create a team
+genie team create <name> --repo <path>     # Create a team
 genie team hire <agent>                    # Add agent to team
 genie team fire <agent>                    # Remove agent from team
 genie team ls [name]                       # List teams or team members
@@ -332,7 +332,7 @@ Skills trigger the next step automatically where possible:
 create team ──▸ hire agents ──▸ dispatch work ──▸ review ──▸ PR to dev ──▸ QA ──▸ disband
 \`\`\`
 
-1. \`genie team create <name>\` — create team for the initiative
+1. \`genie team create <name> --repo <path>\` — create team for the initiative
 2. \`genie team hire <agent>\` — add agents with needed roles
 3. \`genie work <agent> <ref>\` — dispatch groups to workers
 4. Monitor via \`genie status <slug>\`, mark done via \`genie done <ref>\`
