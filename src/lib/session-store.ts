@@ -70,6 +70,7 @@ export async function getOrCreateSession(name: string): Promise<{ uuid: string; 
     return { uuid: existing.uuid, isNew: false };
   }
 
+  // crypto.randomUUID() is available as a global in Bun (Web Crypto API), no import needed
   const uuid = crypto.randomUUID();
   data.sessions[name] = {
     uuid,
