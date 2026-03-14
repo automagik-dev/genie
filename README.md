@@ -116,7 +116,7 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | One Claude tab per task, alt-tab between 5 of them | Parallel agents in live terminal sessions |
 | Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
 | 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
-| 10 min of setup before any work starts | `genie work bd-42` — inherits context automatically |
+| 10 min of setup before any work starts | `genie work wish-42` — inherits context automatically |
 <br/>
 
 ## The Wish Pipeline
@@ -141,26 +141,26 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 |---------|-------------|
 | `genie` | Launch a session in the current directory |
 | `genie work <id>` | Work on a specific task |
-| `genie council <topic>` | Run council review on a topic |
+| `/council` | Run council review on a topic (skill, not CLI command) |
 | `genie send <message>` | Send a message to an agent |
 | `genie inbox` | View pending messages and approvals |
 | `genie daemon` | Start background daemon |
 
-**Agent management (`genie agent`):**
+**Agent management:**
 
 | Command | Description |
 |---------|-------------|
-| `genie agent spawn` | Spawn a new agent |
-| `genie agent list` | List running agents |
-| `genie agent dashboard` | Live agent dashboard |
-| `genie agent approve <id>` | Approve agent action |
-| `genie agent answer <id>` | Answer agent question |
-| `genie agent history <id>` | View agent history |
-| `genie agent events <id>` | Stream agent events |
-| `genie agent close <id>` | Close an agent session |
-| `genie agent ship <id>` | Ship agent work (create PR) |
-| `genie agent kill <id>` | Force-stop an agent |
-| `genie agent suspend <id>` | Suspend agent execution |
+| `genie spawn` | Spawn a new agent |
+| `genie ls` | List running agents |
+| `genie dashboard` | Live agent dashboard |
+| `genie approve <id>` | Approve agent action |
+| `genie answer <id>` | Answer agent question |
+| `genie history <id>` | View agent history |
+| `genie events <id>` | Stream agent events |
+| `genie close <id>` | Close an agent session |
+| `genie ship <id>` | Ship agent work (create PR) |
+| `genie kill <id>` | Force-stop an agent |
+| `genie suspend <id>` | Suspend agent execution |
 
 **Team management (`genie team`):**
 

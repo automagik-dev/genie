@@ -47,10 +47,10 @@ genie profiles default coding-fast
 
 ## Using Profiles
 
-### With genie agent spawn
+### With genie spawn
 ```bash
-genie agent spawn --role implementor --profile coding-fast
-genie agent spawn --role implementor --profile safe  # For interactive work
+genie spawn --role implementor --profile coding-fast
+genie spawn --role implementor --profile safe  # For interactive work
 ```
 
 ### With genie work
