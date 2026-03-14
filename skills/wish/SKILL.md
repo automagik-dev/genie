@@ -88,9 +88,9 @@ Use this structure when writing `WISH.md`:
 - Criterion with validation command
 
 **Validation:**
-\```bash
+```bash
 # Command that exits 0 on success
-\```
+```
 
 **depends-on:** none | Group N
 
