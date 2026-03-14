@@ -70,7 +70,7 @@ async function startNamedSession(name: string): Promise<void> {
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
-  process.exit(result.status ?? 0);
+  if (result.status) process.exit(result.status);
 }
 
 // ============================================================================
@@ -245,10 +245,13 @@ if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
   const otherArgs = args.filter((_: string, i: number) => i !== sessionIdx && i !== sessionIdx + 1);
   const hasSubcommand = otherArgs.some((a: string) => !a.startsWith('-'));
   if (!hasSubcommand) {
-    startNamedSession(sessionName).catch((err) => {
+    try {
+      await startNamedSession(sessionName);
+      process.exit(0);
+    } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : err}`);
       process.exit(1);
-    });
+    }
   } else {
     program.parse();
   }
