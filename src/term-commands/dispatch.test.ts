@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import * as wishState from '../lib/wish-state.js';
 import { parseRef } from './state.js';
 
-import { buildContextPrompt, extractGroup, extractWishContext, writeContextFile } from './dispatch.js';
+import { buildContextPrompt, extractGroup, extractWishContext, parseWishGroups, writeContextFile } from './dispatch.js';
 
 // ============================================================================
 // Sample WISH.md content for testing
@@ -500,5 +500,46 @@ describe('dispatch commands - state machine integration', () => {
 
     // Group 3 should be blocked (group 2 is in_progress, not done)
     expect(() => wishState.startGroup('test-wish-4', '3', 'agent-c', tempDir)).toThrow('dependency "2" is in_progress');
+  });
+});
+
+// ============================================================================
+// parseWishGroups — case-insensitive parsing
+// ============================================================================
+
+describe('parseWishGroups()', () => {
+  it('should parse standard Group headings', () => {
+    const groups = parseWishGroups(SAMPLE_WISH);
+    expect(groups.length).toBe(3);
+    expect(groups[0].name).toBe('1');
+    expect(groups[1].name).toBe('2');
+    expect(groups[2].name).toBe('3');
+  });
+
+  it('should parse lowercase group headings (case-insensitive)', () => {
+    const content = '### group 1: Test\n**depends-on:** none\n\n### group 2: Next\n**depends-on:** Group 1';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(2);
+    expect(groups[0].name).toBe('1');
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].name).toBe('2');
+    expect(groups[1].dependsOn).toEqual(['1']);
+  });
+
+  it('should parse mixed case group headings', () => {
+    const content = '### GROUP 1: Loud\n**depends-on:** none\n\n### Group 2: Normal\n**depends-on:** Group 1';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(2);
+  });
+
+  it('should parse depends-on with Group prefix', () => {
+    const groups = parseWishGroups(SAMPLE_WISH);
+    expect(groups[1].dependsOn).toEqual(['1']);
+    expect(groups[2].dependsOn).toEqual(['2']);
+  });
+
+  it('should handle depends-on: none', () => {
+    const groups = parseWishGroups(SAMPLE_WISH);
+    expect(groups[0].dependsOn).toEqual([]);
   });
 });

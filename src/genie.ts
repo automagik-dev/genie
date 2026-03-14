@@ -92,7 +92,12 @@ program
   });
 
 program.command('doctor').description('Run diagnostic checks on genie installation').action(doctorCommand);
-program.command('update').description('Update Genie CLI to the latest version').action(updateCommand);
+program
+  .command('update')
+  .description('Update Genie CLI to the latest version')
+  .option('--next', 'Switch to dev builds (npm @next tag)')
+  .option('--stable', 'Switch to stable releases (npm @latest tag)')
+  .action(updateCommand);
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');

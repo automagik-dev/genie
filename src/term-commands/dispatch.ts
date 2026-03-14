@@ -144,7 +144,7 @@ function getGitDiff(): string {
  */
 export function parseWishGroups(content: string): GroupDefinition[] {
   const groups: GroupDefinition[] = [];
-  const groupPattern = /^### Group (\d+):/gm;
+  const groupPattern = /^### Group (\d+):/gim;
 
   let match: RegExpExecArray | null;
   while ((match = groupPattern.exec(content)) !== null) {
