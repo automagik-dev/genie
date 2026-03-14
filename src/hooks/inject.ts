@@ -1,7 +1,7 @@
 /**
  * Hook Injection — writes CC hook config into team settings.json
  *
- * Called during `genie agent spawn` to ensure every spawned agent
+ * Called during `genie spawn` to ensure every spawned agent
  * routes its hook events through `genie hook dispatch`.
  */
 
@@ -109,7 +109,7 @@ async function injectIntoFile(settingsPath: string): Promise<boolean> {
 
 /**
  * Inject hook dispatch config into a team's settings.json.
- * Called automatically during `genie agent spawn`.
+ * Called automatically during `genie spawn`.
  */
 export async function injectTeamHooks(teamName: string): Promise<boolean> {
   const path = teamSettingsPath(teamName);

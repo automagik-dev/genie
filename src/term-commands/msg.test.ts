@@ -1,27 +1,27 @@
 /**
- * Sender Identity Detection — Regression Tests
+ * Messaging Commands — Regression Tests
  *
- * Covers the detectSenderIdentity cascade to prevent identity bugs
- * where messages arrive as "genie" or "cli" instead of the correct sender.
- *
- * Scenarios:
- *   1. Team-lead calling genie send via CC Bash tool (GENIE_AGENT_NAME set)
- *   2. Worker calling genie send (GENIE_AGENT_NAME set by provider-adapters)
- *   3. External CLI without context (no env, no tmux → fallback to 'cli')
- *   4. GENIE_AGENT_NAME priority over TMUX_PANE
- *   5. TMUX_PANE fallback when no env var and no registry match
+ * Covers:
+ *   - detectSenderIdentity cascade
+ *   - checkSendScope team enforcement
+ *   - buildTeamLeadCommand shared module
+ *   - provider-adapters GENIE_AGENT_NAME
  *
  * Run with: bun test src/term-commands/msg.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { detectSenderIdentity } from './msg.js';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checkSendScope, detectSenderIdentity } from './msg.js';
 
 // ---------------------------------------------------------------------------
 // Helpers: save/restore env vars
 // ---------------------------------------------------------------------------
 
-const ENV_KEYS = ['GENIE_AGENT_NAME', 'TMUX_PANE', 'CLAUDE_CONFIG_DIR', 'GENIE_HOME'] as const;
+const ENV_KEYS = ['GENIE_AGENT_NAME', 'TMUX_PANE', 'CLAUDE_CONFIG_DIR', 'GENIE_HOME', 'GENIE_TEAM'] as const;
 let savedEnv: Record<string, string | undefined>;
 
 beforeEach(() => {
@@ -93,6 +93,137 @@ describe('detectSenderIdentity', () => {
     const sender = await detectSenderIdentity('nonexistent-team');
     expect(sender).toBe('cli');
   });
+
+  // Scenario 6: Works with no teamName (optional parameter)
+  test('works without teamName parameter', async () => {
+    process.env.GENIE_AGENT_NAME = 'my-agent';
+
+    const sender = await detectSenderIdentity();
+    expect(sender).toBe('my-agent');
+  });
+
+  // Scenario 7: Falls back to GENIE_TEAM env when no teamName provided
+  test('uses GENIE_TEAM env when teamName not provided', async () => {
+    process.env.GENIE_AGENT_NAME = undefined;
+    process.env.TMUX_PANE = undefined;
+    process.env.GENIE_TEAM = 'test-team';
+
+    const sender = await detectSenderIdentity();
+    expect(sender).toBe('cli'); // No TMUX_PANE → still falls through to cli
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkSendScope tests
+// ---------------------------------------------------------------------------
+
+describe('checkSendScope', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'scope-test-'));
+    // Create .genie/teams directory
+    await mkdir(join(tempDir, '.genie', 'teams'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test('cli sender has no scope restriction', async () => {
+    const error = await checkSendScope(tempDir, 'cli', 'anyone');
+    expect(error).toBeNull();
+  });
+
+  test('sender not in any team has no scope restriction', async () => {
+    const error = await checkSendScope(tempDir, 'free-agent', 'anyone');
+    expect(error).toBeNull();
+  });
+
+  test('allows sending within same team', async () => {
+    // Create team with both sender and recipient as members
+    const teamConfig = {
+      name: 'test-team',
+      repo: tempDir,
+      baseBranch: 'dev',
+      worktreePath: join(tempDir, '.worktrees', 'test-team'),
+      members: ['alice', 'bob'],
+      createdAt: new Date().toISOString(),
+    };
+    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+
+    const error = await checkSendScope(tempDir, 'alice', 'bob');
+    expect(error).toBeNull();
+  });
+
+  test('rejects sending to non-team-member', async () => {
+    const teamConfig = {
+      name: 'test-team',
+      repo: tempDir,
+      baseBranch: 'dev',
+      worktreePath: join(tempDir, '.worktrees', 'test-team'),
+      members: ['alice'],
+      createdAt: new Date().toISOString(),
+    };
+    await writeFile(join(tempDir, '.genie', 'teams', 'test-team.json'), JSON.stringify(teamConfig));
+
+    const error = await checkSendScope(tempDir, 'alice', 'outsider');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Scope violation');
+    expect(error).toContain('outsider');
+  });
+
+  test('team-lead can always send to team-lead recipient', async () => {
+    const teamConfig = {
+      name: 'my-team',
+      repo: tempDir,
+      baseBranch: 'dev',
+      worktreePath: join(tempDir, '.worktrees', 'my-team'),
+      members: ['implementor'],
+      createdAt: new Date().toISOString(),
+    };
+    await writeFile(join(tempDir, '.genie', 'teams', 'my-team.json'), JSON.stringify(teamConfig));
+
+    // implementor (member) can send to team-lead
+    const error = await checkSendScope(tempDir, 'implementor', 'team-lead');
+    expect(error).toBeNull();
+  });
+
+  test('team-lead uses GENIE_TEAM for team lookup', async () => {
+    const teamConfig = {
+      name: 'leader-team',
+      repo: tempDir,
+      baseBranch: 'dev',
+      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
+      members: ['worker-a', 'worker-b'],
+      createdAt: new Date().toISOString(),
+    };
+    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+
+    process.env.GENIE_TEAM = 'leader-team';
+
+    // team-lead can send to team member
+    const error = await checkSendScope(tempDir, 'team-lead', 'worker-a');
+    expect(error).toBeNull();
+  });
+
+  test('team-lead blocked from sending to non-member', async () => {
+    const teamConfig = {
+      name: 'leader-team',
+      repo: tempDir,
+      baseBranch: 'dev',
+      worktreePath: join(tempDir, '.worktrees', 'leader-team'),
+      members: ['worker-a'],
+      createdAt: new Date().toISOString(),
+    };
+    await writeFile(join(tempDir, '.genie', 'teams', 'leader-team.json'), JSON.stringify(teamConfig));
+
+    process.env.GENIE_TEAM = 'leader-team';
+
+    const error = await checkSendScope(tempDir, 'team-lead', 'outsider');
+    expect(error).not.toBeNull();
+    expect(error).toContain('Scope violation');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -124,29 +255,29 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('abc-123');
   });
 
-  test('includes --append-system-prompt via $(cat) when systemPrompt provided (default promptMode)', async () => {
+  test('includes --append-system-prompt-file when systemPrompt provided (default promptMode)', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt' });
-    expect(cmd).toContain('--append-system-prompt');
-    expect(cmd).toContain('$(cat');
+    expect(cmd).toContain('--append-system-prompt-file');
     expect(cmd).toContain('.genie/prompts/genie.md');
     // Prompt content is in the file, NOT inlined in the command
     expect(cmd).not.toContain('test prompt');
   });
 
-  test('system prompt is persisted to file, not flattened inline', async () => {
+  test('system prompt is persisted to file, referenced by path', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'line one\nline two' });
-    // Command references file, does not contain prompt text
-    expect(cmd).toContain('$(cat');
+    // Command references file path, does not contain prompt text
+    expect(cmd).toContain('--append-system-prompt-file');
+    expect(cmd).toContain('.genie/prompts/genie.md');
     expect(cmd).not.toContain('line one');
   });
 
-  test('uses --system-prompt flag when promptMode is "system"', async () => {
+  test('uses --system-prompt-file flag when promptMode is "system"', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt', promptMode: 'system' });
-    expect(cmd).toContain('--system-prompt');
-    expect(cmd).not.toContain('--append-system-prompt');
+    expect(cmd).toContain('--system-prompt-file');
+    expect(cmd).not.toContain('--append-system-prompt-file');
   });
 });
 
@@ -195,13 +326,13 @@ describe('provider-adapters: GENIE_AGENT_NAME for workers', () => {
     expect(result.env!.GENIE_AGENT_NAME).toBe('implementor');
   });
 
-  test('buildClaudeCommand without nativeTeam does NOT set GENIE_AGENT_NAME', async () => {
+  test('buildClaudeCommand without nativeTeam still sets GENIE_AGENT_NAME from role', async () => {
     const { buildClaudeCommand } = await import('../lib/provider-adapters.js');
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'genie',
       role: 'implementor',
     });
-    expect(result.env?.GENIE_AGENT_NAME).toBeUndefined();
+    expect(result.env?.GENIE_AGENT_NAME).toBe('implementor');
   });
 });

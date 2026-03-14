@@ -7,18 +7,26 @@ description: "Execute an approved wish plan — orchestrate subagents per task g
 
 Orchestrate execution of an approved wish from `.genie/wishes/<slug>/WISH.md`. The orchestrator never executes directly — always dispatch via subagent.
 
+## Context Injection
+
+This skill receives its execution context from the dispatch layer:
+- **Wish path** — `.genie/wishes/<slug>/WISH.md` in the shared worktree
+- **Group context** — which execution group(s) to work on
+- **Injected section** — the specific group definition extracted from the wish
+
+If context is injected, use it directly. Do not re-parse the wish for information already provided.
+
 ## Flow
-1. **Load wish + status:** read `.genie/wishes/<slug>/WISH.md`, confirm scope and current progress.
-2. **Pick next task:** select next unblocked pending execution group.
+1. **Load wish:** read `.genie/wishes/<slug>/WISH.md` from the shared worktree, confirm scope.
+2. **Pick next task:** select next unblocked pending execution group (or use injected group context).
 3. **Self-refine:** dispatch `/refine` on the task prompt (text mode) with WISH.md as context anchor. Read output from `/tmp/prompts/<slug>.md`. Fallback: proceed with original prompt if refiner fails (non-blocking).
 4. **Dispatch worker:** send the task to a fresh subagent session (see Dispatch).
-5. **Spec review:** dispatch `/review` subagent to check acceptance criteria. On FIX-FIRST, dispatch `/fix` (max 2 loops).
-6. **Quality review:** dispatch `/review` subagent for quality pass (security, maintainability, perf). On FIX-FIRST, dispatch `/fix` (max 1 loop).
+5. **Spec review:** dispatch review subagent to check acceptance criteria. On FIX-FIRST, dispatch fix subagent (max 2 loops).
+6. **Quality review:** dispatch review subagent for quality pass (security, maintainability, perf). On FIX-FIRST, dispatch fix subagent (max 1 loop).
 7. **Validate:** run the group validation command, record evidence.
-8. **Mark complete:** update task state and wish checkboxes.
+8. **Signal completion:** notify the leader via `genie send 'Group N complete' --to <leader>`.
 9. **Repeat** steps 2-8 until all groups done.
 10. **Handoff:** `All work tasks complete. Run /review.`
-11. **Close:** set `**Status:** SHIPPED` in wish file (replace existing Status line). Call `bd close <slug>` (log warning and continue if unavailable).
 
 ## When to Use
 - An approved wish exists and is ready for execution
@@ -27,59 +35,27 @@ Orchestrate execution of an approved wish from `.genie/wishes/<slug>/WISH.md`. T
 
 ## Dispatch
 
-Detect runtime: `Task` tool with `isolation: "worktree"` → Claude Code. `CODEX_ENV` set → Codex. Otherwise → OpenClaw. Default to Claude Code if ambiguous.
+All dispatch uses the `genie spawn` command. The orchestrator spawns subagents for each role — never executes work directly.
 
-### Claude Code (primary)
+```bash
+# Spawn an implementor for the task
+genie spawn implementor
 
-```
-TeamCreate("work-<slug>")
+# Spawn a reviewer (always separate from implementor)
+genie spawn reviewer
 
-Task(
-  model: "sonnet",
-  isolation: "worktree",
-  prompt: "<task prompt with acceptance criteria>",
-  run_in_background: true
-)
+# Spawn a fixer for FIX-FIRST gaps
+genie spawn fixer
 ```
 
 | Need | Method |
 |------|--------|
-| Implementation task | `Task` with `isolation: "worktree"`, `model: "sonnet"` |
-| Review task | Separate `Task` subagent (never same agent as implementor) |
-| Parallel tasks | Multiple `Task` calls with `run_in_background: true` |
+| Implementation task | `genie spawn implementor` |
+| Review task | `genie spawn reviewer` (never same agent as implementor) |
+| Fix task | `genie spawn fixer` (separate from reviewer) |
 | Quick validation | `Bash` tool directly — no subagent needed |
 
-Coordinate via `SendMessage`. Clean up via `TeamDelete` after all workers report.
-
-### Codex
-
-```
-codex_subagent(
-  task: "<task prompt>",
-  sandbox: true
-)
-```
-
-Isolation and model managed by Codex runtime. Collect responses via native API.
-
-### OpenClaw (via `genie`)
-
-Three-layer chain: OpenClaw → `genie` → Claude Code → Teams.
-
-```bash
-# Heavy multi-file work with bead tracking
-bd create "<task title>" --type task
-genie work <bead-id>
-
-# Or spawn directly
-genie agent spawn --role implementor
-
-# Monitor
-genie agent list
-genie agent read <agent>
-```
-
-Fallback when beads unavailable: use timeouts — 3 layers of indirection can stall.
+Coordinate via `genie send '<message>' --to <agent>`. Use `genie broadcast '<message>'` for team-wide updates.
 
 ## Escalation
 
@@ -95,3 +71,4 @@ When a subagent fails or fix loop limit (2) is exceeded:
 - Never skip validation commands.
 - Never overwrite WISH.md from workers — refined prompts are runtime context only.
 - Keep work auditable: capture commands + outcomes.
+- **No state management** — this skill does NOT update task progress markers, write status lines, or close tracking artifacts. State transitions are handled by the orchestration layer.

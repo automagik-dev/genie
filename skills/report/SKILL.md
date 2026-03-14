@@ -181,13 +181,12 @@ The report must always be produced. The only question is how rich the evidence i
 
 Report orchestrates multiple tools but must **never modify source code** — investigation only.
 
-| Runtime | Detection | Trace dispatch | Browser dispatch |
-|---------|-----------|---------------|-----------------|
-| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<trace prompt>")` | Direct `agent-browser` commands |
-| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<trace prompt>", sandbox: true)` | Direct `agent-browser` commands |
-| OpenClaw | `genie` CLI available | `genie agent spawn --role tracer` | Direct `agent-browser` commands |
+```bash
+# Spawn a tracer subagent for investigation
+genie spawn tracer
+```
 
-Default to **Claude Code** when detection is ambiguous.
+Browser dispatch uses direct `agent-browser` commands alongside the trace subagent.
 
 ## Rules
 - Always run `/trace` first — it is the backbone of every report.

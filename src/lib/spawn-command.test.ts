@@ -73,20 +73,6 @@ describe('buildSpawnCommand with claude launcher', () => {
     const command = buildSpawnCommand(profile, { resume: 'abc-123' });
     expect(command).toBe("claude '--dangerously-skip-permissions' --resume 'abc-123'");
   });
-
-  test('includes BEADS_DIR env prefix when provided', () => {
-    const profile = makeProfile({
-      launcher: 'claude',
-      claudeArgs: ['--dangerously-skip-permissions'],
-    });
-    const command = buildSpawnCommand(profile, {
-      sessionId: 'abc-123',
-      beadsDir: '/home/genie/workspace/project/.genie',
-    });
-    expect(command).toBe(
-      "BEADS_DIR='/home/genie/workspace/project/.genie' claude '--dangerously-skip-permissions' --session-id 'abc-123'",
-    );
-  });
 });
 
 // ============================================================================
@@ -109,22 +95,8 @@ describe('buildSpawnCommand edge cases', () => {
       launcher: 'claude',
       claudeArgs: [],
     });
-    // Session IDs should be quoted to handle any special chars
     const command = buildSpawnCommand(profile, { sessionId: "abc'def" });
-    // Should escape single quotes in the session ID
     expect(command).toBe("claude --session-id 'abc'\\''def'");
-  });
-
-  test('handles beadsDir with spaces', () => {
-    const profile = makeProfile({
-      launcher: 'claude',
-      claudeArgs: [],
-    });
-    const command = buildSpawnCommand(profile, {
-      sessionId: 'test-123',
-      beadsDir: '/path/with spaces/.genie',
-    });
-    expect(command).toBe("BEADS_DIR='/path/with spaces/.genie' claude --session-id 'test-123'");
   });
 
   test('sessionId takes precedence if both sessionId and resume provided', () => {
@@ -132,7 +104,6 @@ describe('buildSpawnCommand edge cases', () => {
       launcher: 'claude',
       claudeArgs: [],
     });
-    // If both are somehow provided, sessionId should take precedence
     const command = buildSpawnCommand(profile, {
       sessionId: 'session-id-value',
       resume: 'resume-value',
@@ -161,8 +132,6 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--dangerously-skip-permissions', '--append-system-prompt', "'; rm -rf /; echo '"],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-123' });
-    // The malicious payload should be safely escaped within single quotes
-    // Single quotes inside are escaped as '\'' (end quote, backslash-quote, start quote)
     expect(command).toBe(
       "claude '--dangerously-skip-permissions' '--append-system-prompt' ''\\''; rm -rf /; echo '\\''' --session-id 'test-123'",
     );
@@ -174,7 +143,6 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--prompt', '`id`'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-abc' });
-    // Backticks should be safely enclosed in single quotes (no interpretation)
     expect(command).toBe("claude '--prompt' '`id`' --session-id 'test-abc'");
   });
 
@@ -184,7 +152,6 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--env', '$HOME'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-def' });
-    // Dollar signs should be safely enclosed in single quotes (no interpretation)
     expect(command).toBe("claude '--env' '$HOME' --session-id 'test-def'");
   });
 
@@ -194,7 +161,6 @@ describe('shell injection prevention', () => {
       claudeArgs: ['--prompt', 'hello\nworld'],
     });
     const command = buildSpawnCommand(profile, { sessionId: 'test-jkl' });
-    // Newlines should be safely enclosed in single quotes
     expect(command).toBe("claude '--prompt' 'hello\nworld' --session-id 'test-jkl'");
   });
 });

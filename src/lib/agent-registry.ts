@@ -28,7 +28,7 @@ export type AgentState =
 export type TransportType = 'tmux' | 'inline';
 
 export interface Agent {
-  /** Unique agent ID (usually matches taskId, e.g., "bd-42"). */
+  /** Unique agent ID (usually matches taskId, e.g., "wish-42"). */
   id: string;
   /** tmux pane ID (e.g., "%16"). */
   paneId: string;
@@ -36,9 +36,9 @@ export interface Agent {
   session: string;
   /** Path to git worktree, null if using shared repo. */
   worktree: string | null;
-  /** Beads or local task ID this agent is bound to. */
+  /** Task ID this agent is bound to. */
   taskId?: string;
-  /** Task title from beads. */
+  /** Task title. */
   taskTitle?: string;
   /** Associated wish slug (if from decompose). */
   wishSlug?: string;
@@ -62,7 +62,7 @@ export interface Agent {
   role?: string;
   /** Custom agent name when multiple agents on same task. */
   customName?: string;
-  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = bd-42:1, etc. */
+  /** Ordered list of sub-pane IDs from splits. Index 0 in subPanes = wish-42:1, etc. */
   subPanes?: string[];
   /** Provider used to launch this agent. */
   provider?: ProviderName;
@@ -260,17 +260,6 @@ export async function list(): Promise<Agent[]> {
   return Object.values(registry.workers);
 }
 
-/** Update an agent's state. */
-export async function updateState(id: string, state: AgentState): Promise<void> {
-  await withRegistry((reg) => {
-    const agent = reg.workers[id];
-    if (agent) {
-      agent.state = state;
-      agent.lastStateChange = new Date().toISOString();
-    }
-  });
-}
-
 /** Update multiple agent fields. */
 export async function update(id: string, updates: Partial<Agent>): Promise<void> {
   await withRegistry((reg) => {
@@ -284,7 +273,7 @@ export async function update(id: string, updates: Partial<Agent>): Promise<void>
   });
 }
 
-/** Find agent by tmux pane ID. */
+/** Find agent by tmux pane ID. @public - used via dynamic namespace import in msg.ts */
 export async function findByPane(paneId: string): Promise<Agent | null> {
   const agents = await list();
   const normalized = paneId.startsWith('%') ? paneId : `%${paneId}`;
@@ -298,46 +287,10 @@ export async function findByWindow(windowId: string): Promise<Agent | null> {
   return agents.find((a) => a.windowId === normalizedId) ?? null;
 }
 
-/** Find agent by beads task ID (returns first match for backwards compat). */
+/** Find agent by task ID (returns first match). */
 export async function findByTask(taskId: string): Promise<Agent | null> {
   const agents = await list();
   return agents.find((a) => a.taskId === taskId) ?? null;
-}
-
-/** Find ALL agents for a beads task ID (supports N agents per task). */
-export async function findAllByTask(taskId: string): Promise<Agent[]> {
-  const agents = await list();
-  return agents.filter((a) => a.taskId === taskId);
-}
-
-/** Count agents for a task. */
-async function countByTask(taskId: string): Promise<number> {
-  const agents = await findAllByTask(taskId);
-  return agents.length;
-}
-
-/**
- * Generate a unique agent ID for a task (handles N agents per task).
- * Returns taskId for first agent, taskId-2 for second, etc.
- */
-export async function generateWorkerId(taskId: string, customName?: string): Promise<string> {
-  if (customName) {
-    return customName;
-  }
-
-  const existingCount = await countByTask(taskId);
-  if (existingCount === 0) {
-    return taskId;
-  }
-
-  // Find next available suffix
-  const agents = await list();
-  let suffix = existingCount + 1;
-  while (agents.some((a) => a.id === `${taskId}-${suffix}`)) {
-    suffix++;
-  }
-
-  return `${taskId}-${suffix}`;
 }
 
 /** Calculate elapsed time for an agent. */
@@ -358,16 +311,6 @@ export function getElapsedTime(agent: Agent): { ms: number; formatted: string } 
   }
 
   return { ms, formatted };
-}
-
-/** Format a Date as elapsed time string (e.g., "5m", "2h 30m"). */
-export function formatElapsed(date: Date): string {
-  const ms = Date.now() - date.getTime();
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-  if (hours > 0) return `${hours}h ${minutes % 60}m`;
-  if (minutes > 0) return `${minutes}m`;
-  return '<1m';
 }
 
 // ============================================================================
@@ -429,13 +372,6 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   await withRegistry((reg) => {
     reg.templates[template.id] = template;
-  });
-}
-
-/** Remove a template by ID. */
-export async function removeTemplate(id: string): Promise<void> {
-  await withRegistry((reg) => {
-    delete reg.templates[id];
   });
 }
 

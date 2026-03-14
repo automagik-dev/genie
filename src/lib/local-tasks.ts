@@ -1,7 +1,7 @@
 /**
  * Local task backend (git-tracked) living in repo/.genie
  *
- * This is meant for the macro repo (blanco) where bd is not required.
+ * Local task management for repos with .genie/ directory.
  */
 
 import { existsSync } from 'node:fs';
@@ -101,7 +101,7 @@ export function isLocalTasksEnabled(repoPath: string): boolean {
   if (process.env.TERM_USE_LOCAL_TASKS === 'true') return true;
   if (process.env.TERM_USE_LOCAL_TASKS === 'false') return false;
 
-  // If repo has a .genie directory but bd isn't available, prefer local.
+  // If repo has a .genie directory, use local tasks.
   // For blanco we expect .genie to be tracked.
   return existsSync(getRepoGenieDir(repoPath));
 }

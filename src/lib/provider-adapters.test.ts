@@ -101,6 +101,58 @@ describe('buildClaudeCommand', () => {
     });
     expect(result.command).toContain('--dangerously-skip-permissions');
   });
+
+  it('includes --model flag when model is set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      model: 'opus',
+    });
+    expect(result.command).toContain("--model 'opus'");
+  });
+
+  it('includes --append-system-prompt-file by default when systemPromptFile is set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      systemPromptFile: '/path/to/AGENTS.md',
+    });
+    expect(result.command).toContain('--append-system-prompt-file');
+    expect(result.command).toContain('/path/to/AGENTS.md');
+  });
+
+  it('uses --system-prompt-file when promptMode is "system"', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      systemPromptFile: '/path/to/AGENTS.md',
+      promptMode: 'system',
+    });
+    expect(result.command).toContain('--system-prompt-file');
+    expect(result.command).not.toContain('--append-system-prompt-file');
+  });
+
+  it('uses --append-system-prompt-file when promptMode is "append"', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      systemPromptFile: '/path/to/AGENTS.md',
+      promptMode: 'append',
+    });
+    expect(result.command).toContain('--append-system-prompt-file');
+    expect(result.command).not.toContain("--system-prompt-file '/path");
+  });
+
+  it('does not include prompt file flags when systemPromptFile is not set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+    });
+    expect(result.command).not.toContain('--system-prompt-file');
+    expect(result.command).not.toContain('--append-system-prompt-file');
+  });
 });
 
 // ============================================================================

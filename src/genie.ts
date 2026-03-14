@@ -1,25 +1,23 @@
 #!/usr/bin/env bun
 
 /**
- * genie — Single entrypoint CLI with namespaces:
- *   team, task, agent + top-level: work, daemon, council, send, inbox
+ * genie — Single entrypoint CLI.
+ *
+ * Top-level commands:
+ *   spawn, kill, stop, ls, history, read, answer, work
+ *
+ * Namespaces:
+ *   team, dir, send/inbox, state, hook
+ *
+ * Utilities:
+ *   setup, doctor, update, uninstall, shortcuts
+ *
+ * Session:
+ *   genie --session <name>  — Start or resume a named leader session
  */
 
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { Command } from 'commander';
-import { brainstormCrystallizeCommand } from './genie-commands/brainstorm/crystallize.js';
 import { doctorCommand } from './genie-commands/doctor.js';
-import { ledgerValidateCommand } from './genie-commands/ledger/validate.js';
-import {
-  profilesAddCommand,
-  profilesDefaultCommand,
-  profilesListCommand,
-  profilesRmCommand,
-  profilesShowCommand,
-} from './genie-commands/profiles.js';
-import { type SessionOptions, sessionCommand } from './genie-commands/session.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
 import {
   shortcutsInstallCommand,
@@ -28,25 +26,57 @@ import {
 } from './genie-commands/shortcuts.js';
 import { uninstallCommand } from './genie-commands/uninstall.js';
 import { updateCommand } from './genie-commands/update.js';
-import { sanitizeTeamName } from './lib/claude-native-teams.js';
-import { resolveTeamShortcut } from './lib/team-shortcut.js';
 import { VERSION } from './lib/version.js';
 
 import { registerHookNamespace } from './hooks/dispatch-command.js';
-import { registerAgentNamespace } from './term-commands/agents.js';
-import * as councilCmd from './term-commands/council.js';
-import * as daemonCmd from './term-commands/daemon.js';
+import {
+  type SpawnOptions,
+  handleLsCommand,
+  handleWorkerKill,
+  handleWorkerSpawn,
+  handleWorkerStop,
+} from './term-commands/agents.js';
+import { registerDirNamespace } from './term-commands/dir.js';
+import { registerDispatchCommands } from './term-commands/dispatch.js';
+import * as historyCmd from './term-commands/history.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
-import { registerTaskNamespace } from './term-commands/task/commands.js';
-// Provider-selectable orchestration namespaces (genie-cli-teams)
+import * as orchestrateCmd from './term-commands/orchestrate.js';
+import * as readCmd from './term-commands/read.js';
+import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
-import * as workCmd from './term-commands/work.js';
 
 const program = new Command();
 
-program.name('genie').description('Genie CLI - Setup and utilities for AI-assisted development').version(VERSION);
+program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
 
-// Setup command - configure genie settings
+// ============================================================================
+// Named session — genie --session <name>
+// ============================================================================
+
+async function startNamedSession(name: string): Promise<void> {
+  const { getOrCreateSession } = await import('./lib/session-store.js');
+  const { buildTeamLeadCommand } = await import('./lib/team-lead-command.js');
+  const { getAgentsSystemPrompt } = await import('./genie-commands/session.js');
+
+  const { uuid, isNew } = await getOrCreateSession(name);
+  const systemPrompt = getAgentsSystemPrompt();
+
+  const cmd = buildTeamLeadCommand(name, {
+    systemPrompt: systemPrompt ?? undefined,
+    ...(isNew ? { sessionId: uuid } : { resumeSessionId: uuid }),
+  });
+
+  console.log(isNew ? `Starting new session: ${name}` : `Resuming session: ${name}`);
+
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
+  process.exit(result.status ?? 0);
+}
+
+// ============================================================================
+// Utility commands
+// ============================================================================
+
 program
   .command('setup')
   .description('Configure genie settings')
@@ -61,187 +91,159 @@ program
     await setupCommand(options);
   });
 
-// Doctor command - diagnostic checks
 program.command('doctor').description('Run diagnostic checks on genie installation').action(doctorCommand);
-
-// Update command - pull latest and rebuild
 program.command('update').description('Update Genie CLI to the latest version').action(updateCommand);
-
-// Uninstall command - remove genie CLI
 program.command('uninstall').description('Remove Genie CLI and clean up hooks').action(uninstallCommand);
 
-// Internal handler for session opening (hidden -- user invokes via `genie` or `genie <team>`)
-program
-  .command('_open [team]', { hidden: true })
-  .option('-r, --reset', 'Kill existing session and start fresh')
-  .option('-d, --dir <path>', 'Working directory (default: cwd)')
-  .action(async (team: string | undefined, options: SessionOptions) => {
-    if (team) options.team = team;
-    await sessionCommand(options);
-  });
-
-// Shortcuts command group - manage tmux keyboard shortcuts
 const shortcuts = program.command('shortcuts').description('Manage tmux keyboard shortcuts');
-
-// Make 'show' the default action for bare `genie shortcuts`
 shortcuts.action(shortcutsShowCommand);
-
 shortcuts.command('show').description('Show available shortcuts and installation status').action(shortcutsShowCommand);
-
 shortcuts
   .command('install')
   .description('Install shortcuts to config files (~/.tmux.conf, shell rc)')
   .action(shortcutsInstallCommand);
-
 shortcuts.command('uninstall').description('Remove shortcuts from config files').action(shortcutsUninstallCommand);
 
-// Profiles command group - manage worker profiles
-const profiles = program.command('profiles').description('Manage worker profiles for Claude Code spawning');
-
-// Make 'list' the default action for bare `genie profiles`
-profiles.action(profilesListCommand);
-
-profiles.command('list').description('List all configured worker profiles').action(profilesListCommand);
-
-profiles.command('add <name>').description('Create a new worker profile interactively').action(profilesAddCommand);
-
-profiles.command('rm <name>').description('Delete a worker profile').action(profilesRmCommand);
-
-profiles.command('show <name>').description('Show details of a worker profile').action(profilesShowCommand);
-
-profiles.command('default [name]').description('Get or set the default worker profile').action(profilesDefaultCommand);
-
-// Brainstorm command group
-const brainstorm = program.command('brainstorm').description('Brainstorm utilities (file-based helpers)');
-
-brainstorm
-  .command('crystallize')
-  .description('Crystallize a brainstorm draft into design.md and upsert .beads/issues.jsonl')
-  .requiredOption('--slug <slug>', 'Brainstorm slug (kebab-case)')
-  .option('--file <path>', 'Input draft markdown path (default: .genie/brainstorms/<slug>/draft.md)')
-  .option('-r, --repo <path>', 'Repo path (default: cwd)')
-  .option('--title <title>', 'Issue title (default: slug)')
-  .option('--depends-on <ids>', 'Comma-separated dependency IDs (default: hq-roadmap)')
-  .option('--status <status>', 'Issue status (open|closed)', 'open')
-  .action(brainstormCrystallizeCommand);
-
-// Ledger command group
-const ledger = program.command('ledger').description('Ledger utilities (beads JSONL validation)');
-
-ledger
-  .command('validate')
-  .description('Validate local .beads/issues.jsonl JSONL structure (scriptable)')
-  .option('-r, --repo <path>', 'Repo path (default: cwd)')
-  .option('--json', 'Output JSON')
-  .action(ledgerValidateCommand);
-
 // ============================================================================
-// Provider-selectable orchestration namespaces (genie-cli-teams)
+// Orchestration namespaces
 // ============================================================================
 
 registerTeamNamespace(program);
-registerAgentNamespace(program);
+registerDirNamespace(program);
 registerSendInboxCommands(program);
-registerTaskNamespace(program);
+registerStateCommands(program);
+registerDispatchCommands(program);
 registerHookNamespace(program);
 
 // ============================================================================
-// Top-level commands (migrated from genie term)
+// Top-level agent commands (promoted from genie agent namespace)
 // ============================================================================
 
-// genie work <target> — spawn worker bound to beads issue
+// genie spawn <name>
 program
-  .command('work <target>')
-  .description('Spawn worker bound to beads issue (target: bd-id, "next", or "wish")')
-  .option('--no-worktree', 'Use shared repo instead of worktree')
-  .option('-s, --session <name>', 'Target tmux session')
-  .option('--focus', 'Focus the worker pane after spawning')
-  .option('-p, --prompt <message>', 'Custom initial prompt')
-  .option('--no-resume', 'Start fresh session even if previous exists')
-  .option('--skill <name>', 'Skill to invoke (auto-detects "forge" if wish.md exists)')
-  .option('--no-auto-approve', 'Disable auto-approve for this worker')
-  .option('--profile <name>', 'Worker profile to use')
-  .option('-n, --name <name>', 'Custom worker name (for N workers per task)')
-  .option('-r, --role <role>', 'Worker role (e.g., "main", "tests", "review")')
-  .option('--shared-worktree', 'Share worktree with existing worker on same task')
-  .action(async (target: string, options: workCmd.WorkOptions) => {
-    await workCmd.workCommand(target, options);
+  .command('spawn <name>')
+  .description('Spawn a new agent by name (resolves from directory or built-ins)')
+  .option('--provider <provider>', 'Provider: claude or codex', 'claude')
+  .option('--team <team>', 'Team name', process.env.GENIE_TEAM ?? 'genie')
+  .option('--model <model>', 'Model override (e.g., sonnet, opus)')
+  .option('--skill <skill>', 'Skill to load (optional)')
+  .option('--layout <layout>', 'Layout mode: mosaic (default) or vertical')
+  .option('--color <color>', 'Teammate pane border color')
+  .option('--plan-mode', 'Start teammate in plan mode')
+  .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
+  .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
+  .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
+  .action(async (name: string, options: SpawnOptions) => {
+    try {
+      await handleWorkerSpawn(name, options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
   });
 
-// genie daemon — beads sync daemon
-const daemonProgram = program.command('daemon').description('Manage beads daemon for auto-sync');
-
-daemonProgram
-  .command('start')
-  .description('Start beads daemon (auto-commit, auto-sync)')
-  .option('--no-auto-commit', 'Disable auto-commit')
-  .option('--auto-push', 'Enable auto-push to remote')
-  .action(async (options: daemonCmd.DaemonStartOptions) => {
-    await daemonCmd.startCommand(options);
+// genie kill <name>
+program
+  .command('kill <name>')
+  .description('Force kill an agent by name')
+  .action(async (name: string) => {
+    try {
+      await handleWorkerKill(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
   });
 
-daemonProgram
-  .command('stop')
-  .description('Stop beads daemon')
-  .action(async () => {
-    await daemonCmd.stopCommand();
+// genie stop <name>
+program
+  .command('stop <name>')
+  .description('Stop an agent (preserves session for resume)')
+  .action(async (name: string) => {
+    try {
+      await handleWorkerStop(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
   });
 
-daemonProgram
-  .command('status')
-  .description('Show daemon status')
+// genie history <name>
+program
+  .command('history <name>')
+  .description('Show compressed session history for an agent')
+  .option('--full', 'Show full conversation without compression')
+  .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
   .option('--json', 'Output as JSON')
-  .action(async (options: daemonCmd.DaemonStatusOptions) => {
-    await daemonCmd.statusCommand(options);
+  .option('--raw', 'Output raw JSONL entries')
+  .option('--log-file <path>', 'Direct path to log file (for testing)')
+  .action(async (name: string, options: historyCmd.HistoryOptions) => {
+    await historyCmd.historyCommand(name, options);
   });
 
-daemonProgram
-  .command('restart')
-  .description('Restart beads daemon')
-  .option('--no-auto-commit', 'Disable auto-commit')
-  .option('--auto-push', 'Enable auto-push to remote')
-  .action(async (options: daemonCmd.DaemonStartOptions) => {
-    await daemonCmd.restartCommand(options);
-  });
-
-// genie council — dual-model deliberation
+// genie read <name>
 program
-  .command('council')
-  .description('Spawn dual Claude instances for multi-model deliberation')
-  .option('-s, --session <name>', 'Target tmux session')
-  .option('--preset <name>', 'Council preset to use')
-  .option('--skill <skill>', 'Skill to load on both instances')
-  .option('--no-focus', "Don't focus the new window")
-  .action(async (options: councilCmd.CouncilOptions) => {
-    await councilCmd.councilCommand(options);
+  .command('read <name>')
+  .description('Read terminal output from an agent pane')
+  .option('-n, --lines <number>', 'Number of lines to read')
+  .option('--from <line>', 'Start line')
+  .option('--to <line>', 'End line')
+  .option('--range <range>', 'Line range (e.g., "10-20")')
+  .option('--search <text>', 'Search for text')
+  .option('--grep <pattern>', 'Grep for pattern')
+  .option('-f, --follow', 'Follow mode (like tail -f)')
+  .option('--all', 'Show all output')
+  .option('-r, --reverse', 'Reverse order')
+  .option('--json', 'Output as JSON')
+  .action(async (name: string, options: readCmd.ReadOptions) => {
+    await readCmd.readSessionLogs(name, options);
+  });
+
+// genie answer <name> <choice>
+program
+  .command('answer <name> <choice>')
+  .description('Answer a question for an agent (use "text:..." for text input)')
+  .action(async (name: string, choice: string) => {
+    await orchestrateCmd.answerQuestion(name, choice);
+  });
+
+// genie ls — smart agent view
+program
+  .command('ls')
+  .description('List registered agents with runtime status')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    try {
+      await handleLsCommand(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
   });
 
 // ============================================================================
-// Team shortcut routing: genie <team> -> genie _open <team>
+// genie --session <name> — named leader session (pre-parse check)
 // ============================================================================
 
-// Collect all registered subcommand names (+ aliases)
-const knownCommands = new Set<string>();
-for (const cmd of program.commands) {
-  knownCommands.add(cmd.name());
-  for (const alias of cmd.aliases()) {
-    knownCommands.add(alias);
+const args = process.argv.slice(2);
+const sessionIdx = args.indexOf('--session');
+if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
+  const sessionName = args[sessionIdx + 1];
+  // Only start session if no subcommand is provided
+  const otherArgs = args.filter((_: string, i: number) => i !== sessionIdx && i !== sessionIdx + 1);
+  const hasSubcommand = otherArgs.some((a: string) => !a.startsWith('-'));
+  if (!hasSubcommand) {
+    startNamedSession(sessionName).catch((err) => {
+      console.error(`Error: ${err instanceof Error ? err.message : err}`);
+      process.exit(1);
+    });
+  } else {
+    program.parse();
   }
+} else {
+  program.parse();
 }
-knownCommands.add('help');
-
-const shortcutResult = resolveTeamShortcut(process.argv.slice(2), knownCommands, (name) => {
-  try {
-    return existsSync(join(homedir(), '.claude', 'teams', sanitizeTeamName(name)));
-  } catch {
-    return false;
-  }
-});
-
-if (shortcutResult.collisionWarning) {
-  console.warn(shortcutResult.collisionWarning);
-}
-
-process.argv = [...process.argv.slice(0, 2), ...shortcutResult.args];
-
-program.parse();
