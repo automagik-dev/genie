@@ -112,7 +112,7 @@ export function buildContextPrompt(opts: {
   parts.push('## Assigned Section', '', opts.sectionContent, '');
 
   if (opts.skill) {
-    parts.push(`## Initial Command`, '', `Run \`/${opts.skill}\` to begin.`, '');
+    parts.push('## Initial Command', '', `Run \`/${opts.skill}\` to begin.`, '');
   }
 
   return parts.join('\n');
@@ -129,7 +129,7 @@ function getGitDiff(): string {
     const combined = [diff, staged].filter(Boolean).join('\n');
     // Limit diff size to avoid overwhelming the context
     if (combined.length > 50000) {
-      return combined.slice(0, 50000) + '\n\n... (diff truncated at 50KB)';
+      return `${combined.slice(0, 50000)}\n\n... (diff truncated at 50KB)`;
     }
     return combined;
   } catch {
@@ -149,7 +149,9 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
 
   if (!existsSync(draftPath)) {
     console.error(`❌ Draft not found: ${draftPath}`);
-    console.error(`   Create it first: mkdir -p .genie/brainstorms/${slug} && touch .genie/brainstorms/${slug}/DRAFT.md`);
+    console.error(
+      `   Create it first: mkdir -p .genie/brainstorms/${slug} && touch .genie/brainstorms/${slug}/DRAFT.md`,
+    );
     process.exit(1);
   }
 
@@ -300,7 +302,7 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     '',
     '## Git Diff (changes to review)',
     '',
-    diff ? '```diff\n' + diff + '\n```' : '(no uncommitted changes found — review committed changes)',
+    diff ? `\`\`\`diff\n${diff}\n\`\`\`` : '(no uncommitted changes found — review committed changes)',
   ].join('\n');
 
   const context = buildContextPrompt({
