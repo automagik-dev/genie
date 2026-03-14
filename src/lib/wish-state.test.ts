@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type GroupDefinition, completeGroup, createState, getGroupState, getState, startGroup } from './wish-state.js';
@@ -280,6 +280,221 @@ describe('wish-state', () => {
       for (const group of Object.values(state?.groups ?? {})) {
         expect(group.status).toBe('done');
       }
+    });
+  });
+
+  // ============================================================================
+  // Edge Cases — QA Plan P0 Tests (U-WS-*)
+  // ============================================================================
+
+  describe('edge cases', () => {
+    // U-WS-01: Empty groups array
+    test('createState() with empty groups array creates state with empty groups', async () => {
+      const state = await createState('empty-wish', [], cwd);
+      expect(state.wish).toBe('empty-wish');
+      expect(state.groups).toEqual({});
+      expect(state.createdAt).toBeTruthy();
+    });
+
+    // U-WS-02: Self-referential dep (A depends on A)
+    test('createState() with self-referential dep stays blocked forever', async () => {
+      const groups: GroupDefinition[] = [{ name: 'A', dependsOn: ['A'] }];
+      const state = await createState('self-ref', groups, cwd);
+      // Self-dep means group has deps, so it starts as blocked
+      expect(state.groups.A.status).toBe('blocked');
+
+      // Trying to start it should fail because dep "A" is not done
+      await expect(startGroup('self-ref', 'A', 'agent', cwd)).rejects.toThrow('dependency "A" is blocked');
+    });
+
+    // U-WS-03: Circular dep (A->B->A)
+    test('createState() with circular deps: both stay blocked forever', async () => {
+      const groups: GroupDefinition[] = [
+        { name: 'A', dependsOn: ['B'] },
+        { name: 'B', dependsOn: ['A'] },
+      ];
+      const state = await createState('circular', groups, cwd);
+      expect(state.groups.A.status).toBe('blocked');
+      expect(state.groups.B.status).toBe('blocked');
+
+      // Neither can be started
+      await expect(startGroup('circular', 'A', 'agent', cwd)).rejects.toThrow('dependency "B" is blocked');
+      await expect(startGroup('circular', 'B', 'agent', cwd)).rejects.toThrow('dependency "A" is blocked');
+    });
+
+    // U-WS-04: Dep on non-existent group
+    test('startGroup() with dep on non-existent group throws', async () => {
+      const groups: GroupDefinition[] = [{ name: '1', dependsOn: ['99'] }];
+      await createState('dangling', groups, cwd);
+
+      await expect(startGroup('dangling', '1', 'agent', cwd)).rejects.toThrow('Dependency "99" not found');
+    });
+
+    // U-WS-05: Diamond dep graph (A->B, A->C, B->D, C->D)
+    test('diamond dep graph: D becomes ready only when both B and C are done', async () => {
+      const groups: GroupDefinition[] = [
+        { name: 'A', dependsOn: [] },
+        { name: 'B', dependsOn: ['A'] },
+        { name: 'C', dependsOn: ['A'] },
+        { name: 'D', dependsOn: ['B', 'C'] },
+      ];
+      await createState('diamond', groups, cwd);
+
+      // A is ready, B/C/D blocked
+      let state = await getState('diamond', cwd);
+      expect(state?.groups.A.status).toBe('ready');
+      expect(state?.groups.D.status).toBe('blocked');
+
+      // Complete A -> B and C become ready
+      await startGroup('diamond', 'A', 'a', cwd);
+      await completeGroup('diamond', 'A', cwd);
+      state = await getState('diamond', cwd);
+      expect(state?.groups.B.status).toBe('ready');
+      expect(state?.groups.C.status).toBe('ready');
+      expect(state?.groups.D.status).toBe('blocked');
+
+      // Complete B only -> D still blocked (C not done)
+      await startGroup('diamond', 'B', 'b', cwd);
+      await completeGroup('diamond', 'B', cwd);
+      state = await getState('diamond', cwd);
+      expect(state?.groups.D.status).toBe('blocked');
+
+      // Complete C -> D now ready
+      await startGroup('diamond', 'C', 'c', cwd);
+      await completeGroup('diamond', 'C', cwd);
+      state = await getState('diamond', cwd);
+      expect(state?.groups.D.status).toBe('ready');
+    });
+
+    // U-WS-06: Deep chain (1->2->3->...->20)
+    test('deep chain of 20 groups: sequential unlock works', async () => {
+      const groups: GroupDefinition[] = [];
+      for (let i = 1; i <= 20; i++) {
+        groups.push({ name: String(i), dependsOn: i === 1 ? [] : [String(i - 1)] });
+      }
+      await createState('deep-chain', groups, cwd);
+
+      // Walk through all 20
+      for (let i = 1; i <= 20; i++) {
+        const g = await startGroup('deep-chain', String(i), `agent-${i}`, cwd);
+        expect(g.status).toBe('in_progress');
+        await completeGroup('deep-chain', String(i), cwd);
+      }
+
+      const state = await getState('deep-chain', cwd);
+      for (const group of Object.values(state?.groups ?? {})) {
+        expect(group.status).toBe('done');
+      }
+    });
+
+    // U-WS-07: Wide fan-out (A -> B1..B10)
+    test('wide fan-out: all 10 dependents become ready when A completes', async () => {
+      const groups: GroupDefinition[] = [{ name: 'A', dependsOn: [] }];
+      for (let i = 1; i <= 10; i++) {
+        groups.push({ name: `B${i}`, dependsOn: ['A'] });
+      }
+      await createState('fan-out', groups, cwd);
+
+      await startGroup('fan-out', 'A', 'agent', cwd);
+      await completeGroup('fan-out', 'A', cwd);
+
+      const state = await getState('fan-out', cwd);
+      for (let i = 1; i <= 10; i++) {
+        expect(state?.groups[`B${i}`].status).toBe('ready');
+      }
+    });
+
+    // U-WS-08: Corrupted JSON on disk
+    test('getState() with corrupted JSON returns null', async () => {
+      const statePath = join(cwd, '.genie', 'state');
+      await mkdir(statePath, { recursive: true });
+      await writeFile(join(statePath, 'corrupt.json'), '{ this is not json }}}');
+
+      const state = await getState('corrupt', cwd);
+      expect(state).toBeNull();
+    });
+
+    // U-WS-09: startGroup() with empty assignee string
+    test('startGroup() with empty assignee string is allowed (documents behavior)', async () => {
+      await createState('empty-assignee', [{ name: '1', dependsOn: [] }], cwd);
+      const result = await startGroup('empty-assignee', '1', '', cwd);
+      expect(result.status).toBe('in_progress');
+      expect(result.assignee).toBe('');
+    });
+
+    // U-WS-10: completeGroup() on ready state (skip in_progress)
+    test('completeGroup() on ready group succeeds but has no startedAt', async () => {
+      await createState('skip-start', [{ name: '1', dependsOn: [] }], cwd);
+
+      // Group 1 is ready, complete it directly without starting
+      const result = await completeGroup('skip-start', '1', cwd);
+      expect(result.status).toBe('done');
+      expect(result.completedAt).toBeTruthy();
+      // No startedAt since we skipped in_progress
+      expect(result.startedAt).toBeUndefined();
+      // No assignee either
+      expect(result.assignee).toBeUndefined();
+    });
+
+    // U-WS-11: createState() overwrites existing state
+    test('createState() overwrites existing state (non-idempotent)', async () => {
+      const groups1: GroupDefinition[] = [
+        { name: '1', dependsOn: [] },
+        { name: '2', dependsOn: ['1'] },
+      ];
+      await createState('overwrite-test', groups1, cwd);
+      await startGroup('overwrite-test', '1', 'agent', cwd);
+
+      // Overwrite with different groups
+      const groups2: GroupDefinition[] = [{ name: 'A', dependsOn: [] }];
+      const newState = await createState('overwrite-test', groups2, cwd);
+
+      expect(newState.groups.A).toBeDefined();
+      expect(newState.groups['1']).toBeUndefined();
+      expect(newState.groups['2']).toBeUndefined();
+    });
+
+    // U-WS-12: startGroup() on done group
+    test('startGroup() on done group throws "already done"', async () => {
+      await createState('restart-done', [{ name: '1', dependsOn: [] }], cwd);
+      await startGroup('restart-done', '1', 'agent', cwd);
+      await completeGroup('restart-done', '1', cwd);
+
+      await expect(startGroup('restart-done', '1', 'other', cwd)).rejects.toThrow('already done');
+    });
+
+    // U-WS-13: completeGroup() on blocked group
+    test('completeGroup() on blocked group throws', async () => {
+      await createState(
+        'block-complete',
+        [
+          { name: '1', dependsOn: [] },
+          { name: '2', dependsOn: ['1'] },
+        ],
+        cwd,
+      );
+
+      await expect(completeGroup('block-complete', '2', cwd)).rejects.toThrow('it is blocked (dependencies not met)');
+    });
+
+    // Additional: truncated JSON state file
+    test('getState() with truncated JSON returns null', async () => {
+      const statePath = join(cwd, '.genie', 'state');
+      await mkdir(statePath, { recursive: true });
+      await writeFile(join(statePath, 'truncated.json'), '{"wish":"test","groups":{"1":{"status":"rea');
+
+      const state = await getState('truncated', cwd);
+      expect(state).toBeNull();
+    });
+
+    // Additional: state file that is valid JSON but fails schema validation
+    test('getState() with valid JSON but wrong schema returns null', async () => {
+      const statePath = join(cwd, '.genie', 'state');
+      await mkdir(statePath, { recursive: true });
+      await writeFile(join(statePath, 'bad-schema.json'), '{"foo":"bar"}');
+
+      const state = await getState('bad-schema', cwd);
+      expect(state).toBeNull();
     });
   });
 });

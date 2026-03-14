@@ -208,6 +208,48 @@ describe('Team Manager', () => {
     });
   });
 
+  // ============================================================================
+  // QA Plan P1 Edge Cases
+  // ============================================================================
+
+  describe('edge cases', () => {
+    // U-TM-04: hire council twice — idempotent
+    test('U-TM-04: hiring council twice adds 0 new members on second call', async () => {
+      await createTeam('feat/council-idem', TEST_REPO, 'dev');
+      const first = await hireAgent('feat/council-idem', 'council', TEST_REPO);
+      expect(first.length).toBe(10);
+
+      const second = await hireAgent('feat/council-idem', 'council', TEST_REPO);
+      expect(second.length).toBe(0);
+
+      // Still exactly 10 members
+      const config = await getTeam(TEST_REPO, 'feat/council-idem');
+      expect(config!.members.length).toBe(10);
+    });
+
+    // U-TM-06: corrupted JSON in teams dir
+    test('U-TM-06: listTeams skips corrupted JSON files', async () => {
+      // Write a corrupted team config file
+      const { writeFile: write } = await import('node:fs/promises');
+      const { join: j } = await import('node:path');
+      const dir = j(TEST_REPO, '.genie', 'teams');
+      await write(j(dir, 'corrupt--team.json'), 'not valid json {{{');
+
+      const teams = await listTeams(TEST_REPO);
+      // Should return valid teams without crashing, skipping the bad one
+      expect(teams.length).toBeGreaterThan(0);
+      const names = teams.map((t) => t.name);
+      expect(names).not.toContain('corrupt--team');
+    });
+
+    // U-TM-08: fire agent not in team — returns false
+    test('U-TM-08: fireAgent for non-member returns false', async () => {
+      await createTeam('feat/fire-nonmember', TEST_REPO, 'dev');
+      const removed = await fireAgent('feat/fire-nonmember', 'ghost-agent', TEST_REPO);
+      expect(removed).toBe(false);
+    });
+  });
+
   describe('disbandTeam', () => {
     test('removes worktree and config', async () => {
       const config = await createTeam('feat/disband-test', TEST_REPO, 'dev');

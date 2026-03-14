@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as directory from './agent-directory.js';
@@ -236,5 +236,185 @@ describe('loadIdentity', () => {
     };
     const identity = directory.loadIdentity(emptyEntry);
     expect(identity).toBeNull();
+  });
+});
+
+// ============================================================================
+// Edge Cases — QA Plan P0 Tests (U-AD-*)
+// ============================================================================
+
+describe('edge cases', () => {
+  // U-AD-01: Whitespace-only name
+  test('U-AD-01: add() with whitespace-only name throws', async () => {
+    await expect(directory.add({ name: '   ', dir: agentDir, promptMode: 'append' })).rejects.toThrow(
+      'name is required',
+    );
+  });
+
+  // U-AD-02: Name containing slashes
+  test('U-AD-02: add() with name containing slashes', async () => {
+    // The code doesn't explicitly validate slashes — document behavior
+    // It stores the name as-is in JSON, which is fine for a dict key
+    const entry = await directory.add({
+      name: 'feat/agent',
+      dir: agentDir,
+      promptMode: 'append',
+    });
+    expect(entry.name).toBe('feat/agent');
+
+    // Verify it can be retrieved
+    const retrieved = await directory.get('feat/agent');
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.name).toBe('feat/agent');
+  });
+
+  // U-AD-05: resolve() is case-sensitive
+  test('U-AD-05: resolve() is case-sensitive', async () => {
+    // Built-in 'implementor' should be found
+    const lower = await directory.resolve('implementor');
+    expect(lower).not.toBeNull();
+
+    // 'Implementor' (capital I) should NOT be found
+    const upper = await directory.resolve('Implementor');
+    expect(upper).toBeNull();
+  });
+
+  // U-AD-06: edit() with empty updates (no-op)
+  test('U-AD-06: edit() with empty updates preserves all fields', async () => {
+    await directory.add({
+      name: 'preserve-test',
+      dir: agentDir,
+      promptMode: 'system',
+      model: 'opus',
+      roles: ['implementor'],
+    });
+
+    // Edit with empty object
+    const updated = await directory.edit('preserve-test', {});
+
+    expect(updated.name).toBe('preserve-test');
+    expect(updated.dir).toBe(agentDir);
+    expect(updated.promptMode).toBe('system');
+    expect(updated.model).toBe('opus');
+    expect(updated.roles).toEqual(['implementor']);
+  });
+
+  // U-AD-07: loadIdentity() after AGENTS.md deleted post-add
+  test('U-AD-07: loadIdentity() returns null after AGENTS.md is deleted', async () => {
+    const tmpAgentDir = join(testDir, 'stale-agent');
+    mkdirSync(tmpAgentDir, { recursive: true });
+    writeFileSync(join(tmpAgentDir, 'AGENTS.md'), '# Stale Agent');
+
+    const entry = await directory.add({
+      name: 'stale-agent',
+      dir: tmpAgentDir,
+      promptMode: 'append',
+    });
+
+    // Verify identity exists initially
+    expect(directory.loadIdentity(entry)).not.toBeNull();
+
+    // Delete AGENTS.md
+    unlinkSync(join(tmpAgentDir, 'AGENTS.md'));
+
+    // loadIdentity should now return null
+    expect(directory.loadIdentity(entry)).toBeNull();
+  });
+
+  // U-AD-08: Unicode name
+  test('U-AD-08: add() with unicode name', async () => {
+    const entry = await directory.add({
+      name: 'agente-日本語',
+      dir: agentDir,
+      promptMode: 'append',
+    });
+    expect(entry.name).toBe('agente-日本語');
+
+    const retrieved = await directory.get('agente-日本語');
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.name).toBe('agente-日本語');
+  });
+
+  // F-02: Agent directory file with invalid JSON
+  test('F-02: loadDirectory recovers from corrupted JSON', async () => {
+    // Write garbage to the directory file
+    const dirFilePath = join(testDir, 'agent-directory.json');
+    writeFileSync(dirFilePath, 'not valid json {{{');
+
+    // ls() should return empty (loadDirectory catch returns default)
+    const entries = await directory.ls();
+    expect(entries).toEqual([]);
+
+    // add() should work (overwrites corrupted file)
+    const entry = await directory.add({
+      name: 'after-corruption',
+      dir: agentDir,
+      promptMode: 'append',
+    });
+    expect(entry.name).toBe('after-corruption');
+  });
+
+  // U-AD-03: 1000-char name
+  test('U-AD-03: add() with 1000-char name accepts (no length limit)', async () => {
+    const longName = 'a'.repeat(1000);
+    const entry = await directory.add({
+      name: longName,
+      dir: agentDir,
+      promptMode: 'append',
+    });
+    expect(entry.name).toBe(longName);
+    expect(entry.name.length).toBe(1000);
+
+    const retrieved = await directory.get(longName);
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.name.length).toBe(1000);
+  });
+
+  // U-AD-04: dir pointing to symlink
+  test('U-AD-04: add() with dir pointing to symlink follows it', async () => {
+    // Create target dir with AGENTS.md
+    const realDir = join(testDir, 'real-agent-dir');
+    mkdirSync(realDir, { recursive: true });
+    writeFileSync(join(realDir, 'AGENTS.md'), '# Symlinked Agent');
+
+    // Create symlink to target
+    const linkDir = join(testDir, 'linked-agent-dir');
+    symlinkSync(realDir, linkDir);
+
+    const entry = await directory.add({
+      name: 'symlinked-agent',
+      dir: linkDir,
+      promptMode: 'append',
+    });
+    expect(entry.name).toBe('symlinked-agent');
+
+    // loadIdentity should find AGENTS.md through symlink
+    const identity = directory.loadIdentity(entry);
+    expect(identity).not.toBeNull();
+    expect(identity).toContain('AGENTS.md');
+  });
+
+  // F-04: AGENTS.md deleted between add() and resolve()
+  test('F-04: resolve() returns entry even after AGENTS.md deleted', async () => {
+    const tmpAgentDir = join(testDir, 'resolve-stale');
+    mkdirSync(tmpAgentDir, { recursive: true });
+    writeFileSync(join(tmpAgentDir, 'AGENTS.md'), '# Will Be Deleted');
+
+    await directory.add({
+      name: 'resolve-stale',
+      dir: tmpAgentDir,
+      promptMode: 'append',
+    });
+
+    // Delete AGENTS.md
+    unlinkSync(join(tmpAgentDir, 'AGENTS.md'));
+
+    // resolve() should still return the entry (no re-check of filesystem)
+    const resolved = await directory.resolve('resolve-stale');
+    expect(resolved).not.toBeNull();
+    expect(resolved!.entry.name).toBe('resolve-stale');
+
+    // But loadIdentity should return null
+    expect(directory.loadIdentity(resolved!.entry)).toBeNull();
   });
 });

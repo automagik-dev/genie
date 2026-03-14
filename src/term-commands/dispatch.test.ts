@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import * as wishState from '../lib/wish-state.js';
 import { parseRef } from './state.js';
 
-import { buildContextPrompt, extractGroup, extractWishContext, writeContextFile } from './dispatch.js';
+import { buildContextPrompt, extractGroup, extractWishContext, parseWishGroups, writeContextFile } from './dispatch.js';
 
 // ============================================================================
 // Sample WISH.md content for testing
@@ -275,6 +275,135 @@ describe('writeContextFile()', () => {
     const path1 = await writeContextFile('content 1');
     const path2 = await writeContextFile('content 2');
     expect(path1).not.toBe(path2);
+  });
+});
+
+// ============================================================================
+// Unit Tests: parseWishGroups() — ZERO COVERAGE before this
+// ============================================================================
+
+describe('parseWishGroups()', () => {
+  // U-DC-01: Basic WISH.md with 3 groups
+  it('should extract 3 groups with correct names and deps from SAMPLE_WISH', () => {
+    const groups = parseWishGroups(SAMPLE_WISH);
+    expect(groups.length).toBe(3);
+    expect(groups[0]).toEqual({ name: '1', dependsOn: [] });
+    expect(groups[1]).toEqual({ name: '2', dependsOn: ['1'] });
+    expect(groups[2]).toEqual({ name: '3', dependsOn: ['2'] });
+  });
+
+  // U-DC-02: Case-insensitive "none"
+  it('should handle "depends-on: none" (case-insensitive)', () => {
+    const content = '### Group 1: Setup\n**depends-on:** None\n---\n### Group 2: Build\n**depends-on:** NONE\n';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(2);
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].dependsOn).toEqual([]);
+  });
+
+  // U-DC-03: Multi-dep with "Group" prefix strip
+  it('should parse comma-separated deps and strip "Group" prefix', () => {
+    const content = '### Group 3: Final\n**depends-on:** Group 1, Group 2\n';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].name).toBe('3');
+    expect(groups[0].dependsOn).toEqual(['1', '2']);
+  });
+
+  // U-DC-04: Missing depends-on line
+  it('should default to empty dependsOn when no depends-on line exists', () => {
+    const content = '### Group 1: Solo\n**Goal:** Just do it.\n';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].dependsOn).toEqual([]);
+  });
+
+  // U-DC-05: Non-sequential numbers
+  it('should handle non-sequential group numbers (1, 3, 7)', () => {
+    const content = [
+      '### Group 1: First\n**depends-on:** none\n---',
+      '### Group 3: Third\n**depends-on:** Group 1\n---',
+      '### Group 7: Seventh\n**depends-on:** Group 3\n',
+    ].join('\n');
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(3);
+    expect(groups.map((g) => g.name)).toEqual(['1', '3', '7']);
+    expect(groups[2].dependsOn).toEqual(['3']);
+  });
+
+  // U-DC-06: Empty content
+  it('should return empty array for empty content', () => {
+    const groups = parseWishGroups('');
+    expect(groups).toEqual([]);
+  });
+
+  // U-DC-07: No groups (just text)
+  it('should return empty array when no group headings exist', () => {
+    const content = '# A Wish\n\nThis has no groups at all.\n\n## Summary\n\nJust text.';
+    const groups = parseWishGroups(content);
+    expect(groups).toEqual([]);
+  });
+
+  // U-DC-08: Lowercase heading (case sensitivity)
+  it('should return empty for lowercase "### group 1:" (regex is case-sensitive)', () => {
+    const content = '### group 1: lowercase\n**depends-on:** none\n';
+    const groups = parseWishGroups(content);
+    expect(groups).toEqual([]);
+  });
+
+  // U-DC-09: Real WISH.md (genie-v2) with 10 groups
+  it('should parse real genie-v2 WISH.md with 10 groups and correct dependency graph', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const wishPath = join(process.cwd(), '.genie/wishes/genie-v2-framework-redesign/WISH.md');
+    const { existsSync } = await import('node:fs');
+    if (!existsSync(wishPath)) {
+      // Skip if running from a different CWD
+      console.log('Skipping U-DC-09: WISH.md not found at', wishPath);
+      return;
+    }
+    const content = await readFile(wishPath, 'utf-8');
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(10);
+
+    // Group 1 and 4 should have no deps (parallelizable)
+    const g1 = groups.find((g) => g.name === '1');
+    const g4 = groups.find((g) => g.name === '4');
+    expect(g1?.dependsOn).toEqual([]);
+    expect(g4?.dependsOn).toEqual([]);
+
+    // Group 5 depends on Group 2, Group 4
+    const g5 = groups.find((g) => g.name === '5');
+    expect(g5?.dependsOn).toEqual(['2', '4']);
+
+    // Group 10 depends on Group 7, Group 8, Group 9
+    const g10 = groups.find((g) => g.name === '10');
+    expect(g10?.dependsOn).toEqual(['7', '8', '9']);
+  });
+
+  // U-DC-10: Regex special chars in group name (via extractGroup)
+  it('should handle escapeRegExp correctly in extractGroup', () => {
+    // This tests that the escapeRegExp used by extractGroup prevents regex injection
+    const content = '### Group 1: Test (with parens)\n**Goal:** Test.\n';
+    // extractGroup uses escapeRegExp on the group name
+    const result = extractGroup(content, '1');
+    expect(result).not.toBeNull();
+    expect(result).toContain('Test (with parens)');
+  });
+
+  // Additional: single group wish
+  it('should parse a single group wish', () => {
+    const content = '### Group 1: Only One\n**Goal:** Do everything.\n**depends-on:** none\n';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0]).toEqual({ name: '1', dependsOn: [] });
+  });
+
+  // Additional: deps without "Group" prefix (just numbers)
+  it('should handle deps specified as bare numbers', () => {
+    const content = '### Group 2: Second\n**depends-on:** 1\n';
+    const groups = parseWishGroups(content);
+    expect(groups.length).toBe(1);
+    expect(groups[0].dependsOn).toEqual(['1']);
   });
 });
 
