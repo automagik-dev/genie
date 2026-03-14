@@ -77,9 +77,31 @@ When a council team is active, the review can incorporate council perspectives:
 
 | Verdict | Condition | Next step |
 |---------|-----------|-----------|
-| **SHIP** | Zero CRITICAL/HIGH gaps, validations pass | Proceed |
-| **FIX-FIRST** | Any CRITICAL/HIGH gap or failing validation | Hand off to `/fix` |
+| **SHIP** | Zero CRITICAL/HIGH gaps, validations pass | See SHIP Next-Steps below |
+| **FIX-FIRST** | Any CRITICAL/HIGH gap or failing validation | Auto-invoke `/fix` |
 | **BLOCKED** | Scope or architecture issue requiring wish revision | Escalate to human |
+
+### SHIP Next-Steps (context-dependent)
+
+| Review Context | On SHIP |
+|---------------|---------|
+| Plan review (after `/brainstorm`) | Proceed to `/wish` to create executable plan |
+| Plan review (after `/wish`) | Proceed to `/work` to execute the plan |
+| Execution review (after `/work`) | Create PR targeting `dev` |
+| PR review (before merge) | Merge to `dev` (agents) or approve for human merge |
+
+### Auto-Invocation on FIX-FIRST
+
+When the verdict is FIX-FIRST:
+1. Auto-invoke `/fix` with the severity-tagged gap list.
+2. After `/fix` completes, re-run `/review` (max 2 fix loops).
+3. If still FIX-FIRST after 2 loops, escalate as BLOCKED.
+
+### Unclear Root Cause
+
+When a failure is found but the root cause is unclear:
+- Invoke `/trace` to investigate before dispatching `/fix`.
+- `/trace` produces a diagnosis report; `/fix` uses it to apply the correction.
 
 ## Dispatch
 

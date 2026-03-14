@@ -12,10 +12,25 @@ Audit existing documentation, identify gaps, generate what's missing, and valida
 - Existing documentation is stale or references removed features
 - A wish deliverable includes documentation
 - After significant code changes that invalidate existing docs
+- After `/work` completes — suggest `/docs` to document what changed
+
+## Documentation Surfaces
+
+Audit and maintain these doc types:
+
+| Type | Location | Purpose |
+|------|----------|---------|
+| **README** | `README.md`, `*/README.md` | Project/module overview, setup, usage |
+| **CLAUDE.md** | `CLAUDE.md`, `*/CLAUDE.md` | Project conventions, commands, gotchas for AI agents |
+| **API docs** | `docs/api/`, inline JSDoc/TSDoc | Endpoint contracts, request/response schemas |
+| **Architecture** | `docs/architecture.md`, `ARCHITECTURE.md` | System design, data flow, component relationships |
+| **Inline docs** | JSDoc, TSDoc, docstrings | Function/class/module-level documentation |
+
+**CLAUDE.md is a first-class documentation surface.** When the codebase changes significantly (new commands, changed conventions, removed features), flag CLAUDE.md for update. CLAUDE.md should always reflect the current state of the project.
 
 ## Flow
-1. **Audit existing docs:** scan for READMEs, guides, inline docs, changelogs — map what exists.
-2. **Identify gaps:** compare documentation against actual code — find what's missing, outdated, or wrong.
+1. **Audit existing docs:** scan all documentation surfaces above — map what exists.
+2. **Identify gaps:** compare documentation against actual code — find what's missing, outdated, or wrong. Pay special attention to CLAUDE.md accuracy.
 3. **Generate:** write documentation to fill the gaps, matching project conventions.
 4. **Validate against code:** verify every claim — file paths exist, APIs match, behaviors are accurate.
 5. **Report:** return list of created/updated files with validation results.
