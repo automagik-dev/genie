@@ -78,23 +78,33 @@ Triggered automatically when WRS = 100.
 
 1. Write `.genie/brainstorms/<slug>/DESIGN.md` from `DRAFT.md` using the Design Template below.
 2. Update `.genie/brainstorm.md` — move item to Poured with wish link.
-3. Run `genie brainstorm crystallize`.
+3. Auto-invoke `/review` (plan review) on the `DESIGN.md`.
 
 ## Output Options
 
 | Complexity | Output |
 |-----------|--------|
-| Standard | Write `DESIGN.md`, hand off to `/wish` |
+| Standard | Write `DESIGN.md`, auto-invoke `/review` (plan review) |
 | Small but non-trivial | Write design, ask whether to implement directly |
-| Trivial | Verbal validation only — no file needed |
+| Trivial | Add one-liner to jar (Raw section), no file needed |
 
 ## Handoff
 
+After `/review` returns SHIP on the design:
+
 ```
-Design validated (WRS {score}/100). Run /wish to turn this into an executable plan.
+Design reviewed and validated (WRS {score}/100). Proceeding to /wish.
 ```
 
 Note any cross-repo or cross-agent dependencies — these become `depends-on`/`blocks` fields in the wish.
+
+## Stuck Decisions
+
+If the **Decisions** dimension stays ░ (unfilled) after 2+ exchanges, suggest:
+
+```
+Decisions seem stuck. Consider running /council to get specialist perspectives on the tradeoffs.
+```
 
 ## Design Template
 

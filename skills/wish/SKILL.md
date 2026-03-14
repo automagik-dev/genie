@@ -20,14 +20,14 @@ This skill is collaborative and operates on the shared worktree:
 - When invoked via dispatch, acknowledges injected context (brainstorm design, file path + extracted section)
 
 ## Flow
-1. **Gate check:** if no prior brainstorm/design context, ask: "Run /brainstorm first, or draft the wish directly?"
+1. **Gate check:** if the request is fuzzy (no prior design, unclear scope, vague requirements), auto-trigger `/brainstorm` first. If a brainstorm/design exists, proceed. Otherwise ask: "This needs more clarity. Running `/brainstorm` to refine the idea first."
 2. **Align intent:** ask one question at a time until success criteria are clear.
 3. **Define scope:** explicit IN and OUT lists. OUT scope cannot be empty.
 4. **Decompose into groups:** split into small, loosely coupled execution groups.
 5. **Write wish:** create `.genie/wishes/<slug>/WISH.md` using the Wish Template below.
 6. **Add verification:** every group gets acceptance criteria + a validation command.
-7. **Link tasks:** create linked tasks and declare dependencies.
-8. **Handoff:** reply `Wish documented. Run /work to execute.`
+7. **Declare dependencies:** declare `depends-on` between execution groups and cross-wish dependencies.
+8. **Handoff:** auto-invoke `/review` (plan review) on the WISH.md. Do not suggest `/work` directly — the review gate must pass first.
 
 ## Wish Document Sections
 
