@@ -339,31 +339,6 @@ export function parseWishAutoApprove(wishContent: string): WishAutoApproveOverri
   return result;
 }
 
-/**
- * Load complete auto-approve config including wish-level overrides
- *
- * @param repoPath - Path to the repository
- * @param wishContent - Content of the wish.md file (optional)
- * @param options - Loading options
- * @returns Fully merged auto-approve configuration
- */
-export async function loadFullAutoApproveConfig(
-  repoPath: string,
-  wishContent?: string,
-  options: LoadConfigOptions = {},
-): Promise<AutoApproveConfig> {
-  // Load global + repo config
-  let config = await loadAutoApproveConfig(repoPath, options);
-
-  // Apply wish-level overrides if provided
-  if (wishContent) {
-    const wishOverride = parseWishAutoApprove(wishContent);
-    config = mergeConfigs(config, wishOverride);
-  }
-
-  return config;
-}
-
 // ============================================================================
 // Rule Matching (Group C)
 // ============================================================================

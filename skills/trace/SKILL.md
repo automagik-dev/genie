@@ -35,13 +35,10 @@ Confidence: <high / medium / low>
 
 Trace must run in **isolation** — the subagent must not modify any source files.
 
-| Runtime | Detection | Trace dispatch |
-|---------|-----------|---------------|
-| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<trace prompt>")` |
-| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<trace prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie agent spawn --role tracer` |
-
-Default to **Claude Code** when detection is ambiguous.
+```bash
+# Spawn a tracer subagent (read-only investigation)
+genie spawn tracer
+```
 
 ## Rules
 - Never fix during trace — investigation only, always separate from correction.

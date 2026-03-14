@@ -27,8 +27,6 @@ interface SpawnOptions {
   sessionId?: string;
   /** Session ID to resume (--resume flag) */
   resume?: string;
-  /** Path to beads directory for BEADS_DIR env var */
-  beadsDir?: string;
 }
 
 // ============================================================================
@@ -51,7 +49,7 @@ function escapeForShell(str: string): string {
  * Build a spawn command string based on profile and options
  *
  * @param profile - WorkerProfile defining launcher and args
- * @param options - SpawnOptions with sessionId, resume, and beadsDir
+ * @param options - SpawnOptions with sessionId and resume
  * @returns Command string ready to be passed to tmux.executeCommand()
  * @throws Error if no profile is provided
  *
@@ -69,12 +67,7 @@ export function buildSpawnCommand(profile: WorkerProfile | undefined, options: S
 
   const parts: string[] = [];
 
-  // 1. Add BEADS_DIR env prefix if provided
-  if (options.beadsDir) {
-    parts.push(`BEADS_DIR='${escapeForShell(options.beadsDir)}'`);
-  }
-
-  // 2. Build command
+  // Build command
   parts.push('claude');
 
   // Add claude args (escaped for shell safety)
@@ -82,7 +75,7 @@ export function buildSpawnCommand(profile: WorkerProfile | undefined, options: S
     parts.push(`'${escapeForShell(arg)}'`);
   }
 
-  // 3. Add session-id or resume flag
+  // Add session-id or resume flag
   // sessionId takes precedence over resume
   if (options.sessionId) {
     parts.push('--session-id');
