@@ -22,13 +22,10 @@ Audit existing documentation, identify gaps, generate what's missing, and valida
 
 ## Dispatch
 
-| Runtime | Detection | Pattern |
-|---------|-----------|---------|
-| Claude Code | `Task` tool available | `Task(model: "sonnet", isolation: "worktree", prompt: "<docs prompt>")` |
-| Codex | `CODEX_ENV` or native API | `codex_subagent(task: "<docs prompt>", sandbox: true)` |
-| OpenClaw | `genie` CLI available | `genie agent spawn --role docs` |
-
-Default to **Claude Code** when detection is ambiguous.
+```bash
+# Spawn a docs subagent
+genie spawn docs
+```
 
 ## Rules
 - Validate every claim against actual code — no fiction.

@@ -347,68 +347,6 @@ export async function readLogFile(logPath: string): Promise<ClaudeLogEntry[]> {
  * @param pollIntervalMs - How often to check for new content (default 500ms)
  * @returns Cleanup function to stop tailing
  */
-export async function tailLogFile(
-  logPath: string,
-  onEntry: (entry: ClaudeLogEntry) => void,
-  pollIntervalMs = 500,
-): Promise<() => void> {
-  let lastSize = 0;
-  let running = true;
-  let pendingBuffer = '';
-
-  try {
-    const stats = await stat(logPath);
-    lastSize = stats.size;
-  } catch {
-    // File doesn't exist yet, start from 0
-  }
-
-  async function readNewContent(fromOffset: number): Promise<string> {
-    const { createReadStream } = await import('node:fs');
-    const stream = createReadStream(logPath, { start: fromOffset, encoding: 'utf-8' });
-    let content = '';
-    for await (const chunk of stream) {
-      content += chunk;
-    }
-    return content;
-  }
-
-  function processLines(newContent: string): void {
-    const content = pendingBuffer + newContent;
-    const lines = content.split('\n');
-    pendingBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const entry = parseLogEntry(line);
-      if (entry) onEntry(entry);
-    }
-  }
-
-  const poll = async () => {
-    if (!running) return;
-
-    try {
-      const currentSize = (await stat(logPath)).size;
-      if (currentSize > lastSize) {
-        processLines(await readNewContent(lastSize));
-        lastSize = currentSize;
-      }
-    } catch {
-      // File might have been deleted or rotated
-    }
-
-    if (running) {
-      setTimeout(poll, pollIntervalMs);
-    }
-  };
-
-  // Start polling
-  poll();
-
-  // Return cleanup function
-  return () => {
-    running = false;
-  };
-}
 
 // ============================================================================
 // High-Level Discovery Functions

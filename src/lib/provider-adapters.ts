@@ -66,6 +66,14 @@ export interface SpawnParams {
   sessionId?: string;
   /** Session UUID to resume (emits --resume). Mutually exclusive with sessionId. */
   resume?: string;
+  /** Path to a system prompt file (AGENTS.md). Emits --system-prompt-file or --append-system-prompt-file. */
+  systemPromptFile?: string;
+  /** Inline system prompt text (for built-ins without an AGENTS.md file). Emits --append-system-prompt or --system-prompt. */
+  systemPrompt?: string;
+  /** How to inject the system prompt file: 'system' replaces CC default, 'append' adds to it. */
+  promptMode?: 'system' | 'append';
+  /** Model override (e.g., 'sonnet', 'opus'). Emits --model flag. */
+  model?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -106,6 +114,10 @@ const spawnParamsSchema = z.object({
     .optional(),
   sessionId: z.string().uuid().optional(),
   resume: z.string().uuid().optional(),
+  systemPromptFile: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  promptMode: z.enum(['system', 'append']).optional(),
+  model: z.string().optional(),
 });
 
 /**
@@ -201,6 +213,11 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
 
+  // Always set GENIE_AGENT_NAME, even for non-native spawns
+  if (params.role) {
+    env.GENIE_AGENT_NAME = params.role;
+  }
+
   if (params.nativeTeam?.enabled) {
     appendNativeTeamFlags(parts, env, params.nativeTeam, params);
   }
@@ -212,6 +229,16 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   }
 
   if (params.role) parts.push('--agent', escapeShellArg(params.role));
+
+  if (params.model) parts.push('--model', escapeShellArg(params.model));
+
+  if (params.systemPromptFile) {
+    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
+    parts.push(flag, escapeShellArg(params.systemPromptFile));
+  } else if (params.systemPrompt) {
+    const flag = params.promptMode === 'system' ? '--system-prompt' : '--append-system-prompt';
+    parts.push(flag, escapeShellArg(params.systemPrompt));
+  }
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));

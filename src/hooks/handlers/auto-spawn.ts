@@ -5,6 +5,11 @@
  * tmux pane, this handler attempts to respawn them from their saved
  * template (created during the original `genie agent spawn`).
  *
+ * Resolution order (directory-aware):
+ *   1. Check worker registry for live pane → skip if alive
+ *   2. Check agent directory for recipient identity
+ *   3. Check saved templates → spawn from template
+ *
  * Priority: 20 (runs after identity-inject)
  */
 
@@ -30,6 +35,7 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
     // Lazy-import to avoid pulling heavy deps at dispatch startup
     const registryMod = await import('../../lib/agent-registry.js');
     const tmuxMod = await import('../../lib/tmux.js');
+    const directoryMod = await import('../../lib/agent-directory.js');
 
     // Check if recipient has a live pane
     const agents = await registryMod.list();
@@ -40,11 +46,33 @@ export async function autoSpawn(payload: HookPayload): Promise<HandlerResult> {
       return;
     }
 
+    // Check agent directory for recipient identity (directory-first)
+    const dirEntry = await directoryMod.resolve(recipient);
+
     // Check for a saved template to respawn from
     const templates = await registryMod.listTemplates();
-    const template = templates.find((t) => (t.role === recipient || t.id === recipient) && t.team === teamName);
+
+    // Build search candidates: recipient name + directory entry info
+    const searchNames = new Set([recipient]);
+    if (dirEntry) {
+      searchNames.add(dirEntry.entry.name);
+      if (dirEntry.entry.roles) {
+        for (const role of dirEntry.entry.roles) searchNames.add(role);
+      }
+    }
+
+    const template = templates.find((t) => {
+      if (t.team !== teamName) return false;
+      return [...searchNames].some((q) => t.id === q || t.role === q);
+    });
 
     if (!template) {
+      if (dirEntry) {
+        // Agent is known but has no spawn template — log for debugging
+        console.error(
+          `[genie-hook] Agent "${recipient}" is registered in directory but has no spawn template in team "${teamName}".`,
+        );
+      }
       // No template — can't auto-spawn, let the message go through anyway
       // (CC will show "recipient not found" natively)
       return;

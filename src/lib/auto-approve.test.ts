@@ -985,7 +985,7 @@ describe('compound command smuggling prevention', () => {
   test('escalates command with $() substitution', () => {
     const request = makeRequest({
       toolName: 'Bash',
-      toolInput: { command: 'echo $(cat /etc/passwd)' },
+      toolInput: { command: 'echo $(id)' },
     });
     const decision = evaluateRequest(request, smuggleConfig);
     expect(decision.action).not.toBe('approve');

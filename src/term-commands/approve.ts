@@ -18,7 +18,7 @@ import {
   sendApprovalViaTmux,
 } from '../lib/auto-approve-engine.js';
 import { loadAutoApproveConfig } from '../lib/auto-approve.js';
-import { type PermissionRequestQueue, createPermissionRequestQueue } from '../lib/event-listener.js';
+import type { PermissionRequestQueue } from '../lib/event-listener.js';
 
 // ============================================================================
 // Types
@@ -75,7 +75,6 @@ interface StartEngineOptions {
 // ============================================================================
 
 let currentEngine: AutoApproveEngine | null = null;
-const sharedQueue: PermissionRequestQueue = createPermissionRequestQueue();
 
 // ============================================================================
 // Status
@@ -252,104 +251,3 @@ export function stopEngine(): void {
 }
 
 // ============================================================================
-// CLI Command Handler
-// ============================================================================
-
-interface ApproveCommandOptions {
-  status?: boolean;
-  deny?: string;
-  start?: boolean;
-  stop?: boolean;
-}
-
-/**
- * Display status of all auto-approve requests.
- */
-function displayStatus(auditDir: string): void {
-  const entries = getStatusEntries({ auditDir, queue: sharedQueue });
-  if (entries.length === 0) {
-    console.log('No auto-approve requests found.');
-    return;
-  }
-
-  console.log('Auto-Approve Requests:');
-  console.log('');
-  for (const entry of entries) {
-    const statusLabel = entry.status.toUpperCase().padEnd(10);
-    const pane = entry.paneId ?? 'N/A';
-    console.log(`  [${statusLabel}] ${entry.requestId}  ${entry.toolName}  pane:${pane}  ${entry.timestamp}`);
-    if (entry.reason) {
-      console.log(`              Reason: ${entry.reason}`);
-    }
-  }
-}
-
-/**
- * Handle manual approve or deny of a request.
- */
-function handleManualAction(id: string, action: 'approve' | 'deny'): void {
-  const fn = action === 'approve' ? manualApprove : manualDeny;
-  const result = fn(id, { queue: sharedQueue });
-  if (result) {
-    console.log(`${action === 'approve' ? 'Approved' : 'Denied'} request: ${id}`);
-  } else {
-    console.error(`Request "${id}" not found in pending queue.`);
-    process.exit(1);
-  }
-}
-
-/**
- * Main CLI command handler for `genie agent approve`.
- *
- * Dispatches to the appropriate sub-function based on options:
- * - --status: show pending/approved/denied requests
- * - --start: start the auto-approve engine
- * - --stop: stop the auto-approve engine
- * - --deny <id>: manually deny a pending request
- * - <request-id> (argument): manually approve a pending request
- */
-export async function approveCommand(requestId: string | undefined, options: ApproveCommandOptions): Promise<void> {
-  const repoPath = process.cwd();
-  const auditDir = repoPath;
-
-  if (options.status) {
-    displayStatus(auditDir);
-    return;
-  }
-
-  if (options.start) {
-    if (isEngineRunning()) {
-      console.log('Auto-approve engine is already running.');
-      return;
-    }
-    await startEngine({ auditDir, repoPath });
-    console.log('Auto-approve engine started.');
-    return;
-  }
-
-  if (options.stop) {
-    if (!isEngineRunning()) {
-      console.log('Auto-approve engine is not running.');
-      return;
-    }
-    stopEngine();
-    console.log('Auto-approve engine stopped.');
-    return;
-  }
-
-  if (options.deny) {
-    handleManualAction(options.deny, 'deny');
-    return;
-  }
-  if (requestId) {
-    handleManualAction(requestId, 'approve');
-    return;
-  }
-
-  console.log('Usage:');
-  console.log('  genie agent approve --status              Show pending/approved/denied requests');
-  console.log('  genie agent approve <request-id>          Manually approve a pending request');
-  console.log('  genie agent approve --deny <request-id>   Manually deny a pending request');
-  console.log('  genie agent approve --start               Start the auto-approve engine');
-  console.log('  genie agent approve --stop                Stop the auto-approve engine');
-}
