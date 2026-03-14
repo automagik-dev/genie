@@ -76,6 +76,8 @@ export const GenieConfigSchema = z.object({
   shortcuts: ShortcutsConfigSchema.default({}),
   codex: CodexConfigSchema.optional(),
   installMethod: z.enum(['source', 'npm', 'bun']).optional(),
+  // npm dist-tag channel: 'latest' (stable) or 'next' (dev builds)
+  updateChannel: z.enum(['latest', 'next']).default('latest'),
   setupComplete: z.boolean().default(false),
   lastSetupAt: z.string().optional(),
   // Path to genie-cli source directory (for dev mode sync)
