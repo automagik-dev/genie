@@ -12,6 +12,24 @@ Investigate bugs end-to-end: collect symptoms, run `/trace` for root cause analy
 - A GitHub issue is needed with reproduction steps, root cause, and evidence
 - Multiple evidence sources (code, browser, observability) should be combined into one report
 - Orchestrator or user wants a self-contained bug report that someone can act on without reproducing
+- During QA loop: test failures against wish acceptance criteria need investigation
+
+## Dependencies
+
+- **`agent-browser`** — required for browser-based evidence capture (screenshots, console logs, network requests). Install separately: `agent-browser` must be on PATH for Phase 3 to work. If unavailable, Phase 3 degrades gracefully.
+
+## QA Loop Integration
+
+When invoked during the QA loop (after merge to dev), link findings to wish acceptance criteria:
+
+1. Read the wish's success criteria from `.genie/wishes/<slug>/WISH.md`.
+2. For each QA failure, map it to the specific acceptance criterion it violates.
+3. Include the criterion reference in the report: `Criterion: "<criterion text>" — FAIL`.
+
+**Auto-invocation chain for QA failures:**
+```
+QA failure → /report (investigate + document) → /trace (root cause) → /fix (correct) → retest
+```
 
 ## Flow
 

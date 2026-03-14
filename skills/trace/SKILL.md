@@ -12,13 +12,15 @@ Investigate unknown failures. Dispatch a trace subagent to reproduce, trace, and
 - Stack traces or error messages don't point to an obvious defect
 - Multiple files or systems may be involved
 - Orchestrator needs a diagnosis before dispatching a fix
+- `/review` encounters a failure with unclear root cause and invokes `/trace` for investigation
 
 ## Flow
 1. **Collect symptoms:** gather error messages, stack traces, logs, and expected vs actual behavior from the wish or reporter.
-2. **Dispatch tracer:** send symptoms + relevant context (files, recent changes, environment) to the trace subagent.
-3. **Investigate:** the trace subagent autonomously reproduces, hypothesizes, traces, and isolates root cause.
-4. **Receive report:** structured diagnosis with root cause, evidence, recommended correction, and affected scope.
-5. **Hand off:** pass the report to `/fix` or escalate to the orchestrator.
+2. **Dispatch tracer:** the spawned agent IS the tracer — it performs a read-only inline investigation. Send symptoms + relevant context (files, recent changes, environment).
+3. **Investigate:** the tracer autonomously reproduces, hypothesizes, traces, and isolates root cause.
+4. **Signal findings:** tracer reports findings back to the leader via `genie send '<diagnosis summary>' --to <leader>`.
+5. **Receive report:** structured diagnosis with root cause, evidence, recommended correction, and affected scope.
+6. **Hand off:** pass the report to `/fix` or escalate to the orchestrator.
 
 ## Report Format
 
