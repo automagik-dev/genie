@@ -190,6 +190,18 @@ describe('wish-state', () => {
       await expect(completeGroup('test-wish', 'nonexistent', cwd)).rejects.toThrow('not found');
     });
 
+    test('rejects blocked groups', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      // Group 2 depends on group 1 and should be blocked
+      const groupState = await getGroupState('test-wish', '2', cwd);
+      expect(groupState?.status).toBe('blocked');
+
+      await expect(completeGroup('test-wish', '2', cwd)).rejects.toThrow(
+        'Cannot complete group "2": it is blocked (dependencies not met)',
+      );
+    });
+
     test('allows completing a ready group (skip in_progress)', async () => {
       await createState('test-wish', sampleGroups, cwd);
 

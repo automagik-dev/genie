@@ -265,6 +265,10 @@ export async function completeGroup(slug: string, groupName: string, cwd?: strin
       throw new Error(`Group "${groupName}" is already done`);
     }
 
+    if (group.status === 'blocked') {
+      throw new Error(`Cannot complete group "${groupName}": it is blocked (dependencies not met)`);
+    }
+
     group.status = 'done';
     group.completedAt = new Date().toISOString();
 

@@ -23,6 +23,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
 import { parseRef } from './state.js';
@@ -137,6 +138,43 @@ function getGitDiff(): string {
   }
 }
 
+/**
+ * Parse WISH.md content to extract group definitions for state initialization.
+ * Looks for `### Group <N>: <title>` headings and `**depends-on:**` lines.
+ */
+export function parseWishGroups(content: string): GroupDefinition[] {
+  const groups: GroupDefinition[] = [];
+  const groupPattern = /^### Group (\d+):/gm;
+
+  let match: RegExpExecArray | null;
+  while ((match = groupPattern.exec(content)) !== null) {
+    const name = match[1];
+    const start = match.index;
+
+    // Find the next group heading or end of content
+    const rest = content.slice(start + match[0].length);
+    const nextGroupIdx = rest.search(/^### Group \d+:/m);
+    const section = nextGroupIdx !== -1 ? rest.slice(0, nextGroupIdx) : rest;
+
+    // Look for **depends-on:** line within this group section
+    const depsMatch = section.match(/\*\*depends-on:\*\*\s*(.+)/i);
+    let dependsOn: string[] = [];
+    if (depsMatch) {
+      const depsStr = depsMatch[1].trim();
+      if (depsStr.toLowerCase() !== 'none') {
+        dependsOn = depsStr
+          .split(',')
+          .map((d) => d.trim().replace(/^group\s*/i, ''))
+          .filter(Boolean);
+      }
+    }
+
+    groups.push({ name, dependsOn });
+  }
+
+  return groups;
+}
+
 // ============================================================================
 // Dispatch Commands
 // ============================================================================
@@ -238,6 +276,14 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
       for (const g of groups) console.error(`     ${g}`);
     }
     process.exit(1);
+  }
+
+  // Auto-initialize state if no state file exists
+  let state = await wishState.getState(slug);
+  if (!state) {
+    const groups = parseWishGroups(content);
+    state = await wishState.createState(slug, groups);
+    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
   }
 
   // Start group in state machine (enforces dependencies)
@@ -345,10 +391,8 @@ export function registerDispatchCommands(program: Command): void {
       await wishCommand(agent, slug);
     });
 
-  // Note: this is a NEW dispatch command, separate from the existing `genie work <target>`
-  // which handles task-based work. This command handles wish group dispatch.
   program
-    .command('dispatch-work <agent> <ref>')
+    .command('work <agent> <ref>')
     .description('Dispatch work on a wish group (format: <slug>#<group>)')
     .action(async (agent: string, ref: string) => {
       await workDispatchCommand(agent, ref);
