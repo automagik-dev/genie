@@ -502,7 +502,8 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
 
   let paneId: string;
   try {
-    const splitCmd = `tmux split-window -d ${splitTarget} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+    const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
     paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
