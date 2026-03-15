@@ -653,6 +653,8 @@ export interface SpawnOptions {
   permissionMode?: string;
   extraArgs?: string[];
   cwd?: string;
+  /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
+  initialPrompt?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPrompt. */
@@ -708,6 +710,7 @@ async function buildSpawnParams(
     systemPromptFile: agent.identityPath ?? undefined,
     systemPrompt: agent.systemPrompt,
     promptMode: agent.entry.promptMode,
+    initialPrompt: options.initialPrompt,
   };
 
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {

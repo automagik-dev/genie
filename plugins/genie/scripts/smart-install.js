@@ -260,8 +260,8 @@ If you catch yourself about to use Agent, SendMessage, TeamCreate, or TeamDelete
 \`\`\`bash
 genie spawn <role>                         # Spawn agent (implementor, tests, review, fix, refactor)
 genie kill <name>                          # Force kill agent
-genie stop <name>                          # Graceful stop
-genie ls                                   # List all agents
+genie stop <name>                          # Graceful stop (preserves session for resume)
+genie ls                                   # List all agents with status
 genie history <name>                       # Session history
 genie read <name> --follow                 # Tail terminal output
 genie answer <name> <choice>               # Answer prompt (1-9 or text:...)
@@ -279,11 +279,23 @@ genie inbox [agent]                        # View message inbox
 ### Teams
 
 \`\`\`bash
-genie team create <name> --repo <path>     # Create a team
+genie team create <name> --repo <path>     # Create team with git worktree
+genie team create <name> --repo <path> --wish <slug>  # Create team + auto-spawn task leader
 genie team hire <agent>                    # Add agent to team
 genie team fire <agent>                    # Remove agent from team
 genie team ls [name]                       # List teams or team members
 genie team disband <name>                  # Disband and clean up team
+genie team done <name>                     # Mark team as done
+genie team blocked <name>                  # Mark team as blocked
+\`\`\`
+
+### Agent Directory
+
+\`\`\`bash
+genie dir add <name> --dir <path>          # Register agent directory
+genie dir rm <name>                        # Remove agent from directory
+genie dir ls [name]                        # List agents or agent details
+genie dir edit <name>                      # Edit agent config
 \`\`\`
 
 ### Dispatch (Skill-Bound Work)
@@ -301,6 +313,14 @@ genie review <agent> <ref>                 # Dispatch review
 genie done <ref>                           # Mark group/task done
 genie status <slug>                        # Check wish/group status
 genie reset <ref>                          # Reset stuck group
+\`\`\`
+
+### System
+
+\`\`\`bash
+genie update                               # Update to latest stable version
+genie update --next                        # Switch to dev builds (npm @next tag)
+genie update --stable                      # Switch to stable releases (npm @latest tag)
 \`\`\`
 
 ## 3. Skill Flow — Auto-Invocation Chain
@@ -326,7 +346,17 @@ Skills trigger the next step automatically where possible:
   Decisions stuck after 2+ exchanges ──▸ suggest /council
 \`\`\`
 
-## 4. Team Lifecycle
+## 4. Task Leader Workflow
+
+For autonomous wish execution, use \`--wish\` to spawn a task leader that works without manual intervention:
+
+\`\`\`bash
+genie team create <name> --repo <path> --wish <slug>
+\`\`\`
+
+This creates the team, copies the wish into the worktree, hires a leader, and auto-sends a kickoff prompt so the leader begins immediately — no manual \`genie send\` needed.
+
+## 5. Team Lifecycle
 
 \`\`\`
 create team ──▸ hire agents ──▸ dispatch work ──▸ review ──▸ PR to dev ──▸ QA ──▸ disband
@@ -339,9 +369,16 @@ create team ──▸ hire agents ──▸ dispatch work ──▸ review ─�
 5. Workers signal completion via \`genie send\`; leader runs \`/review\`
 6. Create PR targeting \`dev\`. CI must be green before merge.
 7. QA loop on dev: test against wish criteria → \`/fix\` → retest
-8. \`genie team disband <name>\` — clean up when done
+8. If \`autoMergeDev\` config is true, leader merges PR to dev automatically. Otherwise, leave PR open for human review.
+9. \`genie team disband <name>\` — clean up when done
 
-## 5. Rules
+## 6. Configuration
+
+Key config options in \`~/.genie/config.json\`:
+
+- **\`autoMergeDev\`** (boolean, default: false) — When true, task leaders can auto-merge PRs to \`dev\` after CI passes. When false (default), PRs are left open for human review.
+
+## 7. Rules
 
 - **No native tools.** All agent/team/messaging operations go through \`genie\` CLI.
 - **Role separation.** Leader orchestrates; workers implement. Workers never spawn other agents.

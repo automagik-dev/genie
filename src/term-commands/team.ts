@@ -231,12 +231,14 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   ].join('\n');
   const contextFile = await writeContextFile(contextContent);
 
-  // Spawn leader in the worktree
+  // Spawn leader in the worktree with auto-kickoff prompt
+  const kickoffPrompt = `Begin. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously. Your team is ${config.name}.`;
   await handleWorkerSpawn('leader', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
     extraArgs: ['--append-system-prompt-file', contextFile],
+    initialPrompt: kickoffPrompt,
   });
   console.log('  Leader: spawned and working');
 }
