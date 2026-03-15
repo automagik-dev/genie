@@ -92,6 +92,8 @@ export const GenieConfigSchema = z.object({
   defaultCouncilPreset: z.string().optional(),
   // Controls whether --system-prompt (replace CC default) or --append-system-prompt (preserve CC default) is used
   promptMode: z.enum(['append', 'system']).default('append'),
+  // Whether task leaders should auto-merge PRs to dev (default: false — leave PR open for human)
+  autoMergeDev: z.boolean().default(false),
 });
 
 // Inferred types

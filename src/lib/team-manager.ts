@@ -14,11 +14,15 @@ import { $ } from 'bun';
 import * as registry from './agent-registry.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
+import { acquireLock } from './file-lock.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/** Team lifecycle status. */
+export type TeamStatus = 'in_progress' | 'done' | 'blocked';
 
 /** Persisted team configuration. */
 export interface TeamConfig {
@@ -34,6 +38,8 @@ export interface TeamConfig {
   leader?: string;
   /** Array of agent names that are members of this team. */
   members: string[];
+  /** Team lifecycle status. */
+  status: TeamStatus;
   /** ISO timestamp of creation. */
   createdAt: string;
   /** Parent session UUID for Claude Code native team IPC. */
@@ -207,6 +213,7 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     baseBranch,
     worktreePath,
     members: [],
+    status: 'in_progress',
     createdAt: now,
   };
 
@@ -372,4 +379,20 @@ export async function listMembers(teamName: string): Promise<string[] | null> {
   const config = await getTeam(teamName);
   if (!config) return null;
   return config.members;
+}
+
+/** Set team lifecycle status. */
+export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
+  const filePath = teamFilePath(teamName);
+  const release = await acquireLock(filePath);
+  try {
+    const config = await getTeam(teamName);
+    if (!config) {
+      throw new Error(`Team "${teamName}" not found.`);
+    }
+    config.status = status;
+    await writeFile(filePath, JSON.stringify(config, null, 2));
+  } finally {
+    await release();
+  }
 }
