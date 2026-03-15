@@ -13,8 +13,8 @@ import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
-import { acquireLock } from './file-lock.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
+import { acquireLock } from './file-lock.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
 // ============================================================================
