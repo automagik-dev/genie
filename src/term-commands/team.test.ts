@@ -146,6 +146,26 @@ describe('genie team CLI', () => {
     expect(stdout).toContain('disbanded');
   });
 
+  test('team ls shows status', async () => {
+    const { stdout, exitCode } = await genie('team', 'ls');
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('[in_progress]');
+  });
+
+  test('team done marks team as done', async () => {
+    await genie('team', 'create', 'feat/done-test', '--repo', TEST_REPO, '--branch', 'dev');
+    const { stdout, exitCode } = await genie('team', 'done', 'feat/done-test');
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('marked as done');
+  });
+
+  test('team blocked marks team as blocked', async () => {
+    await genie('team', 'create', 'feat/blocked-test', '--repo', TEST_REPO, '--branch', 'dev');
+    const { stdout, exitCode } = await genie('team', 'blocked', 'feat/blocked-test');
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('marked as blocked');
+  });
+
   test('ensure command does not exist', async () => {
     const { exitCode } = await genie('team', 'ensure', 'test');
     expect(exitCode).not.toBe(0);

@@ -15,8 +15,8 @@ import {
 } from './builtin-agents.js';
 
 describe('BUILTIN_ROLES', () => {
-  test('has 10 built-in roles', () => {
-    expect(BUILTIN_ROLES.length).toBe(10);
+  test('has 11 built-in roles', () => {
+    expect(BUILTIN_ROLES.length).toBe(11);
   });
 
   test('all roles have required fields', () => {
@@ -45,6 +45,14 @@ describe('BUILTIN_ROLES', () => {
     expect(names).toContain('dreamer');
     expect(names).toContain('critic');
     expect(names).toContain('security');
+    expect(names).toContain('leader');
+  });
+
+  test('leader role has append promptMode', () => {
+    const leader = getBuiltin('leader');
+    expect(leader).not.toBeNull();
+    expect(leader!.category).toBe('role');
+    expect(leader!.promptMode).toBe('append');
   });
 });
 
@@ -106,8 +114,8 @@ describe('BUILTIN_COUNCIL_MEMBERS', () => {
 });
 
 describe('ALL_BUILTINS', () => {
-  test('has 20 total built-in agents', () => {
-    expect(ALL_BUILTINS.length).toBe(20);
+  test('has 21 total built-in agents', () => {
+    expect(ALL_BUILTINS.length).toBe(21);
   });
 
   test('names are globally unique across roles and council', () => {

@@ -20,6 +20,9 @@ import { loadGenieConfigSync } from './genie-config.js';
 // Types
 // ============================================================================
 
+/** Team lifecycle status. */
+export type TeamStatus = 'in_progress' | 'done' | 'blocked';
+
 /** Persisted team configuration. */
 export interface TeamConfig {
   /** Team name — also the git branch name (e.g., "feat/auth-bug"). */
@@ -34,6 +37,8 @@ export interface TeamConfig {
   leader?: string;
   /** Array of agent names that are members of this team. */
   members: string[];
+  /** Team lifecycle status. */
+  status: TeamStatus;
   /** ISO timestamp of creation. */
   createdAt: string;
   /** Parent session UUID for Claude Code native team IPC. */
@@ -207,6 +212,7 @@ export async function createTeam(name: string, repo: string, baseBranch = 'dev')
     baseBranch,
     worktreePath,
     members: [],
+    status: 'in_progress',
     createdAt: now,
   };
 
@@ -372,4 +378,15 @@ export async function listMembers(teamName: string): Promise<string[] | null> {
   const config = await getTeam(teamName);
   if (!config) return null;
   return config.members;
+}
+
+/** Set team lifecycle status. */
+export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
+  const config = await getTeam(teamName);
+  if (!config) {
+    throw new Error(`Team "${teamName}" not found.`);
+  }
+  config.status = status;
+  const filePath = teamFilePath(teamName);
+  await writeFile(filePath, JSON.stringify(config, null, 2));
 }
