@@ -244,14 +244,14 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
     // If there is also a systemPromptFile (user agent), merge both
     let content = params.systemPrompt;
     if (params.systemPromptFile) {
-      content = readFileSync(params.systemPromptFile, 'utf-8') + '\n\n' + content;
+      content = `${readFileSync(params.systemPromptFile, 'utf-8')}\n\n${content}`;
     }
 
     // If extraArgs has --append-system-prompt-file, merge that too
     if (params.extraArgs) {
       const fileIdx = params.extraArgs.indexOf('--append-system-prompt-file');
       if (fileIdx !== -1 && params.extraArgs[fileIdx + 1]) {
-        content = content + '\n\n' + readFileSync(params.extraArgs[fileIdx + 1], 'utf-8');
+        content = `${content}\n\n${readFileSync(params.extraArgs[fileIdx + 1], 'utf-8')}`;
         // Remove the extra arg since we merged it
         params.extraArgs.splice(fileIdx, 2);
       }
