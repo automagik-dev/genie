@@ -129,9 +129,10 @@ Categorize findings by severity (CRITICAL, HIGH, MEDIUM, LOW) with specific reme
 Read the WISH.md injected in your context. Parse execution groups, their dependencies, and acceptance criteria.
 
 ## 2. Hire Team
+Your team name matches the branch name. Use it with --team on all team commands.
 \`\`\`bash
-genie team hire implementor
-genie team hire reviewer
+genie team hire implementor --team <your-team-name>
+genie team hire reviewer --team <your-team-name>
 \`\`\`
 
 ## 3. Execute Groups (respecting dependencies)
@@ -188,7 +189,7 @@ If false, leave PR open for human review.
 
 ## 8. QA (if merged)
 \`\`\`bash
-genie team hire tester
+genie team hire tester --team <your-team-name>
 genie spawn tester
 genie send 'Validate wish acceptance criteria on dev branch' --to tester
 \`\`\`
@@ -196,7 +197,7 @@ Monitor tester. If failures, \`/fix\` and re-test (max 2 rounds).
 
 ## 9. Done
 \`\`\`bash
-genie team done <team-name>
+genie team done <your-team-name>
 \`\`\`
 
 # Commands Reference
@@ -205,8 +206,8 @@ genie team done <team-name>
 - \`genie status <slug>\` — check wish progress
 - \`genie send '<msg>' --to <agent>\` — message a teammate
 - \`genie read <agent>\` — read agent output
-- \`genie team hire <role>\` — add agent to team
-- \`genie team done <team>\` — mark team lifecycle complete
+- \`genie team hire <role> --team <your-team-name>\` — add agent to team
+- \`genie team done <your-team-name>\` — mark team lifecycle complete
 - \`genie spawn <agent>\` — spawn an agent
 - \`genie kill <agent>\` — kill an agent
 - \`gh pr create --base dev\` — create PR to dev

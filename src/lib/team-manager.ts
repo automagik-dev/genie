@@ -13,6 +13,7 @@ import path, { join } from 'node:path';
 import { $ } from 'bun';
 import * as registry from './agent-registry.js';
 import { BUILTIN_COUNCIL_MEMBERS } from './builtin-agents.js';
+import { acquireLock } from './file-lock.js';
 import * as nativeTeamsManager from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
@@ -382,11 +383,16 @@ export async function listMembers(teamName: string): Promise<string[] | null> {
 
 /** Set team lifecycle status. */
 export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
-  const config = await getTeam(teamName);
-  if (!config) {
-    throw new Error(`Team "${teamName}" not found.`);
-  }
-  config.status = status;
   const filePath = teamFilePath(teamName);
-  await writeFile(filePath, JSON.stringify(config, null, 2));
+  const release = await acquireLock(filePath);
+  try {
+    const config = await getTeam(teamName);
+    if (!config) {
+      throw new Error(`Team "${teamName}" not found.`);
+    }
+    config.status = status;
+    await writeFile(filePath, JSON.stringify(config, null, 2));
+  } finally {
+    await release();
+  }
 }
