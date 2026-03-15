@@ -205,16 +205,16 @@ describe('Team Manager', () => {
       expect(added).toEqual([]);
     });
 
-    test('hire council adds all 10 council members', async () => {
+    test('hire council adds all 11 council members', async () => {
       await createTeam('feat/hire-council', TEST_REPO, 'dev');
       const added = await hireAgent('feat/hire-council', 'council');
 
-      expect(added.length).toBe(10);
-      expect(added).toContain('council-questioner');
-      expect(added).toContain('council-architect');
+      expect(added.length).toBe(11);
+      expect(added).toContain('council--questioner');
+      expect(added).toContain('council--architect');
 
       const config = await getTeam('feat/hire-council');
-      expect(config!.members.length).toBe(10);
+      expect(config!.members.length).toBe(11);
     });
 
     test('throws for non-existent team', async () => {
