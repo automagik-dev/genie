@@ -11,7 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
 import * as teamManager from '../lib/team-manager.js';
@@ -29,6 +29,16 @@ export function registerTeamNamespace(program: Command): void {
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
     .action(async (name: string, options: { repo: string; branch: string; wish?: string }) => {
       try {
+        // Validate wish exists before creating team
+        if (options.wish) {
+          const resolvedRepo = resolve(options.repo);
+          const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
+          if (!existsSync(wishPath)) {
+            console.error(`Error: Wish not found at ${wishPath}`);
+            process.exit(1);
+          }
+        }
+
         const config = await teamManager.createTeam(name, options.repo, options.branch);
         console.log(`Team "${config.name}" created.`);
         console.log(`  Worktree: ${config.worktreePath}`);
@@ -185,7 +195,7 @@ export function registerTeamNamespace(program: Command): void {
  */
 async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: string): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
-  const resolvedRepo = require('node:path').resolve(repoPath);
+  const resolvedRepo = resolve(repoPath);
 
   // Locate WISH.md in source repo
   const sourceWishPath = join(resolvedRepo, '.genie', 'wishes', slug, 'WISH.md');
