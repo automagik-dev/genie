@@ -275,8 +275,8 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
     return config;
   }
 
-  console.log('  append  — Uses --append-system-prompt (preserves Claude Code default system prompt)');
-  console.log('  system  — Uses --system-prompt (replaces Claude Code default system prompt)');
+  console.log('  append  — Uses --append-system-prompt-file (preserves Claude Code default system prompt)');
+  console.log('  system  — Uses --system-prompt-file (replaces Claude Code default system prompt)');
   console.log();
 
   const promptMode = await select({
