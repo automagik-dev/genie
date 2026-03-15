@@ -14,10 +14,11 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
-  deleteNativeTeam,
+  deleteAllNativeTeams,
   ensureNativeTeam,
   registerNativeMember,
   sanitizeTeamName,
@@ -254,13 +255,26 @@ async function deriveWindowName(sessionName: string, workspaceDir: string, team?
   return sanitizeWindowName(basename(workspaceDir));
 }
 
-async function handleReset(sessionName: string, windowName: string): Promise<void> {
+async function handleReset(sessionName: string, _windowName: string): Promise<void> {
   const existing = await tmux.findSessionByName(sessionName);
   if (existing) {
     console.log(`Resetting session "${sessionName}"...`);
     await tmux.killSession(sessionName);
   }
-  await deleteNativeTeam(windowName);
+
+  // Delete ALL native team directories — reset kills all windows, so all teams are stale
+  const deletedCount = await deleteAllNativeTeams();
+  if (deletedCount > 0) {
+    console.log(`Cleared ${deletedCount} native team(s)`);
+  }
+
+  // Clear worker registry — all workers are dead after session kill
+  const workersPath = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'workers.json');
+  try {
+    await writeFile(workersPath, '[]');
+  } catch {
+    // workers.json may not exist yet — that's fine
+  }
 }
 
 function attachToWindow(sessionName: string, windowName: string): void {
