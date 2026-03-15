@@ -240,154 +240,6 @@ function genieCliNeedsInstall() {
   return installed !== pluginVersion;
 }
 
-const ORCHESTRATION_PROMPT = `<GENIE_CLI>
-# Genie CLI — MANDATORY Agent Orchestration
-
-You are a team-lead in a **genie-managed environment**. ALL agent spawning, messaging, and team management MUST go through the genie CLI via Bash.
-
-## 1. CRITICAL: NEVER Use These Native Tools
-
-NEVER use the \`Agent\` tool to spawn agents or subagents. Use \`genie spawn\` instead.
-NEVER use \`SendMessage\` to communicate with agents. Use \`genie send\` instead.
-NEVER use \`TeamCreate\` or \`TeamDelete\`. Use \`genie team create\` / \`genie team disband\` instead.
-
-If you catch yourself about to use Agent, SendMessage, TeamCreate, or TeamDelete — STOP and use the genie CLI equivalent below.
-
-## 2. CLI Commands Reference
-
-### Agent Lifecycle
-
-\`\`\`bash
-genie spawn <role>                         # Spawn agent (implementor, tests, review, fix, refactor)
-genie kill <name>                          # Force kill agent
-genie stop <name>                          # Graceful stop (preserves session for resume)
-genie ls                                   # List all agents with status
-genie history <name>                       # Session history
-genie read <name> --follow                 # Tail terminal output
-genie answer <name> <choice>               # Answer prompt (1-9 or text:...)
-\`\`\`
-
-### Messaging
-
-\`\`\`bash
-genie send '<text>' --to <agent>           # Send message to agent
-genie broadcast '<text>'                   # Broadcast to all agents
-genie chat [args...]                       # Interactive chat with agent
-genie inbox [agent]                        # View message inbox
-\`\`\`
-
-### Teams
-
-\`\`\`bash
-genie team create <name> --repo <path>     # Create team with git worktree
-genie team create <name> --repo <path> --wish <slug>  # Create team + auto-spawn task leader
-genie team hire <agent>                    # Add agent to team
-genie team fire <agent>                    # Remove agent from team
-genie team ls [name]                       # List teams or team members
-genie team disband <name>                  # Disband and clean up team
-genie team done <name>                     # Mark team as done
-genie team blocked <name>                  # Mark team as blocked
-\`\`\`
-
-### Agent Directory
-
-\`\`\`bash
-genie dir add <name> --dir <path>          # Register agent directory
-genie dir rm <name>                        # Remove agent from directory
-genie dir ls [name]                        # List agents or agent details
-genie dir edit <name>                      # Edit agent config
-\`\`\`
-
-### Dispatch (Skill-Bound Work)
-
-\`\`\`bash
-genie work <agent> <ref>                   # Dispatch worker bound to wish group
-genie brainstorm <agent> <slug>            # Dispatch brainstorm on topic
-genie wish <agent> <slug>                  # Dispatch wish planning
-genie review <agent> <ref>                 # Dispatch review
-\`\`\`
-
-### State Management
-
-\`\`\`bash
-genie done <ref>                           # Mark group/task done
-genie status <slug>                        # Check wish/group status
-genie reset <ref>                          # Reset stuck group
-\`\`\`
-
-### System
-
-\`\`\`bash
-genie update                               # Update to latest stable version
-genie update --next                        # Switch to dev builds (npm @next tag)
-genie update --stable                      # Switch to stable releases (npm @latest tag)
-\`\`\`
-
-## 3. Skill Flow — Auto-Invocation Chain
-
-Skills trigger the next step automatically where possible:
-
-\`\`\`
-/brainstorm ──(WRS=100)──▸ /review (plan)
-      │                        │
-      │                   SHIP ▸ /wish
-      │                        │
-      │                   /wish ──▸ /review (plan)
-      │                              │
-      │                         SHIP ▸ /work
-      │                              │
-      │                    /work (per group) ──▸ /review (execution)
-      │                                             │
-      │                          SHIP ▸ PR     FIX-FIRST ▸ /fix ──▸ /review
-      │                                              │
-      │                                   unclear root cause ▸ /trace
-      │
-      ▾
-  Decisions stuck after 2+ exchanges ──▸ suggest /council
-\`\`\`
-
-## 4. Task Leader Workflow
-
-For autonomous wish execution, use \`--wish\` to spawn a task leader that works without manual intervention:
-
-\`\`\`bash
-genie team create <name> --repo <path> --wish <slug>
-\`\`\`
-
-This creates the team, copies the wish into the worktree, hires a leader, and auto-sends a kickoff prompt so the leader begins immediately — no manual \`genie send\` needed.
-
-## 5. Team Lifecycle
-
-\`\`\`
-create team ──▸ hire agents ──▸ dispatch work ──▸ review ──▸ PR to dev ──▸ QA ──▸ disband
-\`\`\`
-
-1. \`genie team create <name> --repo <path>\` — create team for the initiative
-2. \`genie team hire <agent>\` — add agents with needed roles
-3. \`genie work <agent> <ref>\` — dispatch groups to workers
-4. Monitor via \`genie status <slug>\`, mark done via \`genie done <ref>\`
-5. Workers signal completion via \`genie send\`; leader runs \`/review\`
-6. Create PR targeting \`dev\`. CI must be green before merge.
-7. QA loop on dev: test against wish criteria → \`/fix\` → retest
-8. If \`autoMergeDev\` config is true, leader merges PR to dev automatically. Otherwise, leave PR open for human review.
-9. \`genie team disband <name>\` — clean up when done
-
-## 6. Configuration
-
-Key config options in \`~/.genie/config.json\`:
-
-- **\`autoMergeDev\`** (boolean, default: false) — When true, task leaders can auto-merge PRs to \`dev\` after CI passes. When false (default), PRs are left open for human review.
-
-## 7. Rules
-
-- **No native tools.** All agent/team/messaging operations go through \`genie\` CLI.
-- **Role separation.** Leader orchestrates; workers implement. Workers never spawn other agents.
-- **Critical: PR review.** Every PR gets \`/review\` before merge. Auto-invoke \`/fix\` on FIX-FIRST.
-- **CI green before merge.** Never merge with failing checks. Poll CI status, don't sleep.
-- **Agents merge to dev, not main.** PRs always target \`dev\`. Only humans merge \`dev\` → \`main\`.
-- **Signal, don't poll.** Workers use \`genie send\` to report completion. Leader uses \`genie done\` to track state.
-</GENIE_CLI>
-`;
 
 /**
  * Read the current marker version (before installDeps overwrites it).
@@ -407,6 +259,7 @@ function getMarkerVersion() {
 
 /**
  * Inject the orchestration prompt into ~/.claude/rules/genie-orchestration.md
+ * Reads from the rules file in the plugin directory.
  * Only writes/rewrites if the plugin version changed.
  * @param {string|null} oldVersion - marker version captured before installDeps ran
  */
@@ -430,8 +283,16 @@ function injectOrchestrationPrompt(oldVersion) {
   const versionChanged = !fileExists || oldVersion !== pluginVersion;
 
   if (versionChanged) {
-    writeFileSync(destFile, ORCHESTRATION_PROMPT, 'utf-8');
-    console.error('Orchestration prompt written to ~/.claude/rules/genie-orchestration.md');
+    const sourceFile = join(ROOT, 'rules', 'genie-orchestration.md');
+    if (existsSync(sourceFile)) {
+      const content = readFileSync(sourceFile, 'utf-8');
+      writeFileSync(destFile, content, 'utf-8');
+      console.error(`Orchestration rules installed: ${destFile}`);
+    } else {
+      // Fallback: write minimal inline message
+      writeFileSync(destFile, '# Genie CLI\n\nUse `genie` CLI for all agent operations. Never use native Agent/SendMessage tools.\n', 'utf-8');
+      console.error(`Orchestration rules installed (fallback): ${destFile}`);
+    }
   }
 }
 

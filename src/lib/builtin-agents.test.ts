@@ -35,9 +35,9 @@ describe('BUILTIN_ROLES', () => {
 
   test('contains expected roles', () => {
     const names = listRoleNames();
-    expect(names).toContain('implementor');
-    expect(names).toContain('tester');
+    expect(names).toContain('engineer');
     expect(names).toContain('reviewer');
+    expect(names).toContain('qa');
     expect(names).toContain('debugger');
     expect(names).toContain('verifier');
     expect(names).toContain('investigator');
@@ -126,9 +126,9 @@ describe('ALL_BUILTINS', () => {
 
 describe('getBuiltin', () => {
   test('finds a role by name', () => {
-    const result = getBuiltin('implementor');
+    const result = getBuiltin('engineer');
     expect(result).not.toBeNull();
-    expect(result!.name).toBe('implementor');
+    expect(result!.name).toBe('engineer');
     expect(result!.category).toBe('role');
   });
 

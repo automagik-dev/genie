@@ -10,6 +10,8 @@
 import { existsSync, lstatSync, rmSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+const ORCHESTRATION_RULES_PATH = join(homedir(), '.claude', 'rules', 'genie-orchestration.md');
 import { confirm } from '@inquirer/prompts';
 import { hookScriptExists, removeHookScript } from '../lib/claude-settings.js';
 import { contractPath, getGenieDir } from '../lib/genie-config.js';
@@ -83,6 +85,18 @@ function performUninstall(
     }
   }
 
+  // Remove orchestration rules from ~/.claude/rules/
+  if (existsSync(ORCHESTRATION_RULES_PATH)) {
+    console.log('\x1b[2mRemoving orchestration rules...\x1b[0m');
+    try {
+      unlinkSync(ORCHESTRATION_RULES_PATH);
+      console.log('  \x1b[32m+\x1b[0m Orchestration rules removed (~/.claude/rules/genie-orchestration.md)');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`  \x1b[33m!\x1b[0m Could not remove orchestration rules: ${message}`);
+    }
+  }
+
   if (hasGenieDir) {
     console.log('\x1b[2mRemoving genie directory...\x1b[0m');
     try {
@@ -103,16 +117,18 @@ export async function uninstallCommand(): Promise<void> {
   const genieDir = getGenieDir();
   const hasGenieDir = existsSync(genieDir);
   const hasHookScript = hookScriptExists();
+  const hasOrchestrationRules = existsSync(ORCHESTRATION_RULES_PATH);
   const existingSymlinks = SYMLINKS.filter((name) => isGenieSymlink(join(LOCAL_BIN, name)));
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
+  if (hasOrchestrationRules) console.log('  \x1b[31m-\x1b[0m Orchestration rules (~/.claude/rules/genie-orchestration.md)');
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
   console.log();
 
-  if (!hasGenieDir && !hasHookScript && existingSymlinks.length === 0) {
+  if (!hasGenieDir && !hasHookScript && !hasOrchestrationRules && existingSymlinks.length === 0) {
     console.log('\x1b[33mNothing to uninstall.\x1b[0m');
     console.log();
     return;
