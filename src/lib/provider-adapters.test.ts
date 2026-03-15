@@ -144,7 +144,7 @@ describe('buildClaudeCommand', () => {
     expect(result.command).not.toContain("--system-prompt-file '/path");
   });
 
-  it('does not include prompt file flags when systemPromptFile is not set', () => {
+  it('does not include prompt file flags when neither systemPromptFile nor systemPrompt is set', () => {
     const result = buildClaudeCommand({
       provider: 'claude',
       team: 'work',
@@ -152,6 +152,81 @@ describe('buildClaudeCommand', () => {
     });
     expect(result.command).not.toContain('--system-prompt-file');
     expect(result.command).not.toContain('--append-system-prompt-file');
+  });
+
+  it('writes systemPrompt to temp file and uses --append-system-prompt-file', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      systemPrompt: 'You are an implementor agent.',
+    });
+    expect(result.command).toContain('--append-system-prompt-file');
+    expect(result.command).toContain('/tmp/genie-prompts/implementor-');
+    // Must NOT contain inline --append-system-prompt (without -file)
+    expect(result.command).not.toMatch(/--append-system-prompt(?!-file)/);
+  });
+
+  it('writes systemPrompt to temp file with --system-prompt-file when promptMode is "system"', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      systemPrompt: 'You are an implementor agent.',
+      promptMode: 'system',
+    });
+    expect(result.command).toContain('--system-prompt-file');
+    expect(result.command).not.toContain('--append-system-prompt-file');
+    expect(result.command).toContain('/tmp/genie-prompts/implementor-');
+  });
+
+  it('never emits inline --system-prompt or --append-system-prompt flags', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'tester',
+      systemPrompt: 'Multi-line prompt\nwith ```code blocks```\nand special chars: $VAR "quotes"',
+    });
+    // Should use file-based flag
+    expect(result.command).toContain('--append-system-prompt-file');
+    // Must NOT contain inline prompt flags (without -file suffix)
+    expect(result.command).not.toMatch(/--append-system-prompt(?!-file)/);
+    expect(result.command).not.toMatch(/--system-prompt(?!-file)/);
+  });
+
+  it('uses "agent" as fallback role in temp file name when no role set', () => {
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      systemPrompt: 'Some prompt',
+    });
+    expect(result.command).toContain('/tmp/genie-prompts/agent-');
+    expect(result.command).toContain('--append-system-prompt-file');
+  });
+
+  it('merges systemPromptFile and systemPrompt into one temp file', () => {
+    const fs = require('node:fs');
+    const testFile = '/tmp/genie-prompts/test-agents.md';
+    fs.mkdirSync('/tmp/genie-prompts', { recursive: true });
+    fs.writeFileSync(testFile, 'User agent instructions');
+
+    const result = buildClaudeCommand({
+      provider: 'claude',
+      team: 'work',
+      role: 'implementor',
+      systemPromptFile: testFile,
+      systemPrompt: 'Built-in prompt',
+    });
+    expect(result.command).toContain('--append-system-prompt-file');
+    // Should reference the NEW temp file, not the original
+    expect(result.command).toContain('/tmp/genie-prompts/implementor-');
+
+    // Verify merged content
+    const match = result.command.match(/\/tmp\/genie-prompts\/implementor-[^']+/);
+    expect(match).toBeTruthy();
+    const content = fs.readFileSync(match![0], 'utf-8');
+    expect(content).toContain('User agent instructions');
+    expect(content).toContain('Built-in prompt');
   });
 });
 

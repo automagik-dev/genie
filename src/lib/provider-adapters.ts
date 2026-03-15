@@ -68,7 +68,7 @@ export interface SpawnParams {
   resume?: string;
   /** Path to a system prompt file (AGENTS.md). Emits --system-prompt-file or --append-system-prompt-file. */
   systemPromptFile?: string;
-  /** Inline system prompt text (for built-ins without an AGENTS.md file). Emits --append-system-prompt or --system-prompt. */
+  /** Inline system prompt text (for built-ins without an AGENTS.md file). Written to temp file, emits --append-system-prompt-file or --system-prompt-file. */
   systemPrompt?: string;
   /** How to inject the system prompt file: 'system' replaces CC default, 'append' adds to it. */
   promptMode?: 'system' | 'append';
@@ -232,12 +232,37 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (params.model) parts.push('--model', escapeShellArg(params.model));
 
-  if (params.systemPromptFile) {
+  if (params.systemPrompt) {
+    // Write built-in prompt to temp file — avoids shell escaping of complex content
+    const { mkdirSync, writeFileSync, readFileSync } = require('node:fs');
+    const { join } = require('node:path');
+    const dir = '/tmp/genie-prompts';
+    mkdirSync(dir, { recursive: true });
+    const ts = Date.now().toString(36);
+    const promptFile = join(dir, `${params.role || 'agent'}-${ts}.md`);
+
+    // If there is also a systemPromptFile (user agent), merge both
+    let content = params.systemPrompt;
+    if (params.systemPromptFile) {
+      content = readFileSync(params.systemPromptFile, 'utf-8') + '\n\n' + content;
+    }
+
+    // If extraArgs has --append-system-prompt-file, merge that too
+    if (params.extraArgs) {
+      const fileIdx = params.extraArgs.indexOf('--append-system-prompt-file');
+      if (fileIdx !== -1 && params.extraArgs[fileIdx + 1]) {
+        content = content + '\n\n' + readFileSync(params.extraArgs[fileIdx + 1], 'utf-8');
+        // Remove the extra arg since we merged it
+        params.extraArgs.splice(fileIdx, 2);
+      }
+    }
+
+    writeFileSync(promptFile, content);
+    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
+    parts.push(flag, escapeShellArg(promptFile));
+  } else if (params.systemPromptFile) {
     const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
     parts.push(flag, escapeShellArg(params.systemPromptFile));
-  } else if (params.systemPrompt) {
-    const flag = params.promptMode === 'system' ? '--system-prompt' : '--append-system-prompt';
-    parts.push(flag, escapeShellArg(params.systemPrompt));
   }
 
   if (params.extraArgs) {
