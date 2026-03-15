@@ -74,6 +74,8 @@ export interface SpawnParams {
   promptMode?: 'system' | 'append';
   /** Model override (e.g., 'sonnet', 'opus'). Emits --model flag. */
   model?: string;
+  /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
+  initialPrompt?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -118,6 +120,7 @@ const spawnParamsSchema = z.object({
   systemPrompt: z.string().optional(),
   promptMode: z.enum(['system', 'append']).optional(),
   model: z.string().optional(),
+  initialPrompt: z.string().optional(),
 });
 
 /**
@@ -267,6 +270,11 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));
+  }
+
+  // Positional [prompt] arg must be last — becomes the first user message
+  if (params.initialPrompt) {
+    parts.push(escapeShellArg(params.initialPrompt));
   }
 
   return {
