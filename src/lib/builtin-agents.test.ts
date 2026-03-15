@@ -1,6 +1,7 @@
 /**
  * Tests for Built-in Agents registry.
  *
+ * Agents are discovered from plugins/genie/agents/ folder structure.
  * Run with: bun test src/lib/builtin-agents.test.ts
  */
 
@@ -12,18 +13,19 @@ import {
   getBuiltin,
   listCouncilNames,
   listRoleNames,
+  resolveBuiltinAgentPath,
 } from './builtin-agents.js';
 
 describe('BUILTIN_ROLES', () => {
-  test('has 11 built-in roles', () => {
-    expect(BUILTIN_ROLES.length).toBe(11);
+  test('has 10 built-in roles', () => {
+    expect(BUILTIN_ROLES.length).toBe(10);
   });
 
   test('all roles have required fields', () => {
     for (const role of BUILTIN_ROLES) {
       expect(role.name).toBeTruthy();
       expect(role.description).toBeTruthy();
-      expect(role.systemPrompt).toBeTruthy();
+      expect(role.agentPath).toBeTruthy();
       expect(role.category).toBe('role');
     }
   });
@@ -38,42 +40,40 @@ describe('BUILTIN_ROLES', () => {
     expect(names).toContain('engineer');
     expect(names).toContain('reviewer');
     expect(names).toContain('qa');
-    expect(names).toContain('debugger');
-    expect(names).toContain('verifier');
-    expect(names).toContain('investigator');
-    expect(names).toContain('reproducer');
-    expect(names).toContain('dreamer');
-    expect(names).toContain('critic');
-    expect(names).toContain('security');
-    expect(names).toContain('leader');
+    expect(names).toContain('fix');
+    expect(names).toContain('trace');
+    expect(names).toContain('docs');
+    expect(names).toContain('refactor');
+    expect(names).toContain('learn');
+    expect(names).toContain('team-lead');
+    expect(names).toContain('pm');
   });
 
-  test('leader role has append promptMode', () => {
-    const leader = getBuiltin('leader');
-    expect(leader).not.toBeNull();
-    expect(leader!.category).toBe('role');
-    expect(leader!.promptMode).toBe('append');
+  test('team-lead role has append promptMode', () => {
+    const teamLead = getBuiltin('team-lead');
+    expect(teamLead).not.toBeNull();
+    expect(teamLead!.category).toBe('role');
+    expect(teamLead!.promptMode).toBe('append');
   });
 });
 
 describe('BUILTIN_COUNCIL_MEMBERS', () => {
-  test('has 10 council members', () => {
-    expect(BUILTIN_COUNCIL_MEMBERS.length).toBe(10);
+  test('has 11 council members', () => {
+    expect(BUILTIN_COUNCIL_MEMBERS.length).toBe(11);
   });
 
   test('all council members have required fields', () => {
     for (const member of BUILTIN_COUNCIL_MEMBERS) {
       expect(member.name).toBeTruthy();
       expect(member.description).toBeTruthy();
-      expect(member.systemPrompt).toBeTruthy();
-      expect(member.model).toBeTruthy();
+      expect(member.agentPath).toBeTruthy();
       expect(member.category).toBe('council');
     }
   });
 
-  test('all council names start with council-', () => {
+  test('all council names start with council', () => {
     for (const member of BUILTIN_COUNCIL_MEMBERS) {
-      expect(member.name.startsWith('council-')).toBe(true);
+      expect(member.name.startsWith('council')).toBe(true);
     }
   });
 
@@ -84,31 +84,22 @@ describe('BUILTIN_COUNCIL_MEMBERS', () => {
 
   test('contains expected members', () => {
     const names = listCouncilNames();
-    expect(names).toContain('council-questioner');
-    expect(names).toContain('council-benchmarker');
-    expect(names).toContain('council-simplifier');
-    expect(names).toContain('council-sentinel');
-    expect(names).toContain('council-ergonomist');
-    expect(names).toContain('council-architect');
-    expect(names).toContain('council-operator');
-    expect(names).toContain('council-deployer');
-    expect(names).toContain('council-measurer');
-    expect(names).toContain('council-tracer');
+    expect(names).toContain('council');
+    expect(names).toContain('council--questioner');
+    expect(names).toContain('council--benchmarker');
+    expect(names).toContain('council--simplifier');
+    expect(names).toContain('council--sentinel');
+    expect(names).toContain('council--ergonomist');
+    expect(names).toContain('council--architect');
+    expect(names).toContain('council--operator');
+    expect(names).toContain('council--deployer');
+    expect(names).toContain('council--measurer');
+    expect(names).toContain('council--tracer');
   });
 
-  test('sentinel and architect use opus model', () => {
-    const sentinel = getBuiltin('council-sentinel');
-    const architect = getBuiltin('council-architect');
-    expect(sentinel?.model).toBe('opus');
-    expect(architect?.model).toBe('opus');
-  });
-
-  test('other council members use sonnet model', () => {
-    const sonnetMembers = BUILTIN_COUNCIL_MEMBERS.filter(
-      (m) => m.name !== 'council-sentinel' && m.name !== 'council-architect',
-    );
-    for (const member of sonnetMembers) {
-      expect(member.model).toBe('sonnet');
+  test('council members have haiku model', () => {
+    for (const member of BUILTIN_COUNCIL_MEMBERS) {
+      expect(member.model).toBe('haiku');
     }
   });
 });
@@ -133,13 +124,25 @@ describe('getBuiltin', () => {
   });
 
   test('finds a council member by name', () => {
-    const result = getBuiltin('council-architect');
+    const result = getBuiltin('council--architect');
     expect(result).not.toBeNull();
-    expect(result!.name).toBe('council-architect');
+    expect(result!.name).toBe('council--architect');
     expect(result!.category).toBe('council');
   });
 
   test('returns null for unknown name', () => {
     expect(getBuiltin('nonexistent')).toBeNull();
+  });
+});
+
+describe('resolveBuiltinAgentPath', () => {
+  test('returns AGENTS.md path for existing agent', () => {
+    const path = resolveBuiltinAgentPath('engineer');
+    expect(path).not.toBeNull();
+    expect(path).toContain('plugins/genie/agents/engineer/AGENTS.md');
+  });
+
+  test('returns null for unknown agent', () => {
+    expect(resolveBuiltinAgentPath('nonexistent')).toBeNull();
   });
 });

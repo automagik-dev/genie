@@ -139,10 +139,10 @@ describe('resolve', () => {
   });
 
   test('resolves built-in council member', async () => {
-    const resolved = await directory.resolve('council-architect');
+    const resolved = await directory.resolve('council--architect');
     expect(resolved).not.toBeNull();
     expect(resolved!.builtin).toBe(true);
-    expect(resolved!.entry.name).toBe('council-architect');
+    expect(resolved!.entry.name).toBe('council--architect');
   });
 
   test('user entry overrides built-in', async () => {
