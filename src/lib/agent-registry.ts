@@ -224,6 +224,14 @@ export async function findByTask(taskId: string): Promise<Agent | null> {
   return agents.find((a) => a.taskId === taskId) ?? null;
 }
 
+/** Clear the entire registry (all workers and templates). Used on session reset. */
+export async function clearAll(): Promise<void> {
+  const filePath = getRegistryFilePath();
+  await mkdir(dirname(filePath), { recursive: true });
+  const empty: AgentRegistry = { workers: {}, templates: {}, lastUpdated: new Date().toISOString() };
+  await writeFile(filePath, JSON.stringify(empty, null, 2));
+}
+
 /** Calculate elapsed time for an agent. */
 export function getElapsedTime(agent: Agent): { ms: number; formatted: string } {
   const startTime = new Date(agent.startedAt).getTime();

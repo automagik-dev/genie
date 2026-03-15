@@ -8,8 +8,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { clearAll as clearWorkerRegistry } from '../../lib/agent-registry.js';
+import { deleteAllNativeTeams } from '../../lib/claude-native-teams.js';
 import { buildClaudeCommand, getAgentsSystemPrompt, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
@@ -179,5 +181,100 @@ describe('sanitizeWindowName', () => {
     // missed the existing "foo-bar" window, and returned a name that
     // sanitized back to "foo-bar" — attaching to the wrong project.
     expect(sanitizeWindowName('foo.bar')).toBe(sanitizeWindowName('foo-bar'));
+  });
+});
+
+// ============================================================================
+// Reset cleanup tests — verifies handleReset's underlying functions
+//
+// handleReset() calls deleteAllNativeTeams() + clearWorkerRegistry().
+// These tests validate those functions directly since handleReset is private.
+// ============================================================================
+
+describe('deleteAllNativeTeams (reset cleanup)', () => {
+  const TEST_TEAMS_DIR = '/tmp/session-test-teams';
+  let originalEnv: string | undefined;
+
+  beforeEach(() => {
+    originalEnv = process.env.CLAUDE_CONFIG_DIR;
+    rmSync(TEST_TEAMS_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_TEAMS_DIR, { recursive: true });
+    // Point native teams module at our test directory
+    process.env.CLAUDE_CONFIG_DIR = TEST_TEAMS_DIR;
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      process.env.CLAUDE_CONFIG_DIR = undefined;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalEnv;
+    }
+    rmSync(TEST_TEAMS_DIR, { recursive: true, force: true });
+  });
+
+  test('deletes all team directories under teams/', async () => {
+    const teamsDir = join(TEST_TEAMS_DIR, 'teams');
+    mkdirSync(join(teamsDir, 'team-a'), { recursive: true });
+    mkdirSync(join(teamsDir, 'team-b'), { recursive: true });
+    mkdirSync(join(teamsDir, 'team-c'), { recursive: true });
+    writeFileSync(join(teamsDir, 'team-a', 'config.json'), '{}');
+    writeFileSync(join(teamsDir, 'team-b', 'config.json'), '{}');
+    writeFileSync(join(teamsDir, 'team-c', 'config.json'), '{}');
+
+    const deleted = await deleteAllNativeTeams();
+
+    expect(deleted).toBe(3);
+    expect(existsSync(join(teamsDir, 'team-a'))).toBe(false);
+    expect(existsSync(join(teamsDir, 'team-b'))).toBe(false);
+    expect(existsSync(join(teamsDir, 'team-c'))).toBe(false);
+  });
+
+  test('returns 0 when no teams directory exists', async () => {
+    // Don't create the teams/ subdirectory
+    const deleted = await deleteAllNativeTeams();
+    expect(deleted).toBe(0);
+  });
+
+  test('returns 0 when teams directory is empty', async () => {
+    mkdirSync(join(TEST_TEAMS_DIR, 'teams'), { recursive: true });
+    const deleted = await deleteAllNativeTeams();
+    expect(deleted).toBe(0);
+  });
+});
+
+describe('clearWorkerRegistry (reset cleanup)', () => {
+  let originalEnv: string | undefined;
+  const TEST_GENIE_DIR = '/tmp/session-test-genie-home';
+
+  beforeEach(() => {
+    originalEnv = process.env.GENIE_HOME;
+    rmSync(TEST_GENIE_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_GENIE_DIR, { recursive: true });
+    process.env.GENIE_HOME = TEST_GENIE_DIR;
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      process.env.GENIE_HOME = undefined;
+    } else {
+      process.env.GENIE_HOME = originalEnv;
+    }
+    rmSync(TEST_GENIE_DIR, { recursive: true, force: true });
+  });
+
+  test('clears workers.json to empty registry', async () => {
+    // Seed a non-empty registry
+    const registry = {
+      workers: { 'agent-1': { id: 'agent-1', state: 'idle' } },
+      templates: { 'tmpl-1': { id: 'tmpl-1' } },
+      lastUpdated: new Date().toISOString(),
+    };
+    writeFileSync(join(TEST_GENIE_DIR, 'workers.json'), JSON.stringify(registry));
+
+    await clearWorkerRegistry();
+
+    const content = JSON.parse(require('node:fs').readFileSync(join(TEST_GENIE_DIR, 'workers.json'), 'utf-8'));
+    expect(Object.keys(content.workers)).toHaveLength(0);
+    expect(Object.keys(content.templates)).toHaveLength(0);
   });
 });

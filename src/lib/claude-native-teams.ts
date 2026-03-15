@@ -319,6 +319,31 @@ export async function deleteNativeTeam(teamName: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Delete ALL native team directories under ~/.claude/teams/.
+ * Used by reset to ensure no ghost teammates survive.
+ */
+export async function deleteAllNativeTeams(): Promise<number> {
+  const base = teamsBaseDir();
+  if (!existsSync(base)) return 0;
+
+  let count = 0;
+  try {
+    const entries = await readdir(base);
+    for (const entry of entries) {
+      const entryPath = join(base, entry);
+      const s = await stat(entryPath);
+      if (s.isDirectory()) {
+        await rm(entryPath, { recursive: true, force: true });
+        count++;
+      }
+    }
+  } catch {
+    // teams dir missing or inaccessible
+  }
+  return count;
+}
+
 // ============================================================================
 // Session Discovery
 // ============================================================================

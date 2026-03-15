@@ -16,8 +16,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import { clearAll as clearWorkerRegistry } from '../lib/agent-registry.js';
 import {
-  deleteNativeTeam,
+  deleteAllNativeTeams,
   ensureNativeTeam,
   registerNativeMember,
   sanitizeTeamName,
@@ -254,13 +255,20 @@ async function deriveWindowName(sessionName: string, workspaceDir: string, team?
   return sanitizeWindowName(basename(workspaceDir));
 }
 
-async function handleReset(sessionName: string, windowName: string): Promise<void> {
+async function handleReset(sessionName: string, _windowName: string): Promise<void> {
   const existing = await tmux.findSessionByName(sessionName);
   if (existing) {
     console.log(`Resetting session "${sessionName}"...`);
     await tmux.killSession(sessionName);
   }
-  await deleteNativeTeam(windowName);
+  // Delete ALL native team directories — not just the current window's team.
+  // After killing the tmux session, all workers are dead, so all team state is stale.
+  const deleted = await deleteAllNativeTeams();
+  if (deleted > 0) {
+    console.log(`Cleaned up ${deleted} native team director${deleted === 1 ? 'y' : 'ies'}`);
+  }
+  // Clear worker registry since all workers are dead after session kill
+  await clearWorkerRegistry();
 }
 
 function attachToWindow(sessionName: string, windowName: string): void {
