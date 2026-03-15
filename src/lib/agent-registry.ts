@@ -59,7 +59,7 @@ export interface Agent {
   windowName?: string;
   /** tmux window ID (e.g., "@4") — used for session-qualified cleanup. */
   windowId?: string;
-  /** Agent role (e.g., "implementor", "tester", "main", "tests", "review"). */
+  /** Agent role (e.g., "engineer", "reviewer", "qa", "fix"). */
   role?: string;
   /** Custom agent name when multiple agents on same task. */
   customName?: string;

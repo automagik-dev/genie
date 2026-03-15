@@ -132,10 +132,10 @@ describe('resolve', () => {
   });
 
   test('resolves built-in role', async () => {
-    const resolved = await directory.resolve('implementor');
+    const resolved = await directory.resolve('engineer');
     expect(resolved).not.toBeNull();
     expect(resolved!.builtin).toBe(true);
-    expect(resolved!.entry.name).toBe('implementor');
+    expect(resolved!.entry.name).toBe('engineer');
   });
 
   test('resolves built-in council member', async () => {
@@ -146,8 +146,8 @@ describe('resolve', () => {
   });
 
   test('user entry overrides built-in', async () => {
-    await directory.add({ name: 'implementor', dir: agentDir, promptMode: 'system' });
-    const resolved = await directory.resolve('implementor');
+    await directory.add({ name: 'engineer', dir: agentDir, promptMode: 'system' });
+    const resolved = await directory.resolve('engineer');
     expect(resolved).not.toBeNull();
     expect(resolved!.builtin).toBe(false);
     expect(resolved!.entry.promptMode).toBe('system');

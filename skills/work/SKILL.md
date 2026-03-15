@@ -5,7 +5,7 @@ description: "Execute an approved wish plan — orchestrate subagents per task g
 
 # /work — Execute Wish Plan
 
-The implementor's skill, invoked via `genie work <agent> <ref>` dispatch. Orchestrate execution of an approved wish from `.genie/wishes/<slug>/WISH.md`. The orchestrator never executes directly — always dispatch via subagent.
+The engineer's skill, invoked via `genie work <agent> <ref>` dispatch. Orchestrate execution of an approved wish from `.genie/wishes/<slug>/WISH.md`. The orchestrator never executes directly — always dispatch via subagent.
 
 ## Context Injection
 
@@ -38,10 +38,10 @@ If context is injected, use it directly. Do not re-parse the wish for informatio
 All dispatch uses the `genie spawn` command. The orchestrator spawns subagents for each role — never executes work directly.
 
 ```bash
-# Spawn an implementor for the task
-genie spawn implementor
+# Spawn an engineer for the task
+genie spawn engineer
 
-# Spawn a reviewer (always separate from implementor)
+# Spawn a reviewer (always separate from engineer)
 genie spawn reviewer
 
 # Spawn a fixer for FIX-FIRST gaps
@@ -50,8 +50,8 @@ genie spawn fixer
 
 | Need | Method |
 |------|--------|
-| Implementation task | `genie spawn implementor` |
-| Review task | `genie spawn reviewer` (never same agent as implementor) |
+| Implementation task | `genie spawn engineer` |
+| Review task | `genie spawn reviewer` (never same agent as engineer) |
 | Fix task | `genie spawn fixer` (separate from reviewer) |
 | Quick validation | `Bash` tool directly — no subagent needed |
 

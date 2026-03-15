@@ -9,7 +9,7 @@
  * tmux window, this is a no-op.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { sanitizeWindowName } from '../genie-commands/session.js';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
@@ -28,12 +28,12 @@ interface EnsureTeamLeadResult {
 }
 
 /**
- * Read AGENTS.md from the working directory if it exists.
+ * Get AGENTS.md file path from the working directory if it exists.
  */
-function getSystemPrompt(workingDir: string): string | null {
+function getSystemPromptFile(workingDir: string): string | null {
   const agentsPath = join(workingDir, 'AGENTS.md');
   if (existsSync(agentsPath)) {
-    return readFileSync(agentsPath, 'utf-8');
+    return agentsPath;
   }
   return null;
 }
@@ -110,11 +110,11 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
 
   if (teamWindow.created) {
     // Launch Claude Code in the new window
-    const systemPrompt = getSystemPrompt(workingDir);
+    const systemPromptFile = getSystemPromptFile(workingDir);
     const target = `${session}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const cmd = buildTeamLeadCommand(teamName, { systemPrompt: systemPrompt ?? undefined });
+    const cmd = buildTeamLeadCommand(teamName, { systemPromptFile: systemPromptFile ?? undefined });
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   }
 

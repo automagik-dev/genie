@@ -17,7 +17,7 @@ Pick SHIP-ready wishes, build a dependency-ordered execution plan, spawn paralle
 3. **Human confirms** DREAM.md (may edit before run).
 4. **Phase 1 — Execute:** dispatch workers per wish via `genie work`, collect outcomes.
 5. **Phase 2 — Review + PR:** review each group, create PRs, fix valid issues, CI green.
-6. **Phase 3 — Merge + QA:** merge to dev, spawn tester, QA loop until criteria proven.
+6. **Phase 3 — Merge + QA:** merge to dev, spawn qa, QA loop until criteria proven.
 7. **Phase 4 — Report:** write DREAM-REPORT.md as the wake-up artifact.
 
 ## Picker
@@ -66,10 +66,10 @@ create dream team → hire agents → execute groups → review → PR to dev �
 genie team create dream-<date>
 
 # Hire workers
-genie team hire implementor    # one per wish
+genie team hire engineer       # one per wish
 genie team hire reviewer       # one per PR
 genie team hire fixer          # for FIX-FIRST gaps
-genie team hire tester         # for QA loop on dev
+genie team hire qa             # for QA loop on dev
 ```
 
 ## Phase 1: Execute
@@ -116,7 +116,7 @@ Each worker executes independently:
 **Trigger:** all PRs reviewed and marked SHIP.
 
 1. Merge PRs to dev in `merge_order`.
-2. Spawn tester on dev branch: `genie spawn tester`.
+2. Spawn qa on dev branch: `genie spawn qa`.
 3. QA loop: test against wish acceptance criteria → failures get `/report` → `/trace` → `/fix` → retest.
 4. Each fix creates a new PR to dev, goes through review, merge, retest.
 5. Continue until all wish criteria are proven or blocked.
