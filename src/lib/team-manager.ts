@@ -426,6 +426,20 @@ export async function listMembers(teamName: string): Promise<string[] | null> {
   return config.members;
 }
 
+/** Kill all running workers for a team's members. Best-effort — continues on failure. */
+export async function killTeamMembers(teamName: string): Promise<void> {
+  const config = await getTeam(teamName);
+  if (!config) return;
+
+  for (const member of config.members) {
+    try {
+      await killWorkersByName(member);
+    } catch {
+      // Best-effort — continue with other members
+    }
+  }
+}
+
 /** Set team lifecycle status. */
 export async function setTeamStatus(teamName: string, status: TeamStatus): Promise<void> {
   const filePath = teamFilePath(teamName);

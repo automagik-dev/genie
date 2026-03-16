@@ -49,11 +49,11 @@ describe('BUILTIN_ROLES', () => {
     expect(names).toContain('pm');
   });
 
-  test('team-lead role has append promptMode', () => {
+  test('team-lead role has system promptMode', () => {
     const teamLead = getBuiltin('team-lead');
     expect(teamLead).not.toBeNull();
     expect(teamLead!.category).toBe('role');
-    expect(teamLead!.promptMode).toBe('append');
+    expect(teamLead!.promptMode).toBe('system');
   });
 });
 
