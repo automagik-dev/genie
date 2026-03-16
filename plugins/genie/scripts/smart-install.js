@@ -230,11 +230,30 @@ function getPluginVersion() {
 }
 
 /**
+ * Read updateChannel from ~/.genie/config.json.
+ * Returns 'latest' or 'next'.
+ */
+function getUpdateChannel() {
+  try {
+    const configPath = join(GENIE_DIR, 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      return config.updateChannel || 'latest';
+    }
+  } catch {
+    // Ignore
+  }
+  return 'latest';
+}
+
+/**
  * Check if genie CLI needs install or upgrade via bun global
  */
 function genieCliNeedsInstall() {
   const installed = getGenieVersion();
   if (!installed) return true;
+  // Never overwrite dev builds — dev users update manually via genie update --next
+  if (getUpdateChannel() === 'next') return false;
   const pluginVersion = getPluginVersion();
   if (!pluginVersion) return false;
   return installed !== pluginVersion;
@@ -309,7 +328,7 @@ function createDefaultConfig() {
       version: 2,
       promptMode: 'append',
       session: { name: 'genie', defaultWindow: 'shell', autoCreate: true },
-      terminal: { execTimeout: 120000, readLines: 100, worktreeBase: '.worktrees' },
+      terminal: { execTimeout: 120000, readLines: 100 },
       logging: { tmuxDebug: false, verbose: false },
       shell: { preference: 'auto' },
       shortcuts: { tmuxInstalled: false, shellInstalled: false },
