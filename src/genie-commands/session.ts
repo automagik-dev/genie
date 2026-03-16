@@ -258,9 +258,9 @@ async function handleReset(sessionName: string, windowName: string): Promise<voi
   const existing = await tmux.findSessionByName(sessionName);
   if (existing) {
     // Collect all window names BEFORE killing the session
-    const windows = await tmux.listWindows(sessionName);
+    const windows = await tmux.listWindows(existing.id);
     console.log(`Resetting session "${sessionName}"...`);
-    await tmux.killSession(sessionName);
+    await tmux.killSession(existing.id);
     // Delete native team dirs for ALL windows in the session
     await Promise.all(windows.map((w) => deleteNativeTeam(w.name)));
   } else {
