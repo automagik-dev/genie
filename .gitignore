@@ -47,9 +47,16 @@ yarn-error.log*
 
 # Claude Code worktrees
 .claude/worktrees/
+.worktrees/
 
 # Worker registry (contains session IDs)
 .genie/workers.json
+
+# Local genie state (not part of the package)
+.genie/agents.json
+.genie/teams/
+.genie/brainstorms/
+.genie/wishes/
 
 # Team runtime state
 .genie/mailbox/
