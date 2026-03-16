@@ -88,6 +88,34 @@ export function getProjectRoot(): string {
   }
 }
 
+/**
+ * Detect the main repository root when inside a git worktree.
+ * Worktrees have their own toplevel but share .git with the main repo.
+ * Returns null if not inside a worktree (i.e., already in the main repo).
+ */
+function getMainRepoRoot(): string | null {
+  try {
+    const commonDir = execSync('git rev-parse --git-common-dir', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const toplevel = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    // --git-common-dir returns the shared .git dir (absolute or relative).
+    // For worktrees it points to the main repo's .git, for the main repo it's just ".git".
+    const { resolve: resolvePath } = require('node:path');
+    const absCommon = resolvePath(commonDir);
+    const mainRoot = dirname(absCommon);
+    // If mainRoot equals toplevel, we're in the main repo — no fallback needed.
+    if (mainRoot === toplevel) return null;
+    return mainRoot;
+  } catch {
+    return null;
+  }
+}
+
 function getProjectDirectoryPath(): string {
   return join(getProjectRoot(), '.genie', 'agents.json');
 }
@@ -197,11 +225,22 @@ export async function rm(name: string, options?: ScopeOptions): Promise<boolean>
  * Resolution order: project → global → built-in roles → built-in council.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check project directory
+  // 1. Check project directory (worktree or main repo)
   const projectData = await loadDirectoryFrom(getProjectDirectoryPath());
   const projectEntry = projectData.entries[name];
   if (projectEntry) {
     return { entry: projectEntry, builtin: false };
+  }
+
+  // 1b. If inside a worktree, also check the main repo's agents.json
+  const mainRoot = getMainRepoRoot();
+  if (mainRoot) {
+    const mainDirPath = join(mainRoot, '.genie', 'agents.json');
+    const mainData = await loadDirectoryFrom(mainDirPath);
+    const mainEntry = mainData.entries[name];
+    if (mainEntry) {
+      return { entry: mainEntry, builtin: false };
+    }
   }
 
   // 2. Check global directory
@@ -235,11 +274,24 @@ export async function ls(): Promise<ScopedDirectoryEntry[]> {
   const result: ScopedDirectoryEntry[] = [];
   const seen = new Set<string>();
 
-  // Project entries
+  // Project entries (worktree or main repo)
   const projectData = await loadDirectoryFrom(getProjectDirectoryPath());
   for (const entry of Object.values(projectData.entries)) {
     result.push({ ...entry, scope: 'project' });
     seen.add(entry.name);
+  }
+
+  // Main repo entries (when inside a worktree, check the parent repo too)
+  const mainRoot = getMainRepoRoot();
+  if (mainRoot) {
+    const mainDirPath = join(mainRoot, '.genie', 'agents.json');
+    const mainData = await loadDirectoryFrom(mainDirPath);
+    for (const entry of Object.values(mainData.entries)) {
+      if (!seen.has(entry.name)) {
+        result.push({ ...entry, scope: 'project' });
+        seen.add(entry.name);
+      }
+    }
   }
 
   // Global entries (skip names already in project)
