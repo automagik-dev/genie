@@ -145,6 +145,13 @@ async function detectInstallationType(): Promise<InstallationType> {
 }
 
 async function updateViaBun(channel: string): Promise<void> {
+  // Delete global lockfile — it pins old versions even with --force --no-cache
+  try {
+    require('node:fs').unlinkSync(join(homedir(), '.bun', 'install', 'global', 'bun.lock'));
+  } catch {
+    /* may not exist */
+  }
+
   log(`Updating via bun (channel: ${channel})...`);
   const result = await runCommand('bun', ['add', '-g', '--force', '--no-cache', `@automagik/genie@${channel}`]);
   if (!result.success) {
