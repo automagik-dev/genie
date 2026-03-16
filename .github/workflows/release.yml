@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     name: Create Release
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    if: "!startsWith(github.event.head_commit.message, '[skip ci]')"
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
