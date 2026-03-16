@@ -122,14 +122,14 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   });
 
   const worktreeBase = await input({
-    message: 'Worktree base directory:',
-    default: config.terminal.worktreeBase,
+    message: 'Worktree base directory (leave empty for ~/.genie/worktrees/<project>/):',
+    default: config.terminal.worktreeBase ?? '',
   });
 
   config.terminal = {
     execTimeout: Number.parseInt(timeoutStr, 10),
     readLines: Number.parseInt(linesStr, 10),
-    worktreeBase,
+    ...(worktreeBase ? { worktreeBase } : {}),
   };
 
   return config;

@@ -18,7 +18,7 @@ const SessionConfigSchema = z.object({
 export const TerminalConfigSchema = z.object({
   execTimeout: z.number().default(120000),
   readLines: z.number().default(100),
-  worktreeBase: z.string().default('.worktrees'),
+  worktreeBase: z.string().optional(),
 });
 
 // Logging configuration

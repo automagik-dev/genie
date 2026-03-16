@@ -42,8 +42,8 @@ yarn-error.log*
 .cache/
 .temp/
 
-# Worker worktrees
-.genie/worktrees/
+# Legacy worktrees (now default to ~/.genie/worktrees/)
+.worktrees/
 
 # Claude Code worktrees
 .claude/worktrees/
