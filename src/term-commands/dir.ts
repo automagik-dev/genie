@@ -26,6 +26,7 @@ export function registerDirNamespace(program: Command): void {
     .option('--prompt-mode <mode>', 'Prompt mode: append or system', 'append')
     .option('--model <model>', 'Default model (sonnet, opus, codex)')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
+    .option('--global', 'Write to global directory instead of project')
     .action(
       async (
         name: string,
@@ -35,19 +36,24 @@ export function registerDirNamespace(program: Command): void {
           promptMode: string;
           model?: string;
           roles?: string[];
+          global?: boolean;
         },
       ) => {
         try {
           const promptMode = validatePromptMode(options.promptMode);
-          const entry = await directory.add({
-            name,
-            dir: resolvePath(options.dir),
-            repo: options.repo ? resolvePath(options.repo) : undefined,
-            promptMode,
-            model: options.model,
-            roles: options.roles,
-          });
-          console.log(`Agent "${entry.name}" registered.`);
+          const entry = await directory.add(
+            {
+              name,
+              dir: resolvePath(options.dir),
+              repo: options.repo ? resolvePath(options.repo) : undefined,
+              promptMode,
+              model: options.model,
+              roles: options.roles,
+            },
+            { global: options.global },
+          );
+          const scope = options.global ? 'global' : 'project';
+          console.log(`Agent "${entry.name}" registered (${scope}).`);
           console.log(`  Dir: ${contractPath(entry.dir)}`);
           if (entry.repo) console.log(`  Repo: ${contractPath(entry.repo)}`);
           console.log(`  Prompt mode: ${entry.promptMode}`);
@@ -65,11 +71,13 @@ export function registerDirNamespace(program: Command): void {
   dir
     .command('rm <name>')
     .description('Remove an agent from the directory')
-    .action(async (name: string) => {
+    .option('--global', 'Remove from global directory instead of project')
+    .action(async (name: string, options: { global?: boolean }) => {
       try {
-        const removed = await directory.rm(name);
+        const removed = await directory.rm(name, { global: options.global });
         if (removed) {
-          console.log(`Agent "${name}" removed from directory.`);
+          const scope = options.global ? 'global' : 'project';
+          console.log(`Agent "${name}" removed from ${scope} directory.`);
         } else {
           console.error(`Agent "${name}" not found in directory.`);
           process.exit(1);
@@ -112,6 +120,7 @@ export function registerDirNamespace(program: Command): void {
     .option('--prompt-mode <mode>', 'Prompt mode: append or system')
     .option('--model <model>', 'Default model')
     .option('--roles <roles...>', 'Built-in roles this agent can orchestrate')
+    .option('--global', 'Edit in global directory instead of project')
     .action(async (name: string, options: EditOptions) => {
       try {
         await handleEdit(name, options);
@@ -129,6 +138,7 @@ interface EditOptions {
   promptMode?: string;
   model?: string;
   roles?: string[];
+  global?: boolean;
 }
 
 async function handleEdit(name: string, options: EditOptions): Promise<void> {
@@ -144,8 +154,9 @@ async function handleEdit(name: string, options: EditOptions): Promise<void> {
     process.exit(1);
   }
 
-  const entry = await directory.edit(name, updates);
-  console.log(`Agent "${name}" updated.`);
+  const entry = await directory.edit(name, updates, { global: options.global });
+  const scope = options.global ? 'global' : 'project';
+  console.log(`Agent "${name}" updated (${scope}).`);
   printEntry(entry);
 }
 
@@ -214,28 +225,41 @@ async function listEntries(json?: boolean, includeBuiltins?: boolean): Promise<v
   }
 }
 
-function listEntriesJson(entries: directory.DirectoryEntry[], includeBuiltins?: boolean): void {
-  const result: Record<string, unknown>[] = entries.map((e) => ({ ...e, builtin: false }));
+function listEntriesJson(entries: directory.ScopedDirectoryEntry[], includeBuiltins?: boolean): void {
+  const result: Record<string, unknown>[] = entries.map((e) => ({
+    ...e,
+    builtin: false,
+  }));
   if (includeBuiltins) {
     for (const b of ALL_BUILTINS) {
-      result.push({ name: b.name, description: b.description, model: b.model, category: b.category, builtin: true });
+      result.push({
+        name: b.name,
+        description: b.description,
+        model: b.model,
+        category: b.category,
+        scope: 'built-in',
+        builtin: true,
+      });
     }
   }
   console.log(JSON.stringify(result, null, 2));
 }
 
-function printRegisteredTable(entries: directory.DirectoryEntry[]): void {
+function printRegisteredTable(entries: directory.ScopedDirectoryEntry[]): void {
   const nameW = 22;
-  const dirW = 35;
+  const scopeW = 10;
+  const dirW = 30;
   const modeW = 8;
   const modelW = 8;
 
   console.log('');
   console.log('REGISTERED AGENTS');
-  console.log('-'.repeat(80));
-  console.log(`  ${'NAME'.padEnd(nameW)}${'DIR'.padEnd(dirW)}${'MODE'.padEnd(modeW)}${'MODEL'.padEnd(modelW)}ROLES`);
+  console.log('-'.repeat(85));
   console.log(
-    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(dirW - 2)}  ${'-'.repeat(modeW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(15)}`,
+    `  ${'NAME'.padEnd(nameW)}${'SCOPE'.padEnd(scopeW)}${'DIR'.padEnd(dirW)}${'MODE'.padEnd(modeW)}${'MODEL'.padEnd(modelW)}ROLES`,
+  );
+  console.log(
+    `  ${'-'.repeat(nameW - 2)}  ${'-'.repeat(scopeW - 2)}  ${'-'.repeat(dirW - 2)}  ${'-'.repeat(modeW - 2)}  ${'-'.repeat(modelW - 2)}  ${'-'.repeat(15)}`,
   );
 
   for (const entry of entries) {
@@ -243,7 +267,7 @@ function printRegisteredTable(entries: directory.DirectoryEntry[]): void {
     const truncDir = dir.length > dirW - 2 ? `${dir.slice(0, dirW - 5)}...` : dir;
     const roles = entry.roles?.join(', ') || '-';
     console.log(
-      `  ${entry.name.padEnd(nameW)}${truncDir.padEnd(dirW)}${entry.promptMode.padEnd(modeW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
+      `  ${entry.name.padEnd(nameW)}${entry.scope.padEnd(scopeW)}${truncDir.padEnd(dirW)}${entry.promptMode.padEnd(modeW)}${(entry.model || '-').padEnd(modelW)}${roles}`,
     );
   }
   console.log('');
