@@ -157,11 +157,12 @@ export function registerTeamNamespace(program: Command): void {
   // team done
   team
     .command('done <name>')
-    .description('Mark a team as done')
+    .description('Mark a team as done and kill all members')
     .action(async (name: string) => {
       try {
         await teamManager.setTeamStatus(name, 'done');
-        console.log(`Team "${name}" marked as done.`);
+        await teamManager.killTeamMembers(name);
+        console.log(`Team "${name}" marked as done. All members killed.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -172,11 +173,12 @@ export function registerTeamNamespace(program: Command): void {
   // team blocked
   team
     .command('blocked <name>')
-    .description('Mark a team as blocked')
+    .description('Mark a team as blocked and kill all members')
     .action(async (name: string) => {
       try {
         await teamManager.setTeamStatus(name, 'blocked');
-        console.log(`Team "${name}" marked as blocked.`);
+        await teamManager.killTeamMembers(name);
+        console.log(`Team "${name}" marked as blocked. All members killed.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
