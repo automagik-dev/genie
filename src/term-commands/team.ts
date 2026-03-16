@@ -9,6 +9,9 @@
  *   genie team disband <name>
  */
 
+import { existsSync } from 'node:fs';
+import { copyFile, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
 import * as teamManager from '../lib/team-manager.js';
@@ -22,14 +25,29 @@ export function registerTeamNamespace(program: Command): void {
     .description('Create a new team with a git worktree')
     .requiredOption('--repo <path>', 'Path to the git repository')
     .option('--branch <branch>', 'Base branch to create from', 'dev')
-    .action(async (name: string, options: { repo: string; branch: string }) => {
+    .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
+    .action(async (name: string, options: { repo: string; branch: string; wish?: string }) => {
       try {
+        // Validate wish exists before creating team
+        if (options.wish) {
+          const resolvedRepo = resolve(options.repo);
+          const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
+          if (!existsSync(wishPath)) {
+            console.error(`Error: Wish not found at ${wishPath}`);
+            process.exit(1);
+          }
+        }
+
         const config = await teamManager.createTeam(name, options.repo, options.branch);
         console.log(`Team "${config.name}" created.`);
         console.log(`  Worktree: ${config.worktreePath}`);
         console.log(`  Branch: ${config.name} (from ${config.baseBranch})`);
         if (config.nativeTeamsEnabled) {
           console.log('  Native teams: enabled');
+        }
+
+        if (options.wish) {
+          await spawnLeaderWithWish(config, options.wish, options.repo);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -135,6 +153,80 @@ export function registerTeamNamespace(program: Command): void {
         process.exit(1);
       }
     });
+
+  // team done
+  team
+    .command('done <name>')
+    .description('Mark a team as done')
+    .action(async (name: string) => {
+      try {
+        await teamManager.setTeamStatus(name, 'done');
+        console.log(`Team "${name}" marked as done.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+
+  // team blocked
+  team
+    .command('blocked <name>')
+    .description('Mark a team as blocked')
+    .action(async (name: string) => {
+      try {
+        await teamManager.setTeamStatus(name, 'blocked');
+        console.log(`Team "${name}" marked as blocked.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Error: ${message}`);
+        process.exit(1);
+      }
+    });
+}
+
+// ============================================================================
+// Wish-based Leader Spawn
+// ============================================================================
+
+/**
+ * Copy wish into worktree, hire leader, build context, and auto-spawn.
+ */
+async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: string): Promise<void> {
+  const { handleWorkerSpawn } = await import('./agents.js');
+  const resolvedRepo = resolve(repoPath);
+
+  // Locate WISH.md in source repo
+  const sourceWishPath = join(resolvedRepo, '.genie', 'wishes', slug, 'WISH.md');
+  if (!existsSync(sourceWishPath)) {
+    console.error(`Error: Wish not found at ${sourceWishPath}`);
+    process.exit(1);
+  }
+
+  // Copy wish into worktree (.genie/ is gitignored so worktree won't have it)
+  const destWishDir = join(config.worktreePath, '.genie', 'wishes', slug);
+  await mkdir(destWishDir, { recursive: true });
+  const destWishPath = join(destWishDir, 'WISH.md');
+  await copyFile(sourceWishPath, destWishPath);
+  console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
+
+  // Hire the standard team: team-lead + engineer + reviewer + qa + fix
+  const standardTeam = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  for (const role of standardTeam) {
+    await teamManager.hireAgent(config.name, role);
+  }
+  console.log(`  Team: hired ${standardTeam.join(', ')}`);
+
+  // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
+  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  await handleWorkerSpawn('team-lead', {
+    provider: 'claude',
+    team: config.name,
+    cwd: config.worktreePath,
+    initialPrompt: kickoffPrompt,
+  });
+  console.log('  Leader: spawned and working');
 }
 
 // ============================================================================
@@ -204,7 +296,8 @@ async function printTeams(json?: boolean): Promise<void> {
 
 /** Print a single team summary line. */
 function printTeamSummary(t: TeamConfig): void {
-  console.log(`  ${t.name}`);
+  const status = t.status ?? 'in_progress';
+  console.log(`  ${t.name}  [${status}]`);
   console.log(`    Repo: ${t.repo}`);
   console.log(`    Branch: ${t.name} (from ${t.baseBranch})`);
   console.log(`    Worktree: ${t.worktreePath}`);

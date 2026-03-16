@@ -7,6 +7,20 @@ description: "Obsidian-style knowledge vault — store, search, and retrieve age
 
 Persistent long-term memory for agents. Knowledge is stored in `brain/`, searched before answering, and written back every session.
 
+## Brain vs Memory
+
+These are **different tools for different purposes**:
+
+| | **Brain** (this skill) | **Memory** (Claude native) |
+|---|---|---|
+| **What** | Context graph — entities, relationships, domain knowledge | Behavioral learnings — feedback, decisions, user preferences |
+| **Tool** | `notesmd-cli` (Obsidian-style vault) | `.claude/memory/` files with YAML frontmatter |
+| **When** | Domain intel, playbooks, company/person context, session logs | Corrections, conventions, project rules, user profile |
+| **Updated by** | `/brain` (this skill) | `/learn` skill, auto memory system |
+| **Format** | Markdown notes in `brain/` directory | Typed memory files (user, feedback, project, reference) |
+
+**Rule of thumb:** If it's *knowledge about the world* → brain. If it's *how the agent should behave* → memory.
+
 ## When to Use
 - Agent needs to recall prior session context, decisions, or intel
 - New intel (person, company, deal) is discovered mid-session
@@ -59,18 +73,36 @@ notesmd-cli print "Playbooks/<playbook-name>"
 | `notesmd-cli list` | Browse full vault structure |
 | `notesmd-cli set-default --vault <path>` | Configure vault path (one-time setup) |
 
-## Installation
+## Installation (Auto-Detect)
+
+On first use, check if `notesmd-cli` is available:
 
 ```bash
-# Automated (recommended)
-bash skills/brain/scripts/install-notesmd.sh --vault ./brain
+command -v notesmd-cli >/dev/null 2>&1 && echo "installed" || echo "missing"
+```
 
-# Manual
+**If missing**, offer to install from https://github.com/Yakitrak/notesmd-cli:
+
+```bash
+# macOS (Homebrew)
 brew install yakitrak/yakitrak/notesmd-cli
+
+# Linux / manual
+# Download the latest release binary from:
+# https://github.com/Yakitrak/notesmd-cli/releases
+# Place in /usr/local/bin/notesmd-cli and chmod +x
+
+# Or use the bundled install script (if available)
+bash skills/brain/scripts/install-notesmd.sh --vault ./brain
+```
+
+After install, configure the vault:
+
+```bash
 notesmd-cli set-default --vault ./brain/
 ```
 
-If Homebrew is unavailable: download from https://github.com/Yakitrak/notesmd-cli/releases and place in `/usr/local/bin/notesmd-cli`.
+If the user declines installation, skip brain operations gracefully and note that `/brain` requires `notesmd-cli`.
 
 ## Provisioning a New Agent Brain
 

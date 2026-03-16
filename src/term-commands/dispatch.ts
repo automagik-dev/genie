@@ -146,8 +146,8 @@ export function parseWishGroups(content: string): GroupDefinition[] {
   const groups: GroupDefinition[] = [];
   const groupPattern = /^### Group (\d+):/gim;
 
-  let match: RegExpExecArray | null;
-  while ((match = groupPattern.exec(content)) !== null) {
+  let match: RegExpExecArray | null = groupPattern.exec(content);
+  while (match !== null) {
     const name = match[1];
     const start = match.index;
 
@@ -170,6 +170,7 @@ export function parseWishGroups(content: string): GroupDefinition[] {
     }
 
     groups.push({ name, dependsOn });
+    match = groupPattern.exec(content);
   }
 
   return groups;

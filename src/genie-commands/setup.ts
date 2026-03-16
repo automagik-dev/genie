@@ -122,14 +122,14 @@ async function configureTerminal(config: GenieConfig, quick: boolean): Promise<G
   });
 
   const worktreeBase = await input({
-    message: 'Worktree base directory:',
-    default: config.terminal.worktreeBase,
+    message: 'Worktree base directory (leave empty for ~/.genie/worktrees/<project>/):',
+    default: config.terminal.worktreeBase ?? '',
   });
 
   config.terminal = {
     execTimeout: Number.parseInt(timeoutStr, 10),
     readLines: Number.parseInt(linesStr, 10),
-    worktreeBase,
+    ...(worktreeBase ? { worktreeBase } : {}),
   };
 
   return config;
@@ -275,8 +275,8 @@ async function configurePromptMode(config: GenieConfig, quick: boolean): Promise
     return config;
   }
 
-  console.log('  append  — Uses --append-system-prompt (preserves Claude Code default system prompt)');
-  console.log('  system  — Uses --system-prompt (replaces Claude Code default system prompt)');
+  console.log('  append  — Uses --append-system-prompt-file (preserves Claude Code default system prompt)');
+  console.log('  system  — Uses --system-prompt-file (replaces Claude Code default system prompt)');
   console.log();
 
   const promptMode = await select({
