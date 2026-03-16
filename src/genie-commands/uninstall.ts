@@ -122,7 +122,8 @@ export async function uninstallCommand(): Promise<void> {
 
   console.log('\x1b[2mThis will remove:\x1b[0m');
   if (hasHookScript) console.log('  \x1b[31m-\x1b[0m Hook script (~/.claude/hooks/genie-bash-hook.sh)');
-  if (hasOrchestrationRules) console.log('  \x1b[31m-\x1b[0m Orchestration rules (~/.claude/rules/genie-orchestration.md)');
+  if (hasOrchestrationRules)
+    console.log('  \x1b[31m-\x1b[0m Orchestration rules (~/.claude/rules/genie-orchestration.md)');
   if (hasGenieDir) console.log(`  \x1b[31m-\x1b[0m Genie directory (${contractPath(genieDir)})`);
   if (existingSymlinks.length > 0)
     console.log(`  \x1b[31m-\x1b[0m Symlinks from ~/.local/bin: ${existingSymlinks.join(', ')}`);
