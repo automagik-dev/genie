@@ -1,6 +1,6 @@
 {
   "name": "@automagik/genie",
-  "version": "3.260316.13",
+  "version": "3.260316.14",
   "description": "Collaborative terminal toolkit for human + AI workflows",
   "type": "module",
   "bin": {
@@ -46,7 +46,9 @@
     "url": "git+https://github.com/automagik-dev/genie.git"
   },
   "openclaw": {
-    "extensions": ["./plugins/genie/index.ts"]
+    "extensions": [
+      "./plugins/genie/index.ts"
+    ]
   },
   "engines": {
     "bun": ">=1.3.10"
@@ -54,5 +56,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "trustedDependencies": ["@biomejs/biome"]
+  "trustedDependencies": [
+    "@biomejs/biome"
+  ]
 }

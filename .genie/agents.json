@@ -1,0 +1,23 @@
+{
+  "entries": {
+    "engineer": {
+      "name": "engineer",
+      "dir": "/home/genie/agents/namastexlabs/genie/genie-engineer",
+      "promptMode": "append",
+      "registeredAt": "2026-03-16T04:38:25.757Z"
+    },
+    "qa": {
+      "name": "qa",
+      "dir": "/home/genie/agents/namastexlabs/genie/genie-qa-engineer",
+      "promptMode": "append",
+      "registeredAt": "2026-03-16T04:38:25.856Z"
+    },
+    "pm": {
+      "name": "pm",
+      "dir": "/home/genie/agents/namastexlabs/genie/genie-pm",
+      "promptMode": "append",
+      "registeredAt": "2026-03-16T04:40:59.696Z"
+    }
+  },
+  "lastUpdated": "2026-03-16T04:40:59.707Z"
+}
