@@ -39,9 +39,12 @@ jobs:
 
           **Process:**
           - This PR is automatically created and kept open
-          - Agent monitors CI status and fixes issues
           - Human reviews and merges when ready
           - Label `ready-to-merge` added when all checks pass
+
+          > **IMPORTANT: Merge with "Create a merge commit" — NEVER squash.**
+          > Squash merging breaks history sync between dev and main,
+          > causing the next rolling PR to show all commits again.
 
           > Human approval required for merge to production.
           BODY
