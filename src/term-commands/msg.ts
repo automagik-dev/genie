@@ -202,6 +202,18 @@ function printChatMessages(teamName: string, messages: teamChatTypes.ChatMessage
   console.log('');
 }
 
+/** Resolve team name from explicit option, agent lookup, or env var. Exits on failure. */
+async function resolveTeamName(explicit: string | undefined, repoPath: string, from: string): Promise<string> {
+  if (explicit) return explicit;
+  const team = await findAgentTeam(repoPath, from);
+  const name = team?.name ?? process.env.GENIE_TEAM;
+  if (!name) {
+    console.error('Error: Could not auto-detect team. Use --team <name>.');
+    process.exit(1);
+  }
+  return name;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -329,36 +341,18 @@ export function registerSendInboxCommands(program: Command): void {
       try {
         const repoPath = process.cwd();
         const from = options.from ?? (await detectSenderIdentity());
-
-        // Determine team name
-        let teamName = options.team;
-        if (!teamName) {
-          const team = await findAgentTeam(repoPath, from);
-          if (team) {
-            teamName = team.name;
-          } else {
-            teamName = process.env.GENIE_TEAM;
-          }
-          if (!teamName) {
-            console.error('Error: Could not auto-detect team. Use --team <name>.');
-            process.exit(1);
-          }
-        }
+        const teamName = await resolveTeamName(options.team, repoPath, from);
 
         const teamChat = await getTeamChat();
 
         if (args.length === 0 || args[0] === 'read') {
-          // Read mode
           const messages = await teamChat.readMessages(repoPath, teamName, options.since);
-
           if (options.json) {
             console.log(JSON.stringify(messages, null, 2));
             return;
           }
-
           printChatMessages(teamName, messages);
         } else {
-          // Post mode
           const body = args.join(' ');
           const msg = await teamChat.postMessage(repoPath, teamName, from, body);
           console.log(`Posted to "${teamName}" channel.`);
