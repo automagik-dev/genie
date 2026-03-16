@@ -9,7 +9,7 @@
  * Resolution: user directory entries override built-ins of the same name.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 import type { PromptMode } from './agent-directory.js';
@@ -44,12 +44,17 @@ export interface BuiltinAgent {
  * Works from both `src/lib/` (dev) and `dist/` (compiled).
  */
 function resolvePackageRoot(): string {
-  const base = import.meta.dir ?? __dirname;
+  // In compiled dist, import.meta.dir returns CWD, not the module's dir.
+  // Use the actual script path (process.argv[1]) to find the package root.
+  const scriptPath = realpathSync(process.argv[1] || '');
   const candidates = [
-    // From src/lib/ → ../../
-    resolve(dirname(base), '..', '..'),
-    // From dist/ → ../
-    resolve(dirname(base), '..'),
+    // From dist/genie.js → ../
+    resolve(dirname(scriptPath), '..'),
+    // From src/lib/builtin-agents.ts → ../../
+    resolve(dirname(scriptPath), '..', '..'),
+    // Fallback: import.meta.dir-based (works in dev with bun run)
+    resolve(dirname(import.meta.dir ?? __dirname), '..', '..'),
+    resolve(dirname(import.meta.dir ?? __dirname), '..'),
   ];
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'plugins', 'genie', 'agents'))) {
