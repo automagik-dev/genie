@@ -68,4 +68,5 @@ Report when complete:
 - Never document features that don't exist yet
 - Never guess at behavior — read the code to confirm
 - Never change code — only documentation
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

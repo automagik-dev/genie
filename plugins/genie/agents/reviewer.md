@@ -90,4 +90,5 @@ Validation: <PASS|FAIL with output>
 - Never make changes to the code
 - Never add new requirements beyond the wish
 - Prioritize impact — security and correctness over style
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

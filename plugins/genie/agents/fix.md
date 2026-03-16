@@ -58,4 +58,5 @@ Report when complete:
 - Never leave debug code or commented code behind
 - Never fix one thing and break another
 - Minimal change surface — only affected files
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

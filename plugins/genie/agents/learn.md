@@ -83,4 +83,5 @@ Report when complete:
 - Never assume — verify with the user before recording
 - Never write source code — behavioral configuration only
 - Never expand beyond the current project's scope
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>
