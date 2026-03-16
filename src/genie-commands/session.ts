@@ -111,7 +111,7 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
   await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
 
   await registerNativeMember(teamName, {
-    agentName: 'team-lead',
+    agentName: basename(cwd),
     agentType: 'general-purpose',
     color: 'blue',
     cwd,
@@ -198,13 +198,14 @@ async function createSession(
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workspaceDir);
+  const agentName = basename(workspaceDir);
+  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workspaceDir);
   if (resumeSessionId) {
     console.log(`Resuming previous session: ${resumeSessionId}`);
   }
   const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as team-lead@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
+  console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
 }
 
 /** Focus (or create) a team window within an existing session. */
@@ -226,13 +227,14 @@ async function focusTeamWindow(
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workingDir);
+    const agentName = basename(workingDir);
+    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workingDir);
     if (resumeSessionId) {
       console.log(`Resuming previous session: ${resumeSessionId}`);
     }
     const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-    console.log(`Started Claude Code as team-lead@${sanitizeTeamName(windowName)} in ${workingDir}`);
+    console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workingDir}`);
   }
   await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
   console.log(`Focused team window "${windowName}"`);

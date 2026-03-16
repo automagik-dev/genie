@@ -656,19 +656,11 @@ inject_orchestration_prompt() {
 
     mkdir -p "$rules_dir"
 
-    # Try to find the installed genie package and copy the rules file
+    # Use the already-resolved PKG_DIR to find the rules file
     local source_file=""
-    # Check common install locations
-    for candidate in \
-        "$PLUGIN_SYMLINK/rules/genie-orchestration.md" \
-        "$HOME/.claude/plugins/genie/rules/genie-orchestration.md" \
-        "$(npm root -g 2>/dev/null)/@automagik/genie/plugins/genie/rules/genie-orchestration.md" \
-        "$(bun pm -g bin 2>/dev/null)/../lib/node_modules/@automagik/genie/plugins/genie/rules/genie-orchestration.md"; do
-        if [[ -f "$candidate" ]]; then
-            source_file="$candidate"
-            break
-        fi
-    done
+    if [[ -n "$PKG_DIR" && -f "$PKG_DIR/plugins/genie/rules/genie-orchestration.md" ]]; then
+        source_file="$PKG_DIR/plugins/genie/rules/genie-orchestration.md"
+    fi
 
     if [[ -n "$source_file" ]]; then
         cp "$source_file" "$rules_file"
