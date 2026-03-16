@@ -57,6 +57,18 @@ function removeSymlinks(): string[] {
   return removed;
 }
 
+/** Try an uninstall step, logging success or warning on failure. */
+function tryRemoveStep(label: string, successMsg: string, fn: () => void): void {
+  console.log(`\x1b[2m${label}\x1b[0m`);
+  try {
+    fn();
+    console.log(`  \x1b[32m+\x1b[0m ${successMsg}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.log(`  \x1b[33m!\x1b[0m ${label.replace('...', '')} failed: ${message}`);
+  }
+}
+
 /**
  * Uninstall Genie CLI entirely
  */
@@ -67,14 +79,7 @@ function performUninstall(
   hasGenieDir: boolean,
 ): void {
   if (hasHookScript) {
-    console.log('\x1b[2mRemoving hook script...\x1b[0m');
-    try {
-      removeHookScript();
-      console.log('  \x1b[32m+\x1b[0m Hook script removed');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`  \x1b[33m!\x1b[0m Could not remove hook script: ${message}`);
-    }
+    tryRemoveStep('Removing hook script...', 'Hook script removed', () => removeHookScript());
   }
 
   if (existingSymlinks.length > 0) {
@@ -85,27 +90,18 @@ function performUninstall(
     }
   }
 
-  // Remove orchestration rules from ~/.claude/rules/
   if (existsSync(ORCHESTRATION_RULES_PATH)) {
-    console.log('\x1b[2mRemoving orchestration rules...\x1b[0m');
-    try {
-      unlinkSync(ORCHESTRATION_RULES_PATH);
-      console.log('  \x1b[32m+\x1b[0m Orchestration rules removed (~/.claude/rules/genie-orchestration.md)');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`  \x1b[33m!\x1b[0m Could not remove orchestration rules: ${message}`);
-    }
+    tryRemoveStep(
+      'Removing orchestration rules...',
+      'Orchestration rules removed (~/.claude/rules/genie-orchestration.md)',
+      () => unlinkSync(ORCHESTRATION_RULES_PATH),
+    );
   }
 
   if (hasGenieDir) {
-    console.log('\x1b[2mRemoving genie directory...\x1b[0m');
-    try {
-      rmSync(genieDir, { recursive: true, force: true });
-      console.log('  \x1b[32m+\x1b[0m Directory removed');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`  \x1b[33m!\x1b[0m Could not remove directory: ${message}`);
-    }
+    tryRemoveStep('Removing genie directory...', 'Directory removed', () =>
+      rmSync(genieDir, { recursive: true, force: true }),
+    );
   }
 }
 

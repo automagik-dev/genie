@@ -17,7 +17,7 @@
 
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { identityInject } from './handlers/identity-inject.js';
-import type { Handler, HookDecision, HookPayload } from './types.js';
+import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
 // ============================================================================
@@ -56,40 +56,42 @@ function resolveHandlers(event: string, toolName?: string): Handler[] {
     .sort((a, b) => a.priority - b.priority);
 }
 
+/** Run a single handler, returning its result or undefined on error. */
+async function runHandler(
+  handler: Handler,
+  payload: HookPayload,
+  currentInput: Record<string, unknown> | undefined,
+): Promise<HandlerResult> {
+  const handlerPayload: HookPayload = { ...payload };
+  if (currentInput) handlerPayload.tool_input = currentInput;
+  try {
+    return await handler.fn(handlerPayload);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
+    return undefined;
+  }
+}
+
 async function executeBlockingChain(matched: Handler[], payload: HookPayload): Promise<HookDecision> {
   let currentInput = payload.tool_input ? { ...payload.tool_input } : undefined;
 
   for (const handler of matched) {
-    try {
-      // Build the payload with the (potentially modified) input
-      const handlerPayload: HookPayload = { ...payload };
-      if (currentInput) handlerPayload.tool_input = currentInput;
+    const result = await runHandler(handler, payload, currentInput);
+    if (!result) continue;
 
-      const result = await handler.fn(handlerPayload);
-      if (!result) continue;
-
-      // Short-circuit on deny
-      if (result.decision === 'deny') {
-        return { decision: 'deny', reason: result.reason ?? `Denied by handler: ${handler.name}` };
-      }
-
-      // Accumulate updatedInput for next handler
-      if (result.updatedInput) {
-        currentInput = { ...currentInput, ...result.updatedInput };
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[genie-hook] Handler "${handler.name}" threw: ${msg}`);
-      // Don't block on handler errors — continue chain
+    if (result.decision === 'deny') {
+      return { decision: 'deny', reason: result.reason ?? `Denied by handler: ${handler.name}` };
+    }
+    if (result.updatedInput) {
+      currentInput = { ...currentInput, ...result.updatedInput };
     }
   }
 
-  // If any handler produced updatedInput, return it
   if (currentInput && payload.tool_input && JSON.stringify(currentInput) !== JSON.stringify(payload.tool_input)) {
     return { updatedInput: currentInput };
   }
 
-  // Implicit allow
   return {};
 }
 
