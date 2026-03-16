@@ -80,10 +80,14 @@ jobs:
             RELEASE_NOTES="Initial release of genie v3 CLI."
           fi
           printf '%s' "$RELEASE_NOTES" > /tmp/release-notes.md
-          gh release create "${TAG}" \
-            --target "${{ github.sha }}" \
-            --title "${TAG}" \
-            --notes-file /tmp/release-notes.md
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists — skipping creation"
+          else
+            gh release create "${TAG}" \
+              --target "${{ github.sha }}" \
+              --title "${TAG}" \
+              --notes-file /tmp/release-notes.md
+          fi
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
