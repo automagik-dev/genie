@@ -496,42 +496,37 @@ async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Pr
   }
 }
 
-async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+/**
+ * Create a tmux pane for the worker.
+ *
+ * First agent in a newly created team window reuses the blank pane via send-keys.
+ * Subsequent agents split-window into the same team window.
+ */
+function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
 
-  // When spawning into the current session (no explicit --team), skip team window
-  // resolution and split the current window directly.
-  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
-  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
-
-  let paneId: string;
-  try {
-    // When first agent spawns into a newly created team window, use send-keys
-    // to run the command in the existing (blank) pane — no split-window needed.
-    // Only split-window for 2nd+ agent in the same window.
-    if (teamWindow?.created) {
-      // Get the existing pane ID from the newly created window
-      paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
-        .trim()
-        .split('\n')[0];
-      // cd into the working directory and run the command
-      if (ctx.cwd) {
-        execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
-      }
-      execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
-        encoding: 'utf-8',
-      });
-    } else {
-      const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
-      const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
-      paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
+  if (teamWindow?.created) {
+    const paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
+      .trim()
+      .split('\n')[0];
+    if (ctx.cwd) {
+      execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
     }
-  } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-    process.exit(1);
+    execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
+      encoding: 'utf-8',
+    });
+    return paneId;
   }
 
-  // Apply layout to team window (or fallback to first window in session)
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+  const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+  const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+  return execSync(splitCmd, { encoding: 'utf-8' }).trim();
+}
+
+/** Apply mosaic layout to the team window (or first window in session as fallback). */
+async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): Promise<void> {
+  const { execSync } = require('node:child_process');
   const session = 'genie';
   let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
   if (!teamWindow) {
@@ -543,16 +538,28 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   } catch {
     /* best-effort */
   }
+}
+
+async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+
+  let paneId: string;
+  try {
+    paneId = createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    process.exit(1);
+  }
+
+  await applySpawnLayout(ctx, teamWindow);
 
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
 
-  // Apply agent color to tmux pane border (focus-driven)
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
-  // Save spawn template for auto-respawn on message delivery
   await registry.saveTemplate({
     id: ctx.validated.role ?? ctx.workerId,
     provider: ctx.validated.provider,
@@ -566,7 +573,6 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     lastSessionId: workerEntry.claudeSessionId,
   });
 
-  // Register pane with the shared OTel relay.
   if (ctx.otelRelayActive && paneId !== '%0') {
     registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
   }
