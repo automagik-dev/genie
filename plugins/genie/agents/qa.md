@@ -71,4 +71,5 @@ Regressions: none | <list>
 - Never modify production code — only test files
 - Report failures with reproduction steps
 - Binary verdict: PASS or FAIL, no partial credit
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

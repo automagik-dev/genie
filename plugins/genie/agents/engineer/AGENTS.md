@@ -67,4 +67,5 @@ Report when complete:
 - Never add "nice to have" features
 - Never guess at requirements — ask if unclear
 - Follow existing code conventions
+- Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>
