@@ -1,14 +1,15 @@
 /**
  * Agent Directory — Persistent agent registry with CRUD operations.
  *
- * Stores agent identity entries at `~/.genie/agent-directory.json`.
+ * Three-tier resolution: project (.genie/agents.json) > global (~/.genie/agent-directory.json) > built-in.
+ *
  * Each entry records the agent's folder (CWD + AGENTS.md source),
  * optional repo, prompt mode, default model, and declared roles.
  *
- * Resolution order: user directory > built-in registry.
  * Uses file-lock pattern (same as agent-registry.ts) for concurrent access.
  */
 
+import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -21,6 +22,8 @@ import { acquireLock } from './file-lock.js';
 // ============================================================================
 
 export type PromptMode = 'system' | 'append';
+
+export type DirectoryScope = 'project' | 'global' | 'built-in';
 
 export interface DirectoryEntry {
   /** Globally unique agent name. */
@@ -39,6 +42,11 @@ export interface DirectoryEntry {
   registeredAt: string;
 }
 
+/** Directory entry with scope annotation for ls() results. */
+export interface ScopedDirectoryEntry extends DirectoryEntry {
+  scope: DirectoryScope;
+}
+
 interface AgentDirectoryData {
   entries: Record<string, DirectoryEntry>;
   lastUpdated: string;
@@ -50,6 +58,14 @@ export interface ResolvedAgent {
   entry: DirectoryEntry;
   /** Whether this came from the built-in registry. */
   builtin: boolean;
+  /** Which scope the agent was resolved from. */
+  source: DirectoryScope;
+}
+
+/** Options for scoped operations. */
+export interface ScopeOptions {
+  /** Write to global directory instead of project. */
+  global?: boolean;
 }
 
 // ============================================================================
@@ -60,36 +76,63 @@ function getGlobalDir(): string {
   return process.env.GENIE_HOME ?? join(homedir(), '.genie');
 }
 
-function getDirectoryFilePath(): string {
+/** Path to the global agent directory file (~/.genie/agent-directory.json). */
+export function getGlobalDirectoryPath(): string {
   return join(getGlobalDir(), 'agent-directory.json');
+}
+
+/** Path to the project-scoped agent directory file (<repo>/.genie/agents.json). */
+export function getProjectDirectoryPath(): string {
+  // Allow override for testing
+  if (process.env.GENIE_PROJECT_ROOT) {
+    return join(process.env.GENIE_PROJECT_ROOT, '.genie', 'agents.json');
+  }
+  try {
+    const root = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return join(root, '.genie', 'agents.json');
+  } catch {
+    // Not in a git repo — fallback to CWD
+    return join(process.cwd(), '.genie', 'agents.json');
+  }
+}
+
+/** Get directory file path for the given scope. */
+function getDirectoryPath(scope: 'project' | 'global'): string {
+  return scope === 'project' ? getProjectDirectoryPath() : getGlobalDirectoryPath();
 }
 
 // ============================================================================
 // Internal
 // ============================================================================
 
-async function loadDirectory(): Promise<AgentDirectoryData> {
+async function loadDirectory(scope: 'project' | 'global'): Promise<AgentDirectoryData> {
   try {
-    const content = await readFile(getDirectoryFilePath(), 'utf-8');
+    const content = await readFile(getDirectoryPath(scope), 'utf-8');
     return JSON.parse(content);
   } catch {
     return { entries: {}, lastUpdated: new Date().toISOString() };
   }
 }
 
-async function saveDirectory(data: AgentDirectoryData): Promise<void> {
-  const filePath = getDirectoryFilePath();
+async function saveDirectory(data: AgentDirectoryData, scope: 'project' | 'global'): Promise<void> {
+  const filePath = getDirectoryPath(scope);
   await mkdir(dirname(filePath), { recursive: true });
   data.lastUpdated = new Date().toISOString();
   await writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
-async function withDirectory<T>(fn: (data: AgentDirectoryData) => T | Promise<T>): Promise<T> {
-  const release = await acquireLock(getDirectoryFilePath());
+async function withDirectory<T>(
+  scope: 'project' | 'global',
+  fn: (data: AgentDirectoryData) => T | Promise<T>,
+): Promise<T> {
+  const release = await acquireLock(getDirectoryPath(scope));
   try {
-    const data = await loadDirectory();
+    const data = await loadDirectory(scope);
     const result = await fn(data);
-    await saveDirectory(data);
+    await saveDirectory(data, scope);
     return result;
   } finally {
     await release();
@@ -103,8 +146,12 @@ async function withDirectory<T>(fn: (data: AgentDirectoryData) => T | Promise<T>
 /**
  * Add an agent to the directory.
  * Validates that dir exists and contains AGENTS.md.
+ * Defaults to project scope; pass { global: true } for global.
  */
-export async function add(entry: Omit<DirectoryEntry, 'registeredAt'>): Promise<DirectoryEntry> {
+export async function add(
+  entry: Omit<DirectoryEntry, 'registeredAt'>,
+  options?: ScopeOptions,
+): Promise<DirectoryEntry> {
   if (!entry.name || entry.name.trim() === '') {
     throw new Error('Agent name is required.');
   }
@@ -128,7 +175,8 @@ export async function add(entry: Omit<DirectoryEntry, 'registeredAt'>): Promise<
     registeredAt: new Date().toISOString(),
   };
 
-  await withDirectory((data) => {
+  const scope = options?.global ? 'global' : 'project';
+  await withDirectory(scope, (data) => {
     if (data.entries[entry.name]) {
       throw new Error(`Agent "${entry.name}" already exists. Use "genie dir edit" to update or "genie dir rm" first.`);
     }
@@ -140,10 +188,12 @@ export async function add(entry: Omit<DirectoryEntry, 'registeredAt'>): Promise<
 
 /**
  * Remove an agent from the directory.
+ * Defaults to project scope; pass { global: true } for global.
  */
-export async function rm(name: string): Promise<boolean> {
+export async function rm(name: string, options?: ScopeOptions): Promise<boolean> {
   let removed = false;
-  await withDirectory((data) => {
+  const scope = options?.global ? 'global' : 'project';
+  await withDirectory(scope, (data) => {
     if (data.entries[name]) {
       delete data.entries[name];
       removed = true;
@@ -154,58 +204,87 @@ export async function rm(name: string): Promise<boolean> {
 
 /**
  * Resolve an agent by name.
- * Resolution order: user directory > built-in roles > built-in council members.
+ * Resolution order: project directory > global directory > built-in roles > built-in council members.
  */
 export async function resolve(name: string): Promise<ResolvedAgent | null> {
-  // 1. Check user directory
-  const data = await loadDirectory();
-  const userEntry = data.entries[name];
-  if (userEntry) {
-    return { entry: userEntry, builtin: false };
+  // 1. Check project directory
+  const projectData = await loadDirectory('project');
+  const projectEntry = projectData.entries[name];
+  if (projectEntry) {
+    return { entry: projectEntry, builtin: false, source: 'project' };
   }
 
-  // 2. Check built-in roles
+  // 2. Check global directory
+  const globalData = await loadDirectory('global');
+  const globalEntry = globalData.entries[name];
+  if (globalEntry) {
+    return { entry: globalEntry, builtin: false, source: 'global' };
+  }
+
+  // 3. Check built-in roles
   const builtinRole = BUILTIN_ROLES.find((r: BuiltinAgent) => r.name === name);
   if (builtinRole) {
-    return { entry: builtinToEntry(builtinRole), builtin: true };
+    return { entry: builtinToEntry(builtinRole), builtin: true, source: 'built-in' };
   }
 
-  // 3. Check built-in council members
+  // 4. Check built-in council members
   const councilMember = BUILTIN_COUNCIL_MEMBERS.find((m: BuiltinAgent) => m.name === name);
   if (councilMember) {
-    return { entry: builtinToEntry(councilMember), builtin: true };
+    return { entry: builtinToEntry(councilMember), builtin: true, source: 'built-in' };
   }
 
   return null;
 }
 
 /**
- * List all user-registered agents.
+ * List agents from all scopes with scope annotation.
  */
-export async function ls(): Promise<DirectoryEntry[]> {
-  const data = await loadDirectory();
-  return Object.values(data.entries);
+export async function ls(): Promise<ScopedDirectoryEntry[]> {
+  const results: ScopedDirectoryEntry[] = [];
+
+  // Project entries
+  const projectData = await loadDirectory('project');
+  for (const entry of Object.values(projectData.entries)) {
+    results.push({ ...entry, scope: 'project' });
+  }
+
+  // Global entries (skip if name already present from project)
+  const globalData = await loadDirectory('global');
+  const projectNames = new Set(results.map((e) => e.name));
+  for (const entry of Object.values(globalData.entries)) {
+    if (!projectNames.has(entry.name)) {
+      results.push({ ...entry, scope: 'global' });
+    }
+  }
+
+  return results;
 }
 
 /**
- * Get a single entry by name (user directory only).
+ * Get a single entry by name (user directory only — checks project then global).
  */
 export async function get(name: string): Promise<DirectoryEntry | null> {
-  const data = await loadDirectory();
-  return data.entries[name] ?? null;
+  const projectData = await loadDirectory('project');
+  if (projectData.entries[name]) return projectData.entries[name];
+
+  const globalData = await loadDirectory('global');
+  return globalData.entries[name] ?? null;
 }
 
 /**
  * Edit an existing agent entry.
  * Only provided fields are updated.
+ * Defaults to project scope; pass { global: true } for global.
  */
 export async function edit(
   name: string,
   updates: Partial<Pick<DirectoryEntry, 'dir' | 'repo' | 'promptMode' | 'model' | 'roles'>>,
+  options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   let updated: DirectoryEntry | null = null;
 
-  await withDirectory((data) => {
+  const scope = options?.global ? 'global' : 'project';
+  await withDirectory(scope, (data) => {
     const existing = data.entries[name];
     if (!existing) {
       throw new Error(`Agent "${name}" not found in directory.`);

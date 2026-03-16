@@ -966,16 +966,16 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
   const entries: LsEntry[] = [];
 
   // Add directory entries with runtime status
-  for (const entry of dirEntries) {
-    const running = statusMap.get(entry.name);
+  for (const dirEntry of dirEntries) {
+    const running = statusMap.get(dirEntry.name);
     entries.push({
-      name: entry.name,
-      dir: entry.dir || '-',
+      name: dirEntry.name,
+      dir: dirEntry.dir || '-',
       status: running ? running.state : 'offline',
       team: running?.team || '-',
-      model: entry.model || '-',
+      model: dirEntry.model || '-',
     });
-    statusMap.delete(entry.name);
+    statusMap.delete(dirEntry.name);
   }
 
   // Add running built-in agents not in the directory
