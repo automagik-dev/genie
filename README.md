@@ -126,7 +126,7 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | One Claude tab per task, alt-tab between 5 of them | Parallel agents in live terminal sessions |
 | Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
 | 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
-| 10 min of setup before any work starts | `genie team create auth-fix --wish auth-bug` — team-lead handles the rest |
+| 10 min of setup before any work starts | `genie team create auth-fix --repo . --wish auth-bug` — team-lead handles the rest |
 <br/>
 
 ## The Wish Pipeline

@@ -56,6 +56,7 @@ Before finalizing, verify every claim:
 Report when complete:
 - Files created or updated
 - Gaps that were filled
+- Which criteria are satisfied (with evidence)
 - Validation results — every claim checked against code
 - Anything that remains undocumented or needs human judgment
 </done_report>

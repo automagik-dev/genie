@@ -73,5 +73,6 @@ Report when complete:
 - Never modify source files — read and trace only
 - Always reproduce before theorizing — evidence over intuition
 - Evidence required for every root cause claim
+- Minimal tool surface — Read, Bash, Glob, Grep only
 - Report everything discovered, even if it wasn't the primary target
 </constraints>
