@@ -215,29 +215,12 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   await teamManager.hireAgent(config.name, 'team-lead');
   console.log('  Leader: hired');
 
-  // Build context file with wish content
-  const wishContent = await readFile(destWishPath, 'utf-8');
-  const contextContent = [
-    '# Task Leader Context',
-    '',
-    `**Wish slug:** \`${slug}\``,
-    `**Wish file:** \`${destWishPath}\``,
-    `**Team name:** \`${config.name}\``,
-    `**Worktree:** \`${config.worktreePath}\``,
-    '',
-    '## Wish Content',
-    '',
-    wishContent,
-  ].join('\n');
-  const contextFile = await writeContextFile(contextContent);
-
-  // Spawn leader in the worktree with auto-kickoff prompt
-  const kickoffPrompt = `Begin. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously. Your team is ${config.name}.`;
+  // Spawn leader — AGENTS.md comes from the built-in resolver, wish context goes in the initial prompt
+  const kickoffPrompt = `Your team is ${config.name}. Your wish slug is ${slug}. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
-    extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: kickoffPrompt,
   });
   console.log('  Leader: spawned and working');
