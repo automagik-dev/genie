@@ -72,10 +72,7 @@ describe('add', () => {
   });
 
   test('persists to global directory with global option', async () => {
-    const entry = await directory.add(
-      { name: 'global-agent', dir: agentDir, promptMode: 'append' },
-      { global: true },
-    );
+    const entry = await directory.add({ name: 'global-agent', dir: agentDir, promptMode: 'append' }, { global: true });
 
     expect(entry.name).toBe('global-agent');
 
