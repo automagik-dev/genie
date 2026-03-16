@@ -122,5 +122,6 @@ jobs:
           # Try publish; if version exists (from @next), just retag as latest
           if ! bun publish --access public 2>&1; then
             echo "Publish failed — version may already exist from @next. Retagging as latest..."
+            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
             npm dist-tag add "@automagik/genie@${VERSION}" latest
           fi
