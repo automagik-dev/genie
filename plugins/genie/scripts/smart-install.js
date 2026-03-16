@@ -230,33 +230,13 @@ function getPluginVersion() {
 }
 
 /**
- * Read updateChannel from ~/.genie/config.json.
- * Returns 'latest' or 'next'.
- */
-function getUpdateChannel() {
-  try {
-    const configPath = join(GENIE_DIR, 'config.json');
-    if (existsSync(configPath)) {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      return config.updateChannel || 'latest';
-    }
-  } catch {
-    // Ignore
-  }
-  return 'latest';
-}
-
-/**
- * Check if genie CLI needs install or upgrade via bun global
+ * Check if genie CLI needs FIRST-TIME install.
+ * Only returns true when genie binary is completely missing.
+ * Version upgrades are handled by `genie update` — never mid-session.
  */
 function genieCliNeedsInstall() {
   const installed = getGenieVersion();
-  if (!installed) return true;
-  // Never overwrite dev builds — dev users update manually via genie update --next
-  if (getUpdateChannel() === 'next') return false;
-  const pluginVersion = getPluginVersion();
-  if (!pluginVersion) return false;
-  return installed !== pluginVersion;
+  return !installed;
 }
 
 
@@ -368,7 +348,8 @@ function ensureTmuxDefaults(oldVersion) {
 }
 
 /**
- * Install or upgrade genie CLI globally via bun
+ * First-time install of genie CLI globally via bun.
+ * Only called when genie binary is completely missing.
  */
 function installGenieCli() {
   const bunPath = getBunPath();
@@ -376,18 +357,10 @@ function installGenieCli() {
     throw new Error('Bun executable not found — cannot install genie CLI');
   }
 
-  const pluginVersion = getPluginVersion();
-  const installed = getGenieVersion();
-
-  if (installed) {
-    console.error(`Upgrading genie CLI: ${installed} → ${pluginVersion}...`);
-  } else {
-    console.error('Installing genie CLI globally via bun...');
-  }
+  console.error('Installing genie CLI globally via bun...');
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  const versionSuffix = pluginVersion ? `@${pluginVersion}` : '';
-  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: 'inherit', shell: IS_WINDOWS });
+  execSync(`${bunCmd} add -g @automagik/genie@latest`, { stdio: 'inherit', shell: IS_WINDOWS });
 
   const newVersion = getGenieVersion();
   if (!newVersion) {
