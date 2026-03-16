@@ -74,9 +74,9 @@ function installBun() {
   console.error('Installing Bun runtime...');
   try {
     if (IS_WINDOWS) {
-      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: 'inherit', shell: true });
+      execSync('powershell -c "irm bun.com/install.ps1 | iex"', { stdio: ['pipe', 'pipe', 'inherit'], shell: true });
     } else {
-      execSync('curl -fsSL https://bun.com/install | bash', { stdio: 'inherit', shell: true });
+      execSync('curl -fsSL https://bun.com/install | bash', { stdio: ['pipe', 'pipe', 'inherit'], shell: true });
     }
     if (!isBunInstalled()) {
       throw new Error('Bun installation completed but binary not found. Please restart your terminal.');
@@ -159,7 +159,7 @@ function installDeps() {
   }
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: 'inherit', shell: IS_WINDOWS });
+  execSync(`${bunCmd} install`, { cwd: ROOT, stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
 
   // Write version marker
   let version = 'unknown';
@@ -387,7 +387,7 @@ function installGenieCli() {
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
   const versionSuffix = pluginVersion ? `@${pluginVersion}` : '';
-  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: 'inherit', shell: IS_WINDOWS });
+  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
 
   const newVersion = getGenieVersion();
   if (!newVersion) {
