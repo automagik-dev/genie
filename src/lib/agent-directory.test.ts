@@ -11,16 +11,26 @@ import { join } from 'node:path';
 import * as directory from './agent-directory.js';
 
 // ============================================================================
-// Test setup — use temp dir for GENIE_HOME
+// Test setup — use temp dirs for GENIE_HOME (global) and GENIE_PROJECT_ROOT
 // ============================================================================
 
 let testDir: string;
 let agentDir: string;
+let projectRoot: string;
+let globalHome: string;
 
 beforeEach(() => {
   testDir = join(tmpdir(), `genie-dir-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(testDir, { recursive: true });
-  process.env.GENIE_HOME = testDir;
+
+  // Separate project and global directories
+  projectRoot = join(testDir, 'project');
+  globalHome = join(testDir, 'global');
+  mkdirSync(projectRoot, { recursive: true });
+  mkdirSync(globalHome, { recursive: true });
+
+  process.env.GENIE_HOME = globalHome;
+  process.env.GENIE_PROJECT_ROOT = projectRoot;
 
   // Create a fake agent dir with AGENTS.md
   agentDir = join(testDir, 'test-agent-home');
@@ -31,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(testDir, { recursive: true, force: true });
   process.env.GENIE_HOME = undefined;
+  process.env.GENIE_PROJECT_ROOT = undefined;
 });
 
 // ============================================================================
@@ -38,7 +49,7 @@ afterEach(() => {
 // ============================================================================
 
 describe('add', () => {
-  test('persists entry to directory', async () => {
+  test('persists entry to project directory by default', async () => {
     const entry = await directory.add({
       name: 'test-agent',
       dir: agentDir,
@@ -50,10 +61,28 @@ describe('add', () => {
     expect(entry.promptMode).toBe('append');
     expect(entry.registeredAt).toBeTruthy();
 
-    // Verify persisted
+    // Verify persisted in project scope
     const retrieved = await directory.get('test-agent');
     expect(retrieved).not.toBeNull();
     expect(retrieved!.name).toBe('test-agent');
+
+    // Verify NOT in global scope
+    const globalRetrieved = await directory.get('test-agent', { global: true });
+    expect(globalRetrieved).toBeNull();
+  });
+
+  test('persists to global directory with global option', async () => {
+    const entry = await directory.add({ name: 'global-agent', dir: agentDir, promptMode: 'append' }, { global: true });
+
+    expect(entry.name).toBe('global-agent');
+
+    // Verify in global scope
+    const globalRetrieved = await directory.get('global-agent', { global: true });
+    expect(globalRetrieved).not.toBeNull();
+
+    // Verify NOT in project scope
+    const projectRetrieved = await directory.get('global-agent');
+    expect(projectRetrieved).toBeNull();
   });
 
   test('persists with all optional fields', async () => {
@@ -72,11 +101,20 @@ describe('add', () => {
     expect(entry.roles).toEqual(['implementor', 'tester']);
   });
 
-  test('rejects duplicate name', async () => {
+  test('rejects duplicate name in same scope', async () => {
     await directory.add({ name: 'agent1', dir: agentDir, promptMode: 'append' });
     await expect(directory.add({ name: 'agent1', dir: agentDir, promptMode: 'append' })).rejects.toThrow(
       'already exists',
     );
+  });
+
+  test('allows same name in different scopes', async () => {
+    await directory.add({ name: 'engineer', dir: agentDir, promptMode: 'append' });
+    const globalEntry = await directory.add(
+      { name: 'engineer', dir: agentDir, promptMode: 'system' },
+      { global: true },
+    );
+    expect(globalEntry.promptMode).toBe('system');
   });
 
   test('rejects missing directory', async () => {
@@ -103,12 +141,21 @@ describe('add', () => {
 // ============================================================================
 
 describe('rm', () => {
-  test('removes existing entry', async () => {
+  test('removes existing entry from project', async () => {
     await directory.add({ name: 'to-remove', dir: agentDir, promptMode: 'append' });
     const removed = await directory.rm('to-remove');
     expect(removed).toBe(true);
 
     const retrieved = await directory.get('to-remove');
+    expect(retrieved).toBeNull();
+  });
+
+  test('removes existing entry from global', async () => {
+    await directory.add({ name: 'global-rm', dir: agentDir, promptMode: 'append' }, { global: true });
+    const removed = await directory.rm('global-rm', { global: true });
+    expect(removed).toBe(true);
+
+    const retrieved = await directory.get('global-rm', { global: true });
     expect(retrieved).toBeNull();
   });
 
@@ -123,12 +170,28 @@ describe('rm', () => {
 // ============================================================================
 
 describe('resolve', () => {
-  test('resolves user directory entry', async () => {
+  test('resolves project directory entry', async () => {
     await directory.add({ name: 'my-agent', dir: agentDir, promptMode: 'append' });
     const resolved = await directory.resolve('my-agent');
     expect(resolved).not.toBeNull();
     expect(resolved!.builtin).toBe(false);
     expect(resolved!.entry.name).toBe('my-agent');
+  });
+
+  test('resolves global directory entry', async () => {
+    await directory.add({ name: 'global-agent', dir: agentDir, promptMode: 'append' }, { global: true });
+    const resolved = await directory.resolve('global-agent');
+    expect(resolved).not.toBeNull();
+    expect(resolved!.builtin).toBe(false);
+    expect(resolved!.entry.name).toBe('global-agent');
+  });
+
+  test('project entry shadows global entry', async () => {
+    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'system' }, { global: true });
+    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'append' });
+    const resolved = await directory.resolve('shadow');
+    expect(resolved).not.toBeNull();
+    expect(resolved!.entry.promptMode).toBe('append'); // project wins
   });
 
   test('resolves built-in role', async () => {
@@ -164,13 +227,48 @@ describe('resolve', () => {
 // ============================================================================
 
 describe('ls', () => {
-  test('lists all user entries', async () => {
+  test('lists project entries with scope label', async () => {
     await directory.add({ name: 'agent-a', dir: agentDir, promptMode: 'append' });
-    await directory.add({ name: 'agent-b', dir: agentDir, promptMode: 'system' });
+
+    const entries = await directory.ls();
+    expect(entries.length).toBe(1);
+    expect(entries[0].name).toBe('agent-a');
+    expect(entries[0].scope).toBe('project');
+  });
+
+  test('lists global entries with scope label', async () => {
+    await directory.add({ name: 'agent-g', dir: agentDir, promptMode: 'append' }, { global: true });
+
+    const entries = await directory.ls();
+    expect(entries.length).toBe(1);
+    expect(entries[0].name).toBe('agent-g');
+    expect(entries[0].scope).toBe('global');
+  });
+
+  test('lists entries from both scopes', async () => {
+    await directory.add({ name: 'proj-agent', dir: agentDir, promptMode: 'append' });
+    await directory.add({ name: 'glob-agent', dir: agentDir, promptMode: 'system' }, { global: true });
 
     const entries = await directory.ls();
     expect(entries.length).toBe(2);
-    expect(entries.map((e) => e.name).sort()).toEqual(['agent-a', 'agent-b']);
+    const names = entries.map((e) => e.name).sort();
+    expect(names).toEqual(['glob-agent', 'proj-agent']);
+
+    const projEntry = entries.find((e) => e.name === 'proj-agent');
+    expect(projEntry!.scope).toBe('project');
+    const globEntry = entries.find((e) => e.name === 'glob-agent');
+    expect(globEntry!.scope).toBe('global');
+  });
+
+  test('project entry shadows global entry in listing', async () => {
+    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'system' }, { global: true });
+    await directory.add({ name: 'shadow', dir: agentDir, promptMode: 'append' });
+
+    const entries = await directory.ls();
+    expect(entries.length).toBe(1);
+    expect(entries[0].name).toBe('shadow');
+    expect(entries[0].scope).toBe('project');
+    expect(entries[0].promptMode).toBe('append');
   });
 
   test('returns empty array when no entries', async () => {
@@ -206,6 +304,12 @@ describe('edit', () => {
     expect(updated.roles).toEqual(['implementor', 'reviewer']);
   });
 
+  test('edits global entry with global option', async () => {
+    await directory.add({ name: 'global-edit', dir: agentDir, promptMode: 'append' }, { global: true });
+    const updated = await directory.edit('global-edit', { model: 'sonnet' }, { global: true });
+    expect(updated.model).toBe('sonnet');
+  });
+
   test('rejects edit of non-existent entry', async () => {
     await expect(directory.edit('nonexistent', { model: 'opus' })).rejects.toThrow('not found');
   });
@@ -236,5 +340,17 @@ describe('loadIdentity', () => {
     };
     const identity = directory.loadIdentity(emptyEntry);
     expect(identity).toBeNull();
+  });
+});
+
+// ============================================================================
+// getProjectRoot()
+// ============================================================================
+
+describe('getProjectRoot', () => {
+  test('respects GENIE_PROJECT_ROOT env var', () => {
+    process.env.GENIE_PROJECT_ROOT = '/custom/root';
+    expect(directory.getProjectRoot()).toBe('/custom/root');
+    process.env.GENIE_PROJECT_ROOT = projectRoot; // restore
   });
 });
