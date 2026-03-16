@@ -10,12 +10,11 @@
  */
 
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
 import * as teamManager from '../lib/team-manager.js';
-import { writeContextFile } from './dispatch.js';
 
 export function registerTeamNamespace(program: Command): void {
   const team = program.command('team').description('Team lifecycle management');
