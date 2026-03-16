@@ -212,7 +212,7 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
   // Hire leader
-  await teamManager.hireAgent(config.name, 'leader');
+  await teamManager.hireAgent(config.name, 'team-lead');
   console.log('  Leader: hired');
 
   // Build context file with wish content
@@ -233,7 +233,7 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
 
   // Spawn leader in the worktree with auto-kickoff prompt
   const kickoffPrompt = `Begin. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously. Your team is ${config.name}.`;
-  await handleWorkerSpawn('leader', {
+  await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
