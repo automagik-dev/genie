@@ -10,12 +10,11 @@
  */
 
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { copyFile, mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import type { TeamConfig } from '../lib/team-manager.js';
 import * as teamManager from '../lib/team-manager.js';
-import { writeContextFile } from './dispatch.js';
 
 export function registerTeamNamespace(program: Command): void {
   const team = program.command('team').description('Team lifecycle management');
@@ -211,33 +210,20 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   await copyFile(sourceWishPath, destWishPath);
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
-  // Hire leader
-  await teamManager.hireAgent(config.name, 'team-lead');
-  console.log('  Leader: hired');
+  // Hire the standard team: team-lead + engineer + reviewer + qa + fix
+  const standardTeam = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  for (const role of standardTeam) {
+    await teamManager.hireAgent(config.name, role);
+  }
+  console.log(`  Team: hired ${standardTeam.join(', ')}`);
 
-  // Build context file with wish content
-  const wishContent = await readFile(destWishPath, 'utf-8');
-  const contextContent = [
-    '# Task Leader Context',
-    '',
-    `**Wish slug:** \`${slug}\``,
-    `**Wish file:** \`${destWishPath}\``,
-    `**Team name:** \`${config.name}\``,
-    `**Worktree:** \`${config.worktreePath}\``,
-    '',
-    '## Wish Content',
-    '',
-    wishContent,
-  ].join('\n');
-  const contextFile = await writeContextFile(contextContent);
-
-  // Spawn leader in the worktree with auto-kickoff prompt
-  const kickoffPrompt = `Begin. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously. Your team is ${config.name}.`;
+  // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
+  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired, use genie spawn to activate them). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
-    extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: kickoffPrompt,
   });
   console.log('  Leader: spawned and working');

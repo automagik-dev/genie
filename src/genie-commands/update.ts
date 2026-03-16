@@ -146,7 +146,7 @@ async function detectInstallationType(): Promise<InstallationType> {
 
 async function updateViaBun(channel: string): Promise<void> {
   log(`Updating via bun (channel: ${channel})...`);
-  const result = await runCommand('bun', ['update', '-g', `@automagik/genie@${channel}`]);
+  const result = await runCommand('bun', ['add', '-g', '--force', '--no-cache', `@automagik/genie@${channel}`]);
   if (!result.success) {
     error('Failed to update via bun');
     process.exit(1);
