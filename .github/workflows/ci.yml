@@ -97,4 +97,10 @@ jobs:
             echo "NPM_TOKEN not set — skipping @next publish"
             exit 0
           fi
+          LOCAL=$(jq -r '.version' package.json)
+          PUBLISHED=$(npm view @automagik/genie@next version 2>/dev/null || echo "none")
+          if [ "$LOCAL" = "$PUBLISHED" ]; then
+            echo "Version $LOCAL already published to @next — skipping"
+            exit 0
+          fi
           bun publish --tag next --access public
