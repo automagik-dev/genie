@@ -345,7 +345,47 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     return false;
   }
 
+  // Prune stale worktrees and configs
+  await pruneStaleWorktrees(repoPath);
+
   return true;
+}
+
+/**
+ * Prune stale worktree configs and git tracking.
+ *
+ * Scans all team configs — if a team's worktreePath no longer exists on disk,
+ * deletes that team's config file. Then runs `git worktree prune` to clean
+ * git's internal worktree tracking.
+ */
+export async function pruneStaleWorktrees(repoPath: string): Promise<void> {
+  const dir = teamsDir();
+  let files: string[];
+  try {
+    files = await readdir(dir);
+  } catch {
+    return; // No teams dir — nothing to prune
+  }
+
+  for (const file of files) {
+    if (!file.endsWith('.json')) continue;
+    try {
+      const content = await readFile(join(dir, file), 'utf-8');
+      const config: TeamConfig = JSON.parse(content);
+      if (config.worktreePath && !existsSync(config.worktreePath)) {
+        await unlink(join(dir, file));
+      }
+    } catch {
+      // Skip corrupted files
+    }
+  }
+
+  // Clean git's worktree tracking
+  try {
+    await $`git -C ${repoPath} worktree prune`.quiet();
+  } catch {
+    // Best-effort
+  }
 }
 
 /** Get a team by name. Returns null if not found. */
