@@ -73,10 +73,15 @@ function teamFilePath(name: string): string {
 /** Resolve the worktree base directory from config. */
 function getWorktreeBase(repoPath: string): string {
   const config = loadGenieConfigSync();
-  const base = config.terminal?.worktreeBase ?? '.worktrees';
-  // If relative, resolve against repo path
-  if (path.isAbsolute(base)) return base;
-  return join(repoPath, base);
+  const base = config.terminal?.worktreeBase;
+  // Explicit config: respect absolute or resolve relative against repo
+  if (base) {
+    if (path.isAbsolute(base)) return base;
+    return join(repoPath, base);
+  }
+  // Default: ~/.genie/worktrees/<project-name>/
+  const projectName = path.basename(repoPath);
+  return join(getGenieDir(), 'worktrees', projectName);
 }
 
 // ============================================================================
