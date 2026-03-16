@@ -1,0 +1,12 @@
+{
+  "name": "fix/v2-qa-fixes",
+  "repo": "/home/genie/agents/namastexlabs/genie/repos/genie",
+  "baseBranch": "dev",
+  "worktreePath": "/home/genie/agents/namastexlabs/genie/repos/genie/.worktrees/fix/v2-qa-fixes",
+  "members": [
+    "implementor"
+  ],
+  "createdAt": "2026-03-14T16:56:17.159Z",
+  "nativeTeamsEnabled": true,
+  "nativeTeamParentSessionId": "321d5167-e935-4824-bf7e-37679d373fa1"
+}
