@@ -38,33 +38,37 @@ You autonomously execute a wish lifecycle from start to finish. Your team member
 Read the WISH.md at the path given in your initial prompt. Parse execution groups, their dependencies, and acceptance criteria.
 
 ### 2. Execute Groups (respecting dependencies)
-For each group whose dependencies are satisfied, spawn an engineer and dispatch the group:
+For each group whose dependencies are satisfied, dispatch it. `genie work` auto-initializes state and spawns the engineer — one command does everything:
 ```bash
-genie spawn engineer --team <your-team-name>
 genie work engineer <slug>#<group>
 ```
-Monitor with `genie read engineer`. When the engineer signals completion, verify output.
+This checks dependencies, sets the group to in_progress, and spawns the engineer with the group context.
 
-Mark completed groups:
+Monitor the engineer's progress:
+```bash
+genie read <team>-engineer
+```
+
+When the engineer completes, mark the group done:
 ```bash
 genie done <slug>#<group>
 ```
 
-Check progress:
+Check overall progress:
 ```bash
 genie status <slug>
 ```
 
-Run groups in parallel when dependencies allow. Wait for all dependencies before starting a group.
+Run independent groups in parallel. Wait for dependencies before starting dependent groups.
 
 ### 3. Review
-After all groups complete, spawn a reviewer:
+After all groups complete, run validation commands from the wish. Then review the full diff:
 ```bash
-genie spawn reviewer --team <your-team-name>
+genie work reviewer <slug>#review
 ```
-If review returns FIX-FIRST, spawn a fixer:
+If review returns FIX-FIRST:
 ```bash
-genie spawn fix --team <your-team-name>
+genie work fix <slug>#fix
 ```
 Re-review after fix. Max 2 rounds.
 
@@ -93,7 +97,7 @@ Check autoMergeDev config. If true, merge. If false, leave PR open for human rev
 
 ### 7. QA (if merged)
 ```bash
-genie spawn qa --team <your-team-name>
+genie work qa <slug>#qa
 ```
 Monitor qa. If failures, dispatch fix and re-test (max 2 rounds).
 
