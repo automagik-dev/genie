@@ -211,12 +211,16 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   await copyFile(sourceWishPath, destWishPath);
   console.log(`  Wish: copied ${slug}/WISH.md into worktree`);
 
-  // Hire leader
-  await teamManager.hireAgent(config.name, 'team-lead');
-  console.log('  Leader: hired');
+  // Hire the standard team: team-lead + engineer + reviewer + qa + fix
+  const standardTeam = ['team-lead', 'engineer', 'reviewer', 'qa', 'fix'];
+  for (const role of standardTeam) {
+    await teamManager.hireAgent(config.name, role);
+  }
+  console.log(`  Team: hired ${standardTeam.join(', ')}`);
 
-  // Spawn leader — AGENTS.md comes from the built-in resolver, wish context goes in the initial prompt
-  const kickoffPrompt = `Your team is ${config.name}. Your wish slug is ${slug}. Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
+  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired, use genie spawn to activate them). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
