@@ -79,9 +79,19 @@
 
 ---
 
+## QA Criteria
+
+_What must be verified on dev after merge. The QA agent tests each criterion._
+
+- [ ] <functional criterion — user-facing behavior works>
+- [ ] <integration criterion — system works end-to-end>
+- [ ] <regression criterion — existing behavior not broken>
+
+---
+
 ## Review Results
 
-_Populated by `/review` after make execution completes._
+_Populated by `/review` after execution completes._
 
 ---
 

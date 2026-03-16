@@ -1,52 +1,78 @@
 ---
 name: learn
-description: "Interactive learning mode — explore context, absorb user knowledge, generate plan, apply behavioral improvements."
+description: "Diagnose and fix agent behavioral surfaces when the user corrects a mistake — connects to Claude native memory."
 ---
 
-# /learn — Behavioral Learning Mode
+# /learn — Behavioral Correction
 
-Interactive session to make Genie smarter about this project. Explore the codebase, absorb user knowledge, propose behavioral changes, and apply them with explicit approval.
+When a user corrects a mistake, `/learn` diagnoses which behavioral surface caused it and applies a minimal, targeted fix.
 
 ## When to Use
-- User wants to teach Genie about project conventions, preferences, or constraints
-- Agent behavior needs tuning based on project-specific knowledge
-- New project onboarding — capture domain knowledge early
+- User corrects agent behavior ("no, don't do that", "you should always...", "stop doing X")
+- Agent made a mistake that should never recur
 - User explicitly invokes `/learn`
+- A pattern of repeated errors suggests a missing behavioral rule
 
 ## How It Works
 
-This is an **interactive skill**. It is not dispatched as a background worker by the orchestrator. The user invokes `/learn` directly, and the agent runs in the foreground, conversing with the user throughout.
+This is an **interactive skill**. The user invokes `/learn` directly, and the agent runs in the foreground, conversing with the user throughout.
 
 ## Flow
-1. **Explore context:** scan codebase structure, existing docs, CLAUDE.md, memory files, identity files, project history. Build a baseline understanding before asking the user anything.
-2. **Learning mode:** interactive Q&A with the user. Ask one question at a time. Absorb knowledge about conventions, patterns, constraints, preferences, and domain-specific rules. Verify understanding before moving on.
-3. **Generate learning plan:** enter native plan mode. Show exactly which files will be created or updated, what content will change, and why each change improves behavior. User must approve before any write proceeds.
-4. **Apply learnings:** update only the approved surfaces. Each change is minimal and targeted. Report what was learned and what changed.
+
+1. **Analyze the mistake:** What went wrong? Read the conversation context, recent changes, and relevant code to understand the error.
+2. **Determine root cause:** Why did the agent behave this way? Missing rule? Stale convention? Wrong default?
+3. **Diagnose the surface:** Which behavioral surface needs to change? (See Writable Surfaces below.)
+4. **Propose minimal fix:** Enter native plan mode. Show exactly which file will change, what content will be added/modified, and why. One change per learning — never batch.
+5. **Apply with approval:** User must approve before any write. Apply the change. Confirm what was learned.
+6. **Save to memory:** Write the learning as a feedback memory in `.claude/memory/` so Claude native memory retains it across sessions.
 
 ## Writable Surfaces
 
-The learn agent is allowed to modify these surfaces — and only these:
+The learn agent diagnoses which surface needs the fix:
 
-- `.claude/memory/` — persistent knowledge files
-- `CLAUDE.md` — project instructions, conventions, rules
-- Project-level agent definitions (if the project defines its own outside the framework)
-- `SOUL.md`, `IDENTITY.md`, `BOOTSTRAP.md` — Genie's own agent workspace identity
-- Any configuration file that shapes agent behavior in this project
+| Surface | Path | What It Controls |
+|---------|------|-----------------|
+| Project conventions | `CLAUDE.md` | Commands, gotchas, project rules, coding style |
+| Agent identity | `AGENTS.md` | Agent role, preferences, team behavior |
+| Agent personality | `SOUL.md` / `IDENTITY.md` | Tone, communication style |
+| Global rules | `~/.claude/rules/*.md` | Cross-project behavioral rules |
+| Claude native memory | `.claude/memory/` | Feedback, user prefs, project context |
+| Project memory | `memory/` | Project-scoped knowledge files |
+| Hooks | `.claude/settings.json` | Event-driven automation, permission gates |
+| Any config file | varies | Any file that shapes agent behavior |
 
 ## Never-Touch Surfaces
 
-The learn agent never modifies these — they are framework-scoped:
-
-- `plugins/genie/skills/` — framework skills are maintained by framework developers
-- `plugins/genie/agents/` — framework agents are maintained by framework developers
+- `plugins/genie/skills/` — framework skills (maintained by framework developers)
+- `plugins/genie/agents/` — framework agents (maintained by framework developers)
 - Other projects' files — scope is the current project only
 - Source code — learn updates behavior configuration, not implementation
 
+## Claude Native Memory Connection
+
+When a learning is applied, also save it as a feedback memory:
+
+1. Write a memory file to `.claude/memory/` with frontmatter:
+   ```markdown
+   ---
+   name: <concise-name>
+   description: <one-line description for relevance matching>
+   type: feedback
+   ---
+
+   <The rule itself>
+   **Why:** <reason the user gave or the incident that caused it>
+   **How to apply:** <when/where this guidance kicks in>
+   ```
+2. Update `.claude/memory/MEMORY.md` index with a pointer to the new file.
+
+This ensures the learning persists across conversations via Claude's native memory system.
+
 ## Rules
 - **Plan mode is mandatory** — never write without user approval via native plan mode.
-- **One question at a time** — never batch questions during learning mode.
+- **One learning at a time** — diagnose one surface, propose one fix.
 - **Never assume** — verify with the user before recording any learning.
 - **Never modify framework files** — `plugins/genie/skills/` and `plugins/genie/agents/` are off limits.
 - **Never write source code** — behavioral configuration only.
-- **Explore before asking** — read the codebase first so questions are informed, not generic.
-- **Verify before applying** — confirm understanding with the user before proposing changes.
+- **Minimal changes** — add the smallest rule that prevents the mistake from recurring.
+- **Always save to memory** — every learning gets a feedback memory for cross-session persistence.

@@ -5,17 +5,13 @@
  * command for launching a team-lead. This module prevents drift between the
  * two implementations (which previously caused GENIE_AGENT_NAME regressions).
  *
- * System prompt is written to ~/.genie/prompts/<team>.md and referenced via
- * --append-system-prompt-file (or --system-prompt-file) to keep the command short.
+ * System prompt file path is passed directly via --append-system-prompt-file
+ * (or --system-prompt-file). No copy to ~/.genie/prompts/.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
-
-const PROMPTS_DIR = join(homedir(), '.genie', 'prompts');
 
 /** Shell-quote a string for safe embedding in shell commands. */
 export function shellQuote(s: string): string {
@@ -23,7 +19,8 @@ export function shellQuote(s: string): string {
 }
 
 interface BuildTeamLeadCommandOptions {
-  systemPrompt?: string;
+  /** Path to AGENTS.md or system prompt file (passed directly, no copy). */
+  systemPromptFile?: string;
   resumeSessionId?: string;
   /** Set session ID for a new session (mutually exclusive with resumeSessionId) */
   sessionId?: string;
@@ -36,22 +33,23 @@ interface BuildTeamLeadCommandOptions {
  *
  * Sets all required env vars (including GENIE_AGENT_NAME) and CLI flags.
  * CC requires --agent-id, --agent-name, and --team-name together.
- * The team lead uses agent-id "team-lead@<team>" by convention.
+ * The agent name is derived from basename(cwd) to match the folder name.
  *
- * System prompt is written to file and loaded via --append-system-prompt-file
- * (or --system-prompt-file) to keep the command short.
+ * System prompt file is passed directly via --append-system-prompt-file
+ * (or --system-prompt-file) — no intermediate copy step.
  */
 export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCommandOptions): string {
   const sanitized = sanitizeTeamName(teamName);
   const qTeam = shellQuote(sanitized);
+  const folderName = basename(process.cwd());
   const parts = [
     'CLAUDECODE=1',
     'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
     `GENIE_TEAM=${qTeam}`,
-    `GENIE_AGENT_NAME='team-lead'`,
+    `GENIE_AGENT_NAME=${shellQuote(folderName)}`,
     'claude',
-    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
-    `--agent-name ${shellQuote('team-lead')}`,
+    `--agent-id ${shellQuote(`${folderName}@${sanitized}`)}`,
+    `--agent-name ${shellQuote(folderName)}`,
     `--team-name ${qTeam}`,
     '--dangerously-skip-permissions',
   ];
@@ -62,15 +60,11 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     parts.push(`--session-id ${shellQuote(options.sessionId)}`);
   }
 
-  // Write prompt to file, reference via --*-system-prompt-file
-  if (options?.systemPrompt) {
-    mkdirSync(PROMPTS_DIR, { recursive: true });
-    const promptPath = join(PROMPTS_DIR, `${sanitized}.md`);
-    writeFileSync(promptPath, options.systemPrompt, 'utf-8');
-
+  // Pass file path directly — no copy step
+  if (options?.systemPromptFile) {
     const resolvedPromptMode = options?.promptMode ?? loadGenieConfigSync().promptMode;
     const promptFlag = resolvedPromptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
-    parts.push(`${promptFlag} ${shellQuote(promptPath)}`);
+    parts.push(`${promptFlag} ${shellQuote(options.systemPromptFile)}`);
   }
 
   return parts.join(' ');

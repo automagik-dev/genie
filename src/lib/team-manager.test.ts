@@ -16,6 +16,7 @@ import {
   hireAgent,
   listMembers,
   listTeams,
+  setTeamStatus,
   validateBranchName,
 } from './team-manager.js';
 
@@ -204,16 +205,16 @@ describe('Team Manager', () => {
       expect(added).toEqual([]);
     });
 
-    test('hire council adds all 10 council members', async () => {
+    test('hire council adds all 11 council members', async () => {
       await createTeam('feat/hire-council', TEST_REPO, 'dev');
       const added = await hireAgent('feat/hire-council', 'council');
 
-      expect(added.length).toBe(10);
-      expect(added).toContain('council-questioner');
-      expect(added).toContain('council-architect');
+      expect(added.length).toBe(11);
+      expect(added).toContain('council--questioner');
+      expect(added).toContain('council--architect');
 
       const config = await getTeam('feat/hire-council');
-      expect(config!.members.length).toBe(10);
+      expect(config!.members.length).toBe(11);
     });
 
     test('throws for non-existent team', async () => {
@@ -256,6 +257,31 @@ describe('Team Manager', () => {
     test('returns null for non-existent team', async () => {
       const members = await listMembers('nonexistent');
       expect(members).toBeNull();
+    });
+  });
+
+  describe('team status', () => {
+    test('new team has in_progress status', async () => {
+      const config = await createTeam('feat/status-default', TEST_REPO, 'dev');
+      expect(config.status).toBe('in_progress');
+    });
+
+    test('setTeamStatus sets status to done', async () => {
+      await createTeam('feat/status-done', TEST_REPO, 'dev');
+      await setTeamStatus('feat/status-done', 'done');
+      const config = await getTeam('feat/status-done');
+      expect(config!.status).toBe('done');
+    });
+
+    test('setTeamStatus sets status to blocked', async () => {
+      await createTeam('feat/status-blocked', TEST_REPO, 'dev');
+      await setTeamStatus('feat/status-blocked', 'blocked');
+      const config = await getTeam('feat/status-blocked');
+      expect(config!.status).toBe('blocked');
+    });
+
+    test('setTeamStatus throws for non-existent team', async () => {
+      expect(setTeamStatus('nonexistent', 'done')).rejects.toThrow('not found');
     });
   });
 

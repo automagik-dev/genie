@@ -233,10 +233,12 @@ describe('checkSendScope', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildTeamLeadCommand (shared module)', () => {
-  test('sets GENIE_AGENT_NAME=team-lead', async () => {
+  test('sets GENIE_AGENT_NAME to folder name', async () => {
+    const { basename } = await import('node:path');
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
     const cmd = buildTeamLeadCommand('genie');
-    expect(cmd).toContain("GENIE_AGENT_NAME='team-lead'");
+    const folderName = basename(process.cwd());
+    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
   });
 
   test('sets all required CC native team flags', async () => {
@@ -257,27 +259,23 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('abc-123');
   });
 
-  test('includes --append-system-prompt-file when systemPrompt provided (default promptMode)', async () => {
+  test('includes --append-system-prompt-file when systemPromptFile provided (default promptMode)', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt' });
+    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/tmp/test-agents.md' });
     expect(cmd).toContain('--append-system-prompt-file');
-    expect(cmd).toContain('.genie/prompts/genie.md');
-    // Prompt content is in the file, NOT inlined in the command
-    expect(cmd).not.toContain('test prompt');
+    expect(cmd).toContain('/tmp/test-agents.md');
   });
 
-  test('system prompt is persisted to file, referenced by path', async () => {
+  test('file path is passed directly, not copied', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'line one\nline two' });
-    // Command references file path, does not contain prompt text
+    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/path/to/AGENTS.md' });
     expect(cmd).toContain('--append-system-prompt-file');
-    expect(cmd).toContain('.genie/prompts/genie.md');
-    expect(cmd).not.toContain('line one');
+    expect(cmd).toContain('/path/to/AGENTS.md');
   });
 
   test('uses --system-prompt-file flag when promptMode is "system"', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { systemPrompt: 'test prompt', promptMode: 'system' });
+    const cmd = buildTeamLeadCommand('genie', { systemPromptFile: '/tmp/test.md', promptMode: 'system' });
     expect(cmd).toContain('--system-prompt-file');
     expect(cmd).not.toContain('--append-system-prompt-file');
   });
@@ -288,10 +286,12 @@ describe('buildTeamLeadCommand (shared module)', () => {
 // ---------------------------------------------------------------------------
 
 describe('session.ts: delegates to shared buildTeamLeadCommand', () => {
-  test('session buildClaudeCommand sets GENIE_AGENT_NAME=team-lead', async () => {
+  test('session buildClaudeCommand sets GENIE_AGENT_NAME to folder name', async () => {
+    const { basename } = await import('node:path');
     const { buildClaudeCommand } = await import('../genie-commands/session.js');
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain("GENIE_AGENT_NAME='team-lead'");
+    const folderName = basename(process.cwd());
+    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
   });
 });
 

@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import * as registry from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
@@ -35,13 +36,13 @@ function shortPathHash(p: string): string {
 }
 
 /**
- * Get the AGENTS.md system prompt if it exists in the current directory.
- * Returns the file contents as a string, or null if not found.
+ * Get the AGENTS.md file path if it exists in the current directory.
+ * Returns the absolute file path, or null if not found.
  */
-export function getAgentsSystemPrompt(): string | null {
+export function getAgentsFilePath(): string | null {
   const agentsPath = join(process.cwd(), 'AGENTS.md');
   if (existsSync(agentsPath)) {
-    return readFileSync(agentsPath, 'utf-8');
+    return agentsPath;
   }
   return null;
 }
@@ -111,7 +112,7 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
   await ensureNativeTeam(teamName, `Genie team: ${teamName}`, 'pending');
 
   await registerNativeMember(teamName, {
-    agentName: 'team-lead',
+    agentName: basename(cwd),
     agentType: 'general-purpose',
     color: 'blue',
     cwd,
@@ -122,8 +123,41 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  * Build the claude launch command with native team flags.
  * Delegates to the shared buildTeamLeadCommand (single source of truth).
  */
-export function buildClaudeCommand(teamName: string, systemPrompt?: string, resumeSessionId?: string): string {
-  return buildTeamLeadCommand(teamName, { systemPrompt, resumeSessionId });
+export function buildClaudeCommand(teamName: string, systemPromptFile?: string, resumeSessionId?: string): string {
+  return buildTeamLeadCommand(teamName, { systemPromptFile, resumeSessionId });
+}
+
+/**
+ * Register the interactive genie session in `~/.genie/workers.json`.
+ *
+ * This allows spawned agents to resolve the team-lead for messaging
+ * via the agent registry (e.g., for SendMessage bidirectional comms).
+ */
+async function registerSessionInRegistry(sessionName: string, windowName: string, workspaceDir: string): Promise<void> {
+  try {
+    const target = `${sessionName}:${windowName}`;
+    const paneId = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
+    const now = new Date().toISOString();
+    const sanitized = sanitizeTeamName(windowName);
+    await registry.register({
+      id: `${sanitized}-team-lead`,
+      paneId,
+      session: sessionName,
+      team: windowName,
+      role: 'team-lead',
+      worktree: null,
+      startedAt: now,
+      state: 'working',
+      lastStateChange: now,
+      repoPath: workspaceDir,
+      provider: 'claude',
+      transport: 'tmux',
+      nativeTeamEnabled: true,
+      nativeAgentId: `team-lead@${sanitized}`,
+    });
+  } catch {
+    // Best-effort — don't block session startup if registration fails
+  }
 }
 
 /**
@@ -167,7 +201,7 @@ async function createSession(
   sessionName: string,
   windowName: string,
   workspaceDir: string,
-  systemPrompt: string | null,
+  systemPromptFile: string | null,
 ): Promise<void> {
   await ensureNativeTeamForLeader(windowName, workspaceDir);
   console.log(`Native team "${windowName}" ready at ~/.claude/teams/${sanitizeTeamName(windowName)}/`);
@@ -198,13 +232,17 @@ async function createSession(
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
-  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workspaceDir);
+  const agentName = basename(workspaceDir);
+  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workspaceDir);
   if (resumeSessionId) {
     console.log(`Resuming previous session: ${resumeSessionId}`);
   }
-  const cmd = buildClaudeCommand(windowName, systemPrompt || undefined, resumeSessionId || undefined);
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as team-lead@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
+  console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
+
+  // Register interactive session so spawned agents can find the team-lead
+  await registerSessionInRegistry(sessionName, windowName, workspaceDir);
 }
 
 /** Focus (or create) a team window within an existing session. */
@@ -212,7 +250,7 @@ async function focusTeamWindow(
   sessionName: string,
   windowName: string,
   workingDir: string,
-  systemPrompt: string | null,
+  systemPromptFile: string | null,
 ): Promise<void> {
   const teamWindow = await tmux.ensureTeamWindow(sessionName, windowName, workingDir);
   if (teamWindow.created) {
@@ -226,13 +264,17 @@ async function focusTeamWindow(
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), 'team-lead', workingDir);
+    const agentName = basename(workingDir);
+    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workingDir);
     if (resumeSessionId) {
       console.log(`Resuming previous session: ${resumeSessionId}`);
     }
-    const cmd = buildClaudeCommand(windowName, systemPrompt || undefined, resumeSessionId || undefined);
+    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-    console.log(`Started Claude Code as team-lead@${sanitizeTeamName(windowName)} in ${workingDir}`);
+    console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workingDir}`);
+
+    // Register interactive session so spawned agents can find the team-lead
+    await registerSessionInRegistry(sessionName, windowName, workingDir);
   }
   await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
   console.log(`Focused team window "${windowName}"`);
@@ -257,10 +299,16 @@ async function deriveWindowName(sessionName: string, workspaceDir: string, team?
 async function handleReset(sessionName: string, windowName: string): Promise<void> {
   const existing = await tmux.findSessionByName(sessionName);
   if (existing) {
+    // Collect all window names BEFORE killing the session
+    const windows = await tmux.listWindows(existing.id);
     console.log(`Resetting session "${sessionName}"...`);
-    await tmux.killSession(sessionName);
+    await tmux.killSession(existing.id);
+    // Delete native team dirs for ALL windows in the session
+    await Promise.all(windows.map((w) => deleteNativeTeam(w.name)));
+  } else {
+    // Session not running — still clean up the current window's team dir
+    await deleteNativeTeam(windowName);
   }
-  await deleteNativeTeam(windowName);
 }
 
 function attachToWindow(sessionName: string, windowName: string): void {
@@ -280,16 +328,16 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
     if (options.reset) await handleReset(sessionName, windowName);
 
     const session = await tmux.findSessionByName(sessionName);
-    const systemPrompt = getAgentsSystemPrompt();
-    if (!systemPrompt) {
+    const systemPromptFile = getAgentsFilePath();
+    if (!systemPromptFile) {
       console.warn('Info: No AGENTS.md found in current directory. Team-lead will use orchestration rules only.');
     }
 
     if (!session) {
-      await createSession(sessionName, windowName, workspaceDir, systemPrompt);
+      await createSession(sessionName, windowName, workspaceDir, systemPromptFile);
     } else {
       console.log(`Session "${sessionName}" already exists`);
-      await focusTeamWindow(sessionName, windowName, workspaceDir, systemPrompt);
+      await focusTeamWindow(sessionName, windowName, workspaceDir, systemPromptFile);
     }
 
     attachToWindow(sessionName, windowName);

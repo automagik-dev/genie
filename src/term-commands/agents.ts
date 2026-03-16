@@ -10,7 +10,7 @@
 
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
-import { getBuiltin } from '../lib/builtin-agents.js';
+import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
@@ -393,6 +393,8 @@ interface SpawnCtx {
   extraArgs?: string[];
   /** Working directory for the worker (defaults to process.cwd()). */
   cwd: string;
+  /** When true, spawn into the current tmux window instead of resolving/creating a team window. */
+  spawnIntoCurrentWindow: boolean;
 }
 
 async function registerSpawnWorker(
@@ -494,23 +496,37 @@ async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Pr
   }
 }
 
-async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+/**
+ * Create a tmux pane for the worker.
+ *
+ * First agent in a newly created team window reuses the blank pane via send-keys.
+ * Subsequent agents split-window into the same team window.
+ */
+function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): string {
   const { execSync } = require('node:child_process');
 
-  const teamWindow = await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
-  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
-
-  let paneId: string;
-  try {
-    const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
-    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
-    paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
-  } catch (err) {
-    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
-    process.exit(1);
+  if (teamWindow?.created) {
+    const paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
+      .trim()
+      .split('\n')[0];
+    if (ctx.cwd) {
+      execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
+    }
+    execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
+      encoding: 'utf-8',
+    });
+    return paneId;
   }
 
-  // Apply layout to team window (or fallback to first window in session)
+  const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
+  const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+  const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+  return execSync(splitCmd, { encoding: 'utf-8' }).trim();
+}
+
+/** Apply mosaic layout to the team window (or first window in session as fallback). */
+async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): Promise<void> {
+  const { execSync } = require('node:child_process');
   const session = 'genie';
   let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
   if (!teamWindow) {
@@ -522,16 +538,28 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   } catch {
     /* best-effort */
   }
+}
+
+async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
+  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+
+  let paneId: string;
+  try {
+    paneId = createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    process.exit(1);
+  }
+
+  await applySpawnLayout(ctx, teamWindow);
 
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
 
-  // Apply agent color to tmux pane border (focus-driven)
   if (ctx.spawnColor && paneId !== 'inline') {
     await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
   }
 
-  // Save spawn template for auto-respawn on message delivery
   await registry.saveTemplate({
     id: ctx.validated.role ?? ctx.workerId,
     provider: ctx.validated.provider,
@@ -545,7 +573,6 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     lastSessionId: workerEntry.claudeSessionId,
   });
 
-  // Register pane with the shared OTel relay.
   if (ctx.otelRelayActive && paneId !== '%0') {
     registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
   }
@@ -653,9 +680,11 @@ export interface SpawnOptions {
   permissionMode?: string;
   extraArgs?: string[];
   cwd?: string;
+  /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
+  initialPrompt?: string;
 }
 
-/** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPrompt. */
+/** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
 async function resolveAgentForSpawn(
   name: string,
   options: SpawnOptions,
@@ -664,30 +693,30 @@ async function resolveAgentForSpawn(
   repoPath: string;
   identityPath: string | null;
   model: string | undefined;
-  systemPrompt: string | undefined;
 }> {
   const resolved = await directory.resolve(name);
   if (!resolved) {
     console.error(`Error: Agent "${name}" not found in directory or built-ins.`);
     console.error(`  Register with: genie dir add ${name} --dir <path>`);
-    console.error('  Or use a built-in: implementor, tester, reviewer, debugger, ...');
+    console.error('  Or use a built-in: engineer, reviewer, qa, fix, ...');
     process.exit(1);
   }
   const entry = resolved.entry;
 
-  // For built-in agents, look up their inline system prompt
-  let systemPrompt: string | undefined;
+  // For built-in agents, resolve AGENTS.md file path from built-in registry.
+  // For user agents, resolve from their registered directory.
+  let identityPath: string | null = null;
   if (resolved.builtin) {
-    const builtin = getBuiltin(name);
-    systemPrompt = builtin?.systemPrompt;
+    identityPath = resolveBuiltinAgentPath(name);
+  } else if (entry.dir) {
+    identityPath = directory.loadIdentity(entry);
   }
 
   return {
     entry,
     repoPath: options.cwd ?? (entry.dir || undefined) ?? process.cwd(),
-    identityPath: entry.dir ? directory.loadIdentity(entry) : null,
+    identityPath,
     model: options.model ?? entry.model,
-    systemPrompt,
   };
 }
 
@@ -706,8 +735,8 @@ async function buildSpawnParams(
     extraArgs: options.extraArgs,
     model: agent.model,
     systemPromptFile: agent.identityPath ?? undefined,
-    systemPrompt: agent.systemPrompt,
     promptMode: agent.entry.promptMode,
+    initialPrompt: options.initialPrompt,
   };
 
   const { parentSessionId, spawnColor, nativeTeam } = await resolveNativeTeam(team, agent.repoPath, {
@@ -735,7 +764,8 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // 1. Resolve agent from directory or built-ins
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team
+  // 2. Resolve team (track whether it was explicitly provided via --team)
+  const teamWasExplicit = Boolean(options.team);
   const team = options.team || (await nativeTeams.discoverTeamName());
   if (!team) {
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
@@ -786,6 +816,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
+    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
   };
 
   if (insideTmux) {
