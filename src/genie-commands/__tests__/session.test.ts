@@ -1,5 +1,5 @@
 /**
- * Tests for Session command: buildClaudeCommand and getAgentsSystemPrompt
+ * Tests for Session command: buildClaudeCommand and getAgentsFilePath
  *
  * buildClaudeCommand delegates to buildTeamLeadCommand (team-lead-command.ts),
  * which is the single source of truth for team-lead launch commands.
@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { buildClaudeCommand, getAgentsSystemPrompt, sanitizeWindowName } from '../session.js';
+import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
 // buildClaudeCommand tests
@@ -28,9 +28,10 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('claude');
   });
 
-  test('sets GENIE_AGENT_NAME env var to team-lead', () => {
+  test('sets GENIE_AGENT_NAME env var to folder name', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain("GENIE_AGENT_NAME='team-lead'");
+    const folderName = basename(process.cwd());
+    expect(cmd).toContain(`GENIE_AGENT_NAME='${folderName}'`);
   });
 
   test('sets GENIE_TEAM env var', () => {
@@ -43,26 +44,27 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('--dangerously-skip-permissions');
   });
 
-  test('includes --agent-id with team-lead@team pattern', () => {
+  test('includes --agent-id with folderName@team pattern', () => {
     const cmd = buildClaudeCommand('my-team');
-    expect(cmd).toContain("--agent-id 'team-lead@my-team'");
+    const folderName = basename(process.cwd());
+    expect(cmd).toContain(`--agent-id '${folderName}@my-team'`);
   });
 
-  test('includes --agent-name team-lead', () => {
+  test('includes --agent-name as folder name', () => {
     const cmd = buildClaudeCommand('genie');
-    expect(cmd).toContain("--agent-name 'team-lead'");
+    const folderName = basename(process.cwd());
+    expect(cmd).toContain(`--agent-name '${folderName}'`);
   });
 
-  test('with system prompt references file via --append-system-prompt-file', () => {
-    const cmd = buildClaudeCommand('genie', 'test prompt');
+  test('with system prompt file references it via --append-system-prompt-file', () => {
+    const cmd = buildClaudeCommand('genie', '/tmp/test-agents.md');
     expect(cmd).toContain('--append-system-prompt-file');
-    expect(cmd).toContain('.genie/prompts/genie.md');
+    expect(cmd).toContain('/tmp/test-agents.md');
   });
 
-  test('without explicit system prompt still includes --system-prompt from team-lead prompt', () => {
+  test('without explicit system prompt file has no prompt flag', () => {
     const cmd = buildClaudeCommand('genie');
     // Orchestration prompt is now in ~/.claude/rules/ (auto-loaded by CC)
-    // In test env it may or may not exist, but the flag structure is correct
     expect(cmd).toContain('--team-name');
   });
 
@@ -72,20 +74,18 @@ describe('buildClaudeCommand', () => {
     expect(cmd).not.toContain('--resume');
   });
 
-  test('system prompt is persisted to file, not inlined', () => {
-    const cmd = buildClaudeCommand('genie', "it's a test with a very long prompt");
+  test('file path is passed directly, no content inlined', () => {
+    const cmd = buildClaudeCommand('genie', '/path/to/AGENTS.md');
     expect(cmd).toContain('--append-system-prompt-file');
-    // Prompt content NOT in the command — only the file path reference
-    expect(cmd).not.toContain('very long prompt');
-    expect(cmd).toContain('.genie/prompts/genie.md');
+    expect(cmd).toContain('/path/to/AGENTS.md');
   });
 });
 
 // ============================================================================
-// getAgentsSystemPrompt tests
+// getAgentsFilePath tests
 // ============================================================================
 
-describe('getAgentsSystemPrompt', () => {
+describe('getAgentsFilePath', () => {
   const TEST_DIR = '/tmp/session-test-agents-md';
   let originalCwd: string;
 
@@ -102,16 +102,16 @@ describe('getAgentsSystemPrompt', () => {
 
   test('returns null when no AGENTS.md in cwd', () => {
     process.chdir(TEST_DIR);
-    const result = getAgentsSystemPrompt();
+    const result = getAgentsFilePath();
     expect(result).toBeNull();
   });
 
-  test('returns file contents when AGENTS.md exists in cwd', () => {
+  test('returns file path when AGENTS.md exists in cwd', () => {
     const content = '# Agent Instructions\n\nDo the thing.';
     writeFileSync(join(TEST_DIR, 'AGENTS.md'), content);
     process.chdir(TEST_DIR);
-    const result = getAgentsSystemPrompt();
-    expect(result).toBe(content);
+    const result = getAgentsFilePath();
+    expect(result).toBe(join(TEST_DIR, 'AGENTS.md'));
   });
 });
 

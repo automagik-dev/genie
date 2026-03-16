@@ -105,7 +105,7 @@ When a failure is found but the root cause is unclear:
 
 ## Dispatch
 
-**The reviewer must not be the implementor.** Always dispatch review as a separate subagent.
+**The reviewer must not be the engineer.** Always dispatch review as a separate subagent.
 
 ```bash
 # Spawn a reviewer subagent
