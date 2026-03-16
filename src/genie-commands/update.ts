@@ -339,6 +339,27 @@ async function resolveGlobalPkgDir(installType: InstallationType): Promise<strin
   return null;
 }
 
+/** Update the installed_plugins.json registry entry for genie. */
+function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: string): void {
+  const registryPath = join(claudePlugins, 'installed_plugins.json');
+  try {
+    if (!existsSync(registryPath)) return;
+    const registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
+    const entries = registry.plugins?.['genie@automagik'];
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (entry.scope === 'user') {
+        entry.installPath = cacheDir;
+        entry.version = version;
+        entry.lastUpdated = new Date().toISOString();
+      }
+    }
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2));
+  } catch (err) {
+    log(`Registry update failed (non-fatal): ${err}`);
+  }
+}
+
 async function syncPlugin(installType: InstallationType): Promise<void> {
   log('Syncing Claude Code plugin...');
 
@@ -379,26 +400,7 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
     return;
   }
 
-  // Update installed_plugins.json registry
-  const registryPath = join(claudePlugins, 'installed_plugins.json');
-  try {
-    if (existsSync(registryPath)) {
-      const registry = JSON.parse(readFileSync(registryPath, 'utf-8'));
-      const entries = registry.plugins?.['genie@automagik'];
-      if (Array.isArray(entries)) {
-        for (const entry of entries) {
-          if (entry.scope === 'user') {
-            entry.installPath = cacheDir;
-            entry.version = version;
-            entry.lastUpdated = new Date().toISOString();
-          }
-        }
-        writeFileSync(registryPath, JSON.stringify(registry, null, 2));
-      }
-    }
-  } catch (err) {
-    log(`Registry update failed (non-fatal): ${err}`);
-  }
+  updatePluginRegistry(claudePlugins, cacheDir, version);
 
   success(`Plugin synced to v${version}`);
 }
