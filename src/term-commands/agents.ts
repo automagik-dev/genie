@@ -10,7 +10,7 @@
 
 import * as directory from '../lib/agent-directory.js';
 import * as registry from '../lib/agent-registry.js';
-import { getBuiltin } from '../lib/builtin-agents.js';
+import { resolveBuiltinAgentPath } from '../lib/builtin-agents.js';
 import * as nativeTeams from '../lib/claude-native-teams.js';
 import { OTEL_RELAY_PORT, ensureCodexOtelConfig } from '../lib/codex-config.js';
 import { buildLayoutCommand, resolveLayoutMode } from '../lib/mosaic-layout.js';
@@ -502,9 +502,26 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
 
   let paneId: string;
   try {
-    const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
-    const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
-    paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
+    // When first agent spawns into a newly created team window, use send-keys
+    // to run the command in the existing (blank) pane — no split-window needed.
+    // Only split-window for 2nd+ agent in the same window.
+    if (teamWindow?.created) {
+      // Get the existing pane ID from the newly created window
+      paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
+        .trim()
+        .split('\n')[0];
+      // cd into the working directory and run the command
+      if (ctx.cwd) {
+        execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
+      }
+      execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
+        encoding: 'utf-8',
+      });
+    } else {
+      const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
+      const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;
+      paneId = execSync(splitCmd, { encoding: 'utf-8' }).trim();
+    }
   } catch (err) {
     console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
     process.exit(1);
@@ -657,7 +674,7 @@ export interface SpawnOptions {
   initialPrompt?: string;
 }
 
-/** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPrompt. */
+/** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
 async function resolveAgentForSpawn(
   name: string,
   options: SpawnOptions,
@@ -666,30 +683,30 @@ async function resolveAgentForSpawn(
   repoPath: string;
   identityPath: string | null;
   model: string | undefined;
-  systemPrompt: string | undefined;
 }> {
   const resolved = await directory.resolve(name);
   if (!resolved) {
     console.error(`Error: Agent "${name}" not found in directory or built-ins.`);
     console.error(`  Register with: genie dir add ${name} --dir <path>`);
-    console.error('  Or use a built-in: implementor, tester, reviewer, debugger, ...');
+    console.error('  Or use a built-in: engineer, reviewer, qa, fix, ...');
     process.exit(1);
   }
   const entry = resolved.entry;
 
-  // For built-in agents, look up their inline system prompt
-  let systemPrompt: string | undefined;
+  // For built-in agents, resolve AGENTS.md file path from built-in registry.
+  // For user agents, resolve from their registered directory.
+  let identityPath: string | null = null;
   if (resolved.builtin) {
-    const builtin = getBuiltin(name);
-    systemPrompt = builtin?.systemPrompt;
+    identityPath = resolveBuiltinAgentPath(name);
+  } else if (entry.dir) {
+    identityPath = directory.loadIdentity(entry);
   }
 
   return {
     entry,
     repoPath: options.cwd ?? (entry.dir || undefined) ?? process.cwd(),
-    identityPath: entry.dir ? directory.loadIdentity(entry) : null,
+    identityPath,
     model: options.model ?? entry.model,
-    systemPrompt,
   };
 }
 
@@ -708,7 +725,6 @@ async function buildSpawnParams(
     extraArgs: options.extraArgs,
     model: agent.model,
     systemPromptFile: agent.identityPath ?? undefined,
-    systemPrompt: agent.systemPrompt,
     promptMode: agent.entry.promptMode,
     initialPrompt: options.initialPrompt,
   };
