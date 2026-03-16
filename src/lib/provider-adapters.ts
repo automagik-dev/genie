@@ -216,9 +216,12 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
 
-  // Always set GENIE_AGENT_NAME, even for non-native spawns
+  // Always set GENIE_AGENT_NAME and GENIE_TEAM, even for non-native spawns
   if (params.role) {
     env.GENIE_AGENT_NAME = params.role;
+  }
+  if (params.team) {
+    env.GENIE_TEAM = params.team;
   }
 
   if (params.nativeTeam?.enabled) {
