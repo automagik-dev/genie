@@ -210,19 +210,51 @@ function appendNativeTeamFlags(
   if (nt.permissionMode) parts.push('--permission-mode', escapeShellArg(nt.permissionMode));
 }
 
+/**
+ * Resolve system prompt flags for the Claude command.
+ *
+ * When both an inline systemPrompt and a systemPromptFile exist, merges
+ * them into a single temp file. Also merges any --append-system-prompt-file
+ * found in extraArgs (consuming it so it isn't duplicated later).
+ */
+function appendSystemPromptFlags(parts: string[], params: SpawnParams): void {
+  if (params.systemPrompt) {
+    const { mkdirSync, writeFileSync, readFileSync } = require('node:fs');
+    const { join } = require('node:path');
+    const dir = '/tmp/genie-prompts';
+    mkdirSync(dir, { recursive: true });
+    const ts = Date.now().toString(36);
+    const promptFile = join(dir, `${params.role || 'agent'}-${ts}.md`);
+
+    let content = params.systemPrompt;
+    if (params.systemPromptFile) {
+      content = `${readFileSync(params.systemPromptFile, 'utf-8')}\n\n${content}`;
+    }
+    if (params.extraArgs) {
+      const fileIdx = params.extraArgs.indexOf('--append-system-prompt-file');
+      if (fileIdx !== -1 && params.extraArgs[fileIdx + 1]) {
+        content = `${content}\n\n${readFileSync(params.extraArgs[fileIdx + 1], 'utf-8')}`;
+        params.extraArgs.splice(fileIdx, 2);
+      }
+    }
+
+    writeFileSync(promptFile, content);
+    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
+    parts.push(flag, escapeShellArg(promptFile));
+  } else if (params.systemPromptFile) {
+    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
+    parts.push(flag, escapeShellArg(params.systemPromptFile));
+  }
+}
+
 export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   preflightCheck('claude');
 
   const parts: string[] = ['claude', '--dangerously-skip-permissions'];
   const env: Record<string, string> = {};
 
-  // Always set GENIE_AGENT_NAME and GENIE_TEAM, even for non-native spawns
-  if (params.role) {
-    env.GENIE_AGENT_NAME = params.role;
-  }
-  if (params.team) {
-    env.GENIE_TEAM = params.team;
-  }
+  if (params.role) env.GENIE_AGENT_NAME = params.role;
+  if (params.team) env.GENIE_TEAM = params.team;
 
   if (params.nativeTeam?.enabled) {
     appendNativeTeamFlags(parts, env, params.nativeTeam, params);
@@ -235,47 +267,14 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   }
 
   if (params.role) parts.push('--agent', escapeShellArg(params.role));
-
   if (params.model) parts.push('--model', escapeShellArg(params.model));
 
-  if (params.systemPrompt) {
-    // Write built-in prompt to temp file — avoids shell escaping of complex content
-    const { mkdirSync, writeFileSync, readFileSync } = require('node:fs');
-    const { join } = require('node:path');
-    const dir = '/tmp/genie-prompts';
-    mkdirSync(dir, { recursive: true });
-    const ts = Date.now().toString(36);
-    const promptFile = join(dir, `${params.role || 'agent'}-${ts}.md`);
-
-    // If there is also a systemPromptFile (user agent), merge both
-    let content = params.systemPrompt;
-    if (params.systemPromptFile) {
-      content = `${readFileSync(params.systemPromptFile, 'utf-8')}\n\n${content}`;
-    }
-
-    // If extraArgs has --append-system-prompt-file, merge that too
-    if (params.extraArgs) {
-      const fileIdx = params.extraArgs.indexOf('--append-system-prompt-file');
-      if (fileIdx !== -1 && params.extraArgs[fileIdx + 1]) {
-        content = `${content}\n\n${readFileSync(params.extraArgs[fileIdx + 1], 'utf-8')}`;
-        // Remove the extra arg since we merged it
-        params.extraArgs.splice(fileIdx, 2);
-      }
-    }
-
-    writeFileSync(promptFile, content);
-    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
-    parts.push(flag, escapeShellArg(promptFile));
-  } else if (params.systemPromptFile) {
-    const flag = params.promptMode === 'system' ? '--system-prompt-file' : '--append-system-prompt-file';
-    parts.push(flag, escapeShellArg(params.systemPromptFile));
-  }
+  appendSystemPromptFlags(parts, params);
 
   if (params.extraArgs) {
     for (const arg of params.extraArgs) parts.push(escapeShellArg(arg));
   }
 
-  // Positional [prompt] arg must be last — becomes the first user message
   if (params.initialPrompt) {
     parts.push(escapeShellArg(params.initialPrompt));
   }
