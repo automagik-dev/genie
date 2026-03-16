@@ -219,7 +219,7 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
 
   // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
   const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired, use genie spawn to activate them). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
