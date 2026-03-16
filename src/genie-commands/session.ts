@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
+import * as registry from '../lib/agent-registry.js';
 import {
   deleteNativeTeam,
   ensureNativeTeam,
@@ -127,6 +128,39 @@ export function buildClaudeCommand(teamName: string, systemPromptFile?: string, 
 }
 
 /**
+ * Register the interactive genie session in `~/.genie/workers.json`.
+ *
+ * This allows spawned agents to resolve the team-lead for messaging
+ * via the agent registry (e.g., for SendMessage bidirectional comms).
+ */
+async function registerSessionInRegistry(sessionName: string, windowName: string, workspaceDir: string): Promise<void> {
+  try {
+    const target = `${sessionName}:${windowName}`;
+    const paneId = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_id}'`)).trim();
+    const now = new Date().toISOString();
+    const sanitized = sanitizeTeamName(windowName);
+    await registry.register({
+      id: `${sanitized}-team-lead`,
+      paneId,
+      session: sessionName,
+      team: windowName,
+      role: 'team-lead',
+      worktree: null,
+      startedAt: now,
+      state: 'working',
+      lastStateChange: now,
+      repoPath: workspaceDir,
+      provider: 'claude',
+      transport: 'tmux',
+      nativeTeamEnabled: true,
+      nativeAgentId: `team-lead@${sanitized}`,
+    });
+  } catch {
+    // Best-effort — don't block session startup if registration fails
+  }
+}
+
+/**
  * Resolve the window name for the current working directory.
  *
  * Logic:
@@ -206,6 +240,9 @@ async function createSession(
   const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
   console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
+
+  // Register interactive session so spawned agents can find the team-lead
+  await registerSessionInRegistry(sessionName, windowName, workspaceDir);
 }
 
 /** Focus (or create) a team window within an existing session. */
@@ -235,6 +272,9 @@ async function focusTeamWindow(
     const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
     console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workingDir}`);
+
+    // Register interactive session so spawned agents can find the team-lead
+    await registerSessionInRegistry(sessionName, windowName, workingDir);
   }
   await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
   console.log(`Focused team window "${windowName}"`);

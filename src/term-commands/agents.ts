@@ -393,6 +393,8 @@ interface SpawnCtx {
   extraArgs?: string[];
   /** Working directory for the worker (defaults to process.cwd()). */
   cwd: string;
+  /** When true, spawn into the current tmux window instead of resolving/creating a team window. */
+  spawnIntoCurrentWindow: boolean;
 }
 
 async function registerSpawnWorker(
@@ -497,7 +499,9 @@ async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Pr
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   const { execSync } = require('node:child_process');
 
-  const teamWindow = await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+  // When spawning into the current session (no explicit --team), skip team window
+  // resolution and split the current window directly.
+  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
   const splitTarget = teamWindow ? `-t '${teamWindow.windowId}'` : '';
 
   let paneId: string;
@@ -754,7 +758,8 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // 1. Resolve agent from directory or built-ins
   let agent = await resolveAgentForSpawn(name, options);
 
-  // 2. Resolve team
+  // 2. Resolve team (track whether it was explicitly provided via --team)
+  const teamWasExplicit = Boolean(options.team);
   const team = options.team || (await nativeTeams.discoverTeamName());
   if (!team) {
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
@@ -805,6 +810,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
+    spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
   };
 
   if (insideTmux) {
