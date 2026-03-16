@@ -507,12 +507,16 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     // Only split-window for 2nd+ agent in the same window.
     if (teamWindow?.created) {
       // Get the existing pane ID from the newly created window
-      paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' }).trim().split('\n')[0];
+      paneId = execSync(`tmux list-panes -t '${teamWindow.windowId}' -F '#{pane_id}'`, { encoding: 'utf-8' })
+        .trim()
+        .split('\n')[0];
       // cd into the working directory and run the command
       if (ctx.cwd) {
         execSync(`tmux send-keys -t '${paneId}' 'cd ${ctx.cwd.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
       }
-      execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, { encoding: 'utf-8' });
+      execSync(`tmux send-keys -t '${paneId}' '${ctx.fullCommand.replace(/'/g, "'\\''")}' Enter`, {
+        encoding: 'utf-8',
+      });
     } else {
       const cwdFlag = ctx.cwd ? `-c '${ctx.cwd}'` : '';
       const splitCmd = `tmux split-window -d ${splitTarget} ${cwdFlag} -P -F '#{pane_id}' ${ctx.fullCommand}`;

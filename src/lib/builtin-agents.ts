@@ -9,7 +9,7 @@
  * Resolution: user directory entries override built-ins of the same name.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 import type { PromptMode } from './agent-directory.js';
