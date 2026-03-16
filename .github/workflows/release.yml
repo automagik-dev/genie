@@ -114,4 +114,9 @@ jobs:
             echo "ERROR: NPM_TOKEN secret is not set. Cannot publish to npm." >&2
             exit 1
           fi
-          bun publish --access public
+          VERSION="${{ steps.ver.outputs.version }}"
+          # Try publish; if version exists (from @next), just retag as latest
+          if ! bun publish --access public 2>&1; then
+            echo "Publish failed — version may already exist from @next. Retagging as latest..."
+            npm dist-tag add "@automagik/genie@${VERSION}" latest
+          fi
