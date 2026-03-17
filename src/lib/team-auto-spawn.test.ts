@@ -32,6 +32,7 @@ function makeDeps(overrides: Partial<TeamAutoSpawnDeps> = {}): TeamAutoSpawnDeps
     listWindows: async () => [{ id: '@1', name: 'test-team', active: false, sessionId: 'genie' }],
     listPanes: async () => [{ id: '%1', windowId: '@1', active: true, title: '' }],
     isPaneAlive: async () => true,
+    resolveSessionName: async () => 'genie',
     getTeamLeadEntry: async () => null,
     saveTeamLeadEntry: async () => {},
     ensureNativeTeam: async () =>
@@ -61,27 +62,27 @@ function makeDeps(overrides: Partial<TeamAutoSpawnDeps> = {}): TeamAutoSpawnDeps
 describe('isTeamActive', () => {
   test('returns false when no config exists', async () => {
     const deps = makeDeps({ loadConfig: async () => null });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('returns false when no tmux session exists', async () => {
     const deps = makeDeps({ findSessionByName: async () => null });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('returns false when no matching window exists', async () => {
     const deps = makeDeps({ listWindows: async () => [] });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('returns false when window has no panes', async () => {
     const deps = makeDeps({ listPanes: async () => [] });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('window exists + pane alive → returns true', async () => {
     const deps = makeDeps({ isPaneAlive: async () => true });
-    expect(await isTeamActive('test-team', deps)).toBe(true);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(true);
   });
 
   test('window exists + pane dead → returns false', async () => {
@@ -89,7 +90,7 @@ describe('isTeamActive', () => {
       isPaneAlive: async () => false,
       getTeamLeadEntry: async () => null,
     });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('window exists + pane dead + spawned < 30s ago → returns true (grace period)', async () => {
@@ -110,7 +111,7 @@ describe('isTeamActive', () => {
       }),
       now: () => now,
     });
-    expect(await isTeamActive('test-team', deps)).toBe(true);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(true);
   });
 
   test('window exists + pane dead + spawned > 30s ago → returns false (grace expired)', async () => {
@@ -131,7 +132,7 @@ describe('isTeamActive', () => {
       }),
       now: () => now,
     });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 
   test('handles listWindows error gracefully', async () => {
@@ -140,7 +141,7 @@ describe('isTeamActive', () => {
         throw new Error('tmux: no server running');
       },
     });
-    expect(await isTeamActive('test-team', deps)).toBe(false);
+    expect(await isTeamActive('test-team', 'genie', deps)).toBe(false);
   });
 });
 
@@ -178,6 +179,35 @@ describe('ensureTeamLead', () => {
     expect(result.created).toBe(true);
     expect(savedPaneId).toBe('%42');
     expect(savedTeam).toBe('test-team');
+  });
+
+  test('uses workingDir-derived session over registry session when different', async () => {
+    const observedSessions: string[] = [];
+    const deps = makeDeps({
+      resolveSessionName: async () => 'project-session',
+      getTeamLeadEntry: async () =>
+        ({
+          id: 'team-lead:test-team',
+          paneId: '%1',
+          session: 'registry-session',
+          worktree: null,
+          startedAt: new Date(Date.now() - 60_000).toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/other-project',
+          role: 'team-lead',
+          team: 'test-team',
+        }) as any,
+      loadConfig: async () => null,
+      findSessionByName: async (name) => {
+        observedSessions.push(name);
+        return { id: '$0', name, attached: false, windows: 1 };
+      },
+    });
+
+    const result = await ensureTeamLead('test-team', '/tmp/workspace', deps);
+    expect(result.session).toBe('project-session');
+    expect(observedSessions).toContain('project-session');
   });
 
   test('cleans up stale window and re-creates', async () => {

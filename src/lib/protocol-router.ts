@@ -54,13 +54,19 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
   return false;
 }
 
+/** Fetch workers scoped to a session, or all workers if no session specified. */
+async function scopedWorkers(senderSession?: string): Promise<registry.Agent[]> {
+  return senderSession ? registry.filterBySession(senderSession) : registry.list();
+}
+
 /**
  * Resolve a recipient to live workers using strict tiered matching.
  * Priority: exact ID > role > team:role.
  * Only returns workers with alive panes (non-suspended).
+ * When senderSession is provided, only matches workers in the same session (project isolation).
  */
-async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> {
-  const allWorkers = await registry.list();
+async function resolveRecipient(recipientId: string, senderSession?: string): Promise<registry.Agent[]> {
+  const allWorkers = await scopedWorkers(senderSession);
 
   const byId: registry.Agent[] = [];
   const byRole: registry.Agent[] = [];
@@ -84,8 +90,8 @@ async function resolveRecipient(recipientId: string): Promise<registry.Agent[]> 
  * Find exactly one live worker by tiered match.
  * Returns null if zero or multiple matches (ambiguous).
  */
-async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent | null> {
-  const matches = await resolveRecipient(recipientId);
+async function findLiveWorkerFuzzy(recipientId: string, senderSession?: string): Promise<registry.Agent | null> {
+  const matches = await resolveRecipient(recipientId, senderSession);
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -96,6 +102,7 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent 
 async function ensureWorkerAlive(
   worker: registry.Agent | null,
   recipientId: string,
+  senderSession?: string,
 ): Promise<{ worker: registry.Agent; respawned: boolean } | null> {
   if (worker && worker.state !== 'suspended' && (await isPaneAlive(worker.paneId))) {
     return { worker, respawned: false };
@@ -104,7 +111,7 @@ async function ensureWorkerAlive(
   // Always check for a live worker before attempting to spawn — prevents
   // duplicate spawns when the registry entry is stale/dead but another
   // instance with the same role is already alive.
-  const live = await findLiveWorkerFuzzy(recipientId);
+  const live = await findLiveWorkerFuzzy(recipientId, senderSession);
   if (live) return { worker: live, respawned: false };
 
   if (!process.env.TMUX) return null;
@@ -242,9 +249,11 @@ async function deliverViaNativeInbox(
  * Send a message to a recipient using directory-first resolution.
  *
  * Resolution order:
- *   1. Live workers (ID > role > team:role)
+ *   1. Live workers (ID > role > team:role), scoped to senderSession if provided
  *   2. Agent directory + worker registry → auto-spawn from template
  *   3. Native team inbox fallback
+ *
+ * @param senderSession — When set, only resolves recipients in the same tmux session (project isolation).
  */
 export async function sendMessage(
   repoPath: string,
@@ -252,9 +261,10 @@ export async function sendMessage(
   to: string,
   body: string,
   teamName?: string,
+  senderSession?: string,
 ): Promise<DeliveryResult> {
   // 1. Find live workers using strict tiered matching (ID > role > team:role)
-  const liveMatches = await resolveRecipient(to);
+  const liveMatches = await resolveRecipient(to, senderSession);
 
   if (liveMatches.length === 1) {
     return deliverToWorker(repoPath, from, liveMatches[0], body);
@@ -286,7 +296,7 @@ export async function sendMessage(
 
   // Try auto-spawn if agent is known via directory OR registry
   if (dirResolved || worker) {
-    const alive = await ensureWorkerAlive(worker, to);
+    const alive = await ensureWorkerAlive(worker, to, senderSession);
     if (alive) {
       return deliverToWorker(repoPath, from, alive.worker, body);
     }
