@@ -315,6 +315,7 @@ function injectOrchestrationPrompt(oldVersion) {
 
 /**
  * Create default ~/.genie/config.json with schema v2 defaults if missing.
+ * Also migrates stale keys from older versions.
  */
 function createDefaultConfig() {
   const configPath = join(GENIE_DIR, 'config.json');
@@ -333,6 +334,18 @@ function createDefaultConfig() {
       setupComplete: false,
     }, null, 2), 'utf-8');
     console.error('Created default ~/.genie/config.json');
+  } else {
+    // Migrate: remove stale worktreeBase that overrides dynamic default
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.terminal && config.terminal.worktreeBase === '.worktrees') {
+        delete config.terminal.worktreeBase;
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        console.error('Migrated config: removed stale worktreeBase');
+      }
+    } catch {
+      // Ignore migration errors
+    }
   }
 }
 
