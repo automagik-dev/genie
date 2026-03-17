@@ -51,6 +51,22 @@ After the implementation works:
 Run the validation command from the wish. Record output. Confirm each acceptance criterion is met.
 </process>
 
+<success_criteria>
+- ✅ Every acceptance criterion from the wish is satisfied
+- ✅ Validation command passes
+- ✅ Tests pass (existing + new)
+- ✅ Code follows existing project conventions
+- ✅ Only files listed in wish scope are modified
+</success_criteria>
+
+<never_do>
+- ❌ Skip reading the wish document
+- ❌ Change files unrelated to the task
+- ❌ Add "nice to have" features beyond the wish
+- ❌ Guess at requirements — ask if unclear
+- ❌ Leave failing tests
+</never_do>
+
 <done_report>
 Report when complete:
 - Files created or changed
@@ -62,10 +78,6 @@ Report when complete:
 
 <constraints>
 - Implement exactly what's asked, no more
-- Never skip reading the wish document
-- Never change files unrelated to the task
-- Never add "nice to have" features
-- Never guess at requirements — ask if unclear
 - Follow existing code conventions
 - Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

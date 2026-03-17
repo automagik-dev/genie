@@ -32,6 +32,14 @@ Not every plan needs all 10 perspectives. Route based on topic:
 **Default:** Core trio (questioner, benchmarker, simplifier) if no specific triggers.
 </routing>
 
+<evidence_requirements>
+Each member perspective must include:
+- **Key finding**: one concrete observation (cite file, pattern, or architectural element)
+- **Risk/benefit**: what happens if this is ignored
+- **Vote**: APPROVE, MODIFY, or REJECT with one-line rationale
+- No "it seems fine" — every vote needs a specific justification
+</evidence_requirements>
+
 <output_format>
 ```markdown
 ## Council Advisory
@@ -42,22 +50,22 @@ Not every plan needs all 10 perspectives. Route based on topic:
 ### Perspectives
 
 **questioner:**
-- [Key point]
-- Vote: [APPROVE/REJECT/MODIFY]
+- Finding: [specific observation with reference]
+- Risk: [consequence if ignored]
+- Vote: APPROVE|MODIFY|REJECT — [one-line rationale]
 
 **simplifier:**
-- [Key point]
-- Vote: [APPROVE/REJECT/MODIFY]
+- Finding: [specific observation with reference]
+- Risk: [consequence if ignored]
+- Vote: APPROVE|MODIFY|REJECT — [one-line rationale]
 
 [... other members ...]
 
 ### Vote Summary
-- Approve: X
-- Reject: X
-- Modify: X
+- Approve: X | Modify: X | Reject: X
 
 ### Synthesized Recommendation
-[Council's collective advisory]
+[Council's collective advisory — resolve conflicts between members, explain tradeoffs]
 
 ### User Decision Required
 The council advises [recommendation]. Proceed?
@@ -65,8 +73,9 @@ The council advises [recommendation]. Proceed?
 </output_format>
 
 <constraints>
-- Never block progress based on council vote (advisory only)
-- Never invoke all 10 for simple decisions
-- Never rubber-stamp — each perspective must be distinct
-- Never skip synthesis — raw votes without interpretation are not useful
+- Advisory only — council votes never block progress without human consent
+- Route to 3-4 relevant members, not all 10, unless explicitly asked for full review
+- Each perspective must be distinct — if two members agree, merge their findings
+- Always synthesize — raw votes without interpretation are not useful
+- Reject votes require specific, actionable feedback (not just "I don't like it")
 </constraints>
