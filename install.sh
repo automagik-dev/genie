@@ -725,20 +725,60 @@ install_tmux_if_needed() {
 
 configure_tmux_defaults() {
     local tmux_conf="$HOME/.tmux.conf"
+    local scripts_dir="$GENIE_HOME/scripts"
+    local tmux_scripts_src=""
 
-    if [[ -f "$tmux_conf" ]] && grep -q "base-index" "$tmux_conf"; then
-        info "tmux base-index already configured"
+    # Find tmux scripts source directory
+    if [[ -n "$PKG_DIR" && -d "$PKG_DIR/scripts/tmux" ]]; then
+        tmux_scripts_src="$PKG_DIR/scripts/tmux"
+    fi
+
+    if [[ -z "$tmux_scripts_src" ]]; then
+        warn "tmux scripts not found in package — skipping TUI setup"
         return 0
     fi
 
-    cat >> "$tmux_conf" <<'TMUX_EOF'
+    # --- Copy scripts to ~/.genie/scripts/ ---
+    log "Installing tmux scripts to $scripts_dir..."
+    mkdir -p "$scripts_dir"
 
-# Genie defaults (required for agent orchestration)
-set -g base-index 0
-setw -g pane-base-index 0
-TMUX_EOF
+    local script_count=0
+    for script in "$tmux_scripts_src"/*.sh; do
+        [[ -f "$script" ]] || continue
+        cp "$script" "$scripts_dir/"
+        chmod +x "$scripts_dir/$(basename "$script")"
+        script_count=$((script_count + 1))
+    done
+    success "Installed $script_count tmux scripts to $scripts_dir"
 
-    success "tmux defaults written to $tmux_conf"
+    # --- Write full tmux config ---
+    local tmux_conf_src="$tmux_scripts_src/genie.tmux.conf"
+    if [[ ! -f "$tmux_conf_src" ]]; then
+        warn "genie.tmux.conf template not found — skipping config"
+        return 0
+    fi
+
+    info "Genie will configure tmux. Your existing config will be backed up."
+
+    # Backup existing config if it exists and differs
+    if [[ -f "$tmux_conf" ]]; then
+        if ! diff -q "$tmux_conf" "$tmux_conf_src" &>/dev/null; then
+            cp "$tmux_conf" "${tmux_conf}.bak"
+            success "Backed up existing config to ${tmux_conf}.bak"
+        else
+            info "tmux config already matches Genie template"
+            return 0
+        fi
+    fi
+
+    cp "$tmux_conf_src" "$tmux_conf"
+    success "Genie tmux config written to $tmux_conf"
+
+    # Reload tmux if running
+    if tmux list-sessions &>/dev/null; then
+        tmux source-file "$tmux_conf" 2>/dev/null || true
+        log "tmux config reloaded"
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
