@@ -75,7 +75,8 @@ function getWorktreeBase(repoPath: string): string {
   const config = loadGenieConfigSync();
   const base = config.terminal?.worktreeBase;
   // Explicit config: respect absolute or resolve relative against repo
-  if (base) {
+  // Ignore '.worktrees' — legacy default from older versions that put worktrees inside the repo
+  if (base && base !== '.worktrees') {
     if (path.isAbsolute(base)) return base;
     return join(repoPath, base);
   }
