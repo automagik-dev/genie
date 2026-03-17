@@ -11,13 +11,11 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { sanitizeWindowName } from '../genie-commands/session.js';
+import { resolveSessionName, sanitizeWindowName } from '../genie-commands/session.js';
 import * as registry from './agent-registry.js';
 import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } from './claude-native-teams.js';
 import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
-
-const DEFAULT_SESSION = 'genie';
 
 /** Grace period (ms) after spawn before liveness checks kick in. */
 const LIVENESS_GRACE_MS = 30_000;
@@ -85,18 +83,35 @@ function getSystemPromptFile(workingDir: string, deps: TeamAutoSpawnDeps): strin
 }
 
 /**
- * Ensure a tmux session exists for teams.
- * Creates the "genie" session if it doesn't exist.
+ * Resolve the tmux session name for a team.
+ *
+ * Resolution order:
+ *   1. Team-lead registry entry's session field
+ *   2. GENIE_SESSION env var
+ *   3. Derive from workingDir via resolveSessionName()
  */
-async function ensureSession(deps: TeamAutoSpawnDeps): Promise<string> {
-  const existing = await deps.findSessionByName(DEFAULT_SESSION);
-  if (existing) return DEFAULT_SESSION;
+async function resolveSession(teamName: string, workingDir: string, deps: TeamAutoSpawnDeps): Promise<string> {
+  const entry = await deps.getTeamLeadEntry(teamName);
+  if (entry?.session) return entry.session;
 
-  const session = await deps.createSession(DEFAULT_SESSION);
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+
+  return resolveSessionName(workingDir);
+}
+
+/**
+ * Ensure a tmux session exists for teams.
+ * Creates the session if it doesn't exist.
+ */
+async function ensureSession(sessionName: string, deps: TeamAutoSpawnDeps): Promise<string> {
+  const existing = await deps.findSessionByName(sessionName);
+  if (existing) return sessionName;
+
+  const session = await deps.createSession(sessionName);
   if (!session) {
-    throw new Error(`Failed to create tmux session "${DEFAULT_SESSION}"`);
+    throw new Error(`Failed to create tmux session "${sessionName}"`);
   }
-  return DEFAULT_SESSION;
+  return sessionName;
 }
 
 /**
@@ -104,18 +119,22 @@ async function ensureSession(deps: TeamAutoSpawnDeps): Promise<string> {
  *
  * A team is considered "active" if:
  * 1. Its native config.json exists, AND
- * 2. A tmux window with the team name exists in the genie session, AND
+ * 2. A tmux window with the team name exists in the project session, AND
  * 3. The window's pane has a live process (or is within the 30s grace period)
  */
-export async function isTeamActive(teamName: string, deps: TeamAutoSpawnDeps = defaultDeps): Promise<boolean> {
+export async function isTeamActive(
+  teamName: string,
+  sessionName: string,
+  deps: TeamAutoSpawnDeps = defaultDeps,
+): Promise<boolean> {
   const config = await deps.loadConfig(teamName);
   if (!config) return false;
 
-  const session = await deps.findSessionByName(DEFAULT_SESSION);
+  const session = await deps.findSessionByName(sessionName);
   if (!session) return false;
 
   try {
-    const windows = await deps.listWindows(DEFAULT_SESSION);
+    const windows = await deps.listWindows(sessionName);
     const sanitized = sanitizeTeamName(teamName);
     const matchingWindow = windows.find((w) => w.name === sanitized || w.name === teamName);
     if (!matchingWindow) return false;
@@ -156,21 +175,24 @@ export async function ensureTeamLead(
   workingDir: string,
   deps: TeamAutoSpawnDeps = defaultDeps,
 ): Promise<EnsureTeamLeadResult> {
+  // Resolve session name: registry → env → derive from cwd
+  const sessionName = await resolveSession(teamName, workingDir, deps);
+
   // Fast path: team already active
-  if (await isTeamActive(teamName, deps)) {
-    return { created: false, session: DEFAULT_SESSION, window: sanitizeWindowName(teamName) };
+  if (await isTeamActive(teamName, sessionName, deps)) {
+    return { created: false, session: sessionName, window: sanitizeWindowName(teamName) };
   }
 
   // Check for stale window (window exists but pane is dead) and clean up
   const windowName = sanitizeWindowName(teamName);
-  const existingSession = await deps.findSessionByName(DEFAULT_SESSION);
+  const existingSession = await deps.findSessionByName(sessionName);
   if (existingSession) {
-    const windows = await deps.listWindows(DEFAULT_SESSION);
+    const windows = await deps.listWindows(sessionName);
     const sanitized = sanitizeTeamName(teamName);
     const staleWindow = windows.find((w) => w.name === sanitized || w.name === teamName || w.name === windowName);
     if (staleWindow) {
       try {
-        await deps.executeTmux(`kill-window -t ${shellQuote(`${DEFAULT_SESSION}:${staleWindow.name}`)}`);
+        await deps.executeTmux(`kill-window -t ${shellQuote(`${sessionName}:${staleWindow.name}`)}`);
       } catch {
         /* best-effort cleanup */
       }
@@ -187,7 +209,7 @@ export async function ensureTeamLead(
   });
 
   // Ensure tmux session exists
-  const session = await ensureSession(deps);
+  const session = await ensureSession(sessionName, deps);
 
   // Create team window (sanitize dots — tmux interprets '.' as pane separator)
   const teamWindow = await deps.ensureTeamWindow(session, windowName, workingDir);
