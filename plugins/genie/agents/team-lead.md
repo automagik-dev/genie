@@ -51,6 +51,17 @@ genie team done <team>
 ```
 </process>
 
+<monitoring>
+**State file is source of truth. Messages are notifications.**
+
+When checking progress (after Phase 2 completes or if you need to diagnose):
+1. **Primary:** `genie status <slug>` — reads the state file directly. Deterministic, instant, always accurate.
+2. **Secondary:** `genie inbox` — durable messages from workers. May lag behind state.
+3. **Bonus:** SendMessage from workers arrives between tool calls — use it but don't depend on it.
+
+Never rely on messages alone to determine completion. Always check `genie status` first.
+</monitoring>
+
 <constraints>
 - NEVER write code. `genie work` dispatches engineers.
 - NEVER use `sleep`.

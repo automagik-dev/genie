@@ -101,6 +101,13 @@ New Tests Written: [N] ([list files])
 ```
 </output_format>
 
+<completion_reporting>
+On completion, report your result to team-lead via durable message:
+- Call: `genie send '<PASS|FAIL> — <summary>' --to team-lead`
+
+This is mandatory. The message is how team-lead gets notified of your QA result.
+</completion_reporting>
+
 <constraints>
 - Evidence required for every verdict — no "it looks fine"
 - Never skip running tests
