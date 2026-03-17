@@ -140,11 +140,12 @@ function getGitDiff(): string {
 
 /**
  * Parse WISH.md content to extract group definitions for state initialization.
- * Looks for `### Group <N>: <title>` headings and `**depends-on:**` lines.
+ * Looks for `### Group <id>: <title>` headings and `**depends-on:**` lines.
+ * Accepts both numbered (Group 1) and lettered (Group A) identifiers.
  */
 export function parseWishGroups(content: string): GroupDefinition[] {
   const groups: GroupDefinition[] = [];
-  const groupPattern = /^### Group (\d+):/gim;
+  const groupPattern = /^### Group ([A-Za-z0-9]+):/gim;
 
   let match: RegExpExecArray | null = groupPattern.exec(content);
   while (match !== null) {
@@ -153,7 +154,7 @@ export function parseWishGroups(content: string): GroupDefinition[] {
 
     // Find the next group heading or end of content
     const rest = content.slice(start + match[0].length);
-    const nextGroupIdx = rest.search(/^### Group \d+:/m);
+    const nextGroupIdx = rest.search(/^### Group [A-Za-z0-9]+:/m);
     const section = nextGroupIdx !== -1 ? rest.slice(0, nextGroupIdx) : rest;
 
     // Look for **depends-on:** line within this group section
@@ -274,7 +275,7 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
   if (!groupSection) {
     console.error(`❌ Group "${group}" not found in ${wishPath}`);
     console.error('   Available groups:');
-    const groups = content.match(/^### Group \d+:.*$/gm);
+    const groups = content.match(/^### Group [A-Za-z0-9]+:.*$/gm);
     if (groups) {
       for (const g of groups) console.error(`     ${g}`);
     }
