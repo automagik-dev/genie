@@ -550,6 +550,15 @@ describe('parseWishGroups()', () => {
     const groups = parseWishGroups(SAMPLE_WISH);
     expect(groups[0].dependsOn).toEqual([]);
   });
+
+  it('should strip parenthetical comments from depends-on values', () => {
+    const content =
+      '### Group 1: First\n**depends-on:** none (this is the start)\n\n### Group 2: Second\n**depends-on:** 1 (must be done first)\n\n### Group 3: Third\n**depends-on:** Group 1 (setup), Group 2 (core work)';
+    const groups = parseWishGroups(content);
+    expect(groups[0].dependsOn).toEqual([]);
+    expect(groups[1].dependsOn).toEqual(['1']);
+    expect(groups[2].dependsOn).toEqual(['1', '2']);
+  });
 });
 
 // ============================================================================
