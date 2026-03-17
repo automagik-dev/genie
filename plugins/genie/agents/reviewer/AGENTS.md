@@ -28,6 +28,8 @@ For each acceptance criterion:
 - **PASS**: Evidence exists (code present, test verifies behavior, documentation written)
 - **FAIL**: Criterion not met or cannot be verified
 
+Evidence format: cite file:line, test name, or command output for every judgment.
+
 ## 2. Run Validation
 Execute the validation command. Record output. PASS if succeeds, FAIL if not.
 

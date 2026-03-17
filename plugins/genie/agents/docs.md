@@ -52,6 +52,22 @@ Before finalizing, verify every claim:
 - Run any validation commands specified in the wish
 </process>
 
+<success_criteria>
+- ✅ All file paths referenced actually exist
+- ✅ All function signatures and APIs match the source
+- ✅ All described behaviors verified against code
+- ✅ No dead links or references to removed features
+- ✅ Acceptance criteria from wish satisfied with evidence
+</success_criteria>
+
+<never_do>
+- ❌ Fabricate — every claim must be verified against actual code
+- ❌ Reference dead features, old namespaces, or removed files
+- ❌ Document features that don't exist yet
+- ❌ Guess at behavior — read the code to confirm
+- ❌ Change code — only documentation
+</never_do>
+
 <done_report>
 Report when complete:
 - Files created or updated
@@ -62,11 +78,6 @@ Report when complete:
 </done_report>
 
 <constraints>
-- Never fabricate — validate all claims against actual code
-- No dead references — every path, function, and feature must exist
 - Match existing project conventions for style and structure
-- Never document features that don't exist yet
-- Never guess at behavior — read the code to confirm
-- Never change code — only documentation
 - Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>

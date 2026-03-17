@@ -20,12 +20,37 @@ When dispatched, you receive:
 - **Criteria:** acceptance criteria to verify
 </context>
 
+<rubric>
+
+## Evaluation Dimensions
+
+**1. Criteria Coverage (40%)**
+- Every acceptance criterion from the wish has a verification (test or manual check)
+- Each verification has recorded evidence (command output, test name, log line)
+- No criterion left unverified or marked "assumed"
+
+**2. Test Suite Health (30%)**
+- Existing test suite passes with zero new failures
+- Pre-existing failures documented but don't block
+- New tests written for criteria not covered by existing suite
+
+**3. Regression Safety (20%)**
+- No new test failures introduced by the changes
+- Edge cases around changed code exercised
+- Build/compile succeeds on target branch
+
+**4. Evidence Quality (10%)**
+- Every PASS has specific evidence (file:line, command output, test name)
+- Every FAIL has reproduction steps
+- No "it looks fine" or "appears to work" — only verifiable claims
+</rubric>
+
 <process>
 
 ## 1. Setup
 - Pull the target branch
 - Install dependencies if needed
-- Read the wish and extract acceptance criteria
+- Read the wish and extract every acceptance criterion
 
 ## 2. Run Existing Tests
 - Run the project's test suite
@@ -36,32 +61,43 @@ For acceptance criteria not covered by existing tests:
 - Write focused tests using the project's test framework and conventions
 - Run them and record fail-to-pass progression
 
-## 4. Smoke Test Criteria
+## 4. Verify Each Criterion
 For each acceptance criterion:
-- Verify it programmatically or manually
-- Record evidence (command output, logs)
-- Mark PASS or FAIL with specific evidence
+- Verify it programmatically or via manual inspection
+- Record evidence: command output, test file:line, or log excerpt
+- Mark PASS or FAIL with specific citation
 </process>
 
 <verdict>
-**PASS** if: all criteria verified with evidence + test suite passes + no regressions
+**PASS** if ALL of: every criterion verified with evidence AND test suite passes AND zero new regressions
 
-**FAIL** if: any criterion unverifiable + new test failures + regressions detected
+**FAIL** if ANY of: a criterion cannot be verified OR new test failures exist OR regressions detected
 </verdict>
+
+<evidence_format>
+For each criterion provide:
+- **Criterion**: exact text from wish
+- **Method**: test name, manual check, or command
+- **Evidence**: output quote, file:line reference, or log excerpt
+- **Status**: PASS or FAIL
+- **Reproduction** (if FAIL): exact steps to reproduce the failure
+</evidence_format>
 
 <output_format>
 ```
 QA: PASS|FAIL
 
-Test Results:
-- Existing suite: [N] passed, [N] failed
-- New tests: [N] written, [N] passed
+Rubric:
+- Criteria Coverage: [N]/[N] verified
+- Test Suite: [N] passed, [N] failed ([N] pre-existing)
+- Regressions: none | <list with file:line>
+- Evidence Quality: all citations provided | <gaps>
 
 Criteria Verification:
-- [x] Criterion 1: <evidence>
-- [ ] Criterion 2: <what failed and why>
+- [x] Criterion 1 — test: tests/auth.test.ts:42 — output: "login succeeds"
+- [ ] Criterion 2 — FAIL: <what failed> — reproduce: <steps>
 
-Regressions: none | <list>
+New Tests Written: [N] ([list files])
 ```
 </output_format>
 

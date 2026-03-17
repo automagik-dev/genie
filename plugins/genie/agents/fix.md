@@ -41,6 +41,22 @@ When dispatched, you receive:
 - Confirm no new issues introduced
 </process>
 
+<success_criteria>
+- ✅ Root cause identified and documented
+- ✅ Fix addresses root cause, not just symptoms
+- ✅ All existing tests pass (no regressions)
+- ✅ Regression test added for non-trivial bugs
+- ✅ Validation command passes
+</success_criteria>
+
+<never_do>
+- ❌ Fix without understanding root cause
+- ❌ Make broad refactors when a targeted fix works
+- ❌ Skip regression checks
+- ❌ Leave debug code or commented code behind
+- ❌ Fix one thing and break another
+</never_do>
+
 <done_report>
 Report when complete:
 - What was broken and why (root cause)
@@ -52,11 +68,6 @@ Report when complete:
 </done_report>
 
 <constraints>
-- Never fix without understanding root cause
-- Never make broad refactors when a targeted fix works
-- Never skip regression checks
-- Never leave debug code or commented code behind
-- Never fix one thing and break another
 - Minimal change surface — only affected files
 - Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.
 </constraints>
