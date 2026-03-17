@@ -230,31 +230,12 @@ function getPluginVersion() {
 }
 
 /**
- * Read updateChannel from ~/.genie/config.json.
- * Returns 'latest' or 'next'.
- */
-function getUpdateChannel() {
-  try {
-    const configPath = join(GENIE_DIR, 'config.json');
-    if (existsSync(configPath)) {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      return config.updateChannel || 'latest';
-    }
-  } catch {
-    // Ignore
-  }
-  return 'latest';
-}
-
-/**
- * Check if genie CLI needs install or upgrade via bun global
+ * Check if genie CLI needs FIRST-TIME install.
+ * Only returns true when binary is completely missing.
+ * Upgrades are explicit via `genie update` — never mid-session.
  */
 function genieCliNeedsInstall() {
-  const installed = getGenieVersion();
-  if (!installed) return true;
-  const pluginVersion = getPluginVersion();
-  if (!pluginVersion) return false;
-  return installed !== pluginVersion;
+  return !getGenieVersion();
 }
 
 
@@ -441,18 +422,10 @@ function installGenieCli() {
     throw new Error('Bun executable not found — cannot install genie CLI');
   }
 
-  const updateChannel = getUpdateChannel();
-  const tag = updateChannel === 'next' ? 'next' : 'latest';
-  const installed = getGenieVersion();
-
-  if (installed) {
-    console.error(`Upgrading genie CLI: ${installed} → @${tag}...`);
-  } else {
-    console.error('Installing genie CLI globally via bun...');
-  }
+  console.error('Installing genie CLI globally via bun...');
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  execSync(`${bunCmd} install -g @automagik/genie@${tag}`, { stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
+  execSync(`${bunCmd} add -g @automagik/genie@latest`, { stdio: ['pipe', 'pipe', 'pipe'], shell: IS_WINDOWS });
 
   const newVersion = getGenieVersion();
   if (!newVersion) {
