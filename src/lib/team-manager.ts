@@ -338,6 +338,12 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
         // Best-effort
       }
     }
+    // Safety: ensure worktree operations didn't corrupt the parent repo
+    try {
+      await $`git -C ${repoPath} config core.bare false`.quiet();
+    } catch {
+      // Best-effort
+    }
   }
 
   // Delete team config file
