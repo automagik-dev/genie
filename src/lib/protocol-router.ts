@@ -301,7 +301,7 @@ async function ensureWorkerAlive(
 async function cleanupDeadWorkers(recipientId: string, team?: string, session?: string): Promise<void> {
   const registryApi = getRegistryApi();
   const allWorkers = session
-    ? (testDeps.registry?.filterBySession?.(session) ?? registryFilterBySession(session))
+    ? await (testDeps.registry?.filterBySession?.(session) ?? registryFilterBySession(session))
     : await registryApi.list();
   for (const w of allWorkers) {
     if (team && w.team !== team) continue;
