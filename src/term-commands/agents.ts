@@ -682,6 +682,8 @@ export interface SpawnOptions {
   cwd?: string;
   /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
   initialPrompt?: string;
+  /** Override the role name for registration and duplicate-check (agent directory still resolves by `name`). */
+  role?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -761,7 +763,10 @@ async function buildSpawnParams(
 }
 
 export async function handleWorkerSpawn(name: string, options: SpawnOptions): Promise<void> {
-  // 1. Resolve agent from directory or built-ins
+  // Effective role: suffixed name for registration/duplicate-check, original name for directory lookup
+  const effectiveRole = options.role ?? name;
+
+  // 1. Resolve agent from directory or built-ins (uses original name)
   let agent = await resolveAgentForSpawn(name, options);
 
   // 2. Resolve team (track whether it was explicitly provided via --team)
@@ -771,7 +776,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     console.error('Error: --team is required (or set GENIE_TEAM, or run inside a genie session)');
     process.exit(1);
   }
-  await rejectDuplicateRole(team, name);
+  await rejectDuplicateRole(team, effectiveRole);
 
   // 2b. Override CWD with team worktree path if available
   const teamConfig = await teamManager.getTeam(team);
@@ -780,17 +785,17 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   }
 
   // 3. Build params
-  const { params, parentSessionId, spawnColor } = await buildSpawnParams(name, team, options, agent);
+  const { params, parentSessionId, spawnColor } = await buildSpawnParams(effectiveRole, team, options, agent);
 
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
-  const workerId = await generateWorkerId(validated.team, name);
+  const workerId = await generateWorkerId(validated.team, effectiveRole);
 
   const insideTmux = Boolean(process.env.TMUX);
   const nt = validated.nativeTeam;
   const now = new Date().toISOString();
-  const agentName = nt?.agentName ?? name;
+  const agentName = nt?.agentName ?? effectiveRole;
 
   // OTel relay for non-native workers (Codex)
   let otelRelayActive = false;
