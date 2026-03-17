@@ -61,11 +61,21 @@ npm install -g @automagik/genie
 
 ## Quick Start
 
+**Interactive (you drive):**
+
 | Step | Command |
 |------|---------|
 | **01. Launch** | `genie` |
 | **02. Wish** | `/wish fix the authentication bug in the login flow` |
 | **03. Ship** | Genie asks questions, builds a plan, executes it. You approve the PR. |
+
+**Autonomous (team-lead drives):**
+
+| Step | Command |
+|------|---------|
+| **01. Plan** | `/wish` — define scope, acceptance criteria, execution groups |
+| **02. Launch** | `genie team create auth-fix --repo . --wish auth-bug` |
+| **03. Ship** | Team-lead hires agents, dispatches work, runs review loops. You approve the PR. |
 <br/>
 
 ## Features
@@ -75,8 +85,8 @@ npm install -g @automagik/genie
 <td align="center" width="33%"><h3>🧞 Wish Pipeline</h3>
 Brainstorm, plan, execute, review, ship — consistent results every time.
 </td>
-<td align="center" width="33%"><h3>⚡ Parallel Agents</h3>
-Agents execute in live terminal sessions. Watch them, or check in when done.
+<td align="center" width="33%"><h3>🤖 Autonomous Team-Lead</h3>
+<code>genie team create --wish</code> — team-lead hires agents, dispatches work, runs fix loops, and opens the PR. You approve.
 </td>
 <td align="center" width="33%"><h3>🧠 Context Preservation</h3>
 Scoped specialists instead of one bloated window. No context rot.
@@ -116,7 +126,7 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | One Claude tab per task, alt-tab between 5 of them | Parallel agents in live terminal sessions |
 | Eyeball generated code, miss a bug, fix at 2am | Automated `/review` with severity-tagged gaps |
 | 45 min in, Claude forgets your instructions | Scoped specialists — no context window accumulates junk |
-| 10 min of setup before any work starts | `genie work eng auth-bug#1` — inherits context automatically |
+| 10 min of setup before any work starts | `genie team create auth-fix --repo . --wish auth-bug` — team-lead handles the rest |
 <br/>
 
 ## The Wish Pipeline
@@ -142,6 +152,20 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | `genie` | Persistent session in current directory |
 | `genie --session <name>` | Named/resumed leader session |
 
+**Team (autonomous execution):**
+
+| Command | Description |
+|---------|-------------|
+| `genie team create <name> --repo <path>` | Form team + git worktree |
+| `genie team create <name> --repo <path> --wish <slug>` | Form team and auto-spawn team-lead with wish context |
+| `genie team hire <agent>` | Add agent to team |
+| `genie team hire council` | Hire all 10 council members |
+| `genie team fire <agent>` | Remove agent from team |
+| `genie team ls [<name>]` | List teams or team members |
+| `genie team done <name>` | Mark team done, kill all members |
+| `genie team blocked <name>` | Mark team blocked, kill all members |
+| `genie team disband <name>` | Kill members, remove worktree, delete config |
+
 **Dispatch (lifecycle orchestration):**
 
 | Command | Description |
@@ -151,6 +175,7 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | `genie work <agent> <slug>#<group>` | Check deps, set in\_progress, spawn with context |
 | `genie review <agent> <slug>#<group>` | Spawn agent with review scope |
 | `genie done <slug>#<group>` | Mark group done, unblock dependents |
+| `genie reset <slug>#<group>` | Reset in-progress group back to ready |
 | `genie status <slug>` | Show wish group states |
 
 **Agent lifecycle:**
@@ -184,24 +209,13 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 | `genie dir ls [<name>]` | List all or show single entry |
 | `genie dir edit <name>` | Update entry fields |
 
-**Team (dynamic collaboration):**
-
-| Command | Description |
-|---------|-------------|
-| `genie team create <name> --repo <path>` | Form team + worktree |
-| `genie team hire <agent>` | Add agent to team |
-| `genie team hire council` | Hire all 10 council members |
-| `genie team fire <agent>` | Remove agent from team |
-| `genie team ls [<name>]` | List teams or team members |
-| `genie team disband <name>` | Kill members, cleanup worktree |
-
 **Infrastructure:**
 
 | Command | Description |
 |---------|-------------|
 | `genie setup` | Interactive setup wizard |
 | `genie doctor` | Diagnose configuration issues |
-| `genie update` | Update to latest version |
+| `genie update` | Update to latest version (`--next` for dev builds, `--stable` for releases) |
 | `genie shortcuts show\|install\|uninstall` | tmux keyboard shortcuts |
 
 </details>
@@ -211,36 +225,40 @@ Identity, skills, memory — markdown files you own. Git-versioned.
 
 ### Agent Directory
 
-Register agents with a directory path, prompt mode, and optional model.
+Register custom agents with a directory path, prompt mode, and optional model. Built-in roles (engineer, reviewer, qa, fix, refactor, trace, docs, learn, council) are available out of the box.
 
 ```bash
 genie dir add my-agent --dir /path/to/agent --prompt-mode append
 genie dir ls                          # List all registered agents
+genie dir ls --builtins               # Include built-in roles
 genie dir edit my-agent --model opus  # Update config
 genie dir rm my-agent                 # Remove registration
 ```
 
-### Hook Presets
+### Worktrees
 
-Hooks shape how AI interacts with your system. Combine them freely.
+Teams work in isolated git worktrees so agents never conflict with your working tree.
 
-| Preset | What it does |
-|--------|-------------|
-| **Collaborative** | Commands run through live terminal sessions — watch AI work in real-time |
-| **Supervised** | File changes require your approval |
-| **Sandboxed** | Restrict file access to specific directories |
-| **Audited** | Log all AI tool usage to a file |
+```
+~/.genie/worktrees/<project>/<team>/
+```
+
+Configurable via `genie setup --terminal` → `worktreeBase`. Worktrees are created on `genie team create` and cleaned up on `genie team disband`.
+
+### Setup
 
 ```bash
-genie setup              # Interactive wizard
-genie setup --quick      # Recommended defaults (collaborative + audited)
+genie setup              # Interactive wizard (hooks, terminal, shortcuts, sessions)
+genie setup --quick      # Recommended defaults
+genie setup --show       # Show current configuration
+genie setup --reset      # Reset to defaults
 ```
 
 ### Config Files
 
 | File | Purpose |
 |------|---------|
-| `~/.genie/config.json` | Hook presets, worker profiles, session settings |
+| `~/.genie/config.json` | Terminal settings, session config, worker profiles |
 | `~/.claude/settings.json` | Claude Code settings (hooks registered here) |
 
 </details>
