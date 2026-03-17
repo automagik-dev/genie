@@ -120,10 +120,12 @@ export function validateBranchName(name: string): void {
 // Agent Kill Helper
 // ============================================================================
 
-/** Best-effort kill all running workers matching a given agent name (by role or id). */
-async function killWorkersByName(agentName: string): Promise<void> {
+/** Best-effort kill all running workers matching a given agent name, scoped to a team. */
+async function killWorkersByName(agentName: string, teamName?: string): Promise<void> {
   const workers = await registry.list();
-  const matches = workers.filter((w) => w.role === agentName || w.id === agentName);
+  const matches = workers.filter(
+    (w) => (w.role === agentName || w.id === agentName) && (!teamName || w.team === teamName),
+  );
   for (const w of matches) {
     try {
       if (w.paneId && w.paneId !== 'inline') {
@@ -312,10 +314,10 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Kill all running team members
+  // Kill all running team members (scoped to this team only)
   for (const member of config.members) {
     try {
-      await killWorkersByName(member);
+      await killWorkersByName(member, teamName);
     } catch {
       // Best-effort — continue with other members
     }
@@ -426,14 +428,14 @@ export async function listMembers(teamName: string): Promise<string[] | null> {
   return config.members;
 }
 
-/** Kill all running workers for a team's members. Best-effort — continues on failure. */
+/** Kill all running workers for a team's members. Scoped to the team — won't kill other teams' workers. */
 export async function killTeamMembers(teamName: string): Promise<void> {
   const config = await getTeam(teamName);
   if (!config) return;
 
   for (const member of config.members) {
     try {
-      await killWorkersByName(member);
+      await killWorkersByName(member, teamName);
     } catch {
       // Best-effort — continue with other members
     }
