@@ -14,6 +14,7 @@
  */
 
 import { resolveSessionName } from '../genie-commands/session.js';
+import { filterBySession as registryFilterBySession } from './agent-registry.js';
 import * as registry from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
 import * as mailbox from './mailbox.js';
@@ -130,7 +131,9 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
 /** Fetch workers scoped to a session, or all workers if no session specified. */
 async function scopedWorkers(senderSession?: string): Promise<registry.Agent[]> {
   const registryApi = getRegistryApi();
-  return senderSession ? registryApi.filterBySession(senderSession) : registryApi.list();
+  return senderSession
+    ? (testDeps.registry?.filterBySession?.(senderSession) ?? registryFilterBySession(senderSession))
+    : registryApi.list();
 }
 
 async function scopedTemplates(senderSession?: string): Promise<registry.WorkerTemplate[]> {
@@ -297,7 +300,9 @@ async function ensureWorkerAlive(
  */
 async function cleanupDeadWorkers(recipientId: string, team?: string, session?: string): Promise<void> {
   const registryApi = getRegistryApi();
-  const allWorkers = session ? await registryApi.filterBySession(session) : await registryApi.list();
+  const allWorkers = session
+    ? (testDeps.registry?.filterBySession?.(session) ?? registryFilterBySession(session))
+    : await registryApi.list();
   for (const w of allWorkers) {
     if (team && w.team !== team) continue;
     const matches = w.role === recipientId || w.id === recipientId;
