@@ -299,6 +299,49 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
 // Worker Templates (for auto-respawn)
 // ============================================================================
 
+// ============================================================================
+// Team-Lead Helpers
+// ============================================================================
+
+/**
+ * Save a team-lead entry in the agent registry.
+ * Creates/overwrites the entry keyed by `team-lead:<teamName>`.
+ */
+export async function saveTeamLeadEntry(
+  teamName: string,
+  paneId: string,
+  session: string,
+  windowName: string,
+  repoPath: string,
+): Promise<void> {
+  const id = `team-lead:${teamName}`;
+  await withRegistry((reg) => {
+    reg.workers[id] = {
+      id,
+      paneId,
+      session,
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'spawning',
+      lastStateChange: new Date().toISOString(),
+      repoPath,
+      windowName,
+      role: 'team-lead',
+      team: teamName,
+    };
+  });
+}
+
+/**
+ * Get the team-lead registry entry for a team.
+ * Returns null if no team-lead is registered.
+ */
+export async function getTeamLeadEntry(teamName: string): Promise<Agent | null> {
+  const registry = await loadRegistry();
+  const id = `team-lead:${teamName}`;
+  return registry.workers[id] ?? null;
+}
+
 /** Save or update a worker template. */
 export async function saveTemplate(template: WorkerTemplate): Promise<void> {
   await withRegistry((reg) => {
