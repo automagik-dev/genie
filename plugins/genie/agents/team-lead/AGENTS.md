@@ -59,11 +59,11 @@ For each wave, in order:
    ```
    The auto-suffix feature (`engineer` → `engineer-1`, `engineer-2`, etc.) prevents role collisions, so all groups in a wave launch at once.
 
-2. **Monitor all workers in the wave:**
+2. **After dispatching, wait for worker messages.** Workers send completion messages via SendMessage when done. Do NOT use `sleep` — it blocks incoming messages. Just proceed to the next tool call or check inbox:
    ```bash
-   genie read <team>-engineer-<group>   # Check individual worker progress
-   genie inbox                          # Read worker messages
-   genie status <slug>                  # Check overall progress (only AFTER first dispatch)
+   genie inbox                          # Check for worker completion messages
+   genie status <slug>                  # Check overall progress
+   genie read <team>-engineer-<group>   # Only if you need to debug a stuck worker
    ```
 
 3. **As each group completes, mark it done:**
@@ -73,7 +73,7 @@ For each wave, in order:
 
 4. **When ALL groups in the current wave are done, advance to the next wave.**
 
-Independent groups within a wave run in parallel — dispatch them all, then monitor. Do not wait for one group to finish before dispatching the next group in the same wave.
+IMPORTANT: Never use `sleep` to wait for workers. Messages arrive via SendMessage — sleeping blocks them. Dispatch all groups in the wave, then check inbox repeatedly until all report completion.
 
 **Gate:** All groups show `done` in `genie status`. If any group is stuck after 2 fix attempts, mark team blocked and stop.
 
