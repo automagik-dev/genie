@@ -102,11 +102,56 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 // ============================================================================
 
 /**
- * Enforce team scope: if sender is in a team, recipient must be in the same team.
+ * Resolve the sender's session name for session-scoped messaging.
+ *
+ * Resolution order:
+ * 1. GENIE_SESSION env var (set by session.ts on every tmux window)
+ * 2. Registry lookup by TMUX_PANE → agent.session
+ * 3. null (no session scoping)
+ */
+async function resolveSenderSession(): Promise<string | null> {
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+
+  const paneId = process.env.TMUX_PANE;
+  if (paneId) {
+    const registry = await getRegistry();
+    const worker = typeof registry.findByPane === 'function' ? await registry.findByPane(paneId) : null;
+    if (worker?.session) return worker.session;
+  }
+
+  return null;
+}
+
+/**
+ * Check session isolation: recipient must be in the same project session as sender.
+ * Returns an error message if violated, null if OK.
+ */
+async function checkSessionScope(sender: string, recipient: string): Promise<string | null> {
+  if (sender === 'cli' || recipient === 'team-lead') return null;
+
+  const senderSession = await resolveSenderSession();
+  if (!senderSession) return null;
+
+  const registry = await getRegistry();
+  const sessionAgents = await registry.filterBySession(senderSession);
+  const found = sessionAgents.some(
+    (a) => a.id === recipient || a.role === recipient || `${a.team}:${a.role}` === recipient,
+  );
+  if (found) return null;
+
+  return `Session isolation: "${recipient}" not found in session "${senderSession}". Agents can only message within their project session.`;
+}
+
+/**
+ * Enforce team scope and session isolation.
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
   if (sender === 'cli') return null;
+
+  // Session isolation check
+  const sessionError = await checkSessionScope(sender, recipient);
+  if (sessionError) return sessionError;
 
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
