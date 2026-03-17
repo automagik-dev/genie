@@ -9,7 +9,19 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { InboxWatcherDeps } from './inbox-watcher.js';
-import { checkInboxes, resetSpawnFailures, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
+import {
+  INBOX_POLL_INTERVAL_MS,
+  checkInboxes,
+  clearInboxWatcherPid,
+  getInboxPollIntervalMs,
+  getInboxWatcherPidPath,
+  isProcessAlive,
+  readInboxWatcherPid,
+  resetSpawnFailures,
+  startInboxWatcher,
+  stopInboxWatcher,
+  writeInboxWatcherPid,
+} from './inbox-watcher.js';
 
 // ============================================================================
 // Test helpers
@@ -215,5 +227,161 @@ describe('startInboxWatcher', () => {
 
     expect(handle).not.toBeNull();
     expect(polls).toBe(1);
+  });
+});
+
+// ============================================================================
+// getInboxPollIntervalMs tests
+// ============================================================================
+
+describe('getInboxPollIntervalMs', () => {
+  let savedPollMs: string | undefined;
+
+  beforeEach(() => {
+    savedPollMs = process.env.GENIE_INBOX_POLL_MS;
+  });
+
+  afterEach(() => {
+    if (savedPollMs === undefined) {
+      process.env.GENIE_INBOX_POLL_MS = undefined as unknown as string;
+    } else {
+      process.env.GENIE_INBOX_POLL_MS = savedPollMs;
+    }
+  });
+
+  test('returns default when env var is not set', () => {
+    process.env.GENIE_INBOX_POLL_MS = undefined as unknown as string;
+    expect(getInboxPollIntervalMs()).toBe(INBOX_POLL_INTERVAL_MS);
+  });
+
+  test('returns 0 when env var is "0"', () => {
+    process.env.GENIE_INBOX_POLL_MS = '0';
+    expect(getInboxPollIntervalMs()).toBe(0);
+  });
+
+  test('returns custom value from env', () => {
+    process.env.GENIE_INBOX_POLL_MS = '5000';
+    expect(getInboxPollIntervalMs()).toBe(5000);
+  });
+
+  test('returns default when env var is empty string', () => {
+    process.env.GENIE_INBOX_POLL_MS = '';
+    expect(getInboxPollIntervalMs()).toBe(INBOX_POLL_INTERVAL_MS);
+  });
+
+  test('returns default when env var is NaN', () => {
+    process.env.GENIE_INBOX_POLL_MS = 'not-a-number';
+    expect(getInboxPollIntervalMs()).toBe(INBOX_POLL_INTERVAL_MS);
+  });
+
+  test('returns default when env var is negative', () => {
+    process.env.GENIE_INBOX_POLL_MS = '-100';
+    expect(getInboxPollIntervalMs()).toBe(INBOX_POLL_INTERVAL_MS);
+  });
+});
+
+// ============================================================================
+// PID file management tests
+// ============================================================================
+
+describe('PID file management', () => {
+  let savedHome: string | undefined;
+  let tempDir: string;
+
+  beforeEach(async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    tempDir = await mkdtemp(join(tmpdir(), 'inbox-watcher-pid-test-'));
+    savedHome = process.env.GENIE_HOME;
+    process.env.GENIE_HOME = join(tempDir, '.genie');
+  });
+
+  afterEach(async () => {
+    if (savedHome === undefined) {
+      process.env.GENIE_HOME = undefined as unknown as string;
+    } else {
+      process.env.GENIE_HOME = savedHome;
+    }
+    const { rm } = await import('node:fs/promises');
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  test('getInboxWatcherPidPath returns path under GENIE_HOME', () => {
+    const pidPath = getInboxWatcherPidPath();
+    expect(pidPath).toContain(tempDir);
+    expect(pidPath).toEndWith('inbox-watcher.pid');
+  });
+
+  test('writeInboxWatcherPid creates the pid file', async () => {
+    await writeInboxWatcherPid(12345);
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBe(12345);
+  });
+
+  test('writeInboxWatcherPid defaults to process.pid', async () => {
+    await writeInboxWatcherPid();
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBe(process.pid);
+  });
+
+  test('readInboxWatcherPid returns null when file does not exist', async () => {
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBeNull();
+  });
+
+  test('readInboxWatcherPid returns null for invalid content', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { dirname } = await import('node:path');
+    const pidPath = getInboxWatcherPidPath();
+    await mkdir(dirname(pidPath), { recursive: true });
+    await writeFile(pidPath, 'not-a-pid\n');
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBeNull();
+  });
+
+  test('clearInboxWatcherPid removes the file when pid matches', async () => {
+    await writeInboxWatcherPid(99999);
+    await clearInboxWatcherPid(99999);
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBeNull();
+  });
+
+  test('clearInboxWatcherPid does not remove the file when pid does not match', async () => {
+    await writeInboxWatcherPid(11111);
+    await clearInboxWatcherPid(22222);
+    const pid = await readInboxWatcherPid();
+    expect(pid).toBe(11111);
+  });
+
+  test('clearInboxWatcherPid is safe when file does not exist', async () => {
+    // Should not throw
+    await clearInboxWatcherPid(12345);
+  });
+});
+
+// ============================================================================
+// isProcessAlive tests
+// ============================================================================
+
+describe('isProcessAlive', () => {
+  test('returns true for the current process', () => {
+    expect(isProcessAlive(process.pid)).toBe(true);
+  });
+
+  test('returns false for a non-existent PID', () => {
+    // PID 2147483647 is max int32, very unlikely to be alive
+    expect(isProcessAlive(2147483647)).toBe(false);
+  });
+});
+
+// ============================================================================
+// stopInboxWatcher edge cases
+// ============================================================================
+
+describe('stopInboxWatcher', () => {
+  test('handles null handle gracefully', () => {
+    // Should not throw
+    stopInboxWatcher(null);
   });
 });

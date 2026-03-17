@@ -266,6 +266,64 @@ describe('parseLogEntry', () => {
 });
 
 // ============================================================================
+// readLogFile Tests
+// ============================================================================
+
+describe('readLogFile', () => {
+  const { readLogFile } = require('./claude-logs.js');
+
+  test('reads entries from a JSONL file', async () => {
+    const tempDir = join(TEST_DIR, 'readlogfile-test');
+    await mkdir(tempDir, { recursive: true });
+    const logPath = join(tempDir, 'test.jsonl');
+    const lines = sampleLogEntries.map((e) => JSON.stringify(e)).join('\n');
+    const { writeFile: wf } = await import('node:fs/promises');
+    await wf(logPath, lines);
+
+    const entries = await readLogFile(logPath);
+    expect(entries.length).toBe(3);
+    expect(entries[0].type).toBe('user');
+    expect(entries[1].type).toBe('assistant');
+    expect(entries[2].type).toBe('progress');
+  });
+
+  test('returns empty array for non-existent file', async () => {
+    const entries = await readLogFile('/tmp/nonexistent-log-12345.jsonl');
+    expect(entries).toEqual([]);
+  });
+});
+
+// ============================================================================
+// getLogsForPane Tests
+// ============================================================================
+
+describe('getLogsForPane', () => {
+  const { getLogsForPane } = require('./claude-logs.js');
+
+  beforeAll(async () => {
+    await setupTestStructure();
+  });
+
+  afterAll(async () => {
+    await cleanupTestStructure();
+  });
+
+  test('returns null for non-existent workspace', async () => {
+    const result = await getLogsForPane('/nonexistent/path/12345', CLAUDE_DIR);
+    expect(result).toBeNull();
+  });
+
+  test('returns log info for known workspace', async () => {
+    const result = await getLogsForPane('/home/genie/workspace/guga', CLAUDE_DIR);
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.logPath).toContain('test-session-123.jsonl');
+      expect(result.session.sessionId).toBe('test-session-123');
+    }
+  });
+});
+
+// ============================================================================
 // Integration Tests (using real ~/.claude if available)
 // ============================================================================
 
