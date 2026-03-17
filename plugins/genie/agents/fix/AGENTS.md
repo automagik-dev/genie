@@ -67,6 +67,13 @@ Report when complete:
 - Anything remaining or needing attention
 </done_report>
 
+<completion_reporting>
+On completion, report to team-lead via durable message:
+- Call: `genie send 'Fix applied — <summary>' --to team-lead`
+
+This is mandatory. The message is how team-lead gets notified that the fix is done.
+</completion_reporting>
+
 <constraints>
 - Minimal change surface — only affected files
 - Intermediate worker — execute the task and report back. The orchestrator makes the ship/no-ship decision.

@@ -162,10 +162,17 @@ export function parseWishGroups(content: string): GroupDefinition[] {
     let dependsOn: string[] = [];
     if (depsMatch) {
       const depsStr = depsMatch[1].trim();
-      if (depsStr.toLowerCase() !== 'none') {
+      const depsNormalized = depsStr.replace(/\s*\([^)]*\)/g, '').trim();
+      if (depsNormalized.toLowerCase() !== 'none') {
         dependsOn = depsStr
           .split(',')
-          .map((d) => d.trim().replace(/^group\s*/i, ''))
+          .map((d) =>
+            d
+              .trim()
+              .replace(/^group\s*/i, '')
+              .replace(/\s*\(.*\)\s*$/, '')
+              .trim(),
+          )
           .filter(Boolean);
       }
     }
@@ -543,7 +550,7 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
     team: process.env.GENIE_TEAM ?? 'genie',
     role: `${agentName}-${group}`,
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion. When done, run: genie done ${slug}#${group}`,
+    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`,
   });
 }
 
@@ -598,7 +605,7 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.`,
+    initialPrompt: `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`,
   });
 }
 
