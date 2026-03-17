@@ -318,6 +318,7 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
+    role: `${agentName}-${group}`,
     extraArgs: ['--append-system-prompt-file', contextFile],
     initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.`,
   });
