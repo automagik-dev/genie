@@ -38,8 +38,10 @@ This skill is collaborative and operates on the shared worktree:
 | Scope IN / OUT | Yes | OUT cannot be empty |
 | Decisions | Yes | Key choices with rationale |
 | Success Criteria | Yes | Checkboxes, each testable |
+| Execution Strategy | Yes | Wave-based parallel/sequential execution plan |
 | Execution Groups | Yes | Goal, deliverables, acceptance criteria, validation command |
 | Dependencies | No | `depends-on` / `blocks` using slug or `repo/slug` |
+| QA Criteria | No | What must be verified on dev after merge |
 | Assumptions / Risks | No | Flag what could invalidate the plan |
 
 ## Wish Template
@@ -76,6 +78,20 @@ Use this structure when writing `WISH.md`:
 - [ ] Testable criterion 1
 - [ ] Testable criterion 2
 
+## Execution Strategy
+
+### Wave 1 (parallel)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 1 | engineer | <task description> |
+| 2 | engineer | <task description> |
+
+### Wave 2 (after Wave 1)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 3 | engineer | <task description> |
+| review | reviewer | Review Groups 1+2 |
+
 ## Execution Groups
 
 ### Group 1: <Name>
@@ -84,8 +100,8 @@ Use this structure when writing `WISH.md`:
 1. Deliverable with acceptance criteria
 2. Deliverable with acceptance criteria
 
-**Acceptance criteria:**
-- Criterion with validation command
+**Acceptance Criteria:**
+- [ ] Testable criterion
 
 **Validation:**
 ```bash
@@ -96,10 +112,34 @@ Use this structure when writing `WISH.md`:
 
 ---
 
+## QA Criteria
+
+_What must be verified on dev after merge. The QA agent tests each criterion._
+
+- [ ] <functional criterion — user-facing behavior works>
+- [ ] <integration criterion — system works end-to-end>
+- [ ] <regression criterion — existing behavior not broken>
+
+---
+
 ## Assumptions / Risks
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | Risk 1 | Low/Medium/High | How to handle |
+
+---
+
+## Review Results
+
+_Populated by `/review` after execution completes._
+
+---
+
+## Files to Create/Modify
+
+```
+<list of files this wish will touch>
+```
 ```
 
 ## Rules
@@ -108,3 +148,4 @@ Use this structure when writing `WISH.md`:
 - Keep tasks bite-sized and independently shippable.
 - Declare cross-wish dependencies early with `depends-on` / `blocks`.
 - OUT scope must contain at least one concrete exclusion.
+- Execution Strategy is mandatory — every wish must define waves, even if sequential (single wave). This forces the planner to think about ordering, parallelism, and dependencies upfront.
