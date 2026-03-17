@@ -32,6 +32,7 @@ function makeDeps(overrides: Partial<TeamAutoSpawnDeps> = {}): TeamAutoSpawnDeps
     listWindows: async () => [{ id: '@1', name: 'test-team', active: false, sessionId: 'genie' }],
     listPanes: async () => [{ id: '%1', windowId: '@1', active: true, title: '' }],
     isPaneAlive: async () => true,
+    resolveSessionName: async () => 'genie',
     getTeamLeadEntry: async () => null,
     saveTeamLeadEntry: async () => {},
     ensureNativeTeam: async () =>
@@ -178,6 +179,35 @@ describe('ensureTeamLead', () => {
     expect(result.created).toBe(true);
     expect(savedPaneId).toBe('%42');
     expect(savedTeam).toBe('test-team');
+  });
+
+  test('uses workingDir-derived session over registry session when different', async () => {
+    const observedSessions: string[] = [];
+    const deps = makeDeps({
+      resolveSessionName: async () => 'project-session',
+      getTeamLeadEntry: async () =>
+        ({
+          id: 'team-lead:test-team',
+          paneId: '%1',
+          session: 'registry-session',
+          worktree: null,
+          startedAt: new Date(Date.now() - 60_000).toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/other-project',
+          role: 'team-lead',
+          team: 'test-team',
+        }) as any,
+      loadConfig: async () => null,
+      findSessionByName: async (name) => {
+        observedSessions.push(name);
+        return { id: '$0', name, attached: false, windows: 1 };
+      },
+    });
+
+    const result = await ensureTeamLead('test-team', '/tmp/workspace', deps);
+    expect(result.session).toBe('project-session');
+    expect(observedSessions).toContain('project-session');
   });
 
   test('cleans up stale window and re-creates', async () => {
