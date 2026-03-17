@@ -1,5 +1,12 @@
 set -e
 
+# Prevent GIT_DIR/GIT_WORK_TREE from leaking into child processes.
+# Git sets these in hook environments, but bun test spawns git commands
+# that must discover their own repos. Without this, test setupTestRepo()
+# commits land on the REAL repo branch, causing catastrophic data loss.
+unset GIT_DIR
+unset GIT_WORK_TREE
+
 remote="$1"
 while read local_ref local_oid remote_ref remote_oid; do
   if echo "$remote_ref" | grep -qE 'refs/heads/(main|master)$'; then
