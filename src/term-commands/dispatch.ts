@@ -162,10 +162,17 @@ export function parseWishGroups(content: string): GroupDefinition[] {
     let dependsOn: string[] = [];
     if (depsMatch) {
       const depsStr = depsMatch[1].trim();
-      if (depsStr.toLowerCase() !== 'none') {
+      const depsNormalized = depsStr.replace(/\s*\([^)]*\)/g, '').trim();
+      if (depsNormalized.toLowerCase() !== 'none') {
         dependsOn = depsStr
           .split(',')
-          .map((d) => d.trim().replace(/^group\s*/i, ''))
+          .map((d) =>
+            d
+              .trim()
+              .replace(/^group\s*/i, '')
+              .replace(/\s*\(.*\)\s*$/, '')
+              .trim(),
+          )
           .filter(Boolean);
       }
     }
