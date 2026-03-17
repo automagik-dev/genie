@@ -2,6 +2,6 @@
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["tmux", "which"],
-  "ignore": ["src/lib/team-auto-spawn.ts"],
+  "ignore": ["src/lib/inbox-watcher.ts"],
   "ignoreExportsUsedInFile": true
 }
