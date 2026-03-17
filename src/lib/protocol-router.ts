@@ -54,6 +54,11 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
   return false;
 }
 
+/** Fetch workers scoped to a session, or all workers if no session specified. */
+async function scopedWorkers(senderSession?: string): Promise<registry.Agent[]> {
+  return senderSession ? registry.filterBySession(senderSession) : registry.list();
+}
+
 /**
  * Resolve a recipient to live workers using strict tiered matching.
  * Priority: exact ID > role > team:role.
@@ -61,7 +66,7 @@ async function waitForWorkerReady(paneId: string, timeoutMs = AUTO_SPAWN_READY_T
  * When senderSession is provided, only matches workers in the same session (project isolation).
  */
 async function resolveRecipient(recipientId: string, senderSession?: string): Promise<registry.Agent[]> {
-  const allWorkers = senderSession ? await registry.filterBySession(senderSession) : await registry.list();
+  const allWorkers = await scopedWorkers(senderSession);
 
   const byId: registry.Agent[] = [];
   const byRole: registry.Agent[] = [];
