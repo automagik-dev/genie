@@ -18,7 +18,15 @@ import { join } from 'node:path';
 import * as wishState from '../lib/wish-state.js';
 import { parseRef } from './state.js';
 
-import { buildContextPrompt, extractGroup, extractWishContext, parseWishGroups, writeContextFile } from './dispatch.js';
+import {
+  buildContextPrompt,
+  detectWorkMode,
+  extractGroup,
+  extractWishContext,
+  parseExecutionStrategy,
+  parseWishGroups,
+  writeContextFile,
+} from './dispatch.js';
 
 // ============================================================================
 // Sample WISH.md content for testing
@@ -541,5 +549,179 @@ describe('parseWishGroups()', () => {
   it('should handle depends-on: none', () => {
     const groups = parseWishGroups(SAMPLE_WISH);
     expect(groups[0].dependsOn).toEqual([]);
+  });
+});
+
+// ============================================================================
+// parseExecutionStrategy — wave parsing
+// ============================================================================
+
+const WISH_WITH_STRATEGY = `# Wish: Auto-Orchestrate
+
+## Summary
+
+Auto-orchestrate wish execution.
+
+## Execution Groups
+
+### Group 1: Parse Strategy
+
+**depends-on:** none
+
+---
+
+### Group 2: Orchestrator
+
+**depends-on:** Group 1
+
+---
+
+### Group 3: Engineer done
+
+**depends-on:** none
+
+---
+
+### Group 4: Team-lead prompt
+
+**depends-on:** Group 2
+
+---
+
+### Group 5: Validate
+
+**depends-on:** Group 1, Group 2, Group 3, Group 4
+
+---
+
+## Execution Strategy
+
+### Wave 1 (parallel)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 1 | engineer | Parse Execution Strategy |
+| 3 | engineer | Engineer reports completion |
+
+### Wave 2 (after Wave 1)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 2 | engineer | Auto-orchestration loop |
+
+### Wave 3 (after Wave 2)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 4 | engineer | Team-lead prompt update |
+
+### Wave 4 (after Wave 3)
+| Group | Agent | Description |
+|-------|-------|-------------|
+| 5 | reviewer | Full validation |
+
+---
+
+## Assumptions / Risks
+`;
+
+describe('parseExecutionStrategy()', () => {
+  it('should parse waves from Execution Strategy section', () => {
+    const waves = parseExecutionStrategy(WISH_WITH_STRATEGY);
+    expect(waves.length).toBe(4);
+  });
+
+  it('should parse wave names', () => {
+    const waves = parseExecutionStrategy(WISH_WITH_STRATEGY);
+    expect(waves[0].name).toBe('Wave 1 (parallel)');
+    expect(waves[1].name).toBe('Wave 2 (after Wave 1)');
+    expect(waves[2].name).toBe('Wave 3 (after Wave 2)');
+    expect(waves[3].name).toBe('Wave 4 (after Wave 3)');
+  });
+
+  it('should parse groups in Wave 1', () => {
+    const waves = parseExecutionStrategy(WISH_WITH_STRATEGY);
+    expect(waves[0].groups.length).toBe(2);
+    expect(waves[0].groups[0]).toEqual({ group: '1', agent: 'engineer' });
+    expect(waves[0].groups[1]).toEqual({ group: '3', agent: 'engineer' });
+  });
+
+  it('should parse single-group waves', () => {
+    const waves = parseExecutionStrategy(WISH_WITH_STRATEGY);
+    expect(waves[1].groups.length).toBe(1);
+    expect(waves[1].groups[0]).toEqual({ group: '2', agent: 'engineer' });
+  });
+
+  it('should parse reviewer agent', () => {
+    const waves = parseExecutionStrategy(WISH_WITH_STRATEGY);
+    expect(waves[3].groups[0]).toEqual({ group: '5', agent: 'reviewer' });
+  });
+
+  it('should fall back to single wave when no Execution Strategy section', () => {
+    const waves = parseExecutionStrategy(SAMPLE_WISH);
+    expect(waves.length).toBe(1);
+    expect(waves[0].name).toContain('fallback');
+    expect(waves[0].groups.length).toBe(3);
+    expect(waves[0].groups[0]).toEqual({ group: '1', agent: 'engineer' });
+    expect(waves[0].groups[1]).toEqual({ group: '2', agent: 'engineer' });
+    expect(waves[0].groups[2]).toEqual({ group: '3', agent: 'engineer' });
+  });
+
+  it('should return empty array for content with no groups', () => {
+    const waves = parseExecutionStrategy('# Just a title\n\nNo groups here.');
+    expect(waves).toEqual([]);
+  });
+
+  it('should fall back when Execution Strategy section has no wave headings', () => {
+    const content = `## Execution Groups
+
+### Group 1: Only group
+
+**depends-on:** none
+
+## Execution Strategy
+
+No waves defined here, just text.
+`;
+    const waves = parseExecutionStrategy(content);
+    expect(waves.length).toBe(1);
+    expect(waves[0].name).toContain('fallback');
+    expect(waves[0].groups[0]).toEqual({ group: '1', agent: 'engineer' });
+  });
+});
+
+// ============================================================================
+// detectWorkMode — auto vs manual mode detection
+// ============================================================================
+
+describe('detectWorkMode()', () => {
+  it('should detect auto mode from single slug (no #)', () => {
+    const result = detectWorkMode('my-wish');
+    expect(result).toEqual({ mode: 'auto', slug: 'my-wish' });
+  });
+
+  it('should detect manual mode — new style: ref#group then agent', () => {
+    const result = detectWorkMode('my-wish#2', 'engineer');
+    expect(result).toEqual({ mode: 'manual', ref: 'my-wish#2', agent: 'engineer' });
+  });
+
+  it('should detect manual mode — old style: agent then ref#group (backwards compatible)', () => {
+    const result = detectWorkMode('engineer', 'my-wish#2');
+    expect(result).toEqual({ mode: 'manual', ref: 'my-wish#2', agent: 'engineer' });
+  });
+
+  it('should throw when single arg contains # (no agent for manual dispatch)', () => {
+    expect(() => detectWorkMode('my-wish#2')).toThrow('requires an agent');
+  });
+
+  it('should throw when neither arg contains #', () => {
+    expect(() => detectWorkMode('something', 'other')).toThrow('must contain "#"');
+  });
+
+  it('should handle complex slug with # in new style', () => {
+    const result = detectWorkMode('auto-orchestrate#5', 'reviewer');
+    expect(result).toEqual({ mode: 'manual', ref: 'auto-orchestrate#5', agent: 'reviewer' });
+  });
+
+  it('should handle complex slug with # in old style', () => {
+    const result = detectWorkMode('reviewer', 'auto-orchestrate#5');
+    expect(result).toEqual({ mode: 'manual', ref: 'auto-orchestrate#5', agent: 'reviewer' });
   });
 });

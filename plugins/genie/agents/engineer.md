@@ -49,6 +49,9 @@ After the implementation works:
 
 ## 6. Validate
 Run the validation command from the wish. Record output. Confirm each acceptance criterion is met.
+
+## 7. Report Completion
+After completing all deliverables and validation, call `genie done <slug>#<group>` to report completion. The slug and group are in your initial prompt. This signals the orchestrator that your work is finished so it can advance to the next wave.
 </process>
 
 <success_criteria>
