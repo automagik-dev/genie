@@ -6,6 +6,7 @@
  * logic is unit-testable without tmux or filesystem side effects.
  */
 
+import { resolveSessionName } from '../genie-commands/session.js';
 import { listTeamsWithUnreadInbox } from './claude-native-teams.js';
 import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
 
@@ -16,7 +17,7 @@ import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
 /** Dependencies used by inbox-watcher functions. */
 export interface InboxWatcherDeps {
   listTeamsWithUnreadInbox: typeof listTeamsWithUnreadInbox;
-  isTeamActive: (teamName: string) => Promise<boolean>;
+  isTeamActive: (teamName: string, sessionName: string) => Promise<boolean>;
   ensureTeamLead: (teamName: string, workingDir: string) => Promise<{ created: boolean }>;
   warn: (msg: string) => void;
 }
@@ -24,7 +25,7 @@ export interface InboxWatcherDeps {
 /** Default production dependencies. */
 const defaultDeps: InboxWatcherDeps = {
   listTeamsWithUnreadInbox,
-  isTeamActive: (teamName) => isTeamActive(teamName),
+  isTeamActive: (teamName, sessionName) => isTeamActive(teamName, sessionName),
   ensureTeamLead: (teamName, workingDir) => ensureTeamLead(teamName, workingDir),
   warn: (msg) => console.warn(msg),
 };
@@ -38,6 +39,13 @@ export const INBOX_POLL_INTERVAL_MS = 30_000;
 
 /** Maximum consecutive spawn failures before skipping a team. */
 const MAX_SPAWN_FAILURES = 3;
+
+/** Resolve the session name for a team's working directory. */
+async function resolveTeamSession(workingDir: string | null | undefined): Promise<string> {
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+  if (workingDir) return resolveSessionName(workingDir);
+  return 'genie';
+}
 
 /**
  * Get the inbox poll interval from env or default.
@@ -90,8 +98,10 @@ export async function checkInboxes(deps: InboxWatcherDeps = defaultDeps): Promis
       continue;
     }
 
+    const sessionName = await resolveTeamSession(workingDir ?? undefined);
+
     // Skip teams that already have an active team-lead
-    const active = await deps.isTeamActive(teamName);
+    const active = await deps.isTeamActive(teamName, sessionName);
     if (active) continue;
 
     // No working dir means we can't spawn
