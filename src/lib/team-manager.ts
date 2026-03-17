@@ -392,6 +392,7 @@ export async function pruneStaleWorktrees(repoPath: string): Promise<void> {
   // Clean git's worktree tracking
   try {
     await $`git -C ${repoPath} worktree prune`.quiet();
+    await $`git -C ${repoPath} config core.bare false`.quiet();
   } catch {
     // Best-effort
   }
