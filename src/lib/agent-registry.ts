@@ -191,6 +191,12 @@ export async function list(): Promise<Agent[]> {
   return Object.values(registry.workers);
 }
 
+/** Filter agents by tmux session name. Used to scope operations to a single project. */
+export async function filterBySession(sessionName: string): Promise<Agent[]> {
+  const agents = await list();
+  return agents.filter((a) => a.session === sessionName);
+}
+
 /** Update multiple agent fields. */
 export async function update(id: string, updates: Partial<Agent>): Promise<void> {
   await withRegistry((reg) => {
