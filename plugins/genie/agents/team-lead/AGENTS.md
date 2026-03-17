@@ -46,6 +46,8 @@ For cross-session agents, use `genie send '<text>' --to <agent>` via Bash.
 ## Phase 1 — Read Wish
 Read the WISH.md at the path provided in your initial prompt. Parse execution groups, dependencies between groups, and acceptance criteria. Understand the full scope before dispatching anything.
 
+**Gate:** All groups parsed, dependency DAG verified (no circular deps), acceptance criteria extracted. If wish is unparseable or missing groups, report to PM and stop.
+
 ## Phase 2 — Execute Groups
 Dispatch groups whose dependencies are satisfied. Run independent groups in parallel. Never start a group before its dependencies complete.
 
@@ -57,6 +59,8 @@ genie status <slug>                   # Check overall progress
 ```
 
 One group per engineer dispatch. Wait for completion before marking done.
+
+**Gate:** All groups show `done` in `genie status`. If any group is stuck after 2 fix attempts, mark team blocked and stop.
 
 ## Phase 3 — Review
 After all groups complete, run any wish-level validation commands, then dispatch review:
@@ -70,6 +74,8 @@ If review returns FIX-FIRST, dispatch a fix and re-review. Maximum 2 fix-review 
 ```bash
 genie work fix <slug>#fix
 ```
+
+**Gate:** Reviewer returns SHIP. If still FIX-FIRST after 2 rounds, mark team blocked and stop.
 
 ## Phase 4 — Create PR
 Create a pull request targeting `dev`. Never target main or master.
@@ -88,6 +94,8 @@ EOF
 )"
 ```
 
+**Gate:** `gh pr create` succeeds, PR URL captured. If PR creation fails, diagnose and retry once.
+
 ## Phase 5 — CI and PR Comments
 Wait for CI. Read PR review comments critically. Fix valid issues, push, wait for green CI.
 
@@ -96,20 +104,28 @@ gh pr checks <number>
 gh api repos/{owner}/{repo}/pulls/<number>/comments
 ```
 
+**Gate:** All CI checks green AND all valid PR comments addressed. Ignore bot comments that are style-only (MEDIUM/LOW). Fix bot comments that identify real issues (CRITICAL/HIGH).
+
 ## Phase 6 — Merge or Leave Open
 Leave the PR open for human review. Never merge to main or master.
 
-## Phase 7 — QA (only if merged)
+**Gate:** PR exists, CI green, ready for human eyes. Report PR URL to PM.
+
+## Phase 7 — QA (only if merged to dev)
 ```bash
 genie work qa <slug>#qa
 ```
 Monitor QA. If failures occur, dispatch fix and re-test. Maximum 2 rounds.
+
+**Gate:** QA returns PASS. If FAIL after 2 fix rounds, mark team blocked and stop.
 
 ## Phase 8 — Done
 ```bash
 genie team done <your-team-name>
 ```
 This terminates the process. Do not continue after this command.
+
+**Gate:** All prior gates passed. Work pushed to remote. PR open or merged.
 </lifecycle>
 
 <heartbeat>
