@@ -6,6 +6,9 @@
  * logic is unit-testable without tmux or filesystem side effects.
  */
 
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { resolveSessionName } from '../genie-commands/session.js';
 import { listTeamsWithUnreadInbox } from './claude-native-teams.js';
 import { ensureTeamLead, isTeamActive } from './team-auto-spawn.js';
@@ -36,6 +39,7 @@ const defaultDeps: InboxWatcherDeps = {
 
 /** Default inbox poll interval in milliseconds (30 seconds). */
 export const INBOX_POLL_INTERVAL_MS = 30_000;
+const INBOX_WATCHER_PID_FILE = 'inbox-watcher.pid';
 
 /** Maximum consecutive spawn failures before skipping a team. */
 const MAX_SPAWN_FAILURES = 3;
@@ -71,6 +75,50 @@ const spawnFailures = new Map<string, number>();
 /** Reset all failure counts (exposed for testing). */
 export function resetSpawnFailures(): void {
   spawnFailures.clear();
+}
+
+function getGlobalDir(): string {
+  return process.env.GENIE_HOME ?? join(homedir(), '.genie');
+}
+
+export function getInboxWatcherPidPath(): string {
+  return join(getGlobalDir(), INBOX_WATCHER_PID_FILE);
+}
+
+export async function readInboxWatcherPid(): Promise<number | null> {
+  try {
+    const raw = (await readFile(getInboxWatcherPidPath(), 'utf-8')).trim();
+    const pid = Number(raw);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeInboxWatcherPid(pid = process.pid): Promise<void> {
+  const pidPath = getInboxWatcherPidPath();
+  await mkdir(dirname(pidPath), { recursive: true });
+  await writeFile(pidPath, `${pid}\n`);
+}
+
+export async function clearInboxWatcherPid(pid = process.pid): Promise<void> {
+  const currentPid = await readInboxWatcherPid();
+  if (currentPid !== pid) return;
+
+  try {
+    await unlink(getInboxWatcherPidPath());
+  } catch {
+    // Best-effort cleanup.
+  }
 }
 
 // ============================================================================
@@ -134,20 +182,29 @@ export async function checkInboxes(deps: InboxWatcherDeps = defaultDeps): Promis
 
 /**
  * Start the inbox watcher polling loop.
- * Returns a handle that can be passed to `stopInboxWatcher()`.
+ * Returns `null` when polling is disabled.
  */
-export function startInboxWatcher(deps: InboxWatcherDeps = defaultDeps): NodeJS.Timeout {
+export function startInboxWatcher(deps: InboxWatcherDeps = defaultDeps): NodeJS.Timeout | null {
+  const pollMs = getInboxPollIntervalMs();
+  if (pollMs === 0) return null;
+
+  checkInboxes(deps).catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.warn(`[inbox-watcher] Initial poll error: ${message}`);
+  });
+
   return setInterval(() => {
     checkInboxes(deps).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       deps.warn(`[inbox-watcher] Poll error: ${message}`);
     });
-  }, getInboxPollIntervalMs());
+  }, pollMs);
 }
 
 /**
  * Stop the inbox watcher polling loop.
  */
-export function stopInboxWatcher(handle: NodeJS.Timeout): void {
+export function stopInboxWatcher(handle: NodeJS.Timeout | null): void {
+  if (!handle) return;
   clearInterval(handle);
 }

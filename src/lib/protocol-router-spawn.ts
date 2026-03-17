@@ -67,12 +67,15 @@ function buildFullCommand(launch: { command: string; env?: Record<string, string
   return launch.command;
 }
 
-/** Resolve session name: team-lead registry → GENIE_SESSION env → derive from cwd. */
-async function resolveSpawnSession(team: string, repoPath: string): Promise<string> {
-  const teamLeadEntry = await registry.getTeamLeadEntry(team);
+/** Resolve session name: explicit sender session → same-session team-lead registry → env → derive from cwd. */
+async function resolveSpawnSession(team: string, repoPath: string, senderSession?: string): Promise<string> {
+  if (senderSession) return senderSession;
+
+  const derivedSession = await resolveSessionName(repoPath);
+  const teamLeadEntry = await registry.getTeamLeadEntry(team, derivedSession, repoPath);
   if (teamLeadEntry?.session) return teamLeadEntry.session;
   if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
-  return resolveSessionName(repoPath);
+  return derivedSession;
 }
 
 async function generateWorkerId(team: string, role?: string): Promise<string> {
@@ -84,6 +87,7 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 export async function spawnWorkerFromTemplate(
   template: WorkerTemplate,
   resumeSessionId?: string,
+  senderSession?: string,
 ): Promise<{ worker: registry.Agent; paneId: string; workerId: string }> {
   const repoPath = template.cwd ?? process.cwd();
   const team = template.team;
@@ -98,7 +102,7 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   // Resolve target window: if team is set, ensure a dedicated team window
-  const session = await resolveSpawnSession(team, repoPath);
+  const session = await resolveSpawnSession(team, repoPath, senderSession);
   let teamWindow: { windowId: string; windowName: string } | null = null;
   try {
     teamWindow = await ensureTeamWindow(session, team, repoPath);

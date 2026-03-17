@@ -7,7 +7,15 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { type Agent, addSubPane, findByWindow, getPane, removeSubPane } from './agent-registry.js';
+import {
+  type Agent,
+  addSubPane,
+  findByWindow,
+  getPane,
+  getTeamLeadEntry,
+  removeSubPane,
+  saveTeamLeadEntry,
+} from './agent-registry.js';
 
 // ============================================================================
 // Test Setup
@@ -401,6 +409,45 @@ describe('findByWindow', () => {
   });
 });
 
+describe('team-lead entries', () => {
+  const GLOBAL_TEST_DIR = '/tmp/worker-registry-test-team-leads';
+
+  beforeEach(() => {
+    try {
+      rmSync(GLOBAL_TEST_DIR, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
+    mkdirSync(GLOBAL_TEST_DIR, { recursive: true });
+    process.env.GENIE_HOME = GLOBAL_TEST_DIR;
+  });
+
+  test('stores team-leads separately per session', async () => {
+    await saveTeamLeadEntry('alpha', '%1', 'project-a', 'alpha', '/repo/a');
+    await saveTeamLeadEntry('alpha', '%2', 'project-b', 'alpha', '/repo/b');
+
+    const teamLeadA = await getTeamLeadEntry('alpha', 'project-a');
+    const teamLeadB = await getTeamLeadEntry('alpha', 'project-b');
+
+    expect(teamLeadA?.id).toMatch(/^team-lead:project-a:[0-9a-f]{8}:alpha$/);
+    expect(teamLeadA?.paneId).toBe('%1');
+    expect(teamLeadB?.id).toMatch(/^team-lead:project-b:[0-9a-f]{8}:alpha$/);
+    expect(teamLeadB?.paneId).toBe('%2');
+  });
+
+  test('stores team-leads separately for different projects in the same session', async () => {
+    await saveTeamLeadEntry('alpha', '%1', 'shared-session', 'alpha', '/repo/a');
+    await saveTeamLeadEntry('alpha', '%2', 'shared-session', 'alpha', '/repo/b');
+
+    const teamLeadA = await getTeamLeadEntry('alpha', 'shared-session', '/repo/a');
+    const teamLeadB = await getTeamLeadEntry('alpha', 'shared-session', '/repo/b');
+
+    expect(teamLeadA?.id).not.toBe(teamLeadB?.id);
+    expect(teamLeadA?.paneId).toBe('%1');
+    expect(teamLeadB?.paneId).toBe('%2');
+  });
+});
+
 // ============================================================================
 // Cleanup
 // ============================================================================
@@ -409,6 +456,7 @@ afterAll(() => {
   try {
     rmSync(TEST_DIR, { recursive: true, force: true });
     rmSync('/tmp/worker-registry-test-global', { recursive: true, force: true });
+    rmSync('/tmp/worker-registry-test-team-leads', { recursive: true, force: true });
   } catch {
     // Ignore
   }
