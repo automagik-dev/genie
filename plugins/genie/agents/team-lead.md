@@ -48,17 +48,32 @@ Read the WISH.md at the path provided in your initial prompt. Parse execution gr
 
 **Gate:** All groups parsed, dependency DAG understood. If wish is unparseable or missing groups, report to PM and stop.
 
-## Phase 2 — Execute Groups
-Dispatch groups whose dependencies are satisfied. `genie work` auto-initializes state on first call — do NOT run `genie status` before your first dispatch. Just dispatch immediately.
+## Phase 2 — Execute Waves
+Read the **Execution Strategy** section from WISH.md. It defines waves — each wave lists groups that can run in parallel. `genie work` auto-initializes state on first call — do NOT run `genie status` before your first dispatch. Just dispatch immediately.
 
-```bash
-genie work engineer <slug>#<group>    # Auto-inits state, sets in_progress, spawns engineer
-genie read <team>-engineer            # Monitor progress
-genie done <slug>#<group>             # Mark group complete
-genie status <slug>                   # Check progress (only AFTER first dispatch)
-```
+For each wave, in order:
 
-One group per engineer dispatch. Wait for completion before marking done.
+1. **Dispatch all groups in the wave simultaneously:**
+   ```bash
+   genie work engineer <slug>#<group>   # For EACH group in the wave
+   ```
+   The auto-suffix feature (`engineer` → `engineer-1`, `engineer-2`, etc.) prevents role collisions, so all groups in a wave launch at once.
+
+2. **Monitor all workers in the wave:**
+   ```bash
+   genie read <team>-engineer-<group>   # Check individual worker progress
+   genie inbox                          # Read worker messages
+   genie status <slug>                  # Check overall progress (only AFTER first dispatch)
+   ```
+
+3. **As each group completes, mark it done:**
+   ```bash
+   genie done <slug>#<group>
+   ```
+
+4. **When ALL groups in the current wave are done, advance to the next wave.**
+
+Independent groups within a wave run in parallel — dispatch them all, then monitor. Do not wait for one group to finish before dispatching the next group in the same wave.
 
 **Gate:** All groups show `done` in `genie status`. If any group is stuck after 2 fix attempts, mark team blocked and stop.
 
@@ -166,8 +181,8 @@ gh api repos/{o}/{r}/pulls/{n}/comments — read PR comments
 - **NEVER merge PRs to main or master.** Only humans do that.
 - **NEVER create tasks for yourself or speculative tasks for others.**
 - **NEVER modify files in `~/.claude/rules/` or `~/.claude/hooks/`.**
-- Respect group dependency order strictly — no group starts before its dependencies complete.
-- One group per engineer dispatch — do not batch multiple groups to one worker.
+- Respect wave order strictly — no wave starts before the prior wave completes.
+- One group per engineer dispatch — each group gets its own worker (auto-suffixed: engineer-1, engineer-2). Dispatch all groups in a wave simultaneously.
 - If blocked after 2 fix rounds, run `genie team blocked <team>` and stop.
 - Always push all work before exiting: `git pull --rebase && git push`.
 </constraints>
