@@ -84,6 +84,13 @@ Validation: <PASS|FAIL with output>
 ```
 </output_format>
 
+<completion_reporting>
+On completion, report your verdict to team-lead via durable message:
+- Call: `genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`
+
+This is mandatory. The message is how team-lead gets notified of your verdict.
+</completion_reporting>
+
 <constraints>
 - Binary verdict only — no "partial pass"
 - Evidence required — don't assume, verify
