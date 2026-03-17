@@ -40,6 +40,7 @@ export interface TeamAutoSpawnDeps {
   listWindows: typeof tmux.listWindows;
   listPanes: typeof tmux.listPanes;
   isPaneAlive: typeof tmux.isPaneAlive;
+  resolveSessionName: typeof resolveSessionName;
   getTeamLeadEntry: typeof registry.getTeamLeadEntry;
   saveTeamLeadEntry: typeof registry.saveTeamLeadEntry;
   ensureNativeTeam: typeof ensureNativeTeam;
@@ -59,6 +60,7 @@ const defaultDeps: TeamAutoSpawnDeps = {
   listWindows: tmux.listWindows,
   listPanes: tmux.listPanes,
   isPaneAlive: tmux.isPaneAlive,
+  resolveSessionName,
   getTeamLeadEntry: registry.getTeamLeadEntry,
   saveTeamLeadEntry: registry.saveTeamLeadEntry,
   ensureNativeTeam,
@@ -86,17 +88,17 @@ function getSystemPromptFile(workingDir: string, deps: TeamAutoSpawnDeps): strin
  * Resolve the tmux session name for a team.
  *
  * Resolution order:
- *   1. Team-lead registry entry's session field
- *   2. GENIE_SESSION env var
- *   3. Derive from workingDir via resolveSessionName()
+ *   1. GENIE_SESSION env var (explicit override)
+ *   2. Derive from workingDir via resolveSessionName()
+ *   3. Team-lead registry session (only when it matches this project session)
  */
 async function resolveSession(teamName: string, workingDir: string, deps: TeamAutoSpawnDeps): Promise<string> {
-  const entry = await deps.getTeamLeadEntry(teamName);
-  if (entry?.session) return entry.session;
-
   if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
 
-  return resolveSessionName(workingDir);
+  const derivedSession = await deps.resolveSessionName(workingDir);
+  const entry = await deps.getTeamLeadEntry(teamName);
+  if (entry?.session && entry.session === derivedSession) return entry.session;
+  return derivedSession;
 }
 
 /**
@@ -175,7 +177,7 @@ export async function ensureTeamLead(
   workingDir: string,
   deps: TeamAutoSpawnDeps = defaultDeps,
 ): Promise<EnsureTeamLeadResult> {
-  // Resolve session name: registry → env → derive from cwd
+  // Resolve session name: env override → workingDir-derived session → matching registry
   const sessionName = await resolveSession(teamName, workingDir, deps);
 
   // Fast path: team already active
