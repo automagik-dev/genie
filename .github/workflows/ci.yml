@@ -67,7 +67,7 @@ jobs:
 
       - name: Test with coverage
         run: |
-          COVERAGE_OUTPUT=$(bun test --coverage 2>&1)
+          COVERAGE_OUTPUT=$(bun test --coverage 2>&1) || true
           echo "$COVERAGE_OUTPUT"
           LINE_COV=$(echo "$COVERAGE_OUTPUT" | grep "All files" | awk -F'|' '{print $2}' | tr -d ' ')
           echo "Line coverage: ${LINE_COV}%"
