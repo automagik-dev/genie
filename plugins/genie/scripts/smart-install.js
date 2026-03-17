@@ -252,8 +252,6 @@ function getUpdateChannel() {
 function genieCliNeedsInstall() {
   const installed = getGenieVersion();
   if (!installed) return true;
-  // Never overwrite dev builds — dev users update manually via genie update --next
-  if (getUpdateChannel() === 'next') return false;
   const pluginVersion = getPluginVersion();
   if (!pluginVersion) return false;
   return installed !== pluginVersion;
@@ -376,18 +374,18 @@ function installGenieCli() {
     throw new Error('Bun executable not found — cannot install genie CLI');
   }
 
-  const pluginVersion = getPluginVersion();
+  const updateChannel = getUpdateChannel();
+  const tag = updateChannel === 'next' ? 'next' : 'latest';
   const installed = getGenieVersion();
 
   if (installed) {
-    console.error(`Upgrading genie CLI: ${installed} → ${pluginVersion}...`);
+    console.error(`Upgrading genie CLI: ${installed} → @${tag}...`);
   } else {
     console.error('Installing genie CLI globally via bun...');
   }
 
   const bunCmd = IS_WINDOWS && bunPath.includes(' ') ? `"${bunPath}"` : bunPath;
-  const versionSuffix = pluginVersion ? `@${pluginVersion}` : '';
-  execSync(`${bunCmd} install -g @automagik/genie${versionSuffix}`, { stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
+  execSync(`${bunCmd} install -g @automagik/genie@${tag}`, { stdio: ['pipe', 'pipe', 'inherit'], shell: IS_WINDOWS });
 
   const newVersion = getGenieVersion();
   if (!newVersion) {
