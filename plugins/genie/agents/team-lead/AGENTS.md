@@ -49,31 +49,44 @@ Read the WISH.md at the path provided in your initial prompt. Parse execution gr
 **Gate:** All groups parsed, dependency DAG understood. If wish is unparseable or missing groups, report to PM and stop.
 
 ## Phase 2 — Execute Waves
-Read the **Execution Strategy** section from WISH.md. It defines waves — each wave lists groups that can run in parallel. `genie work` auto-initializes state on first call — do NOT run `genie status` before your first dispatch. Just dispatch immediately.
+Read the **Execution Strategy** section from WISH.md. It defines waves — each wave lists groups that can run in parallel.
 
-For each wave, in order:
+### Primary: Auto-orchestration (preferred)
+Run a single command that handles all wave orchestration automatically:
 
-1. **Dispatch all groups in the wave simultaneously:**
-   ```bash
-   genie work engineer <slug>#<group>   # For EACH group in the wave
-   ```
-   The auto-suffix feature (`engineer` → `engineer-1`, `engineer-2`, etc.) prevents role collisions, so all groups in a wave launch at once.
+```bash
+genie work <slug>
+```
 
-2. **Monitor all workers in the wave:**
-   ```bash
-   genie read <team>-engineer-<group>   # Check individual worker progress
-   genie inbox                          # Read worker messages
-   genie status <slug>                  # Check overall progress (only AFTER first dispatch)
-   ```
+This reads the Execution Strategy, spawns all agents per wave in parallel, polls wish state for completion, advances waves, and exits 0 when all groups are done (or exits 1 on timeout). It replaces manual per-group dispatch entirely.
 
-3. **As each group completes, mark it done:**
-   ```bash
-   genie done <slug>#<group>
-   ```
+While `genie work <slug>` runs (it blocks until complete), monitor progress in parallel:
+```bash
+genie ls                              # Check running agents
+genie status <slug>                   # Check overall wish progress
+genie read <team>-engineer-<group>    # Debug a stuck worker
+```
 
-4. **When ALL groups in the current wave are done, advance to the next wave.**
+### Fallback: Manual dispatch (if auto fails)
+If `genie work <slug>` fails or is not available, dispatch groups manually per wave:
 
-Independent groups within a wave run in parallel — dispatch them all, then monitor. Do not wait for one group to finish before dispatching the next group in the same wave.
+```bash
+genie work engineer <slug>#<group>    # For EACH group in the wave
+```
+
+The auto-suffix feature (`engineer` → `engineer-1`, `engineer-2`, etc.) prevents role collisions. After dispatching, wait for worker messages via inbox — do NOT use `sleep`:
+```bash
+genie inbox                           # Check for worker completion messages
+genie status <slug>                   # Check overall progress
+```
+
+As each group completes, mark it done: `genie done <slug>#<group>`. Advance to the next wave when all groups in the current wave are done.
+
+### Escape hatch: Custom agents
+For non-standard work not covered by execution groups, spawn agents directly:
+```bash
+genie spawn <role> --team <name>
+```
 
 **Gate:** All groups show `done` in `genie status`. If any group is stuck after 2 fix attempts, mark team blocked and stop.
 
@@ -157,7 +170,8 @@ When running in a loop, execute this checklist each iteration. Exit early if not
 
 <commands_reference>
 ```
-genie work <agent> <slug>#<group>     — dispatch group work (auto-spawns agent)
+genie work <slug>                     — auto-orchestrate full wish (preferred)
+genie work <agent> <slug>#<group>     — dispatch single group manually (fallback)
 genie done <slug>#<group>             — mark group complete
 genie status <slug>                   — check wish progress
 genie spawn <role> --team <name>      — spawn a worker in your team

@@ -315,6 +315,7 @@ function injectOrchestrationPrompt(oldVersion) {
 
 /**
  * Create default ~/.genie/config.json with schema v2 defaults if missing.
+ * Also migrates stale keys from older versions.
  */
 function createDefaultConfig() {
   const configPath = join(GENIE_DIR, 'config.json');
@@ -333,35 +334,101 @@ function createDefaultConfig() {
       setupComplete: false,
     }, null, 2), 'utf-8');
     console.error('Created default ~/.genie/config.json');
+  } else {
+    // Migrate: remove stale worktreeBase that overrides dynamic default
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.terminal && config.terminal.worktreeBase === '.worktrees') {
+        delete config.terminal.worktreeBase;
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        console.error('Migrated config: removed stale worktreeBase');
+      }
+    } catch {
+      // Ignore migration errors
+    }
   }
 }
 
 /**
- * Ensure tmux base-index defaults are set in ~/.tmux.conf
- * Only runs when version changes (or file missing).
- * @param {string|null} oldVersion - marker version captured before installDeps ran
+ * Copy tmux scripts from npm package to ~/.genie/scripts/ and configure tmux.
+ * On first run (no ~/.tmux.conf or no "Genie TUI" marker): write full config with backup.
+ * On subsequent runs: only refresh scripts, don't touch ~/.tmux.conf.
  */
-function ensureTmuxDefaults(oldVersion) {
-  let pluginVersion = null;
-  try {
-    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'));
-    pluginVersion = pkg.version || null;
-  } catch {
-    // Ignore
+function configureTmux() {
+  const scriptsDir = join(GENIE_DIR, 'scripts');
+  const tmuxScriptsSrc = join(ROOT, '..', '..', 'scripts', 'tmux');
+
+  // Fallback: try global package dir structure (npm package root)
+  const altSrc = join(ROOT, 'scripts', 'tmux');
+  const srcDir = existsSync(tmuxScriptsSrc) ? tmuxScriptsSrc : existsSync(altSrc) ? altSrc : null;
+
+  if (!srcDir) {
+    console.error('tmux scripts not found in package — skipping TUI setup');
+    return;
   }
 
-  if (oldVersion === pluginVersion) return;
+  // --- Copy scripts to ~/.genie/scripts/ ---
+  if (!existsSync(scriptsDir)) {
+    mkdirSync(scriptsDir, { recursive: true });
+  }
 
+  const { readdirSync, chmodSync } = require('node:fs');
+  let scriptCount = 0;
+  for (const entry of readdirSync(srcDir)) {
+    if (entry.endsWith('.sh')) {
+      const srcFile = join(srcDir, entry);
+      const destFile = join(scriptsDir, entry);
+      const content = readFileSync(srcFile);
+      writeFileSync(destFile, content);
+      chmodSync(destFile, 0o755);
+      scriptCount++;
+    }
+  }
+
+  if (scriptCount > 0) {
+    console.error(`Installed ${scriptCount} tmux scripts to ${scriptsDir}`);
+  }
+
+  // --- Write tmux config on first run only ---
   const tmuxConf = join(homedir(), '.tmux.conf');
-  let contents = '';
-  if (existsSync(tmuxConf)) {
-    contents = readFileSync(tmuxConf, 'utf-8');
+  const tmuxConfSrc = join(srcDir, 'genie.tmux.conf');
+
+  if (!existsSync(tmuxConfSrc)) {
+    console.error('genie.tmux.conf template not found — skipping config');
+    return;
   }
 
-  if (!contents.includes('base-index 0')) {
-    const append = '\n# Genie defaults\nset -g base-index 0\nsetw -g pane-base-index 0\n';
-    writeFileSync(tmuxConf, contents + append, 'utf-8');
-    console.error('Added tmux base-index defaults to ~/.tmux.conf');
+  // Check if this is a first run (no config or no Genie marker)
+  let isFirstRun = true;
+  if (existsSync(tmuxConf)) {
+    const existing = readFileSync(tmuxConf, 'utf-8');
+    if (existing.includes('Genie TUI')) {
+      isFirstRun = false;
+    }
+  }
+
+  if (isFirstRun) {
+    console.error('Genie will configure tmux. Your existing config will be backed up.');
+
+    // Backup existing config
+    if (existsSync(tmuxConf)) {
+      const { copyFileSync } = require('node:fs');
+      copyFileSync(tmuxConf, `${tmuxConf}.bak`);
+      console.error(`Backed up existing config to ${tmuxConf}.bak`);
+    }
+
+    // Write full config
+    const template = readFileSync(tmuxConfSrc, 'utf-8');
+    writeFileSync(tmuxConf, template, 'utf-8');
+    console.error(`Genie tmux config written to ${tmuxConf}`);
+
+    // Reload tmux if running
+    try {
+      const { spawnSync: spSync } = require('node:child_process');
+      spSync('tmux', ['source-file', tmuxConf], { stdio: 'ignore' });
+    } catch {
+      // tmux not running — that's fine
+    }
   }
 }
 
@@ -451,11 +518,11 @@ try {
     console.error(`Warning: Could not create default config: ${e.message}`);
   }
 
-  // 3c. Ensure tmux base-index defaults (idempotent — checks version marker)
+  // 3c. Configure tmux TUI (scripts + config on first run)
   try {
-    ensureTmuxDefaults(oldVersion);
+    configureTmux();
   } catch (e) {
-    console.error(`Warning: Could not update ~/.tmux.conf: ${e.message}`);
+    console.error(`Warning: Could not configure tmux TUI: ${e.message}`);
   }
 
   // 4. Install or upgrade genie CLI via bun global (non-fatal)
