@@ -91,4 +91,46 @@ describe('handleEntrypointArgs', () => {
     expect(calls.ensureInboxWatcherDaemon).toBe(1);
     expect(calls.error).toBe(1);
   });
+
+  test('--reset flag triggers sessionCommand with reset: true', async () => {
+    let resetValue = false;
+    const { deps } = makeDeps({
+      sessionCommand: async (options) => {
+        resetValue = options.reset;
+      },
+    });
+
+    await expect(handleEntrypointArgs(['--reset'], deps)).rejects.toMatchObject({ code: 0 });
+    expect(resetValue).toBe(true);
+  });
+
+  test('--session at end of args without value falls through to parseProgram', async () => {
+    const { deps, calls } = makeDeps();
+
+    await handleEntrypointArgs(['--session'], deps);
+    expect(calls.parseProgram).toBe(1);
+    expect(calls.startNamedSession).toBe(0);
+  });
+
+  test('--session with only flag args (no subcommand) starts session', async () => {
+    const { deps, calls } = makeDeps();
+
+    await expect(handleEntrypointArgs(['--session', 'beta', '--verbose'], deps)).rejects.toMatchObject({ code: 0 });
+    expect(calls.startNamedSession).toBe(1);
+  });
+
+  test('reports non-Error session failures correctly', async () => {
+    let errorMessage = '';
+    const { deps } = makeDeps({
+      startNamedSession: async () => {
+        throw 'string error';
+      },
+      error: (msg) => {
+        errorMessage = msg;
+      },
+    });
+
+    await expect(handleEntrypointArgs(['--session', 'gamma'], deps)).rejects.toMatchObject({ code: 1 });
+    expect(errorMessage).toContain('string error');
+  });
 });
