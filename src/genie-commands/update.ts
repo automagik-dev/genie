@@ -395,6 +395,12 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
       rmSync(cacheDir, { recursive: true, force: true });
     }
     copyDirSync(pluginSrc, cacheDir);
+
+    // Skills live at <pkg>/skills/ (symlink in plugins/genie/ doesn't survive npm)
+    const skillsSrc = join(globalPkgDir, 'skills');
+    if (existsSync(skillsSrc) && !existsSync(join(cacheDir, 'skills'))) {
+      copyDirSync(skillsSrc, join(cacheDir, 'skills'));
+    }
   } catch (err) {
     error(`Failed to copy plugin: ${err}`);
     return;
