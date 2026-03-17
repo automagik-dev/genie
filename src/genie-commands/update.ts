@@ -1,5 +1,14 @@
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { chmod, copyFile, mkdir, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -360,6 +369,34 @@ function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: 
   }
 }
 
+/** Copy tmux scripts from the global package to ~/.genie/scripts/ */
+function syncTmuxScripts(globalPkgDir: string): void {
+  const tmuxScriptsSrc = join(globalPkgDir, 'scripts', 'tmux');
+  if (!existsSync(tmuxScriptsSrc)) return;
+
+  const scriptsDir = join(GENIE_HOME, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+
+  let scriptCount = 0;
+  for (const entry of readdirSync(tmuxScriptsSrc)) {
+    if (entry.endsWith('.sh')) {
+      const src = join(tmuxScriptsSrc, entry);
+      const dest = join(scriptsDir, entry);
+      copyFileSync(src, dest);
+      try {
+        chmodSync(dest, 0o755);
+      } catch {
+        // chmod may fail on some filesystems — non-fatal
+      }
+      scriptCount++;
+    }
+  }
+
+  if (scriptCount > 0) {
+    success(`Refreshed ${scriptCount} tmux scripts at ${scriptsDir}`);
+  }
+}
+
 async function syncPlugin(installType: InstallationType): Promise<void> {
   log('Syncing Claude Code plugin...');
 
@@ -407,6 +444,7 @@ async function syncPlugin(installType: InstallationType): Promise<void> {
   }
 
   updatePluginRegistry(claudePlugins, cacheDir, version);
+  syncTmuxScripts(globalPkgDir);
 
   success(`Plugin synced to v${version}`);
 }
