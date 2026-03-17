@@ -1,1 +1,5 @@
+# Prevent GIT_DIR/GIT_WORK_TREE from leaking into child processes (see pre-push)
+unset GIT_DIR
+unset GIT_WORK_TREE
+
 bunx commitlint --edit "$1"

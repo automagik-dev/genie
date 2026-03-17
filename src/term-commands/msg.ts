@@ -18,30 +18,55 @@ import type * as protocolRouterTypes from '../lib/protocol-router.js';
 import type * as teamChatTypes from '../lib/team-chat.js';
 import type * as teamManagerTypes from '../lib/team-manager.js';
 
+export interface MsgCommandTestDeps {
+  registry?: Pick<typeof registryTypes, 'findByPane'>;
+  protocolRouter?: Pick<typeof protocolRouterTypes, 'sendMessage' | 'getInbox'>;
+  teamManager?: Pick<typeof teamManagerTypes, 'listTeams'>;
+  teamChat?: Pick<typeof teamChatTypes, 'postMessage' | 'readMessages'>;
+}
+
+let testDeps: Partial<MsgCommandTestDeps> = {};
+
+export function __setMsgCommandTestDeps(deps: Partial<MsgCommandTestDeps>): void {
+  testDeps = { ...testDeps, ...deps };
+}
+
+export function __resetMsgCommandTestDeps(): void {
+  testDeps = {};
+  _registry = undefined;
+  _protocolRouter = undefined;
+  _teamManager = undefined;
+  _teamChat = undefined;
+}
+
 // ============================================================================
 // Lazy Loaders (avoid pulling heavy deps at module-evaluation time)
 // ============================================================================
 
 let _registry: typeof registryTypes | undefined;
 async function getRegistry(): Promise<typeof registryTypes> {
+  if (testDeps.registry) return testDeps.registry as typeof registryTypes;
   if (!_registry) _registry = await import('../lib/agent-registry.js');
   return _registry;
 }
 
 let _protocolRouter: typeof protocolRouterTypes | undefined;
 async function getProtocolRouter(): Promise<typeof protocolRouterTypes> {
+  if (testDeps.protocolRouter) return testDeps.protocolRouter as typeof protocolRouterTypes;
   if (!_protocolRouter) _protocolRouter = await import('../lib/protocol-router.js');
   return _protocolRouter;
 }
 
 let _teamManager: typeof teamManagerTypes | undefined;
 async function getTeamManager(): Promise<typeof teamManagerTypes> {
+  if (testDeps.teamManager) return testDeps.teamManager as typeof teamManagerTypes;
   if (!_teamManager) _teamManager = await import('../lib/team-manager.js');
   return _teamManager;
 }
 
 let _teamChat: typeof teamChatTypes | undefined;
 async function getTeamChat(): Promise<typeof teamChatTypes> {
+  if (testDeps.teamChat) return testDeps.teamChat as typeof teamChatTypes;
   if (!_teamChat) _teamChat = await import('../lib/team-chat.js');
   return _teamChat;
 }
@@ -102,7 +127,28 @@ async function findMemberByPane(teamName: string, paneId: string): Promise<strin
 // ============================================================================
 
 /**
- * Enforce team scope: if sender is in a team, recipient must be in the same team.
+ * Resolve the sender's session name for session-scoped messaging.
+ *
+ * Resolution order:
+ * 1. GENIE_SESSION env var (set by session.ts on every tmux window)
+ * 2. Registry lookup by TMUX_PANE → agent.session
+ * 3. null (no session scoping)
+ */
+async function resolveSenderSession(): Promise<string | null> {
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+
+  const paneId = process.env.TMUX_PANE;
+  if (paneId) {
+    const registry = await getRegistry();
+    const worker = typeof registry.findByPane === 'function' ? await registry.findByPane(paneId) : null;
+    if (worker?.session) return worker.session;
+  }
+
+  return null;
+}
+
+/**
+ * Enforce team scope.
  * Returns an error message if scope is violated, null if OK.
  */
 export async function checkSendScope(_repoPath: string, sender: string, recipient: string): Promise<string | null> {
@@ -230,6 +276,7 @@ export function registerSendInboxCommands(program: Command): void {
         const protocolRouter = await getProtocolRouter();
         const repoPath = process.cwd();
         const from = options.from ?? (await detectSenderIdentity());
+        const senderSession = await resolveSenderSession();
 
         // Scope check: sender in a team → recipient must be in same team
         const scopeError = await checkSendScope(repoPath, from, options.to);
@@ -238,7 +285,14 @@ export function registerSendInboxCommands(program: Command): void {
           process.exit(1);
         }
 
-        const result = await protocolRouter.sendMessage(repoPath, from, options.to, body);
+        const result = await protocolRouter.sendMessage(
+          repoPath,
+          from,
+          options.to,
+          body,
+          undefined,
+          senderSession ?? undefined,
+        );
 
         if (result.delivered) {
           console.log(`Message sent to "${result.workerId}".`);
@@ -264,6 +318,7 @@ export function registerSendInboxCommands(program: Command): void {
         const protocolRouter = await getProtocolRouter();
         const repoPath = process.cwd();
         const from = options.from ?? (await detectSenderIdentity());
+        const senderSession = await resolveSenderSession();
 
         const team = await findAgentTeam(repoPath, from);
         if (!team) {
@@ -281,7 +336,14 @@ export function registerSendInboxCommands(program: Command): void {
         let failed = 0;
 
         for (const recipient of recipients) {
-          const result = await protocolRouter.sendMessage(repoPath, from, recipient, body);
+          const result = await protocolRouter.sendMessage(
+            repoPath,
+            from,
+            recipient,
+            body,
+            undefined,
+            senderSession ?? undefined,
+          );
           if (result.delivered) {
             delivered++;
           } else {

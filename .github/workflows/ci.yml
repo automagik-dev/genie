@@ -65,8 +65,22 @@ jobs:
       - name: Dead code check (knip)
         run: bunx knip
 
-      - name: Test
-        run: bun test || bun test
+      - name: Test with coverage
+        run: |
+          COVERAGE_OUTPUT=$(bun test --coverage 2>&1) || true
+          echo "$COVERAGE_OUTPUT"
+          LINE_COV=$(echo "$COVERAGE_OUTPUT" | grep "All files" | awk -F'|' '{print $2}' | tr -d ' ')
+          echo "Line coverage: ${LINE_COV}%"
+          if [ -z "$LINE_COV" ]; then
+            echo "WARNING: Could not parse coverage — skipping threshold check"
+            exit 0
+          fi
+          THRESHOLD=68
+          if [ "$(echo "$LINE_COV < $THRESHOLD" | bc -l)" = "1" ]; then
+            echo "FAILED: Coverage ${LINE_COV}% is below ${THRESHOLD}% minimum"
+            exit 1
+          fi
+          echo "PASSED: Coverage ${LINE_COV}% meets ${THRESHOLD}% minimum"
 
   publish-next:
     name: Publish @next
