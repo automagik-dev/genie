@@ -7,6 +7,7 @@
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveSessionName } from '../genie-commands/session.js';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
@@ -66,6 +67,14 @@ function buildFullCommand(launch: { command: string; env?: Record<string, string
   return launch.command;
 }
 
+/** Resolve session name: team-lead registry → GENIE_SESSION env → derive from cwd. */
+async function resolveSpawnSession(team: string, repoPath: string): Promise<string> {
+  const teamLeadEntry = await registry.getTeamLeadEntry(team);
+  if (teamLeadEntry?.session) return teamLeadEntry.session;
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+  return resolveSessionName(repoPath);
+}
+
 async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
   const existing = await registry.list();
@@ -89,7 +98,7 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   // Resolve target window: if team is set, ensure a dedicated team window
-  const session = 'genie';
+  const session = await resolveSpawnSession(team, repoPath);
   let teamWindow: { windowId: string; windowName: string } | null = null;
   try {
     teamWindow = await ensureTeamWindow(session, team, repoPath);
