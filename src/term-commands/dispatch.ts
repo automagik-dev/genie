@@ -178,6 +178,229 @@ export function parseWishGroups(content: string): GroupDefinition[] {
 }
 
 // ============================================================================
+// Execution Strategy Parser
+// ============================================================================
+
+export interface WaveGroup {
+  group: string;
+  agent: string;
+}
+
+export interface Wave {
+  name: string;
+  groups: WaveGroup[];
+}
+
+/**
+ * Parse the Execution Strategy section from WISH.md content.
+ *
+ * Looks for `## Execution Strategy` section, then parses `### Wave N` headings
+ * with their markdown tables (Group | Agent | Description).
+ *
+ * Falls back to a single wave with all groups assigned to `engineer` if no
+ * Execution Strategy section is found.
+ */
+export function parseExecutionStrategy(content: string): Wave[] {
+  // Find the Execution Strategy section
+  const strategyMatch = content.match(/^## Execution Strategy\s*$/m);
+  if (!strategyMatch || strategyMatch.index === undefined) {
+    return buildFallbackWaves(content);
+  }
+
+  const strategyStart = strategyMatch.index + strategyMatch[0].length;
+
+  // Find the end of the Execution Strategy section (next ## heading or end of content)
+  const nextSectionMatch = content.slice(strategyStart).match(/^## /m);
+  const strategyEnd = nextSectionMatch?.index !== undefined ? strategyStart + nextSectionMatch.index : content.length;
+
+  const strategyContent = content.slice(strategyStart, strategyEnd);
+
+  // Parse each ### Wave heading and its table
+  const waves: Wave[] = [];
+  const wavePattern = /^### (Wave \d+[^\n]*)/gm;
+  let waveMatch: RegExpExecArray | null = wavePattern.exec(strategyContent);
+
+  while (waveMatch !== null) {
+    const waveName = waveMatch[1].trim();
+    const waveStart = waveMatch.index + waveMatch[0].length;
+
+    // Find the end of this wave section (next ### heading or end of strategy)
+    const restAfterWave = strategyContent.slice(waveStart);
+    const nextWaveIdx = restAfterWave.search(/^### /m);
+    const waveEnd = nextWaveIdx !== -1 ? waveStart + nextWaveIdx : strategyContent.length;
+
+    const waveContent = strategyContent.slice(waveStart, waveEnd);
+
+    // Parse markdown table rows (skip header row and separator)
+    const waveGroups: WaveGroup[] = [];
+    const tableRowPattern = /^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*[^|]*\s*\|$/gm;
+    let rowMatch: RegExpExecArray | null = tableRowPattern.exec(waveContent);
+
+    while (rowMatch !== null) {
+      const groupVal = rowMatch[1].trim();
+      const agentVal = rowMatch[2].trim();
+
+      // Skip header row and separator row
+      if (groupVal !== 'Group' && !groupVal.startsWith('-')) {
+        waveGroups.push({ group: groupVal, agent: agentVal });
+      }
+
+      rowMatch = tableRowPattern.exec(waveContent);
+    }
+
+    if (waveGroups.length > 0) {
+      waves.push({ name: waveName, groups: waveGroups });
+    }
+
+    waveMatch = wavePattern.exec(strategyContent);
+  }
+
+  // If strategy section exists but had no parseable waves, fall back
+  if (waves.length === 0) {
+    return buildFallbackWaves(content);
+  }
+
+  return waves;
+}
+
+/**
+ * Build fallback waves — all groups in a single wave with `engineer` as default agent.
+ */
+function buildFallbackWaves(content: string): Wave[] {
+  const groups = parseWishGroups(content);
+  if (groups.length === 0) return [];
+
+  return [
+    {
+      name: 'Wave 1 (sequential fallback)',
+      groups: groups.map((g) => ({ group: g.name, agent: 'engineer' })),
+    },
+  ];
+}
+
+// ============================================================================
+// Auto-Orchestration
+// ============================================================================
+
+/** Poll interval for checking wave completion (30 seconds). */
+export const ORCHESTRATE_POLL_MS = 30_000;
+
+/** Maximum time to wait for a wave to complete (30 minutes). */
+export const ORCHESTRATE_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Detect whether `genie work` should run in auto or manual mode.
+ *
+ * - 1 arg, no `#` → auto mode (slug only)
+ * - 2 args, first has `#` → manual mode, new style: `work <slug#group> <agent>`
+ * - 2 args, second has `#` → manual mode, old style: `work <agent> <slug#group>`
+ */
+export function detectWorkMode(
+  ref: string,
+  agent?: string,
+): { mode: 'auto'; slug: string } | { mode: 'manual'; ref: string; agent: string } {
+  if (!agent) {
+    if (ref.includes('#')) {
+      throw new Error('Manual dispatch requires an agent: genie work <slug>#<group> <agent>');
+    }
+    return { mode: 'auto', slug: ref };
+  }
+
+  if (ref.includes('#')) {
+    return { mode: 'manual', ref, agent };
+  }
+  if (agent.includes('#')) {
+    // Backwards compatible: genie work <agent> <slug>#<group>
+    return { mode: 'manual', ref: agent, agent: ref };
+  }
+
+  throw new Error('Invalid: ref must contain "#" — use "genie work <slug>" or "genie work <agent> <slug>#<group>"');
+}
+
+/**
+ * `genie work <slug>` — Auto-orchestrate full wish execution.
+ *
+ * Reads the Execution Strategy, spawns all agents per wave in parallel,
+ * monitors completion via state polling, advances waves, and exits when done.
+ */
+export async function autoOrchestrateCommand(slug: string): Promise<void> {
+  const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
+
+  if (!existsSync(wishPath)) {
+    console.error(`❌ Wish not found: ${wishPath}`);
+    console.error(`   Create it first: genie wish <agent> ${slug}`);
+    process.exit(1);
+  }
+
+  const content = await readFile(wishPath, 'utf-8');
+  const groups = parseWishGroups(content);
+  const waves = parseExecutionStrategy(content);
+
+  if (waves.length === 0) {
+    console.error('❌ No execution groups found in wish');
+    process.exit(1);
+  }
+
+  // Auto-initialize wish state
+  let state = await wishState.getState(slug);
+  if (!state) {
+    state = await wishState.createState(slug, groups);
+    console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
+  }
+
+  console.log(`🚀 Auto-orchestrating wish "${slug}" — ${waves.length} waves, ${groups.length} groups`);
+
+  for (const wave of waves) {
+    console.log(`\n⏳ ${wave.name} — dispatching ${wave.groups.length} group(s)`);
+
+    // Dispatch all groups in this wave concurrently.
+    // workDispatchCommand spawns a tmux pane and returns immediately,
+    // so Promise.all resolves once all panes are created.
+    await Promise.all(
+      wave.groups.map(({ group, agent }) => {
+        const ref = `${slug}#${group}`;
+        return workDispatchCommand(agent, ref);
+      }),
+    );
+
+    // Poll state until all groups in wave are done
+    const waveStart = Date.now();
+    const waveGroupNames = wave.groups.map((g) => g.group);
+
+    while (true) {
+      const currentState = await wishState.getState(slug);
+      if (!currentState) {
+        console.error('❌ State file disappeared during orchestration');
+        process.exit(1);
+      }
+
+      const allDone = waveGroupNames.every((g) => currentState.groups[g]?.status === 'done');
+      if (allDone) {
+        console.log(`✅ ${wave.name} complete`);
+        break;
+      }
+
+      // Check timeout
+      if (Date.now() - waveStart > ORCHESTRATE_TIMEOUT_MS) {
+        const pending = waveGroupNames
+          .filter((g) => currentState.groups[g]?.status !== 'done')
+          .map((g) => `${g} (${currentState.groups[g]?.status ?? 'unknown'})`)
+          .join(', ');
+        console.error(`❌ ${wave.name} timed out after 30min — pending: ${pending}`);
+        process.exit(1);
+      }
+
+      // Log status and wait
+      const statuses = waveGroupNames.map((g) => `${g}:${currentState.groups[g]?.status ?? '?'}`).join(' ');
+      console.log(`   ⏳ ${statuses}`);
+      await new Promise((resolve) => setTimeout(resolve, ORCHESTRATE_POLL_MS));
+    }
+  }
+
+  console.log(`\n🎉 All waves complete — wish "${slug}" fully executed`);
+}
+
+// ============================================================================
 // Dispatch Commands
 // ============================================================================
 
@@ -320,7 +543,7 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
     team: process.env.GENIE_TEAM ?? 'genie',
     role: `${agentName}-${group}`,
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.`,
+    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion. When done, run: genie done ${slug}#${group}`,
   });
 }
 
@@ -399,10 +622,20 @@ export function registerDispatchCommands(program: Command): void {
     });
 
   program
-    .command('work <agent> <ref>')
-    .description('Dispatch work on a wish group (format: <slug>#<group>)')
-    .action(async (agent: string, ref: string) => {
-      await workDispatchCommand(agent, ref);
+    .command('work <ref> [agent]')
+    .description('Auto-orchestrate a wish, or dispatch work on a specific group')
+    .action(async (ref: string, agent?: string) => {
+      try {
+        const work = detectWorkMode(ref, agent);
+        if (work.mode === 'auto') {
+          await autoOrchestrateCommand(work.slug);
+        } else {
+          await workDispatchCommand(work.agent, work.ref);
+        }
+      } catch (error) {
+        console.error(`❌ ${error instanceof Error ? error.message : error}`);
+        process.exit(1);
+      }
     });
 
   program
