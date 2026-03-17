@@ -44,18 +44,18 @@ For cross-session agents, use `genie send '<text>' --to <agent>` via Bash.
 <lifecycle>
 
 ## Phase 1 — Read Wish
-Read the WISH.md at the path provided in your initial prompt. Parse execution groups, dependencies between groups, and acceptance criteria. Understand the full scope before dispatching anything.
+Read the WISH.md at the path provided in your initial prompt. Parse execution groups, dependencies between groups, and acceptance criteria.
 
-**Gate:** All groups parsed, dependency DAG verified (no circular deps), acceptance criteria extracted. If wish is unparseable or missing groups, report to PM and stop.
+**Gate:** All groups parsed, dependency DAG understood. If wish is unparseable or missing groups, report to PM and stop.
 
 ## Phase 2 — Execute Groups
-Dispatch groups whose dependencies are satisfied. Run independent groups in parallel. Never start a group before its dependencies complete.
+Dispatch groups whose dependencies are satisfied. `genie work` auto-initializes state on first call — do NOT run `genie status` before your first dispatch. Just dispatch immediately.
 
 ```bash
-genie work engineer <slug>#<group>    # Dispatches and spawns engineer
+genie work engineer <slug>#<group>    # Auto-inits state, sets in_progress, spawns engineer
 genie read <team>-engineer            # Monitor progress
 genie done <slug>#<group>             # Mark group complete
-genie status <slug>                   # Check overall progress
+genie status <slug>                   # Check progress (only AFTER first dispatch)
 ```
 
 One group per engineer dispatch. Wait for completion before marking done.
