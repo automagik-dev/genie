@@ -45,6 +45,17 @@ import * as readCmd from './term-commands/read.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 
+// Safety: ensure git repo is never in bare mode (worktree operations can corrupt this)
+try {
+  const { execSync: execSyncStartup } = require('node:child_process');
+  const isBare = execSyncStartup('git config core.bare', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+  if (isBare === 'true') {
+    execSyncStartup('git config core.bare false', { stdio: ['pipe', 'pipe', 'pipe'] });
+  }
+} catch {
+  // Not in a git repo — that's fine
+}
+
 const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
