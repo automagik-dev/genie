@@ -16,6 +16,7 @@
  *   genie --session <name>  — Start or resume a named leader session
  */
 
+import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
 import { doctorCommand } from './genie-commands/doctor.js';
 import { type SetupOptions, setupCommand } from './genie-commands/setup.js';
@@ -60,6 +61,30 @@ const program = new Command();
 
 program.name('genie').description('Genie CLI - AI-assisted development').version(VERSION);
 
+program
+  .command('__watch-inboxes')
+  .description('Internal inbox watcher daemon')
+  .action(async () => {
+    const { clearInboxWatcherPid, startInboxWatcher, stopInboxWatcher, writeInboxWatcherPid } = await import(
+      './lib/inbox-watcher.js'
+    );
+
+    await writeInboxWatcherPid();
+    const handle = startInboxWatcher();
+
+    const shutdown = async (): Promise<void> => {
+      stopInboxWatcher(handle);
+      await clearInboxWatcherPid();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', () => void shutdown());
+    process.on('SIGTERM', () => void shutdown());
+    process.on('SIGHUP', () => void shutdown());
+
+    await new Promise(() => {});
+  });
+
 // ============================================================================
 // Named session — genie --session <name>
 // ============================================================================
@@ -82,6 +107,97 @@ async function startNamedSession(name: string): Promise<void> {
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
   if (result.status) process.exit(result.status);
+}
+
+async function ensureInboxWatcherDaemon(): Promise<void> {
+  const { clearInboxWatcherPid, getInboxPollIntervalMs, isProcessAlive, readInboxWatcherPid, writeInboxWatcherPid } =
+    await import('./lib/inbox-watcher.js');
+
+  if (getInboxPollIntervalMs() === 0) return;
+
+  const existingPid = await readInboxWatcherPid();
+  if (existingPid && isProcessAlive(existingPid)) return;
+  if (existingPid) await clearInboxWatcherPid(existingPid);
+
+  const entrypoint = process.argv[1];
+  if (!entrypoint) return;
+
+  const { spawn } = await import('node:child_process');
+  const child = spawn(process.execPath, [entrypoint, '__watch-inboxes'], {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
+
+  if (child.pid) {
+    await writeInboxWatcherPid(child.pid);
+  }
+  child.unref();
+}
+
+export interface EntrypointDeps {
+  ensureInboxWatcherDaemon: () => Promise<void>;
+  sessionCommand: (options: { reset: boolean }) => Promise<void>;
+  startNamedSession: (name: string) => Promise<void>;
+  parseProgram: () => void;
+  error: (message: string) => void;
+  exit: (code: number) => never;
+}
+
+function exitProcess(code: number): never {
+  process.exit(code);
+}
+
+export async function handleEntrypointArgs(args: string[], deps?: Partial<EntrypointDeps>): Promise<void> {
+  const resolvedDeps: EntrypointDeps = {
+    ensureInboxWatcherDaemon,
+    sessionCommand: async (options) => {
+      const { sessionCommand } = await import('./genie-commands/session.js');
+      await sessionCommand(options);
+    },
+    startNamedSession,
+    parseProgram: () => {
+      program.parse();
+    },
+    error: (message) => {
+      console.error(message);
+    },
+    exit: exitProcess,
+    ...deps,
+  };
+
+  // Default command: genie (no args) or genie --reset
+  if (args.length === 0 || args.every((a) => a === '--reset')) {
+    await resolvedDeps.ensureInboxWatcherDaemon();
+    await resolvedDeps.sessionCommand({ reset: args.includes('--reset') });
+    resolvedDeps.exit(0);
+  }
+
+  const sessionIdx = args.indexOf('--session');
+  if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
+    const sessionName = args[sessionIdx + 1];
+    // Only start session if no subcommand is provided
+    const otherArgs = args.filter((_: string, i: number) => i !== sessionIdx && i !== sessionIdx + 1);
+    const hasSubcommand = otherArgs.some((a: string) => !a.startsWith('-'));
+    if (!hasSubcommand) {
+      try {
+        await resolvedDeps.ensureInboxWatcherDaemon();
+        await resolvedDeps.startNamedSession(sessionName);
+      } catch (err) {
+        resolvedDeps.error(`Error: ${err instanceof Error ? err.message : err}`);
+        resolvedDeps.exit(1);
+      }
+      resolvedDeps.exit(0);
+    }
+  }
+
+  resolvedDeps.parseProgram();
+}
+
+function isMainModule(): boolean {
+  const entrypoint = process.argv[1];
+  if (!entrypoint) return false;
+  return import.meta.url === pathToFileURL(entrypoint).href;
 }
 
 // ============================================================================
@@ -245,32 +361,6 @@ program
 // genie --session <name> — named leader session (pre-parse check)
 // ============================================================================
 
-const args = process.argv.slice(2);
-
-// Default command: genie (no args) or genie --reset
-if (args.length === 0 || args.every((a) => a === '--reset')) {
-  const { sessionCommand } = await import('./genie-commands/session.js');
-  await sessionCommand({ reset: args.includes('--reset') });
-  process.exit(0);
-}
-
-const sessionIdx = args.indexOf('--session');
-if (sessionIdx !== -1 && sessionIdx + 1 < args.length) {
-  const sessionName = args[sessionIdx + 1];
-  // Only start session if no subcommand is provided
-  const otherArgs = args.filter((_: string, i: number) => i !== sessionIdx && i !== sessionIdx + 1);
-  const hasSubcommand = otherArgs.some((a: string) => !a.startsWith('-'));
-  if (!hasSubcommand) {
-    try {
-      await startNamedSession(sessionName);
-      process.exit(0);
-    } catch (err) {
-      console.error(`Error: ${err instanceof Error ? err.message : err}`);
-      process.exit(1);
-    }
-  } else {
-    program.parse();
-  }
-} else {
-  program.parse();
+if (isMainModule()) {
+  await handleEntrypointArgs(process.argv.slice(2));
 }

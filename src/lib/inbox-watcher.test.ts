@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { InboxWatcherDeps } from './inbox-watcher.js';
-import { checkInboxes, resetSpawnFailures } from './inbox-watcher.js';
+import { checkInboxes, resetSpawnFailures, startInboxWatcher, stopInboxWatcher } from './inbox-watcher.js';
 
 // ============================================================================
 // Test helpers
@@ -180,5 +180,40 @@ describe('checkInboxes', () => {
     await checkInboxes(deps);
     // Should still try (only 1 failure after reset)
     expect(attempt).toBe(4);
+  });
+});
+
+describe('startInboxWatcher', () => {
+  beforeEach(() => {
+    process.env.GENIE_INBOX_POLL_MS = undefined;
+  });
+
+  afterEach(() => {
+    process.env.GENIE_INBOX_POLL_MS = undefined;
+  });
+
+  test('returns null when polling is disabled', () => {
+    process.env.GENIE_INBOX_POLL_MS = '0';
+
+    const handle = startInboxWatcher(makeDeps());
+
+    expect(handle).toBeNull();
+  });
+
+  test('runs an initial poll immediately', async () => {
+    let polls = 0;
+    const deps = makeDeps({
+      listTeamsWithUnreadInbox: async () => {
+        polls++;
+        return [];
+      },
+    });
+
+    const handle = startInboxWatcher(deps);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    stopInboxWatcher(handle);
+
+    expect(handle).not.toBeNull();
+    expect(polls).toBe(1);
   });
 });

@@ -96,7 +96,7 @@ async function resolveSession(teamName: string, workingDir: string, deps: TeamAu
   if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
 
   const derivedSession = await deps.resolveSessionName(workingDir);
-  const entry = await deps.getTeamLeadEntry(teamName);
+  const entry = await deps.getTeamLeadEntry(teamName, derivedSession, workingDir);
   if (entry?.session && entry.session === derivedSession) return entry.session;
   return derivedSession;
 }
@@ -148,7 +148,7 @@ export async function isTeamActive(
     const paneId = panes[0].id;
 
     // Grace period: skip liveness check if team-lead was spawned < 30s ago
-    const entry = await deps.getTeamLeadEntry(teamName);
+    const entry = await deps.getTeamLeadEntry(teamName, sessionName);
     if (entry?.startedAt) {
       const elapsed = deps.now() - new Date(entry.startedAt).getTime();
       if (elapsed < LIVENESS_GRACE_MS) return true;

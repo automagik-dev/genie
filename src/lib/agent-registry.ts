@@ -6,6 +6,7 @@
  * global file at `~/.genie/workers.json`.
  */
 
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -107,6 +108,22 @@ interface AgentRegistry {
   workers: Record<string, Agent>;
   templates: Record<string, WorkerTemplate>;
   lastUpdated: string;
+}
+
+function shortProjectHash(repoPath: string): string {
+  return createHash('sha1').update(repoPath).digest('hex').slice(0, 8);
+}
+
+function buildProjectTeamLeadEntryId(teamName: string, session: string, repoPath: string): string {
+  return `team-lead:${session}:${shortProjectHash(repoPath)}:${teamName}`;
+}
+
+function buildSessionTeamLeadEntryId(teamName: string, session: string): string {
+  return `team-lead:${session}:${teamName}`;
+}
+
+function buildLegacyTeamLeadEntryId(teamName: string): string {
+  return `team-lead:${teamName}`;
 }
 
 // ============================================================================
@@ -311,7 +328,7 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
 
 /**
  * Save a team-lead entry in the agent registry.
- * Creates/overwrites the entry keyed by `team-lead:<teamName>`.
+ * Creates/overwrites the entry keyed by `team-lead:<session>:<project-hash>:<teamName>`.
  */
 export async function saveTeamLeadEntry(
   teamName: string,
@@ -320,7 +337,7 @@ export async function saveTeamLeadEntry(
   windowName: string,
   repoPath: string,
 ): Promise<void> {
-  const id = `team-lead:${teamName}`;
+  const id = buildProjectTeamLeadEntryId(teamName, session, repoPath);
   await withRegistry((reg) => {
     reg.workers[id] = {
       id,
@@ -342,10 +359,40 @@ export async function saveTeamLeadEntry(
  * Get the team-lead registry entry for a team.
  * Returns null if no team-lead is registered.
  */
-export async function getTeamLeadEntry(teamName: string): Promise<Agent | null> {
+export async function getTeamLeadEntry(teamName: string, session?: string, repoPath?: string): Promise<Agent | null> {
   const registry = await loadRegistry();
-  const id = `team-lead:${teamName}`;
-  return registry.workers[id] ?? null;
+  const workers = Object.values(registry.workers);
+
+  if (session) {
+    if (repoPath) {
+      const exactProject = registry.workers[buildProjectTeamLeadEntryId(teamName, session, repoPath)];
+      if (exactProject) return exactProject;
+    }
+
+    const exactSession = registry.workers[buildSessionTeamLeadEntryId(teamName, session)];
+    if (exactSession && (!repoPath || exactSession.repoPath === repoPath)) return exactSession;
+
+    const legacy = registry.workers[buildLegacyTeamLeadEntryId(teamName)];
+    if (legacy?.session === session && (!repoPath || legacy.repoPath === repoPath)) return legacy;
+
+    return (
+      workers.find(
+        (worker) =>
+          worker.role === 'team-lead' &&
+          worker.team === teamName &&
+          worker.session === session &&
+          (!repoPath || worker.repoPath === repoPath),
+      ) ?? null
+    );
+  }
+
+  return (
+    registry.workers[buildLegacyTeamLeadEntryId(teamName)] ??
+    workers
+      .filter((worker) => worker.role === 'team-lead' && worker.team === teamName)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ??
+    null
+  );
 }
 
 /** Save or update a worker template. */
