@@ -51,7 +51,13 @@ After the implementation works:
 Run the validation command from the wish. Record output. Confirm each acceptance criterion is met.
 
 ## 7. Report Completion
-After completing all deliverables and validation, call `genie done <slug>#<group>` to report completion. The slug and group are in your initial prompt. This signals the orchestrator that your work is finished so it can advance to the next wave.
+After completing all deliverables and validation:
+1. Run validation commands from the wish
+2. Commit and push your work
+3. Call: `genie done <slug>#<group>` — marks the group complete in state (source of truth)
+4. Call: `genie send 'Group <N> complete. <summary>' --to team-lead` — sends durable notification
+
+The slug and group are in your initial prompt. Both commands are mandatory — state is how the orchestrator tracks progress, the message is how team-lead gets notified.
 </process>
 
 <success_criteria>
