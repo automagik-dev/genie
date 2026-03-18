@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
@@ -369,6 +369,32 @@ function updatePluginRegistry(claudePlugins: string, cacheDir: string, version: 
   }
 }
 
+const GENIE_TMUX_HEADER = '# Genie TUI — tmux configuration';
+
+/** If ~/.tmux.conf was installed by genie, overwrite it and reload tmux. */
+function syncTmuxConf(tmuxScriptsSrc: string): void {
+  const tmuxConfSrc = join(tmuxScriptsSrc, 'genie.tmux.conf');
+  const tmuxConfDest = join(homedir(), '.tmux.conf');
+  if (!existsSync(tmuxConfSrc) || !existsSync(tmuxConfDest)) return;
+
+  try {
+    const existing = readFileSync(tmuxConfDest, 'utf-8');
+    if (!existing.includes(GENIE_TMUX_HEADER)) return;
+
+    copyFileSync(tmuxConfSrc, tmuxConfDest);
+    success('Updated ~/.tmux.conf (genie-managed)');
+
+    try {
+      execSync('tmux source-file ~/.tmux.conf', { stdio: 'ignore' });
+      success('Reloaded tmux configuration');
+    } catch {
+      // tmux not running or reload failed — non-fatal
+    }
+  } catch {
+    // Read/write failed — non-fatal
+  }
+}
+
 /** Copy tmux scripts from the global package to ~/.genie/scripts/ */
 function syncTmuxScripts(globalPkgDir: string): void {
   const tmuxScriptsSrc = join(globalPkgDir, 'scripts', 'tmux');
@@ -379,12 +405,12 @@ function syncTmuxScripts(globalPkgDir: string): void {
 
   let scriptCount = 0;
   for (const entry of readdirSync(tmuxScriptsSrc)) {
-    if (entry.endsWith('.sh')) {
+    if (entry.endsWith('.sh') || entry === 'genie.tmux.conf') {
       const src = join(tmuxScriptsSrc, entry);
       const dest = join(scriptsDir, entry);
       copyFileSync(src, dest);
       try {
-        chmodSync(dest, 0o755);
+        chmodSync(dest, entry.endsWith('.sh') ? 0o755 : 0o644);
       } catch {
         // chmod may fail on some filesystems — non-fatal
       }
@@ -395,6 +421,8 @@ function syncTmuxScripts(globalPkgDir: string): void {
   if (scriptCount > 0) {
     success(`Refreshed ${scriptCount} tmux scripts at ${scriptsDir}`);
   }
+
+  syncTmuxConf(tmuxScriptsSrc);
 }
 
 async function syncPlugin(installType: InstallationType): Promise<void> {
