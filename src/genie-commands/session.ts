@@ -1,19 +1,31 @@
 /**
  * Genie Session Command
  *
- * Session-per-folder: running `genie` from any folder creates/attaches
- * a tmux session named after that folder.
+ * Per-project sessions: running `genie` from any folder creates/attaches
+ * a tmux session named after that project directory.
  *
  * Architecture:
- *   tmux session: "myapp"              <- named after basename(cwd)
- *     |-- Window 0: "myapp"            <- main window
- *     |-- Window 1: "api-server-c7b1"  <- disambiguated (same basename, different path)
- *     +-- Window 2: "myapp2"           <- genie run from ~/projects/myapp2
+ *   tmux session: "myapp"              <- genie run from ~/projects/myapp
+ *     |-- Window 0: "myapp"            <- team-lead window
+ *     +-- Window 1: "feat/auth"        <- team window
+ *
+ *   tmux session: "api-server"         <- genie run from ~/projects/api-server
+ *     |-- Window 0: "api-server"       <- team-lead window
+ *     +-- Window 1: "fix/bug"          <- team window
+ *
+ * Session name = sanitized basename(cwd) with hash disambiguation.
+ * Two projects with same basename in different dirs get unique names:
+ *   /home/user/project-a  -> session "project-a"
+ *   /tmp/project-a        -> session "project-a-c7b1"
+ *
+ * GENIE_SESSION env var is set on every window so spawned agents
+ * know which session they belong to.
  */
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import * as registry from '../lib/agent-registry.js';
 import {
@@ -33,6 +45,35 @@ function shortPathHash(p: string): string {
 }
 
 /**
+ * Resolve the tmux session name for the given working directory.
+ *
+ * Logic:
+ * 1. Session name starts as sanitizeWindowName(basename(cwd))
+ * 2. Check if a session with that name already exists
+ * 3. If it exists, read GENIE_CWD env var from the session
+ * 4. If GENIE_CWD matches current cwd -> reuse that session
+ * 5. If GENIE_CWD differs (collision) -> append 4-char hash to disambiguate
+ * 6. If no session exists -> use the base name
+ */
+export async function resolveSessionName(cwd: string): Promise<string> {
+  const baseName = sanitizeWindowName(basename(cwd));
+  const existing = await tmux.findSessionByName(baseName);
+
+  if (!existing) {
+    return baseName;
+  }
+
+  // Session exists — check if it's for the same cwd
+  const storedCwd = await tmux.getWindowEnv(baseName, 'GENIE_CWD');
+  if (storedCwd === cwd) {
+    return baseName;
+  }
+
+  // Different folder with same basename — disambiguate with hash
+  return `${baseName}-${shortPathHash(cwd)}`;
+}
+
+/**
  * Get the AGENTS.md file path if it exists in the current directory.
  * Returns the absolute file path, or null if not found.
  */
@@ -40,6 +81,52 @@ export function getAgentsFilePath(): string | null {
   const agentsPath = join(process.cwd(), 'AGENTS.md');
   if (existsSync(agentsPath)) {
     return agentsPath;
+  }
+  return null;
+}
+
+/**
+ * Convert a workspace directory path to a Claude project directory name.
+ * Claude encodes paths by replacing '/' with '-', so /home/genie/workspace -> -home-genie-workspace.
+ */
+function workspaceDirToProjectDir(workspaceDir: string): string {
+  return workspaceDir.replace(/\//g, '-');
+}
+
+/**
+ * Find the most recent session ID for a given teamName + agentName from Claude's JSONL logs.
+ * Returns null if no matching session is found.
+ */
+function findLastSessionId(teamName: string, agentName: string, workspaceDir: string): string | null {
+  const projectDirName = workspaceDirToProjectDir(workspaceDir);
+  const projectDir = join(homedir(), '.claude', 'projects', projectDirName);
+
+  if (!existsSync(projectDir)) return null;
+
+  let files: { path: string; mtime: number }[];
+  try {
+    files = readdirSync(projectDir)
+      .filter((f) => f.endsWith('.jsonl'))
+      .map((f) => {
+        const p = join(projectDir, f);
+        return { path: p, mtime: statSync(p).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch {
+    return null;
+  }
+
+  for (const { path } of files) {
+    try {
+      const firstLine = readFileSync(path, 'utf-8').split('\n')[0];
+      if (!firstLine) continue;
+      const data = JSON.parse(firstLine);
+      if (data.teamName === teamName && data.agentName === agentName && data.sessionId) {
+        return data.sessionId as string;
+      }
+    } catch {
+      // Skip malformed files
+    }
   }
   return null;
 }
@@ -74,8 +161,8 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  * Build the claude launch command with native team flags.
  * Delegates to the shared buildTeamLeadCommand (single source of truth).
  */
-export function buildClaudeCommand(teamName: string, systemPromptFile?: string, continueName?: string): string {
-  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName });
+export function buildClaudeCommand(teamName: string, systemPromptFile?: string, resumeSessionId?: string): string {
+  return buildTeamLeadCommand(teamName, { systemPromptFile, resumeSessionId });
 }
 
 /**
@@ -176,52 +263,25 @@ async function createSession(
   await tmux.executeTmux(`rename-window -t ${shellQuote(firstWindow.id)} ${shellQuote(windowName)}`);
   await tmux.executeTmux(`set-window-option -t ${shellQuote(firstWindow.id)} automatic-rename off`);
 
-  // Store cwd as env var on the window
+  // Store cwd and session name as env vars on the window
   await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_CWD', workspaceDir);
+  await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_SESSION', sessionName);
 
   const target = `${sessionName}:${windowName}`;
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
   const agentName = basename(workspaceDir);
-  // First run — no session to continue, just start fresh with --name
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workspaceDir);
+  if (resumeSessionId) {
+    console.log(`Resuming previous session: ${resumeSessionId}`);
+  }
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
+  console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
 
   // Register interactive session so spawned agents can find the team-lead
   await registerSessionInRegistry(sessionName, windowName, workspaceDir);
-}
-
-/**
- * Launch Claude Code in a tmux pane with --continue fallback.
- *
- * Tries --continue first (preserves conversation history). Waits ~3 seconds,
- * then checks #{pane_current_command} — if the pane shows a shell, --continue
- * failed (no prior conversation) so we retry fresh without --continue.
- */
-async function launchWithContinueFallback(
-  target: string,
-  windowName: string,
-  systemPromptFile: string | null,
-): Promise<void> {
-  const continueName = sanitizeTeamName(windowName);
-  const continueCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
-  const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
-
-  // Try --continue first (preserves conversation history)
-  await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(continueCmd)} Enter`);
-
-  // Wait briefly then check if CC is running or fell back to shell
-  // CC fails fast on missing conversations (~1s), 3s is conservative
-  await new Promise((r) => setTimeout(r, 3000));
-  const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
-
-  if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
-    // --continue failed, start fresh
-    console.log('No prior conversation found, starting fresh session...');
-    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
-  }
 }
 
 /** Focus (or create) a team window within an existing session. */
@@ -235,39 +295,26 @@ async function focusTeamWindow(
   if (teamWindow.created) {
     console.log(`Created team window "${windowName}"`);
 
-    // Store cwd as env var on the window
+    // Store cwd and session name as env vars on the window
     await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_CWD', workingDir);
+    await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_SESSION', sessionName);
 
     // Bootstrap native team and launch Claude Code in the new window
     await ensureNativeTeamForLeader(windowName, workingDir);
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-
-    await launchWithContinueFallback(target, windowName, systemPromptFile);
-    console.log(`Started Claude Code as ${basename(workingDir)}@${sanitizeTeamName(windowName)} in ${workingDir}`);
+    const agentName = basename(workingDir);
+    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workingDir);
+    if (resumeSessionId) {
+      console.log(`Resuming previous session: ${resumeSessionId}`);
+    }
+    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
+    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
+    console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workingDir}`);
 
     // Register interactive session so spawned agents can find the team-lead
     await registerSessionInRegistry(sessionName, windowName, workingDir);
-  } else {
-    // Window exists — check if Claude Code is still running
-    const target = `${sessionName}:${windowName}`;
-    const currentCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
-
-    const isShell = ['bash', 'zsh', 'sh', 'fish'].includes(currentCmd);
-    if (isShell) {
-      // Claude Code has exited — relaunch
-      console.log(`Claude Code not running in "${windowName}", relaunching...`);
-      await ensureNativeTeamForLeader(windowName, workingDir);
-
-      const cdCmd = `cd ${shellQuote(workingDir)}`;
-      await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-
-      await launchWithContinueFallback(target, windowName, systemPromptFile);
-
-      await registerSessionInRegistry(sessionName, windowName, workingDir);
-    }
-    // else: Claude Code is still running — just select the window below
   }
   await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
   console.log(`Focused team window "${windowName}"`);
@@ -305,15 +352,20 @@ async function handleReset(sessionName: string, windowName: string): Promise<voi
 }
 
 function attachToWindow(sessionName: string, windowName: string): void {
-  console.log('Attaching...');
   const target = `${sessionName}:${windowName}`;
-  const cmd = process.env.TMUX ? 'switch-client' : 'attach';
-  spawnSync('tmux', [cmd, '-t', target], { stdio: 'inherit' });
+  if (process.env.TMUX) {
+    // Already inside tmux — use switch-client for cross-project session switching
+    console.log(`Switching to session "${sessionName}"...`);
+    spawnSync('tmux', ['switch-client', '-t', target], { stdio: 'inherit' });
+  } else {
+    console.log('Attaching...');
+    spawnSync('tmux', ['attach', '-t', target], { stdio: 'inherit' });
+  }
 }
 
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
   const workspaceDir = options.dir ?? process.cwd();
-  const sessionName = options.name ?? sanitizeWindowName(basename(workspaceDir));
+  const sessionName = options.name ?? (await resolveSessionName(workspaceDir));
 
   try {
     const windowName = await deriveWindowName(sessionName, workspaceDir, options.team);
@@ -335,8 +387,9 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
       const currentWindowName = `${windowName}-${suffix}`;
       await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
       await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
-      // Fresh session — random suffix means no prior conversation to continue
-      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined);
+      const agentName = basename(workspaceDir);
+      const resumeSessionId = findLastSessionId(sanitizeTeamName(currentWindowName), agentName, workspaceDir);
+      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, resumeSessionId || undefined);
       const { execSync: execSyncCmd } = require('node:child_process');
       execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
     } else {
