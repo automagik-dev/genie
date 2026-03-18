@@ -113,7 +113,7 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
 
   await registerNativeMember(teamName, {
     agentName: basename(cwd),
-    agentType: 'general-purpose',
+    agentType: 'team-lead',
     color: 'blue',
     cwd,
   });
@@ -319,8 +319,8 @@ function attachToWindow(sessionName: string, windowName: string): void {
 }
 
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
-  const sessionName = options.name ?? DEFAULT_SESSION_NAME;
   const workspaceDir = options.dir ?? process.cwd();
+  const sessionName = options.name ?? sanitizeWindowName(basename(workspaceDir));
 
   try {
     const windowName = await deriveWindowName(sessionName, workspaceDir, options.team);
@@ -335,12 +335,24 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
 
     if (!session) {
       await createSession(sessionName, windowName, workspaceDir, systemPromptFile);
+      attachToWindow(sessionName, windowName);
+    } else if (process.env.TMUX) {
+      // Already inside tmux — launch Claude Code in the CURRENT pane
+      const suffix = Date.now().toString(36).slice(-4);
+      const currentWindowName = `${windowName}-${suffix}`;
+      await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
+      await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
+      const agentName = basename(workspaceDir);
+      const resumeSessionId = findLastSessionId(sanitizeTeamName(currentWindowName), agentName, workspaceDir);
+      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, resumeSessionId || undefined);
+      const { execSync: execSyncCmd } = require('node:child_process');
+      execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
     } else {
+      // Outside tmux — attach to existing session
       console.log(`Session "${sessionName}" already exists`);
       await focusTeamWindow(sessionName, windowName, workspaceDir, systemPromptFile);
+      attachToWindow(sessionName, windowName);
     }
-
-    attachToWindow(sessionName, windowName);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Error: ${message}`);

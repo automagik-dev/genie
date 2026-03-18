@@ -48,11 +48,15 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     `GENIE_TEAM=${qTeam}`,
     `GENIE_AGENT_NAME=${shellQuote(folderName)}`,
     'claude',
-    `--agent-id ${shellQuote(`${folderName}@${sanitized}`)}`,
-    `--agent-name ${shellQuote(folderName)}`,
+    `--agent-id ${shellQuote(`team-lead@${sanitized}`)}`,
+    '--agent-name team-lead',
     `--team-name ${qTeam}`,
+    '--agent-type team-lead',
     '--dangerously-skip-permissions',
   ];
+
+  // Session name for CC's /resume and terminal title
+  parts.push(`--name ${shellQuote(sanitized)}`);
 
   if (options?.resumeSessionId) {
     parts.push(`--resume ${shellQuote(options.resumeSessionId)}`);
