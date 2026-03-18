@@ -406,7 +406,7 @@ async function registerSpawnWorker(
   const workerEntry: registry.Agent = {
     id: ctx.workerId,
     paneId,
-    session: 'genie',
+    session: ctx.validated.team,
     provider: ctx.validated.provider,
     transport: ctx.transport,
     role: ctx.validated.role,
@@ -489,7 +489,8 @@ type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; cr
 async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Promise<TeamWindowInfo | null> {
   if (!team) return null;
   try {
-    return await tmux.ensureTeamWindow('genie', team, cwd);
+    const sessionName = (await tmux.getCurrentSessionName()) ?? team;
+    return await tmux.ensureTeamWindow(sessionName, team, cwd);
   } catch (err) {
     console.warn(`Warning: could not ensure team window for "${team}": ${err instanceof Error ? err.message : err}`);
     return null;
@@ -756,8 +757,8 @@ async function buildSpawnParams(
     console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
   }
 
-  const claudeSessionId = params.provider === 'claude' ? crypto.randomUUID() : undefined;
-  if (claudeSessionId) params.sessionId = claudeSessionId;
+  // Let Claude Code generate its own session ID — no UUID override needed.
+  // Folder-based session naming is handled by the session layer.
 
   return { params, parentSessionId, spawnColor };
 }
@@ -819,7 +820,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     agentName,
     spawnColor,
     parentSessionId,
-    claudeSessionId: params.sessionId,
+    claudeSessionId: undefined,
     otelRelayActive,
     now,
     transport: insideTmux ? 'tmux' : 'inline',

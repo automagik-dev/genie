@@ -36,6 +36,20 @@ export async function executeTmux(tmuxCommand: string): Promise<string> {
 }
 
 /**
+ * Get the current tmux session name (requires running inside tmux).
+ * Returns null if not inside a tmux session.
+ */
+export async function getCurrentSessionName(): Promise<string | null> {
+  if (!process.env.TMUX) return null;
+  try {
+    const name = (await executeTmux("display-message -p '#{session_name}'")).trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * List all tmux sessions
  */
 export async function listSessions(): Promise<TmuxSession[]> {
