@@ -2,11 +2,11 @@
  * Genie Session Command
  *
  * Session-per-folder: running `genie` from any folder creates/attaches
- * a tmux window named after that folder inside a single "genie" session.
+ * a tmux session named after that folder.
  *
  * Architecture:
- *   tmux session: "genie"              <- single persistent session
- *     |-- Window 0: "myapp"            <- genie run from ~/projects/myapp
+ *   tmux session: "myapp"              <- named after basename(cwd)
+ *     |-- Window 0: "myapp"            <- main window
  *     |-- Window 1: "api-server-c7b1"  <- disambiguated (same basename, different path)
  *     +-- Window 2: "myapp2"           <- genie run from ~/projects/myapp2
  */
