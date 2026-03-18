@@ -16,8 +16,6 @@ import { ensureNativeTeam, loadConfig, registerNativeMember, sanitizeTeamName } 
 import { buildTeamLeadCommand, shellQuote } from './team-lead-command.js';
 import * as tmux from './tmux.js';
 
-const DEFAULT_SESSION = 'genie';
-
 interface EnsureTeamLeadResult {
   /** Whether a new team window was created (false = already existed) */
   created: boolean;
@@ -39,18 +37,24 @@ function getSystemPromptFile(workingDir: string): string | null {
 }
 
 /**
- * Ensure a tmux session exists for teams.
- * Creates the "genie" session if it doesn't exist.
+ * Ensure a tmux session exists for the given team.
+ * Uses the current tmux session if inside one, otherwise creates a session named after the team.
  */
-async function ensureSession(): Promise<string> {
-  const existing = await tmux.findSessionByName(DEFAULT_SESSION);
-  if (existing) return DEFAULT_SESSION;
+async function ensureSession(teamName: string): Promise<string> {
+  // If inside tmux, reuse the current session
+  const current = await tmux.getCurrentSessionName();
+  if (current) return current;
 
-  const session = await tmux.createSession(DEFAULT_SESSION);
+  // Otherwise create/find a session named after the team (folder-based naming)
+  const sessionName = sanitizeTeamName(teamName);
+  const existing = await tmux.findSessionByName(sessionName);
+  if (existing) return sessionName;
+
+  const session = await tmux.createSession(sessionName);
   if (!session) {
-    throw new Error(`Failed to create tmux session "${DEFAULT_SESSION}"`);
+    throw new Error(`Failed to create tmux session "${sessionName}"`);
   }
-  return DEFAULT_SESSION;
+  return sessionName;
 }
 
 /**
@@ -58,17 +62,19 @@ async function ensureSession(): Promise<string> {
  *
  * A team is considered "active" if:
  * 1. Its native config.json exists, AND
- * 2. A tmux window with the team name exists in the genie session
+ * 2. A tmux window with the team name exists in any session
  */
 async function isTeamActive(teamName: string): Promise<boolean> {
   const config = await loadConfig(teamName);
   if (!config) return false;
 
-  const session = await tmux.findSessionByName(DEFAULT_SESSION);
+  // Check current session first, then try team name as session
+  const sessionName = (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
+  const session = await tmux.findSessionByName(sessionName);
   if (!session) return false;
 
   try {
-    const windows = await tmux.listWindows(DEFAULT_SESSION);
+    const windows = await tmux.listWindows(sessionName);
     const sanitized = sanitizeTeamName(teamName);
     return windows.some((w) => w.name === sanitized || w.name === teamName);
   } catch {
@@ -88,8 +94,9 @@ async function isTeamActive(teamName: string): Promise<boolean> {
  */
 export async function ensureTeamLead(teamName: string, workingDir: string): Promise<EnsureTeamLeadResult> {
   // Fast path: team already active
+  const currentSession = (await tmux.getCurrentSessionName()) ?? sanitizeTeamName(teamName);
   if (await isTeamActive(teamName)) {
-    return { created: false, session: DEFAULT_SESSION, window: sanitizeWindowName(teamName) };
+    return { created: false, session: currentSession, window: sanitizeWindowName(teamName) };
   }
 
   // Create native team structure
@@ -102,7 +109,7 @@ export async function ensureTeamLead(teamName: string, workingDir: string): Prom
   });
 
   // Ensure tmux session exists
-  const session = await ensureSession();
+  const session = await ensureSession(teamName);
 
   // Create team window (sanitize dots — tmux interprets '.' as pane separator)
   const windowName = sanitizeWindowName(teamName);
