@@ -13,8 +13,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import * as registry from '../lib/agent-registry.js';
 import {
@@ -41,52 +40,6 @@ export function getAgentsFilePath(): string | null {
   const agentsPath = join(process.cwd(), 'AGENTS.md');
   if (existsSync(agentsPath)) {
     return agentsPath;
-  }
-  return null;
-}
-
-/**
- * Convert a workspace directory path to a Claude project directory name.
- * Claude encodes paths by replacing '/' with '-', so /home/genie/workspace -> -home-genie-workspace.
- */
-function workspaceDirToProjectDir(workspaceDir: string): string {
-  return workspaceDir.replace(/\//g, '-');
-}
-
-/**
- * Find the most recent session ID for a given teamName + agentName from Claude's JSONL logs.
- * Returns null if no matching session is found.
- */
-function findLastSessionId(teamName: string, agentName: string, workspaceDir: string): string | null {
-  const projectDirName = workspaceDirToProjectDir(workspaceDir);
-  const projectDir = join(homedir(), '.claude', 'projects', projectDirName);
-
-  if (!existsSync(projectDir)) return null;
-
-  let files: { path: string; mtime: number }[];
-  try {
-    files = readdirSync(projectDir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => {
-        const p = join(projectDir, f);
-        return { path: p, mtime: statSync(p).mtimeMs };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-  } catch {
-    return null;
-  }
-
-  for (const { path } of files) {
-    try {
-      const firstLine = readFileSync(path, 'utf-8').split('\n')[0];
-      if (!firstLine) continue;
-      const data = JSON.parse(firstLine);
-      if (data.teamName === teamName && data.agentName === agentName && data.sessionId) {
-        return data.sessionId as string;
-      }
-    } catch {
-      // Skip malformed files
-    }
   }
   return null;
 }
@@ -121,8 +74,8 @@ async function ensureNativeTeamForLeader(teamName: string, cwd: string): Promise
  * Build the claude launch command with native team flags.
  * Delegates to the shared buildTeamLeadCommand (single source of truth).
  */
-export function buildClaudeCommand(teamName: string, systemPromptFile?: string, resumeSessionId?: string): string {
-  return buildTeamLeadCommand(teamName, { systemPromptFile, resumeSessionId });
+export function buildClaudeCommand(teamName: string, systemPromptFile?: string, continueName?: string): string {
+  return buildTeamLeadCommand(teamName, { systemPromptFile, continueName });
 }
 
 /**
@@ -231,13 +184,11 @@ async function createSession(
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
   const agentName = basename(workspaceDir);
-  const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workspaceDir);
-  if (resumeSessionId) {
-    console.log(`Resuming previous session: ${resumeSessionId}`);
-  }
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
+  const continueName = sanitizeTeamName(windowName);
+  console.log(`Continuing session by name: ${continueName}`);
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workspaceDir}`);
+  console.log(`Started Claude Code as ${agentName}@${continueName} in ${workspaceDir}`);
 
   // Register interactive session so spawned agents can find the team-lead
   await registerSessionInRegistry(sessionName, windowName, workspaceDir);
@@ -263,13 +214,11 @@ async function focusTeamWindow(
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
     const agentName = basename(workingDir);
-    const resumeSessionId = findLastSessionId(sanitizeTeamName(windowName), agentName, workingDir);
-    if (resumeSessionId) {
-      console.log(`Resuming previous session: ${resumeSessionId}`);
-    }
-    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, resumeSessionId || undefined);
+    const continueName = sanitizeTeamName(windowName);
+    console.log(`Continuing session by name: ${continueName}`);
+    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-    console.log(`Started Claude Code as ${agentName}@${sanitizeTeamName(windowName)} in ${workingDir}`);
+    console.log(`Started Claude Code as ${agentName}@${continueName} in ${workingDir}`);
 
     // Register interactive session so spawned agents can find the team-lead
     await registerSessionInRegistry(sessionName, windowName, workingDir);
@@ -340,9 +289,8 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
       const currentWindowName = `${windowName}-${suffix}`;
       await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
       await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
-      const agentName = basename(workspaceDir);
-      const resumeSessionId = findLastSessionId(sanitizeTeamName(currentWindowName), agentName, workspaceDir);
-      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, resumeSessionId || undefined);
+      const continueName = sanitizeTeamName(currentWindowName);
+      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, continueName);
       const { execSync: execSyncCmd } = require('node:child_process');
       execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
     } else {

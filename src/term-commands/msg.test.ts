@@ -252,11 +252,11 @@ describe('buildTeamLeadCommand (shared module)', () => {
     expect(cmd).toContain('CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1');
   });
 
-  test('includes --resume when resumeSessionId provided', async () => {
+  test('includes --continue when continueName provided', async () => {
     const { buildTeamLeadCommand } = await import('../lib/team-lead-command.js');
-    const cmd = buildTeamLeadCommand('genie', { resumeSessionId: 'abc-123' });
-    expect(cmd).toContain('--resume');
-    expect(cmd).toContain('abc-123');
+    const cmd = buildTeamLeadCommand('genie', { continueName: 'genie' });
+    expect(cmd).toContain('--continue');
+    expect(cmd).toContain('genie');
   });
 
   test('includes --append-system-prompt-file when systemPromptFile provided (default promptMode)', async () => {

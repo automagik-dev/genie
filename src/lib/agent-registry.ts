@@ -99,8 +99,6 @@ export interface WorkerTemplate {
   nativeTeamEnabled?: boolean;
   /** Timestamp of last spawn from this template. */
   lastSpawnedAt: string;
-  /** Last known Claude session ID for resume capability. */
-  lastSessionId?: string;
 }
 
 interface AgentRegistry {
