@@ -229,12 +229,6 @@ describe('full flow: wish -> work -> ship', () => {
   });
 
   afterAll(async () => {
-    // Clean up worktrees first
-    try {
-      await $`git -C ${nestedRepo} worktree prune`.quiet();
-    } catch {
-      /* ignore */
-    }
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -258,14 +252,17 @@ Test the full wish -> work -> ship flow.
 `,
     );
 
-    // Step 2: Simulate work command - create worktree in nested repo
+    // Step 2: Simulate work command - create shared clone in nested repo
     const branchName = `work/${wishId}`;
     const worktreePath = join(nestedRepo, '.genie', 'worktrees', wishId);
 
     await mkdir(join(nestedRepo, '.genie', 'worktrees'), { recursive: true });
-    await $`git -C ${nestedRepo} worktree add -b ${branchName} ${worktreePath}`.quiet();
+    await $`git -C ${nestedRepo} branch ${branchName}`.quiet();
+    await $`git clone --shared --branch ${branchName} ${nestedRepo} ${worktreePath}`.quiet();
+    await $`git -C ${worktreePath} config user.email "test@test.com"`.quiet();
+    await $`git -C ${worktreePath} config user.name "Test User"`.quiet();
 
-    // Verify worktree was created in the NESTED repo (not macro repo)
+    // Verify clone was created in the NESTED repo (not macro repo)
     expect(await pathExists(worktreePath)).toBe(true);
 
     // Verify it's not in the macro repo
@@ -289,12 +286,10 @@ Test the full wish -> work -> ship flow.
     expect(logResult.stdout.toString()).toContain(`Test change for ${wishId}`);
 
     // Cleanup
-    await $`git -C ${nestedRepo} worktree remove ${worktreePath} --force`.quiet();
+    await rm(worktreePath, { recursive: true, force: true });
   });
 
-  it('should prevent ship when accidentally on main in worktree', async () => {
-    // Create a fresh test repo for this edge case since we can't have two
-    // worktrees on the same branch, and the nested repo is already on main
+  it('should prevent ship when accidentally on main in clone', async () => {
     const edgeCaseRepo = await createTempGitRepo(tempDir, 'edge-case-repo');
     const wishId = 'wish-main-accident';
 
@@ -306,16 +301,12 @@ Test the full wish -> work -> ship flow.
       mainBranch = 'master';
     }
 
-    // First, switch the main repo to a different branch so we can create
-    // a worktree on main
-    await $`git -C ${edgeCaseRepo} checkout -b temp-branch`.quiet();
-
-    // Create worktree attached to main (simulating a mistake/edge case)
+    // Create shared clone on main (simulating a mistake/edge case)
     const worktreePath = join(edgeCaseRepo, '.genie', 'worktrees', wishId);
     await mkdir(join(edgeCaseRepo, '.genie', 'worktrees'), { recursive: true });
-    await $`git -C ${edgeCaseRepo} worktree add ${worktreePath} ${mainBranch}`.quiet();
+    await $`git clone --shared --branch ${mainBranch} ${edgeCaseRepo} ${worktreePath}`.quiet();
 
-    // Verify we're on main in the worktree
+    // Verify we're on main in the clone
     const branch = await getCurrentBranch(worktreePath);
     expect([mainBranch]).toContain(branch);
 
@@ -331,7 +322,7 @@ Test the full wish -> work -> ship flow.
     expect(error?.message).toContain('Cannot push from main/master');
 
     // Cleanup
-    await $`git -C ${edgeCaseRepo} worktree remove ${worktreePath} --force`.quiet();
+    await rm(worktreePath, { recursive: true, force: true });
   });
 });
 
