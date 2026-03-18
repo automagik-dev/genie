@@ -37,14 +37,14 @@ function buildSpawnArgs(template: {
   role?: string;
   skill?: string;
   cwd?: string;
-  lastSessionId?: string;
   extraArgs?: string[];
 }): string[] {
   const args = ['spawn', '--provider', template.provider, '--team', template.team];
   if (template.role) args.push('--role', template.role);
   if (template.skill) args.push('--skill', template.skill);
   if (template.cwd) args.push('--cwd', template.cwd);
-  if (template.lastSessionId) args.push('--resume', template.lastSessionId);
+  // Session resumption is handled by --continue via the session name (${team}-${role}),
+  // which is set automatically by the spawn command. No explicit flag needed here.
   if (template.extraArgs) args.push(...template.extraArgs);
   return args;
 }

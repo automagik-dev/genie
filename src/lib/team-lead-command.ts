@@ -21,8 +21,9 @@ export function shellQuote(s: string): string {
 interface BuildTeamLeadCommandOptions {
   /** Path to AGENTS.md or system prompt file (passed directly, no copy). */
   systemPromptFile?: string;
-  resumeSessionId?: string;
-  /** Set session ID for a new session (mutually exclusive with resumeSessionId) */
+  /** Session name to continue (emits --continue). Mutually exclusive with sessionId. */
+  continueName?: string;
+  /** Set session ID for a new session (mutually exclusive with continueName) */
   sessionId?: string;
   /** Override promptMode instead of reading from config (useful for testing) */
   promptMode?: 'append' | 'system';
@@ -58,8 +59,8 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   // Session name for CC's /resume and terminal title
   parts.push(`--name ${shellQuote(sanitized)}`);
 
-  if (options?.resumeSessionId) {
-    parts.push(`--resume ${shellQuote(options.resumeSessionId)}`);
+  if (options?.continueName) {
+    parts.push(`--continue ${shellQuote(options.continueName)}`);
   } else if (options?.sessionId) {
     parts.push(`--session-id ${shellQuote(options.sessionId)}`);
   }
