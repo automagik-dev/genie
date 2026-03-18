@@ -571,7 +571,6 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
     extraArgs: ctx.extraArgs,
     nativeTeamEnabled: workerEntry.nativeTeamEnabled,
     lastSpawnedAt: new Date().toISOString(),
-    lastSessionId: workerEntry.claudeSessionId,
   });
 
   if (ctx.otelRelayActive && paneId !== '%0') {
@@ -927,16 +926,6 @@ export async function handleWorkerKill(name: string): Promise<void> {
   killWorkerPane(w);
   cleanupRelayFiles(w.id);
   await cleanupWorkerNativeTeam(w);
-
-  // Save last session ID into template before unregistering so
-  // ensureWorkerAlive can resume with --resume on next message.
-  if (w.claudeSessionId) {
-    const templates = await registry.listTemplates();
-    const tmpl = templates.find((t) => t.id === w.id || t.id === w.role || t.role === w.role);
-    if (tmpl) {
-      await registry.saveTemplate({ ...tmpl, lastSessionId: w.claudeSessionId });
-    }
-  }
 
   await registry.unregister(w.id);
   console.log(`Agent "${w.id}" killed and unregistered (template preserved).`);
