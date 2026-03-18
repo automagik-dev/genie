@@ -29,7 +29,7 @@ get_current_version() {
 check_latest_version() {
   # Try npm registry
   local latest
-  latest=$(npm view automagik-genie version 2>/dev/null) || true
+  latest=$(npm view @automagik/genie version 2>/dev/null) || true
   echo "${latest:-}"
 }
 
@@ -78,15 +78,18 @@ main() {
     return 0
   fi
 
-  # Compare versions
-  if [[ "$current_version" == "$latest_version" ]]; then
-    echo "v${current_version}" > "$CACHE_FILE"
-    echo "v${current_version}"
-  else
-    local result="v${current_version} (${latest_version} available)"
-    echo "$result" > "$CACHE_FILE"
-    echo "$result"
+  # Compare versions — only show update if npm is newer
+  local result="v${current_version}"
+  if [[ "$current_version" != "$latest_version" ]]; then
+    # Sort versions; if current comes first, npm is newer
+    local older
+    older=$(printf '%s\n%s\n' "$current_version" "$latest_version" | sort -V | head -1)
+    if [[ "$older" == "$current_version" ]]; then
+      result="v${current_version} ⬆ ${latest_version}"
+    fi
   fi
+  echo "$result" > "$CACHE_FILE"
+  echo "$result"
 }
 
 main
