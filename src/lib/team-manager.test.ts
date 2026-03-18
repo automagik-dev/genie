@@ -1,5 +1,5 @@
 /**
- * Tests for Team Manager — CRUD for team lifecycle with git worktree integration.
+ * Tests for Team Manager — CRUD for team lifecycle with git clone --shared isolation.
  * Run with: bun test src/lib/team-manager.test.ts
  */
 
@@ -55,27 +55,6 @@ async function setupTestRepo(): Promise<void> {
 
 async function cleanupTestRepo(): Promise<void> {
   try {
-    // Remove all worktrees first
-    const result = await $`git -C ${TEST_REPO} worktree list --porcelain`.quiet();
-    const paths = result.stdout
-      .toString()
-      .split('\n')
-      .filter((line) => line.startsWith('worktree '))
-      .map((line) => line.slice(9))
-      .filter((path) => path !== TEST_REPO);
-
-    for (const p of paths) {
-      try {
-        await $`git -C ${TEST_REPO} worktree remove ${p} --force`.quiet();
-      } catch {
-        // Ignore
-      }
-    }
-  } catch {
-    // Ignore
-  }
-
-  try {
     await rm(TEST_DIR, { recursive: true, force: true });
   } catch {
     // Ignore
@@ -123,7 +102,7 @@ describe('Team Manager', () => {
   });
 
   describe('createTeam', () => {
-    test('creates team with worktree', async () => {
+    test('creates team with shared clone', async () => {
       const config = await createTeam('feat/test-create', TEST_REPO, 'dev');
 
       expect(config.name).toBe('feat/test-create');
@@ -286,7 +265,7 @@ describe('Team Manager', () => {
   });
 
   describe('disbandTeam', () => {
-    test('removes worktree and config', async () => {
+    test('removes clone directory and config', async () => {
       const config = await createTeam('feat/disband-test', TEST_REPO, 'dev');
       const worktreePath = config.worktreePath;
 

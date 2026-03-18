@@ -45,7 +45,10 @@ import * as readCmd from './term-commands/read.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 
-// Safety: ensure git repo is never in bare mode (worktree operations can corrupt this)
+// Safety net: ensure git repo is never in bare mode.
+// This should no longer trigger now that we use `git clone --shared` instead of
+// `git worktree` (which could flip core.bare=true on the parent repo). Kept as
+// a last-resort guard for repos previously corrupted by the old worktree approach.
 try {
   const { execSync: execSyncStartup } = require('node:child_process');
   const isBare = execSyncStartup('git config core.bare', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
