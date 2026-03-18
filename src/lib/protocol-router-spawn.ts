@@ -19,7 +19,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
