@@ -18,14 +18,14 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
 async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
   const teamConfig = await teamManager.getTeam(team);
   if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
-  return (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
+  return (await nativeTeams.discoverClaudeSessionId()) ?? `genie-${team}`;
 }
 
 function buildSpawnParams(
@@ -41,7 +41,7 @@ function buildSpawnParams(
     role: template.role,
     skill: template.skill,
     extraArgs: template.extraArgs,
-    sessionId: isClaude && !resumeSessionId ? crypto.randomUUID() : undefined,
+    sessionId: undefined,
     resume: isClaude ? resumeSessionId : undefined,
   };
   if (isClaude) {
@@ -89,7 +89,7 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   // Resolve target window: if team is set, ensure a dedicated team window
-  const session = 'genie';
+  const session = (await getCurrentSessionName()) ?? team;
   let teamWindow: { windowId: string; windowName: string } | null = null;
   try {
     teamWindow = await ensureTeamWindow(session, team, repoPath);
