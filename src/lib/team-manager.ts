@@ -190,6 +190,16 @@ async function ensureWorktree(
   // Clone with --shared to reuse object store (fast, no disk duplication)
   // but with a separate .git config — avoids the core.bare corruption bug
   await $`git clone --shared --branch ${branchName} ${repoPath} ${worktreePath}`.quiet();
+
+  // Inherit git user config from parent repo (shared clone has separate .git)
+  try {
+    const userName = (await $`git -C ${repoPath} config user.name`.quiet()).text().trim();
+    const userEmail = (await $`git -C ${repoPath} config user.email`.quiet()).text().trim();
+    if (userName) await $`git -C ${worktreePath} config user.name ${userName}`.quiet();
+    if (userEmail) await $`git -C ${worktreePath} config user.email ${userEmail}`.quiet();
+  } catch {
+    // Best-effort — global config may suffice
+  }
 }
 
 /**

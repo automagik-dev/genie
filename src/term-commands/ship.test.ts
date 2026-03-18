@@ -259,6 +259,8 @@ Test the full wish -> work -> ship flow.
     await mkdir(join(nestedRepo, '.genie', 'worktrees'), { recursive: true });
     await $`git -C ${nestedRepo} branch ${branchName}`.quiet();
     await $`git clone --shared --branch ${branchName} ${nestedRepo} ${worktreePath}`.quiet();
+    await $`git -C ${worktreePath} config user.email "test@test.com"`.quiet();
+    await $`git -C ${worktreePath} config user.name "Test User"`.quiet();
 
     // Verify clone was created in the NESTED repo (not macro repo)
     expect(await pathExists(worktreePath)).toBe(true);
