@@ -649,7 +649,7 @@ async function resolveNativeTeam(
   const teamConfig = await teamManager.getTeam(team);
   let parentSessionId = teamConfig?.nativeTeamParentSessionId;
   if (!parentSessionId) {
-    parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
+    parentSessionId = (await nativeTeams.discoverClaudeSessionId()) ?? `genie-${team}`;
   }
   await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
   const spawnColor = (options.color as ClaudeTeamColor) ?? (await nativeTeams.assignColor(team));
