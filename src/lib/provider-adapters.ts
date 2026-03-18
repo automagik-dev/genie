@@ -76,6 +76,8 @@ export interface SpawnParams {
   model?: string;
   /** Initial prompt to send as the first user message (Claude Code positional [prompt] arg). */
   initialPrompt?: string;
+  /** Display name for the CC session (emits --name). Used in /resume and terminal title. */
+  name?: string;
 }
 
 /** Result of a successful launch-command build. */
@@ -115,12 +117,13 @@ const spawnParamsSchema = z.object({
     })
     .optional(),
   sessionId: z.string().uuid().optional(),
-  resume: z.string().uuid().optional(),
+  resume: z.string().optional(),
   systemPromptFile: z.string().optional(),
   systemPrompt: z.string().optional(),
   promptMode: z.enum(['system', 'append']).optional(),
   model: z.string().optional(),
   initialPrompt: z.string().optional(),
+  name: z.string().optional(),
 });
 
 /**
@@ -268,6 +271,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
 
   if (params.role) parts.push('--agent', escapeShellArg(params.role));
   if (params.model) parts.push('--model', escapeShellArg(params.model));
+  if (params.name) parts.push('--name', escapeShellArg(params.name));
 
   appendSystemPromptFlags(parts, params);
 

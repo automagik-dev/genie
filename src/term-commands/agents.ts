@@ -787,6 +787,10 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
   // 3. Build params
   const { params, parentSessionId, spawnColor } = await buildSpawnParams(effectiveRole, team, options, agent);
 
+  // Set CC session display name if not already set
+  if (!params.name) {
+    params.name = `${params.team}-${effectiveRole}`;
+  }
   const validated = validateSpawnParams(params);
   const launch = buildLaunchCommand(validated);
   const layoutMode = resolveLayoutMode(options.layout);
