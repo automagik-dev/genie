@@ -44,16 +44,14 @@ describe('buildClaudeCommand', () => {
     expect(cmd).toContain('--dangerously-skip-permissions');
   });
 
-  test('includes --agent-id with folderName@team pattern', () => {
+  test('includes --agent-id with team-lead@team pattern', () => {
     const cmd = buildClaudeCommand('my-team');
-    const folderName = basename(process.cwd());
-    expect(cmd).toContain(`--agent-id '${folderName}@my-team'`);
+    expect(cmd).toContain(`--agent-id 'team-lead@my-team'`);
   });
 
-  test('includes --agent-name as folder name', () => {
+  test('includes --agent-name as team-lead', () => {
     const cmd = buildClaudeCommand('genie');
-    const folderName = basename(process.cwd());
-    expect(cmd).toContain(`--agent-name '${folderName}'`);
+    expect(cmd).toContain('--agent-name team-lead');
   });
 
   test('with system prompt file references it via --append-system-prompt-file', () => {
