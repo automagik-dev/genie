@@ -51,6 +51,7 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     `--agent-id ${shellQuote(`${folderName}@${sanitized}`)}`,
     `--agent-name ${shellQuote(folderName)}`,
     `--team-name ${qTeam}`,
+    '--agent-type team-lead',
     '--dangerously-skip-permissions',
   ];
 
