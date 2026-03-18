@@ -1,25 +1,14 @@
 /**
  * Genie Session Command
  *
- * Per-project sessions: running `genie` from any folder creates/attaches
- * a tmux session named after that project directory.
+ * Session-per-folder: running `genie` from any folder creates/attaches
+ * a tmux window named after that folder inside a single "genie" session.
  *
  * Architecture:
- *   tmux session: "myapp"              <- genie run from ~/projects/myapp
- *     |-- Window 0: "myapp"            <- team-lead window
- *     +-- Window 1: "feat/auth"        <- team window
- *
- *   tmux session: "api-server"         <- genie run from ~/projects/api-server
- *     |-- Window 0: "api-server"       <- team-lead window
- *     +-- Window 1: "fix/bug"          <- team window
- *
- * Session name = sanitized basename(cwd) with hash disambiguation.
- * Two projects with same basename in different dirs get unique names:
- *   /home/user/project-a  -> session "project-a"
- *   /tmp/project-a        -> session "project-a-c7b1"
- *
- * GENIE_SESSION env var is set on every window so spawned agents
- * know which session they belong to.
+ *   tmux session: "genie"              <- single persistent session
+ *     |-- Window 0: "myapp"            <- genie run from ~/projects/myapp
+ *     |-- Window 1: "api-server-c7b1"  <- disambiguated (same basename, different path)
+ *     +-- Window 2: "myapp2"           <- genie run from ~/projects/myapp2
  */
 
 import { spawnSync } from 'node:child_process';
@@ -37,40 +26,13 @@ import {
 import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 
+const DEFAULT_SESSION_NAME = 'genie';
+
 /**
  * Generate a short 4-char hash of a path for disambiguation.
  */
 function shortPathHash(p: string): string {
   return createHash('md5').update(p).digest('hex').slice(0, 4);
-}
-
-/**
- * Resolve the tmux session name for the given working directory.
- *
- * Logic:
- * 1. Session name starts as sanitizeWindowName(basename(cwd))
- * 2. Check if a session with that name already exists
- * 3. If it exists, read GENIE_CWD env var from the session
- * 4. If GENIE_CWD matches current cwd -> reuse that session
- * 5. If GENIE_CWD differs (collision) -> append 4-char hash to disambiguate
- * 6. If no session exists -> use the base name
- */
-export async function resolveSessionName(cwd: string): Promise<string> {
-  const baseName = sanitizeWindowName(basename(cwd));
-  const existing = await tmux.findSessionByName(baseName);
-
-  if (!existing) {
-    return baseName;
-  }
-
-  // Session exists — check if it's for the same cwd
-  const storedCwd = await tmux.getWindowEnv(baseName, 'GENIE_CWD');
-  if (storedCwd === cwd) {
-    return baseName;
-  }
-
-  // Different folder with same basename — disambiguate with hash
-  return `${baseName}-${shortPathHash(cwd)}`;
 }
 
 /**
@@ -263,9 +225,8 @@ async function createSession(
   await tmux.executeTmux(`rename-window -t ${shellQuote(firstWindow.id)} ${shellQuote(windowName)}`);
   await tmux.executeTmux(`set-window-option -t ${shellQuote(firstWindow.id)} automatic-rename off`);
 
-  // Store cwd and session name as env vars on the window
+  // Store cwd as env var on the window
   await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_CWD', workspaceDir);
-  await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_SESSION', sessionName);
 
   const target = `${sessionName}:${windowName}`;
   const cdCmd = `cd ${shellQuote(workspaceDir)}`;
@@ -295,9 +256,8 @@ async function focusTeamWindow(
   if (teamWindow.created) {
     console.log(`Created team window "${windowName}"`);
 
-    // Store cwd and session name as env vars on the window
+    // Store cwd as env var on the window
     await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_CWD', workingDir);
-    await tmux.setWindowEnv(`${sessionName}:${windowName}`, 'GENIE_SESSION', sessionName);
 
     // Bootstrap native team and launch Claude Code in the new window
     await ensureNativeTeamForLeader(windowName, workingDir);
@@ -352,20 +312,15 @@ async function handleReset(sessionName: string, windowName: string): Promise<voi
 }
 
 function attachToWindow(sessionName: string, windowName: string): void {
+  console.log('Attaching...');
   const target = `${sessionName}:${windowName}`;
-  if (process.env.TMUX) {
-    // Already inside tmux — use switch-client for cross-project session switching
-    console.log(`Switching to session "${sessionName}"...`);
-    spawnSync('tmux', ['switch-client', '-t', target], { stdio: 'inherit' });
-  } else {
-    console.log('Attaching...');
-    spawnSync('tmux', ['attach', '-t', target], { stdio: 'inherit' });
-  }
+  const cmd = process.env.TMUX ? 'switch-client' : 'attach';
+  spawnSync('tmux', [cmd, '-t', target], { stdio: 'inherit' });
 }
 
 export async function sessionCommand(options: SessionOptions = {}): Promise<void> {
+  const sessionName = options.name ?? DEFAULT_SESSION_NAME;
   const workspaceDir = options.dir ?? process.cwd();
-  const sessionName = options.name ?? (await resolveSessionName(workspaceDir));
 
   try {
     const windowName = await deriveWindowName(sessionName, workspaceDir, options.team);
