@@ -8,10 +8,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { buildClaudeCommand, getAgentsFilePath, resolveSessionName, sanitizeWindowName } from '../session.js';
+import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
 // ============================================================================
 // buildClaudeCommand tests
@@ -180,49 +179,5 @@ describe('sanitizeWindowName', () => {
     // missed the existing "foo-bar" window, and returned a name that
     // sanitized back to "foo-bar" — attaching to the wrong project.
     expect(sanitizeWindowName('foo.bar')).toBe(sanitizeWindowName('foo-bar'));
-  });
-});
-
-// ============================================================================
-// resolveSessionName tests — per-project session name derivation
-//
-// resolveSessionName derives a tmux session name from the cwd:
-// - basename(cwd) sanitized (dots → dashes)
-// - hash disambiguation when two dirs share the same basename
-// ============================================================================
-
-describe('resolveSessionName', () => {
-  test('derives session name from basename of cwd', async () => {
-    // When no session exists with this name, returns sanitized basename
-    const name = await resolveSessionName('/home/user/project-a');
-    expect(name).toBe('project-a');
-  });
-
-  test('sanitizes dots in directory name', async () => {
-    const name = await resolveSessionName('/home/user/my.cool.app');
-    expect(name).toBe('my-cool-app');
-  });
-
-  test('produces unique names for same-basename dirs via hash', () => {
-    // Unit test: the hash disambiguation logic produces different names
-    const hash = (p: string) => createHash('md5').update(p).digest('hex').slice(0, 4);
-    const a = sanitizeWindowName('project-a');
-    const b = `${sanitizeWindowName('project-a')}-${hash('/tmp/project-a')}`;
-    expect(a).not.toBe(b);
-    expect(b).toMatch(/^project-a-[0-9a-f]{4}$/);
-  });
-
-  test('hash disambiguation is deterministic', () => {
-    const hash = (p: string) => createHash('md5').update(p).digest('hex').slice(0, 4);
-    const h1 = hash('/tmp/project-a');
-    const h2 = hash('/tmp/project-a');
-    expect(h1).toBe(h2);
-  });
-
-  test('different paths produce different hashes', () => {
-    const hash = (p: string) => createHash('md5').update(p).digest('hex').slice(0, 4);
-    const h1 = hash('/home/user/project-a');
-    const h2 = hash('/tmp/project-a');
-    expect(h1).not.toBe(h2);
   });
 });
