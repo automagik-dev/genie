@@ -1,9 +1,13 @@
 /**
- * Team Manager — CRUD for team lifecycle with git worktree integration.
+ * Team Manager — CRUD for team lifecycle with git clone --shared isolation.
  *
  * Teams are stored as JSON files in `~/.genie/teams/<safe-name>.json` (global).
- * Each team owns a git worktree at `<worktreeBase>/<team-name>`.
+ * Each team owns a shared clone at `<worktreeBase>/<team-name>`.
  * Team name IS the branch name (conventional prefixes: feat/, fix/, chore/, etc.).
+ *
+ * Uses `git clone --shared` instead of `git worktree` to avoid the worktree bug
+ * where CC workers can flip `core.bare=true` on the parent repo via shared `.git`
+ * metadata, silently corrupting it.
  */
 
 import { existsSync } from 'node:fs';
@@ -144,7 +148,7 @@ async function killWorkersByName(agentName: string, teamName?: string): Promise<
 // API
 // ============================================================================
 
-/** Ensure a git worktree exists for the given branch. */
+/** Ensure a shared clone exists for the given branch. */
 async function ensureWorktree(
   repoPath: string,
   branchName: string,
@@ -160,7 +164,7 @@ async function ensureWorktree(
 
   await mkdir(path.dirname(worktreePath), { recursive: true });
 
-  // Skip if worktree already exists on disk
+  // Skip if clone already exists on disk
   if (existsSync(worktreePath)) return;
 
   // Check if branch already exists
@@ -169,31 +173,30 @@ async function ensureWorktree(
     await $`git -C ${repoPath} rev-parse --verify ${branchName}`.quiet();
     branchExists = true;
   } catch {
-    // Branch doesn't exist yet
-  }
-
-  if (branchExists) {
-    await $`git -C ${repoPath} worktree add ${worktreePath} ${branchName}`.quiet();
-    return;
-  }
-
-  // Create new branch from baseBranch — try origin first, then local, then HEAD
-  try {
-    await $`git -C ${repoPath} worktree add -b ${branchName} ${worktreePath} origin/${baseBranch}`.quiet();
-  } catch {
-    try {
-      await $`git -C ${repoPath} worktree add -b ${branchName} ${worktreePath} ${baseBranch}`.quiet();
-    } catch {
-      await $`git -C ${repoPath} worktree add -b ${branchName} ${worktreePath}`.quiet();
+    // Branch doesn't exist yet — create it from baseBranch
+    if (!branchExists) {
+      try {
+        await $`git -C ${repoPath} branch ${branchName} origin/${baseBranch}`.quiet();
+      } catch {
+        try {
+          await $`git -C ${repoPath} branch ${branchName} ${baseBranch}`.quiet();
+        } catch {
+          await $`git -C ${repoPath} branch ${branchName}`.quiet();
+        }
+      }
     }
   }
+
+  // Clone with --shared to reuse object store (fast, no disk duplication)
+  // but with a separate .git config — avoids the core.bare corruption bug
+  await $`git clone --shared --branch ${branchName} ${repoPath} ${worktreePath}`.quiet();
 }
 
 /**
- * Create a new team with a git worktree.
+ * Create a new team with a shared clone.
  *
  * Idempotent — if the team already exists, returns existing config.
- * Steps: validate name → git pull on baseBranch → git worktree add → persist config.
+ * Steps: validate name → git pull on baseBranch → git clone --shared → persist config.
  */
 export async function createTeam(name: string, repo: string, baseBranch = 'dev'): Promise<TeamConfig> {
   validateBranchName(name);
@@ -299,7 +302,7 @@ export async function fireAgent(teamName: string, agentName: string): Promise<bo
 }
 
 /**
- * Disband a team: remove git worktree and delete team config.
+ * Disband a team: remove shared clone and delete team config.
  * Returns true if the team was found and disbanded.
  */
 export async function disbandTeam(teamName: string): Promise<boolean> {
@@ -324,23 +327,10 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     }
   }
 
-  // Remove git worktree
-  const repoPath = config.repo;
+  // Remove shared clone directory
   if (config.worktreePath && existsSync(config.worktreePath)) {
     try {
-      await $`git -C ${repoPath} worktree remove ${config.worktreePath} --force`.quiet();
-    } catch {
-      // Force-remove directory if git worktree remove fails
-      try {
-        await rm(config.worktreePath, { recursive: true, force: true });
-        await $`git -C ${repoPath} worktree prune`.quiet();
-      } catch {
-        // Best-effort
-      }
-    }
-    // Safety: ensure worktree operations didn't corrupt the parent repo
-    try {
-      await $`git -C ${repoPath} config core.bare false`.quiet();
+      await rm(config.worktreePath, { recursive: true, force: true });
     } catch {
       // Best-effort
     }
@@ -354,20 +344,19 @@ export async function disbandTeam(teamName: string): Promise<boolean> {
     return false;
   }
 
-  // Prune stale worktrees and configs
-  await pruneStaleWorktrees(repoPath);
+  // Prune stale configs (remove team configs whose clone directories are gone)
+  await pruneStaleWorktrees(config.repo);
 
   return true;
 }
 
 /**
- * Prune stale worktree configs and git tracking.
+ * Prune stale team configs.
  *
- * Scans all team configs — if a team's worktreePath no longer exists on disk,
- * deletes that team's config file. Then runs `git worktree prune` to clean
- * git's internal worktree tracking.
+ * Scans all team configs — if a team's worktreePath (clone directory) no longer
+ * exists on disk, deletes that team's config file.
  */
-export async function pruneStaleWorktrees(repoPath: string): Promise<void> {
+export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
   const dir = teamsDir();
   let files: string[];
   try {
@@ -387,14 +376,6 @@ export async function pruneStaleWorktrees(repoPath: string): Promise<void> {
     } catch {
       // Skip corrupted files
     }
-  }
-
-  // Clean git's worktree tracking
-  try {
-    await $`git -C ${repoPath} worktree prune`.quiet();
-    await $`git -C ${repoPath} config core.bare false`.quiet();
-  } catch {
-    // Best-effort
   }
 }
 
