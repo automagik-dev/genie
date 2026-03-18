@@ -26,8 +26,6 @@ import {
 import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 
-const DEFAULT_SESSION_NAME = 'genie';
-
 /**
  * Generate a short 4-char hash of a path for disambiguation.
  */

@@ -41,7 +41,7 @@ function buildSpawnParams(
     role: template.role,
     skill: template.skill,
     extraArgs: template.extraArgs,
-    sessionId: isClaude && !resumeSessionId ? crypto.randomUUID() : undefined,
+    sessionId: undefined,
     resume: isClaude ? resumeSessionId : undefined,
   };
   if (isClaude) {

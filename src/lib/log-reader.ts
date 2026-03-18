@@ -85,16 +85,19 @@ function searchContent(paneContent: string, pattern: string, reverse?: boolean):
 }
 
 export async function readSessionLogs(sessionName: string, options: ReadOptions = {}): Promise<string> {
-  const session = await tmux.findSessionByName(sessionName);
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found`);
-  }
-
+  // When a pane ID is already resolved (e.g., from target-resolver), skip session lookup entirely.
+  // The session lookup fails when session names don't match (e.g., folder-based "genie-pm" vs legacy "genie").
   const paneId = options.pane
     ? options.pane.startsWith('%')
       ? options.pane
       : `%${options.pane}`
-    : await resolveActivePaneId(sessionName, session);
+    : await (async () => {
+        const session = await tmux.findSessionByName(sessionName);
+        if (!session) {
+          throw new Error(`Session "${sessionName}" not found`);
+        }
+        return resolveActivePaneId(sessionName, session);
+      })();
 
   // Parse range if provided
   if (options.range) {
@@ -132,16 +135,16 @@ export async function followSessionLogs(
   callback: (line: string) => void,
   options: { pane?: string } = {},
 ): Promise<() => void> {
-  const session = await tmux.findSessionByName(sessionName);
-  if (!session) {
-    throw new Error(`Session "${sessionName}" not found`);
-  }
-
   let paneId: string;
 
   if (options.pane) {
     paneId = options.pane.startsWith('%') ? options.pane : `%${options.pane}`;
   } else {
+    const session = await tmux.findSessionByName(sessionName);
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found`);
+    }
+
     const windows = await tmux.listWindows(session.id);
     if (!windows || windows.length === 0) {
       throw new Error(`No windows found in session "${sessionName}"`);
