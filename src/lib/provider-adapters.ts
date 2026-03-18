@@ -64,7 +64,7 @@ export interface SpawnParams {
   nativeTeam?: NativeTeamParams;
   /** Session UUID for new sessions (emits --session-id). */
   sessionId?: string;
-  /** Session UUID to resume (emits --resume). Mutually exclusive with sessionId. */
+  /** Session name to continue (emits --continue). Mutually exclusive with sessionId. */
   resume?: string;
   /** Path to a system prompt file (AGENTS.md). Emits --system-prompt-file or --append-system-prompt-file. */
   systemPromptFile?: string;
@@ -264,7 +264,7 @@ export function buildClaudeCommand(params: SpawnParams): LaunchCommand {
   }
 
   if (params.resume) {
-    parts.push('--resume', escapeShellArg(params.resume));
+    parts.push('--continue', escapeShellArg(params.resume));
   } else if (params.sessionId) {
     parts.push('--session-id', escapeShellArg(params.sessionId));
   }

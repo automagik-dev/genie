@@ -68,19 +68,17 @@ program.name('genie').description('Genie CLI - AI-assisted development').version
 // ============================================================================
 
 async function startNamedSession(name: string): Promise<void> {
-  const { getOrCreateSession } = await import('./lib/session-store.js');
   const { buildTeamLeadCommand } = await import('./lib/team-lead-command.js');
   const { getAgentsFilePath } = await import('./genie-commands/session.js');
 
-  const { uuid, isNew } = await getOrCreateSession(name);
   const systemPromptFile = getAgentsFilePath();
 
   const cmd = buildTeamLeadCommand(name, {
     systemPromptFile: systemPromptFile ?? undefined,
-    ...(isNew ? { sessionId: uuid } : { resumeSessionId: uuid }),
+    continueName: name,
   });
 
-  console.log(isNew ? `Starting new session: ${name}` : `Resuming session: ${name}`);
+  console.log(`Continuing session: ${name}`);
 
   const { spawnSync } = await import('node:child_process');
   const result = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
