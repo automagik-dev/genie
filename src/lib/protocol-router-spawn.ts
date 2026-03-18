@@ -32,9 +32,10 @@ function buildSpawnParams(
   template: WorkerTemplate,
   parentSessionId: string,
   spawnColor: ClaudeTeamColor | undefined,
-  resumeSessionId?: string,
+  continueName?: string,
 ): SpawnParams {
   const isClaude = template.provider === 'claude';
+  const sessionName = template.role ? `${template.team}-${template.role}` : undefined;
   const params: SpawnParams = {
     provider: template.provider,
     team: template.team,
@@ -42,7 +43,8 @@ function buildSpawnParams(
     skill: template.skill,
     extraArgs: template.extraArgs,
     sessionId: undefined,
-    resume: isClaude ? resumeSessionId : undefined,
+    resume: isClaude ? continueName : undefined,
+    name: sessionName,
   };
   if (isClaude) {
     params.nativeTeam = {
@@ -74,7 +76,7 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 
 export async function spawnWorkerFromTemplate(
   template: WorkerTemplate,
-  resumeSessionId?: string,
+  continueName?: string,
 ): Promise<{ worker: registry.Agent; paneId: string; workerId: string }> {
   const repoPath = template.cwd ?? process.cwd();
   const team = template.team;
@@ -83,7 +85,7 @@ export async function spawnWorkerFromTemplate(
   await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
 
   const spawnColor = await nativeTeams.assignColor(team);
-  const params = buildSpawnParams(template, parentSessionId, spawnColor, resumeSessionId);
+  const params = buildSpawnParams(template, parentSessionId, spawnColor, continueName);
   const launch = buildLaunchCommand(validateSpawnParams(params));
   const fullCommand = buildFullCommand(launch);
   const workerId = await generateWorkerId(team, template.role);
@@ -130,7 +132,7 @@ export async function spawnWorkerFromTemplate(
     state: 'spawning',
     lastStateChange: now,
     repoPath,
-    claudeSessionId: resumeSessionId ?? params.sessionId,
+    claudeSessionId: params.sessionId,
     nativeTeamEnabled: isClaude,
     nativeAgentId: `${agentName}@${team}`,
     nativeColor: spawnColor,
@@ -151,7 +153,7 @@ export async function spawnWorkerFromTemplate(
   });
   await nativeTeams.writeNativeInbox(team, 'team-lead', {
     from: agentName,
-    text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
+    text: `Worker ${agentName} (${template.provider}) auto-spawned${continueName ? ' with --continue' : ''}. Ready for tasks.`,
     summary: `${agentName} auto-spawned`,
     timestamp: now,
     color: spawnColor ?? 'blue',
