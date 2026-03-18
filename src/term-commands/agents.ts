@@ -395,8 +395,6 @@ interface SpawnCtx {
   cwd: string;
   /** When true, spawn into the current tmux window instead of resolving/creating a team window. */
   spawnIntoCurrentWindow: boolean;
-  /** tmux session name for this worker. */
-  session: string;
 }
 
 async function registerSpawnWorker(
@@ -408,7 +406,7 @@ async function registerSpawnWorker(
   const workerEntry: registry.Agent = {
     id: ctx.workerId,
     paneId,
-    session: ctx.session,
+    session: 'genie',
     provider: ctx.validated.provider,
     transport: ctx.transport,
     role: ctx.validated.role,
@@ -488,14 +486,10 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
 type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
 
 /** Resolve team window for spawn. Returns null if team is unset or resolution fails. */
-async function resolveSpawnTeamWindow(
-  team: string | undefined,
-  cwd: string,
-  session: string,
-): Promise<TeamWindowInfo | null> {
+async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Promise<TeamWindowInfo | null> {
   if (!team) return null;
   try {
-    return await tmux.ensureTeamWindow(session, team, cwd);
+    return await tmux.ensureTeamWindow('genie', team, cwd);
   } catch (err) {
     console.warn(`Warning: could not ensure team window for "${team}": ${err instanceof Error ? err.message : err}`);
     return null;
@@ -533,10 +527,11 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
 /** Apply mosaic layout to the team window (or first window in session as fallback). */
 async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): Promise<void> {
   const { execSync } = require('node:child_process');
-  let layoutTarget = `${ctx.session}:${teamWindow?.windowName ?? ''}`;
+  const session = 'genie';
+  let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
   if (!teamWindow) {
-    const wins = await tmux.listWindows(ctx.session);
-    layoutTarget = wins[0] ? wins[0].id : `${ctx.session}:`;
+    const wins = await tmux.listWindows(session);
+    layoutTarget = wins[0] ? wins[0].id : `${session}:`;
   }
   try {
     execSync(`tmux ${buildLayoutCommand(layoutTarget, ctx.layoutMode)}`, { stdio: 'ignore' });
@@ -546,9 +541,7 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
-  const teamWindow = ctx.spawnIntoCurrentWindow
-    ? null
-    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.session);
+  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
 
   let paneId: string;
   try {
@@ -829,7 +822,6 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
     spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
-    session: process.env.GENIE_SESSION ?? 'genie',
   };
 
   if (insideTmux) {
