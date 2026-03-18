@@ -54,6 +54,9 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
     '--dangerously-skip-permissions',
   ];
 
+  // Session name for CC's /resume and terminal title
+  parts.push(`--name ${shellQuote(sanitized)}`);
+
   if (options?.resumeSessionId) {
     parts.push(`--resume ${shellQuote(options.resumeSessionId)}`);
   } else if (options?.sessionId) {
