@@ -18,7 +18,7 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
@@ -89,7 +89,7 @@ export async function spawnWorkerFromTemplate(
   const workerId = await generateWorkerId(team, template.role);
 
   // Resolve target window: if team is set, ensure a dedicated team window
-  const session = 'genie';
+  const session = (await getCurrentSessionName()) ?? team;
   let teamWindow: { windowId: string; windowName: string } | null = null;
   try {
     teamWindow = await ensureTeamWindow(session, team, repoPath);

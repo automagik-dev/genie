@@ -528,7 +528,7 @@ function createTmuxPane(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): strin
 /** Apply mosaic layout to the team window (or first window in session as fallback). */
 async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null): Promise<void> {
   const { execSync } = require('node:child_process');
-  const session = 'genie';
+  const session = (await tmux.getCurrentSessionName()) ?? ctx.validated.team;
   let layoutTarget = `${session}:${teamWindow?.windowName ?? ''}`;
   if (!teamWindow) {
     const wins = await tmux.listWindows(session);
