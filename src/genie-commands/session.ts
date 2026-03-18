@@ -193,6 +193,37 @@ async function createSession(
   await registerSessionInRegistry(sessionName, windowName, workspaceDir);
 }
 
+/**
+ * Launch Claude Code in a tmux pane with --continue fallback.
+ *
+ * Tries --continue first (preserves conversation history). Waits ~3 seconds,
+ * then checks #{pane_current_command} — if the pane shows a shell, --continue
+ * failed (no prior conversation) so we retry fresh without --continue.
+ */
+async function launchWithContinueFallback(
+  target: string,
+  windowName: string,
+  systemPromptFile: string | null,
+): Promise<void> {
+  const continueName = sanitizeTeamName(windowName);
+  const continueCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
+  const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+
+  // Try --continue first (preserves conversation history)
+  await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(continueCmd)} Enter`);
+
+  // Wait briefly then check if CC is running or fell back to shell
+  // CC fails fast on missing conversations (~1s), 3s is conservative
+  await new Promise((r) => setTimeout(r, 3000));
+  const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
+
+  if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
+    // --continue failed, start fresh
+    console.log('No prior conversation found, starting fresh session...');
+    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
+  }
+}
+
 /** Focus (or create) a team window within an existing session. */
 async function focusTeamWindow(
   sessionName: string,
@@ -212,15 +243,31 @@ async function focusTeamWindow(
     const target = `${sessionName}:${windowName}`;
     const cdCmd = `cd ${shellQuote(workingDir)}`;
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
-    const agentName = basename(workingDir);
-    const continueName = sanitizeTeamName(windowName);
-    console.log(`Continuing session by name: ${continueName}`);
-    const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
-    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-    console.log(`Started Claude Code as ${agentName}@${continueName} in ${workingDir}`);
+
+    await launchWithContinueFallback(target, windowName, systemPromptFile);
+    console.log(`Started Claude Code as ${basename(workingDir)}@${sanitizeTeamName(windowName)} in ${workingDir}`);
 
     // Register interactive session so spawned agents can find the team-lead
     await registerSessionInRegistry(sessionName, windowName, workingDir);
+  } else {
+    // Window exists — check if Claude Code is still running
+    const target = `${sessionName}:${windowName}`;
+    const currentCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
+
+    const isShell = ['bash', 'zsh', 'sh', 'fish'].includes(currentCmd);
+    if (isShell) {
+      // Claude Code has exited — relaunch
+      console.log(`Claude Code not running in "${windowName}", relaunching...`);
+      await ensureNativeTeamForLeader(windowName, workingDir);
+
+      const cdCmd = `cd ${shellQuote(workingDir)}`;
+      await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
+
+      await launchWithContinueFallback(target, windowName, systemPromptFile);
+
+      await registerSessionInRegistry(sessionName, windowName, workingDir);
+    }
+    // else: Claude Code is still running — just select the window below
   }
   await tmux.executeTmux(`select-window -t ${shellQuote(`${sessionName}:${windowName}`)}`);
   console.log(`Focused team window "${windowName}"`);
@@ -288,8 +335,8 @@ export async function sessionCommand(options: SessionOptions = {}): Promise<void
       const currentWindowName = `${windowName}-${suffix}`;
       await tmux.executeTmux(`rename-window ${shellQuote(currentWindowName)}`);
       await ensureNativeTeamForLeader(currentWindowName, workspaceDir);
-      const continueName = sanitizeTeamName(currentWindowName);
-      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, continueName);
+      // Fresh session — random suffix means no prior conversation to continue
+      const cmd = buildClaudeCommand(currentWindowName, systemPromptFile || undefined, undefined);
       const { execSync: execSyncCmd } = require('node:child_process');
       execSyncCmd(cmd, { stdio: 'inherit', cwd: workspaceDir });
     } else {

@@ -72,6 +72,16 @@ describe('buildClaudeCommand', () => {
     expect(cmd).not.toContain('--resume');
   });
 
+  test('with undefined continueName does NOT include --continue', () => {
+    const cmd = buildClaudeCommand('genie', undefined, undefined);
+    expect(cmd).not.toContain('--continue');
+  });
+
+  test('with a continueName DOES include --continue', () => {
+    const cmd = buildClaudeCommand('my-team', undefined, 'my-team');
+    expect(cmd).toContain("--continue 'my-team'");
+  });
+
   test('file path is passed directly, no content inlined', () => {
     const cmd = buildClaudeCommand('genie', '/path/to/AGENTS.md');
     expect(cmd).toContain('--append-system-prompt-file');
