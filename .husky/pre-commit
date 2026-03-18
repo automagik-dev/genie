@@ -1,7 +1,3 @@
-# Prevent GIT_DIR/GIT_WORK_TREE from leaking into child processes (see pre-push)
-unset GIT_DIR
-unset GIT_WORK_TREE
-
 # Check if CI is red on current branch — block commits on broken branches
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$branch" ] && [ "${SKIP_CI_CHECK:-}" != "1" ] && command -v gh >/dev/null 2>&1; then

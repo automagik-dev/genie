@@ -22,7 +22,7 @@ import { $ } from 'bun';
 async function createTempGitRepo(basePath: string, name: string): Promise<string> {
   const repoPath = join(basePath, name);
   await mkdir(repoPath, { recursive: true });
-  await $`git -C ${repoPath} init -b main`.quiet();
+  await $`git -C ${repoPath} init`.quiet();
   await $`git -C ${repoPath} config user.email "test@test.com"`.quiet();
   await $`git -C ${repoPath} config user.name "Test User"`.quiet();
 
