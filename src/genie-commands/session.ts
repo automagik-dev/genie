@@ -184,11 +184,10 @@ async function createSession(
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cdCmd)} Enter`);
 
   const agentName = basename(workspaceDir);
-  const continueName = sanitizeTeamName(windowName);
-  console.log(`Continuing session by name: ${continueName}`);
-  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
+  // First run — no session to continue, just start fresh with --name
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
-  console.log(`Started Claude Code as ${agentName}@${continueName} in ${workspaceDir}`);
+  console.log(`Started Claude Code as ${agentName} in ${workspaceDir}`);
 
   // Register interactive session so spawned agents can find the team-lead
   await registerSessionInRegistry(sessionName, windowName, workspaceDir);
