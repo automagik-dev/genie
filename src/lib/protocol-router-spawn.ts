@@ -7,6 +7,7 @@
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveSessionName } from '../genie-commands/session.js';
 import * as registry from './agent-registry.js';
 import type { WorkerTemplate } from './agent-registry.js';
 import * as nativeTeams from './claude-native-teams.js';
@@ -18,24 +19,23 @@ import {
   validateSpawnParams,
 } from './provider-adapters.js';
 import * as teamManager from './team-manager.js';
-import { applyPaneColor, ensureTeamWindow, getCurrentSessionName, listWindows } from './tmux.js';
+import { applyPaneColor, ensureTeamWindow, listWindows } from './tmux.js';
 
 const execAsync = promisify(exec);
 
 async function resolveParentSession(_repoPath: string, team: string): Promise<string> {
   const teamConfig = await teamManager.getTeam(team);
   if (teamConfig?.nativeTeamParentSessionId) return teamConfig.nativeTeamParentSessionId;
-  return (await nativeTeams.discoverClaudeSessionId()) ?? `genie-${team}`;
+  return (await nativeTeams.discoverClaudeSessionId()) ?? crypto.randomUUID();
 }
 
 function buildSpawnParams(
   template: WorkerTemplate,
   parentSessionId: string,
   spawnColor: ClaudeTeamColor | undefined,
-  continueName?: string,
+  resumeSessionId?: string,
 ): SpawnParams {
   const isClaude = template.provider === 'claude';
-  const sessionName = template.role ? `${template.team}-${template.role}` : undefined;
   const params: SpawnParams = {
     provider: template.provider,
     team: template.team,
@@ -43,8 +43,7 @@ function buildSpawnParams(
     skill: template.skill,
     extraArgs: template.extraArgs,
     sessionId: undefined,
-    resume: isClaude ? continueName : undefined,
-    name: sessionName,
+    resume: isClaude ? resumeSessionId : undefined,
   };
   if (isClaude) {
     params.nativeTeam = {
@@ -68,6 +67,17 @@ function buildFullCommand(launch: { command: string; env?: Record<string, string
   return launch.command;
 }
 
+/** Resolve session name: explicit sender session → same-session team-lead registry → env → derive from cwd. */
+async function resolveSpawnSession(team: string, repoPath: string, senderSession?: string): Promise<string> {
+  if (senderSession) return senderSession;
+
+  const derivedSession = await resolveSessionName(repoPath);
+  const teamLeadEntry = await registry.getTeamLeadEntry(team, derivedSession, repoPath);
+  if (teamLeadEntry?.session) return teamLeadEntry.session;
+  if (process.env.GENIE_SESSION) return process.env.GENIE_SESSION;
+  return derivedSession;
+}
+
 async function generateWorkerId(team: string, role?: string): Promise<string> {
   const base = role ? `${team}-${role}` : team;
   const existing = await registry.list();
@@ -76,7 +86,8 @@ async function generateWorkerId(team: string, role?: string): Promise<string> {
 
 export async function spawnWorkerFromTemplate(
   template: WorkerTemplate,
-  continueName?: string,
+  resumeSessionId?: string,
+  senderSession?: string,
 ): Promise<{ worker: registry.Agent; paneId: string; workerId: string }> {
   const repoPath = template.cwd ?? process.cwd();
   const team = template.team;
@@ -85,13 +96,13 @@ export async function spawnWorkerFromTemplate(
   await nativeTeams.ensureNativeTeam(team, `Genie team: ${team}`, parentSessionId);
 
   const spawnColor = await nativeTeams.assignColor(team);
-  const params = buildSpawnParams(template, parentSessionId, spawnColor, continueName);
+  const params = buildSpawnParams(template, parentSessionId, spawnColor, resumeSessionId);
   const launch = buildLaunchCommand(validateSpawnParams(params));
   const fullCommand = buildFullCommand(launch);
   const workerId = await generateWorkerId(team, template.role);
 
   // Resolve target window: if team is set, ensure a dedicated team window
-  const session = (await getCurrentSessionName()) ?? team;
+  const session = await resolveSpawnSession(team, repoPath, senderSession);
   let teamWindow: { windowId: string; windowName: string } | null = null;
   try {
     teamWindow = await ensureTeamWindow(session, team, repoPath);
@@ -132,7 +143,7 @@ export async function spawnWorkerFromTemplate(
     state: 'spawning',
     lastStateChange: now,
     repoPath,
-    claudeSessionId: params.sessionId,
+    claudeSessionId: resumeSessionId ?? params.sessionId,
     nativeTeamEnabled: isClaude,
     nativeAgentId: `${agentName}@${team}`,
     nativeColor: spawnColor,
@@ -153,7 +164,7 @@ export async function spawnWorkerFromTemplate(
   });
   await nativeTeams.writeNativeInbox(team, 'team-lead', {
     from: agentName,
-    text: `Worker ${agentName} (${template.provider}) auto-spawned${continueName ? ' with --continue' : ''}. Ready for tasks.`,
+    text: `Worker ${agentName} (${template.provider}) auto-spawned${resumeSessionId ? ' with --resume' : ''}. Ready for tasks.`,
     summary: `${agentName} auto-spawned`,
     timestamp: now,
     color: spawnColor ?? 'blue',
