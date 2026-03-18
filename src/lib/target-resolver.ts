@@ -10,6 +10,7 @@
  */
 
 import type { Agent } from './agent-registry.js';
+import { getCurrentSessionName } from './tmux.js';
 
 // ============================================================================
 // Types
@@ -218,6 +219,28 @@ function resolveWorkerSubPane(worker: Agent, leftSide: string, rightSide: string
   return paneId;
 }
 
+/**
+ * Resolve a target by role name, scoped to the current tmux session (= team).
+ * Returns null if no unique match. Throws on ambiguity.
+ */
+async function resolveByRole(target: string, workers: Record<string, Agent>): Promise<ResolvedTarget | null> {
+  const currentTeam = (await getCurrentSessionName()) ?? process.env.GENIE_TEAM;
+  if (!currentTeam) return null;
+
+  const candidates = Object.entries(workers).filter(([, w]) => w.role === target && w.team === currentTeam);
+  if (candidates.length === 0) return null;
+
+  if (candidates.length > 1) {
+    const ids = candidates.map(([id]) => id).join(', ');
+    throw new Error(
+      `Ambiguous target "${target}" — ${candidates.length} workers with role "${target}" in team "${currentTeam}": ${ids}\nUse the full ID instead.`,
+    );
+  }
+
+  const [matchedId, matchedWorker] = candidates[0];
+  return { paneId: matchedWorker.paneId, session: matchedWorker.session, workerId: matchedId, resolvedVia: 'worker' };
+}
+
 export async function resolveTarget(target: string, options: ResolveOptions = {}): Promise<ResolvedTarget> {
   const {
     checkLiveness = false,
@@ -281,7 +304,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
   }
 
-  // No colon: check worker registry
+  // No colon: check worker registry by exact ID
   const worker = workers[target];
   if (worker) {
     if (checkLiveness) {
@@ -293,6 +316,18 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
       );
     }
     return { paneId: worker.paneId, session: worker.session, workerId: target, resolvedVia: 'worker' };
+  }
+
+  // Fallback: match by role scoped to current tmux session (e.g., "fix" → "genie-pm-fix")
+  const roleMatch = await resolveByRole(target, workers);
+  if (roleMatch) {
+    const rid = roleMatch.workerId ?? target;
+    if (checkLiveness) {
+      await assertLive(roleMatch.paneId, isPaneLive, `Worker ${rid}: pane ${roleMatch.paneId} is dead.`, () =>
+        cleanupDeadPane(rid, roleMatch.paneId),
+      );
+    }
+    return roleMatch;
   }
 
   throw new Error(`Target "${target}" not found. Not a worker or pane ID.\nRun 'genie ls' to list agents.`);
