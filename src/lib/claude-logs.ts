@@ -25,6 +25,8 @@
 
 import { access, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Agent } from './agent-registry.js';
+import type { TranscriptEntry, TranscriptProvider } from './transcript.js';
 
 // ============================================================================
 // Types
@@ -268,9 +270,9 @@ function populateAssistantFields(
   }
   if (raw.message.model) {
     entry.model = raw.message.model;
-    if (raw.message.usage) {
-      entry.usage = raw.message.usage as { input_tokens: number; output_tokens: number };
-    }
+  }
+  if (raw.message.usage) {
+    entry.usage = raw.message.usage as { input_tokens: number; output_tokens: number };
   }
 }
 
@@ -399,3 +401,91 @@ export async function getLogsForPane(
     projectDir: result.projectDir,
   };
 }
+
+// ============================================================================
+// Transcript Provider Adapter
+// ============================================================================
+
+/**
+ * Extract text content from a message content field.
+ */
+function extractText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const item of content) {
+    if (typeof item === 'string') parts.push(item);
+    else if (item && typeof item === 'object' && 'text' in item) parts.push(String(item.text));
+  }
+  return parts.join(' ');
+}
+
+type ClaudeBase = { provider: 'claude'; model?: string; raw: Record<string, unknown> };
+
+function convertAssistant(entry: ClaudeLogEntry, base: ClaudeBase): TranscriptEntry[] {
+  const results: TranscriptEntry[] = [];
+  const text = entry.message ? extractText(entry.message.content) : '';
+
+  if (text) {
+    results.push({
+      ...base,
+      role: 'assistant',
+      timestamp: entry.timestamp,
+      text,
+      usage: entry.usage ? { input: entry.usage.input_tokens, output: entry.usage.output_tokens } : undefined,
+    });
+  }
+
+  if (entry.toolCalls) {
+    for (const tc of entry.toolCalls) {
+      results.push({
+        ...base,
+        role: 'tool_call',
+        timestamp: entry.timestamp,
+        text: `${tc.name}: ${JSON.stringify(tc.input).slice(0, 200)}`,
+        toolCall: { id: tc.id, name: tc.name, input: tc.input },
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Convert a Claude log entry into normalized TranscriptEntry items.
+ * An assistant message with tool calls produces multiple entries.
+ */
+export function claudeEntryToTranscript(entry: ClaudeLogEntry): TranscriptEntry[] {
+  const base: ClaudeBase = { provider: 'claude', model: entry.model, raw: entry.raw };
+
+  if (entry.type === 'user' && entry.message) {
+    const text = extractText(entry.message.content);
+    return text ? [{ ...base, role: 'user', timestamp: entry.timestamp, text }] : [];
+  }
+
+  if (entry.type === 'assistant') return convertAssistant(entry, base);
+
+  if (entry.type === 'system' || entry.type === 'progress') {
+    const text = entry.message ? extractText(entry.message.content) : '';
+    return text ? [{ ...base, role: 'system', timestamp: entry.timestamp, text }] : [];
+  }
+
+  return [];
+}
+
+/**
+ * Claude Code transcript provider.
+ * Discovers logs via workspace path hash, reads JSONL session files.
+ */
+export const claudeTranscriptProvider: TranscriptProvider = {
+  async discoverLogPath(worker: Agent): Promise<string | null> {
+    const workspacePath = worker.worktree || worker.repoPath;
+    const result = await getLogsForPane(workspacePath);
+    return result?.logPath ?? null;
+  },
+
+  async readEntries(logPath: string): Promise<TranscriptEntry[]> {
+    const entries = await readLogFile(logPath);
+    return entries.flatMap(claudeEntryToTranscript);
+  },
+};
