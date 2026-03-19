@@ -76,7 +76,10 @@ genie team ls                    # List all teams
 genie team ls my-feature         # Show team members and status
 genie status my-feature-slug     # Show wish group progress
 genie read team-lead             # Tail team-lead output
-genie history team-lead          # Compressed session timeline
+genie history team-lead                    # Compressed session timeline
+genie history team-lead --last 20          # Last 20 transcript entries
+genie history team-lead --type assistant   # Only assistant messages
+genie history team-lead --ndjson | jq '.text'  # Pipe to jq
 ```
 
 ### Team Lifecycle
