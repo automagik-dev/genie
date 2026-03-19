@@ -17,6 +17,9 @@ bun test src/lib/wish-state.test.ts  # Single file
 ```
 src/genie.ts              CLI entry point (commander)
 src/lib/                  Core modules (state, registry, locking, messaging, providers)
+src/lib/transcript.ts     Provider-agnostic transcript abstraction (Claude + Codex)
+src/lib/codex-logs.ts     Codex JSONL parsing + SQLite discovery
+src/lib/claude-logs.ts    Claude log parsing + transcript adapter
 src/term-commands/        CLI command handlers (agents, team, dispatch, msg, state, dir)
 src/hooks/                Git hook system (branch-guard, auto-spawn, identity-inject)
 src/genie-commands/       Setup/utility commands (setup, doctor, update, session)

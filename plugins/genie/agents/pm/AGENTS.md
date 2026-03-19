@@ -49,6 +49,7 @@ Monitor team-leads. They work autonomously — intervene only on blocks:
 ```bash
 genie status <slug>       # Check wish progress
 genie read <team-lead>    # Read team-lead output
+genie history <agent> --ndjson | jq '.text'  # Structured session review
 genie ls                  # List active agents
 ```
 
@@ -115,6 +116,7 @@ For cross-session agents, use `genie send '<text>' --to <agent>` via Bash.
 genie team create <name> --repo <path> --wish <slug>  — create team for wish
 genie status <slug>                                   — check wish progress
 genie read <agent>                                    — read agent output
+genie history <agent> --ndjson | jq '.text'           — structured session review
 genie send '<msg>' --to <agent>                       — message cross-session agent
 genie team done|blocked|disband <name>                — lifecycle management
 genie team ls [<name>]                                — list teams or members
