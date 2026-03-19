@@ -270,9 +270,9 @@ function populateAssistantFields(
   }
   if (raw.message.model) {
     entry.model = raw.message.model;
-    if (raw.message.usage) {
-      entry.usage = raw.message.usage as { input_tokens: number; output_tokens: number };
-    }
+  }
+  if (raw.message.usage) {
+    entry.usage = raw.message.usage as { input_tokens: number; output_tokens: number };
   }
 }
 

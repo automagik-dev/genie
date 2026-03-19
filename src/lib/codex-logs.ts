@@ -14,7 +14,7 @@
  *   - turn_context: Per-turn workspace metadata
  */
 
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
@@ -47,7 +47,14 @@ function getStateDbPath(): string {
 async function discoverLogPath(worker: Agent): Promise<string | null> {
   const cwd = worker.worktree || worker.repoPath;
   const sqlitePath = await discoverViaSqlite(cwd);
-  if (sqlitePath) return sqlitePath;
+  if (sqlitePath) {
+    try {
+      await access(sqlitePath);
+      return sqlitePath;
+    } catch {
+      // Stale path — fall through to scan
+    }
+  }
   return discoverViaScan(cwd);
 }
 
@@ -135,7 +142,8 @@ async function scanDay(dayDir: string, cwd: string): Promise<string | null> {
 async function readSessionMeta(filePath: string): Promise<{ cwd: string } | null> {
   try {
     const content = await readFile(filePath, 'utf-8');
-    const firstLine = content.slice(0, content.indexOf('\n'));
+    const nlIdx = content.indexOf('\n');
+    const firstLine = nlIdx === -1 ? content : content.slice(0, nlIdx);
     const entry = JSON.parse(firstLine);
     if (entry.type === 'session_meta' && entry.payload?.cwd) {
       return { cwd: entry.payload.cwd };
@@ -243,6 +251,8 @@ function parseCodexLine(line: string): TranscriptEntry[] {
   if (!raw.type || !raw.timestamp) return [];
 
   const base: EntryBase = { provider: 'codex', raw: raw as unknown as Record<string, unknown> };
+
+  if (!raw.payload || typeof raw.payload !== 'object') return [];
 
   if (raw.type === 'event_msg') return parseEventMsg(raw.payload, raw.timestamp, base);
   if (raw.type === 'response_item') return parseResponseItem(raw.payload, raw.timestamp, base);

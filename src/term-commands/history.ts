@@ -335,6 +335,15 @@ function formatTranscriptEntryForDisplay(entry: TranscriptEntry): string[] {
     return [`\n[${time}] ASSISTANT:`, text];
   }
 
+  if (entry.role === 'tool_result') {
+    const text = entry.text.slice(0, 500) + (entry.text.length > 500 ? '...' : '');
+    return [`\n[${time}] RESULT:`, `  ${text}`];
+  }
+
+  if (entry.role === 'system') {
+    return [`\n[${time}] SYSTEM:`, entry.text];
+  }
+
   return [];
 }
 
@@ -457,11 +466,7 @@ async function loadEntries(ctx: TranscriptContext, options: HistoryOptions): Pro
 
 function filterEntries(entries: TranscriptEntry[], options: HistoryOptions): TranscriptEntry[] {
   const { applyFilter } = require('../lib/transcript.js') as typeof import('../lib/transcript.js');
-  const conversationEntries = entries.filter(
-    (e) => e.role === 'user' || e.role === 'assistant' || e.role === 'tool_call',
-  );
-  let filtered =
-    options.since && options.since > 0 ? filterSinceExchanges(conversationEntries, options.since) : conversationEntries;
+  let filtered = options.since && options.since > 0 ? filterSinceExchanges(entries, options.since) : entries;
   const transcriptFilter = buildFilter(options);
   if (transcriptFilter) filtered = applyFilter(filtered, transcriptFilter);
   return filtered;
