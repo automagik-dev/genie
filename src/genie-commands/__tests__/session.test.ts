@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { buildClaudeCommand, getAgentsFilePath, sanitizeWindowName } from '../session.js';
 
@@ -94,7 +94,7 @@ describe('buildClaudeCommand', () => {
 // ============================================================================
 
 describe('getAgentsFilePath', () => {
-  const TEST_DIR = '/tmp/session-test-agents-md';
+  const TEST_DIR = `${realpathSync('/tmp')}/session-test-agents-md`;
   let originalCwd: string;
 
   beforeEach(() => {

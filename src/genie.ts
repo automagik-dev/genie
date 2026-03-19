@@ -194,7 +194,11 @@ program
   .description('Show compressed session history for an agent')
   .option('--full', 'Show full conversation without compression')
   .option('--since <n>', 'Show last N user/assistant exchanges', Number.parseInt)
+  .option('--last <n>', 'Show last N transcript entries', Number.parseInt)
+  .option('--type <role>', 'Filter by role (user, assistant, tool_call)')
+  .option('--after <timestamp>', 'Only entries after ISO timestamp')
   .option('--json', 'Output as JSON')
+  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
   .option('--raw', 'Output raw JSONL entries')
   .option('--log-file <path>', 'Direct path to log file (for testing)')
   .action(async (name: string, options: historyCmd.HistoryOptions) => {
