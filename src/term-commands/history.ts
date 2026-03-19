@@ -2,17 +2,21 @@
  * Worker History Command - Session catch-up with compression
  *
  * Produces a compressed summary of a worker's session by parsing
- * Claude's JSONL logs and extracting key events.
+ * provider logs (Claude Code or Codex) and extracting key events.
  *
  * Usage:
- *   genie history <agent>          # Compressed summary
- *   genie history <agent> --full   # Full conversation
- *   genie history <agent> --since 5  # Last 5 exchanges
- *   genie history <agent> --json   # JSON output
+ *   genie history <agent>                         # Compressed summary
+ *   genie history <agent> --full                  # Full conversation
+ *   genie history <agent> --since 5               # Last 5 user/assistant exchanges
+ *   genie history <agent> --last 20               # Last 20 transcript entries
+ *   genie history <agent> --type assistant         # Only assistant messages
+ *   genie history <agent> --json                  # JSON output
+ *   genie history <agent> --ndjson                # Newline-delimited JSON (pipeable)
+ *   genie history <agent> --ndjson | jq '.text'   # Pipe to jq
  */
 
 import * as workerRegistry from '../lib/agent-registry.js';
-import * as claudeLogs from '../lib/claude-logs.js';
+import type { TranscriptEntry, TranscriptFilter, TranscriptRole } from '../lib/transcript.js';
 
 // ============================================================================
 // Types
@@ -21,14 +25,22 @@ import * as claudeLogs from '../lib/claude-logs.js';
 export interface HistoryOptions {
   /** Show full conversation without compression */
   full?: boolean;
-  /** Show last N user/assistant exchanges */
+  /** Show last N user/assistant exchanges (legacy) */
   since?: number;
+  /** Show last N transcript entries */
+  last?: number;
+  /** Filter by role (user, assistant, tool_call, system) */
+  type?: string;
   /** Output as JSON */
   json?: boolean;
+  /** Output as newline-delimited JSON */
+  ndjson?: boolean;
   /** Show raw JSONL entries */
   raw?: boolean;
   /** Direct path to log file (for testing/debugging) */
   logFile?: string;
+  /** ISO timestamp — only entries after this time */
+  after?: string;
 }
 
 /** Compressed event for display */
@@ -45,8 +57,9 @@ interface SessionStats {
   workerId: string;
   taskId?: string;
   branch?: string;
+  provider: string;
   duration: string;
-  totalLines: number;
+  totalEntries: number;
   compressedLines: number;
   compressionRatio: number;
   exchanges: number;
@@ -55,33 +68,9 @@ interface SessionStats {
 }
 
 // ============================================================================
-// Event Extraction
+// Event Extraction (from TranscriptEntry)
 // ============================================================================
 
-/**
- * Extract text content from a message content array or string
- */
-function extractTextContent(content: unknown): string {
-  if (typeof content === 'string') {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    const textParts: string[] = [];
-    for (const item of content) {
-      if (typeof item === 'string') {
-        textParts.push(item);
-      } else if (item && typeof item === 'object' && 'text' in item) {
-        textParts.push(String(item.text));
-      }
-    }
-    return textParts.join(' ');
-  }
-  return '';
-}
-
-/**
- * Format a timestamp for display (HH:MM)
- */
 function formatTime(timestamp: string): string {
   try {
     const date = new Date(timestamp);
@@ -91,19 +80,12 @@ function formatTime(timestamp: string): string {
   }
 }
 
-/**
- * Truncate a string with ellipsis
- */
 function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return `${str.slice(0, maxLen - 3)}...`;
 }
 
-/**
- * Format file path for display (shorten if needed)
- */
 function formatPath(path: string): string {
-  // Remove common prefixes
   const shortened = path.replace(/^\/home\/\w+\/workspace\//, '~/').replace(/^\/home\/\w+\//, '~/');
   return truncate(shortened, 50);
 }
@@ -150,79 +132,86 @@ function flushAll(ctx: EventExtractionContext): void {
   flushPendingEdits(ctx);
 }
 
-function processToolCall(tool: { name: string; input: unknown }, timestamp: string, ctx: EventExtractionContext): void {
-  const input = tool.input as Record<string, unknown>;
-  switch (tool.name) {
+function processToolCallEntry(entry: TranscriptEntry, ctx: EventExtractionContext): void {
+  if (!entry.toolCall) return;
+  const { name, input } = entry.toolCall;
+  const inputRecord = input as Record<string, unknown>;
+
+  // Normalize Codex shell/exec_command to match Claude tool names
+  const normalizedName = name === 'shell' || name === 'exec_command' ? 'Bash' : name;
+
+  switch (normalizedName) {
     case 'Read':
-      ctx.lastReadTime = timestamp;
-      if (input.file_path) ctx.pendingReads.push(String(input.file_path));
+      ctx.lastReadTime = entry.timestamp;
+      if (inputRecord.file_path) ctx.pendingReads.push(String(inputRecord.file_path));
       break;
     case 'Edit':
       flushPendingReads(ctx);
-      ctx.lastEditTime = timestamp;
-      if (input.file_path) ctx.pendingEdits.push(String(input.file_path));
+      ctx.lastEditTime = entry.timestamp;
+      if (inputRecord.file_path) ctx.pendingEdits.push(String(inputRecord.file_path));
       break;
     case 'Write':
       flushAll(ctx);
       ctx.events.push({
-        timestamp,
+        timestamp: entry.timestamp,
         type: 'write',
-        summary: `Write: ${formatPath(String(input.file_path || 'unknown'))}`,
+        summary: `Write: ${formatPath(String(inputRecord.file_path || 'unknown'))}`,
       });
       break;
     case 'Bash': {
       flushAll(ctx);
-      const cmd = String(input.command || '').replace(/\n/g, ' ');
-      ctx.events.push({ timestamp, type: 'bash', summary: `Bash: ${truncate(cmd, 60)}` });
+      const cmd = String(inputRecord.command || '').replace(/\n/g, ' ');
+      ctx.events.push({ timestamp: entry.timestamp, type: 'bash', summary: `Bash: ${truncate(cmd, 60)}` });
       break;
     }
     case 'AskUserQuestion': {
       flushAll(ctx);
-      const questions = input.questions as Array<{ question?: string }> | undefined;
+      const questions = inputRecord.questions as Array<{ question?: string }> | undefined;
       ctx.events.push({
-        timestamp,
+        timestamp: entry.timestamp,
         type: 'question',
         summary: `Question: ${truncate(questions?.[0]?.question || 'question', 60)}`,
       });
       break;
     }
-  }
-}
-
-function processLogEntry(entry: claudeLogs.ClaudeLogEntry, ctx: EventExtractionContext): void {
-  if (entry.type === 'user' && entry.message) {
-    flushAll(ctx);
-    const text = extractTextContent(entry.message.content);
-    if (text) {
-      ctx.events.push({ timestamp: entry.timestamp, type: 'prompt', summary: truncate(text.replace(/\n/g, ' '), 80) });
-    }
-    return;
-  }
-
-  if (entry.type === 'assistant' && entry.toolCalls) {
-    for (const tool of entry.toolCalls) {
-      processToolCall(tool, entry.timestamp, ctx);
-    }
-    return;
-  }
-
-  if (entry.type === 'assistant' && entry.message && !entry.toolCalls) {
-    flushAll(ctx);
-    const text = extractTextContent(entry.message.content);
-    if (text && text.length > 100) {
+    default: {
+      flushAll(ctx);
       ctx.events.push({
         timestamp: entry.timestamp,
-        type: 'response',
-        summary: truncate(text.replace(/\n/g, ' '), 80),
+        type: 'bash',
+        summary: `${normalizedName}: ${truncate(entry.text.replace(/\n/g, ' '), 60)}`,
       });
     }
   }
 }
 
-/**
- * Extract compressed events from log entries
- */
-function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] {
+function processTranscriptEntry(entry: TranscriptEntry, ctx: EventExtractionContext): void {
+  if (entry.role === 'user') {
+    flushAll(ctx);
+    ctx.events.push({
+      timestamp: entry.timestamp,
+      type: 'prompt',
+      summary: truncate(entry.text.replace(/\n/g, ' '), 80),
+    });
+    return;
+  }
+
+  if (entry.role === 'tool_call') {
+    processToolCallEntry(entry, ctx);
+    return;
+  }
+
+  if (entry.role === 'assistant' && entry.text.length > 100) {
+    flushAll(ctx);
+    ctx.events.push({
+      timestamp: entry.timestamp,
+      type: 'response',
+      summary: truncate(entry.text.replace(/\n/g, ' '), 80),
+    });
+  }
+}
+
+function extractEvents(entries: TranscriptEntry[]): CompressedEvent[] {
   const ctx: EventExtractionContext = {
     events: [],
     pendingReads: [],
@@ -232,40 +221,24 @@ function extractEvents(entries: claudeLogs.ClaudeLogEntry[]): CompressedEvent[] 
   };
 
   for (const entry of entries) {
-    processLogEntry(entry, ctx);
+    processTranscriptEntry(entry, ctx);
   }
 
   flushAll(ctx);
   return ctx.events;
 }
 
-/**
- * Detect current worker status from last entries
- */
-function detectStatusFromEntry(entry: claudeLogs.ClaudeLogEntry): string | null {
-  if (entry.type === 'assistant' && entry.toolCalls) {
-    const lastTool = entry.toolCalls[entry.toolCalls.length - 1];
-    if (lastTool.name === 'AskUserQuestion') return 'question';
-  }
-  if (entry.type === 'progress' && entry.data) {
-    const data = entry.data as Record<string, unknown>;
-    if (data.type === 'permission_request') return 'permission';
-  }
-  return null;
-}
-
-function detectStatus(entries: claudeLogs.ClaudeLogEntry[]): string {
+function detectStatus(entries: TranscriptEntry[]): string {
   if (entries.length === 0) return 'unknown';
 
   const lastEntries = entries.slice(-10);
   for (const entry of lastEntries.reverse()) {
-    const status = detectStatusFromEntry(entry);
-    if (status) return status;
+    if (entry.role === 'tool_call' && entry.toolCall?.name === 'AskUserQuestion') return 'question';
   }
 
-  const lastEntry = entries[entries.length - 1];
-  if (lastEntry.type === 'user') return 'working';
-  if (lastEntry.type === 'assistant') return 'idle';
+  const last = entries[entries.length - 1];
+  if (last.role === 'user') return 'working';
+  if (last.role === 'assistant') return 'idle';
   return 'unknown';
 }
 
@@ -273,26 +246,20 @@ function detectStatus(entries: claudeLogs.ClaudeLogEntry[]): string {
 // Display Formatting
 // ============================================================================
 
-/**
- * Format events for terminal display
- */
 function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats): string {
   const lines: string[] = [];
 
-  // Header
   lines.push('');
   lines.push(
-    `Session: ${stats.workerId}${stats.branch ? ` (${stats.branch})` : ''} | ${stats.duration} | ${stats.totalLines} lines → ${stats.compressedLines} lines`,
+    `Session: ${stats.workerId} [${stats.provider}]${stats.branch ? ` (${stats.branch})` : ''} | ${stats.duration} | ${stats.totalEntries} entries → ${stats.compressedLines} lines`,
   );
   lines.push('');
 
-  // Events
   for (const event of events) {
     const time = formatTime(event.timestamp);
     const icon = getEventIcon(event.type);
     lines.push(`[${time}] ${icon} ${event.summary}`);
 
-    // Show details if present
     if (event.details && event.details.length > 0) {
       for (const detail of event.details.slice(0, 5)) {
         lines.push(`         ${detail}`);
@@ -302,13 +269,11 @@ function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats):
       }
     }
 
-    // Show result if present
     if (event.result) {
       lines.push(`         → ${event.result}`);
     }
   }
 
-  // Footer
   lines.push('');
   lines.push(
     `Status: ${stats.status.toUpperCase()} | ${stats.exchanges} exchanges | ${stats.toolCalls} tool calls | ${stats.compressionRatio.toFixed(0)}x compression`,
@@ -318,9 +283,6 @@ function formatEventsForDisplay(events: CompressedEvent[], stats: SessionStats):
   return lines.join('\n');
 }
 
-/**
- * Get icon for event type
- */
 function getEventIcon(type: CompressedEvent['type']): string {
   switch (type) {
     case 'prompt':
@@ -348,113 +310,135 @@ function getEventIcon(type: CompressedEvent['type']): string {
   }
 }
 
-/**
- * Format full conversation for display
- */
-function formatToolCallLine(tool: { name: string; input: unknown }): string {
-  const input = tool.input as Record<string, unknown>;
-  if (tool.name === 'Bash') return `  ${tool.name}: ${input.command}`;
-  if (tool.name === 'Read' || tool.name === 'Edit' || tool.name === 'Write')
-    return `  ${tool.name}: ${input.file_path}`;
-  return `  ${tool.name}`;
-}
-
-function formatEntryForDisplay(entry: claudeLogs.ClaudeLogEntry): string[] {
+function formatTranscriptEntryForDisplay(entry: TranscriptEntry): string[] {
   const time = formatTime(entry.timestamp);
 
-  if (entry.type === 'user' && entry.message) {
-    return [`\n[${time}] USER:`, extractTextContent(entry.message.content)];
+  if (entry.role === 'user') {
+    return [`\n[${time}] USER:`, entry.text];
   }
 
-  if (entry.type !== 'assistant') return [];
-
-  if (entry.toolCalls && entry.toolCalls.length > 0) {
-    return [`\n[${time}] ASSISTANT (tools):`, ...entry.toolCalls.map(formatToolCallLine)];
-  }
-
-  if (entry.message) {
-    const text = extractTextContent(entry.message.content);
-    if (text) {
-      return [`\n[${time}] ASSISTANT:`, text.slice(0, 500) + (text.length > 500 ? '...' : '')];
+  if (entry.role === 'tool_call' && entry.toolCall) {
+    const input = entry.toolCall.input as Record<string, unknown>;
+    let detail: string;
+    if (entry.toolCall.name === 'Bash' || entry.toolCall.name === 'shell') {
+      detail = `  ${entry.toolCall.name}: ${input.command ?? ''}`;
+    } else if (['Read', 'Edit', 'Write'].includes(entry.toolCall.name)) {
+      detail = `  ${entry.toolCall.name}: ${input.file_path ?? ''}`;
+    } else {
+      detail = `  ${entry.toolCall.name}`;
     }
+    return [`\n[${time}] TOOL:`, detail];
+  }
+
+  if (entry.role === 'assistant') {
+    const text = entry.text.slice(0, 500) + (entry.text.length > 500 ? '...' : '');
+    return [`\n[${time}] ASSISTANT:`, text];
   }
 
   return [];
 }
 
-function formatFullConversation(entries: claudeLogs.ClaudeLogEntry[]): string {
-  return entries.flatMap(formatEntryForDisplay).join('\n');
+function formatFullConversation(entries: TranscriptEntry[]): string {
+  return entries.flatMap(formatTranscriptEntryForDisplay).join('\n');
 }
 
 // ============================================================================
 // Main Command
 // ============================================================================
 
-/**
- * Find worker by ID or task ID
- */
 async function findWorker(identifier: string): Promise<workerRegistry.Agent | null> {
-  // Try direct ID lookup first
   let worker = await workerRegistry.get(identifier);
   if (worker) return worker;
 
-  // Try task ID lookup
   worker = await workerRegistry.findByTask(identifier);
   if (worker) return worker;
 
-  // Try partial match on worker ID
   const allWorkers = await workerRegistry.list();
-  const match = allWorkers.find(
-    (w) =>
-      w.id.includes(identifier) ||
-      w.taskId?.includes(identifier) ||
-      w.taskTitle?.toLowerCase().includes(identifier.toLowerCase()),
+  return (
+    allWorkers.find(
+      (w) =>
+        w.id.includes(identifier) ||
+        w.taskId?.includes(identifier) ||
+        w.taskTitle?.toLowerCase().includes(identifier.toLowerCase()),
+    ) ?? null
   );
-
-  return match || null;
 }
 
-/** Resolved log context for history display */
-interface LogContext {
-  logPath: string;
+/** Resolved context for transcript reading */
+interface TranscriptContext {
+  worker: workerRegistry.Agent;
   workerId: string;
+  provider: string;
   branch?: string;
   duration: string;
 }
 
-async function resolveLogContext(workerIdOrName: string, options: HistoryOptions): Promise<LogContext> {
+async function resolveContext(workerIdOrName: string, options: HistoryOptions): Promise<TranscriptContext> {
   if (options.logFile) {
-    return { logPath: options.logFile, workerId: 'direct', duration: 'N/A' };
+    // Direct log file mode — create a stub worker for Claude provider
+    const stub: workerRegistry.Agent = {
+      id: 'direct',
+      paneId: '',
+      session: '',
+      worktree: null,
+      startedAt: new Date().toISOString(),
+      state: 'idle',
+      lastStateChange: new Date().toISOString(),
+      repoPath: process.cwd(),
+      provider: 'claude',
+    };
+    return { worker: stub, workerId: 'direct', provider: 'claude', duration: 'N/A' };
   }
 
   const worker = await findWorker(workerIdOrName);
   if (!worker) {
-    console.error(`❌ Agent "${workerIdOrName}" not found.`);
-    console.error('   Run `genie ls` to see agents.');
-    process.exit(1);
-  }
-
-  const workspacePath = worker.worktree || worker.repoPath;
-  const logInfo = await claudeLogs.getLogsForPane(workspacePath);
-  if (!logInfo) {
-    console.error(`❌ No Claude logs found for agent "${worker.id}"`);
-    console.error(`   Workspace: ${workspacePath}`);
+    console.error(`Agent "${workerIdOrName}" not found. Run \`genie ls\` to see agents.`);
     process.exit(1);
   }
 
   const elapsed = workerRegistry.getElapsedTime(worker);
   return {
-    logPath: logInfo.logPath,
+    worker,
     workerId: worker.id,
+    provider: worker.provider ?? 'claude',
     branch: worker.worktree ? `work/${worker.taskId}` : undefined,
     duration: elapsed.formatted,
   };
 }
 
-function filterSinceExchanges(entries: claudeLogs.ClaudeLogEntry[], since: number): claudeLogs.ClaudeLogEntry[] {
+/**
+ * Build a TranscriptFilter from CLI options.
+ */
+function buildFilter(options: HistoryOptions): TranscriptFilter | undefined {
+  const filter: TranscriptFilter = {};
+  let hasFilter = false;
+
+  if (options.last && options.last > 0) {
+    filter.last = options.last;
+    hasFilter = true;
+  }
+
+  if (options.after) {
+    filter.since = options.after;
+    hasFilter = true;
+  }
+
+  if (options.type) {
+    filter.roles = [options.type as TranscriptRole];
+    hasFilter = true;
+  }
+
+  return hasFilter ? filter : undefined;
+}
+
+/**
+ * Filter entries by exchange count (last N user turns + everything after).
+ * Legacy --since behavior.
+ */
+function filterSinceExchanges(entries: TranscriptEntry[], since: number): TranscriptEntry[] {
   let userCount = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].type === 'user') {
+    if (entries[i].role === 'user') {
       userCount++;
       if (userCount >= since) return entries.slice(i);
     }
@@ -462,44 +446,73 @@ function filterSinceExchanges(entries: claudeLogs.ClaudeLogEntry[], since: numbe
   return entries;
 }
 
+async function loadEntries(ctx: TranscriptContext, options: HistoryOptions): Promise<TranscriptEntry[]> {
+  const { readTranscript, getProvider } = await import('../lib/transcript.js');
+  if (options.logFile) {
+    const provider = await getProvider(ctx.worker);
+    return provider.readEntries(options.logFile);
+  }
+  return readTranscript(ctx.worker);
+}
+
+function filterEntries(entries: TranscriptEntry[], options: HistoryOptions): TranscriptEntry[] {
+  const { applyFilter } = require('../lib/transcript.js') as typeof import('../lib/transcript.js');
+  const conversationEntries = entries.filter(
+    (e) => e.role === 'user' || e.role === 'assistant' || e.role === 'tool_call',
+  );
+  let filtered =
+    options.since && options.since > 0 ? filterSinceExchanges(conversationEntries, options.since) : conversationEntries;
+  const transcriptFilter = buildFilter(options);
+  if (transcriptFilter) filtered = applyFilter(filtered, transcriptFilter);
+  return filtered;
+}
+
+function outputEntries(filtered: TranscriptEntry[], options: HistoryOptions): boolean {
+  if (options.ndjson) {
+    for (const entry of filtered) {
+      const { raw: _raw, ...rest } = entry;
+      console.log(JSON.stringify(options.raw ? entry : rest));
+    }
+    return true;
+  }
+  if (options.raw) {
+    for (const entry of filtered) console.log(JSON.stringify(entry.raw));
+    return true;
+  }
+  if (options.full) {
+    console.log(formatFullConversation(filtered));
+    return true;
+  }
+  return false;
+}
+
 /**
  * Main history command handler
  */
 export async function historyCommand(workerIdOrName: string, options: HistoryOptions): Promise<void> {
-  const { logPath, workerId, branch, duration } = await resolveLogContext(workerIdOrName, options);
+  const ctx = await resolveContext(workerIdOrName, options);
+  const entries = await loadEntries(ctx, options);
 
-  const entries = await claudeLogs.readLogFile(logPath);
   if (entries.length === 0) {
-    console.error(`❌ Log file is empty: ${logPath}`);
+    console.error(`No transcript found for agent "${ctx.workerId}".`);
     process.exit(1);
   }
 
-  const conversationEntries = entries.filter((e) => e.type === 'user' || e.type === 'assistant');
-  const filteredEntries =
-    options.since && options.since > 0 ? filterSinceExchanges(conversationEntries, options.since) : conversationEntries;
+  const filtered = filterEntries(entries, options);
+  if (outputEntries(filtered, options)) return;
 
-  if (options.raw) {
-    for (const entry of filteredEntries) {
-      console.log(JSON.stringify(entry.raw));
-    }
-    return;
-  }
-
-  if (options.full) {
-    console.log(formatFullConversation(filteredEntries));
-    return;
-  }
-
-  const events = extractEvents(filteredEntries);
-  const toolCallCount = entries.reduce((count, e) => count + (e.toolCalls?.length || 0), 0);
-  const userMessageCount = entries.filter((e) => e.type === 'user').length;
+  // Compressed summary (default)
+  const events = extractEvents(filtered);
+  const toolCallCount = entries.filter((e) => e.role === 'tool_call').length;
+  const userMessageCount = entries.filter((e) => e.role === 'user').length;
 
   const stats: SessionStats = {
-    workerId,
-    taskId: workerId,
-    branch,
-    duration,
-    totalLines: entries.length,
+    workerId: ctx.workerId,
+    taskId: ctx.workerId,
+    branch: ctx.branch,
+    provider: ctx.provider,
+    duration: ctx.duration,
+    totalEntries: entries.length,
     compressedLines: events.length,
     compressionRatio: entries.length / Math.max(events.length, 1),
     exchanges: userMessageCount,
