@@ -20,6 +20,7 @@ Which groups are done? Which are in progress? Which are blocked?
 ```bash
 genie ls
 genie read <worker> --follow
+genie history <worker> --last 10           # Quick catch-up
 ```
 For each active worker: is it alive? Is it stuck? Is it waiting for approval?
 If stuck for >5 minutes with no output, kill and re-dispatch.
