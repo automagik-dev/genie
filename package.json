@@ -26,6 +26,8 @@
     "@inquirer/prompts": "^7.0.0",
     "commander": "^12.1.0",
     "js-yaml": "^4.1.1",
+    "pgserve": "^1.1.6",
+    "postgres": "^3.4.8",
     "uuid": "^11.1.0",
     "zod": "^3.25.0"
   },
@@ -54,5 +56,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "trustedDependencies": ["@biomejs/biome"]
+  "trustedDependencies": ["@biomejs/biome", "bun"]
 }
