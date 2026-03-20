@@ -43,6 +43,7 @@ import * as historyCmd from './term-commands/history.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import * as readCmd from './term-commands/read.js';
+import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 
@@ -133,6 +134,7 @@ registerStateCommands(program);
 registerDispatchCommands(program);
 registerHookNamespace(program);
 registerDbCommands(program);
+registerScheduleCommands(program);
 
 // ============================================================================
 // Top-level agent commands (promoted from genie agent namespace)
