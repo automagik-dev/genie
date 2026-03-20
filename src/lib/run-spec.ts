@@ -42,12 +42,6 @@ export function isValidTransition(from: AgentState | 'failed', to: AgentState): 
 }
 
 // ============================================================================
-// RunState — scheduled run lifecycle
-// ============================================================================
-
-export type RunState = 'spawning' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled';
-
-// ============================================================================
 // RunSpec — execution specification
 // ============================================================================
 
