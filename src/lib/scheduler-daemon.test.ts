@@ -3,9 +3,12 @@ import {
   type LogEntry,
   type SchedulerConfig,
   type SchedulerDeps,
+  type WorkerInfo,
+  _resetWorkerStatesForTesting,
   claimDueTriggers,
   collectHeartbeats,
   collectMachineSnapshot,
+  emitWorkerEvents,
   fireTrigger,
   logToFile,
   reclaimExpiredLeases,
@@ -117,10 +120,12 @@ function createMockDeps(
   deps: SchedulerDeps;
   logs: LogEntry[];
   spawns: { command: string; env: Record<string, string> }[];
+  publishedEvents: { subject: string; data: unknown }[];
   mock: ReturnType<typeof createMockSql>;
 } {
   const logs: LogEntry[] = [];
   const spawns: { command: string; env: Record<string, string> }[] = [];
+  const publishedEvents: { subject: string; data: unknown }[] = [];
   const mock = createMockSql(sqlData);
 
   let idCounter = 0;
@@ -139,10 +144,13 @@ function createMockDeps(
     isPaneAlive: async () => true,
     listWorkers: async () => [],
     countTmuxSessions: async () => 0,
+    publishEvent: async (subject, data) => {
+      publishedEvents.push({ subject, data });
+    },
     ...overrides,
   };
 
-  return { deps, logs, spawns, mock };
+  return { deps, logs, spawns, publishedEvents, mock };
 }
 
 const defaultConfig: SchedulerConfig = {
@@ -899,6 +907,149 @@ describe('scheduler-daemon', () => {
 
       const recoveryDone = logs.find((l) => l.event === 'recovery_completed');
       expect(recoveryDone).toBeDefined();
+    });
+  });
+
+  // ==========================================================================
+  // Group 4: NATS Event Emission
+  // ==========================================================================
+
+  describe('emitWorkerEvents', () => {
+    beforeEach(() => {
+      _resetWorkerStatesForTesting();
+    });
+
+    afterEach(() => {
+      _resetWorkerStatesForTesting();
+    });
+
+    test('emits spawned event for new workers', async () => {
+      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      await emitWorkerEvents(deps);
+
+      expect(publishedEvents).toHaveLength(1);
+      expect(publishedEvents[0].subject).toBe('genie.agent.engineer.spawned');
+      const data = publishedEvents[0].data as Record<string, unknown>;
+      expect(data.kind).toBe('state');
+      expect(data.agent).toBe('engineer');
+      expect(data.team).toBe('alpha');
+    });
+
+    test('emits state change event when state changes', async () => {
+      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      // First call — spawned
+      await emitWorkerEvents(deps);
+      publishedEvents.length = 0;
+
+      // Change state
+      workers[0].state = 'idle';
+      await emitWorkerEvents(deps);
+
+      expect(publishedEvents).toHaveLength(1);
+      expect(publishedEvents[0].subject).toBe('genie.agent.engineer.state');
+      const data = publishedEvents[0].data as Record<string, unknown>;
+      expect((data.data as Record<string, unknown>).previousState).toBe('working');
+      expect((data.data as Record<string, unknown>).state).toBe('idle');
+    });
+
+    test('emits killed event when worker disappears', async () => {
+      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      // First call — spawned
+      await emitWorkerEvents(deps);
+      publishedEvents.length = 0;
+
+      // Remove worker
+      workers.length = 0;
+      await emitWorkerEvents(deps);
+
+      expect(publishedEvents).toHaveLength(1);
+      expect(publishedEvents[0].subject).toBe('genie.agent.engineer.killed');
+      const data = publishedEvents[0].data as Record<string, unknown>;
+      expect(data.kind).toBe('state');
+      expect((data.data as Record<string, unknown>).lastState).toBe('working');
+    });
+
+    test('emits wish group done event when agent with wish completes', async () => {
+      const workers: WorkerInfo[] = [
+        { id: 'eng-1', paneId: '%1', state: 'working', team: 'alpha', wishSlug: 'genie-log', groupNumber: 4 },
+      ];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      // First call — spawned
+      await emitWorkerEvents(deps);
+      publishedEvents.length = 0;
+
+      // Agent completes
+      workers[0].state = 'done';
+      await emitWorkerEvents(deps);
+
+      // Should emit both state change and wish group done
+      expect(publishedEvents).toHaveLength(2);
+      expect(publishedEvents[0].subject).toBe('genie.agent.eng-1.state');
+      expect(publishedEvents[1].subject).toBe('genie.wish.genie-log.group.4.done');
+      const wishData = publishedEvents[1].data as Record<string, unknown>;
+      expect(wishData.kind).toBe('system');
+      expect((wishData.data as Record<string, unknown>).wishSlug).toBe('genie-log');
+      expect((wishData.data as Record<string, unknown>).groupNumber).toBe(4);
+    });
+
+    test('does not emit when state unchanged', async () => {
+      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      // First call — spawned
+      await emitWorkerEvents(deps);
+      publishedEvents.length = 0;
+
+      // Same state — no event
+      await emitWorkerEvents(deps);
+
+      expect(publishedEvents).toHaveLength(0);
+    });
+
+    test('handles multiple workers with mixed changes', async () => {
+      const workers: WorkerInfo[] = [
+        { id: 'eng-1', paneId: '%1', state: 'working', team: 'alpha' },
+        { id: 'eng-2', paneId: '%2', state: 'idle', team: 'alpha' },
+      ];
+      const { deps, publishedEvents } = createMockDeps({}, { listWorkers: async () => workers });
+
+      await emitWorkerEvents(deps);
+      publishedEvents.length = 0;
+
+      // eng-1 changes state, eng-2 removed, eng-3 added
+      workers[0].state = 'idle';
+      workers.splice(1, 1); // remove eng-2
+      workers.push({ id: 'eng-3', paneId: '%3', state: 'spawning', team: 'alpha' });
+
+      await emitWorkerEvents(deps);
+
+      const subjects = publishedEvents.map((e) => e.subject);
+      expect(subjects).toContain('genie.agent.eng-1.state');
+      expect(subjects).toContain('genie.agent.eng-2.killed');
+      expect(subjects).toContain('genie.agent.eng-3.spawned');
+    });
+
+    test('gracefully handles publishEvent failure', async () => {
+      const workers: WorkerInfo[] = [{ id: 'engineer', paneId: '%1', state: 'working', team: 'alpha' }];
+      const { deps } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          publishEvent: async () => {
+            throw new Error('NATS down');
+          },
+        },
+      );
+
+      // Should not throw
+      await expect(emitWorkerEvents(deps)).rejects.toThrow('NATS down');
     });
   });
 });
