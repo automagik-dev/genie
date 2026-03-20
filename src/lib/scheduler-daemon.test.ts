@@ -4,8 +4,13 @@ import {
   type SchedulerConfig,
   type SchedulerDeps,
   claimDueTriggers,
+  collectHeartbeats,
+  collectMachineSnapshot,
   fireTrigger,
   logToFile,
+  reclaimExpiredLeases,
+  reconcileOrphanedRuns,
+  reconcileOrphans,
   startDaemon,
 } from './scheduler-daemon.js';
 
@@ -23,9 +28,12 @@ function createMockSql(data: {
   runs?: Record<string, unknown>[];
   schedules?: Record<string, unknown>[];
   runningCount?: number;
+  heartbeats?: Record<string, unknown>[];
 }) {
   const queries: QueryLog[] = [];
   const insertedRuns: Record<string, unknown>[] = [];
+  const insertedHeartbeats: Record<string, unknown>[] = [];
+  const insertedSnapshots: Record<string, unknown>[] = [];
   const updatedTriggers: { id: string; status: string }[] = [];
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: mock SQL router needs many branches
@@ -36,8 +44,19 @@ function createMockSql(data: {
     if (query.includes('FROM runs') && query.includes('count')) {
       return [{ cnt: data.runningCount ?? 0 }];
     }
+    if (query.includes('FROM runs') && query.includes('status IN')) {
+      return data.runs ?? [];
+    }
+    if (query.includes('FROM runs') && query.includes('running')) {
+      return data.runs ?? [];
+    }
     if (query.includes('FROM triggers') && query.includes('FOR UPDATE')) {
       return data.triggers ?? [];
+    }
+    if (query.includes('UPDATE triggers') && query.includes('leased_until <')) {
+      // Reclaim expired leases — return triggers that match
+      const expired = (data.triggers ?? []).filter((t) => t.status === 'executing');
+      return expired.map((t) => ({ id: t.id }));
     }
     if (query.includes('UPDATE triggers')) {
       return [];
@@ -55,6 +74,17 @@ function createMockSql(data: {
     if (query.includes('UPDATE runs')) {
       return [];
     }
+    if (query.includes('INSERT INTO heartbeats')) {
+      insertedHeartbeats.push({ values });
+      return [];
+    }
+    if (query.includes('FROM heartbeats')) {
+      return data.heartbeats ?? [];
+    }
+    if (query.includes('INSERT INTO machine_snapshots')) {
+      insertedSnapshots.push({ values });
+      return [];
+    }
     return [];
   };
 
@@ -68,7 +98,7 @@ function createMockSql(data: {
 
   sql.end = async () => {};
 
-  return { sql, queries, insertedRuns, updatedTriggers };
+  return { sql, queries, insertedRuns, insertedHeartbeats, insertedSnapshots, updatedTriggers };
 }
 
 // ============================================================================
@@ -101,6 +131,9 @@ function createMockDeps(
     now: () => new Date('2026-03-20T12:00:00Z'),
     sleep: async () => {},
     jitter: (maxMs) => Math.floor(maxMs / 2),
+    isPaneAlive: async () => true,
+    listWorkers: async () => [],
+    countTmuxSessions: async () => 0,
     ...overrides,
   };
 
@@ -112,6 +145,9 @@ const defaultConfig: SchedulerConfig = {
   pollIntervalMs: 30_000,
   maxJitterMs: 30_000,
   jitterThreshold: 3,
+  heartbeatIntervalMs: 60_000,
+  orphanCheckIntervalMs: 300_000,
+  deadHeartbeatThreshold: 2,
 };
 
 // ============================================================================
@@ -445,6 +481,301 @@ describe('scheduler-daemon', () => {
           rmSync(tmpDir, { recursive: true });
         } catch {}
       }
+    });
+  });
+
+  // ==========================================================================
+  // Group 4: Reboot recovery + orphan reconciliation + heartbeats
+  // ==========================================================================
+
+  describe('reclaimExpiredLeases', () => {
+    test('reclaims expired executing triggers', async () => {
+      const triggers = [
+        {
+          id: 'trig-expired',
+          schedule_id: 'sched-1',
+          due_at: new Date('2026-03-20T10:00:00Z'),
+          status: 'executing',
+          leased_until: new Date('2026-03-20T11:00:00Z'), // expired (now is 12:00)
+          leased_by: 'old-daemon',
+          idempotency_key: null,
+        },
+      ];
+      const { deps, logs } = createMockDeps({ triggers });
+
+      const count = await reclaimExpiredLeases(deps, 'daemon-new');
+
+      expect(count).toBe(1);
+      const reclaimLog = logs.find((l) => l.event === 'expired_leases_reclaimed');
+      expect(reclaimLog).toBeDefined();
+      expect(reclaimLog?.count).toBe(1);
+    });
+
+    test('returns 0 when no expired leases', async () => {
+      const { deps, logs } = createMockDeps({ triggers: [] });
+
+      const count = await reclaimExpiredLeases(deps, 'daemon-1');
+
+      expect(count).toBe(0);
+      const reclaimLog = logs.find((l) => l.event === 'expired_leases_reclaimed');
+      expect(reclaimLog).toBeUndefined();
+    });
+  });
+
+  describe('reconcileOrphanedRuns', () => {
+    test('marks orphaned runs with dead processes as failed', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '99999999', // non-existent PID
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps, logs } = createMockDeps({ runs });
+
+      const count = await reconcileOrphanedRuns(deps, 'daemon-1');
+
+      expect(count).toBe(1);
+      const orphanLog = logs.find((l) => l.event === 'orphaned_runs_reconciled');
+      expect(orphanLog).toBeDefined();
+      expect(orphanLog?.count).toBe(1);
+    });
+
+    test('does not mark runs with alive panes as failed', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps } = createMockDeps({ runs }, { isPaneAlive: async () => true });
+
+      const count = await reconcileOrphanedRuns(deps, 'daemon-1');
+
+      expect(count).toBe(0);
+    });
+
+    test('marks runs with dead panes as failed', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps, logs } = createMockDeps({ runs }, { isPaneAlive: async () => false });
+
+      const count = await reconcileOrphanedRuns(deps, 'daemon-1');
+
+      expect(count).toBe(1);
+      const orphanLog = logs.find((l) => l.event === 'orphaned_runs_reconciled');
+      expect(orphanLog).toBeDefined();
+    });
+  });
+
+  describe('collectHeartbeats', () => {
+    test('inserts heartbeat for running run with alive pane', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps, mock, logs } = createMockDeps({ runs }, { isPaneAlive: async () => true });
+
+      const count = await collectHeartbeats(deps);
+
+      expect(count).toBe(1);
+      expect(mock.insertedHeartbeats).toHaveLength(1);
+      const heartbeatLog = logs.find((l) => l.event === 'heartbeats_collected');
+      expect(heartbeatLog).toBeDefined();
+      expect(heartbeatLog?.count).toBe(1);
+    });
+
+    test('inserts dead heartbeat for run with dead pane', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps, mock } = createMockDeps({ runs }, { isPaneAlive: async () => false });
+
+      const count = await collectHeartbeats(deps);
+
+      expect(count).toBe(1);
+      expect(mock.insertedHeartbeats).toHaveLength(1);
+    });
+
+    test('returns 0 when no running runs', async () => {
+      const { deps } = createMockDeps({ runs: [] });
+
+      const count = await collectHeartbeats(deps);
+
+      expect(count).toBe(0);
+    });
+
+    test('checks PID-based worker_id via process.kill', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: String(process.pid), // current process — alive
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const { deps, mock } = createMockDeps({ runs });
+
+      const count = await collectHeartbeats(deps);
+
+      expect(count).toBe(1);
+      expect(mock.insertedHeartbeats).toHaveLength(1);
+    });
+  });
+
+  describe('reconcileOrphans', () => {
+    test('marks run as failed after N consecutive dead heartbeats', async () => {
+      const runs = [
+        {
+          id: 'run-orphan',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const heartbeats = [{ status: 'dead' }, { status: 'dead' }];
+
+      const { deps, logs } = createMockDeps({ runs, heartbeats });
+
+      const count = await reconcileOrphans(deps, defaultConfig);
+
+      expect(count).toBe(1);
+      const failLog = logs.find((l) => l.event === 'orphan_run_failed');
+      expect(failLog).toBeDefined();
+      expect(failLog?.run_id).toBe('run-orphan');
+    });
+
+    test('does not mark run when heartbeats are alive', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const heartbeats = [{ status: 'alive' }, { status: 'alive' }];
+
+      const { deps, logs } = createMockDeps({ runs, heartbeats });
+
+      const count = await reconcileOrphans(deps, defaultConfig);
+
+      expect(count).toBe(0);
+      const failLog = logs.find((l) => l.event === 'orphan_run_failed');
+      expect(failLog).toBeUndefined();
+    });
+
+    test('does not mark run when insufficient heartbeats', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const heartbeats = [{ status: 'dead' }]; // only 1, threshold is 2
+
+      const { deps } = createMockDeps({ runs, heartbeats });
+
+      const count = await reconcileOrphans(deps, defaultConfig);
+
+      expect(count).toBe(0);
+    });
+
+    test('does not mark run with mixed alive/dead heartbeats', async () => {
+      const runs = [
+        {
+          id: 'run-1',
+          worker_id: '%42',
+          status: 'running',
+          trigger_id: 'trig-1',
+        },
+      ];
+      const heartbeats = [{ status: 'dead' }, { status: 'alive' }];
+
+      const { deps } = createMockDeps({ runs, heartbeats });
+
+      const count = await reconcileOrphans(deps, defaultConfig);
+
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('collectMachineSnapshot', () => {
+    test('inserts machine snapshot with worker and session counts', async () => {
+      const workers = [
+        { id: 'w-1', paneId: '%1', state: 'working', team: 'alpha' },
+        { id: 'w-2', paneId: '%2', state: 'idle', team: 'alpha' },
+        { id: 'w-3', paneId: '%3', state: 'suspended', team: 'beta' },
+      ];
+      const { deps, mock, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => workers,
+          countTmuxSessions: async () => 3,
+        },
+      );
+
+      await collectMachineSnapshot(deps);
+
+      expect(mock.insertedSnapshots).toHaveLength(1);
+      const snapshotLog = logs.find((l) => l.event === 'machine_snapshot');
+      expect(snapshotLog).toBeDefined();
+      expect(snapshotLog?.active_workers).toBe(2); // working + idle (not suspended)
+      expect(snapshotLog?.active_teams).toBe(2); // alpha + beta (both have workers with teams)
+      expect(snapshotLog?.tmux_sessions).toBe(3);
+    });
+
+    test('handles empty worker list', async () => {
+      const { deps, mock, logs } = createMockDeps({});
+
+      await collectMachineSnapshot(deps);
+
+      expect(mock.insertedSnapshots).toHaveLength(1);
+      const snapshotLog = logs.find((l) => l.event === 'machine_snapshot');
+      expect(snapshotLog).toBeDefined();
+      expect(snapshotLog?.active_workers).toBe(0);
+      expect(snapshotLog?.active_teams).toBe(0);
+    });
+  });
+
+  describe('startDaemon with recovery', () => {
+    test('runs recovery on startup', async () => {
+      const { deps, logs } = createMockDeps({ triggers: [], runs: [] });
+
+      const handle = startDaemon(
+        { pollIntervalMs: 50, heartbeatIntervalMs: 100_000, orphanCheckIntervalMs: 100_000 },
+        { ...deps, sleep: async () => {} },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      handle.stop();
+      await Promise.race([handle.done, new Promise((resolve) => setTimeout(resolve, 2000))]);
+
+      const recoveryStart = logs.find((l) => l.event === 'recovery_started');
+      expect(recoveryStart).toBeDefined();
+
+      const recoveryDone = logs.find((l) => l.event === 'recovery_completed');
+      expect(recoveryDone).toBeDefined();
     });
   });
 });
