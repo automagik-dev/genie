@@ -10,7 +10,9 @@
  */
 
 import type { Command } from 'commander';
+import { computeNextCronDue, parseDuration } from '../lib/cron.js';
 import { getConnection, shutdown } from '../lib/db.js';
+export { computeNextCronDue, parseDuration };
 
 // ============================================================================
 // Types
@@ -65,35 +67,6 @@ interface HistoryRow {
 // Time Parsing
 // ============================================================================
 
-const DURATION_RE = /^(\d+(?:\.\d+)?)\s*(s|sec|m|min|h|hr|d|day)s?$/i;
-
-/**
- * Parse a human-friendly duration string into milliseconds.
- * Supports: "30s", "10m", "2h", "24h", "1d", "1.5h"
- */
-export function parseDuration(input: string): number {
-  const match = input.trim().match(DURATION_RE);
-  if (!match) throw new Error(`Invalid duration: "${input}". Expected format: 10m, 2h, 24h, 1d`);
-
-  const value = Number.parseFloat(match[1]);
-  const unit = match[2].toLowerCase();
-
-  const multipliers: Record<string, number> = {
-    s: 1000,
-    sec: 1000,
-    m: 60_000,
-    min: 60_000,
-    h: 3_600_000,
-    hr: 3_600_000,
-    d: 86_400_000,
-    day: 86_400_000,
-  };
-
-  const ms = value * multipliers[unit];
-  if (ms <= 0) throw new Error(`Duration must be positive: "${input}"`);
-  return ms;
-}
-
 /**
  * Parse a time specification into an absolute Date.
  * Supports ISO 8601 strings and human-friendly formats.
@@ -145,18 +118,6 @@ function computeFirstDueAt(options: CreateOptions): { dueAt: Date; cronExpr: str
   }
 
   throw new Error('One of --at, --every, or --after is required');
-}
-
-/**
- * Simple cron next-due computation for common patterns.
- * For full cron support, computes the next occurrence based on the expression.
- */
-function computeNextCronDue(_cronExpr: string): Date {
-  // Simple implementation: schedule first trigger 1 minute from now
-  // The daemon will compute proper cron timing for subsequent triggers
-  const next = new Date(Date.now() + 60_000);
-  next.setSeconds(0, 0);
-  return next;
 }
 
 // ============================================================================

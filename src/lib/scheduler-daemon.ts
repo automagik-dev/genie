@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { computeNextCronDue, parseDuration } from './cron.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
 // ============================================================================
@@ -59,6 +60,7 @@ interface ScheduleRow {
   command: string | null;
   run_spec: RunSpec | Record<string, never>;
   status: string;
+  cron_expression: string | null;
 }
 
 export interface LogEntry {
@@ -264,6 +266,65 @@ export async function claimDueTriggers(
 }
 
 /**
+ * Compute the next due_at for a recurring schedule and insert a new pending trigger.
+ * Returns without inserting if the schedule is one-shot (@once) or has no cron_expression.
+ */
+async function maybeCreateNextTrigger(
+  sql: SqlClient,
+  deps: SchedulerDeps,
+  schedule: ScheduleRow,
+  now: Date,
+): Promise<void> {
+  if (!schedule.cron_expression || schedule.cron_expression === '@once') return;
+
+  let nextDueAt: Date | null = null;
+
+  if (schedule.cron_expression.startsWith('@every ')) {
+    const durationStr = schedule.cron_expression.slice(7).trim();
+    try {
+      const intervalMs = parseDuration(durationStr);
+      nextDueAt = new Date(now.getTime() + intervalMs);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'invalid_interval',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  } else {
+    try {
+      nextDueAt = computeNextCronDue(schedule.cron_expression, now);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'cron_computation_failed',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  }
+
+  if (nextDueAt) {
+    const nextTriggerId = deps.generateId();
+    await sql`
+      INSERT INTO triggers (id, schedule_id, due_at, status)
+      VALUES (${nextTriggerId}, ${schedule.id}, ${nextDueAt.toISOString()}, 'pending')
+    `;
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'next_trigger_created',
+      trigger_id: nextTriggerId,
+      schedule_id: schedule.id,
+      due_at: nextDueAt.toISOString(),
+    });
+  }
+}
+
+/**
  * Fire a single claimed trigger: resolve RunSpec, spawn command, record run.
  */
 export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daemonId: string): Promise<void> {
@@ -297,7 +358,7 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
 
   // Load schedule to get command + run_spec
   const scheduleRows = await sql<ScheduleRow[]>`
-    SELECT id, name, command, run_spec, status FROM schedules WHERE id = ${trigger.schedule_id}
+    SELECT id, name, command, run_spec, status, cron_expression FROM schedules WHERE id = ${trigger.schedule_id}
   `;
 
   if (scheduleRows.length === 0) {
@@ -354,6 +415,9 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
       WHERE id = ${runId}
     `;
 
+    // Advance trigger from 'executing' to 'completed'
+    await sql`UPDATE triggers SET status = 'completed', completed_at = ${now} WHERE id = ${trigger.id}`;
+
     deps.log({
       timestamp: now.toISOString(),
       level: 'info',
@@ -365,6 +429,9 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
       pid: result.pid,
       schedule_name: schedule.name,
     });
+
+    // Insert next trigger for recurring schedules
+    await maybeCreateNextTrigger(sql, deps, schedule, now);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
