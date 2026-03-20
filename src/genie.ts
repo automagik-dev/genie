@@ -41,6 +41,7 @@ import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
+import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import * as readCmd from './term-commands/read.js';
@@ -210,6 +211,21 @@ program
   .option('--log-file <path>', 'Direct path to log file (for testing)')
   .action(async (name: string, options: historyCmd.HistoryOptions) => {
     await historyCmd.historyCommand(name, options);
+  });
+
+// genie log [agent]
+program
+  .command('log [agent]')
+  .description('Unified observability feed — aggregates transcript, DMs, team chat')
+  .option('--team <name>', 'Show interleaved feed for all agents in a team')
+  .option('--type <kind>', 'Filter by event kind (transcript, message, tool_call, state, system)')
+  .option('--since <timestamp>', 'Only events after ISO timestamp')
+  .option('--last <n>', 'Show last N events', Number.parseInt)
+  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
+  .option('--json', 'Output as pretty JSON')
+  .option('-f, --follow', 'Follow mode — real-time streaming')
+  .action(async (agent: string | undefined, options: LogOptions) => {
+    await logCommand(agent, options);
   });
 
 // genie read <name>

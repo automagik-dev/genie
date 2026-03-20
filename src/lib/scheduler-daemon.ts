@@ -73,6 +73,16 @@ export interface LogEntry {
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 type SqlClient = any;
 
+/** Worker info returned by listWorkers. */
+export interface WorkerInfo {
+  id: string;
+  paneId: string;
+  state: string;
+  team?: string;
+  wishSlug?: string;
+  groupNumber?: number;
+}
+
 /** Dependency injection interface for testing. */
 export interface SchedulerDeps {
   getConnection: () => Promise<SqlClient>;
@@ -85,9 +95,11 @@ export interface SchedulerDeps {
   /** Check if a tmux pane is still alive. Used for heartbeat collection and orphan detection. */
   isPaneAlive: (paneId: string) => Promise<boolean>;
   /** List registered workers from the agent registry. */
-  listWorkers: () => Promise<{ id: string; paneId: string; state: string; team?: string }[]>;
+  listWorkers: () => Promise<WorkerInfo[]>;
   /** Count active tmux sessions. */
   countTmuxSessions: () => Promise<number>;
+  /** Publish an event to NATS. Fire-and-forget, no-ops if NATS unavailable. */
+  publishEvent: (subject: string, data: unknown) => Promise<void>;
 }
 
 // ============================================================================
@@ -134,10 +146,26 @@ async function defaultIsPaneAlive(paneId: string): Promise<boolean> {
   return isPaneAlive(paneId);
 }
 
-async function defaultListWorkers(): Promise<{ id: string; paneId: string; state: string; team?: string }[]> {
+async function defaultListWorkers(): Promise<WorkerInfo[]> {
   const { list } = await import('./agent-registry.js');
   const agents = await list();
-  return agents.map((a) => ({ id: a.id, paneId: a.paneId, state: a.state, team: a.team }));
+  return agents.map((a) => ({
+    id: a.id,
+    paneId: a.paneId,
+    state: a.state,
+    team: a.team,
+    wishSlug: a.wishSlug,
+    groupNumber: a.groupNumber,
+  }));
+}
+
+async function defaultPublishEvent(subject: string, data: unknown): Promise<void> {
+  try {
+    const { publish } = await import('./nats-client.js');
+    await publish(subject, data);
+  } catch {
+    // NATS unavailable — silent degradation
+  }
 }
 
 async function defaultCountTmuxSessions(): Promise<number> {
@@ -165,6 +193,7 @@ function createDefaultDeps(): SchedulerDeps {
     isPaneAlive: defaultIsPaneAlive,
     listWorkers: defaultListWorkers,
     countTmuxSessions: defaultCountTmuxSessions,
+    publishEvent: defaultPublishEvent,
   };
 }
 
@@ -753,6 +782,95 @@ export async function collectMachineSnapshot(deps: SchedulerDeps): Promise<void>
 }
 
 // ============================================================================
+// NATS Event Emission
+// ============================================================================
+
+/** Previous worker snapshot for detecting state changes between heartbeats. */
+const previousWorkerStates = new Map<string, WorkerInfo>();
+
+/**
+ * Detect and emit NATS events for worker state changes.
+ * Compares current workers against the previous snapshot to detect:
+ *   - State changes → genie.agent.{id}.state
+ *   - New agents (spawned) → genie.agent.{id}.spawned
+ *   - Removed agents (killed) → genie.agent.{id}.killed
+ *   - Group completion (agent done with wishSlug) → genie.wish.{slug}.group.{n}.done
+ */
+export async function emitWorkerEvents(deps: SchedulerDeps): Promise<void> {
+  const workers = await deps.listWorkers();
+  const now = deps.now().toISOString();
+  const currentIds = new Set<string>();
+
+  for (const worker of workers) {
+    currentIds.add(worker.id);
+    const prev = previousWorkerStates.get(worker.id);
+
+    if (!prev) {
+      // New worker — spawned
+      await deps.publishEvent(`genie.agent.${worker.id}.spawned`, {
+        timestamp: now,
+        kind: 'state',
+        agent: worker.id,
+        team: worker.team,
+        text: `Agent ${worker.id} spawned`,
+        data: { state: worker.state },
+        source: 'registry',
+      });
+    } else if (prev.state !== worker.state) {
+      // State changed
+      await deps.publishEvent(`genie.agent.${worker.id}.state`, {
+        timestamp: now,
+        kind: 'state',
+        agent: worker.id,
+        team: worker.team,
+        text: `Agent ${worker.id} state: ${prev.state} → ${worker.state}`,
+        data: { previousState: prev.state, state: worker.state },
+        source: 'registry',
+      });
+
+      // Detect group completion: agent transitioned to 'done' and has a wish assignment
+      if (worker.state === 'done' && worker.wishSlug && worker.groupNumber != null) {
+        await deps.publishEvent(`genie.wish.${worker.wishSlug}.group.${worker.groupNumber}.done`, {
+          timestamp: now,
+          kind: 'system',
+          agent: worker.id,
+          team: worker.team,
+          text: `Wish ${worker.wishSlug} group ${worker.groupNumber} completed by ${worker.id}`,
+          data: { wishSlug: worker.wishSlug, groupNumber: worker.groupNumber },
+          source: 'registry',
+        });
+      }
+    }
+
+    // Update snapshot
+    previousWorkerStates.set(worker.id, { ...worker });
+  }
+
+  // Detect killed workers (in previous snapshot but not in current)
+  for (const [id, prev] of previousWorkerStates) {
+    if (!currentIds.has(id)) {
+      await deps.publishEvent(`genie.agent.${id}.killed`, {
+        timestamp: now,
+        kind: 'state',
+        agent: id,
+        team: prev.team,
+        text: `Agent ${id} killed`,
+        data: { lastState: prev.state },
+        source: 'registry',
+      });
+      previousWorkerStates.delete(id);
+    }
+  }
+}
+
+/**
+ * Reset the worker state snapshot. Intended for testing only.
+ */
+export function _resetWorkerStatesForTesting(): void {
+  previousWorkerStates.clear();
+}
+
+// ============================================================================
 // Daemon loop
 // ============================================================================
 
@@ -900,12 +1018,13 @@ export function startDaemon(
       // Continue with poll-only mode
     }
 
-    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot
+    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot + NATS events
     heartbeatTimer = setInterval(async () => {
       if (!running) return;
       try {
         await collectHeartbeats(deps);
         await collectMachineSnapshot(deps);
+        await emitWorkerEvents(deps);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         deps.log({

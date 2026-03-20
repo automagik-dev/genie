@@ -17,6 +17,7 @@
 
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { identityInject } from './handlers/identity-inject.js';
+import { natsEmit } from './handlers/nats-emit.js';
 import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -38,6 +39,13 @@ const handlers: Handler[] = [
     matcher: /^SendMessage$/,
     priority: 20,
     fn: autoSpawn,
+  },
+  {
+    name: 'nats-emit',
+    event: 'PostToolUse',
+    matcher: /^SendMessage$/,
+    priority: 30,
+    fn: natsEmit,
   },
 ];
 
