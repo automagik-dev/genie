@@ -85,6 +85,14 @@ export interface Agent {
   parentSessionId?: string;
   /** ISO timestamp when agent was suspended (pane killed, session preserved). */
   suspendedAt?: string;
+  /** Whether this agent should be auto-resumed on pane death (default true). */
+  autoResume?: boolean;
+  /** Number of auto-resume attempts since last manual resume or spawn. */
+  resumeAttempts?: number;
+  /** ISO timestamp of the last auto-resume attempt. */
+  lastResumeAttempt?: string;
+  /** Maximum auto-resume attempts before permanently failing (default 3). */
+  maxResumeAttempts?: number;
 }
 
 /** Saved spawn configuration for auto-respawn on message delivery. */
