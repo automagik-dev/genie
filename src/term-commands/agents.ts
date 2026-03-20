@@ -395,6 +395,8 @@ interface SpawnCtx {
   cwd: string;
   /** When true, spawn into the current tmux window instead of resolving/creating a team window. */
   spawnIntoCurrentWindow: boolean;
+  /** Explicit tmux session name override (from --session flag). */
+  sessionOverride?: string;
 }
 
 async function registerSpawnWorker(
@@ -485,11 +487,27 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
 
 type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
 
-/** Resolve team window for spawn. Returns null if team is unset or resolution fails. */
-async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Promise<TeamWindowInfo | null> {
+/**
+ * Resolve team window for spawn. Returns null if team is unset or resolution fails.
+ *
+ * Session resolution order:
+ *   1. Explicit `sessionOverride` (from --session flag)
+ *   2. `getCurrentSessionName()` (TMUX env or list-sessions fallback)
+ *   3. Team config `tmuxSessionName` (stored during team create)
+ *   4. Team name as session name (last resort)
+ */
+async function resolveSpawnTeamWindow(
+  team: string | undefined,
+  cwd: string,
+  sessionOverride?: string,
+): Promise<TeamWindowInfo | null> {
   if (!team) return null;
   try {
-    const sessionName = (await tmux.getCurrentSessionName()) ?? team;
+    let sessionName = sessionOverride ?? (await tmux.getCurrentSessionName(team));
+    if (!sessionName) {
+      const teamConfig = await teamManager.getTeam(team);
+      sessionName = teamConfig?.tmuxSessionName ?? team;
+    }
     return await tmux.ensureTeamWindow(sessionName, team, cwd);
   } catch (err) {
     console.warn(`Warning: could not ensure team window for "${team}": ${err instanceof Error ? err.message : err}`);
@@ -542,7 +560,9 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
-  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+  const teamWindow = ctx.spawnIntoCurrentWindow
+    ? null
+    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
 
   let paneId: string;
   try {
@@ -684,6 +704,8 @@ export interface SpawnOptions {
   initialPrompt?: string;
   /** Override the role name for registration and duplicate-check (agent directory still resolves by `name`). */
   role?: string;
+  /** Explicit tmux session name to spawn into (overrides auto-detection). */
+  session?: string;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -826,6 +848,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
     spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
+    sessionOverride: options.session,
   };
 
   if (insideTmux) {

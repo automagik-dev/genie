@@ -50,6 +50,8 @@ export interface TeamConfig {
   nativeTeamParentSessionId?: string;
   /** Whether this team uses Claude Code native teams. */
   nativeTeamsEnabled?: boolean;
+  /** Tmux session name used by this team — single source of truth for all workers. */
+  tmuxSessionName?: string;
 }
 
 // ============================================================================
@@ -387,6 +389,12 @@ export async function pruneStaleWorktrees(_repoPath: string): Promise<void> {
       // Skip corrupted files
     }
   }
+}
+
+/** Update team config on disk (full overwrite). */
+export async function updateTeamConfig(name: string, config: TeamConfig): Promise<void> {
+  const filePath = teamFilePath(name);
+  await writeFile(filePath, JSON.stringify(config, null, 2));
 }
 
 /** Get a team by name. Returns null if not found. */
