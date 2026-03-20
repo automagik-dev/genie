@@ -826,8 +826,11 @@ async function buildSpawnParams(
     console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
   }
 
-  // Let Claude Code generate its own session ID — no UUID override needed.
-  // Folder-based session naming is handled by the session layer.
+  // Generate a session ID for Claude workers so we can resume by ID later.
+  // Stored in the agent registry on spawn for --resume on respawn.
+  if (params.provider === 'claude') {
+    params.sessionId = crypto.randomUUID();
+  }
 
   return { params, parentSessionId, spawnColor };
 }
@@ -889,7 +892,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     agentName,
     spawnColor,
     parentSessionId,
-    claudeSessionId: undefined,
+    claudeSessionId: validated.sessionId,
     otelRelayActive,
     now,
     transport: insideTmux ? 'tmux' : 'inline',
