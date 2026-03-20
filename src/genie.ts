@@ -36,6 +36,7 @@ import {
   handleWorkerSpawn,
   handleWorkerStop,
 } from './term-commands/agents.js';
+import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
@@ -131,6 +132,7 @@ registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
 registerHookNamespace(program);
+registerDbCommands(program);
 
 // ============================================================================
 // Top-level agent commands (promoted from genie agent namespace)

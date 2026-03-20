@@ -2,7 +2,6 @@
   "$schema": "https://unpkg.com/knip@5.85.0/schema.json",
   "project": ["src/**/*.ts"],
   "ignoreBinaries": ["tmux", "which"],
-  "ignore": ["src/lib/team-auto-spawn.ts", "src/lib/db.ts", "src/lib/db-migrations.ts"],
-  "ignoreDependencies": ["pgserve", "postgres"],
+  "ignore": ["src/lib/team-auto-spawn.ts"],
   "ignoreExportsUsedInFile": true
 }
