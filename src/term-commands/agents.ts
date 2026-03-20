@@ -290,6 +290,43 @@ function writeInbox(meta, text, summary) {
   writeFileSync(INBOX, JSON.stringify(messages, null, 2));
 }
 
+// Reset in_progress groups assigned to a dead worker and notify team-lead
+function handleDeadWorkerLiveness(workerId, meta) {
+  if (!meta || !meta.repoPath) return;
+  try {
+    const stateDir = join(meta.repoPath, '.genie', 'state');
+    let stateFiles;
+    try { stateFiles = readdirSync(stateDir).filter(f => f.endsWith('.json')); }
+    catch { return; }
+    for (const sf of stateFiles) {
+      const statePath = join(stateDir, sf);
+      try {
+        const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+        let modified = false;
+        for (const [groupName, group] of Object.entries(state.groups || {})) {
+          if (group.status !== 'in_progress' || !group.assignee) continue;
+          // Match: exact, or workerId ends with assignee (team-prefixed IDs)
+          if (group.assignee === workerId || workerId.endsWith('-' + group.assignee) ||
+              group.assignee === meta.agent || (meta.agent && workerId.endsWith('-' + meta.agent))) {
+            group.status = 'ready';
+            delete group.assignee;
+            delete group.startedAt;
+            state.updatedAt = new Date().toISOString();
+            modified = true;
+            const agentLabel = meta.agent || workerId;
+            writeInbox(
+              { agent: 'genie-relay', color: 'red' },
+              'Agent ' + agentLabel + ' crashed while working on group ' + groupName + ' of wish ' + state.wish + '. Group has been reset to ready for retry.',
+              '[crash] ' + agentLabel + ' crashed on ' + state.wish + '#' + groupName + '. Reset to ready.'
+            );
+          }
+        }
+        if (modified) writeFileSync(statePath, JSON.stringify(state, null, 2));
+      } catch {}
+    }
+  } catch {}
+}
+
 // Clean up dead panes every 30s
 setInterval(() => {
   let paneFiles;
@@ -302,6 +339,9 @@ setInterval(() => {
       execSync(\`tmux display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
     } catch {
       const workerId = file.replace(/-pane$/, '');
+      // Read meta before cleanup (for liveness reset)
+      let meta = null;
+      try { meta = JSON.parse(readFileSync(join(RELAY_DIR, workerId + '-meta'), 'utf-8')); } catch {}
       for (const suffix of ['-pane', '-meta']) {
         try { unlinkSync(join(RELAY_DIR, workerId + suffix)); } catch {}
       }
@@ -309,6 +349,8 @@ setInterval(() => {
       workerFirstSeen.delete(workerId);
       bootstrapDone.delete(workerId);
       stoppedWorkers.add(workerId);
+      // Liveness check: reset in_progress groups assigned to this dead worker
+      handleDeadWorkerLiveness(workerId, meta);
     }
   }
   try {
@@ -453,13 +495,19 @@ async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
   });
 }
 
-function registerOtelRelayPane(workerId: string, paneId: string, agentName: string, spawnColor: string): void {
+function registerOtelRelayPane(
+  workerId: string,
+  paneId: string,
+  agentName: string,
+  spawnColor: string,
+  repoPath?: string,
+): void {
   const { writeFileSync: wfs } = require('node:fs');
   const { join: pjoin } = require('node:path');
   const { homedir: hdir } = require('node:os');
   const rd = pjoin(hdir(), '.genie', 'relay');
   wfs(pjoin(rd, `${workerId}-pane`), paneId);
-  wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor }));
+  wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor, repoPath }));
 }
 
 function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Agent): void {
@@ -594,7 +642,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   });
 
   if (ctx.otelRelayActive && paneId !== '%0') {
-    registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
+    registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor, ctx.cwd);
   }
 
   if (teamWindow) {
