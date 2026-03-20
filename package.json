@@ -56,5 +56,5 @@
   "publishConfig": {
     "access": "public"
   },
-  "trustedDependencies": ["@biomejs/biome"]
+  "trustedDependencies": ["@biomejs/biome", "bun"]
 }
