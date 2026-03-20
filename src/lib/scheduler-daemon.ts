@@ -76,17 +76,19 @@ export interface SchedulerDeps {
 // Logging
 // ============================================================================
 
-const LOG_DIR = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'logs');
-const LOG_FILE = join(LOG_DIR, 'scheduler.log');
+function getLogDir(): string {
+  return join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'logs');
+}
 
-function ensureLogDir(): void {
-  mkdirSync(LOG_DIR, { recursive: true });
+function getLogFile(): string {
+  return join(getLogDir(), 'scheduler.log');
 }
 
 /** Append a structured JSON log entry to the scheduler log file. */
 export function logToFile(entry: LogEntry): void {
-  ensureLogDir();
-  appendFileSync(LOG_FILE, `${JSON.stringify(entry)}\n`);
+  const logDir = getLogDir();
+  mkdirSync(logDir, { recursive: true });
+  appendFileSync(getLogFile(), `${JSON.stringify(entry)}\n`);
 }
 
 // ============================================================================
@@ -371,6 +373,7 @@ export function startDaemon(
 
   let running = true;
   let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  let pollResolve: (() => void) | null = null;
   let listenConnection: SqlClient | null = null;
 
   const stop = () => {
@@ -378,6 +381,11 @@ export function startDaemon(
     if (pollTimeout) {
       clearTimeout(pollTimeout);
       pollTimeout = null;
+    }
+    // Resolve the pending poll promise so the loop exits
+    if (pollResolve) {
+      pollResolve();
+      pollResolve = null;
     }
     if (listenConnection) {
       listenConnection.end().catch(() => {});
@@ -463,8 +471,10 @@ export function startDaemon(
     // Poll loop as fallback safety net
     while (running) {
       await new Promise<void>((resolve) => {
+        pollResolve = resolve;
         pollTimeout = setTimeout(resolve, config.pollIntervalMs);
       });
+      pollResolve = null;
 
       if (!running) break;
       await processTriggers();
