@@ -65,13 +65,13 @@ describe('buildSpawnCommand with claude launcher', () => {
     expect(command).toBe("claude --session-id 'ghi-789'");
   });
 
-  test('builds command with continue instead of session-id', () => {
+  test('builds command with resume instead of session-id', () => {
     const profile = makeProfile({
       launcher: 'claude',
       claudeArgs: ['--dangerously-skip-permissions'],
     });
     const command = buildSpawnCommand(profile, { resume: 'abc-123' });
-    expect(command).toBe("claude '--dangerously-skip-permissions' --continue 'abc-123'");
+    expect(command).toBe("claude '--dangerously-skip-permissions' --resume 'abc-123'");
   });
 });
 

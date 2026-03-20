@@ -194,11 +194,11 @@ async function createSession(
 }
 
 /**
- * Launch Claude Code in a tmux pane with --continue fallback.
+ * Launch Claude Code in a tmux pane with --resume fallback.
  *
- * Tries --continue first (preserves conversation history). Waits ~3 seconds,
- * then checks #{pane_current_command} — if the pane shows a shell, --continue
- * failed (no prior conversation) so we retry fresh without --continue.
+ * Tries --resume first (preserves conversation history). Waits ~3 seconds,
+ * then checks #{pane_current_command} — if the pane shows a shell, --resume
+ * failed (no prior session) so we retry fresh without --resume.
  */
 async function launchWithContinueFallback(
   target: string,
@@ -209,17 +209,17 @@ async function launchWithContinueFallback(
   const continueCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
   const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
 
-  // Try --continue first (preserves conversation history)
+  // Try --resume first (preserves conversation history)
   await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(continueCmd)} Enter`);
 
   // Wait briefly then check if CC is running or fell back to shell
-  // CC fails fast on missing conversations (~1s), 3s is conservative
+  // CC fails fast on missing sessions (~1s), 3s is conservative
   await new Promise((r) => setTimeout(r, 3000));
   const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
 
   if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
-    // --continue failed, start fresh
-    console.log('No prior conversation found, starting fresh session...');
+    // --resume failed, start fresh
+    console.log('No prior session found, starting fresh session...');
     await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
   }
 }

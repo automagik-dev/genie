@@ -2,12 +2,19 @@
  * State commands — CLI interface for wish state machine.
  *
  * Commands:
- *   genie done <slug>#<group>    - Mark group as done, unblock dependents
+ *   genie done <slug>#<group>    - Mark group as done, unblock dependents,
+ *                                  push work, notify team-lead on wave completion,
+ *                                  and auto-kill the calling agent's tmux pane.
  *   genie status <slug>          - Pretty-print wish state overview
  */
 
+import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import * as wishState from '../lib/wish-state.js';
+import { parseExecutionStrategy } from './dispatch.js';
 
 // ============================================================================
 // Helpers
@@ -58,11 +65,117 @@ function padRight(str: string, len: number): string {
 }
 
 // ============================================================================
+// Wave Detection
+// ============================================================================
+
+/**
+ * Detect which wave a group belongs to and whether all groups in that wave are done.
+ * Returns the wave name and list of groups if the wave is complete, null otherwise.
+ */
+export async function detectWaveCompletion(
+  slug: string,
+  groupName: string,
+  cwd?: string,
+): Promise<{ waveName: string; waveGroups: string[] } | null> {
+  const base = cwd ?? process.cwd();
+  const wishPath = join(base, '.genie', 'wishes', slug, 'WISH.md');
+  if (!existsSync(wishPath)) return null;
+
+  const content = await readFile(wishPath, 'utf-8');
+  const waves = parseExecutionStrategy(content);
+
+  // Find which wave contains this group
+  const targetWave = waves.find((w) => w.groups.some((g) => g.group === groupName));
+  if (!targetWave) return null;
+
+  // Check if all groups in this wave are now done
+  const state = await wishState.getState(slug, cwd);
+  if (!state) return null;
+
+  const waveGroupNames = targetWave.groups.map((g) => g.group);
+  const allDone = waveGroupNames.every((g) => state.groups[g]?.status === 'done');
+
+  if (!allDone) return null;
+  return { waveName: targetWave.name, waveGroups: waveGroupNames };
+}
+
+// ============================================================================
+// Push Enforcement
+// ============================================================================
+
+/**
+ * Ensure all work is committed and pushed before exiting.
+ * 1. If working tree is dirty → commit as WIP
+ * 2. If there are unpushed commits → push
+ */
+export async function ensureWorkPushed(slug: string, group: string): Promise<void> {
+  // 1. Commit dirty working tree as WIP
+  try {
+    const porcelain = execSync('git status --porcelain', { encoding: 'utf-8' }).trim();
+    if (porcelain) {
+      console.log('   Committing dirty working tree...');
+      execSync('git add -A', { encoding: 'utf-8' });
+      execSync(`git commit -m "wip: ${slug}#${group}"`, { encoding: 'utf-8' });
+      console.log(`   Committed as "wip: ${slug}#${group}"`);
+    }
+  } catch {
+    // git status or commit failed — may not be in a git repo
+  }
+
+  // 2. Push unpushed commits
+  try {
+    const unpushed = execSync('git log @{u}..HEAD --oneline', { encoding: 'utf-8' }).trim();
+    if (unpushed) {
+      console.log('   Pushing unpushed commits...');
+      execSync('git push', { encoding: 'utf-8', timeout: 30000 });
+      console.log('   Push complete.');
+    }
+  } catch {
+    // No upstream tracking or push failed — best-effort
+    try {
+      // Try pushing with --set-upstream for new branches
+      const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf-8' }).trim();
+      if (branch && branch !== 'HEAD') {
+        execSync(`git push -u origin ${branch}`, { encoding: 'utf-8', timeout: 30000 });
+        console.log('   Push complete (set upstream).');
+      }
+    } catch {
+      console.log('   ⚠️ Push failed — manual push may be needed.');
+    }
+  }
+}
+
+// ============================================================================
+// Pane Auto-Kill
+// ============================================================================
+
+/**
+ * Kill the calling agent's tmux pane. If not in tmux, exit the process.
+ */
+export function autoKillPane(): void {
+  const paneId = process.env.TMUX_PANE;
+  if (paneId) {
+    // Small delay to ensure all output is flushed before killing the pane
+    setTimeout(() => {
+      try {
+        execSync(`tmux kill-pane -t '${paneId}'`, { encoding: 'utf-8' });
+      } catch {
+        // Pane already dead or not in tmux
+        process.exit(0);
+      }
+    }, 1000);
+  } else {
+    process.exit(0);
+  }
+}
+
+// ============================================================================
 // Commands
 // ============================================================================
 
 /**
- * `genie done <slug>#<group>` — complete a group and unblock dependents.
+ * `genie done <slug>#<group>` — complete a group, push work, notify team-lead
+ * on wave completion, and auto-kill the calling agent's tmux pane.
  */
 export async function doneCommand(ref: string): Promise<void> {
   try {
@@ -85,6 +198,27 @@ export async function doneCommand(ref: string): Promise<void> {
         console.log(`   Unblocked: ${nowReady.join(', ')}`);
       }
     }
+
+    // Push enforcement: commit dirty tree + push unpushed commits
+    await ensureWorkPushed(slug, group);
+
+    // Wave completion detection + team-lead notification
+    const waveResult = await detectWaveCompletion(slug, group);
+    if (waveResult) {
+      console.log(`   🌊 ${waveResult.waveName} complete! All groups done: ${waveResult.waveGroups.join(', ')}`);
+      try {
+        const protocolRouter = await import('../lib/protocol-router.js');
+        const repoPath = process.cwd();
+        const message = `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
+        await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
+        console.log('   Notified team-lead of wave completion.');
+      } catch {
+        console.log('   ⚠️ Could not notify team-lead (messaging unavailable).');
+      }
+    }
+
+    // Auto-kill the calling agent's tmux pane
+    autoKillPane();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`❌ ${message}`);
