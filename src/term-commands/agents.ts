@@ -3,6 +3,7 @@
  *
  * Exported handlers (registered in genie.ts as top-level commands):
  *   handleWorkerSpawn  - genie spawn <name>
+ *   handleWorkerResume - genie resume <name> / genie resume --all
  *   handleWorkerKill   - genie kill <name>
  *   handleWorkerStop   - genie stop <name>
  *   handleLsCommand    - genie ls
@@ -439,6 +440,8 @@ interface SpawnCtx {
   spawnIntoCurrentWindow: boolean;
   /** Explicit tmux session name override (from --session flag). */
   sessionOverride?: string;
+  /** Auto-resume on pane death (default true, false disables). */
+  autoResume?: boolean;
 }
 
 async function registerSpawnWorker(
@@ -470,6 +473,9 @@ async function registerSpawnWorker(
     window: windowInfo?.windowName,
     windowName: windowInfo?.windowName,
     windowId: windowInfo?.windowId,
+    // Resume tracking
+    autoResume: ctx.autoResume === false ? false : undefined,
+    resumeAttempts: 0,
   };
   await registry.register(workerEntry);
   return workerEntry;
@@ -754,6 +760,8 @@ export interface SpawnOptions {
   role?: string;
   /** Explicit tmux session name to spawn into (overrides auto-detection). */
   session?: string;
+  /** Auto-resume on pane death (default true, set to false by --no-auto-resume). */
+  autoResume?: boolean;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -900,6 +908,7 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     cwd: agent.repoPath,
     spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
     sessionOverride: options.session,
+    autoResume: options.autoResume,
   };
 
   if (insideTmux) {
@@ -1027,6 +1036,168 @@ export async function handleWorkerStop(name: string): Promise<void> {
   } else {
     console.error(`Failed to stop agent "${w.id}".`);
     process.exit(1);
+  }
+}
+
+/** Check if an agent is eligible for resume (suspended/error, has session, pane dead). */
+async function isResumeEligible(w: registry.Agent): Promise<boolean> {
+  return (
+    (w.state === 'suspended' || w.state === 'error') && Boolean(w.claudeSessionId) && !(await isPaneAlive(w.paneId))
+  );
+}
+
+/** Resume all eligible agents (--all mode). */
+async function resumeAllAgents(): Promise<void> {
+  const workers = await registry.list();
+  const toResume: registry.Agent[] = [];
+  for (const w of workers) {
+    if (await isResumeEligible(w)) toResume.push(w);
+  }
+
+  if (toResume.length === 0) {
+    console.log('No eligible agents to resume.');
+    return;
+  }
+
+  console.log(`Resuming ${toResume.length} agent(s)...`);
+  for (const w of toResume) {
+    try {
+      await resumeAgent(w);
+    } catch (err) {
+      console.error(`  Failed to resume "${w.id}": ${err instanceof Error ? err.message : err}`);
+    }
+  }
+}
+
+/**
+ * genie resume <name> — Resume a suspended/failed agent with its Claude session.
+ * genie resume --all  — Resume all eligible agents.
+ */
+export async function handleWorkerResume(name: string | undefined, options: { all?: boolean }): Promise<void> {
+  if (options.all) return resumeAllAgents();
+
+  if (!name) {
+    console.error('Error: provide an agent name, or use --all to resume all eligible agents.');
+    process.exit(1);
+  }
+
+  const w = await resolveWorkerByName(name);
+
+  if (!w.claudeSessionId) {
+    console.error(`Error: Agent "${w.id}" has no Claude session ID — cannot resume.`);
+    console.error('  Only agents spawned with the Claude provider have resumable sessions.');
+    process.exit(1);
+  }
+
+  if (await isPaneAlive(w.paneId)) {
+    console.log(`Agent "${w.id}" is already running (pane ${w.paneId} is alive).`);
+    return;
+  }
+
+  await resumeAgent(w);
+}
+
+/** Build SpawnParams for a resume operation from agent + template. */
+function buildResumeParams(agent: registry.Agent, template: registry.WorkerTemplate | undefined): SpawnParams {
+  const agentName = agent.role ?? agent.id;
+  const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
+  const team = template?.team ?? agent.team ?? 'genie';
+
+  return {
+    provider,
+    team,
+    role: agentName,
+    skill: template?.skill ?? agent.skill,
+    extraArgs: template?.extraArgs,
+    // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
+    resume: agent.claudeSessionId!,
+    name: `${team}-${agentName}`,
+  };
+}
+
+/**
+ * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
+ * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
+ */
+async function resumeAgent(agent: registry.Agent): Promise<void> {
+  const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
+
+  await registry.update(agent.id, { resumeAttempts: 0 });
+
+  const params = buildResumeParams(agent, template);
+
+  if (agent.nativeTeamEnabled) {
+    const nativeResult = await resolveNativeTeam(params.team, agent.repoPath, {
+      provider: params.provider,
+      role: params.role,
+      color: agent.nativeColor,
+    });
+    if (nativeResult.nativeTeam) params.nativeTeam = nativeResult.nativeTeam;
+  }
+
+  const validated = validateSpawnParams(params);
+  const launch = buildLaunchCommand(validated);
+  const fullCommand = prependEnvVars(launch.command, launch.env);
+  const now = new Date().toISOString();
+
+  if (!process.env.TMUX) {
+    console.error('Error: resume requires tmux. Start a tmux session first.');
+    process.exit(1);
+  }
+
+  const ctx: SpawnCtx = {
+    workerId: agent.id,
+    validated,
+    launch,
+    layoutMode: resolveLayoutMode(undefined),
+    fullCommand,
+    agentName: agent.role ?? agent.id,
+    spawnColor: agent.nativeColor ?? 'blue',
+    parentSessionId: agent.parentSessionId ?? `genie-${params.team}`,
+    claudeSessionId: agent.claudeSessionId,
+    otelRelayActive: false,
+    now,
+    transport: 'tmux',
+    extraArgs: template?.extraArgs,
+    cwd: template?.cwd ?? agent.repoPath,
+    spawnIntoCurrentWindow: false,
+    autoResume: agent.autoResume,
+  };
+
+  const teamWindow = await resolveSpawnTeamWindow(validated.team, ctx.cwd);
+
+  let paneId: string;
+  try {
+    paneId = createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    process.exit(1);
+  }
+
+  await applySpawnLayout(ctx, teamWindow);
+
+  await registry.update(agent.id, {
+    paneId,
+    state: 'spawning',
+    startedAt: now,
+    lastStateChange: now,
+    suspendedAt: undefined,
+    windowName: teamWindow?.windowName,
+    windowId: teamWindow?.windowId,
+    window: teamWindow?.windowName,
+  });
+
+  await notifySpawnJoin(ctx, paneId);
+
+  if (ctx.spawnColor && paneId !== 'inline') {
+    await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
+  }
+
+  console.log(`Agent "${agent.id}" resumed.`);
+  console.log(`  Session:  ${agent.claudeSessionId}`);
+  console.log(`  Pane:     ${paneId}`);
+  if (teamWindow) {
+    console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
   }
 }
 
