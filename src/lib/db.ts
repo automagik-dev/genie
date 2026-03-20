@@ -11,6 +11,7 @@ import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MultiTenantRouter } from 'pgserve';
+import { runMigrations } from './db-migrations.js';
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
@@ -158,6 +159,9 @@ export async function getConnection() {
     idle_timeout: 30,
     connect_timeout: 10,
   });
+
+  // Run pending migrations on first connect
+  await runMigrations(sqlClient);
 
   return sqlClient;
 }
