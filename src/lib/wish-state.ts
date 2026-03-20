@@ -302,6 +302,33 @@ export async function resetGroup(slug: string, groupName: string, cwd?: string):
   });
 }
 
+/**
+ * Find a group assigned to a specific worker that is currently in_progress.
+ * Searches all groups in the wish state for an assignee match.
+ *
+ * Matching strategy: checks if the group's assignee matches workerId exactly,
+ * or if workerId ends with the assignee (to handle team-prefixed worker IDs
+ * like "fire-and-forget-engineer" matching assignee "engineer").
+ *
+ * @public - consumed by OTel relay liveness check (Group 4 deliverable)
+ */
+export async function findGroupByAssignee(
+  slug: string,
+  workerId: string,
+  cwd?: string,
+): Promise<{ groupName: string; group: GroupState } | null> {
+  const state = await getState(slug, cwd);
+  if (!state) return null;
+
+  for (const [groupName, group] of Object.entries(state.groups)) {
+    if (group.status !== 'in_progress' || !group.assignee) continue;
+    if (group.assignee === workerId) return { groupName, group: { ...group } };
+    // Handle team-prefixed IDs: "team-engineer" matches assignee "engineer"
+    if (workerId.endsWith(`-${group.assignee}`)) return { groupName, group: { ...group } };
+  }
+  return null;
+}
+
 /** Read current state. Lockless by design — reads are eventually consistent. */
 export async function getState(slug: string, cwd?: string): Promise<WishState | null> {
   const statePath = getStatePath(slug, cwd);

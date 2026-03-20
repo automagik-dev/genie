@@ -91,7 +91,7 @@ async function findLiveWorkerFuzzy(recipientId: string): Promise<registry.Agent 
 
 /**
  * Ensure a worker is alive, auto-spawning from template if needed.
- * Handles suspended workers by resuming with --continue flag.
+ * Handles suspended workers by resuming with --resume <session-id>.
  */
 async function ensureWorkerAlive(
   worker: registry.Agent | null,
@@ -120,10 +120,10 @@ async function ensureWorkerAlive(
   });
   if (!template) return null;
 
-  // Derive continue name from template metadata — matches the --name value
-  // set during spawn (${team}-${role}). Claude Code's --continue resumes by name.
-  const continueName =
-    template.provider === 'claude' && template.role ? `${template.team}-${template.role}` : undefined;
+  // Use stored Claude session ID for --resume (session-id based, not name-based).
+  // Falls back to undefined (fresh session) if no prior session ID exists.
+  const resumeSessionId =
+    template.provider === 'claude' && worker?.claudeSessionId ? worker.claudeSessionId : undefined;
 
   try {
     // Clean up ghost worker entries (dead panes) for this role before spawning
@@ -134,7 +134,7 @@ async function ensureWorkerAlive(
     }
 
     const { spawnWorkerFromTemplate } = await import('./protocol-router-spawn.js');
-    const result = await spawnWorkerFromTemplate(template, continueName);
+    const result = await spawnWorkerFromTemplate(template, resumeSessionId);
 
     await registry.saveTemplate({
       ...template,
@@ -273,7 +273,7 @@ export async function sendMessage(
   const { resolve } = await import('./agent-directory.js');
   const dirResolved = await resolve(to);
 
-  // Also check worker registry for session context (provides claudeSessionId for resume)
+  // Also check worker registry for session context (provides claudeSessionId for --resume)
   let worker = await registry.get(to);
   if (!worker) {
     const allWorkers = await registry.list();

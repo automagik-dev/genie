@@ -152,6 +152,7 @@ program
   .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
   .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
   .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
+  .option('--session <session>', 'Tmux session name to spawn into')
   .action(async (name: string, options: SpawnOptions) => {
     try {
       await handleWorkerSpawn(name, options);

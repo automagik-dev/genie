@@ -36,14 +36,35 @@ export async function executeTmux(tmuxCommand: string): Promise<string> {
 }
 
 /**
- * Get the current tmux session name (requires running inside tmux).
- * Returns null if not inside a tmux session.
+ * Get the current tmux session name.
+ *
+ * Fallback chain:
+ *   1. TMUX env → display-message (running inside tmux)
+ *   2. `tmux list-sessions` → first session (tmux server running, but invoked outside)
+ *
+ * The optional `hint` parameter biases step 2: if a session name contains
+ * the hint, it is preferred over the first match.
  */
-export async function getCurrentSessionName(): Promise<string | null> {
-  if (!process.env.TMUX) return null;
+export async function getCurrentSessionName(hint?: string): Promise<string | null> {
+  // 1. Inside tmux — authoritative
+  if (process.env.TMUX) {
+    try {
+      const name = (await executeTmux("display-message -p '#{session_name}'")).trim();
+      return name || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // 2. Outside tmux — try list-sessions fallback
   try {
-    const name = (await executeTmux("display-message -p '#{session_name}'")).trim();
-    return name || null;
+    const sessions = await listSessions();
+    if (sessions.length === 0) return null;
+    if (hint) {
+      const match = sessions.find((s) => s.name.includes(hint));
+      if (match) return match.name;
+    }
+    return sessions[0].name;
   } catch {
     return null;
   }

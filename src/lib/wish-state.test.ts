@@ -6,6 +6,7 @@ import {
   type GroupDefinition,
   completeGroup,
   createState,
+  findGroupByAssignee,
   getGroupState,
   getState,
   resetGroup,
@@ -407,6 +408,79 @@ describe('wish-state', () => {
       const result = await startGroup('test-wish', '1', 'agent-b', cwd);
       expect(result.status).toBe('in_progress');
       expect(result.assignee).toBe('agent-b');
+    });
+  });
+
+  // ============================================================================
+  // findGroupByAssignee
+  // ============================================================================
+
+  describe('findGroupByAssignee', () => {
+    test('finds group by exact assignee match', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.groupName).toBe('1');
+      expect(result?.group.status).toBe('in_progress');
+      expect(result?.group.assignee).toBe('agent-a');
+    });
+
+    test('finds group by team-prefixed workerId', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'engineer', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'fire-and-forget-engineer', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.groupName).toBe('1');
+      expect(result?.group.assignee).toBe('engineer');
+    });
+
+    test('returns null when no matching assignee', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-b', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('returns null for nonexistent slug', async () => {
+      const result = await findGroupByAssignee('nonexistent', 'agent-a', cwd);
+      expect(result).toBeNull();
+    });
+
+    test('ignores done groups', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+      await startGroup('test-wish', '1', 'agent-a', cwd);
+      await completeGroup('test-wish', '1', cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('ignores ready groups', async () => {
+      await createState('test-wish', sampleGroups, cwd);
+
+      const result = await findGroupByAssignee('test-wish', 'agent-a', cwd);
+
+      expect(result).toBeNull();
+    });
+
+    test('returns first matching in_progress group', async () => {
+      const groups: GroupDefinition[] = [{ name: 'a' }, { name: 'b' }];
+      await createState('multi', groups, cwd);
+      await startGroup('multi', 'a', 'agent-a', cwd);
+      await startGroup('multi', 'b', 'agent-a', cwd);
+
+      const result = await findGroupByAssignee('multi', 'agent-a', cwd);
+
+      expect(result).not.toBeNull();
+      expect(result?.group.status).toBe('in_progress');
     });
   });
 });
