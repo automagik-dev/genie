@@ -1,0 +1,960 @@
+/**
+ * Scheduler Daemon — Core loop that claims and fires triggers from pgserve.
+ *
+ * Architecture:
+ *   - LISTEN on `genie_trigger_due` for real-time notifications
+ *   - 30s poll fallback as safety net (if NOTIFY is missed)
+ *   - SELECT FOR UPDATE SKIP LOCKED for lease-based claiming
+ *   - Idempotency keys prevent double-fire
+ *   - Global concurrency cap via GENIE_MAX_CONCURRENT
+ *   - Jitter on batch catch-up (>3 triggers at once) to prevent thundering herd
+ *   - Structured JSON logging to ~/.genie/logs/scheduler.log
+ *   - trace_id propagation into spawned agent environment
+ *   - Reboot recovery: reclaim expired leases, reconcile orphaned runs
+ *   - Heartbeat collection every 60s: pane liveness + agent state
+ *   - Machine snapshot every 60s: workers, teams, tmux sessions, CPU/memory
+ *   - Orphan reconciliation every 5m: mark dead runs as failed after 2 missed heartbeats
+ */
+
+import { randomUUID } from 'node:crypto';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { computeNextCronDue, parseDuration } from './cron.js';
+import { type RunSpec, resolveRunSpec } from './run-spec.js';
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export interface SchedulerConfig {
+  /** Maximum concurrent runs. Default: 5. Overridden by GENIE_MAX_CONCURRENT. */
+  maxConcurrent: number;
+  /** Poll interval in ms. Default: 30000 (30s). */
+  pollIntervalMs: number;
+  /** Maximum jitter in ms for batch catch-up. Default: 30000 (30s). */
+  maxJitterMs: number;
+  /** Batch trigger threshold — jitter is applied when more than this many fire at once. */
+  jitterThreshold: number;
+  /** Heartbeat collection interval in ms. Default: 60000 (60s). */
+  heartbeatIntervalMs: number;
+  /** Orphan reconciliation interval in ms. Default: 300000 (5m). */
+  orphanCheckIntervalMs: number;
+  /** Number of consecutive dead heartbeats before marking a run as failed. Default: 2. */
+  deadHeartbeatThreshold: number;
+}
+
+interface TriggerRow {
+  id: string;
+  schedule_id: string;
+  due_at: Date;
+  status: string;
+  idempotency_key: string | null;
+  leased_by: string | null;
+  leased_until: Date | null;
+}
+
+interface ScheduleRow {
+  id: string;
+  name: string;
+  command: string | null;
+  run_spec: RunSpec | Record<string, never>;
+  status: string;
+  cron_expression: string | null;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  event: string;
+  [key: string]: unknown;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
+type SqlClient = any;
+
+/** Dependency injection interface for testing. */
+export interface SchedulerDeps {
+  getConnection: () => Promise<SqlClient>;
+  spawnCommand: (command: string, env: Record<string, string>) => Promise<{ pid: number | undefined }>;
+  log: (entry: LogEntry) => void;
+  generateId: () => string;
+  now: () => Date;
+  sleep: (ms: number) => Promise<void>;
+  jitter: (maxMs: number) => number;
+  /** Check if a tmux pane is still alive. Used for heartbeat collection and orphan detection. */
+  isPaneAlive: (paneId: string) => Promise<boolean>;
+  /** List registered workers from the agent registry. */
+  listWorkers: () => Promise<{ id: string; paneId: string; state: string; team?: string }[]>;
+  /** Count active tmux sessions. */
+  countTmuxSessions: () => Promise<number>;
+}
+
+// ============================================================================
+// Logging
+// ============================================================================
+
+function getLogDir(): string {
+  return join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'logs');
+}
+
+function getLogFile(): string {
+  return join(getLogDir(), 'scheduler.log');
+}
+
+/** Append a structured JSON log entry to the scheduler log file. */
+export function logToFile(entry: LogEntry): void {
+  const logDir = getLogDir();
+  mkdirSync(logDir, { recursive: true });
+  appendFileSync(getLogFile(), `${JSON.stringify(entry)}\n`);
+}
+
+// ============================================================================
+// Default dependencies (production)
+// ============================================================================
+
+async function defaultSpawnCommand(command: string, env: Record<string, string>): Promise<{ pid: number | undefined }> {
+  const proc = Bun.spawn(['sh', '-c', command], {
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'ignore', 'ignore'],
+  });
+  return { pid: proc.pid };
+}
+
+function defaultJitter(maxMs: number): number {
+  return Math.floor(Math.random() * maxMs);
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function defaultIsPaneAlive(paneId: string): Promise<boolean> {
+  const { isPaneAlive } = await import('./tmux.js');
+  return isPaneAlive(paneId);
+}
+
+async function defaultListWorkers(): Promise<{ id: string; paneId: string; state: string; team?: string }[]> {
+  const { list } = await import('./agent-registry.js');
+  const agents = await list();
+  return agents.map((a) => ({ id: a.id, paneId: a.paneId, state: a.state, team: a.team }));
+}
+
+async function defaultCountTmuxSessions(): Promise<number> {
+  try {
+    const { execSync } = await import('node:child_process');
+    const output = execSync('tmux list-sessions 2>/dev/null', { encoding: 'utf-8' });
+    return output.trim().split('\n').filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
+
+function createDefaultDeps(): SchedulerDeps {
+  return {
+    getConnection: async () => {
+      const { getConnection } = await import('./db.js');
+      return getConnection();
+    },
+    spawnCommand: defaultSpawnCommand,
+    log: logToFile,
+    generateId: randomUUID,
+    now: () => new Date(),
+    sleep: defaultSleep,
+    jitter: defaultJitter,
+    isPaneAlive: defaultIsPaneAlive,
+    listWorkers: defaultListWorkers,
+    countTmuxSessions: defaultCountTmuxSessions,
+  };
+}
+
+// ============================================================================
+// Default config
+// ============================================================================
+
+function resolveConfig(overrides?: Partial<SchedulerConfig>): SchedulerConfig {
+  const envMax = process.env.GENIE_MAX_CONCURRENT;
+  const maxConcurrent = envMax ? Number.parseInt(envMax, 10) : 5;
+
+  return {
+    maxConcurrent: overrides?.maxConcurrent ?? (Number.isNaN(maxConcurrent) ? 5 : maxConcurrent),
+    pollIntervalMs: overrides?.pollIntervalMs ?? 30_000,
+    maxJitterMs: overrides?.maxJitterMs ?? 30_000,
+    jitterThreshold: overrides?.jitterThreshold ?? 3,
+    heartbeatIntervalMs: overrides?.heartbeatIntervalMs ?? 60_000,
+    orphanCheckIntervalMs: overrides?.orphanCheckIntervalMs ?? 300_000,
+    deadHeartbeatThreshold: overrides?.deadHeartbeatThreshold ?? 2,
+  };
+}
+
+// ============================================================================
+// Core: claim and fire triggers
+// ============================================================================
+
+/**
+ * Claim due triggers using SELECT FOR UPDATE SKIP LOCKED.
+ * Returns claimed trigger rows (already marked as 'executing' in a transaction).
+ */
+export async function claimDueTriggers(
+  deps: SchedulerDeps,
+  config: SchedulerConfig,
+  daemonId: string,
+): Promise<TriggerRow[]> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+  const leaseUntil = new Date(now.getTime() + 300_000); // 5m default lease
+
+  // Check current running count against global cap
+  const runningResult = await sql`
+    SELECT count(*)::int AS cnt FROM runs
+    WHERE status IN ('leased', 'running')
+  `;
+  const runningCount = runningResult[0]?.cnt ?? 0;
+  const available = Math.max(0, config.maxConcurrent - runningCount);
+
+  if (available === 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'concurrency_cap_reached',
+      running: runningCount,
+      max: config.maxConcurrent,
+    });
+    return [];
+  }
+
+  const limit = Math.min(available, 5);
+
+  // Atomic claim: select + update in one transaction
+  const claimed = await sql.begin(async (tx: SqlClient) => {
+    const rows: TriggerRow[] = await tx`
+      SELECT id, schedule_id, due_at, status, idempotency_key, leased_by, leased_until
+      FROM triggers
+      WHERE status = 'pending' AND due_at <= ${now}
+      ORDER BY due_at ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT ${limit}
+    `;
+
+    if (rows.length === 0) return [];
+
+    const ids = rows.map((r: TriggerRow) => r.id);
+    await tx`
+      UPDATE triggers
+      SET status = 'executing',
+          leased_by = ${daemonId},
+          leased_until = ${leaseUntil},
+          started_at = ${now}
+      WHERE id = ANY(${ids})
+    `;
+
+    return rows;
+  });
+
+  if (claimed.length > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'triggers_claimed',
+      count: claimed.length,
+      ids: claimed.map((t: TriggerRow) => t.id),
+      daemon_id: daemonId,
+    });
+  }
+
+  return claimed;
+}
+
+/**
+ * Compute the next due_at for a recurring schedule and insert a new pending trigger.
+ * Returns without inserting if the schedule is one-shot (@once) or has no cron_expression.
+ */
+async function maybeCreateNextTrigger(
+  sql: SqlClient,
+  deps: SchedulerDeps,
+  schedule: ScheduleRow,
+  now: Date,
+): Promise<void> {
+  if (!schedule.cron_expression || schedule.cron_expression === '@once') return;
+
+  let nextDueAt: Date | null = null;
+
+  if (schedule.cron_expression.startsWith('@every ')) {
+    const durationStr = schedule.cron_expression.slice(7).trim();
+    try {
+      const intervalMs = parseDuration(durationStr);
+      nextDueAt = new Date(now.getTime() + intervalMs);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'invalid_interval',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  } else {
+    try {
+      nextDueAt = computeNextCronDue(schedule.cron_expression, now);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'cron_computation_failed',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  }
+
+  if (nextDueAt) {
+    const nextTriggerId = deps.generateId();
+    await sql`
+      INSERT INTO triggers (id, schedule_id, due_at, status)
+      VALUES (${nextTriggerId}, ${schedule.id}, ${nextDueAt.toISOString()}, 'pending')
+    `;
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'next_trigger_created',
+      trigger_id: nextTriggerId,
+      schedule_id: schedule.id,
+      due_at: nextDueAt.toISOString(),
+    });
+  }
+}
+
+/**
+ * Fire a single claimed trigger: resolve RunSpec, spawn command, record run.
+ */
+export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daemonId: string): Promise<void> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+  const traceId = deps.generateId();
+  const runId = deps.generateId();
+
+  // Check idempotency
+  if (trigger.idempotency_key) {
+    // Query for OTHER triggers with the same key that already fired
+    const dupeResult = await sql`
+      SELECT 1 FROM triggers
+      WHERE idempotency_key = ${trigger.idempotency_key}
+        AND id != ${trigger.id}
+        AND status IN ('executing', 'completed')
+      LIMIT 1
+    `;
+    if (dupeResult.length > 0) {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'idempotency_skip',
+        trigger_id: trigger.id,
+        idempotency_key: trigger.idempotency_key,
+      });
+      await sql`UPDATE triggers SET status = 'skipped', completed_at = ${now} WHERE id = ${trigger.id}`;
+      return;
+    }
+  }
+
+  // Load schedule to get command + run_spec
+  const scheduleRows = await sql<ScheduleRow[]>`
+    SELECT id, name, command, run_spec, status, cron_expression FROM schedules WHERE id = ${trigger.schedule_id}
+  `;
+
+  if (scheduleRows.length === 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'error',
+      event: 'schedule_not_found',
+      trigger_id: trigger.id,
+      schedule_id: trigger.schedule_id,
+    });
+    await sql`UPDATE triggers SET status = 'failed', completed_at = ${now} WHERE id = ${trigger.id}`;
+    return;
+  }
+
+  const schedule = scheduleRows[0];
+  const command = schedule.command ?? (schedule.run_spec as RunSpec)?.command;
+
+  if (!command) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'error',
+      event: 'no_command',
+      trigger_id: trigger.id,
+      schedule_id: trigger.schedule_id,
+    });
+    await sql`UPDATE triggers SET status = 'failed', completed_at = ${now} WHERE id = ${trigger.id}`;
+    return;
+  }
+
+  // Resolve RunSpec (merge schedule.run_spec defaults with command)
+  const rawSpec = typeof schedule.run_spec === 'object' && schedule.run_spec !== null ? schedule.run_spec : {};
+  const runSpec = resolveRunSpec({ ...rawSpec, command } as RunSpec);
+
+  // Create run record
+  await sql`
+    INSERT INTO runs (id, trigger_id, worker_id, status, trace_id, lease_timeout_ms, started_at, created_at)
+    VALUES (${runId}, ${trigger.id}, ${daemonId}, 'leased', ${traceId}, ${runSpec.lease_timeout_ms}, ${now}, ${now})
+  `;
+
+  // Spawn the command with trace_id in environment
+  const env: Record<string, string> = {
+    GENIE_TRACE_ID: traceId,
+    GENIE_RUN_ID: runId,
+    GENIE_TRIGGER_ID: trigger.id,
+    GENIE_SCHEDULE_ID: trigger.schedule_id,
+  };
+
+  try {
+    const result = await deps.spawnCommand(runSpec.command, env);
+
+    // Update run to running
+    await sql`
+      UPDATE runs SET status = 'running', worker_id = ${String(result.pid ?? daemonId)}
+      WHERE id = ${runId}
+    `;
+
+    // Advance trigger from 'executing' to 'completed'
+    await sql`UPDATE triggers SET status = 'completed', completed_at = ${now} WHERE id = ${trigger.id}`;
+
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'trigger_fired',
+      trigger_id: trigger.id,
+      run_id: runId,
+      trace_id: traceId,
+      command: runSpec.command,
+      pid: result.pid,
+      schedule_name: schedule.name,
+    });
+
+    // Insert next trigger for recurring schedules
+    await maybeCreateNextTrigger(sql, deps, schedule, now);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    await sql`UPDATE runs SET status = 'failed', error = ${message}, completed_at = ${deps.now()} WHERE id = ${runId}`;
+    await sql`UPDATE triggers SET status = 'failed', completed_at = ${deps.now()} WHERE id = ${trigger.id}`;
+
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'error',
+      event: 'spawn_failed',
+      trigger_id: trigger.id,
+      run_id: runId,
+      command: runSpec.command,
+      error: message,
+    });
+  }
+}
+
+// ============================================================================
+// Reboot recovery
+// ============================================================================
+
+/**
+ * Reclaim expired leases on startup.
+ * After a crash/reboot, triggers stuck in 'executing' with expired leases
+ * are reset to 'pending' so they can be re-claimed.
+ */
+export async function reclaimExpiredLeases(deps: SchedulerDeps, daemonId: string): Promise<number> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+
+  const result = await sql`
+    UPDATE triggers
+    SET status = 'pending', leased_by = NULL, leased_until = NULL, started_at = NULL
+    WHERE status = 'executing' AND leased_until < ${now}
+    RETURNING id
+  `;
+
+  const count = result.length;
+  if (count > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'expired_leases_reclaimed',
+      count,
+      ids: result.map((r: { id: string }) => r.id),
+      daemon_id: daemonId,
+    });
+  }
+
+  return count;
+}
+
+/**
+ * Check if a worker is alive by PID or tmux pane.
+ * Returns { alive, isPid } for the given worker_id.
+ */
+async function checkWorkerAlive(
+  deps: SchedulerDeps,
+  workerId: string | null,
+): Promise<{ alive: boolean; isPid: boolean }> {
+  const isPid = /^\d+$/.test(workerId ?? '');
+  if (isPid && workerId) {
+    try {
+      process.kill(Number(workerId), 0);
+      return { alive: true, isPid };
+    } catch {
+      return { alive: false, isPid };
+    }
+  }
+  const paneId = workerId?.startsWith('%') ? workerId : null;
+  if (paneId) {
+    const alive = await deps.isPaneAlive(paneId);
+    return { alive, isPid };
+  }
+  return { alive: false, isPid };
+}
+
+/**
+ * Reconcile orphaned runs on startup.
+ * For runs with status='running' or 'leased', check if the worker pane is alive.
+ * If pane is dead, mark the run as failed.
+ */
+export async function reconcileOrphanedRuns(deps: SchedulerDeps, daemonId: string): Promise<number> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+
+  const activeRuns = await sql`
+    SELECT id, worker_id, status, trigger_id FROM runs
+    WHERE status IN ('running', 'leased')
+  `;
+
+  let orphanCount = 0;
+  for (const run of activeRuns) {
+    const { alive } = await checkWorkerAlive(deps, run.worker_id);
+    if (!alive) {
+      await sql`
+        UPDATE runs SET status = 'failed', error = 'orphaned: worker dead on startup recovery', completed_at = ${now}
+        WHERE id = ${run.id}
+      `;
+      await sql`
+        UPDATE triggers SET status = 'failed', completed_at = ${now}
+        WHERE id = ${run.trigger_id} AND status = 'executing'
+      `;
+      orphanCount++;
+    }
+  }
+
+  if (orphanCount > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'orphaned_runs_reconciled',
+      count: orphanCount,
+      daemon_id: daemonId,
+    });
+  }
+
+  return orphanCount;
+}
+
+/**
+ * Run full startup recovery: reclaim expired leases + reconcile orphaned runs.
+ */
+export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string): Promise<void> {
+  const now = deps.now();
+  deps.log({
+    timestamp: now.toISOString(),
+    level: 'info',
+    event: 'recovery_started',
+    daemon_id: daemonId,
+  });
+
+  const reclaimed = await reclaimExpiredLeases(deps, daemonId);
+  const orphans = await reconcileOrphanedRuns(deps, daemonId);
+
+  deps.log({
+    timestamp: deps.now().toISOString(),
+    level: 'info',
+    event: 'recovery_completed',
+    reclaimed_leases: reclaimed,
+    orphaned_runs: orphans,
+    daemon_id: daemonId,
+  });
+}
+
+// ============================================================================
+// Heartbeat collection
+// ============================================================================
+
+interface RunRow {
+  id: string;
+  worker_id: string;
+  status: string;
+  trigger_id: string;
+}
+
+/**
+ * Collect heartbeats for all active runs.
+ * For each run with status='running': check if pane is alive, detect state,
+ * and insert a heartbeat record.
+ */
+export async function collectHeartbeats(deps: SchedulerDeps): Promise<number> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+
+  const activeRuns: RunRow[] = await sql`
+    SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
+  `;
+
+  let collected = 0;
+  for (const run of activeRuns) {
+    const { alive, isPid } = await checkWorkerAlive(deps, run.worker_id);
+    const heartbeatStatus = alive ? (isPid ? 'busy' : 'alive') : 'dead';
+
+    const heartbeatId = deps.generateId();
+    await sql`
+      INSERT INTO heartbeats (id, worker_id, run_id, status, context, last_seen_at, created_at)
+      VALUES (${heartbeatId}, ${run.worker_id}, ${run.id}, ${heartbeatStatus}, ${JSON.stringify({ alive, pid_check: isPid })}, ${now}, ${now})
+    `;
+    collected++;
+  }
+
+  if (collected > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'heartbeats_collected',
+      count: collected,
+    });
+  }
+
+  return collected;
+}
+
+// ============================================================================
+// Orphan reconciliation
+// ============================================================================
+
+/**
+ * Reconcile orphaned runs by checking heartbeat history.
+ * If a run has N consecutive 'dead' heartbeats (default 2), mark it as failed.
+ * This runs every 5 minutes as a safety net.
+ */
+export async function reconcileOrphans(deps: SchedulerDeps, config: SchedulerConfig): Promise<number> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+  const threshold = config.deadHeartbeatThreshold;
+
+  const activeRuns: RunRow[] = await sql`
+    SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
+  `;
+
+  let failedCount = 0;
+  for (const run of activeRuns) {
+    // Get the most recent N heartbeats for this run
+    const recentHeartbeats = await sql`
+      SELECT status FROM heartbeats
+      WHERE run_id = ${run.id}
+      ORDER BY created_at DESC
+      LIMIT ${threshold}
+    `;
+
+    // Only mark as failed if we have enough heartbeats AND all are 'dead'
+    if (recentHeartbeats.length >= threshold) {
+      const allDead = recentHeartbeats.every((h: { status: string }) => h.status === 'dead');
+      if (allDead) {
+        await sql`
+          UPDATE runs SET status = 'failed', error = 'orphaned: ${threshold} consecutive dead heartbeats', completed_at = ${now}
+          WHERE id = ${run.id}
+        `;
+        await sql`
+          UPDATE triggers SET status = 'failed', completed_at = ${now}
+          WHERE id = ${run.trigger_id} AND status = 'executing'
+        `;
+        failedCount++;
+
+        deps.log({
+          timestamp: now.toISOString(),
+          level: 'warn',
+          event: 'orphan_run_failed',
+          run_id: run.id,
+          worker_id: run.worker_id,
+          dead_heartbeats: threshold,
+        });
+      }
+    }
+  }
+
+  if (failedCount > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'orphan_reconciliation_completed',
+      failed_count: failedCount,
+    });
+  }
+
+  return failedCount;
+}
+
+// ============================================================================
+// Machine snapshot
+// ============================================================================
+
+/**
+ * Collect a machine snapshot: active workers, teams, tmux sessions, CPU/memory.
+ */
+export async function collectMachineSnapshot(deps: SchedulerDeps): Promise<void> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+  const snapshotId = deps.generateId();
+
+  const workers = await deps.listWorkers();
+  const activeWorkers = workers.filter((w) => !['done', 'error', 'suspended'].includes(w.state)).length;
+  const teams = new Set(workers.filter((w) => w.team).map((w) => w.team));
+  const tmuxSessions = await deps.countTmuxSessions();
+
+  // Best-effort CPU and memory
+  let cpuPercent: number | null = null;
+  let memoryMb: number | null = null;
+  try {
+    const mem = process.memoryUsage();
+    memoryMb = Math.round(mem.rss / 1024 / 1024);
+  } catch {
+    // ignore
+  }
+
+  try {
+    const os = await import('node:os');
+    const cpus = os.cpus();
+    if (cpus.length > 0) {
+      const total = cpus.reduce((acc, cpu) => {
+        const t = Object.values(cpu.times).reduce((a, b) => a + b, 0);
+        return acc + t - cpu.times.idle;
+      }, 0);
+      const totalAll = cpus.reduce((acc, cpu) => acc + Object.values(cpu.times).reduce((a, b) => a + b, 0), 0);
+      cpuPercent = totalAll > 0 ? Math.round((total / totalAll) * 100) : null;
+    }
+  } catch {
+    // ignore
+  }
+
+  await sql`
+    INSERT INTO machine_snapshots (id, active_workers, active_teams, tmux_sessions, cpu_percent, memory_mb, created_at)
+    VALUES (${snapshotId}, ${activeWorkers}, ${teams.size}, ${tmuxSessions}, ${cpuPercent}, ${memoryMb}, ${now})
+  `;
+
+  deps.log({
+    timestamp: now.toISOString(),
+    level: 'debug',
+    event: 'machine_snapshot',
+    active_workers: activeWorkers,
+    active_teams: teams.size,
+    tmux_sessions: tmuxSessions,
+    cpu_percent: cpuPercent,
+    memory_mb: memoryMb,
+  });
+}
+
+// ============================================================================
+// Daemon loop
+// ============================================================================
+
+export interface DaemonHandle {
+  /** Stop the daemon gracefully. */
+  stop: () => void;
+  /** Promise that resolves when the daemon exits. */
+  done: Promise<void>;
+  /** The unique daemon ID for this instance. */
+  daemonId: string;
+}
+
+/**
+ * Start the scheduler daemon.
+ *
+ * Flow:
+ *   1. LISTEN on genie_trigger_due for real-time notifications
+ *   2. Poll every 30s as fallback
+ *   3. On each cycle: claim due triggers, apply jitter if batch, fire each
+ *   4. Loop until stopped
+ */
+export function startDaemon(
+  configOverrides?: Partial<SchedulerConfig>,
+  depsOverrides?: Partial<SchedulerDeps>,
+): DaemonHandle {
+  const config = resolveConfig(configOverrides);
+  const baseDeps = createDefaultDeps();
+  const deps: SchedulerDeps = { ...baseDeps, ...depsOverrides };
+  const daemonId = deps.generateId();
+
+  let running = true;
+  let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+  let pollResolve: (() => void) | null = null;
+  let listenConnection: SqlClient | null = null;
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let orphanTimer: ReturnType<typeof setInterval> | null = null;
+
+  const stop = () => {
+    running = false;
+    if (pollTimeout) {
+      clearTimeout(pollTimeout);
+      pollTimeout = null;
+    }
+    // Resolve the pending poll promise so the loop exits
+    if (pollResolve) {
+      pollResolve();
+      pollResolve = null;
+    }
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (orphanTimer) {
+      clearInterval(orphanTimer);
+      orphanTimer = null;
+    }
+    if (listenConnection) {
+      listenConnection.end().catch(() => {});
+      listenConnection = null;
+    }
+  };
+
+  const processTriggers = async () => {
+    try {
+      const claimed = await claimDueTriggers(deps, config, daemonId);
+
+      if (claimed.length === 0) return;
+
+      // Apply jitter on batch catch-up
+      if (claimed.length > config.jitterThreshold) {
+        const jitterMs = deps.jitter(config.maxJitterMs);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'info',
+          event: 'jitter_applied',
+          count: claimed.length,
+          jitter_ms: jitterMs,
+        });
+        await deps.sleep(jitterMs);
+      }
+
+      // Fire each claimed trigger
+      for (const trigger of claimed) {
+        if (!running) break;
+        await fireTrigger(deps, trigger, daemonId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'error',
+        event: 'process_cycle_error',
+        error: message,
+      });
+    }
+  };
+
+  const done = (async () => {
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'daemon_started',
+      daemon_id: daemonId,
+      max_concurrent: config.maxConcurrent,
+      poll_interval_ms: config.pollIntervalMs,
+    });
+
+    // Startup recovery: reclaim expired leases + reconcile orphans
+    try {
+      await recoverOnStartup(deps, daemonId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'error',
+        event: 'recovery_error',
+        error: message,
+      });
+    }
+
+    // Set up LISTEN/NOTIFY for real-time trigger notifications
+    try {
+      const sql = await deps.getConnection();
+      listenConnection = sql;
+
+      await sql.listen('genie_trigger_due', async () => {
+        if (!running) return;
+        await processTriggers();
+      });
+
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'info',
+        event: 'listen_started',
+        channel: 'genie_trigger_due',
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.log({
+        timestamp: deps.now().toISOString(),
+        level: 'warn',
+        event: 'listen_failed',
+        error: message,
+      });
+      // Continue with poll-only mode
+    }
+
+    // Start heartbeat collection (every 60s) — collects pane liveness + machine snapshot
+    heartbeatTimer = setInterval(async () => {
+      if (!running) return;
+      try {
+        await collectHeartbeats(deps);
+        await collectMachineSnapshot(deps);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'error',
+          event: 'heartbeat_error',
+          error: message,
+        });
+      }
+    }, config.heartbeatIntervalMs);
+
+    // Start orphan reconciliation (every 5m)
+    orphanTimer = setInterval(async () => {
+      if (!running) return;
+      try {
+        await reconcileOrphans(deps, config);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        deps.log({
+          timestamp: deps.now().toISOString(),
+          level: 'error',
+          event: 'orphan_reconciliation_error',
+          error: message,
+        });
+      }
+    }, config.orphanCheckIntervalMs);
+
+    // Initial trigger check
+    await processTriggers();
+
+    // Poll loop as fallback safety net
+    while (running) {
+      await new Promise<void>((resolve) => {
+        pollResolve = resolve;
+        pollTimeout = setTimeout(resolve, config.pollIntervalMs);
+      });
+      pollResolve = null;
+
+      if (!running) break;
+      await processTriggers();
+    }
+
+    deps.log({
+      timestamp: deps.now().toISOString(),
+      level: 'info',
+      event: 'daemon_stopped',
+      daemon_id: daemonId,
+    });
+  })();
+
+  return { stop, done, daemonId };
+}
