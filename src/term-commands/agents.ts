@@ -1201,24 +1201,56 @@ async function resumeAgent(agent: registry.Agent): Promise<void> {
   }
 }
 
+type WorkerStatus = {
+  state: string;
+  team: string;
+  resumeAttempts?: number;
+  maxResumeAttempts?: number;
+  autoResume?: boolean;
+};
+
+/** Build a name → status map from registry workers, including resume info for dead agents. */
+async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
+  const statusMap = new Map<string, WorkerStatus>();
+  for (const w of workers) {
+    const name = w.role || w.id;
+    const alive = await isPaneAlive(w.paneId);
+    if (alive) {
+      statusMap.set(name, { state: w.state, team: w.team || '-' });
+    } else if (w.state === 'suspended' || w.state === 'error') {
+      const attempts = w.resumeAttempts ?? 0;
+      const max = w.maxResumeAttempts ?? 3;
+      const autoStr = w.autoResume === false ? 'off' : 'on';
+      statusMap.set(name, {
+        state: `${w.state} (${attempts}/${max} resumes, auto-resume: ${autoStr})`,
+        team: w.team || '-',
+        resumeAttempts: attempts,
+        maxResumeAttempts: max,
+        autoResume: w.autoResume !== false,
+      });
+    }
+  }
+  return statusMap;
+}
+
 /**
  * genie ls — Smart view of registered agents with runtime status.
  */
 export async function handleLsCommand(options: { json?: boolean }): Promise<void> {
   const dirEntries = await directory.ls();
   const workers = await registry.list();
+  const statusMap = await buildWorkerStatusMap(workers);
 
-  // Build status map: name → running worker info
-  const statusMap = new Map<string, { state: string; team: string }>();
-  for (const w of workers) {
-    const name = w.role || w.id;
-    const alive = await isPaneAlive(w.paneId);
-    if (alive) {
-      statusMap.set(name, { state: w.state, team: w.team || '-' });
-    }
-  }
-
-  type LsEntry = { name: string; dir: string; status: string; team: string; model: string };
+  type LsEntry = {
+    name: string;
+    dir: string;
+    status: string;
+    team: string;
+    model: string;
+    resumeAttempts?: number;
+    maxResumeAttempts?: number;
+    autoResume?: boolean;
+  };
   const entries: LsEntry[] = [];
 
   // Add directory entries with runtime status
@@ -1230,11 +1262,14 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
       status: running ? running.state : 'offline',
       team: running?.team || '-',
       model: entry.model || '-',
+      resumeAttempts: running?.resumeAttempts,
+      maxResumeAttempts: running?.maxResumeAttempts,
+      autoResume: running?.autoResume,
     });
     statusMap.delete(entry.name);
   }
 
-  // Add running built-in agents not in the directory
+  // Add built-in agents not in the directory (alive or suspended/error)
   for (const [name, info] of statusMap) {
     entries.push({
       name,
@@ -1242,6 +1277,9 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
       status: info.state,
       team: info.team,
       model: '-',
+      resumeAttempts: info.resumeAttempts,
+      maxResumeAttempts: info.maxResumeAttempts,
+      autoResume: info.autoResume,
     });
   }
 
@@ -1257,7 +1295,7 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
 
   console.log('');
   console.log(formatLsRow('NAME', 'DIR', 'STATUS', 'TEAM', 'MODEL'));
-  console.log('-'.repeat(94));
+  console.log('-'.repeat(106));
   for (const e of entries) {
     console.log(formatLsRow(e.name, e.dir, e.status, e.team, e.model));
   }
@@ -1265,5 +1303,5 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
 }
 
 function formatLsRow(name: string, dir: string, status: string, team: string, model: string): string {
-  return `${name.padEnd(20).substring(0, 20)}${dir.padEnd(40).substring(0, 40)}${status.padEnd(12).substring(0, 12)}${team.padEnd(12).substring(0, 12)}${model}`;
+  return `${name.padEnd(20).substring(0, 20)}${dir.padEnd(30).substring(0, 30)}${status.padEnd(44).substring(0, 44)}${team.padEnd(12).substring(0, 12)}${model}`;
 }
