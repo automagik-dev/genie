@@ -2,17 +2,46 @@
  * RunSpec / RunState — Execution specification and state machines.
  *
  * Two state machines coexist:
- *   1. Agent lifecycle (AgentState) — tracked in agent-registry
+ *   1. Agent lifecycle (AgentState) — tracked in agent-registry, used for resume
  *   2. Scheduled run lifecycle (RunState) — tracked in pgserve runs table
  *
  * RunSpec describes HOW a trigger should be executed: which repo, provider,
- * command, concurrency class, and lease timeout.
+ * command, concurrency class, and lease timeout. Stored as JSONB in the
+ * schedules table and resolved at fire time.
  */
 
 import type { AgentState } from './agent-registry.js';
 
 // ============================================================================
-// Agent State Transitions
+// RunState — lifecycle state machine
+// ============================================================================
+
+/**
+ * Lifecycle states for a scheduled run:
+ *   spawning      → process being created
+ *   running       → process alive and executing
+ *   waiting_input → agent waiting for permission or user input
+ *   completed     → finished successfully
+ *   failed        → terminated with error or timeout
+ *   cancelled     → manually cancelled
+ */
+export type RunState = 'spawning' | 'running' | 'waiting_input' | 'completed' | 'failed' | 'cancelled';
+
+/** Valid transitions from each state. */
+export const RUN_STATE_TRANSITIONS: Record<RunState, RunState[]> = {
+  spawning: ['running', 'failed', 'cancelled'],
+  running: ['waiting_input', 'completed', 'failed', 'cancelled'],
+  waiting_input: ['running', 'completed', 'failed', 'cancelled'],
+  completed: [],
+  failed: [],
+  cancelled: [],
+};
+
+/** Terminal states — no further transitions possible. */
+export const TERMINAL_STATES: ReadonlySet<RunState> = new Set(['completed', 'failed', 'cancelled']);
+
+// ============================================================================
+// Agent State Transitions (for resume/respawn lifecycle)
 // ============================================================================
 
 /**
@@ -21,7 +50,7 @@ import type { AgentState } from './agent-registry.js';
  * `failed` is a pseudo-state derived from `error` with no pane —
  * the `failed → spawning` transition enables auto-resume.
  */
-export const RUN_STATE_TRANSITIONS: Record<AgentState | 'failed', readonly AgentState[]> = {
+export const AGENT_STATE_TRANSITIONS: Record<AgentState | 'failed', readonly AgentState[]> = {
   spawning: ['working', 'idle', 'error', 'done', 'suspended'],
   working: ['idle', 'permission', 'question', 'done', 'error', 'suspended'],
   idle: ['working', 'permission', 'question', 'done', 'error', 'suspended'],
@@ -36,8 +65,8 @@ export const RUN_STATE_TRANSITIONS: Record<AgentState | 'failed', readonly Agent
 /**
  * Check whether an agent state transition is valid.
  */
-export function isValidTransition(from: AgentState | 'failed', to: AgentState): boolean {
-  const allowed = RUN_STATE_TRANSITIONS[from];
+export function isValidAgentTransition(from: AgentState | 'failed', to: AgentState): boolean {
+  const allowed = AGENT_STATE_TRANSITIONS[from];
   return allowed?.includes(to) ?? false;
 }
 
@@ -48,21 +77,29 @@ export function isValidTransition(from: AgentState | 'failed', to: AgentState): 
 export interface RunSpec {
   /** Repository path to execute in. Defaults to cwd. */
   repo?: string;
+
   /** Git ref policy: 'current' uses HEAD, 'default' uses default branch. */
   ref_policy?: 'current' | 'default';
+
   /** AI provider to use for spawning. */
   provider?: 'claude' | 'codex';
+
   /** Agent role (e.g., 'engineer', 'reviewer'). */
   role?: string;
+
   /** Model override (e.g., 'sonnet', 'opus'). */
   model?: string;
-  /** Full command string to execute. */
+
+  /** Full command string to execute (e.g., 'genie spawn reviewer'). */
   command: string;
+
   /** Approval policy for the spawned agent. */
   approval_policy?: 'auto' | 'manual';
+
   /** Concurrency class — runs in the same class share the max_concurrent limit. */
   concurrency_class?: string;
-  /** Lease timeout in milliseconds. Default: 300000 (5m). */
+
+  /** Lease timeout in milliseconds. How long before an unresponsive run is considered dead. Default: 300000 (5m). */
   lease_timeout_ms?: number;
 }
 
@@ -78,7 +115,7 @@ const DEFAULTS: Required<Omit<RunSpec, 'command'>> = {
   model: '',
   approval_policy: 'auto',
   concurrency_class: 'default',
-  lease_timeout_ms: 300_000,
+  lease_timeout_ms: 300_000, // 5 minutes
 };
 
 // ============================================================================
@@ -89,6 +126,7 @@ const VALID_PROVIDERS = new Set(['claude', 'codex']);
 const VALID_REF_POLICIES = new Set(['current', 'default']);
 const VALID_APPROVAL_POLICIES = new Set(['auto', 'manual']);
 
+/** Validate RunSpec fields. Throws with descriptive error on invalid input. */
 function validateRunSpec(input: Partial<RunSpec>): void {
   if (!input.command || input.command.trim().length === 0) {
     throw new Error('RunSpec.command is required and cannot be empty');
@@ -112,6 +150,7 @@ function validateRunSpec(input: Partial<RunSpec>): void {
 
 /**
  * Validate a RunSpec and fill in defaults for missing fields.
+ * Throws on invalid input (missing command, bad lease timeout, etc.).
  */
 export function resolveRunSpec(input: Partial<RunSpec> & { command: string }): Required<Omit<RunSpec, 'command'>> & {
   command: string;
@@ -129,4 +168,11 @@ export function resolveRunSpec(input: Partial<RunSpec> & { command: string }): R
     concurrency_class: input.concurrency_class ?? DEFAULTS.concurrency_class,
     lease_timeout_ms: input.lease_timeout_ms ?? DEFAULTS.lease_timeout_ms,
   };
+}
+
+/**
+ * Check if a state transition is valid.
+ */
+export function isValidTransition(from: RunState, to: RunState): boolean {
+  return RUN_STATE_TRANSITIONS[from].includes(to);
 }

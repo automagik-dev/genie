@@ -38,6 +38,7 @@ function createMockSql(data: {
   const insertedRuns: Record<string, unknown>[] = [];
   const insertedHeartbeats: Record<string, unknown>[] = [];
   const insertedSnapshots: Record<string, unknown>[] = [];
+  const insertedTriggers: Record<string, unknown>[] = [];
   const updatedTriggers: { id: string; status: string }[] = [];
 
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: mock SQL router needs many branches
@@ -89,6 +90,10 @@ function createMockSql(data: {
       insertedSnapshots.push({ values });
       return [];
     }
+    if (query.includes('INSERT INTO triggers')) {
+      insertedTriggers.push({ values });
+      return [];
+    }
     return [];
   };
 
@@ -102,7 +107,7 @@ function createMockSql(data: {
 
   sql.end = async () => {};
 
-  return { sql, queries, insertedRuns, insertedHeartbeats, insertedSnapshots, updatedTriggers };
+  return { sql, queries, insertedRuns, insertedHeartbeats, insertedSnapshots, insertedTriggers, updatedTriggers };
 }
 
 // ============================================================================
@@ -364,6 +369,124 @@ describe('scheduler-daemon', () => {
       const errLog = logs.find((l) => l.event === 'spawn_failed');
       expect(errLog).toBeDefined();
       expect(errLog?.error).toContain('command not found');
+    });
+
+    test('advances trigger to completed after successful fire', async () => {
+      const trigger = {
+        id: 'trig-1',
+        schedule_id: 'sched-1',
+        due_at: new Date('2026-03-20T11:00:00Z'),
+        status: 'executing',
+        idempotency_key: null,
+        leased_by: 'daemon-1',
+        leased_until: new Date('2026-03-20T12:05:00Z'),
+      };
+      const schedules = [
+        {
+          id: 'sched-1',
+          name: 'once-task',
+          command: 'echo hi',
+          run_spec: {},
+          status: 'active',
+          cron_expression: '@once',
+        },
+      ];
+
+      const { deps, mock } = createMockDeps({ schedules });
+      await fireTrigger(deps, trigger, 'daemon-1');
+
+      const completionQuery = mock.queries.find(
+        (q) => q.query.includes('UPDATE triggers') && q.query.includes('completed'),
+      );
+      expect(completionQuery).toBeDefined();
+    });
+
+    test('creates next trigger for recurring interval schedule', async () => {
+      const trigger = {
+        id: 'trig-1',
+        schedule_id: 'sched-1',
+        due_at: new Date('2026-03-20T11:50:00Z'),
+        status: 'executing',
+        idempotency_key: null,
+        leased_by: 'daemon-1',
+        leased_until: new Date('2026-03-20T12:05:00Z'),
+      };
+      const schedules = [
+        {
+          id: 'sched-1',
+          name: 'recurring-task',
+          command: 'genie spawn reviewer',
+          run_spec: {},
+          status: 'active',
+          cron_expression: '@every 10m',
+        },
+      ];
+
+      const { deps, mock, logs } = createMockDeps({ schedules });
+      await fireTrigger(deps, trigger, 'daemon-1');
+
+      expect(mock.insertedTriggers).toHaveLength(1);
+      const nextTriggerLog = logs.find((l) => l.event === 'next_trigger_created');
+      expect(nextTriggerLog).toBeDefined();
+      expect(nextTriggerLog?.schedule_id).toBe('sched-1');
+    });
+
+    test('creates next trigger for cron schedule', async () => {
+      const trigger = {
+        id: 'trig-1',
+        schedule_id: 'sched-1',
+        due_at: new Date('2026-03-20T00:00:00Z'),
+        status: 'executing',
+        idempotency_key: null,
+        leased_by: 'daemon-1',
+        leased_until: new Date('2026-03-20T00:05:00Z'),
+      };
+      const schedules = [
+        {
+          id: 'sched-1',
+          name: 'nightly-task',
+          command: 'genie spawn reviewer',
+          run_spec: {},
+          status: 'active',
+          cron_expression: '0 0 * * *',
+        },
+      ];
+
+      const { deps, mock, logs } = createMockDeps({ schedules });
+      await fireTrigger(deps, trigger, 'daemon-1');
+
+      expect(mock.insertedTriggers).toHaveLength(1);
+      const nextTriggerLog = logs.find((l) => l.event === 'next_trigger_created');
+      expect(nextTriggerLog).toBeDefined();
+    });
+
+    test('does not create next trigger for @once schedule', async () => {
+      const trigger = {
+        id: 'trig-1',
+        schedule_id: 'sched-1',
+        due_at: new Date('2026-03-20T11:00:00Z'),
+        status: 'executing',
+        idempotency_key: null,
+        leased_by: 'daemon-1',
+        leased_until: new Date('2026-03-20T12:05:00Z'),
+      };
+      const schedules = [
+        {
+          id: 'sched-1',
+          name: 'once-task',
+          command: 'echo hi',
+          run_spec: {},
+          status: 'active',
+          cron_expression: '@once',
+        },
+      ];
+
+      const { deps, mock, logs } = createMockDeps({ schedules });
+      await fireTrigger(deps, trigger, 'daemon-1');
+
+      expect(mock.insertedTriggers).toHaveLength(0);
+      const nextTriggerLog = logs.find((l) => l.event === 'next_trigger_created');
+      expect(nextTriggerLog).toBeUndefined();
     });
 
     test('uses command from run_spec when schedule.command is null', async () => {
@@ -1022,7 +1145,6 @@ describe('scheduler-daemon', () => {
       // It's skipped, meaning daemon waits for next cycle (which won't help since autoResume is false)
       // Actually we want: when autoResume=false AND resume is skipped, we should check if the agent
       // will never be resumed. For autoResume=false, the skip means "permanently skip" so fall through.
-      // Let me re-check the logic...
       // The current logic: if result === 'skipped' → continue (skip marking failed)
       // This is correct for cooldown/cap skips, but wrong for autoResume=false.
       // The test expectation should match behavior: agent with autoResume=false → skipped → not failed YET.

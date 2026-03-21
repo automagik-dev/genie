@@ -21,6 +21,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from './agent-registry.js';
+import { computeNextCronDue, parseDuration } from './cron.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
 // ============================================================================
@@ -60,6 +61,7 @@ interface ScheduleRow {
   command: string | null;
   run_spec: RunSpec | Record<string, never>;
   status: string;
+  cron_expression: string | null;
 }
 
 export interface LogEntry {
@@ -310,6 +312,65 @@ export async function claimDueTriggers(
 }
 
 /**
+ * Compute the next due_at for a recurring schedule and insert a new pending trigger.
+ * Returns without inserting if the schedule is one-shot (@once) or has no cron_expression.
+ */
+async function maybeCreateNextTrigger(
+  sql: SqlClient,
+  deps: SchedulerDeps,
+  schedule: ScheduleRow,
+  now: Date,
+): Promise<void> {
+  if (!schedule.cron_expression || schedule.cron_expression === '@once') return;
+
+  let nextDueAt: Date | null = null;
+
+  if (schedule.cron_expression.startsWith('@every ')) {
+    const durationStr = schedule.cron_expression.slice(7).trim();
+    try {
+      const intervalMs = parseDuration(durationStr);
+      nextDueAt = new Date(now.getTime() + intervalMs);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'invalid_interval',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  } else {
+    try {
+      nextDueAt = computeNextCronDue(schedule.cron_expression, now);
+    } catch {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'warn',
+        event: 'cron_computation_failed',
+        schedule_id: schedule.id,
+        cron_expression: schedule.cron_expression,
+      });
+    }
+  }
+
+  if (nextDueAt) {
+    const nextTriggerId = deps.generateId();
+    await sql`
+      INSERT INTO triggers (id, schedule_id, due_at, status)
+      VALUES (${nextTriggerId}, ${schedule.id}, ${nextDueAt.toISOString()}, 'pending')
+    `;
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'next_trigger_created',
+      trigger_id: nextTriggerId,
+      schedule_id: schedule.id,
+      due_at: nextDueAt.toISOString(),
+    });
+  }
+}
+
+/**
  * Fire a single claimed trigger: resolve RunSpec, spawn command, record run.
  */
 export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daemonId: string): Promise<void> {
@@ -343,7 +404,7 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
 
   // Load schedule to get command + run_spec
   const scheduleRows = await sql<ScheduleRow[]>`
-    SELECT id, name, command, run_spec, status FROM schedules WHERE id = ${trigger.schedule_id}
+    SELECT id, name, command, run_spec, status, cron_expression FROM schedules WHERE id = ${trigger.schedule_id}
   `;
 
   if (scheduleRows.length === 0) {
@@ -400,6 +461,9 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
       WHERE id = ${runId}
     `;
 
+    // Advance trigger from 'executing' to 'completed'
+    await sql`UPDATE triggers SET status = 'completed', completed_at = ${now} WHERE id = ${trigger.id}`;
+
     deps.log({
       timestamp: now.toISOString(),
       level: 'info',
@@ -411,6 +475,9 @@ export async function fireTrigger(deps: SchedulerDeps, trigger: TriggerRow, daem
       pid: result.pid,
       schedule_name: schedule.name,
     });
+
+    // Insert next trigger for recurring schedules
+    await maybeCreateNextTrigger(sql, deps, schedule, now);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -574,55 +641,6 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, co
 }
 
 // ============================================================================
-// Heartbeat collection
-// ============================================================================
-
-interface RunRow {
-  id: string;
-  worker_id: string;
-  status: string;
-  trigger_id: string;
-}
-
-/**
- * Collect heartbeats for all active runs.
- * For each run with status='running': check if pane is alive, detect state,
- * and insert a heartbeat record.
- */
-export async function collectHeartbeats(deps: SchedulerDeps): Promise<number> {
-  const sql = await deps.getConnection();
-  const now = deps.now();
-
-  const activeRuns: RunRow[] = await sql`
-    SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
-  `;
-
-  let collected = 0;
-  for (const run of activeRuns) {
-    const { alive, isPid } = await checkWorkerAlive(deps, run.worker_id);
-    const heartbeatStatus = alive ? (isPid ? 'busy' : 'alive') : 'dead';
-
-    const heartbeatId = deps.generateId();
-    await sql`
-      INSERT INTO heartbeats (id, worker_id, run_id, status, context, last_seen_at, created_at)
-      VALUES (${heartbeatId}, ${run.worker_id}, ${run.id}, ${heartbeatStatus}, ${JSON.stringify({ alive, pid_check: isPid })}, ${now}, ${now})
-    `;
-    collected++;
-  }
-
-  if (collected > 0) {
-    deps.log({
-      timestamp: now.toISOString(),
-      level: 'debug',
-      event: 'heartbeats_collected',
-      count: collected,
-    });
-  }
-
-  return collected;
-}
-
-// ============================================================================
 // Agent auto-resume
 // ============================================================================
 
@@ -779,6 +797,55 @@ export async function attemptAgentResume(
   }
 
   return 'skipped';
+}
+
+// ============================================================================
+// Heartbeat collection
+// ============================================================================
+
+interface RunRow {
+  id: string;
+  worker_id: string;
+  status: string;
+  trigger_id: string;
+}
+
+/**
+ * Collect heartbeats for all active runs.
+ * For each run with status='running': check if pane is alive, detect state,
+ * and insert a heartbeat record.
+ */
+export async function collectHeartbeats(deps: SchedulerDeps): Promise<number> {
+  const sql = await deps.getConnection();
+  const now = deps.now();
+
+  const activeRuns: RunRow[] = await sql`
+    SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
+  `;
+
+  let collected = 0;
+  for (const run of activeRuns) {
+    const { alive, isPid } = await checkWorkerAlive(deps, run.worker_id);
+    const heartbeatStatus = alive ? (isPid ? 'busy' : 'alive') : 'dead';
+
+    const heartbeatId = deps.generateId();
+    await sql`
+      INSERT INTO heartbeats (id, worker_id, run_id, status, context, last_seen_at, created_at)
+      VALUES (${heartbeatId}, ${run.worker_id}, ${run.id}, ${heartbeatStatus}, ${JSON.stringify({ alive, pid_check: isPid })}, ${now}, ${now})
+    `;
+    collected++;
+  }
+
+  if (collected > 0) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'heartbeats_collected',
+      count: collected,
+    });
+  }
+
+  return collected;
 }
 
 // ============================================================================
