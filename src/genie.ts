@@ -33,6 +33,7 @@ import {
   type SpawnOptions,
   handleLsCommand,
   handleWorkerKill,
+  handleWorkerResume,
   handleWorkerSpawn,
   handleWorkerStop,
 } from './term-commands/agents.js';
@@ -157,6 +158,7 @@ program
   .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
   .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
   .option('--session <session>', 'Tmux session name to spawn into')
+  .option('--no-auto-resume', 'Disable auto-resume on pane death')
   .action(async (name: string, options: SpawnOptions) => {
     try {
       await handleWorkerSpawn(name, options);
@@ -188,6 +190,21 @@ program
   .action(async (name: string) => {
     try {
       await handleWorkerStop(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie resume [name]
+program
+  .command('resume [name]')
+  .description('Resume a suspended/failed agent with its Claude session')
+  .option('--all', 'Resume all eligible agents')
+  .action(async (name: string | undefined, options: { all?: boolean }) => {
+    try {
+      await handleWorkerResume(name, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Error: ${message}`);

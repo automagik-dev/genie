@@ -1,13 +1,16 @@
 /**
- * RunSpec / RunState — Execution specification and state machine for scheduled runs.
+ * RunSpec / RunState — Execution specification and state machines.
+ *
+ * Two state machines coexist:
+ *   1. Agent lifecycle (AgentState) — tracked in agent-registry, used for resume
+ *   2. Scheduled run lifecycle (RunState) — tracked in pgserve runs table
  *
  * RunSpec describes HOW a trigger should be executed: which repo, provider,
  * command, concurrency class, and lease timeout. Stored as JSONB in the
  * schedules table and resolved at fire time.
- *
- * RunState tracks WHERE a run is in its lifecycle, from spawning through
- * completion or failure.
  */
+
+import type { AgentState } from './agent-registry.js';
 
 // ============================================================================
 // RunState — lifecycle state machine
@@ -36,6 +39,36 @@ export const RUN_STATE_TRANSITIONS: Record<RunState, RunState[]> = {
 
 /** Terminal states — no further transitions possible. */
 export const TERMINAL_STATES: ReadonlySet<RunState> = new Set(['completed', 'failed', 'cancelled']);
+
+// ============================================================================
+// Agent State Transitions (for resume/respawn lifecycle)
+// ============================================================================
+
+/**
+ * Allowed state transitions for agents.
+ *
+ * `failed` is a pseudo-state derived from `error` with no pane —
+ * the `failed → spawning` transition enables auto-resume.
+ */
+export const AGENT_STATE_TRANSITIONS: Record<AgentState | 'failed', readonly AgentState[]> = {
+  spawning: ['working', 'idle', 'error', 'done', 'suspended'],
+  working: ['idle', 'permission', 'question', 'done', 'error', 'suspended'],
+  idle: ['working', 'permission', 'question', 'done', 'error', 'suspended'],
+  permission: ['working', 'idle', 'error', 'suspended'],
+  question: ['working', 'idle', 'error', 'suspended'],
+  done: [],
+  error: ['spawning', 'suspended'],
+  suspended: ['spawning'],
+  failed: ['spawning'],
+} as const;
+
+/**
+ * Check whether an agent state transition is valid.
+ */
+export function isValidAgentTransition(from: AgentState | 'failed', to: AgentState): boolean {
+  const allowed = AGENT_STATE_TRANSITIONS[from];
+  return allowed?.includes(to) ?? false;
+}
 
 // ============================================================================
 // RunSpec — execution specification
