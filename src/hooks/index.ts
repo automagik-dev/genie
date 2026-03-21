@@ -17,7 +17,7 @@
 
 import { autoSpawn } from './handlers/auto-spawn.js';
 import { identityInject } from './handlers/identity-inject.js';
-import { natsEmit } from './handlers/nats-emit.js';
+import { natsEmit, natsEmitAssistantResponse, natsEmitToolCall, natsEmitUserPrompt } from './handlers/nats-emit.js';
 import type { Handler, HandlerResult, HookDecision, HookPayload } from './types.js';
 import { isBlockingEvent } from './types.js';
 
@@ -41,11 +41,30 @@ const handlers: Handler[] = [
     fn: autoSpawn,
   },
   {
-    name: 'nats-emit',
+    name: 'nats-emit-tool',
+    event: 'PreToolUse',
+    matcher: /.*/,
+    priority: 30,
+    fn: natsEmitToolCall,
+  },
+  {
+    name: 'nats-emit-msg',
     event: 'PostToolUse',
     matcher: /^SendMessage$/,
     priority: 30,
     fn: natsEmit,
+  },
+  {
+    name: 'nats-emit-user-prompt',
+    event: 'UserPromptSubmit',
+    priority: 30,
+    fn: natsEmitUserPrompt,
+  },
+  {
+    name: 'nats-emit-assistant-response',
+    event: 'Stop',
+    priority: 30,
+    fn: natsEmitAssistantResponse,
   },
 ];
 

@@ -60,7 +60,7 @@ function makeAgent(id: string, team?: string): Agent {
 // ============================================================================
 
 describe('transcriptToLogEvent', () => {
-  test('maps assistant entry to transcript kind', () => {
+  test('maps assistant entry to assistant kind', () => {
     const entry: TranscriptEntry = {
       role: 'assistant',
       timestamp: '2026-03-20T10:00:00.000Z',
@@ -72,13 +72,13 @@ describe('transcriptToLogEvent', () => {
 
     const event = transcriptToLogEvent(entry, 'engineer', 'my-team');
 
-    expect(event.kind).toBe('transcript');
-    expect(event.agent).toBe('engineer');
-    expect(event.team).toBe('my-team');
-    expect(event.text).toBe('Hello, I can help with that.');
-    expect(event.source).toBe('provider');
-    expect(event.data?.role).toBe('assistant');
-    expect(event.data?.model).toBe('claude-sonnet-4-20250514');
+    expect(event!.kind).toBe('assistant');
+    expect(event!.agent).toBe('engineer');
+    expect(event!.team).toBe('my-team');
+    expect(event!.text).toBe('Hello, I can help with that.');
+    expect(event!.source).toBe('provider');
+    expect(event!.data?.role).toBe('assistant');
+    expect(event!.data?.model).toBe('claude-sonnet-4-20250514');
   });
 
   test('maps tool_call entry to tool_call kind', () => {
@@ -93,8 +93,8 @@ describe('transcriptToLogEvent', () => {
 
     const event = transcriptToLogEvent(entry, 'engineer');
 
-    expect(event.kind).toBe('tool_call');
-    expect(event.data?.toolCall).toEqual({ id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } });
+    expect(event!.kind).toBe('tool_call');
+    expect(event!.data?.toolCall).toEqual({ id: 'tc-1', name: 'Read', input: { file_path: '/test.ts' } });
   });
 
   test('maps tool_result entry to tool_result kind', () => {
@@ -107,8 +107,8 @@ describe('transcriptToLogEvent', () => {
     };
 
     const event = transcriptToLogEvent(entry, 'coder');
-    expect(event.kind).toBe('tool_result');
-    expect(event.source).toBe('provider');
+    expect(event!.kind).toBe('tool_result');
+    expect(event!.source).toBe('provider');
   });
 
   test('maps system entry to system kind', () => {
@@ -121,7 +121,7 @@ describe('transcriptToLogEvent', () => {
     };
 
     const event = transcriptToLogEvent(entry, 'engineer');
-    expect(event.kind).toBe('system');
+    expect(event!.kind).toBe('system');
   });
 });
 
@@ -141,12 +141,12 @@ describe('inboxMessageToLogEvent', () => {
       'my-team',
     );
 
-    expect(event.kind).toBe('message');
-    expect(event.direction).toBe('in');
-    expect(event.peer).toBe('reviewer');
-    expect(event.agent).toBe('engineer');
-    expect(event.text).toBe('Please fix the tests');
-    expect(event.source).toBe('mailbox');
+    expect(event!.kind).toBe('message');
+    expect(event!.direction).toBe('in');
+    expect(event!.peer).toBe('reviewer');
+    expect(event!.agent).toBe('engineer');
+    expect(event!.text).toBe('Please fix the tests');
+    expect(event!.source).toBe('mailbox');
   });
 });
 
@@ -165,11 +165,11 @@ describe('outboxMessageToLogEvent', () => {
       'engineer',
     );
 
-    expect(event.kind).toBe('message');
-    expect(event.direction).toBe('out');
-    expect(event.peer).toBe('reviewer');
-    expect(event.agent).toBe('engineer');
-    expect(event.text).toBe('Tests are fixed');
+    expect(event!.kind).toBe('message');
+    expect(event!.direction).toBe('out');
+    expect(event!.peer).toBe('reviewer');
+    expect(event!.agent).toBe('engineer');
+    expect(event!.text).toBe('Tests are fixed');
   });
 });
 
@@ -185,11 +185,11 @@ describe('chatMessageToLogEvent', () => {
       'dev-team',
     );
 
-    expect(event.kind).toBe('message');
-    expect(event.agent).toBe('alice');
-    expect(event.team).toBe('dev-team');
-    expect(event.source).toBe('chat');
-    expect(event.text).toBe('Starting implementation');
+    expect(event!.kind).toBe('message');
+    expect(event!.agent).toBe('alice');
+    expect(event!.team).toBe('dev-team');
+    expect(event!.source).toBe('chat');
+    expect(event!.text).toBe('Starting implementation');
   });
 });
 
@@ -201,7 +201,7 @@ describe('applyLogFilter', () => {
   const events: LogEvent[] = [
     {
       timestamp: '2026-03-20T10:00:00.000Z',
-      kind: 'transcript',
+      kind: 'assistant',
       agent: 'eng',
       text: 'first',
       source: 'provider',
@@ -222,7 +222,7 @@ describe('applyLogFilter', () => {
     },
     {
       timestamp: '2026-03-20T13:00:00.000Z',
-      kind: 'transcript',
+      kind: 'assistant',
       agent: 'eng',
       text: 'fourth',
       source: 'provider',
@@ -248,7 +248,7 @@ describe('applyLogFilter', () => {
   });
 
   test('filters by multiple kinds', () => {
-    const result = applyLogFilter(events, { kinds: ['transcript', 'tool_call'] });
+    const result = applyLogFilter(events, { kinds: ['assistant', 'tool_call'] });
     expect(result.length).toBe(3);
   });
 
@@ -262,7 +262,7 @@ describe('applyLogFilter', () => {
   test('applies filters in order: since → kinds → last', () => {
     const result = applyLogFilter(events, {
       since: '2026-03-20T10:30:00.000Z',
-      kinds: ['transcript', 'tool_call'],
+      kinds: ['assistant', 'tool_call'],
       last: 1,
     });
     expect(result.length).toBe(1);
@@ -273,8 +273,8 @@ describe('applyLogFilter', () => {
 describe('sortByTimestamp', () => {
   test('sorts events chronologically', () => {
     const events: LogEvent[] = [
-      { timestamp: '2026-03-20T12:00:00.000Z', kind: 'transcript', agent: 'a', text: 'c', source: 'provider' },
-      { timestamp: '2026-03-20T10:00:00.000Z', kind: 'transcript', agent: 'a', text: 'a', source: 'provider' },
+      { timestamp: '2026-03-20T12:00:00.000Z', kind: 'assistant', agent: 'a', text: 'c', source: 'provider' },
+      { timestamp: '2026-03-20T10:00:00.000Z', kind: 'assistant', agent: 'a', text: 'a', source: 'provider' },
       { timestamp: '2026-03-20T11:00:00.000Z', kind: 'message', agent: 'a', text: 'b', source: 'mailbox' },
     ];
 

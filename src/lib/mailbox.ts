@@ -115,6 +115,23 @@ export async function send(repoPath: string, from: string, to: string, body: str
     // Append to sender's outbox (append-only JSONL, no lock needed — single writer per send call)
     await appendFile(outboxFilePath(repoPath, from), `${JSON.stringify(message)}\n`);
 
+    // Publish to NATS for real-time streaming (fire-and-forget, auto-closes)
+    try {
+      const { publish } = await import('./nats-client.js');
+      await publish(`genie.msg.${to}`, {
+        timestamp: message.createdAt,
+        kind: 'message',
+        agent: from,
+        direction: 'out',
+        peer: to,
+        text: body,
+        data: { messageId: message.id, from, to },
+        source: 'mailbox',
+      });
+    } catch {
+      // NATS unavailable — no-op
+    }
+
     return message;
   } finally {
     await release();

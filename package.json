@@ -26,6 +26,7 @@
     "@inquirer/prompts": "^7.0.0",
     "commander": "^12.1.0",
     "js-yaml": "^4.1.1",
+    "nats": "^2.29.3",
     "pgserve": "^1.1.6",
     "postgres": "^3.4.8",
     "uuid": "^11.1.0",
