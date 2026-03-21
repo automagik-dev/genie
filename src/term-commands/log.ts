@@ -56,15 +56,12 @@ function formatTime(timestamp: string): string {
   }
 }
 
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return `${str.slice(0, maxLen - 3)}...`;
-}
-
 function kindIcon(kind: LogEventKind): string {
   switch (kind) {
-    case 'transcript':
-      return 'T';
+    case 'user':
+      return 'U';
+    case 'assistant':
+      return 'A';
     case 'message':
       return 'M';
     case 'state':
@@ -82,10 +79,12 @@ function kindIcon(kind: LogEventKind): string {
 
 function kindColor(kind: LogEventKind): string {
   switch (kind) {
-    case 'transcript':
+    case 'user':
+      return '\x1b[33m'; // yellow
+    case 'assistant':
       return '\x1b[36m'; // cyan
     case 'message':
-      return '\x1b[33m'; // yellow
+      return '\x1b[35m'; // magenta
     case 'state':
       return '\x1b[35m'; // magenta
     case 'tool_call':
@@ -103,18 +102,79 @@ const RESET = '\x1b[0m';
 const DIM = '\x1b[90m';
 const BOLD = '\x1b[1m';
 
-function formatEventLine(event: LogEvent): string {
+/**
+ * Summarize a tool call for human display.
+ * Extracts the essential info (tool name + target) instead of raw JSON.
+ */
+function summarizeToolCall(event: LogEvent): string {
+  const tc = event.data?.toolCall as { name: string; input: Record<string, unknown> } | undefined;
+  if (!tc) return event.text;
+
+  const input = tc.input;
+  switch (tc.name) {
+    case 'Read':
+    case 'Edit':
+    case 'Write':
+      return `${tc.name} ${input.file_path ?? ''}`;
+    case 'Bash': {
+      const cmd = String(input.command ?? '').split('\n')[0];
+      return `$ ${cmd}`;
+    }
+    case 'Grep':
+      return `Grep "${input.pattern}" ${input.path ?? ''}`;
+    case 'Glob':
+      return `Glob ${input.pattern}`;
+    case 'Agent':
+      return `Agent: ${input.description ?? ''}`;
+    case 'SendMessage':
+      return `SendMessage → ${input.to}: ${String(input.message ?? '').slice(0, 80)}`;
+    case 'shell':
+    case 'exec_command': {
+      const shellCmd = Array.isArray(input.command) ? input.command.join(' ') : String(input.command ?? '');
+      return `$ ${shellCmd.split('\n')[0]}`;
+    }
+    case 'web_search':
+      return `Search: ${input.query ?? ''}`;
+    default:
+      return `${tc.name}`;
+  }
+}
+
+function formatEventBlock(event: LogEvent): string {
   const time = formatTime(event.timestamp);
   const icon = kindIcon(event.kind);
   const color = kindColor(event.kind);
 
   let agent = event.agent;
-  if (event.direction === 'in') agent = `${event.peer} -> ${event.agent}`;
-  else if (event.direction === 'out') agent = `${event.agent} -> ${event.peer}`;
+  if (event.direction === 'in') agent = `${event.peer} → ${event.agent}`;
+  else if (event.direction === 'out') agent = `${event.agent} → ${event.peer}`;
 
-  const text = truncate(event.text.replace(/\n/g, ' '), 100);
+  const header = `${DIM}${time}${RESET} ${color}[${icon}]${RESET} ${BOLD}${agent}${RESET}`;
 
-  return `${DIM}${time}${RESET} ${color}[${icon}]${RESET} ${BOLD}${agent}${RESET} ${text}`;
+  // Tool calls: one-line summary
+  if (event.kind === 'tool_call') {
+    const summary = summarizeToolCall(event);
+    return `${header} ${DIM}${summary}${RESET}`;
+  }
+
+  // Tool results: dim, single line
+  if (event.kind === 'tool_result') {
+    const line = event.text.split('\n')[0].slice(0, 120);
+    return `${header} ${DIM}${line}${RESET}`;
+  }
+
+  // Short text (< 80 chars, single line): inline
+  const text = event.text.trim();
+  if (text.length < 80 && !text.includes('\n')) {
+    return `${header}\n  ${text}`;
+  }
+
+  // Multi-line: indent each line
+  const indented = text
+    .split('\n')
+    .map((l) => `  ${l}`)
+    .join('\n');
+  return `${header}\n${indented}`;
 }
 
 function formatHumanOutput(events: LogEvent[], label: string): string {
@@ -130,8 +190,14 @@ function formatHumanOutput(events: LogEvent[], label: string): string {
     return lines.join('\n');
   }
 
+  let lastKind: string | null = null;
   for (const event of events) {
-    lines.push(formatEventLine(event));
+    // Blank line between events, except consecutive tool_calls (keep them tight)
+    if (lastKind !== null && !(lastKind === 'tool_call' && event.kind === 'tool_call')) {
+      lines.push('');
+    }
+    lines.push(formatEventBlock(event));
+    lastKind = event.kind;
   }
 
   lines.push('');
@@ -275,11 +341,17 @@ async function followCommand(
   repoPath: string,
   filter: LogFilter | undefined,
 ): Promise<void> {
+  let lastFollowKind: string | null = null;
   const outputEvent = (event: LogEvent) => {
     if (options.ndjson) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
     } else {
-      process.stdout.write(`${formatEventLine(event)}\n`);
+      // Add spacing between events (except consecutive tool_calls)
+      if (lastFollowKind !== null && !(lastFollowKind === 'tool_call' && event.kind === 'tool_call')) {
+        process.stdout.write('\n');
+      }
+      process.stdout.write(`${formatEventBlock(event)}\n`);
+      lastFollowKind = event.kind;
     }
   };
 

@@ -19,7 +19,7 @@ import type { TranscriptEntry } from './transcript.js';
 // Types
 // ============================================================================
 
-export type LogEventKind = 'transcript' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system';
+export type LogEventKind = 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system';
 export type LogEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook';
 
 export interface LogEvent {
@@ -56,22 +56,40 @@ export interface LogFilter {
 // Converters
 // ============================================================================
 
+/** Check if text looks like injected system/skill content rather than real conversation. */
+function isSystemNoise(text: string): boolean {
+  const trimmed = text.trimStart();
+  return (
+    trimmed.startsWith('<command-name>') ||
+    trimmed.startsWith('<command-message>') ||
+    trimmed.startsWith('Base directory for this skill:') ||
+    trimmed.startsWith('<system-reminder>') ||
+    trimmed.startsWith('<local-command')
+  );
+}
+
 /** Convert a TranscriptEntry to a LogEvent. */
-export function transcriptToLogEvent(entry: TranscriptEntry, agent: string, team?: string): LogEvent {
+export function transcriptToLogEvent(entry: TranscriptEntry, agent: string, team?: string): LogEvent | null {
   const kindMap: Record<string, LogEventKind> = {
-    user: 'transcript',
-    assistant: 'transcript',
+    user: 'user',
+    assistant: 'assistant',
     system: 'system',
     tool_call: 'tool_call',
     tool_result: 'tool_result',
   };
 
+  const text = entry.text.trim();
+
+  // Filter out system/skill injection noise
+  if (isSystemNoise(text)) return null;
+  if (!text) return null;
+
   return {
     timestamp: entry.timestamp,
-    kind: kindMap[entry.role] ?? 'transcript',
+    kind: kindMap[entry.role] ?? 'assistant',
     agent,
     team,
-    text: entry.text,
+    text,
     data: {
       role: entry.role,
       ...(entry.toolCall ? { toolCall: entry.toolCall } : {}),
@@ -181,7 +199,8 @@ export async function readAgentLog(agent: Agent, repoPath: string, filter?: LogF
   const events: LogEvent[] = [];
 
   for (const entry of transcriptEntries) {
-    events.push(transcriptToLogEvent(entry, agentName, team));
+    const event = transcriptToLogEvent(entry, agentName, team);
+    if (event) events.push(event);
   }
 
   for (const msg of inboxMessages) {
@@ -230,7 +249,8 @@ export async function readTeamLog(
 
       const events: LogEvent[] = [];
       for (const entry of transcriptEntries) {
-        events.push(transcriptToLogEvent(entry, agentName, teamName));
+        const event = transcriptToLogEvent(entry, agentName, teamName);
+        if (event) events.push(event);
       }
       for (const msg of inboxMessages) {
         events.push(inboxMessageToLogEvent(msg, agentName, teamName));
@@ -273,11 +293,7 @@ export async function followAgentLog(
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
 ): Promise<FollowHandle> {
-  const natsHandle = await tryNatsFollow([agent], agent.team, filter, onEvent);
-  if (natsHandle) return natsHandle;
-
-  // Fallback: file polling
-  return startFilePolling([agent], repoPath, agent.team, filter, onEvent);
+  return startNatsFollow([agent], repoPath, agent.team, filter, onEvent);
 }
 
 /**
@@ -292,117 +308,52 @@ export async function followTeamLog(
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
 ): Promise<FollowHandle> {
-  const natsHandle = await tryNatsFollow(agents, teamName, filter, onEvent);
-  if (natsHandle) return natsHandle;
-
-  // Fallback: file polling
-  return startFilePolling(agents, repoPath, teamName, filter, onEvent);
+  return startNatsFollow(agents, repoPath, teamName, filter, onEvent);
 }
 
 /**
- * Try to set up NATS-based follow. Returns null if NATS is unavailable.
+ * NATS-only follow: subscribe to all genie.* subjects for real-time streaming.
+ * All events (tool calls, messages, state changes) are published to NATS by hooks.
+ * No file polling — NATS is the single source for --follow.
  */
-async function tryNatsFollow(
-  agents: Agent[],
-  team: string | undefined,
+async function startNatsFollow(
+  _agents: Agent[],
+  _repoPath: string,
+  _team: string | undefined,
   filter: LogFilter | undefined,
   onEvent: LogEventCallback,
-): Promise<FollowHandle | null> {
-  try {
-    const nats = await import('./nats-client.js');
-    const available = await nats.isAvailable();
-    if (!available) return null;
-
-    const kindsFilter = filter?.kinds ? new Set(filter.kinds) : null;
-    const subs: Array<{ unsubscribe: () => void }> = [];
-
-    const handleNatsEvent = (_subject: string, data: unknown) => {
-      const event = data as LogEvent;
-      if (!event?.timestamp || !event?.kind) return;
-      if (kindsFilter && !kindsFilter.has(event.kind)) return;
-      onEvent(event);
-    };
-
-    // Subscribe to agent-specific subjects
-    for (const agent of agents) {
-      // State events: genie.agent.{id}.>
-      const stateSub = await nats.subscribe(`genie.agent.${agent.id}.>`, handleNatsEvent);
-      subs.push(stateSub);
-
-      // Message events: genie.msg.{id}
-      const msgSub = await nats.subscribe(`genie.msg.${agent.id}`, handleNatsEvent);
-      subs.push(msgSub);
-    }
-
-    // Team broadcast
-    if (team) {
-      const broadcastSub = await nats.subscribe('genie.msg.broadcast', handleNatsEvent);
-      subs.push(broadcastSub);
-    }
-
-    return {
-      mode: 'nats',
-      stop: async () => {
-        for (const sub of subs) sub.unsubscribe();
-      },
-    };
-  } catch {
-    return null;
+): Promise<FollowHandle> {
+  const nats = await import('./nats-client.js');
+  const available = await nats.isAvailable();
+  if (!available) {
+    throw new Error('NATS is not available. Install nats package and ensure NATS server is running.');
   }
-}
 
-/**
- * File polling fallback: re-read logs every 1s, emit new events.
- */
-function startFilePolling(
-  agents: Agent[],
-  repoPath: string,
-  team: string | undefined,
-  filter: LogFilter | undefined,
-  onEvent: LogEventCallback,
-): FollowHandle {
+  const kindsFilter = filter?.kinds ? new Set(filter.kinds) : null;
+  const subs: Array<{ unsubscribe: () => void }> = [];
   const seenKeys = new Set<string>();
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Generate a dedup key for an event. */
-  const eventKey = (e: LogEvent): string => `${e.timestamp}|${e.kind}|${e.agent}|${e.source}|${e.text.slice(0, 80)}`;
+  const eventKey = (e: LogEvent): string => `${e.timestamp}|${e.kind}|${e.agent}|${e.text.slice(0, 80)}`;
 
-  const poll = async () => {
-    if (stopped) return;
-
-    try {
-      let events: LogEvent[];
-      if (agents.length === 1) {
-        events = await readAgentLog(agents[0], repoPath, filter);
-      } else {
-        events = await readTeamLog(agents, repoPath, team ?? 'unknown', filter);
-      }
-
-      for (const event of events) {
-        const key = eventKey(event);
-        if (!seenKeys.has(key)) {
-          seenKeys.add(key);
-          onEvent(event);
-        }
-      }
-    } catch {
-      // Silently retry on next poll
-    }
-
-    if (!stopped) {
-      timer = setTimeout(poll, 1000);
-    }
+  const handleNatsEvent = (_subject: string, data: unknown) => {
+    const event = data as LogEvent;
+    if (!event?.timestamp || !event?.kind) return;
+    if (kindsFilter && !kindsFilter.has(event.kind)) return;
+    // Dedup (same event can arrive on multiple matching subjects)
+    const key = eventKey(event);
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    onEvent(event);
   };
 
-  // Initial poll
-  poll();
+  // Subscribe to all genie events (messages, tool calls, state changes)
+  const allSub = await nats.subscribe('genie.>', handleNatsEvent);
+  subs.push(allSub);
 
   return {
-    mode: 'poll',
+    mode: 'nats',
     stop: async () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
+      for (const sub of subs) sub.unsubscribe();
     },
   };
 }

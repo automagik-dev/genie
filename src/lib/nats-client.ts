@@ -1,37 +1,24 @@
 /**
- * NATS Client — Lazy singleton with graceful degradation.
+ * NATS Client — Lazy singleton with auto-cleanup.
  *
- * Connects to NATS on first publish/subscribe. If NATS is unavailable,
- * all methods no-op silently (logs a warning once). Connection is reused
- * across calls (singleton pattern).
- *
- * Uses dynamic import so `nats` is an optional peer dependency —
- * if the package isn't installed, operations degrade gracefully.
+ * - Connects lazily on first use
+ * - Auto-closes after 500ms idle (no pending subscribes)
+ * - Long-lived subscribers keep the connection alive
+ * - All methods no-op silently if NATS unavailable
+ * - Connection is reused across calls (singleton)
  */
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/** Callback for NATS message subscription */
 export type NatsMessageCallback = (subject: string, data: unknown) => void;
 
-/** Subscription handle returned by subscribe() */
 export interface NatsSubscription {
   unsubscribe: () => void;
 }
 
-/** Internal NATS connection state */
-interface NatsState {
-  connection: NatsConnection | null;
-  codec: NatsCodec | null;
-  connecting: Promise<boolean> | null;
-  warnedUnavailable: boolean;
-  warnedMissingPackage: boolean;
-  closed: boolean;
-}
-
-// Minimal type aliases for the nats package (avoid hard dependency on @types)
+// Minimal type aliases (avoid hard dependency on @types/nats)
 interface NatsConnection {
   publish(subject: string, data?: Uint8Array): void;
   subscribe(subject: string): NatsSubscriptionIter;
@@ -59,14 +46,17 @@ interface NatsCodec {
 // Singleton State
 // ============================================================================
 
-const state: NatsState = {
-  connection: null,
-  codec: null,
-  connecting: null,
+const state = {
+  connection: null as NatsConnection | null,
+  codec: null as NatsCodec | null,
+  connecting: null as Promise<boolean> | null,
   warnedUnavailable: false,
   warnedMissingPackage: false,
-  closed: false,
+  activeSubscriptions: 0,
+  idleTimer: null as ReturnType<typeof setTimeout> | null,
 };
+
+const IDLE_TIMEOUT_MS = 500;
 
 // ============================================================================
 // Internal Helpers
@@ -83,15 +73,11 @@ function warnOnce(key: 'warnedUnavailable' | 'warnedMissingPackage', message: st
   }
 }
 
-/**
- * Dynamically import the nats package. Returns null if not installed.
- */
 async function importNats(): Promise<{
   connect: (opts: Record<string, unknown>) => Promise<NatsConnection>;
   JSONCodec: () => NatsCodec;
 } | null> {
   try {
-    // Use variable to prevent TypeScript from resolving the module at compile time
     const pkg = 'nats';
     return await import(/* webpackIgnore: true */ pkg);
   } catch {
@@ -100,15 +86,12 @@ async function importNats(): Promise<{
   }
 }
 
-/**
- * Ensure a NATS connection exists. Returns true if connected, false if unavailable.
- * Uses a connecting promise to deduplicate concurrent connection attempts.
- */
 async function ensureConnection(): Promise<boolean> {
-  if (state.closed) return false;
-  if (state.connection && !state.connection.isClosed()) return true;
+  if (state.connection && !state.connection.isClosed()) {
+    resetIdleTimer();
+    return true;
+  }
 
-  // Deduplicate concurrent connection attempts
   if (state.connecting) return state.connecting;
 
   state.connecting = (async () => {
@@ -116,21 +99,20 @@ async function ensureConnection(): Promise<boolean> {
       const natsModule = await importNats();
       if (!natsModule) return false;
 
-      const url = getNatsUrl();
       state.connection = await natsModule.connect({
-        servers: url,
-        maxReconnectAttempts: 3,
-        reconnectTimeWait: 1000,
+        servers: getNatsUrl(),
+        maxReconnectAttempts: 2,
+        reconnectTimeWait: 500,
+        timeout: 2000,
       });
       state.codec = natsModule.JSONCodec();
-
-      // Reset warning so reconnections are silent
       state.warnedUnavailable = false;
+      resetIdleTimer();
       return true;
     } catch {
       state.connection = null;
       state.codec = null;
-      warnOnce('warnedUnavailable', `NATS not available at ${getNatsUrl()} — operating without real-time events`);
+      warnOnce('warnedUnavailable', `NATS not available at ${getNatsUrl()}`);
       return false;
     } finally {
       state.connecting = null;
@@ -140,29 +122,40 @@ async function ensureConnection(): Promise<boolean> {
   return state.connecting;
 }
 
+/** Schedule auto-close if no active subscriptions. */
+function resetIdleTimer(): void {
+  if (state.idleTimer) clearTimeout(state.idleTimer);
+  if (state.activeSubscriptions > 0) return; // subscribers keep it alive
+  state.idleTimer = setTimeout(() => {
+    if (state.activeSubscriptions === 0) {
+      close().catch(() => {});
+    }
+  }, IDLE_TIMEOUT_MS);
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
 
 /**
- * Publish a message to a NATS subject. Fire-and-forget.
- * No-ops silently if NATS is unavailable.
+ * Publish a message. Fire-and-forget.
+ * Connection auto-closes after idle if no active subscriptions.
  */
 export async function publish(subject: string, data: unknown): Promise<void> {
   const connected = await ensureConnection();
   if (!connected || !state.connection || !state.codec) return;
 
   try {
-    const payload = state.codec.encode(data);
-    state.connection.publish(subject, payload);
+    state.connection.publish(subject, state.codec.encode(data));
   } catch {
-    // Fire-and-forget — swallow publish errors
+    // Swallow publish errors
   }
+  resetIdleTimer();
 }
 
 /**
- * Subscribe to a NATS subject. The callback receives decoded JSON messages.
- * Returns a subscription handle with unsubscribe(). No-ops if NATS unavailable.
+ * Subscribe to a NATS subject.
+ * Keeps connection alive until unsubscribed.
  */
 export async function subscribe(subject: string, callback: NatsMessageCallback): Promise<NatsSubscription> {
   const noop: NatsSubscription = { unsubscribe: () => {} };
@@ -173,20 +166,25 @@ export async function subscribe(subject: string, callback: NatsMessageCallback):
   try {
     const sub = state.connection.subscribe(subject);
     const codec = state.codec;
+    state.activeSubscriptions++;
 
-    // Process messages in background
+    // Clear idle timer — subscriptions keep connection alive
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+
     const processMessages = async () => {
       try {
         for await (const msg of sub) {
           try {
-            const decoded = codec.decode(msg.data);
-            callback(msg.subject, decoded);
+            callback(msg.subject, codec.decode(msg.data));
           } catch {
             // Skip malformed messages
           }
         }
       } catch {
-        // Iterator ends on connection close — expected
+        // Iterator ends on connection close
       }
     };
     processMessages();
@@ -198,6 +196,8 @@ export async function subscribe(subject: string, callback: NatsMessageCallback):
         } catch {
           // Already unsubscribed
         }
+        state.activeSubscriptions = Math.max(0, state.activeSubscriptions - 1);
+        resetIdleTimer();
       },
     };
   } catch {
@@ -205,20 +205,17 @@ export async function subscribe(subject: string, callback: NatsMessageCallback):
   }
 }
 
-/**
- * Check if NATS is currently reachable.
- * Attempts a connection if not already connected.
- */
+/** Check if NATS is reachable. */
 export async function isAvailable(): Promise<boolean> {
   return ensureConnection();
 }
 
-/**
- * Gracefully close the NATS connection.
- * Safe to call multiple times.
- */
+/** Gracefully close the connection. Safe to call multiple times. */
 export async function close(): Promise<void> {
-  state.closed = true;
+  if (state.idleTimer) {
+    clearTimeout(state.idleTimer);
+    state.idleTimer = null;
+  }
   if (state.connection) {
     try {
       await state.connection.drain();
@@ -234,14 +231,14 @@ export async function close(): Promise<void> {
   }
 }
 
-/**
- * Reset internal state. Intended for testing only.
- */
+/** Reset internal state (testing only). */
 export function _resetForTesting(): void {
   state.connection = null;
   state.codec = null;
   state.connecting = null;
   state.warnedUnavailable = false;
   state.warnedMissingPackage = false;
-  state.closed = false;
+  state.activeSubscriptions = 0;
+  if (state.idleTimer) clearTimeout(state.idleTimer);
+  state.idleTimer = null;
 }

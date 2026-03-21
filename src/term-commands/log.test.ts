@@ -115,7 +115,7 @@ describe('log command: team log via readTeamLog', () => {
 
 describe('log command: filters', () => {
   const baseEvents: LogEvent[] = [
-    { timestamp: '2026-03-20T10:00:00.000Z', kind: 'transcript', agent: 'eng', text: 'first', source: 'provider' },
+    { timestamp: '2026-03-20T10:00:00.000Z', kind: 'assistant', agent: 'eng', text: 'first', source: 'provider' },
     { timestamp: '2026-03-20T11:00:00.000Z', kind: 'message', agent: 'eng', text: 'second', source: 'mailbox' },
     { timestamp: '2026-03-20T12:00:00.000Z', kind: 'tool_call', agent: 'eng', text: 'third', source: 'provider' },
     { timestamp: '2026-03-20T13:00:00.000Z', kind: 'message', agent: 'eng', text: 'fourth', source: 'mailbox' },
@@ -202,126 +202,22 @@ describe('log command: NDJSON output', () => {
 // ============================================================================
 
 // ============================================================================
-// Follow mode (file polling fallback — NATS not available in test)
+// Follow mode (NATS-only — requires NATS server for real-time streaming)
 // ============================================================================
 
-describe('log command: follow mode (file polling)', () => {
-  test('followAgentLog falls back to poll mode when NATS unavailable', async () => {
+describe('log command: follow mode (NATS)', () => {
+  test('followAgentLog returns nats mode when NATS is available', async () => {
     const agent = makeAgent('engineer', 'test-team');
-    await send(tempDir, 'reviewer', 'engineer', 'hello follow');
-
-    const received: LogEvent[] = [];
-    const handle = await followAgentLog(agent, tempDir, undefined, (event) => {
-      received.push(event);
-    });
-
-    expect(handle.mode).toBe('poll');
-
-    // Wait for first poll cycle
-    await new Promise((r) => setTimeout(r, 1500));
+    const handle = await followAgentLog(agent, tempDir, undefined, () => {});
+    expect(handle.mode).toBe('nats');
     await handle.stop();
-
-    expect(received.length).toBeGreaterThanOrEqual(1);
-    expect(received.some((e) => e.text === 'hello follow')).toBe(true);
   });
 
-  test('followAgentLog emits new events on subsequent polls', async () => {
-    const agent = makeAgent('engineer');
-
-    await send(tempDir, 'reviewer', 'engineer', 'first msg');
-
-    const received: LogEvent[] = [];
-    const handle = await followAgentLog(agent, tempDir, undefined, (event) => {
-      received.push(event);
-    });
-
-    // Wait for first poll
-    await new Promise((r) => setTimeout(r, 1500));
-    const countAfterFirst = received.length;
-    expect(countAfterFirst).toBeGreaterThanOrEqual(1);
-
-    // Add a new message
-    await send(tempDir, 'qa', 'engineer', 'second msg');
-
-    // Wait for next poll
-    await new Promise((r) => setTimeout(r, 1500));
+  test('followTeamLog returns nats mode when NATS is available', async () => {
+    const agents = [makeAgent('eng', 'team'), makeAgent('rev', 'team')];
+    const handle = await followTeamLog(agents, tempDir, 'team', undefined, () => {});
+    expect(handle.mode).toBe('nats');
     await handle.stop();
-
-    expect(received.length).toBeGreaterThan(countAfterFirst);
-    expect(received.some((e) => e.text === 'second msg')).toBe(true);
-  });
-
-  test('followAgentLog respects kind filter', async () => {
-    const agent = makeAgent('engineer', 'team-x');
-
-    await send(tempDir, 'reviewer', 'engineer', 'dm message');
-    await postMessage(tempDir, 'team-x', 'engineer', 'chat message');
-
-    const received: LogEvent[] = [];
-    const handle = await followAgentLog(agent, tempDir, { kinds: ['message'] }, (event) => {
-      received.push(event);
-    });
-
-    await new Promise((r) => setTimeout(r, 1500));
-    await handle.stop();
-
-    // All received events should be messages
-    for (const e of received) {
-      expect(e.kind).toBe('message');
-    }
-    expect(received.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('followTeamLog polls events from multiple agents', async () => {
-    const eng = makeAgent('engineer', 'my-team');
-    const rev = makeAgent('reviewer', 'my-team');
-
-    await send(tempDir, 'engineer', 'reviewer', 'PR ready');
-    await send(tempDir, 'reviewer', 'engineer', 'LGTM');
-
-    const received: LogEvent[] = [];
-    const handle = await followTeamLog([eng, rev], tempDir, 'my-team', undefined, (event) => {
-      received.push(event);
-    });
-
-    await new Promise((r) => setTimeout(r, 1500));
-    await handle.stop();
-
-    expect(received.length).toBeGreaterThanOrEqual(2);
-  });
-
-  test('followAgentLog does not emit duplicates across polls', async () => {
-    const agent = makeAgent('engineer');
-    await send(tempDir, 'reviewer', 'engineer', 'no dupes');
-
-    const received: LogEvent[] = [];
-    const handle = await followAgentLog(agent, tempDir, undefined, (event) => {
-      received.push(event);
-    });
-
-    // Wait for two poll cycles
-    await new Promise((r) => setTimeout(r, 2500));
-    await handle.stop();
-
-    // Count events with text 'no dupes' — should be exactly 1
-    const dupeCount = received.filter((e) => e.text === 'no dupes').length;
-    expect(dupeCount).toBe(1);
-  });
-
-  test('stop() cleanly stops polling', async () => {
-    const agent = makeAgent('engineer');
-    const received: LogEvent[] = [];
-    const handle = await followAgentLog(agent, tempDir, undefined, (event) => {
-      received.push(event);
-    });
-
-    await handle.stop();
-
-    // Add message after stop — should NOT appear
-    await send(tempDir, 'reviewer', 'engineer', 'after stop');
-    await new Promise((r) => setTimeout(r, 1500));
-
-    expect(received.every((e) => e.text !== 'after stop')).toBe(true);
   });
 });
 
