@@ -108,7 +108,7 @@ function computeFirstDueAt(options: CreateOptions): { dueAt: Date; cronExpr: str
   if (options.every) {
     if (isCronExpression(options.every)) {
       // Store cron expression directly
-      const dueAt = computeNextCronDue(options.every);
+      const dueAt = computeNextCronDue(options.every, { timezone: options.timezone });
       return { dueAt, cronExpr: options.every, scheduleType: 'cron' };
     }
     // Parse as interval duration
@@ -205,19 +205,19 @@ async function scheduleCreateCommand(name: string, options: CreateOptions): Prom
 
     const scheduleId = generateId();
     const triggerId = generateId();
+    const runSpec = options.leaseTimeout ? { lease_timeout_ms: parseDuration(options.leaseTimeout) } : {};
     const metadata = {
       type: scheduleType,
       original_spec: options.at ?? options.every ?? options.after,
       timezone: options.timezone ?? 'UTC',
-      ...(options.leaseTimeout ? { lease_timeout_ms: parseDuration(options.leaseTimeout) } : {}),
     };
 
     // biome-ignore lint/suspicious/noExplicitAny: postgres.js transaction type
     await sql.begin(async (tx: any) => {
       // Insert schedule
       await tx`
-        INSERT INTO schedules (id, name, cron_expression, timezone, command, metadata, status)
-        VALUES (${scheduleId}, ${name}, ${cronExpr}, ${options.timezone ?? 'UTC'}, ${options.command}, ${JSON.stringify(metadata)}, 'active')
+        INSERT INTO schedules (id, name, cron_expression, timezone, command, run_spec, metadata, status)
+        VALUES (${scheduleId}, ${name}, ${cronExpr}, ${options.timezone ?? 'UTC'}, ${options.command}, ${JSON.stringify(runSpec)}, ${JSON.stringify(metadata)}, 'active')
       `;
 
       // Insert first trigger
