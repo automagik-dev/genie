@@ -210,10 +210,14 @@ export async function doneCommand(ref: string): Promise<void> {
         const protocolRouter = await import('../lib/protocol-router.js');
         const repoPath = process.cwd();
         const message = `${waveResult.waveName} complete. All groups done: [${waveResult.waveGroups.join(', ')}]. Run /review or advance to next wave.`;
-        await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
-        console.log('   Notified team-lead of wave completion.');
+        const result = await protocolRouter.sendMessage(repoPath, 'cli', 'team-lead', message);
+        if (result && typeof result === 'object' && 'delivered' in result && !result.delivered) {
+          console.warn('   ⚠️ Wave-complete notification may not have been delivered.');
+        } else {
+          console.log('   Notified team-lead of wave completion.');
+        }
       } catch {
-        console.log('   ⚠️ Could not notify team-lead (messaging unavailable).');
+        console.warn('   ⚠️ Could not notify team-lead (messaging unavailable).');
       }
     }
 
