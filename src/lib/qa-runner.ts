@@ -16,10 +16,11 @@
  *   - Reports PASS/FAIL as a structured JSON in team chat
  */
 
-import { readdir } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import * as nats from './nats-client.js';
 import { type QaSpec, parseQaSpec } from './qa-parser.js';
-import { readMessages } from './team-chat.js';
 import * as teamManager from './team-manager.js';
 
 // ============================================================================
@@ -89,26 +90,27 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
     const config = await teamManager.createTeam(teamName, repoPath);
     console.error(`  [qa] Created team ${teamName} at ${config.worktreePath}`);
 
-    // 2. Hire team-lead
-    await teamManager.hireAgent(teamName, 'team-lead');
+    // 2. Write the QA spec prompt to a temp file for --append-system-prompt-file
+    const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
+    const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
+    await writeFile(promptFile, prompt);
 
-    // 3. Spawn team-lead via genie CLI
+    // 3. Hire and spawn qa-runner agent (dedicated QA executor, not generic team-lead)
+    await teamManager.hireAgent(teamName, 'qa-runner');
+
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
-    await handleWorkerSpawn('team-lead', {
+    await handleWorkerSpawn('qa-runner', {
       provider: 'claude',
       team: teamName,
       cwd: config.worktreePath,
+      role: 'team-lead',
+      extraArgs: ['--append-system-prompt-file', promptFile],
+      initialPrompt: `Execute the QA spec "${spec.name}". Your full instructions are in the system prompt. Start now.`,
     });
-    console.error(`  [qa] Spawned team-lead in team ${teamName}`);
+    console.error(`  [qa] Spawned qa-runner in team ${teamName}`);
 
-    // 4. Build and send the kickoff prompt with the full spec
-    const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
-    const protocolRouter = await import('./protocol-router.js');
-    await protocolRouter.sendMessage(repoPath, 'qa-cli', 'team-lead', prompt, teamName);
-    console.error('  [qa] Sent spec to team-lead');
-
-    // 5. Poll team chat for the result (team-lead posts a QA_RESULT JSON)
-    const report = await pollForResult(spec, teamName, repoPath, timeoutMs, start);
+    // 5. Wait for result via NATS (team-lead runs `genie qa report` which publishes to genie.qa.{team}.result)
+    const report = await waitForResult(spec, teamName, timeoutMs, start);
 
     // 6. Disband the team
     await teamManager.disbandTeam(teamName);
@@ -165,16 +167,16 @@ After executing all actions and collecting events, validate each expectation:
 ${expectInstructions}
 
 ### 4. Report Result
-When done, post your result to team chat using \`genie send\`. The message MUST contain a JSON block with this exact format:
+When done, publish the result via NATS using \`genie qa-report\`:
 
-\`\`\`
-genie send 'QA_RESULT: {"result": "pass|fail", "expectations": [{"description": "...", "result": "pass|fail", "evidence": "...", "reason": "..."}], "collectedEvents": [{"timestamp": "...", "kind": "...", "agent": "...", "text": "..."}]}' --to qa-cli
+\`\`\`bash
+genie qa-report '{"result": "pass", "expectations": [{"description": "...", "result": "pass", "evidence": "matched event..."}], "collectedEvents": [{"timestamp": "...", "kind": "...", "agent": "...", "text": "..."}]}'
 \`\`\`
 
-- Set "result" to "pass" only if ALL expectations pass
+- Set "result" to "pass" only if ALL expectations pass, otherwise "fail"
 - For each expectation, include evidence (if pass) or reason (if fail)
 - Include collected events in the collectedEvents array
-- IMPORTANT: The message MUST start with "QA_RESULT:" followed by valid JSON
+- IMPORTANT: This publishes instantly via NATS — the QA runner receives it immediately
 
 ### 5. Cleanup
 After reporting, run:
@@ -244,72 +246,57 @@ function formatActionStep(a: QaSpec['actions'][number]): string {
 }
 
 // ============================================================================
-// Polling
+// NATS Result Listener
 // ============================================================================
 
-const POLL_INTERVAL_MS = 3000;
-const QA_RESULT_PREFIX = 'QA_RESULT:';
+/** Subscribe to `genie.qa.{team}.result` and wait for the team-lead's report. */
+async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, start: number): Promise<SpecReport> {
+  const subject = `genie.qa.${teamName}.result`;
+  let resolved = false;
+  let resolveFn: (report: SpecReport) => void;
+  const promise = new Promise<SpecReport>((r) => {
+    resolveFn = r;
+  });
 
-/** Poll team chat for the team-lead's QA_RESULT message. */
-async function pollForResult(
-  spec: QaSpec,
-  teamName: string,
-  repoPath: string,
-  timeoutMs: number,
-  start: number,
-): Promise<SpecReport> {
-  const deadline = start + timeoutMs;
+  const sub = await nats.subscribe(subject, (_subj, data) => {
+    if (resolved) return;
+    resolved = true;
+    const report = parseTeamLeadReport(spec, data as Record<string, unknown>, start);
+    sub.unsubscribe();
+    resolveFn(report);
+  });
 
-  while (Date.now() < deadline) {
-    await sleep(POLL_INTERVAL_MS);
+  console.error(`  [qa] Listening on ${subject} for result...`);
 
+  // Timeout fallback
+  const timer = setTimeout(
+    () => {
+      if (resolved) return;
+      resolved = true;
+      sub.unsubscribe();
+      resolveFn(makeErrorReport(spec, start, `Timeout after ${timeoutMs}ms waiting for team-lead report via NATS`));
+    },
+    timeoutMs - (Date.now() - start),
+  );
+
+  // Progress indicator
+  const progress = setInterval(() => {
+    if (resolved) {
+      clearInterval(progress);
+      clearTimeout(timer);
+      return;
+    }
     const elapsed = ((Date.now() - start) / 1000).toFixed(0);
-    console.error(`  [qa] Polling for result... (${elapsed}s elapsed)`);
+    console.error(`  [qa] Waiting for result... (${elapsed}s elapsed)`);
+  }, 5000);
 
-    // Read team chat messages
-    const messages = await readMessages(repoPath, teamName);
-    for (const msg of messages) {
-      if (msg.body.includes(QA_RESULT_PREFIX)) {
-        return parseTeamLeadReport(spec, msg.body, start);
-      }
-    }
-
-    // Also check team status — if team-lead marked it done, we're done
-    const team = await teamManager.getTeam(teamName);
-    if (team?.status === 'done') {
-      // Check one last time for result message
-      const finalMessages = await readMessages(repoPath, teamName);
-      for (const msg of finalMessages) {
-        if (msg.body.includes(QA_RESULT_PREFIX)) {
-          return parseTeamLeadReport(spec, msg.body, start);
-        }
-      }
-      // Team marked done but no structured report — treat as pass with no evidence
-      return {
-        name: spec.name,
-        file: spec.file,
-        result: 'pass',
-        expectations: spec.expect.map((e) => ({
-          description: e.description,
-          result: 'pass' as ExpectResult,
-          evidence: 'Team-lead marked team as done (no structured report)',
-        })),
-        collectedEvents: [],
-        durationMs: Date.now() - start,
-      };
-    }
-  }
-
-  // Timeout — return error
-  return makeErrorReport(spec, start, `Timeout after ${timeoutMs}ms waiting for team-lead report`);
+  return promise;
 }
 
-/** Parse the team-lead's QA_RESULT JSON from a chat message. */
-function parseTeamLeadReport(spec: QaSpec, messageBody: string, start: number): SpecReport {
+/** Parse the team-lead's QA result from NATS payload. */
+function parseTeamLeadReport(spec: QaSpec, payload: Record<string, unknown>, start: number): SpecReport {
   try {
-    const jsonStart = messageBody.indexOf(QA_RESULT_PREFIX) + QA_RESULT_PREFIX.length;
-    const jsonStr = messageBody.slice(jsonStart).trim();
-    const data = JSON.parse(jsonStr) as {
+    const data = payload as {
       result?: string;
       expectations?: ExpectReport[];
       collectedEvents?: CollectedEvent[];
@@ -342,10 +329,6 @@ function makeErrorReport(spec: QaSpec, start: number, error: string): SpecReport
     durationMs: Date.now() - start,
     error,
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** Resolve the default QA specs directory. */

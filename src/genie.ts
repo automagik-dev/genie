@@ -44,6 +44,7 @@ import * as historyCmd from './term-commands/history.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
+import { type QaOptions, qaCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -226,6 +227,39 @@ program
   .option('-f, --follow', 'Follow mode — real-time streaming')
   .action(async (agent: string | undefined, options: LogOptions) => {
     await logCommand(agent, options);
+  });
+
+// genie qa [spec]
+program
+  .command('qa [spec]')
+  .description('Run QA specs — self-testing system for genie CLI')
+  .option('--timeout <seconds>', 'Max seconds per spec', (v: string) => Number(v), 60)
+  .option('--verbose', 'Show all collected events')
+  .option('--ndjson', 'Machine-readable NDJSON output')
+  .action(async (spec: string | undefined, options: QaOptions) => {
+    await qaCommand(spec, options);
+  });
+
+// genie qa report <json> — team-lead calls this to publish QA result via NATS
+program
+  .command('qa-report <json>')
+  .description('Publish QA result via NATS (called by QA team-lead)')
+  .action(async (json: string) => {
+    const team = process.env.GENIE_TEAM;
+    if (!team) {
+      console.error('Error: GENIE_TEAM not set. This command must be run by a QA team-lead agent.');
+      process.exit(1);
+    }
+    try {
+      const { publish, close } = await import('./lib/nats-client.js');
+      const data = JSON.parse(json);
+      await publish(`genie.qa.${team}.result`, data);
+      await close();
+      console.log(`QA result published to genie.qa.${team}.result`);
+    } catch (err) {
+      console.error(`Failed to publish QA result: ${err}`);
+      process.exit(1);
+    }
   });
 
 // genie read <name>
