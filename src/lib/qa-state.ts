@@ -1,14 +1,15 @@
 /**
  * QA State — Persistent storage for QA run results.
  *
- * Results are stored in `<repo>/.genie/qa/results.json` so they survive across sessions.
+ * Specs live in `{repo}/.genie/qa/` (tracked in git, per-repo).
+ * Results live in `~/.genie/qa/{repo-hash}/` (local, never tracked).
  * Each entry is keyed by domain-relative spec path (e.g. "messaging/round-trip-response").
  */
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
-import { getRepoGenieDir } from './genie-dir.js';
+import { homedir } from 'node:os';
+import { join, relative, resolve } from 'node:path';
 import type { ExpectReport, SpecReport } from './qa-runner.js';
 
 // ============================================================================
@@ -39,12 +40,18 @@ export interface SpecEntry {
 // Paths
 // ============================================================================
 
-function qaDir(repoPath: string): string {
-  return join(getRepoGenieDir(repoPath), 'qa');
+/** Hash a repo path to a short ID for global results storage. */
+function repoHash(repoPath: string): string {
+  return createHash('sha256').update(resolve(repoPath)).digest('hex').slice(0, 12);
+}
+
+/** Global results directory: ~/.genie/qa/{repo-hash}/ */
+function resultsDir(repoPath: string): string {
+  return join(homedir(), '.genie', 'qa', repoHash(repoPath));
 }
 
 function resultsPath(repoPath: string): string {
-  return join(qaDir(repoPath), 'results.json');
+  return join(resultsDir(repoPath), 'results.json');
 }
 
 // ============================================================================
@@ -63,7 +70,7 @@ export async function loadResults(repoPath: string): Promise<QaResults> {
 
 /** Save a single spec result. Merges into existing results file. */
 export async function saveResult(repoPath: string, specKey: string, report: SpecReport): Promise<void> {
-  const dir = qaDir(repoPath);
+  const dir = resultsDir(repoPath);
   await mkdir(dir, { recursive: true });
 
   const results = await loadResults(repoPath);

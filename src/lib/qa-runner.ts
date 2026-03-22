@@ -444,7 +444,7 @@ function makeErrorReport(spec: QaSpec, start: number, error: string): SpecReport
   };
 }
 
-/** Resolve the default QA specs directory. */
-export function defaultSpecDir(): string {
-  return resolve(__dirname, '..', '..', 'tests', 'qa');
+/** Resolve the QA specs directory for the current repo. */
+export function defaultSpecDir(repoPath?: string): string {
+  return join(resolve(repoPath ?? process.cwd()), '.genie', 'qa');
 }
