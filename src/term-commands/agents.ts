@@ -474,11 +474,14 @@ async function registerSpawnWorker(
   await registry.register(workerEntry);
 
   // Auto-add to team config members (enables scope checks for genie send)
+  // Skip 'council' — hireAgent has a special path that bulk-adds all council members
   const role = ctx.validated.role ?? ctx.agentName;
-  try {
-    await teamManager.hireAgent(ctx.validated.team, role);
-  } catch {
-    // Team may not exist in team-manager (e.g., native-only teams) — that's fine
+  if (role !== 'council') {
+    try {
+      await teamManager.hireAgent(ctx.validated.team, role);
+    } catch {
+      // Team may not exist in team-manager (e.g., native-only teams) — that's fine
+    }
   }
 
   return workerEntry;
@@ -675,7 +678,10 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
 
   // Watch for Claude Code workspace trust prompt and auto-confirm
   // (upstream bug: --dangerously-skip-permissions doesn't bypass it)
-  await autoConfirmTrustPrompt(paneId);
+  // Only for Claude provider — Codex doesn't have this prompt
+  if (ctx.validated.provider === 'claude') {
+    await autoConfirmTrustPrompt(paneId);
+  }
 
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
