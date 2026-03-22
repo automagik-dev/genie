@@ -47,7 +47,8 @@ function repoHash(repoPath: string): string {
 
 /** Global results directory: ~/.genie/qa/{repo-hash}/ */
 function resultsDir(repoPath: string): string {
-  return join(homedir(), '.genie', 'qa', repoHash(repoPath));
+  const base = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+  return join(base, 'qa', repoHash(repoPath));
 }
 
 function resultsPath(repoPath: string): string {
