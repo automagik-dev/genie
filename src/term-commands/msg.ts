@@ -133,8 +133,10 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
   for (const team of senderTeams) {
     if (team.members.includes(recipient) || recipient === 'team-lead') return null;
     // Strip team prefix: "qa-abc123-engineer" → "engineer"
-    const roleOnly = recipient.startsWith(`${team.name}-`) ? recipient.slice(team.name.length + 1) : recipient;
-    if (team.members.includes(roleOnly)) return null;
+    if (recipient.startsWith(`${team.name}-`)) {
+      const roleOnly = recipient.slice(team.name.length + 1);
+      if (team.members.includes(roleOnly)) return null;
+    }
   }
 
   const teamNames = senderTeams.map((t) => t.name).join(', ');
