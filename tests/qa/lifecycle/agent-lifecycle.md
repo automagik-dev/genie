@@ -1,14 +1,13 @@
-# Test: Agent spawn and kill lifecycle
+# Test: Agent spawn completes and responds to task
 
 ## Setup
 - start follow on team
+- spawn engineer (provider: claude)
 
 ## Actions
-1. spawn engineer (provider: claude)
-2. wait 5s
-3. run genie ls --json
-4. run genie kill engineer
+1. send "echo LIFECYCLE_TEST and tell me done" to engineer
+2. wait 30s
 
 ## Expect
-- [ ] output contains engineer
-- [ ] output contains working
+- [ ] follow stream contains event kind=tool_call text~=LIFECYCLE_TEST
+- [ ] follow stream contains event kind=message text~=LIFECYCLE_TEST
