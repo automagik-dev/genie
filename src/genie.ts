@@ -42,8 +42,10 @@ import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
+import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
+import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -227,6 +229,74 @@ program
   .option('--log-file <path>', 'Direct path to log file (for testing)')
   .action(async (name: string, options: historyCmd.HistoryOptions) => {
     await historyCmd.historyCommand(name, options);
+  });
+
+// genie log [agent]
+program
+  .command('log [agent]')
+  .description('Unified observability feed — aggregates transcript, DMs, team chat')
+  .option('--team <name>', 'Show interleaved feed for all agents in a team')
+  .option('--type <kind>', 'Filter by event kind (transcript, message, tool_call, state, system)')
+  .option('--since <timestamp>', 'Only events after ISO timestamp')
+  .option('--last <n>', 'Show last N events', Number.parseInt)
+  .option('--ndjson', 'Output as newline-delimited JSON (pipeable to jq)')
+  .option('--json', 'Output as pretty JSON')
+  .option('-f, --follow', 'Follow mode — real-time streaming')
+  .action(async (agent: string | undefined, options: LogOptions) => {
+    await logCommand(agent, options);
+  });
+
+// genie qa [target] — run specs by name, domain, or all
+// genie qa status — dashboard
+// genie qa history — recent runs
+const qaCmd = program.command('qa').description('QA — self-testing system for genie CLI');
+
+qaCmd
+  .command('run [target]', { isDefault: true })
+  .description('Run QA specs (all, a domain, or a single spec)')
+  .option('--timeout <seconds>', 'Max seconds per spec', (v: string) => Number(v), 60)
+  .option('--parallel <n>', 'Max specs to run in parallel', (v: string) => Number(v), 5)
+  .option('--verbose', 'Show all collected events')
+  .option('--ndjson', 'Machine-readable NDJSON output')
+  .action(async (target: string | undefined, options: QaOptions) => {
+    await qaCommand(target, options);
+  });
+
+qaCmd
+  .command('status')
+  .description('Show QA dashboard with last results per spec')
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    await qaStatusCommand(options);
+  });
+
+qaCmd
+  .command('history')
+  .description('Show recent QA runs')
+  .action(async () => {
+    await qaHistoryCommand();
+  });
+
+// genie qa report <json> — team-lead calls this to publish QA result via NATS
+program
+  .command('qa-report <json>')
+  .description('Publish QA result via NATS (called by QA team-lead)')
+  .action(async (json: string) => {
+    const team = process.env.GENIE_TEAM;
+    if (!team) {
+      console.error('Error: GENIE_TEAM not set. This command must be run by a QA team-lead agent.');
+      process.exit(1);
+    }
+    try {
+      const { publish, close } = await import('./lib/nats-client.js');
+      const data = JSON.parse(json);
+      await publish(`genie.qa.${team}.result`, data);
+      await close();
+      console.log(`QA result published to genie.qa.${team}.result`);
+    } catch (err) {
+      console.error(`Failed to publish QA result: ${err}`);
+      process.exit(1);
+    }
   });
 
 // genie read <name>
