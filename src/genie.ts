@@ -238,6 +238,7 @@ qaCmd
   .command('run [target]', { isDefault: true })
   .description('Run QA specs (all, a domain, or a single spec)')
   .option('--timeout <seconds>', 'Max seconds per spec', (v: string) => Number(v), 60)
+  .option('--parallel <n>', 'Max specs to run in parallel', (v: string) => Number(v), 5)
   .option('--verbose', 'Show all collected events')
   .option('--ndjson', 'Machine-readable NDJSON output')
   .action(async (target: string | undefined, options: QaOptions) => {

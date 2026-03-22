@@ -59,6 +59,8 @@ export interface QaRunnerOptions {
   timeout?: number;
   verbose?: boolean;
   repoPath?: string;
+  /** Max specs to run in parallel (default: 5) */
+  parallel?: number;
 }
 
 // ============================================================================
@@ -82,17 +84,48 @@ export async function runDomainSpecs(
   return runSpecEntries(filtered, specDir, options);
 }
 
-/** Run a list of spec entries, saving results after each. */
+/** Run a list of spec entries in parallel chunks, saving results after each. */
 async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
   const repoPath = resolve(options?.repoPath ?? process.cwd());
+  const chunkSize = options?.parallel ?? 5;
   const reports: SpecReport[] = [];
-  for (const entry of entries) {
-    const spec = await parseQaSpec(entry.filePath);
-    const report = await runSpec(spec, options);
-    const key = specKeyFromPath(specDir, entry.filePath);
-    await saveResult(repoPath, key, report);
-    reports.push(report);
+
+  for (let i = 0; i < entries.length; i += chunkSize) {
+    const chunk = entries.slice(i, i + chunkSize);
+    const chunkLabel = chunk.map((e) => e.name).join(', ');
+    if (entries.length > 1) {
+      console.error(
+        `\n  [qa] Running chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(entries.length / chunkSize)} (${chunk.length} specs): ${chunkLabel}`,
+      );
+    }
+
+    const chunkResults = await Promise.allSettled(
+      chunk.map(async (entry) => {
+        const spec = await parseQaSpec(entry.filePath);
+        const report = await runSpec(spec, options);
+        const key = specKeyFromPath(specDir, entry.filePath);
+        await saveResult(repoPath, key, report);
+        return report;
+      }),
+    );
+
+    for (const result of chunkResults) {
+      if (result.status === 'fulfilled') {
+        reports.push(result.value);
+      } else {
+        reports.push({
+          name: 'unknown',
+          file: 'unknown',
+          result: 'error',
+          expectations: [],
+          collectedEvents: [],
+          durationMs: 0,
+          error: String(result.reason),
+        });
+      }
+    }
   }
+
   return reports;
 }
 
