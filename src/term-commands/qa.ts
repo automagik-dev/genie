@@ -224,9 +224,9 @@ async function resolveAndRun(specDir: string, target: string, opts: QaRunnerOpti
   const specPath = await resolveSpecPath(specDir, target);
   if (specPath) {
     const spec = await parseQaSpec(specPath);
-    const report = await runSpec(spec, opts);
-    const repoPath = opts.repoPath ?? process.cwd();
     const key = specKeyFromPath(specDir, specPath);
+    const report = await runSpec(spec, { ...opts, specKey: key });
+    const repoPath = opts.repoPath ?? process.cwd();
     await saveResult(repoPath, key, report);
     return [report];
   }

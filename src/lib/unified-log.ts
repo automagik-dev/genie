@@ -19,7 +19,7 @@ import type { TranscriptEntry } from './transcript.js';
 // Types
 // ============================================================================
 
-export type LogEventKind = 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system';
+export type LogEventKind = 'user' | 'assistant' | 'message' | 'state' | 'tool_call' | 'tool_result' | 'system' | 'qa';
 export type LogEventSource = 'provider' | 'mailbox' | 'chat' | 'registry' | 'hook';
 
 export interface LogEvent {
