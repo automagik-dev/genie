@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { AgentState } from './agent-registry.js';
 import {
   type LogEntry,
   type SchedulerConfig,
   type SchedulerDeps,
   type WorkerInfo,
   _resetWorkerStatesForTesting,
+  attemptAgentResume,
   claimDueTriggers,
   collectHeartbeats,
   collectMachineSnapshot,
@@ -14,6 +16,7 @@ import {
   reclaimExpiredLeases,
   reconcileOrphanedRuns,
   reconcileOrphans,
+  recoverOnStartup,
   startDaemon,
 } from './scheduler-daemon.js';
 
@@ -147,6 +150,8 @@ function createMockDeps(
     publishEvent: async (subject, data) => {
       publishedEvents.push({ subject, data });
     },
+    resumeAgent: async () => true,
+    updateAgent: async () => {},
     ...overrides,
   };
 
@@ -853,7 +858,7 @@ describe('scheduler-daemon', () => {
 
   describe('collectMachineSnapshot', () => {
     test('inserts machine snapshot with worker and session counts', async () => {
-      const workers = [
+      const workers: WorkerInfo[] = [
         { id: 'w-1', paneId: '%1', state: 'working', team: 'alpha' },
         { id: 'w-2', paneId: '%2', state: 'idle', team: 'alpha' },
         { id: 'w-3', paneId: '%3', state: 'suspended', team: 'beta' },
@@ -1050,6 +1055,360 @@ describe('scheduler-daemon', () => {
 
       // Should not throw
       await expect(emitWorkerEvents(deps)).rejects.toThrow('NATS down');
+    });
+  });
+
+  // ==========================================================================
+  // Auto-resume tests
+  // ==========================================================================
+
+  describe('attemptAgentResume', () => {
+    function makeWorker(overrides: Partial<WorkerInfo> = {}): WorkerInfo {
+      return {
+        id: 'test-agent',
+        paneId: '%42',
+        state: 'error',
+        claudeSessionId: 'session-abc',
+        autoResume: true,
+        resumeAttempts: 0,
+        maxResumeAttempts: 3,
+        ...overrides,
+      };
+    }
+
+    test('resumes eligible agent successfully', async () => {
+      const agent = makeWorker();
+      const updates: { id: string; updates: Record<string, unknown> }[] = [];
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async (id, u) => {
+            updates.push({ id, updates: u });
+          },
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('resumed');
+      expect(updates).toHaveLength(1);
+      expect(updates[0].updates.resumeAttempts).toBe(1);
+      expect(updates[0].updates.lastResumeAttempt).toBeDefined();
+
+      const attempted = logs.find((l) => l.event === 'agent_resume_attempted');
+      expect(attempted).toBeDefined();
+      expect(attempted?.resume_attempts).toBe(1);
+
+      const succeeded = logs.find((l) => l.event === 'agent_resume_succeeded');
+      expect(succeeded).toBeDefined();
+    });
+
+    test('skips agent with autoResume: false', async () => {
+      const agent = makeWorker({ autoResume: false });
+      const { deps, logs } = createMockDeps();
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('skipped');
+      const skip = logs.find((l) => l.event === 'agent_resume_skipped');
+      expect(skip).toBeDefined();
+      expect(skip?.reason).toBe('auto_resume_disabled');
+    });
+
+    test('skips agent with no Claude session ID', async () => {
+      const agent = makeWorker({ claudeSessionId: undefined });
+      const { deps, logs } = createMockDeps();
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('skipped');
+      const skip = logs.find((l) => l.event === 'agent_resume_skipped');
+      expect(skip?.reason).toBe('no_session_id');
+    });
+
+    test('returns exhausted when retry budget depleted', async () => {
+      const agent = makeWorker({ resumeAttempts: 3, maxResumeAttempts: 3 });
+      const { deps, logs } = createMockDeps();
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+    });
+
+    test('skips when within cooldown period', async () => {
+      const agent = makeWorker({
+        lastResumeAttempt: new Date('2026-03-20T11:59:30Z').toISOString(), // 30s ago (now = 12:00)
+      });
+      const { deps, logs } = createMockDeps();
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('skipped');
+      const skip = logs.find((l) => l.event === 'agent_resume_skipped');
+      expect(skip?.reason).toBe('cooldown');
+    });
+
+    test('resumes when cooldown has elapsed', async () => {
+      const agent = makeWorker({
+        lastResumeAttempt: new Date('2026-03-20T11:58:00Z').toISOString(), // 2min ago
+      });
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+      expect(result).toBe('resumed');
+    });
+
+    test('skips when concurrency cap is reached', async () => {
+      const agent = makeWorker();
+      const activeWorkers: WorkerInfo[] = Array.from({ length: 5 }, (_, i) => ({
+        id: `w-${i}`,
+        paneId: `%${i}`,
+        state: 'working' as AgentState,
+      }));
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          listWorkers: async () => activeWorkers,
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('skipped');
+      const skip = logs.find((l) => l.event === 'agent_resume_skipped');
+      expect(skip?.reason).toBe('concurrency_cap');
+    });
+
+    test('handles resume failure gracefully', async () => {
+      const agent = makeWorker({ resumeAttempts: 0 });
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => false,
+          updateAgent: async () => {},
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      // Not exhausted yet (1 of 3)
+      expect(result).toBe('skipped');
+      const failed = logs.find((l) => l.event === 'agent_resume_failed');
+      expect(failed).toBeDefined();
+    });
+
+    test('returns exhausted on last failed attempt', async () => {
+      const agent = makeWorker({ resumeAttempts: 2, maxResumeAttempts: 3 });
+      const { deps, logs } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => false,
+          updateAgent: async () => {},
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+
+      expect(result).toBe('exhausted');
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+      expect(exhausted?.resume_attempts).toBe(3);
+    });
+
+    test('treats undefined autoResume as true (default)', async () => {
+      const agent = makeWorker({ autoResume: undefined });
+      const { deps } = createMockDeps(
+        {},
+        {
+          resumeAgent: async () => true,
+          updateAgent: async () => {},
+        },
+      );
+
+      const result = await attemptAgentResume(deps, defaultConfig, agent);
+      expect(result).toBe('resumed');
+    });
+  });
+
+  describe('reconcileOrphans with auto-resume', () => {
+    test('attempts resume before marking orphaned run as failed', async () => {
+      const runs = [{ id: 'run-orphan', worker_id: 'agent-1', status: 'running', trigger_id: 'trig-1' }];
+      const heartbeats = [{ status: 'dead' }, { status: 'dead' }];
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-1',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      let resumed = false;
+      const { deps, logs } = createMockDeps(
+        { runs, heartbeats },
+        {
+          listWorkers: async () => workers,
+          resumeAgent: async () => {
+            resumed = true;
+            return true;
+          },
+          updateAgent: async () => {},
+        },
+      );
+
+      const failedCount = await reconcileOrphans(deps, defaultConfig);
+
+      expect(resumed).toBe(true);
+      expect(failedCount).toBe(0); // Not marked as failed — resumed instead
+      const resumeLog = logs.find((l) => l.event === 'orphan_run_resumed');
+      expect(resumeLog).toBeDefined();
+    });
+
+    test('marks run as failed when auto-resume is disabled', async () => {
+      const runs = [{ id: 'run-orphan', worker_id: 'agent-1', status: 'running', trigger_id: 'trig-1' }];
+      const heartbeats = [{ status: 'dead' }, { status: 'dead' }];
+      const workers: WorkerInfo[] = [
+        { id: 'agent-1', paneId: '%42', state: 'working', autoResume: false, claudeSessionId: 'sess-1' },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { runs, heartbeats },
+        {
+          listWorkers: async () => workers,
+        },
+      );
+
+      const failedCount = await reconcileOrphans(deps, defaultConfig);
+
+      // autoResume=false → skipped → but still not marked failed on skip
+      // It's skipped, meaning daemon waits for next cycle (which won't help since autoResume is false)
+      // Actually we want: when autoResume=false AND resume is skipped, we should check if the agent
+      // will never be resumed. For autoResume=false, the skip means "permanently skip" so fall through.
+      // The current logic: if result === 'skipped' → continue (skip marking failed)
+      // This is correct for cooldown/cap skips, but wrong for autoResume=false.
+      // The test expectation should match behavior: agent with autoResume=false → skipped → not failed YET.
+      // On next cycle, same thing happens. Agent is never auto-resumed, but daemon doesn't mark it failed either.
+      // This is actually fine — the run in PG stays 'running' and eventually manual intervention or
+      // `genie kill` handles it. The autoResume=false just means the daemon won't try to auto-resume.
+      // For the GROUP 3 acceptance criteria: "Agent with autoResume: false is marked failed (current behavior)"
+      // We need to adjust: skip only on cooldown/cap, not on autoResume=false.
+      expect(failedCount).toBe(1);
+      const failLog = logs.find((l) => l.event === 'orphan_run_failed');
+      expect(failLog).toBeDefined();
+    });
+
+    test('marks run as failed when resume exhausted', async () => {
+      const runs = [{ id: 'run-orphan', worker_id: 'agent-1', status: 'running', trigger_id: 'trig-1' }];
+      const heartbeats = [{ status: 'dead' }, { status: 'dead' }];
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-1',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 3,
+          maxResumeAttempts: 3,
+        },
+      ];
+
+      const { deps, logs } = createMockDeps(
+        { runs, heartbeats },
+        {
+          listWorkers: async () => workers,
+        },
+      );
+
+      const failedCount = await reconcileOrphans(deps, defaultConfig);
+
+      expect(failedCount).toBe(1);
+      const exhausted = logs.find((l) => l.event === 'agent_resume_exhausted');
+      expect(exhausted).toBeDefined();
+    });
+  });
+
+  describe('recoverOnStartup with auto-resume', () => {
+    test('auto-resumes agents with dead panes on startup', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-1',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+        { id: 'agent-2', paneId: '%43', state: 'idle', autoResume: true, claudeSessionId: 'sess-2', resumeAttempts: 0 },
+        { id: 'agent-done', paneId: '%44', state: 'done', claudeSessionId: 'sess-3' },
+        { id: 'agent-suspended', paneId: '%45', state: 'suspended', claudeSessionId: 'sess-4' },
+      ];
+
+      const resumedAgents: string[] = [];
+      const { deps, logs } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => false, // all panes dead
+          resumeAgent: async (id) => {
+            resumedAgents.push(id);
+            return true;
+          },
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      // Only agent-1 and agent-2 should be resumed (not done, not suspended)
+      expect(resumedAgents).toHaveLength(2);
+      expect(resumedAgents).toContain('agent-1');
+      expect(resumedAgents).toContain('agent-2');
+
+      const recoveryLog = logs.find((l) => l.event === 'recovery_completed');
+      expect(recoveryLog).toBeDefined();
+      expect(recoveryLog?.resumed_agents).toBe(2);
+    });
+
+    test('skips agents with alive panes on startup', async () => {
+      const workers: WorkerInfo[] = [
+        {
+          id: 'agent-1',
+          paneId: '%42',
+          state: 'working',
+          autoResume: true,
+          claudeSessionId: 'sess-1',
+          resumeAttempts: 0,
+        },
+      ];
+
+      const resumedAgents: string[] = [];
+      const { deps } = createMockDeps(
+        { triggers: [], runs: [] },
+        {
+          listWorkers: async () => workers,
+          isPaneAlive: async () => true, // pane is alive
+          resumeAgent: async (id) => {
+            resumedAgents.push(id);
+            return true;
+          },
+          updateAgent: async () => {},
+        },
+      );
+
+      await recoverOnStartup(deps, 'daemon-1', defaultConfig);
+
+      expect(resumedAgents).toHaveLength(0);
     });
   });
 });

@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  AGENT_STATE_TRANSITIONS,
   RUN_STATE_TRANSITIONS,
   type RunState,
   TERMINAL_STATES,
+  isValidAgentTransition,
   isValidTransition,
   resolveRunSpec,
 } from './run-spec.js';
@@ -134,6 +136,42 @@ describe('run-spec', () => {
       for (const state of states) {
         expect(RUN_STATE_TRANSITIONS[state]).toBeDefined();
       }
+    });
+  });
+
+  describe('agent state transitions', () => {
+    test('AGENT_STATE_TRANSITIONS: failed -> spawning is valid', () => {
+      expect(AGENT_STATE_TRANSITIONS.failed).toContain('spawning');
+    });
+    test('AGENT_STATE_TRANSITIONS: done is terminal (no transitions)', () => {
+      expect(AGENT_STATE_TRANSITIONS.done).toHaveLength(0);
+    });
+    test('AGENT_STATE_TRANSITIONS: suspended -> spawning', () => {
+      expect(AGENT_STATE_TRANSITIONS.suspended).toContain('spawning');
+    });
+    test('AGENT_STATE_TRANSITIONS: error -> spawning', () => {
+      expect(AGENT_STATE_TRANSITIONS.error).toContain('spawning');
+    });
+    test('AGENT_STATE_TRANSITIONS: spawning -> working', () => {
+      expect(AGENT_STATE_TRANSITIONS.spawning).toContain('working');
+    });
+    test('isValidAgentTransition: failed -> spawning', () => {
+      expect(isValidAgentTransition('failed', 'spawning')).toBe(true);
+    });
+    test('isValidAgentTransition: failed -> working is invalid', () => {
+      expect(isValidAgentTransition('failed', 'working')).toBe(false);
+    });
+    test('isValidAgentTransition: done -> spawning is invalid', () => {
+      expect(isValidAgentTransition('done', 'spawning')).toBe(false);
+    });
+    test('isValidAgentTransition: suspended -> spawning', () => {
+      expect(isValidAgentTransition('suspended', 'spawning')).toBe(true);
+    });
+    test('isValidAgentTransition: working -> done', () => {
+      expect(isValidAgentTransition('working', 'done')).toBe(true);
+    });
+    test('isValidAgentTransition: working -> spawning is invalid', () => {
+      expect(isValidAgentTransition('working', 'spawning')).toBe(false);
     });
   });
 });

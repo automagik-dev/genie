@@ -42,6 +42,7 @@ export function parseDuration(input: string): number {
 
 /** Expand a range (start-end) or wildcard (*) with an optional step into a list of values. */
 function expandRange(range: string, step: number, min: number, max: number): number[] {
+  if (step === 0) throw new Error('Cron step value cannot be 0');
   if (range === '*') {
     const out: number[] = [];
     for (let i = min; i <= max; i += step) out.push(i);
@@ -81,64 +82,125 @@ function parseCronField(field: string, min: number, max: number): number[] {
  *   - If both DOM and DOW are restricted (not *), the day matches if EITHER matches (union).
  *   - Otherwise, both must match (intersection — wildcards always match).
  */
-export function computeNextCronDue(cronExpr: string, after?: Date): Date {
+export interface CronOptions {
+  /** Compute next occurrence after this time. Defaults to now. */
+  after?: Date;
+  /** IANA timezone (e.g. 'America/New_York'). When set, cron fields are matched against wall-clock time in this timezone. */
+  timezone?: string;
+}
+
+/** Get the wall-clock components of a UTC Date in a given timezone. */
+function getTimeParts(
+  date: Date,
+  tz?: string,
+): { month: number; dom: number; dow: number; hour: number; minute: number } {
+  if (!tz) {
+    return {
+      month: date.getMonth() + 1,
+      dom: date.getDate(),
+      dow: date.getDay(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+    };
+  }
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? 'Sun';
+  return {
+    month: get('month'),
+    dom: get('day'),
+    dow: dayMap[weekday] ?? 0,
+    hour: get('hour') === 24 ? 0 : get('hour'),
+    minute: get('minute'),
+  };
+}
+
+function parseOpts(afterOrOpts?: Date | CronOptions): { after?: Date; timezone?: string } {
+  if (afterOrOpts instanceof Date) return { after: afterOrOpts };
+  if (afterOrOpts) return { after: afterOrOpts.after, timezone: afterOrOpts.timezone };
+  return {};
+}
+
+/** Advance candidate to the start of the next day in the given timezone. */
+function advanceToNextDay(candidate: Date, tz?: string): void {
+  candidate.setTime(candidate.getTime() + 24 * 60 * 60 * 1000);
+  const tp = getTimeParts(candidate, tz);
+  candidate.setTime(candidate.getTime() - tp.hour * 3_600_000 - tp.minute * 60_000);
+}
+
+interface ParsedCron {
+  minutes: number[];
+  hours: number[];
+  doms: number[];
+  months: number[];
+  dows: number[];
+  domRestricted: boolean;
+  dowRestricted: boolean;
+}
+
+function parseCronExpr(cronExpr: string): ParsedCron {
   const parts = cronExpr.trim().split(/\s+/);
   if (parts.length < 5) throw new Error(`Invalid cron expression: "${cronExpr}"`);
-
   const [minField, hourField, domField, monthField, dowField] = parts;
+  return {
+    minutes: parseCronField(minField, 0, 59),
+    hours: parseCronField(hourField, 0, 23),
+    doms: parseCronField(domField, 1, 31),
+    months: parseCronField(monthField, 1, 12),
+    dows: parseCronField(dowField, 0, 6),
+    domRestricted: domField !== '*',
+    dowRestricted: dowField !== '*',
+  };
+}
 
-  const minutes = parseCronField(minField, 0, 59);
-  const hours = parseCronField(hourField, 0, 23);
-  const doms = parseCronField(domField, 1, 31);
-  const months = parseCronField(monthField, 1, 12);
-  const dows = parseCronField(dowField, 0, 6);
-
-  const domRestricted = domField !== '*';
-  const dowRestricted = dowField !== '*';
+export function computeNextCronDue(cronExpr: string, afterOrOpts?: Date | CronOptions): Date {
+  const { after, timezone } = parseOpts(afterOrOpts);
+  const cron = parseCronExpr(cronExpr);
 
   const base = after ?? new Date();
   const candidate = new Date(base.getTime());
   candidate.setSeconds(0, 0);
-  candidate.setMinutes(candidate.getMinutes() + 1);
+  candidate.setTime(candidate.getTime() + 60_000);
 
   const limit = new Date(candidate.getTime() + 366 * 24 * 60 * 60 * 1000);
 
   while (candidate <= limit) {
-    const month = candidate.getMonth() + 1;
-    const dom = candidate.getDate();
-    const dow = candidate.getDay();
-    const hour = candidate.getHours();
-    const minute = candidate.getMinutes();
+    const tp = getTimeParts(candidate, timezone);
 
-    if (!months.includes(month)) {
-      candidate.setMonth(candidate.getMonth() + 1, 1);
-      candidate.setHours(0, 0, 0, 0);
+    if (!cron.months.includes(tp.month)) {
+      advanceToNextDay(candidate, timezone);
       continue;
     }
 
-    let dayMatch: boolean;
-    if (domRestricted && dowRestricted) {
-      dayMatch = doms.includes(dom) || dows.includes(dow);
-    } else {
-      dayMatch = doms.includes(dom) && dows.includes(dow);
-    }
+    const dayMatch =
+      cron.domRestricted && cron.dowRestricted
+        ? cron.doms.includes(tp.dom) || cron.dows.includes(tp.dow)
+        : cron.doms.includes(tp.dom) && cron.dows.includes(tp.dow);
 
     if (!dayMatch) {
-      candidate.setDate(candidate.getDate() + 1);
-      candidate.setHours(0, 0, 0, 0);
+      advanceToNextDay(candidate, timezone);
       continue;
     }
 
-    if (!hours.includes(hour)) {
-      candidate.setHours(candidate.getHours() + 1, 0, 0, 0);
+    if (!cron.hours.includes(tp.hour)) {
+      candidate.setTime(candidate.getTime() + 3_600_000 - tp.minute * 60_000);
       continue;
     }
 
-    if (minutes.includes(minute)) {
-      return candidate;
-    }
+    if (cron.minutes.includes(tp.minute)) return candidate;
 
-    candidate.setMinutes(candidate.getMinutes() + 1);
+    candidate.setTime(candidate.getTime() + 60_000);
   }
 
   throw new Error(`No next cron occurrence found for "${cronExpr}" within 366 days`);
