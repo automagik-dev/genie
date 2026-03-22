@@ -63,15 +63,45 @@ export interface QaRunnerOptions {
   parallel?: number;
   /** Emit incremental NDJSON events on stdout */
   ndjson?: boolean;
+  /** Spec key override for single-spec mode (e.g. "messaging/mailbox-delivery") */
+  specKey?: string;
 }
 
 // ============================================================================
-// NDJSON Event Emitter
+// QA Event Emitter (NDJSON + NATS)
 // ============================================================================
 
+interface QaEventPayload {
+  type: string;
+  specKey: string;
+  domain: string;
+  team: string;
+  [key: string]: unknown;
+}
+
 /** Emit an NDJSON event line to stdout (only when ndjson mode is active). */
-function emitNdjson(event: Record<string, unknown>): void {
+function emitNdjson(event: QaEventPayload): void {
   process.stdout.write(`${JSON.stringify(event)}\n`);
+}
+
+/** Publish a QA event to NATS as a LogEvent-compatible payload. */
+function publishQaEvent(qaType: string, payload: QaEventPayload): void {
+  const { specKey, domain, team, ...rest } = payload;
+  nats.publish(`genie.qa.${qaType}`, {
+    timestamp: new Date().toISOString(),
+    kind: 'qa',
+    agent: 'qa-runner',
+    team,
+    text: `${qaType}: ${specKey}`,
+    data: { qaType, specKey, domain, ...rest },
+    source: 'hook',
+  });
+}
+
+/** Emit a QA event to both NDJSON stdout and NATS. */
+function emitQaEvent(qaType: string, payload: QaEventPayload, ndjson: boolean): void {
+  publishQaEvent(qaType, payload);
+  if (ndjson) emitNdjson(payload);
 }
 
 // ============================================================================
@@ -120,7 +150,11 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
 
       prepared.push({ entry, spec, teamName, worktreePath: config.worktreePath, promptFile });
       console.error(`    ✓ ${entry.name}`);
-      if (ndjson) emitNdjson({ type: 'qa:team-created', team: teamName, spec: entry.key });
+      emitQaEvent(
+        'team-created',
+        { type: 'qa:team-created', specKey: entry.key, domain: entry.domain, team: teamName },
+        ndjson,
+      );
     } catch (err) {
       console.error(`    ✗ ${entry.name}: ${err instanceof Error ? err.message : err}`);
     }
@@ -129,16 +163,22 @@ async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: bool
   return prepared;
 }
 
-/** Emit a spec-done NDJSON event. */
-function emitSpecDone(spec: string, report: SpecReport): void {
-  emitNdjson({
-    type: 'qa:spec-done',
-    spec,
-    result: report.result,
-    durationMs: report.durationMs,
-    expectations: report.expectations,
-    error: report.error,
-  });
+/** Emit a spec-done event to NATS + optionally NDJSON. */
+function emitSpecDone(specKey: string, domain: string, team: string, report: SpecReport, ndjson: boolean): void {
+  emitQaEvent(
+    'spec-done',
+    {
+      type: 'qa:spec-done',
+      specKey,
+      domain,
+      team,
+      result: report.result,
+      durationMs: report.durationMs,
+      expectations: report.expectations,
+      error: report.error,
+    },
+    ndjson,
+  );
 }
 
 async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
@@ -160,14 +200,19 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
     if (!event?.timestamp || !event?.kind) return;
     const team = event.team ?? '';
     if (!team.startsWith('qa-')) return;
-    const specName = prepared.find((p) => p.teamName === team)?.entry.name ?? team;
+    const match = prepared.find((p) => p.teamName === team);
+    const specKey = match?.entry.key ?? team;
+    const specName = match?.entry.name ?? team;
+    const domain = match?.entry.domain ?? '';
     const time = new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false });
     const text = (event.text ?? '').slice(0, 100);
     console.error(`  ${DIM}${time}${RESET} ${DIM}[${event.kind}]${RESET} ${specName} ${DIM}${text}${RESET}`);
     if (ndjson)
       emitNdjson({
         type: 'qa:event',
-        spec: specName,
+        specKey,
+        domain,
+        team,
         event: { timestamp: event.timestamp, kind: event.kind, agent: event.agent ?? '', text: event.text ?? '' },
       });
   });
@@ -184,7 +229,11 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
       while (running < maxConcurrency && nextIdx < prepared.length) {
         const p = prepared[nextIdx++];
         running++;
-        if (ndjson) emitNdjson({ type: 'qa:spec-started', spec: p.entry.key, team: p.teamName });
+        emitQaEvent(
+          'spec-started',
+          { type: 'qa:spec-started', specKey: p.entry.key, domain: p.entry.domain, team: p.teamName },
+          ndjson,
+        );
 
         runPreparedSpec(p.spec, p.teamName, p.worktreePath, p.promptFile, timeoutMs)
           .then(async (report) => {
@@ -193,14 +242,14 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
             const icon = report.result === 'pass' ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
             console.error(`  ${icon} ${p.entry.name} (${(report.durationMs / 1000).toFixed(0)}s) [${elapsed}s total]`);
-            if (ndjson) emitSpecDone(p.entry.key, report);
+            emitSpecDone(p.entry.key, p.entry.domain, p.teamName, report, ndjson);
             reports.push(report);
           })
           .catch((err) => {
             const errorReport = makeErrorReport(p.spec, Date.now(), String(err));
             reports.push(errorReport);
             console.error(`  ${RED}✗${RESET} ${p.entry.name}: ${err}`);
-            if (ndjson) emitSpecDone(p.entry.key, errorReport);
+            emitSpecDone(p.entry.key, p.entry.domain, p.teamName, errorReport, ndjson);
           })
           .finally(() => {
             running--;
@@ -232,21 +281,23 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
   const repoPath = resolve(options?.repoPath ?? process.cwd());
   const timeoutMs = (options?.timeout ?? 60) * 1000;
   const ndjson = options?.ndjson ?? false;
+  const specKey = options?.specKey ?? spec.name;
+  const domain = specKey.includes('/') ? specKey.split('/').slice(0, -1).join('/') : '(root)';
   const teamName = `qa-${Date.now().toString(36)}-${spec.name.slice(0, 8).replace(/\s+/g, '-')}`;
   const start = Date.now();
 
   try {
     const config = await teamManager.createTeam(teamName, repoPath);
     await teamManager.hireAgent(teamName, 'qa-runner');
-    if (ndjson) emitNdjson({ type: 'qa:team-created', team: teamName, spec: spec.name });
+    emitQaEvent('team-created', { type: 'qa:team-created', specKey, domain, team: teamName }, ndjson);
 
     const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
     const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
     await writeFile(promptFile, prompt);
 
-    if (ndjson) emitNdjson({ type: 'qa:spec-started', spec: spec.name, team: teamName });
+    emitQaEvent('spec-started', { type: 'qa:spec-started', specKey, domain, team: teamName }, ndjson);
     const report = await runPreparedSpec(spec, teamName, config.worktreePath, promptFile, timeoutMs);
-    if (ndjson) emitSpecDone(spec.name, report);
+    emitSpecDone(specKey, domain, teamName, report, ndjson);
 
     await teamManager.disbandTeam(teamName);
     return report;
@@ -257,7 +308,7 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
       // Best effort
     }
     const errorReport = makeErrorReport(spec, start, String(err));
-    if (ndjson) emitSpecDone(spec.name, errorReport);
+    emitSpecDone(specKey, domain, teamName, errorReport, ndjson);
     return errorReport;
   }
 }
