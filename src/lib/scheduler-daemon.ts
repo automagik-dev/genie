@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { Agent } from './agent-registry.js';
 import { computeNextCronDue, parseDuration } from './cron.js';
 import { type RunSpec, resolveRunSpec } from './run-spec.js';
 
@@ -73,15 +74,21 @@ export interface LogEntry {
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 type SqlClient = any;
 
-/** Worker info returned by listWorkers. */
-export interface WorkerInfo {
-  id: string;
-  paneId: string;
-  state: string;
-  team?: string;
-  wishSlug?: string;
-  groupNumber?: number;
-}
+/** Minimal agent shape returned by listWorkers for resume eligibility checks and event emission. */
+export type WorkerInfo = Pick<
+  Agent,
+  | 'id'
+  | 'paneId'
+  | 'state'
+  | 'team'
+  | 'wishSlug'
+  | 'groupNumber'
+  | 'autoResume'
+  | 'resumeAttempts'
+  | 'maxResumeAttempts'
+  | 'lastResumeAttempt'
+  | 'claudeSessionId'
+>;
 
 /** Dependency injection interface for testing. */
 export interface SchedulerDeps {
@@ -100,6 +107,10 @@ export interface SchedulerDeps {
   countTmuxSessions: () => Promise<number>;
   /** Publish an event to NATS. Fire-and-forget, no-ops if NATS unavailable. */
   publishEvent: (subject: string, data: unknown) => Promise<void>;
+  /** Resume a single agent by name via `genie resume <name>`. Returns true on success. */
+  resumeAgent: (agentId: string) => Promise<boolean>;
+  /** Update fields on an agent in the registry. */
+  updateAgent: (agentId: string, updates: Partial<Agent>) => Promise<void>;
 }
 
 // ============================================================================
@@ -156,6 +167,11 @@ async function defaultListWorkers(): Promise<WorkerInfo[]> {
     team: a.team,
     wishSlug: a.wishSlug,
     groupNumber: a.groupNumber,
+    autoResume: a.autoResume,
+    resumeAttempts: a.resumeAttempts,
+    maxResumeAttempts: a.maxResumeAttempts,
+    lastResumeAttempt: a.lastResumeAttempt,
+    claudeSessionId: a.claudeSessionId,
   }));
 }
 
@@ -178,6 +194,21 @@ async function defaultCountTmuxSessions(): Promise<number> {
   }
 }
 
+async function defaultResumeAgent(agentId: string): Promise<boolean> {
+  try {
+    const { execSync } = await import('node:child_process');
+    execSync(`genie resume ${agentId}`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function defaultUpdateAgent(agentId: string, updates: Partial<Agent>): Promise<void> {
+  const { update } = await import('./agent-registry.js');
+  await update(agentId, updates);
+}
+
 function createDefaultDeps(): SchedulerDeps {
   return {
     getConnection: async () => {
@@ -194,6 +225,8 @@ function createDefaultDeps(): SchedulerDeps {
     listWorkers: defaultListWorkers,
     countTmuxSessions: defaultCountTmuxSessions,
     publishEvent: defaultPublishEvent,
+    resumeAgent: defaultResumeAgent,
+    updateAgent: defaultUpdateAgent,
   };
 }
 
@@ -583,9 +616,10 @@ export async function reconcileOrphanedRuns(deps: SchedulerDeps, daemonId: strin
 }
 
 /**
- * Run full startup recovery: reclaim expired leases + reconcile orphaned runs.
+ * Run full startup recovery: reclaim expired leases, reconcile orphaned runs,
+ * then auto-resume agents whose panes died while the daemon was down.
  */
-export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string): Promise<void> {
+export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string, config?: SchedulerConfig): Promise<void> {
   const now = deps.now();
   deps.log({
     timestamp: now.toISOString(),
@@ -597,14 +631,188 @@ export async function recoverOnStartup(deps: SchedulerDeps, daemonId: string): P
   const reclaimed = await reclaimExpiredLeases(deps, daemonId);
   const orphans = await reconcileOrphanedRuns(deps, daemonId);
 
+  // Auto-resume agents whose panes died while daemon was down
+  let resumed = 0;
+  const resolvedConfig = config ?? resolveConfig();
+  const workers = await deps.listWorkers();
+  const resumable = workers.filter((w) => w.state !== 'suspended' && w.state !== 'done' && w.claudeSessionId);
+
+  for (const worker of resumable) {
+    const alive = await deps.isPaneAlive(worker.paneId);
+    if (!alive) {
+      const result = await attemptAgentResume(deps, resolvedConfig, worker);
+      if (result === 'resumed') resumed++;
+    }
+  }
+
   deps.log({
     timestamp: deps.now().toISOString(),
     level: 'info',
     event: 'recovery_completed',
     reclaimed_leases: reclaimed,
     orphaned_runs: orphans,
+    resumed_agents: resumed,
     daemon_id: daemonId,
   });
+}
+
+// ============================================================================
+// Agent auto-resume
+// ============================================================================
+
+/** Default resume cooldown in ms (60s). */
+const RESUME_COOLDOWN_MS = 60_000;
+
+/** Default max auto-resume attempts. */
+const DEFAULT_MAX_RESUME_ATTEMPTS = 3;
+
+/**
+ * Result of an auto-resume attempt.
+ *   - 'resumed' — agent was successfully resumed
+ *   - 'exhausted' — retry budget depleted, agent marked permanently failed
+ *   - 'skipped' — ineligible (autoResume off, cooldown, cap, no session, etc.)
+ */
+export type ResumeResult = 'resumed' | 'exhausted' | 'skipped';
+
+/**
+ * Attempt to auto-resume a dead agent.
+ *
+ * Checks eligibility (autoResume flag, retry budget, cooldown, concurrency cap),
+ * then delegates to `deps.resumeAgent` to actually respawn the agent.
+ */
+export async function attemptAgentResume(
+  deps: SchedulerDeps,
+  config: SchedulerConfig,
+  agent: WorkerInfo,
+): Promise<ResumeResult> {
+  const now = deps.now();
+  const agentId = agent.id;
+
+  // autoResume defaults to true when undefined
+  if (agent.autoResume === false) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'agent_resume_skipped',
+      agent_id: agentId,
+      reason: 'auto_resume_disabled',
+    });
+    return 'skipped';
+  }
+
+  // Must have a Claude session ID to resume
+  if (!agent.claudeSessionId) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'agent_resume_skipped',
+      agent_id: agentId,
+      reason: 'no_session_id',
+    });
+    return 'skipped';
+  }
+
+  const maxAttempts = agent.maxResumeAttempts ?? DEFAULT_MAX_RESUME_ATTEMPTS;
+  const attempts = agent.resumeAttempts ?? 0;
+
+  // Retry budget exhausted
+  if (attempts >= maxAttempts) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'warn',
+      event: 'agent_resume_exhausted',
+      agent_id: agentId,
+      resume_attempts: attempts,
+      max_resume_attempts: maxAttempts,
+    });
+    return 'exhausted';
+  }
+
+  // Cooldown: lastResumeAttempt + 60s must be in the past
+  if (agent.lastResumeAttempt) {
+    const lastAttempt = new Date(agent.lastResumeAttempt).getTime();
+    if (now.getTime() - lastAttempt < RESUME_COOLDOWN_MS) {
+      deps.log({
+        timestamp: now.toISOString(),
+        level: 'debug',
+        event: 'agent_resume_skipped',
+        agent_id: agentId,
+        reason: 'cooldown',
+        last_attempt: agent.lastResumeAttempt,
+      });
+      return 'skipped';
+    }
+  }
+
+  // Concurrency cap: count active workers
+  const workers = await deps.listWorkers();
+  const activeCount = workers.filter((w) => !['done', 'error', 'suspended'].includes(w.state)).length;
+  if (activeCount >= config.maxConcurrent) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'debug',
+      event: 'agent_resume_skipped',
+      agent_id: agentId,
+      reason: 'concurrency_cap',
+      active: activeCount,
+      max: config.maxConcurrent,
+    });
+    return 'skipped';
+  }
+
+  // Increment attempts and set lastResumeAttempt before spawning
+  const newAttempts = attempts + 1;
+  await deps.updateAgent(agentId, {
+    resumeAttempts: newAttempts,
+    lastResumeAttempt: now.toISOString(),
+  });
+
+  deps.log({
+    timestamp: now.toISOString(),
+    level: 'info',
+    event: 'agent_resume_attempted',
+    agent_id: agentId,
+    resume_attempts: newAttempts,
+    max_resume_attempts: maxAttempts,
+  });
+
+  // Attempt the resume
+  const success = await deps.resumeAgent(agentId);
+
+  if (success) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'agent_resume_succeeded',
+      agent_id: agentId,
+      resume_attempts: newAttempts,
+    });
+    return 'resumed';
+  }
+
+  deps.log({
+    timestamp: now.toISOString(),
+    level: 'warn',
+    event: 'agent_resume_failed',
+    agent_id: agentId,
+    resume_attempts: newAttempts,
+    max_resume_attempts: maxAttempts,
+  });
+
+  // If this was the last attempt, mark exhausted
+  if (newAttempts >= maxAttempts) {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'warn',
+      event: 'agent_resume_exhausted',
+      agent_id: agentId,
+      resume_attempts: newAttempts,
+      max_resume_attempts: maxAttempts,
+    });
+    return 'exhausted';
+  }
+
+  return 'skipped';
 }
 
 // ============================================================================
@@ -660,10 +868,56 @@ export async function collectHeartbeats(deps: SchedulerDeps): Promise<number> {
 // Orphan reconciliation
 // ============================================================================
 
+/** Check if a run has N consecutive dead heartbeats. */
+async function isRunDead(sql: SqlClient, runId: string, threshold: number): Promise<boolean> {
+  const recentHeartbeats = await sql`
+    SELECT status FROM heartbeats
+    WHERE run_id = ${runId}
+    ORDER BY created_at DESC
+    LIMIT ${threshold}
+  `;
+  if (recentHeartbeats.length < threshold) return false;
+  return recentHeartbeats.every((h: { status: string }) => h.status === 'dead');
+}
+
+/**
+ * Try to auto-resume a dead run's agent. Returns:
+ *   'resumed' — agent was resumed, don't mark run failed
+ *   'deferred' — temporarily skipped (cooldown/cap), retry next cycle
+ *   'failed' — permanently ineligible or exhausted, mark run failed
+ */
+async function tryResumeOrFail(
+  deps: SchedulerDeps,
+  config: SchedulerConfig,
+  run: RunRow,
+  workerById: Map<string, WorkerInfo>,
+  now: Date,
+): Promise<'resumed' | 'deferred' | 'failed'> {
+  const agent = workerById.get(run.worker_id);
+  if (!agent) return 'failed';
+
+  const result = await attemptAgentResume(deps, config, agent);
+  if (result === 'resumed') {
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'info',
+      event: 'orphan_run_resumed',
+      run_id: run.id,
+      agent_id: agent.id,
+    });
+    return 'resumed';
+  }
+  if (result === 'skipped') {
+    const isPermanent = agent.autoResume === false || !agent.claudeSessionId;
+    return isPermanent ? 'failed' : 'deferred';
+  }
+  return 'failed'; // exhausted
+}
+
 /**
  * Reconcile orphaned runs by checking heartbeat history.
- * If a run has N consecutive 'dead' heartbeats (default 2), mark it as failed.
- * This runs every 5 minutes as a safety net.
+ * If a run has N consecutive 'dead' heartbeats (default 2), attempt auto-resume
+ * before marking the run as failed. This runs every 5 minutes as a safety net.
  */
 export async function reconcileOrphans(deps: SchedulerDeps, config: SchedulerConfig): Promise<number> {
   const sql = await deps.getConnection();
@@ -674,40 +928,34 @@ export async function reconcileOrphans(deps: SchedulerDeps, config: SchedulerCon
     SELECT id, worker_id, status, trigger_id FROM runs WHERE status = 'running'
   `;
 
+  const allWorkers = await deps.listWorkers();
+  const workerById = new Map(allWorkers.map((w) => [w.id, w]));
+
   let failedCount = 0;
   for (const run of activeRuns) {
-    // Get the most recent N heartbeats for this run
-    const recentHeartbeats = await sql`
-      SELECT status FROM heartbeats
-      WHERE run_id = ${run.id}
-      ORDER BY created_at DESC
-      LIMIT ${threshold}
+    if (!(await isRunDead(sql, run.id, threshold))) continue;
+
+    const action = await tryResumeOrFail(deps, config, run, workerById, now);
+    if (action === 'resumed' || action === 'deferred') continue;
+
+    await sql`
+      UPDATE runs SET status = 'failed', error = 'orphaned: ${threshold} consecutive dead heartbeats', completed_at = ${now}
+      WHERE id = ${run.id}
     `;
+    await sql`
+      UPDATE triggers SET status = 'failed', completed_at = ${now}
+      WHERE id = ${run.trigger_id} AND status = 'executing'
+    `;
+    failedCount++;
 
-    // Only mark as failed if we have enough heartbeats AND all are 'dead'
-    if (recentHeartbeats.length >= threshold) {
-      const allDead = recentHeartbeats.every((h: { status: string }) => h.status === 'dead');
-      if (allDead) {
-        await sql`
-          UPDATE runs SET status = 'failed', error = 'orphaned: ${threshold} consecutive dead heartbeats', completed_at = ${now}
-          WHERE id = ${run.id}
-        `;
-        await sql`
-          UPDATE triggers SET status = 'failed', completed_at = ${now}
-          WHERE id = ${run.trigger_id} AND status = 'executing'
-        `;
-        failedCount++;
-
-        deps.log({
-          timestamp: now.toISOString(),
-          level: 'warn',
-          event: 'orphan_run_failed',
-          run_id: run.id,
-          worker_id: run.worker_id,
-          dead_heartbeats: threshold,
-        });
-      }
-    }
+    deps.log({
+      timestamp: now.toISOString(),
+      level: 'warn',
+      event: 'orphan_run_failed',
+      run_id: run.id,
+      worker_id: run.worker_id,
+      dead_heartbeats: threshold,
+    });
   }
 
   if (failedCount > 0) {
@@ -980,7 +1228,7 @@ export function startDaemon(
 
     // Startup recovery: reclaim expired leases + reconcile orphans
     try {
-      await recoverOnStartup(deps, daemonId);
+      await recoverOnStartup(deps, daemonId, config);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       deps.log({

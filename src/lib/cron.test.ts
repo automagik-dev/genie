@@ -76,4 +76,38 @@ describe('computeNextCronDue', () => {
   test('rejects invalid cron expression', () => {
     expect(() => computeNextCronDue('bad')).toThrow('Invalid cron expression');
   });
+
+  test('rejects step=0 in cron field (Fixes #678)', () => {
+    expect(() => computeNextCronDue('*/0 * * * *')).toThrow('step value cannot be 0');
+    expect(() => computeNextCronDue('1-10/0 * * * *')).toThrow('step value cannot be 0');
+  });
+
+  test('timezone-aware cron computes correct UTC time (Fixes #679)', () => {
+    // 2026-03-20 12:00 UTC. In America/New_York (EDT, UTC-4), that's 08:00.
+    // Cron "0 9 * * *" = 9 AM New York = 13:00 UTC
+    const base = new Date('2026-03-20T12:00:00Z');
+    const next = computeNextCronDue('0 9 * * *', { after: base, timezone: 'America/New_York' });
+
+    // 9 AM ET on March 20 (EDT) = 13:00 UTC
+    expect(next.getUTCHours()).toBe(13);
+    expect(next.getUTCMinutes()).toBe(0);
+  });
+
+  test('timezone-aware cron with different timezone', () => {
+    // 2026-03-20 12:00 UTC. In Asia/Tokyo (JST, UTC+9), that's 21:00.
+    // Cron "0 6 * * *" = 6 AM Tokyo = 21:00 UTC (previous day)
+    // Since we're at 21:00 JST, next 6 AM JST is tomorrow = 2026-03-20 21:00 UTC
+    const base = new Date('2026-03-20T12:00:00Z');
+    const next = computeNextCronDue('0 6 * * *', { after: base, timezone: 'Asia/Tokyo' });
+
+    // 6 AM JST = 21:00 UTC (previous day)
+    expect(next.getUTCHours()).toBe(21);
+    expect(next.getUTCMinutes()).toBe(0);
+  });
+
+  test('backward compat: Date arg still works', () => {
+    const base = new Date('2026-03-20T12:00:00Z');
+    const next = computeNextCronDue('0 0 * * *', base);
+    expect(next.getUTCHours()).toBe(0);
+  });
 });
