@@ -25,7 +25,7 @@ export interface WorkerProfile {
 interface SpawnOptions {
   /** Session ID for new sessions (--session-id flag) */
   sessionId?: string;
-  /** Session name to continue (--continue flag) */
+  /** Session ID to resume (--resume flag) */
   resume?: string;
 }
 
@@ -81,7 +81,7 @@ export function buildSpawnCommand(profile: WorkerProfile | undefined, options: S
     parts.push('--session-id');
     parts.push(`'${escapeForShell(options.sessionId)}'`);
   } else if (options.resume) {
-    parts.push('--continue');
+    parts.push('--resume');
     parts.push(`'${escapeForShell(options.resume)}'`);
   }
 

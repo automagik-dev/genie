@@ -3,6 +3,7 @@
  *
  * Exported handlers (registered in genie.ts as top-level commands):
  *   handleWorkerSpawn  - genie spawn <name>
+ *   handleWorkerResume - genie resume <name> / genie resume --all
  *   handleWorkerKill   - genie kill <name>
  *   handleWorkerStop   - genie stop <name>
  *   handleLsCommand    - genie ls
@@ -290,6 +291,43 @@ function writeInbox(meta, text, summary) {
   writeFileSync(INBOX, JSON.stringify(messages, null, 2));
 }
 
+// Reset in_progress groups assigned to a dead worker and notify team-lead
+function handleDeadWorkerLiveness(workerId, meta) {
+  if (!meta || !meta.repoPath) return;
+  try {
+    const stateDir = join(meta.repoPath, '.genie', 'state');
+    let stateFiles;
+    try { stateFiles = readdirSync(stateDir).filter(f => f.endsWith('.json')); }
+    catch { return; }
+    for (const sf of stateFiles) {
+      const statePath = join(stateDir, sf);
+      try {
+        const state = JSON.parse(readFileSync(statePath, 'utf-8'));
+        let modified = false;
+        for (const [groupName, group] of Object.entries(state.groups || {})) {
+          if (group.status !== 'in_progress' || !group.assignee) continue;
+          // Match: exact, or workerId ends with assignee (team-prefixed IDs)
+          if (group.assignee === workerId || workerId.endsWith('-' + group.assignee) ||
+              group.assignee === meta.agent || (meta.agent && workerId.endsWith('-' + meta.agent))) {
+            group.status = 'ready';
+            delete group.assignee;
+            delete group.startedAt;
+            state.updatedAt = new Date().toISOString();
+            modified = true;
+            const agentLabel = meta.agent || workerId;
+            writeInbox(
+              { agent: 'genie-relay', color: 'red' },
+              'Agent ' + agentLabel + ' crashed while working on group ' + groupName + ' of wish ' + state.wish + '. Group has been reset to ready for retry.',
+              '[crash] ' + agentLabel + ' crashed on ' + state.wish + '#' + groupName + '. Reset to ready.'
+            );
+          }
+        }
+        if (modified) writeFileSync(statePath, JSON.stringify(state, null, 2));
+      } catch {}
+    }
+  } catch {}
+}
+
 // Clean up dead panes every 30s
 setInterval(() => {
   let paneFiles;
@@ -302,6 +340,9 @@ setInterval(() => {
       execSync(\`tmux display -t '\${paneId}' -p '#{pane_id}'\`, { stdio: 'ignore' });
     } catch {
       const workerId = file.replace(/-pane$/, '');
+      // Read meta before cleanup (for liveness reset)
+      let meta = null;
+      try { meta = JSON.parse(readFileSync(join(RELAY_DIR, workerId + '-meta'), 'utf-8')); } catch {}
       for (const suffix of ['-pane', '-meta']) {
         try { unlinkSync(join(RELAY_DIR, workerId + suffix)); } catch {}
       }
@@ -309,6 +350,8 @@ setInterval(() => {
       workerFirstSeen.delete(workerId);
       bootstrapDone.delete(workerId);
       stoppedWorkers.add(workerId);
+      // Liveness check: reset in_progress groups assigned to this dead worker
+      handleDeadWorkerLiveness(workerId, meta);
     }
   }
   try {
@@ -395,6 +438,10 @@ interface SpawnCtx {
   cwd: string;
   /** When true, spawn into the current tmux window instead of resolving/creating a team window. */
   spawnIntoCurrentWindow: boolean;
+  /** Explicit tmux session name override (from --session flag). */
+  sessionOverride?: string;
+  /** Auto-resume on pane death (default true, false disables). */
+  autoResume?: boolean;
 }
 
 async function registerSpawnWorker(
@@ -426,6 +473,9 @@ async function registerSpawnWorker(
     window: windowInfo?.windowName,
     windowName: windowInfo?.windowName,
     windowId: windowInfo?.windowId,
+    // Resume tracking
+    autoResume: ctx.autoResume === false ? false : undefined,
+    resumeAttempts: 0,
   };
   await registry.register(workerEntry);
   return workerEntry;
@@ -451,13 +501,19 @@ async function notifySpawnJoin(ctx: SpawnCtx, paneId: string): Promise<void> {
   });
 }
 
-function registerOtelRelayPane(workerId: string, paneId: string, agentName: string, spawnColor: string): void {
+function registerOtelRelayPane(
+  workerId: string,
+  paneId: string,
+  agentName: string,
+  spawnColor: string,
+  repoPath?: string,
+): void {
   const { writeFileSync: wfs } = require('node:fs');
   const { join: pjoin } = require('node:path');
   const { homedir: hdir } = require('node:os');
   const rd = pjoin(hdir(), '.genie', 'relay');
   wfs(pjoin(rd, `${workerId}-pane`), paneId);
-  wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor }));
+  wfs(pjoin(rd, `${workerId}-meta`), JSON.stringify({ agent: agentName, color: spawnColor, repoPath }));
 }
 
 function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Agent): void {
@@ -485,11 +541,27 @@ function printSpawnInfo(ctx: SpawnCtx, paneId: string, workerEntry: registry.Age
 
 type TeamWindowInfo = { windowId: string; windowName: string; paneId: string; created: boolean };
 
-/** Resolve team window for spawn. Returns null if team is unset or resolution fails. */
-async function resolveSpawnTeamWindow(team: string | undefined, cwd: string): Promise<TeamWindowInfo | null> {
+/**
+ * Resolve team window for spawn. Returns null if team is unset or resolution fails.
+ *
+ * Session resolution order:
+ *   1. Explicit `sessionOverride` (from --session flag)
+ *   2. `getCurrentSessionName()` (TMUX env or list-sessions fallback)
+ *   3. Team config `tmuxSessionName` (stored during team create)
+ *   4. Team name as session name (last resort)
+ */
+async function resolveSpawnTeamWindow(
+  team: string | undefined,
+  cwd: string,
+  sessionOverride?: string,
+): Promise<TeamWindowInfo | null> {
   if (!team) return null;
   try {
-    const sessionName = (await tmux.getCurrentSessionName()) ?? team;
+    let sessionName = sessionOverride ?? (await tmux.getCurrentSessionName(team));
+    if (!sessionName) {
+      const teamConfig = await teamManager.getTeam(team);
+      sessionName = teamConfig?.tmuxSessionName ?? team;
+    }
     return await tmux.ensureTeamWindow(sessionName, team, cwd);
   } catch (err) {
     console.warn(`Warning: could not ensure team window for "${team}": ${err instanceof Error ? err.message : err}`);
@@ -542,7 +614,9 @@ async function applySpawnLayout(ctx: SpawnCtx, teamWindow: TeamWindowInfo | null
 }
 
 async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
-  const teamWindow = ctx.spawnIntoCurrentWindow ? null : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd);
+  const teamWindow = ctx.spawnIntoCurrentWindow
+    ? null
+    : await resolveSpawnTeamWindow(ctx.validated.team, ctx.cwd, ctx.sessionOverride);
 
   let paneId: string;
   try {
@@ -574,7 +648,7 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   });
 
   if (ctx.otelRelayActive && paneId !== '%0') {
-    registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor);
+    registerOtelRelayPane(ctx.workerId, paneId, ctx.agentName, ctx.spawnColor, ctx.cwd);
   }
 
   if (teamWindow) {
@@ -684,6 +758,10 @@ export interface SpawnOptions {
   initialPrompt?: string;
   /** Override the role name for registration and duplicate-check (agent directory still resolves by `name`). */
   role?: string;
+  /** Explicit tmux session name to spawn into (overrides auto-detection). */
+  session?: string;
+  /** Auto-resume on pane death (default true, set to false by --no-auto-resume). */
+  autoResume?: boolean;
 }
 
 /** Resolve agent from directory, returning entry + derived CWD/identity/model/systemPromptFile. */
@@ -756,8 +834,11 @@ async function buildSpawnParams(
     console.warn(`Warning: could not inject hooks for team "${team}": ${err instanceof Error ? err.message : err}`);
   }
 
-  // Let Claude Code generate its own session ID — no UUID override needed.
-  // Folder-based session naming is handled by the session layer.
+  // Generate a session ID for Claude workers so we can resume by ID later.
+  // Stored in the agent registry on spawn for --resume on respawn.
+  if (params.provider === 'claude') {
+    params.sessionId = crypto.randomUUID();
+  }
 
   return { params, parentSessionId, spawnColor };
 }
@@ -819,13 +900,15 @@ export async function handleWorkerSpawn(name: string, options: SpawnOptions): Pr
     agentName,
     spawnColor,
     parentSessionId,
-    claudeSessionId: undefined,
+    claudeSessionId: validated.sessionId,
     otelRelayActive,
     now,
     transport: insideTmux ? 'tmux' : 'inline',
     extraArgs: options.extraArgs,
     cwd: agent.repoPath,
     spawnIntoCurrentWindow: !teamWasExplicit && insideTmux,
+    sessionOverride: options.session,
+    autoResume: options.autoResume,
   };
 
   if (insideTmux) {
@@ -956,24 +1039,218 @@ export async function handleWorkerStop(name: string): Promise<void> {
   }
 }
 
+/** Check if an agent is eligible for resume (suspended/error, has session, pane dead). */
+async function isResumeEligible(w: registry.Agent): Promise<boolean> {
+  return (
+    (w.state === 'suspended' || w.state === 'error') && Boolean(w.claudeSessionId) && !(await isPaneAlive(w.paneId))
+  );
+}
+
+/** Resume all eligible agents (--all mode). */
+async function resumeAllAgents(): Promise<void> {
+  const workers = await registry.list();
+  const toResume: registry.Agent[] = [];
+  for (const w of workers) {
+    if (await isResumeEligible(w)) toResume.push(w);
+  }
+
+  if (toResume.length === 0) {
+    console.log('No eligible agents to resume.');
+    return;
+  }
+
+  console.log(`Resuming ${toResume.length} agent(s)...`);
+  for (const w of toResume) {
+    try {
+      await resumeAgent(w);
+    } catch (err) {
+      console.error(`  Failed to resume "${w.id}": ${err instanceof Error ? err.message : err}`);
+    }
+  }
+}
+
+/**
+ * genie resume <name> — Resume a suspended/failed agent with its Claude session.
+ * genie resume --all  — Resume all eligible agents.
+ */
+export async function handleWorkerResume(name: string | undefined, options: { all?: boolean }): Promise<void> {
+  if (options.all) return resumeAllAgents();
+
+  if (!name) {
+    console.error('Error: provide an agent name, or use --all to resume all eligible agents.');
+    process.exit(1);
+  }
+
+  const w = await resolveWorkerByName(name);
+
+  if (!w.claudeSessionId) {
+    console.error(`Error: Agent "${w.id}" has no Claude session ID — cannot resume.`);
+    console.error('  Only agents spawned with the Claude provider have resumable sessions.');
+    process.exit(1);
+  }
+
+  if (await isPaneAlive(w.paneId)) {
+    console.log(`Agent "${w.id}" is already running (pane ${w.paneId} is alive).`);
+    return;
+  }
+
+  await resumeAgent(w);
+}
+
+/** Build SpawnParams for a resume operation from agent + template. */
+function buildResumeParams(agent: registry.Agent, template: registry.WorkerTemplate | undefined): SpawnParams {
+  const agentName = agent.role ?? agent.id;
+  const provider = (template?.provider ?? agent.provider ?? 'claude') as ProviderName;
+  const team = template?.team ?? agent.team ?? 'genie';
+
+  return {
+    provider,
+    team,
+    role: agentName,
+    skill: template?.skill ?? agent.skill,
+    extraArgs: template?.extraArgs,
+    // biome-ignore lint/style/noNonNullAssertion: caller guarantees claudeSessionId exists
+    resume: agent.claudeSessionId!,
+    name: `${team}-${agentName}`,
+  };
+}
+
+/**
+ * Resume a single agent by rebuilding spawn params with --resume <sessionId>.
+ * Resets resumeAttempts to 0 (manual resume = fresh retry budget).
+ */
+async function resumeAgent(agent: registry.Agent): Promise<void> {
+  const template = (await registry.listTemplates()).find((t) => t.id === (agent.role ?? agent.id));
+
+  await registry.update(agent.id, { resumeAttempts: 0 });
+
+  const params = buildResumeParams(agent, template);
+
+  if (agent.nativeTeamEnabled) {
+    const nativeResult = await resolveNativeTeam(params.team, agent.repoPath, {
+      provider: params.provider,
+      role: params.role,
+      color: agent.nativeColor,
+    });
+    if (nativeResult.nativeTeam) params.nativeTeam = nativeResult.nativeTeam;
+  }
+
+  const validated = validateSpawnParams(params);
+  const launch = buildLaunchCommand(validated);
+  const fullCommand = prependEnvVars(launch.command, launch.env);
+  const now = new Date().toISOString();
+
+  if (!process.env.TMUX) {
+    console.error('Error: resume requires tmux. Start a tmux session first.');
+    process.exit(1);
+  }
+
+  const ctx: SpawnCtx = {
+    workerId: agent.id,
+    validated,
+    launch,
+    layoutMode: resolveLayoutMode(undefined),
+    fullCommand,
+    agentName: agent.role ?? agent.id,
+    spawnColor: agent.nativeColor ?? 'blue',
+    parentSessionId: agent.parentSessionId ?? `genie-${params.team}`,
+    claudeSessionId: agent.claudeSessionId,
+    otelRelayActive: false,
+    now,
+    transport: 'tmux',
+    extraArgs: template?.extraArgs,
+    cwd: template?.cwd ?? agent.repoPath,
+    spawnIntoCurrentWindow: false,
+    autoResume: agent.autoResume,
+  };
+
+  const teamWindow = await resolveSpawnTeamWindow(validated.team, ctx.cwd);
+
+  let paneId: string;
+  try {
+    paneId = createTmuxPane(ctx, teamWindow);
+  } catch (err) {
+    console.error(`Failed to create tmux pane: ${err instanceof Error ? err.message : 'unknown error'}`);
+    process.exit(1);
+  }
+
+  await applySpawnLayout(ctx, teamWindow);
+
+  await registry.update(agent.id, {
+    paneId,
+    state: 'spawning',
+    startedAt: now,
+    lastStateChange: now,
+    suspendedAt: undefined,
+    windowName: teamWindow?.windowName,
+    windowId: teamWindow?.windowId,
+    window: teamWindow?.windowName,
+  });
+
+  await notifySpawnJoin(ctx, paneId);
+
+  if (ctx.spawnColor && paneId !== 'inline') {
+    await tmux.applyPaneColor(paneId, ctx.spawnColor, teamWindow?.windowId);
+  }
+
+  console.log(`Agent "${agent.id}" resumed.`);
+  console.log(`  Session:  ${agent.claudeSessionId}`);
+  console.log(`  Pane:     ${paneId}`);
+  if (teamWindow) {
+    console.log(`  Window:   ${teamWindow.windowName} (${teamWindow.windowId})`);
+  }
+}
+
+type WorkerStatus = {
+  state: string;
+  team: string;
+  resumeAttempts?: number;
+  maxResumeAttempts?: number;
+  autoResume?: boolean;
+};
+
+/** Build a name → status map from registry workers, including resume info for dead agents. */
+async function buildWorkerStatusMap(workers: registry.Agent[]): Promise<Map<string, WorkerStatus>> {
+  const statusMap = new Map<string, WorkerStatus>();
+  for (const w of workers) {
+    const name = w.role || w.id;
+    const alive = await isPaneAlive(w.paneId);
+    if (alive) {
+      statusMap.set(name, { state: w.state, team: w.team || '-' });
+    } else if (w.state === 'suspended' || w.state === 'error') {
+      const attempts = w.resumeAttempts ?? 0;
+      const max = w.maxResumeAttempts ?? 3;
+      const autoStr = w.autoResume === false ? 'off' : 'on';
+      statusMap.set(name, {
+        state: `${w.state} (${attempts}/${max} resumes, auto-resume: ${autoStr})`,
+        team: w.team || '-',
+        resumeAttempts: attempts,
+        maxResumeAttempts: max,
+        autoResume: w.autoResume !== false,
+      });
+    }
+  }
+  return statusMap;
+}
+
 /**
  * genie ls — Smart view of registered agents with runtime status.
  */
 export async function handleLsCommand(options: { json?: boolean }): Promise<void> {
   const dirEntries = await directory.ls();
   const workers = await registry.list();
+  const statusMap = await buildWorkerStatusMap(workers);
 
-  // Build status map: name → running worker info
-  const statusMap = new Map<string, { state: string; team: string }>();
-  for (const w of workers) {
-    const name = w.role || w.id;
-    const alive = await isPaneAlive(w.paneId);
-    if (alive) {
-      statusMap.set(name, { state: w.state, team: w.team || '-' });
-    }
-  }
-
-  type LsEntry = { name: string; dir: string; status: string; team: string; model: string };
+  type LsEntry = {
+    name: string;
+    dir: string;
+    status: string;
+    team: string;
+    model: string;
+    resumeAttempts?: number;
+    maxResumeAttempts?: number;
+    autoResume?: boolean;
+  };
   const entries: LsEntry[] = [];
 
   // Add directory entries with runtime status
@@ -985,11 +1262,14 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
       status: running ? running.state : 'offline',
       team: running?.team || '-',
       model: entry.model || '-',
+      resumeAttempts: running?.resumeAttempts,
+      maxResumeAttempts: running?.maxResumeAttempts,
+      autoResume: running?.autoResume,
     });
     statusMap.delete(entry.name);
   }
 
-  // Add running built-in agents not in the directory
+  // Add built-in agents not in the directory (alive or suspended/error)
   for (const [name, info] of statusMap) {
     entries.push({
       name,
@@ -997,6 +1277,9 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
       status: info.state,
       team: info.team,
       model: '-',
+      resumeAttempts: info.resumeAttempts,
+      maxResumeAttempts: info.maxResumeAttempts,
+      autoResume: info.autoResume,
     });
   }
 
@@ -1012,7 +1295,7 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
 
   console.log('');
   console.log(formatLsRow('NAME', 'DIR', 'STATUS', 'TEAM', 'MODEL'));
-  console.log('-'.repeat(94));
+  console.log('-'.repeat(106));
   for (const e of entries) {
     console.log(formatLsRow(e.name, e.dir, e.status, e.team, e.model));
   }
@@ -1020,5 +1303,5 @@ export async function handleLsCommand(options: { json?: boolean }): Promise<void
 }
 
 function formatLsRow(name: string, dir: string, status: string, team: string, model: string): string {
-  return `${name.padEnd(20).substring(0, 20)}${dir.padEnd(40).substring(0, 40)}${status.padEnd(12).substring(0, 12)}${team.padEnd(12).substring(0, 12)}${model}`;
+  return `${name.padEnd(20).substring(0, 20)}${dir.padEnd(30).substring(0, 30)}${status.padEnd(44).substring(0, 44)}${team.padEnd(12).substring(0, 12)}${model}`;
 }

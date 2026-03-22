@@ -43,7 +43,7 @@ function buildSpawnArgs(template: {
   if (template.role) args.push('--role', template.role);
   if (template.skill) args.push('--skill', template.skill);
   if (template.cwd) args.push('--cwd', template.cwd);
-  // Session resumption is handled by --continue via the session name (${team}-${role}),
+  // Session resumption is handled by --resume via the stored session ID,
   // which is set automatically by the spawn command. No explicit flag needed here.
   if (template.extraArgs) args.push(...template.extraArgs);
   return args;

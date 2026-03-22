@@ -33,15 +33,19 @@ import {
   type SpawnOptions,
   handleLsCommand,
   handleWorkerKill,
+  handleWorkerResume,
   handleWorkerSpawn,
   handleWorkerStop,
 } from './term-commands/agents.js';
+import { registerDaemonCommands } from './term-commands/daemon.js';
+import { registerDbCommands } from './term-commands/db.js';
 import { registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import * as readCmd from './term-commands/read.js';
+import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
 import { registerTeamNamespace } from './term-commands/team.js';
 
@@ -131,6 +135,9 @@ registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
 registerHookNamespace(program);
+registerDbCommands(program);
+registerScheduleCommands(program);
+registerDaemonCommands(program);
 
 // ============================================================================
 // Top-level agent commands (promoted from genie agent namespace)
@@ -150,6 +157,8 @@ program
   .option('--permission-mode <mode>', 'Permission mode (e.g., acceptEdits)')
   .option('--extra-args <args...>', 'Extra CLI args forwarded to provider')
   .option('--cwd <path>', 'Working directory for the agent (overrides directory entry)')
+  .option('--session <session>', 'Tmux session name to spawn into')
+  .option('--no-auto-resume', 'Disable auto-resume on pane death')
   .action(async (name: string, options: SpawnOptions) => {
     try {
       await handleWorkerSpawn(name, options);
@@ -181,6 +190,21 @@ program
   .action(async (name: string) => {
     try {
       await handleWorkerStop(name);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      process.exit(1);
+    }
+  });
+
+// genie resume [name]
+program
+  .command('resume [name]')
+  .description('Resume a suspended/failed agent with its Claude session')
+  .option('--all', 'Resume all eligible agents')
+  .action(async (name: string | undefined, options: { all?: boolean }) => {
+    try {
+      await handleWorkerResume(name, options);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Error: ${message}`);

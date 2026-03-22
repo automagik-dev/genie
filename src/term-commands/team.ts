@@ -26,29 +26,10 @@ export function registerTeamNamespace(program: Command): void {
     .requiredOption('--repo <path>', 'Path to the git repository')
     .option('--branch <branch>', 'Base branch to create from', 'dev')
     .option('--wish <slug>', 'Wish slug — auto-spawns a task leader with wish context')
-    .action(async (name: string, options: { repo: string; branch: string; wish?: string }) => {
+    .option('--session <name>', 'Tmux session name (avoids session explosion on parallel creates)')
+    .action(async (name: string, options: { repo: string; branch: string; wish?: string; session?: string }) => {
       try {
-        // Validate wish exists before creating team
-        if (options.wish) {
-          const resolvedRepo = resolve(options.repo);
-          const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
-          if (!existsSync(wishPath)) {
-            console.error(`Error: Wish not found at ${wishPath}`);
-            process.exit(1);
-          }
-        }
-
-        const config = await teamManager.createTeam(name, options.repo, options.branch);
-        console.log(`Team "${config.name}" created.`);
-        console.log(`  Worktree: ${config.worktreePath}`);
-        console.log(`  Branch: ${config.name} (from ${config.baseBranch})`);
-        if (config.nativeTeamsEnabled) {
-          console.log('  Native teams: enabled');
-        }
-
-        if (options.wish) {
-          await spawnLeaderWithWish(config, options.wish, options.repo);
-        }
+        await handleTeamCreate(name, options);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Error: ${message}`);
@@ -188,15 +169,70 @@ export function registerTeamNamespace(program: Command): void {
 }
 
 // ============================================================================
+// Team Create Handler (extracted for cognitive complexity)
+// ============================================================================
+
+async function handleTeamCreate(
+  name: string,
+  options: { repo: string; branch: string; wish?: string; session?: string },
+): Promise<void> {
+  // Validate wish exists before creating team
+  if (options.wish) {
+    const resolvedRepo = resolve(options.repo);
+    const wishPath = join(resolvedRepo, '.genie', 'wishes', options.wish, 'WISH.md');
+    if (!existsSync(wishPath)) {
+      console.error(`Error: Wish not found at ${wishPath}`);
+      process.exit(1);
+    }
+  }
+
+  const config = await teamManager.createTeam(name, options.repo, options.branch);
+
+  // Store tmux session name in team config (prevents session explosion on parallel creates)
+  if (options.session) {
+    config.tmuxSessionName = options.session;
+    await teamManager.updateTeamConfig(name, config);
+  }
+
+  console.log(`Team "${config.name}" created.`);
+  console.log(`  Worktree: ${config.worktreePath}`);
+  console.log(`  Branch: ${config.name} (from ${config.baseBranch})`);
+  if (config.tmuxSessionName) {
+    console.log(`  Session: ${config.tmuxSessionName}`);
+  }
+  if (config.nativeTeamsEnabled) {
+    console.log('  Native teams: enabled');
+  }
+
+  if (options.wish) {
+    await spawnLeaderWithWish(config, options.wish, options.repo, options.session);
+  }
+}
+
+// ============================================================================
 // Wish-based Leader Spawn
 // ============================================================================
 
 /**
  * Copy wish into worktree, hire leader, build context, and auto-spawn.
+ *
+ * Resolves the tmux session name BEFORE spawning workers and stores it
+ * in the team config so all subsequent spawns use the same session.
  */
-async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: string): Promise<void> {
+async function spawnLeaderWithWish(
+  config: TeamConfig,
+  slug: string,
+  repoPath: string,
+  sessionOverride?: string,
+): Promise<void> {
   const { handleWorkerSpawn } = await import('./agents.js');
+  const { getCurrentSessionName } = await import('../lib/tmux.js');
   const resolvedRepo = resolve(repoPath);
+
+  // Resolve tmux session BEFORE spawning — prevents parallel creates from each creating a new session
+  const tmuxSession = sessionOverride ?? (await getCurrentSessionName(config.name)) ?? config.name;
+  config.tmuxSessionName = tmuxSession;
+  await teamManager.updateTeamConfig(config.name, config);
 
   // Locate WISH.md in source repo
   const sourceWishPath = join(resolvedRepo, '.genie', 'wishes', slug, 'WISH.md');
@@ -219,15 +255,19 @@ async function spawnLeaderWithWish(config: TeamConfig, slug: string, repoPath: s
   }
   console.log(`  Team: hired ${standardTeam.join(', ')}`);
 
-  // Spawn leader — AGENTS.md comes from the built-in resolver, all context in the initial prompt
-  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
-  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  // Spawn leader — AGENTS.md comes from the built-in resolver, prompt delivered via mailbox
   await handleWorkerSpawn('team-lead', {
     provider: 'claude',
     team: config.name,
     cwd: config.worktreePath,
-    initialPrompt: kickoffPrompt,
+    session: tmuxSession,
   });
+
+  // Deliver kickoff prompt via mailbox (durable, queued to disk)
+  const members = standardTeam.filter((r) => r !== 'team-lead').join(', ');
+  const kickoffPrompt = `Your team is "${config.name}". Repo: ${config.repo}. Branch: ${config.name}. Worktree: ${config.worktreePath}. Wish slug: ${slug}. Your team members are: ${members} (already hired — genie work will spawn them automatically). Read the wish at .genie/wishes/${slug}/WISH.md and execute the full lifecycle autonomously.`;
+  const protocolRouter = await import('../lib/protocol-router.js');
+  await protocolRouter.sendMessage(config.worktreePath, 'cli', 'team-lead', kickoffPrompt);
   console.log('  Leader: spawned and working');
 }
 

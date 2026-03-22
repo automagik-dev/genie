@@ -23,6 +23,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import * as protocolRouter from '../lib/protocol-router.js';
 import type { GroupDefinition } from '../lib/wish-state.js';
 import * as wishState from '../lib/wish-state.js';
 import { handleWorkerSpawn } from './agents.js';
@@ -286,14 +287,8 @@ function buildFallbackWaves(content: string): Wave[] {
 }
 
 // ============================================================================
-// Auto-Orchestration
+// Auto-Orchestration (fire-and-forget)
 // ============================================================================
-
-/** Poll interval for checking wave completion (30 seconds). */
-export const ORCHESTRATE_POLL_MS = 30_000;
-
-/** Maximum time to wait for a wave to complete (30 minutes). */
-export const ORCHESTRATE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * Detect whether `genie work` should run in auto or manual mode.
@@ -325,10 +320,12 @@ export function detectWorkMode(
 }
 
 /**
- * `genie work <slug>` — Auto-orchestrate full wish execution.
+ * `genie work <slug>` — Fire-and-forget wish dispatch.
  *
- * Reads the Execution Strategy, spawns all agents per wave in parallel,
- * monitors completion via state polling, advances waves, and exits when done.
+ * Reads the Execution Strategy, finds the first wave with unstarted groups,
+ * spawns all agents for that wave in parallel, prints guidance, and returns
+ * the terminal immediately. Wave advancement is handled by `genie done`
+ * notifying the team-lead.
  */
 export async function autoOrchestrateCommand(slug: string): Promise<void> {
   const wishPath = join(process.cwd(), '.genie', 'wishes', slug, 'WISH.md');
@@ -355,56 +352,34 @@ export async function autoOrchestrateCommand(slug: string): Promise<void> {
     console.log(`📝 Initialized state for wish "${slug}" (${groups.length} groups)`);
   }
 
-  console.log(`🚀 Auto-orchestrating wish "${slug}" — ${waves.length} waves, ${groups.length} groups`);
+  // Find the first wave with groups that are still `ready` (not started/done)
+  const nextWave = waves.find((wave) =>
+    wave.groups.some((g) => {
+      const gs = state?.groups[g.group];
+      return !gs || gs.status === 'ready';
+    }),
+  );
 
-  for (const wave of waves) {
-    console.log(`\n⏳ ${wave.name} — dispatching ${wave.groups.length} group(s)`);
-
-    // Dispatch all groups in this wave concurrently.
-    // workDispatchCommand spawns a tmux pane and returns immediately,
-    // so Promise.all resolves once all panes are created.
-    await Promise.all(
-      wave.groups.map(({ group, agent }) => {
-        const ref = `${slug}#${group}`;
-        return workDispatchCommand(agent, ref);
-      }),
-    );
-
-    // Poll state until all groups in wave are done
-    const waveStart = Date.now();
-    const waveGroupNames = wave.groups.map((g) => g.group);
-
-    while (true) {
-      const currentState = await wishState.getState(slug);
-      if (!currentState) {
-        console.error('❌ State file disappeared during orchestration');
-        process.exit(1);
-      }
-
-      const allDone = waveGroupNames.every((g) => currentState.groups[g]?.status === 'done');
-      if (allDone) {
-        console.log(`✅ ${wave.name} complete`);
-        break;
-      }
-
-      // Check timeout
-      if (Date.now() - waveStart > ORCHESTRATE_TIMEOUT_MS) {
-        const pending = waveGroupNames
-          .filter((g) => currentState.groups[g]?.status !== 'done')
-          .map((g) => `${g} (${currentState.groups[g]?.status ?? 'unknown'})`)
-          .join(', ');
-        console.error(`❌ ${wave.name} timed out after 30min — pending: ${pending}`);
-        process.exit(1);
-      }
-
-      // Log status and wait
-      const statuses = waveGroupNames.map((g) => `${g}:${currentState.groups[g]?.status ?? '?'}`).join(' ');
-      console.log(`   ⏳ ${statuses}`);
-      await new Promise((resolve) => setTimeout(resolve, ORCHESTRATE_POLL_MS));
-    }
+  if (!nextWave) {
+    console.log(`✅ All waves already dispatched for wish "${slug}"`);
+    return;
   }
 
-  console.log(`\n🎉 All waves complete — wish "${slug}" fully executed`);
+  console.log(`🚀 Dispatching ${nextWave.name} for wish "${slug}" — ${nextWave.groups.length} group(s)`);
+
+  // Dispatch all groups in this wave concurrently.
+  // workDispatchCommand spawns a tmux pane and returns immediately.
+  await Promise.all(
+    nextWave.groups.map(({ group, agent }) => {
+      const ref = `${slug}#${group}`;
+      return workDispatchCommand(agent, ref);
+    }),
+  );
+
+  const groupList = nextWave.groups.map((g) => g.group).join(', ');
+  console.log(`\n✅ Agents dispatched for ${nextWave.name} (groups: ${groupList})`);
+  console.log(`   Monitor: genie status ${slug}`);
+  console.log('   Logs:    genie read <agent>');
 }
 
 // ============================================================================
@@ -441,8 +416,16 @@ export async function brainstormCommand(agentName: string, slug: string): Promis
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`,
   });
+
+  // Deliver work prompt via mailbox (durable, queued to disk)
+  const repoPath = process.cwd();
+  await protocolRouter.sendMessage(
+    repoPath,
+    'cli',
+    agentName,
+    `Brainstorm "${slug}". Your context is in the system prompt. Explore the idea, ask clarifying questions, and build toward a design.`,
+  );
 }
 
 /**
@@ -473,8 +456,16 @@ export async function wishCommand(agentName: string, slug: string): Promise<void
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`,
   });
+
+  // Deliver work prompt via mailbox (durable, queued to disk)
+  const repoPath = process.cwd();
+  await protocolRouter.sendMessage(
+    repoPath,
+    'cli',
+    agentName,
+    `Create a wish from the design for "${slug}". Your context is in the system prompt. Write the WISH.md with execution groups, acceptance criteria, and validation commands.`,
+  );
 }
 
 /**
@@ -545,13 +536,22 @@ export async function workDispatchCommand(agentName: string, ref: string): Promi
   console.log(`   Wish: ${wishPath}`);
   console.log(`   Group: ${group}`);
 
+  const effectiveRole = `${agentName}-${group}`;
   await handleWorkerSpawn(agentName, {
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
-    role: `${agentName}-${group}`,
+    role: effectiveRole,
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`,
   });
+
+  // Deliver work prompt via mailbox (durable, queued to disk)
+  const repoPath = process.cwd();
+  await protocolRouter.sendMessage(
+    repoPath,
+    'cli',
+    effectiveRole,
+    `Execute Group ${group} of wish "${slug}". Your full context is in the system prompt. Read the wish at ${wishPath} if needed. Implement all deliverables, run validation, and report completion.\n\nWhen done:\n1. Run: genie done ${slug}#${group}\n2. Run: genie send 'Group ${group} complete. <summary>' --to team-lead`,
+  );
 }
 
 /**
@@ -605,8 +605,16 @@ export async function reviewCommand(agentName: string, ref: string): Promise<voi
     provider: 'claude',
     team: process.env.GENIE_TEAM ?? 'genie',
     extraArgs: ['--append-system-prompt-file', contextFile],
-    initialPrompt: `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`,
   });
+
+  // Deliver work prompt via mailbox (durable, queued to disk)
+  const repoPath = process.cwd();
+  await protocolRouter.sendMessage(
+    repoPath,
+    'cli',
+    agentName,
+    `Review "${ref}". Your context and diff are in the system prompt. Evaluate against acceptance criteria and return SHIP, FIX-FIRST, or BLOCKED with severity-tagged findings.\n\nWhen done, report your verdict:\nRun: genie send '<SHIP|FIX-FIRST|BLOCKED> — <summary>' --to team-lead`,
+  );
 }
 
 // ============================================================================
