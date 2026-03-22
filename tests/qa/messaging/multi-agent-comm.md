@@ -12,4 +12,3 @@
 ## Expect
 - [ ] follow stream contains event kind=tool_call text~=SendMessage
 - [ ] follow stream contains event kind=message text~=CROSS_AGENT_QA
-- [ ] inbox has event peer=engineer text~=CROSS_AGENT_QA

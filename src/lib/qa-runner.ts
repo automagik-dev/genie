@@ -84,97 +84,169 @@ export async function runDomainSpecs(
   return runSpecEntries(filtered, specDir, options);
 }
 
-/** Run a list of spec entries in parallel chunks, saving results after each. */
+/**
+ * Run spec entries with semaphore-based concurrency + real-time NATS timeline.
+ * Phase 1: Pre-create all teams serially (git worktree can't run in parallel)
+ * Phase 2: Run specs through semaphore queue (next spec starts as soon as one finishes)
+ * Phase 3: Disband all teams
+ */
 async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
   const repoPath = resolve(options?.repoPath ?? process.cwd());
-  const chunkSize = options?.parallel ?? 5;
-  const reports: SpecReport[] = [];
+  const maxConcurrency = options?.parallel ?? 5;
+  const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const DIM = '\x1b[90m';
+  const RESET = '\x1b[0m';
+  const GREEN = '\x1b[32m';
+  const RED = '\x1b[31m';
 
-  for (let i = 0; i < entries.length; i += chunkSize) {
-    const chunk = entries.slice(i, i + chunkSize);
-    const chunkLabel = chunk.map((e) => e.name).join(', ');
-    if (entries.length > 1) {
-      console.error(
-        `\n  [qa] Running chunk ${Math.floor(i / chunkSize) + 1}/${Math.ceil(entries.length / chunkSize)} (${chunk.length} specs): ${chunkLabel}`,
-      );
+  // Phase 1: Pre-create all teams serially
+  type PreparedSpec = { entry: SpecEntry; spec: QaSpec; teamName: string; worktreePath: string; promptFile: string };
+  const prepared: PreparedSpec[] = [];
+  console.error(`\n  [qa] Creating ${entries.length} teams...`);
+  for (const entry of entries) {
+    const teamName = `qa-${Date.now().toString(36)}-${entry.name.slice(0, 8)}`;
+    try {
+      const spec = await parseQaSpec(entry.filePath);
+      const config = await teamManager.createTeam(teamName, repoPath);
+      await teamManager.hireAgent(teamName, 'qa-runner');
+
+      const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
+      const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
+      await writeFile(promptFile, prompt);
+
+      prepared.push({ entry, spec, teamName, worktreePath: config.worktreePath, promptFile });
+      console.error(`    ✓ ${entry.name}`);
+    } catch (err) {
+      console.error(`    ✗ ${entry.name}: ${err instanceof Error ? err.message : err}`);
     }
+    await new Promise((r) => setTimeout(r, 200));
+  }
 
-    const chunkResults = await Promise.allSettled(
-      chunk.map(async (entry) => {
-        const spec = await parseQaSpec(entry.filePath);
-        const report = await runSpec(spec, options);
-        const key = specKeyFromPath(specDir, entry.filePath);
-        await saveResult(repoPath, key, report);
-        return report;
-      }),
-    );
+  if (prepared.length === 0) return [];
 
-    for (const result of chunkResults) {
-      if (result.status === 'fulfilled') {
-        reports.push(result.value);
-      } else {
-        reports.push({
-          name: 'unknown',
-          file: 'unknown',
-          result: 'error',
-          expectations: [],
-          collectedEvents: [],
-          durationMs: 0,
-          error: String(result.reason),
-        });
+  // Subscribe to all NATS events for real-time timeline
+  const timelineSub = await nats.subscribe('genie.>', (_subj, data) => {
+    const event = data as { timestamp?: string; kind?: string; agent?: string; text?: string; team?: string };
+    if (!event?.timestamp || !event?.kind) return;
+    // Only show events from QA teams
+    const team = event.team ?? '';
+    if (!team.startsWith('qa-')) return;
+    const specName = prepared.find((p) => p.teamName === team)?.entry.name ?? team;
+    const time = new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false });
+    const text = (event.text ?? '').slice(0, 100);
+    console.error(`  ${DIM}${time}${RESET} ${DIM}[${event.kind}]${RESET} ${specName} ${DIM}${text}${RESET}`);
+  });
+
+  // Phase 2: Semaphore-based concurrency
+  console.error(`\n  [qa] Running ${prepared.length} specs (max ${maxConcurrency} parallel)\n`);
+  const reports: SpecReport[] = [];
+  let running = 0;
+  let nextIdx = 0;
+  const startTime = Date.now();
+
+  await new Promise<void>((resolveAll) => {
+    const tryStartNext = () => {
+      while (running < maxConcurrency && nextIdx < prepared.length) {
+        const p = prepared[nextIdx++];
+        running++;
+
+        runPreparedSpec(p.spec, p.teamName, p.worktreePath, p.promptFile, timeoutMs)
+          .then(async (report) => {
+            const key = specKeyFromPath(specDir, p.entry.filePath);
+            await saveResult(repoPath, key, report);
+            const icon = report.result === 'pass' ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+            console.error(`  ${icon} ${p.entry.name} (${(report.durationMs / 1000).toFixed(0)}s) [${elapsed}s total]`);
+            reports.push(report);
+          })
+          .catch((err) => {
+            const errorReport = makeErrorReport(p.spec, Date.now(), String(err));
+            reports.push(errorReport);
+            console.error(`  ${RED}✗${RESET} ${p.entry.name}: ${err}`);
+          })
+          .finally(() => {
+            running--;
+            if (reports.length === prepared.length) {
+              resolveAll();
+            } else {
+              tryStartNext();
+            }
+          });
       }
+    };
+    tryStartNext();
+  });
+
+  // Unsubscribe timeline
+  timelineSub.unsubscribe();
+
+  // Phase 3: Disband all teams
+  console.error(`\n  [qa] Cleaning up ${prepared.length} teams...`);
+  for (const p of prepared) {
+    try {
+      await teamManager.disbandTeam(p.teamName);
+    } catch {
+      // Best effort
     }
   }
 
   return reports;
 }
 
-/** Run a single QA spec by creating a real team with a team-lead agent. */
+/** Run a single QA spec (creates team, runs, disbands). For individual spec execution. */
 export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<SpecReport> {
-  const teamName = `qa-${Date.now().toString(36)}`;
   const repoPath = resolve(options?.repoPath ?? process.cwd());
   const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const teamName = `qa-${Date.now().toString(36)}-${spec.name.slice(0, 8).replace(/\s+/g, '-')}`;
   const start = Date.now();
 
   try {
-    // 1. Create the QA team
     const config = await teamManager.createTeam(teamName, repoPath);
-    console.error(`  [qa] Created team ${teamName} at ${config.worktreePath}`);
+    await teamManager.hireAgent(teamName, 'qa-runner');
 
-    // 2. Write the QA spec prompt to a temp file for --append-system-prompt-file
     const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
     const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
     await writeFile(promptFile, prompt);
 
-    // 3. Hire and spawn qa-runner agent (dedicated QA executor, not generic team-lead)
-    await teamManager.hireAgent(teamName, 'qa-runner');
+    const report = await runPreparedSpec(spec, teamName, config.worktreePath, promptFile, timeoutMs);
 
+    await teamManager.disbandTeam(teamName);
+    return report;
+  } catch (err) {
+    try {
+      await teamManager.disbandTeam(teamName);
+    } catch {
+      // Best effort
+    }
+    return makeErrorReport(spec, start, String(err));
+  }
+}
+
+/** Run a single spec with a pre-created team (no git operations — safe for parallel). */
+async function runPreparedSpec(
+  spec: QaSpec,
+  teamName: string,
+  worktreePath: string,
+  promptFile: string,
+  timeoutMs: number,
+): Promise<SpecReport> {
+  const start = Date.now();
+
+  try {
     const { handleWorkerSpawn } = await import('../term-commands/agents.js');
     await handleWorkerSpawn('qa-runner', {
       provider: 'claude',
       team: teamName,
-      cwd: config.worktreePath,
+      cwd: worktreePath,
       role: 'team-lead',
       extraArgs: ['--append-system-prompt-file', promptFile],
       initialPrompt: `Execute the QA spec "${spec.name}". Your full instructions are in the system prompt. Start now.`,
     });
-    console.error(`  [qa] Spawned qa-runner in team ${teamName}`);
+    console.error(`  [qa] Spawned qa-runner for "${spec.name}" in ${teamName}`);
 
-    // 5. Wait for result via NATS (team-lead runs `genie qa report` which publishes to genie.qa.{team}.result)
     const report = await waitForResult(spec, teamName, timeoutMs, start);
-
-    // 6. Disband the team
-    await teamManager.disbandTeam(teamName);
-    console.error(`  [qa] Disbanded team ${teamName}`);
-
     return report;
   } catch (err) {
-    // Best-effort cleanup
-    try {
-      await teamManager.disbandTeam(teamName);
-    } catch {
-      // Ignore cleanup errors
-    }
     return makeErrorReport(spec, start, String(err));
   }
 }
@@ -317,8 +389,6 @@ async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, 
     resolveFn(report);
   });
 
-  console.error(`  [qa] Listening on ${subject} for result...`);
-
   // Timeout fallback
   const timer = setTimeout(
     () => {
@@ -330,16 +400,8 @@ async function waitForResult(spec: QaSpec, teamName: string, timeoutMs: number, 
     timeoutMs - (Date.now() - start),
   );
 
-  // Progress indicator
-  const progress = setInterval(() => {
-    if (resolved) {
-      clearInterval(progress);
-      clearTimeout(timer);
-      return;
-    }
-    const elapsed = ((Date.now() - start) / 1000).toFixed(0);
-    console.error(`  [qa] Waiting for result... (${elapsed}s elapsed)`);
-  }, 5000);
+  // Cleanup timer when resolved
+  promise.then(() => clearTimeout(timer));
 
   return promise;
 }
