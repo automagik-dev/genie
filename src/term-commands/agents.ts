@@ -478,6 +478,18 @@ async function registerSpawnWorker(
     resumeAttempts: 0,
   };
   await registry.register(workerEntry);
+
+  // Auto-add to team config members (enables scope checks for genie send)
+  // Skip 'council' — hireAgent has a special path that bulk-adds all council members
+  const role = ctx.validated.role ?? ctx.agentName;
+  if (role !== 'council') {
+    try {
+      await teamManager.hireAgent(ctx.validated.team, role);
+    } catch {
+      // Team may not exist in team-manager (e.g., native-only teams) — that's fine
+    }
+  }
+
   return workerEntry;
 }
 
@@ -570,6 +582,48 @@ async function resolveSpawnTeamWindow(
 }
 
 /**
+ * Watch a tmux pane for Claude Code's workspace trust prompt and auto-confirm it.
+ * Polls the pane content for up to 15s. If the trust prompt is detected, sends Enter.
+ * If the session starts normally (no trust prompt), returns immediately.
+ *
+ * Workaround for: https://github.com/anthropics/claude-code/issues/36342
+ * --dangerously-skip-permissions does not bypass the trust dialog.
+ */
+async function autoConfirmTrustPrompt(paneId: string): Promise<void> {
+  const { execSync } = require('node:child_process');
+  const maxWaitMs = 15000;
+  const pollMs = 500;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise((r) => setTimeout(r, pollMs));
+
+    let content: string;
+    try {
+      content = execSync(`tmux capture-pane -t '${paneId}' -p`, { encoding: 'utf-8' });
+    } catch {
+      return; // Pane gone — nothing to do
+    }
+
+    // Trust prompt detected — send Enter to confirm "Yes, I trust this folder"
+    if (content.includes('trust this folder') || content.includes('Quick safety check')) {
+      try {
+        execSync(`tmux send-keys -t '${paneId}' Enter`, { encoding: 'utf-8' });
+      } catch {
+        // Best effort
+      }
+      return;
+    }
+
+    // Session already started — no trust prompt needed
+    if (content.includes('Claude Code') || content.includes('❯') || content.includes('Churning')) {
+      return;
+    }
+  }
+  // Timeout — proceed anyway, agent may have started
+}
+
+/**
  * Create a tmux pane for the worker.
  *
  * First agent in a newly created team window reuses the blank pane via send-keys.
@@ -627,6 +681,13 @@ async function launchTmuxSpawn(ctx: SpawnCtx): Promise<void> {
   }
 
   await applySpawnLayout(ctx, teamWindow);
+
+  // Watch for Claude Code workspace trust prompt and auto-confirm
+  // (upstream bug: --dangerously-skip-permissions doesn't bypass it)
+  // Only for Claude provider — Codex doesn't have this prompt
+  if (ctx.validated.provider === 'claude') {
+    await autoConfirmTrustPrompt(paneId);
+  }
 
   const workerEntry = await registerSpawnWorker(ctx, paneId, teamWindow);
   await notifySpawnJoin(ctx, paneId);
