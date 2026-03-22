@@ -115,8 +115,8 @@ export function projectPathToHash(projectPath: string): string {
   let normalized = projectPath.replace(/\/+$/, '');
   if (!normalized) normalized = '/';
 
-  // Replace slashes with dashes
-  return normalized.replace(/\//g, '-');
+  // Claude Code replaces both slashes and dots with dashes in the project hash
+  return normalized.replace(/[/.]/g, '-');
 }
 
 /**
