@@ -248,8 +248,9 @@ qaCmd
 qaCmd
   .command('status')
   .description('Show QA dashboard with last results per spec')
-  .action(async () => {
-    await qaStatusCommand();
+  .option('--json', 'Output as JSON')
+  .action(async (options: { json?: boolean }) => {
+    await qaStatusCommand(options);
   });
 
 qaCmd
