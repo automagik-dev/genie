@@ -84,17 +84,51 @@ export async function qaCommand(target: string | undefined, options: QaOptions):
 }
 
 /** `genie qa status` — Dashboard showing all specs with last result. */
-export async function qaStatusCommand(): Promise<void> {
+export async function qaStatusCommand(options?: { json?: boolean }): Promise<void> {
   const specDir = defaultSpecDir();
   const repoPath = process.cwd();
   const specs = await listAllSpecs(specDir);
   const results = await loadResults(repoPath);
 
   if (specs.length === 0) {
-    console.error('\x1b[33mNo QA specs found.\x1b[0m');
+    if (options?.json) {
+      console.log(JSON.stringify({ specs: [], summary: { total: 0, pass: 0, fail: 0, stale: 0, never: 0 } }));
+    } else {
+      console.error('\x1b[33mNo QA specs found.\x1b[0m');
+    }
     return;
   }
 
+  // JSON output mode
+  if (options?.json) {
+    const jsonSpecs = [];
+    for (const spec of specs) {
+      const stored = results[spec.key];
+      const stale = stored ? await isStale(repoPath, spec.key, spec.filePath) : false;
+      const status = !stored ? 'never' : stale ? 'stale' : stored.result;
+      jsonSpecs.push({
+        key: spec.key,
+        domain: spec.domain,
+        name: spec.name,
+        status,
+        durationMs: stored?.durationMs ?? null,
+        lastRun: stored?.lastRun ?? null,
+        expectations: stored?.expectations ?? [],
+        error: stored?.error ?? null,
+      });
+    }
+    const counts = {
+      total: specs.length,
+      pass: jsonSpecs.filter((s) => s.status === 'pass').length,
+      fail: jsonSpecs.filter((s) => s.status === 'fail' || s.status === 'error').length,
+      stale: jsonSpecs.filter((s) => s.status === 'stale').length,
+      never: jsonSpecs.filter((s) => s.status === 'never').length,
+    };
+    console.log(JSON.stringify({ specs: jsonSpecs, summary: counts }));
+    return;
+  }
+
+  // Human output
   console.log();
   console.log('\x1b[1m  QA Status\x1b[0m');
   console.log('  \x1b[2m────────────────────────────────────────\x1b[0m');
