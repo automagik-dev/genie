@@ -218,7 +218,7 @@ export async function list(): Promise<Agent[]> {
   return Object.values(registry.workers);
 }
 
-/** Filter agents by tmux session name. */
+/** Filter agents by tmux session name. @public */
 export async function filterBySession(sessionName: string): Promise<Agent[]> {
   const agents = await list();
   return agents.filter((a) => a.session === sessionName);
@@ -335,6 +335,7 @@ export async function removeSubPane(workerId: string, paneId: string, registryPa
 /**
  * Get the team-lead registry entry for a team.
  * Returns null if no team-lead is registered.
+ * @public
  */
 export async function getTeamLeadEntry(teamName: string, session?: string, repoPath?: string): Promise<Agent | null> {
   const registry = await loadRegistry();
