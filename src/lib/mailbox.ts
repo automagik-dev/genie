@@ -8,7 +8,7 @@
  * panes only when the worker is idle (not mid-turn).
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path, { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { NativeInboxMessage } from './claude-native-teams.js';
@@ -52,6 +52,12 @@ function mailboxDir(repoPath: string): string {
 function mailboxFilePath(repoPath: string, workerId: string): string {
   const safeId = path.basename(workerId);
   return join(mailboxDir(repoPath), `${safeId}.json`);
+}
+
+/** Outbox JSONL file for tracking sent messages (append-only). */
+export function outboxFilePath(repoPath: string, workerId: string): string {
+  const safeId = path.basename(workerId);
+  return join(mailboxDir(repoPath), `${safeId}-sent.jsonl`);
 }
 
 // ============================================================================
@@ -106,6 +112,26 @@ export async function send(repoPath: string, from: string, to: string, body: str
     mailbox.messages.push(message);
     await saveMailbox(repoPath, mailbox);
 
+    // Append to sender's outbox (append-only JSONL, no lock needed — single writer per send call)
+    await appendFile(outboxFilePath(repoPath, from), `${JSON.stringify(message)}\n`);
+
+    // Publish to NATS for real-time streaming (fire-and-forget, auto-closes)
+    try {
+      const { publish } = await import('./nats-client.js');
+      await publish(`genie.msg.${to}`, {
+        timestamp: message.createdAt,
+        kind: 'message',
+        agent: from,
+        direction: 'out',
+        peer: to,
+        text: body,
+        data: { messageId: message.id, from, to },
+        source: 'mailbox',
+      });
+    } catch {
+      // NATS unavailable — no-op
+    }
+
     return message;
   } finally {
     await release();
@@ -118,6 +144,27 @@ export async function send(repoPath: string, from: string, to: string, body: str
 export async function inbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
   const mailbox = await loadMailbox(repoPath, workerId);
   return mailbox.messages;
+}
+
+/**
+ * Read sent messages from a worker's outbox (JSONL file).
+ */
+export async function readOutbox(repoPath: string, workerId: string): Promise<MailboxMessage[]> {
+  try {
+    const content = await readFile(outboxFilePath(repoPath, workerId), 'utf-8');
+    const lines = content.trim().split('\n').filter(Boolean);
+    const messages: MailboxMessage[] = [];
+    for (const line of lines) {
+      try {
+        messages.push(JSON.parse(line));
+      } catch {
+        // Skip malformed lines
+      }
+    }
+    return messages;
+  } catch {
+    return [];
+  }
 }
 
 /**
