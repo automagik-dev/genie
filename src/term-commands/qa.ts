@@ -57,6 +57,7 @@ export async function qaCommand(target: string | undefined, options: QaOptions):
     parallel: options.parallel ?? 5,
     verbose: options.verbose ?? false,
     repoPath: process.cwd(),
+    ndjson: options.ndjson ?? false,
   };
 
   let reports: SpecReport[];

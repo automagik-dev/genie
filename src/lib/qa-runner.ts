@@ -61,6 +61,17 @@ export interface QaRunnerOptions {
   repoPath?: string;
   /** Max specs to run in parallel (default: 5) */
   parallel?: number;
+  /** Emit incremental NDJSON events on stdout */
+  ndjson?: boolean;
+}
+
+// ============================================================================
+// NDJSON Event Emitter
+// ============================================================================
+
+/** Emit an NDJSON event line to stdout (only when ndjson mode is active). */
+function emitNdjson(event: Record<string, unknown>): void {
+  process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
 // ============================================================================
@@ -90,17 +101,10 @@ export async function runDomainSpecs(
  * Phase 2: Run specs through semaphore queue (next spec starts as soon as one finishes)
  * Phase 3: Disband all teams
  */
-async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
-  const repoPath = resolve(options?.repoPath ?? process.cwd());
-  const maxConcurrency = options?.parallel ?? 5;
-  const timeoutMs = (options?.timeout ?? 60) * 1000;
-  const DIM = '\x1b[90m';
-  const RESET = '\x1b[0m';
-  const GREEN = '\x1b[32m';
-  const RED = '\x1b[31m';
+type PreparedSpec = { entry: SpecEntry; spec: QaSpec; teamName: string; worktreePath: string; promptFile: string };
 
-  // Phase 1: Pre-create all teams serially
-  type PreparedSpec = { entry: SpecEntry; spec: QaSpec; teamName: string; worktreePath: string; promptFile: string };
+/** Phase 1: Pre-create all teams serially (git worktree can't run in parallel). */
+async function prepareTeams(entries: SpecEntry[], repoPath: string, ndjson: boolean): Promise<PreparedSpec[]> {
   const prepared: PreparedSpec[] = [];
   console.error(`\n  [qa] Creating ${entries.length} teams...`);
   for (const entry of entries) {
@@ -116,25 +120,56 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
 
       prepared.push({ entry, spec, teamName, worktreePath: config.worktreePath, promptFile });
       console.error(`    ✓ ${entry.name}`);
+      if (ndjson) emitNdjson({ type: 'qa:team-created', team: teamName, spec: entry.key });
     } catch (err) {
       console.error(`    ✗ ${entry.name}: ${err instanceof Error ? err.message : err}`);
     }
     await new Promise((r) => setTimeout(r, 200));
   }
+  return prepared;
+}
 
+/** Emit a spec-done NDJSON event. */
+function emitSpecDone(spec: string, report: SpecReport): void {
+  emitNdjson({
+    type: 'qa:spec-done',
+    spec,
+    result: report.result,
+    durationMs: report.durationMs,
+    expectations: report.expectations,
+    error: report.error,
+  });
+}
+
+async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
+  const repoPath = resolve(options?.repoPath ?? process.cwd());
+  const maxConcurrency = options?.parallel ?? 5;
+  const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const ndjson = options?.ndjson ?? false;
+  const GREEN = '\x1b[32m';
+  const RED = '\x1b[31m';
+  const RESET = '\x1b[0m';
+  const DIM = '\x1b[90m';
+
+  const prepared = await prepareTeams(entries, repoPath, ndjson);
   if (prepared.length === 0) return [];
 
   // Subscribe to all NATS events for real-time timeline
   const timelineSub = await nats.subscribe('genie.>', (_subj, data) => {
     const event = data as { timestamp?: string; kind?: string; agent?: string; text?: string; team?: string };
     if (!event?.timestamp || !event?.kind) return;
-    // Only show events from QA teams
     const team = event.team ?? '';
     if (!team.startsWith('qa-')) return;
     const specName = prepared.find((p) => p.teamName === team)?.entry.name ?? team;
     const time = new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false });
     const text = (event.text ?? '').slice(0, 100);
     console.error(`  ${DIM}${time}${RESET} ${DIM}[${event.kind}]${RESET} ${specName} ${DIM}${text}${RESET}`);
+    if (ndjson)
+      emitNdjson({
+        type: 'qa:event',
+        spec: specName,
+        event: { timestamp: event.timestamp, kind: event.kind, agent: event.agent ?? '', text: event.text ?? '' },
+      });
   });
 
   // Phase 2: Semaphore-based concurrency
@@ -149,6 +184,7 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
       while (running < maxConcurrency && nextIdx < prepared.length) {
         const p = prepared[nextIdx++];
         running++;
+        if (ndjson) emitNdjson({ type: 'qa:spec-started', spec: p.entry.key, team: p.teamName });
 
         runPreparedSpec(p.spec, p.teamName, p.worktreePath, p.promptFile, timeoutMs)
           .then(async (report) => {
@@ -157,27 +193,25 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
             const icon = report.result === 'pass' ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
             console.error(`  ${icon} ${p.entry.name} (${(report.durationMs / 1000).toFixed(0)}s) [${elapsed}s total]`);
+            if (ndjson) emitSpecDone(p.entry.key, report);
             reports.push(report);
           })
           .catch((err) => {
             const errorReport = makeErrorReport(p.spec, Date.now(), String(err));
             reports.push(errorReport);
             console.error(`  ${RED}✗${RESET} ${p.entry.name}: ${err}`);
+            if (ndjson) emitSpecDone(p.entry.key, errorReport);
           })
           .finally(() => {
             running--;
-            if (reports.length === prepared.length) {
-              resolveAll();
-            } else {
-              tryStartNext();
-            }
+            if (reports.length === prepared.length) resolveAll();
+            else tryStartNext();
           });
       }
     };
     tryStartNext();
   });
 
-  // Unsubscribe timeline
   timelineSub.unsubscribe();
 
   // Phase 3: Disband all teams
@@ -197,18 +231,22 @@ async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: Q
 export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<SpecReport> {
   const repoPath = resolve(options?.repoPath ?? process.cwd());
   const timeoutMs = (options?.timeout ?? 60) * 1000;
+  const ndjson = options?.ndjson ?? false;
   const teamName = `qa-${Date.now().toString(36)}-${spec.name.slice(0, 8).replace(/\s+/g, '-')}`;
   const start = Date.now();
 
   try {
     const config = await teamManager.createTeam(teamName, repoPath);
     await teamManager.hireAgent(teamName, 'qa-runner');
+    if (ndjson) emitNdjson({ type: 'qa:team-created', team: teamName, spec: spec.name });
 
     const prompt = buildTeamLeadPrompt(spec, teamName, repoPath);
     const promptFile = join(tmpdir(), `genie-qa-${teamName}.md`);
     await writeFile(promptFile, prompt);
 
+    if (ndjson) emitNdjson({ type: 'qa:spec-started', spec: spec.name, team: teamName });
     const report = await runPreparedSpec(spec, teamName, config.worktreePath, promptFile, timeoutMs);
+    if (ndjson) emitSpecDone(spec.name, report);
 
     await teamManager.disbandTeam(teamName);
     return report;
@@ -218,7 +256,9 @@ export async function runSpec(spec: QaSpec, options?: QaRunnerOptions): Promise<
     } catch {
       // Best effort
     }
-    return makeErrorReport(spec, start, String(err));
+    const errorReport = makeErrorReport(spec, start, String(err));
+    if (ndjson) emitSpecDone(spec.name, errorReport);
+    return errorReport;
   }
 }
 

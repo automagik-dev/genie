@@ -262,5 +262,58 @@ describe('qa-state', () => {
       expect(resultsA.test.result).toBe('pass');
       expect(resultsB.test.result).toBe('fail');
     });
+
+    test('saving result in repo A does not appear in repo B', async () => {
+      const repoA = join(testDir, 'repo-alpha');
+      const repoB = join(testDir, 'repo-beta');
+      const specFile = join(testDir, 'spec.md');
+      await writeFile(specFile, '# Test');
+
+      await saveResult(repoA, 'messaging/chat', makeReport({ file: specFile }));
+
+      const resultsB = await loadResults(repoB);
+      expect(resultsB).toEqual({});
+    });
+
+    test('listAllSpecs returns only specs from its own specDir', async () => {
+      const repoA = join(testDir, 'repo-a');
+      const repoB = join(testDir, 'repo-b');
+      const specDirA = join(repoA, '.genie', 'qa');
+      const specDirB = join(repoB, '.genie', 'qa');
+      await mkdir(join(specDirA, 'auth'), { recursive: true });
+      await mkdir(join(specDirB, 'messaging'), { recursive: true });
+
+      await writeFile(join(specDirA, 'auth', 'login.md'), '# Login');
+      await writeFile(join(specDirA, 'health.md'), '# Health');
+      await writeFile(join(specDirB, 'messaging', 'round-trip.md'), '# Round Trip');
+
+      const specsA = await listAllSpecs(specDirA);
+      const specsB = await listAllSpecs(specDirB);
+
+      expect(specsA).toHaveLength(2);
+      expect(specsA.map((s) => s.key).sort()).toEqual(['auth/login', 'health']);
+
+      expect(specsB).toHaveLength(1);
+      expect(specsB[0].key).toBe('messaging/round-trip');
+    });
+
+    test('isStale in repo B is not affected by spec changes in repo A', async () => {
+      const repoA = join(testDir, 'repo-a');
+      const repoB = join(testDir, 'repo-b');
+      const specFileA = join(testDir, 'spec-a.md');
+      const specFileB = join(testDir, 'spec-b.md');
+      await writeFile(specFileA, '# Spec A original');
+      await writeFile(specFileB, '# Spec B original');
+
+      await saveResult(repoA, 'test', makeReport({ file: specFileA }));
+      await saveResult(repoB, 'test', makeReport({ file: specFileB }));
+
+      // Modify spec in repo A
+      await writeFile(specFileA, '# Spec A modified');
+
+      // repo A should be stale, repo B should not
+      expect(await isStale(repoA, 'test', specFileA)).toBe(true);
+      expect(await isStale(repoB, 'test', specFileB)).toBe(false);
+    });
   });
 });
