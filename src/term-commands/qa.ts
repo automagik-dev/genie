@@ -40,6 +40,7 @@ import {
 
 export interface QaOptions {
   timeout?: number;
+  parallel?: number;
   verbose?: boolean;
   ndjson?: boolean;
 }
@@ -53,6 +54,7 @@ export async function qaCommand(target: string | undefined, options: QaOptions):
   const specDir = defaultSpecDir();
   const runnerOpts: QaRunnerOptions = {
     timeout: options.timeout ?? 60,
+    parallel: options.parallel ?? 5,
     verbose: options.verbose ?? false,
     repoPath: process.cwd(),
   };
