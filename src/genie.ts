@@ -44,7 +44,7 @@ import * as historyCmd from './term-commands/history.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
-import { type QaOptions, qaCommand } from './term-commands/qa.js';
+import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
@@ -229,15 +229,33 @@ program
     await logCommand(agent, options);
   });
 
-// genie qa [spec]
-program
-  .command('qa [spec]')
-  .description('Run QA specs — self-testing system for genie CLI')
+// genie qa [target] — run specs by name, domain, or all
+// genie qa status — dashboard
+// genie qa history — recent runs
+const qaCmd = program.command('qa').description('QA — self-testing system for genie CLI');
+
+qaCmd
+  .command('run [target]', { isDefault: true })
+  .description('Run QA specs (all, a domain, or a single spec)')
   .option('--timeout <seconds>', 'Max seconds per spec', (v: string) => Number(v), 60)
   .option('--verbose', 'Show all collected events')
   .option('--ndjson', 'Machine-readable NDJSON output')
-  .action(async (spec: string | undefined, options: QaOptions) => {
-    await qaCommand(spec, options);
+  .action(async (target: string | undefined, options: QaOptions) => {
+    await qaCommand(target, options);
+  });
+
+qaCmd
+  .command('status')
+  .description('Show QA dashboard with last results per spec')
+  .action(async () => {
+    await qaStatusCommand();
+  });
+
+qaCmd
+  .command('history')
+  .description('Show recent QA runs')
+  .action(async () => {
+    await qaHistoryCommand();
   });
 
 // genie qa report <json> — team-lead calls this to publish QA result via NATS

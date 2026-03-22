@@ -16,11 +16,12 @@
  *   - Reports PASS/FAIL as a structured JSON in team chat
  */
 
-import { readdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as nats from './nats-client.js';
 import { type QaSpec, parseQaSpec } from './qa-parser.js';
+import { type SpecEntry, listAllSpecs, saveResult, specKeyFromPath } from './qa-state.js';
 import * as teamManager from './team-manager.js';
 
 // ============================================================================
@@ -64,15 +65,32 @@ export interface QaRunnerOptions {
 // Runner
 // ============================================================================
 
-/** Discover and run all QA specs from a directory. */
+/** Discover and run all QA specs recursively from a directory (supports domain subdirectories). */
 export async function runAllSpecs(specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
-  const files = await readdir(specDir);
-  const mdFiles = files.filter((f) => f.endsWith('.md')).sort();
+  const entries = await listAllSpecs(specDir);
+  return runSpecEntries(entries, specDir, options);
+}
 
+/** Run specs from a specific domain subdirectory. */
+export async function runDomainSpecs(
+  specDir: string,
+  domain: string,
+  options?: QaRunnerOptions,
+): Promise<SpecReport[]> {
+  const entries = await listAllSpecs(specDir);
+  const filtered = entries.filter((e) => e.domain === domain);
+  return runSpecEntries(filtered, specDir, options);
+}
+
+/** Run a list of spec entries, saving results after each. */
+async function runSpecEntries(entries: SpecEntry[], specDir: string, options?: QaRunnerOptions): Promise<SpecReport[]> {
+  const repoPath = resolve(options?.repoPath ?? process.cwd());
   const reports: SpecReport[] = [];
-  for (const file of mdFiles) {
-    const spec = await parseQaSpec(join(specDir, file));
+  for (const entry of entries) {
+    const spec = await parseQaSpec(entry.filePath);
     const report = await runSpec(spec, options);
+    const key = specKeyFromPath(specDir, entry.filePath);
+    await saveResult(repoPath, key, report);
     reports.push(report);
   }
   return reports;
