@@ -17,8 +17,8 @@ import {
 } from './builtin-agents.js';
 
 describe('BUILTIN_ROLES', () => {
-  test('has 10 built-in roles', () => {
-    expect(BUILTIN_ROLES.length).toBe(10);
+  test('has 11 built-in roles', () => {
+    expect(BUILTIN_ROLES.length).toBe(11);
   });
 
   test('all roles have required fields', () => {
@@ -105,8 +105,8 @@ describe('BUILTIN_COUNCIL_MEMBERS', () => {
 });
 
 describe('ALL_BUILTINS', () => {
-  test('has 21 total built-in agents', () => {
-    expect(ALL_BUILTINS.length).toBe(21);
+  test('has 22 total built-in agents', () => {
+    expect(ALL_BUILTINS.length).toBe(22);
   });
 
   test('names are globally unique across roles and council', () => {
