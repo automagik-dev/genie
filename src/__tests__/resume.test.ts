@@ -65,6 +65,7 @@ function createMockDeps(overrides: Partial<SchedulerDeps> = {}) {
     isPaneAlive: async () => false,
     listWorkers: async () => [],
     countTmuxSessions: async () => 0,
+    publishEvent: async () => {},
     resumeAgent: async () => true,
     updateAgent: async (id, u) => {
       agentUpdates.push({ id, updates: u });
