@@ -247,6 +247,12 @@ export async function ensureTeamWindow(
   teamName: string,
   workingDir?: string,
 ): Promise<{ windowId: string; windowName: string; paneId: string; created: boolean }> {
+  // Auto-create session if it doesn't exist (enables --session with new session names)
+  const sessionExists = await findSessionByName(session);
+  if (!sessionExists) {
+    await createSession(session);
+  }
+
   const existing = await findWindowByName(session, teamName);
   if (existing) {
     // Ensure automatic-rename is off so the team name sticks
