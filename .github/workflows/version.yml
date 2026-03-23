@@ -4,15 +4,14 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  # This workflow always writes to `dev`, regardless of the trigger ref.
-  group: version-dev
+  group: version-${{ github.event.workflow_run.head_branch || 'manual' }}
   cancel-in-progress: false
 
 jobs:
@@ -24,15 +23,35 @@ jobs:
       (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
-       contains(github.event.workflow_run.head_commit.message, '/dev') &&
-       !contains(github.event.workflow_run.head_commit.message, '[skip ci]'))
+       !contains(github.event.workflow_run.head_commit.message, '[skip ci]') &&
+       (
+         (github.event.workflow_run.head_branch == 'main' &&
+          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
+          contains(github.event.workflow_run.head_commit.message, '/dev'))
+         ||
+         (github.event.workflow_run.head_branch == 'dev' &&
+          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request'))
+       ))
 
     steps:
+      - name: Determine branch and version prefix
+        id: context
+        run: |
+          BRANCH="${{ github.event.workflow_run.head_branch || 'dev' }}"
+          if [ "$BRANCH" = "main" ]; then
+            echo "branch=dev" >> "$GITHUB_OUTPUT"
+            echo "prefix=3" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=dev" >> "$GITHUB_OUTPUT"
+            echo "prefix=4" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved: branch=dev, prefix=$([ "$BRANCH" = "main" ] && echo 3 || echo 4)"
+
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: ${{ steps.context.outputs.branch }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -51,10 +70,11 @@ jobs:
       - name: Derive version
         id: version
         run: |
+          PREFIX="${{ steps.context.outputs.prefix }}"
           TODAY=$(date -u +%y%m%d)
-          EXISTING=$(git tag --list "v3.${TODAY}.*" | wc -l)
+          EXISTING=$(git tag --list "v${PREFIX}.${TODAY}.*" | wc -l)
           BUILD_NUMBER=$((EXISTING + 1))
-          VERSION="3.${TODAY}.${BUILD_NUMBER}"
+          VERSION="${PREFIX}.${TODAY}.${BUILD_NUMBER}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "Derived version: ${VERSION}"
@@ -71,6 +91,7 @@ jobs:
       - name: Commit and tag
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          BRANCH="${{ steps.context.outputs.branch }}"
 
           git add -A '*.json' 'src/lib/version.ts'
           if git diff --cached --quiet; then
@@ -80,7 +101,7 @@ jobs:
           fi
 
           git tag "v${VERSION}"
-          git push --atomic origin HEAD:refs/heads/dev "refs/tags/v${VERSION}"
+          git push --atomic origin "HEAD:refs/heads/${BRANCH}" "refs/tags/v${VERSION}"
 
       - name: Build CLI
         run: bun run build
@@ -95,4 +116,4 @@ jobs:
             echo "⚠️ NPM_TOKEN not set — skipping dev publish"
             exit 0
           fi
-          bun publish --access public --tag next
+          bun publish --access public --tag ${{ steps.context.outputs.npm_tag }}
