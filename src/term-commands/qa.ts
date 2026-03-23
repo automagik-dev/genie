@@ -100,36 +100,51 @@ export async function qaStatusCommand(options?: { json?: boolean }): Promise<voi
     return;
   }
 
-  // JSON output mode
   if (options?.json) {
-    const jsonSpecs = [];
-    for (const spec of specs) {
-      const stored = results[spec.key];
-      const stale = stored ? await isStale(repoPath, spec.key, spec.filePath) : false;
-      const status = !stored ? 'never' : stale ? 'stale' : stored.result;
-      jsonSpecs.push({
-        key: spec.key,
-        domain: spec.domain,
-        name: spec.name,
-        status,
-        durationMs: stored?.durationMs ?? null,
-        lastRun: stored?.lastRun ?? null,
-        expectations: stored?.expectations ?? [],
-        error: stored?.error ?? null,
-      });
-    }
-    const counts = {
-      total: specs.length,
-      pass: jsonSpecs.filter((s) => s.status === 'pass').length,
-      fail: jsonSpecs.filter((s) => s.status === 'fail' || s.status === 'error').length,
-      stale: jsonSpecs.filter((s) => s.status === 'stale').length,
-      never: jsonSpecs.filter((s) => s.status === 'never').length,
-    };
-    console.log(JSON.stringify({ specs: jsonSpecs, summary: counts }));
-    return;
+    await printJsonStatus(specs, results, repoPath);
+  } else {
+    await printHumanStatus(specs, results, repoPath);
   }
+}
 
-  // Human output
+/** Render QA status as JSON. */
+async function printJsonStatus(
+  specs: SpecEntry[],
+  results: Record<string, StoredResult>,
+  repoPath: string,
+): Promise<void> {
+  const jsonSpecs = [];
+  for (const spec of specs) {
+    const stored = results[spec.key];
+    const stale = stored ? await isStale(repoPath, spec.key, spec.filePath) : false;
+    const status = !stored ? 'never' : stale ? 'stale' : stored.result;
+    jsonSpecs.push({
+      key: spec.key,
+      domain: spec.domain,
+      name: spec.name,
+      status,
+      durationMs: stored?.durationMs ?? null,
+      lastRun: stored?.lastRun ?? null,
+      expectations: stored?.expectations ?? [],
+      error: stored?.error ?? null,
+    });
+  }
+  const counts = {
+    total: specs.length,
+    pass: jsonSpecs.filter((s) => s.status === 'pass').length,
+    fail: jsonSpecs.filter((s) => s.status === 'fail' || s.status === 'error').length,
+    stale: jsonSpecs.filter((s) => s.status === 'stale').length,
+    never: jsonSpecs.filter((s) => s.status === 'never').length,
+  };
+  console.log(JSON.stringify({ specs: jsonSpecs, summary: counts }));
+}
+
+/** Render QA status as a human-readable dashboard. */
+async function printHumanStatus(
+  specs: SpecEntry[],
+  results: Record<string, StoredResult>,
+  repoPath: string,
+): Promise<void> {
   console.log();
   console.log('\x1b[1m  QA Status\x1b[0m');
   console.log('  \x1b[2m────────────────────────────────────────\x1b[0m');

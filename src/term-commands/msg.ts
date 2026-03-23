@@ -106,6 +106,19 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
   const teamManager = await getTeamManager();
   const teams = await teamManager.listTeams();
 
+  const senderTeams = resolveSenderTeams(teams, sender);
+  if (senderTeams.length === 0) return null;
+
+  for (const team of senderTeams) {
+    if (isRecipientInTeam(team, recipient)) return null;
+  }
+
+  const teamNames = senderTeams.map((t) => t.name).join(', ');
+  return `Scope violation: "${recipient}" is not in sender's team(s): ${teamNames}`;
+}
+
+/** Build the list of teams the sender belongs to, including env-based team-lead membership. */
+function resolveSenderTeams(teams: teamManagerTypes.TeamConfig[], sender: string): teamManagerTypes.TeamConfig[] {
   let senderTeams = teams.filter((t) => t.members.includes(sender));
 
   if (sender === 'team-lead') {
@@ -118,18 +131,17 @@ export async function checkSendScope(_repoPath: string, sender: string, recipien
     }
   }
 
-  if (senderTeams.length === 0) return null;
+  return senderTeams;
+}
 
-  for (const team of senderTeams) {
-    if (team.members.includes(recipient) || recipient === 'team-lead') return null;
-    if (recipient.startsWith(`${team.name}-`)) {
-      const roleOnly = recipient.slice(team.name.length + 1);
-      if (team.members.includes(roleOnly)) return null;
-    }
+/** Check whether a recipient is reachable within a given team (direct member, team-lead, or prefixed name). */
+function isRecipientInTeam(team: teamManagerTypes.TeamConfig, recipient: string): boolean {
+  if (team.members.includes(recipient) || recipient === 'team-lead') return true;
+  if (recipient.startsWith(`${team.name}-`)) {
+    const roleOnly = recipient.slice(team.name.length + 1);
+    if (team.members.includes(roleOnly)) return true;
   }
-
-  const teamNames = senderTeams.map((t) => t.name).join(', ');
-  return `Scope violation: "${recipient}" is not in sender's team(s): ${teamNames}`;
+  return false;
 }
 
 /**

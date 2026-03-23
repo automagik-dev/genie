@@ -342,26 +342,7 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
   const workers = Object.values(registry.workers);
 
   if (session) {
-    if (repoPath) {
-      const exactProject = registry.workers[buildProjectTeamLeadEntryId(teamName, session, repoPath)];
-      if (exactProject) return exactProject;
-    }
-
-    const exactSession = registry.workers[buildSessionTeamLeadEntryId(teamName, session)];
-    if (exactSession && (!repoPath || exactSession.repoPath === repoPath)) return exactSession;
-
-    const legacy = registry.workers[buildLegacyTeamLeadEntryId(teamName)];
-    if (legacy?.session === session && (!repoPath || legacy.repoPath === repoPath)) return legacy;
-
-    return (
-      workers.find(
-        (worker) =>
-          worker.role === 'team-lead' &&
-          worker.team === teamName &&
-          worker.session === session &&
-          (!repoPath || worker.repoPath === repoPath),
-      ) ?? null
-    );
+    return findTeamLeadBySession(registry, workers, teamName, session, repoPath);
   }
 
   return (
@@ -370,6 +351,36 @@ export async function getTeamLeadEntry(teamName: string, session?: string, repoP
       .filter((worker) => worker.role === 'team-lead' && worker.team === teamName)
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ??
     null
+  );
+}
+
+/** Look up a team-lead entry by session, trying keyed lookups before scanning. */
+function findTeamLeadBySession(
+  registry: AgentRegistry,
+  workers: Agent[],
+  teamName: string,
+  session: string,
+  repoPath?: string,
+): Agent | null {
+  if (repoPath) {
+    const exactProject = registry.workers[buildProjectTeamLeadEntryId(teamName, session, repoPath)];
+    if (exactProject) return exactProject;
+  }
+
+  const exactSession = registry.workers[buildSessionTeamLeadEntryId(teamName, session)];
+  if (exactSession && (!repoPath || exactSession.repoPath === repoPath)) return exactSession;
+
+  const legacy = registry.workers[buildLegacyTeamLeadEntryId(teamName)];
+  if (legacy?.session === session && (!repoPath || legacy.repoPath === repoPath)) return legacy;
+
+  return (
+    workers.find(
+      (worker) =>
+        worker.role === 'team-lead' &&
+        worker.team === teamName &&
+        worker.session === session &&
+        (!repoPath || worker.repoPath === repoPath),
+    ) ?? null
   );
 }
 
