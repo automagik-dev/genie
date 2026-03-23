@@ -42,6 +42,21 @@ Trace must run in **isolation** — the subagent must not modify any source file
 genie spawn tracer
 ```
 
+## Task Lifecycle Integration (v4)
+
+When a PG task exists for the work being investigated, log findings as task comments:
+
+| Event | Command |
+|-------|---------|
+| Investigation start | `genie task comment #<seq> "Trace: investigating — [symptom summary]"` |
+| Root cause found | `genie task comment #<seq> "Root cause: [summary] — [file:line]"` |
+| Multiple causes | `genie task comment #<seq> "Root causes: [count] identified — see trace report"` |
+| Investigation failed | `genie task comment #<seq> "Trace: could not determine root cause — [reason]"` |
+
+Include file paths and line numbers in every root cause comment so the task history is actionable without reading the full report.
+
+**Graceful degradation:** If no PG task exists for the investigated work, skip all `genie task` commands. Findings logging is an enhancement — the trace flow must never fail due to missing tasks.
+
 ## Rules
 - Never fix during trace — investigation only, always separate from correction.
 - Always reproduce before theorizing — if the failure can't be reproduced, the report must say so.
