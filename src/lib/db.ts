@@ -6,7 +6,8 @@
  * pgserve only starts when something actually needs the database.
  */
 
-import { mkdirSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -15,8 +16,68 @@ import { runMigrations } from './db-migrations.js';
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
+const MAX_PORT_RETRIES = 10;
 const DATA_DIR = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'data', 'pgserve');
 const DB_NAME = 'genie';
+
+/** Sanitize connection URLs for logging — never expose credentials */
+function maskCredentials(url: string): string {
+  return url.replace(/\/\/.*@/, '//***@');
+}
+
+/**
+ * Kill orphaned postgres processes from a previous crash.
+ * Reads postmaster.pid from data dir, verifies PID is actually postgres,
+ * sends SIGTERM → waits 5s → SIGKILL if still alive.
+ */
+function killOrphanedPostgres(dataDir: string): void {
+  const pidFile = join(dataDir, 'postmaster.pid');
+  if (!existsSync(pidFile)) return;
+
+  try {
+    const content = readFileSync(pidFile, 'utf-8');
+    const pid = Number.parseInt(content.split('\n')[0], 10);
+    if (Number.isNaN(pid) || pid <= 0) return;
+
+    // Verify PID is actually a postgres process
+    let cmdline: string;
+    try {
+      cmdline = execSync(`ps -o command= -p ${pid} 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    } catch {
+      // Process doesn't exist — stale pid file, safe to ignore
+      return;
+    }
+
+    if (!cmdline.includes('postgres')) return;
+
+    // SIGTERM first (graceful)
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {
+      return; // Already dead
+    }
+
+    // Wait up to 5s for graceful shutdown
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0); // Check if alive
+        execSync('sleep 0.2', { stdio: 'ignore' });
+      } catch {
+        return; // Process exited
+      }
+    }
+
+    // SIGKILL if still alive
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already dead
+    }
+  } catch {
+    // Best effort — don't block startup on cleanup failures
+  }
+}
 
 /** Resolved port from env or default */
 function getPort(): number {
@@ -89,6 +150,9 @@ async function _ensurePgserve(): Promise<number> {
   // Ensure data directory exists
   mkdirSync(DATA_DIR, { recursive: true });
 
+  // Clean up orphaned postgres from a previous crash
+  killOrphanedPostgres(DATA_DIR);
+
   // Start pgserve
   try {
     const { startMultiTenantServer } = await import('pgserve');
@@ -106,7 +170,7 @@ async function _ensurePgserve(): Promise<number> {
     return port;
   } catch (err) {
     // Port may have been taken between check and start — try auto-increment
-    for (let offset = 1; offset <= 3; offset++) {
+    for (let offset = 1; offset <= MAX_PORT_RETRIES; offset++) {
       const fallbackPort = port + offset;
       if (await isPortListening(fallbackPort, DEFAULT_HOST)) {
         activePort = fallbackPort;
@@ -134,8 +198,10 @@ async function _ensurePgserve(): Promise<number> {
     // All attempts failed
     process.env.GENIE_PG_AVAILABLE = 'false';
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`Warning: pgserve failed to start: ${message}`);
-    throw new Error(`pgserve failed to start on port ${port} (and fallbacks ${port + 1}-${port + 3}): ${message}`);
+    console.warn(`Warning: pgserve failed to start: ${maskCredentials(message)}`);
+    throw new Error(
+      `pgserve failed to start on port ${port} (and fallbacks ${port + 1}-${port + MAX_PORT_RETRIES}): ${maskCredentials(message)}`,
+    );
   }
 }
 
@@ -185,7 +251,7 @@ export async function isAvailable(): Promise<boolean> {
  */
 export async function shutdown(): Promise<void> {
   if (sqlClient) {
-    await sqlClient.end();
+    await sqlClient.end({ timeout: 5 });
     sqlClient = null;
   }
 }

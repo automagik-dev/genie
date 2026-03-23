@@ -55,6 +55,13 @@ export const WorkerProfileSchema = z
   })
   .passthrough();
 
+// Omni integration configuration
+export const OmniConfigSchema = z.object({
+  apiUrl: z.string(),
+  apiKey: z.string().optional(),
+  defaultInstanceId: z.string().optional(),
+});
+
 // Council preset configuration
 // Defines a pair of profiles for dual-model deliberation
 export const CouncilPresetSchema = z.object({
@@ -94,6 +101,8 @@ export const GenieConfigSchema = z.object({
   promptMode: z.enum(['append', 'system']).default('append'),
   // Whether task leaders should auto-merge PRs to dev (default: false — leave PR open for human)
   autoMergeDev: z.boolean().default(false),
+  // Omni integration (optional — multi-channel messaging)
+  omni: OmniConfigSchema.optional(),
 });
 
 // Inferred types
