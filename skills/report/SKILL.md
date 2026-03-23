@@ -206,6 +206,28 @@ genie spawn tracer
 
 Browser dispatch uses direct `agent-browser` commands alongside the trace subagent.
 
+## Task Lifecycle Integration (v4)
+
+After creating the GitHub issue, also create a PG task to track the bug in the task system:
+
+| Event | Command |
+|-------|---------|
+| Bug task creation | `genie task create "<bug title>" --type software --tags bug --priority <severity>` |
+| Link GitHub issue | `genie task comment #<seq> "GitHub: <issue-url>"` |
+| Link trace findings | `genie task comment #<seq> "Root cause: <summary> — <file:line>"` |
+| QA criterion failure | `genie task comment #<seq> "Criterion FAIL: <criterion text>"` |
+
+Priority mapping from severity:
+
+| Severity | Priority |
+|----------|----------|
+| CRITICAL | `--priority critical` |
+| HIGH | `--priority high` |
+| MEDIUM | `--priority medium` |
+| LOW | `--priority low` |
+
+**Graceful degradation:** If PG is unavailable, skip `genie task` commands. The GitHub issue is the primary artifact — PG task tracking is an enhancement. The report must always be produced regardless of PG availability.
+
 ## Rules
 - Always run `/trace` first — it is the backbone of every report.
 - One question at a time when collecting symptoms — never batch questions.

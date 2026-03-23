@@ -47,6 +47,20 @@ genie spawn fixer
 genie spawn reviewer
 ```
 
+## Task Lifecycle Integration (v4)
+
+When a PG task exists for the work being fixed, log each fix attempt as a task comment:
+
+| Event | Command |
+|-------|---------|
+| Fix attempt start | `genie task comment #<seq> "Fix loop 1/2: [gap summary]"` |
+| Fix attempt result | `genie task comment #<seq> "Fix loop 1/2: [changes made]"` |
+| Fix success | `genie task comment #<seq> "Fix complete — [summary of all changes]"` |
+| Escalation (max loops) | `genie task block #<seq> --reason "Fix loop exceeded (2/2)"` |
+| Escalation (no progress) | `genie task block #<seq> --reason "No progress — identical gaps across loops"` |
+
+**Graceful degradation:** If no PG task exists for the work being fixed, skip all `genie task` commands. Fix loop logging is an enhancement — the fix flow must never fail due to missing tasks.
+
 ## Rules
 - Never fix and review in the same session — always separate subagents.
 - Never exceed 2 fix loops — escalate, don't spin.
