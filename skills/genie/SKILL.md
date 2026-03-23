@@ -111,6 +111,74 @@ When spawning, genie resolves agents in three tiers:
 
 ## CLI Quick Reference
 
+### Task Lifecycle (v4)
+
+Tasks are tracked in PG via short IDs (`#47`). All task commands accept either a full UUID or `#<seq>` shorthand.
+
+```bash
+genie task create <title> [options]       # Create a task
+  --type <type>                           #   Task type (default: software)
+  --priority <p>                          #   urgent | high | normal | low
+  --tags <t1,t2>                          #   Comma-separated tag IDs
+  --parent <id|#seq>                      #   Parent task for hierarchy
+  --assign <name>                         #   Assign to local actor
+  --description <text>                    #   Task description
+  --effort <effort>                       #   Estimated effort (e.g., "2h")
+  --comment <msg>                         #   Initial comment
+  --due <YYYY-MM-DD>                      #   Due date
+  --start <YYYY-MM-DD>                    #   Start date
+
+genie task list [options]                 # List tasks with filters
+  --stage <stage>                         #   Filter by stage
+  --type <type>                           #   Filter by type
+  --priority <p>                          #   Filter by priority
+  --release <name>                        #   Filter by release
+  --mine                                  #   Show only my tasks
+  --json                                  #   JSON output
+
+genie task show <id|#seq> [--json]        # Show task detail
+genie task move <id|#seq> --to <stage>    # Move task to stage
+  --comment <msg>                         #   Comment on the move
+genie task assign <id|#seq> --to <name>   # Assign actor
+  --role <role>                           #   Actor role (default: assignee)
+genie task tag <id|#seq> <tags...>        # Add tags
+genie task comment <id|#seq> <message>    # Comment on task
+  --reply-to <msgId>                      #   Reply to specific message
+genie task block <id|#seq> --reason <r>   # Block task
+  --comment <msg>                         #   Additional comment
+genie task unblock <id|#seq>              # Unblock task
+genie task done <id|#seq>                 # Mark task done
+  --comment <msg>                         #   Comment on completion
+genie task checkout <id|#seq>             # Claim task for execution
+genie task release <id|#seq>              # Release task claim
+genie task unlock <id|#seq>              # Force-release stale checkout
+genie task dep <id|#seq> [options]        # Manage dependencies
+  --depends-on <id2>                      #   This task depends on id2
+  --blocks <id2>                          #   This task blocks id2
+  --relates-to <id2>                      #   This task relates to id2
+  --remove <id2>                          #   Remove dependency
+```
+
+### Types, Tags, Releases & Notifications (v4)
+
+```bash
+genie type list                           # List all task types
+genie type show <id>                      # Show type + stage pipeline
+genie type create <name>                  # Create custom type with stages JSON
+
+genie tag list [--type <typeId>]          # List all tags
+genie tag create <name>                   # Create a custom tag
+
+genie release create <name> --tasks <ids...>  # Create release with tasks
+genie release list [--json]                   # List all releases
+
+genie notify set --channel <ch>           # Set notification preference
+  --priority <p>                          #   Priority threshold
+  --default                               #   Set as default channel
+genie notify list                         # List notification preferences
+genie notify remove --channel <ch>        # Remove preference
+```
+
 ### Teams
 ```bash
 genie team create <name> --repo <path> [--wish <slug>]

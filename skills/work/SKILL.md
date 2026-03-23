@@ -19,14 +19,30 @@ If context is injected, use it directly. Do not re-parse the wish for informatio
 ## Flow
 1. **Load wish:** read `.genie/wishes/<slug>/WISH.md` from the shared worktree, confirm scope.
 2. **Pick next task:** select next unblocked pending execution group (or use injected group context).
-3. **Self-refine:** dispatch `/refine` on the task prompt (text mode) with WISH.md as context anchor. Read output from `/tmp/prompts/<slug>.md`. Fallback: proceed with original prompt if refiner fails (non-blocking).
-4. **Dispatch worker:** send the task to a fresh subagent session (see Dispatch).
-5. **Local review:** run `/review` against the wish spec for this group's acceptance criteria before signaling done. On FIX-FIRST, dispatch fix subagent (max 2 loops).
-6. **Quality review:** dispatch review subagent for quality pass (security, maintainability, perf). On FIX-FIRST, dispatch fix subagent (max 1 loop).
-7. **Validate:** run the group validation command, record evidence.
-8. **Signal completion:** notify the leader via `genie send 'Group N complete — all criteria met' --to <leader>`.
-9. **Repeat** steps 2-8 until all groups done.
-10. **Handoff:** `All work tasks complete. Run /review.`
+3. **Task checkout (v4):** if a PG task exists for this group, claim it before starting:
+   ```bash
+   genie task checkout #<seq>
+   ```
+4. **Self-refine:** dispatch `/refine` on the task prompt (text mode) with WISH.md as context anchor. Read output from `/tmp/prompts/<slug>.md`. Fallback: proceed with original prompt if refiner fails (non-blocking).
+5. **Dispatch worker:** send the task to a fresh subagent session (see Dispatch).
+6. **Progress update (v4):** log progress as task comments during execution:
+   ```bash
+   genie task comment #<seq> "Building group N..."
+   ```
+7. **Local review:** run `/review` against the wish spec for this group's acceptance criteria before signaling done. On FIX-FIRST, dispatch fix subagent (max 2 loops).
+8. **Quality review:** dispatch review subagent for quality pass (security, maintainability, perf). On FIX-FIRST, dispatch fix subagent (max 1 loop).
+9. **Validate:** run the group validation command, record evidence.
+10. **Group done (v4):** move the task to review stage:
+    ```bash
+    genie task move #<seq> --to review --comment "Group N complete"
+    ```
+11. **Signal completion:** notify the leader via `genie send 'Group N complete — all criteria met' --to <leader>`.
+12. **Repeat** steps 2-11 until all groups done.
+13. **Wish done (v4):** mark the parent task done:
+    ```bash
+    genie task done #<parent-seq> --comment "All groups shipped"
+    ```
+14. **Handoff:** `All work tasks complete. Run /review.`
 
 ## When to Use
 - An approved wish exists and is ready for execution
@@ -71,6 +87,20 @@ When a subagent fails or fix loop limit (2) is exceeded:
 - Create follow-up task with concrete gaps.
 - Continue with next unblocked task.
 - Include blocked items in final handoff.
+
+## Task Lifecycle Integration (v4)
+
+When PG tasks exist for the wish, use `genie task` commands to track execution:
+
+| Event | Command |
+|-------|---------|
+| Start working on group | `genie task checkout #<seq>` |
+| Progress update | `genie task comment #<seq> "<status>"` |
+| Group complete | `genie task move #<seq> --to review --comment "Group N complete"` |
+| All groups done | `genie task done #<parent-seq> --comment "All groups shipped"` |
+| Group blocked | `genie task block #<seq> --reason "<reason>"` |
+
+**Graceful degradation:** If no PG task exists for the wish (e.g., PG unavailable or wish was created before v4), skip all `genie task` commands and fall back to current behavior. Task integration is optional — the core flow must never break due to missing tasks.
 
 ## Rules
 - Never execute directly — always dispatch subagents.
