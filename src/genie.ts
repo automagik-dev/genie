@@ -44,12 +44,17 @@ import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
 import { registerSendInboxCommands } from './term-commands/msg.js';
+import { registerNotifyCommands } from './term-commands/notify.js';
 import * as orchestrateCmd from './term-commands/orchestrate.js';
 import { type QaOptions, qaCommand, qaHistoryCommand, qaStatusCommand } from './term-commands/qa.js';
 import * as readCmd from './term-commands/read.js';
+import { registerReleaseCommands } from './term-commands/release.js';
 import { registerScheduleCommands } from './term-commands/schedule.js';
 import { registerStateCommands } from './term-commands/state.js';
+import { registerTagCommands } from './term-commands/tag.js';
+import { registerTaskCommands } from './term-commands/task.js';
 import { registerTeamNamespace } from './term-commands/team.js';
+import { registerTypeCommands } from './term-commands/type.js';
 
 // Safety net: ensure git repo is never in bare mode.
 // This should no longer trigger now that we use `git clone --shared` instead of
@@ -141,6 +146,11 @@ registerHookNamespace(program);
 registerDbCommands(program);
 registerScheduleCommands(program);
 registerDaemonCommands(program);
+registerTaskCommands(program);
+registerTypeCommands(program);
+registerTagCommands(program);
+registerReleaseCommands(program);
+registerNotifyCommands(program);
 
 // ============================================================================
 // Top-level agent commands (promoted from genie agent namespace)
