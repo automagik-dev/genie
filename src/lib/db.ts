@@ -20,6 +20,7 @@ const MAX_PORT_RETRIES = 3;
 const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
 const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
 const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
+const MIGRATION_MARKER = join(GENIE_HOME, 'pgserve.migrated');
 const DB_NAME = 'genie';
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -171,14 +172,18 @@ export async function ensurePgserve(): Promise<number> {
 }
 
 async function _ensurePgserve(): Promise<number> {
-  const port = getPort();
-
   // Already started by us in this process
-  if (activePort === port && pgserveServer) {
-    return port;
+  if (activePort !== null && pgserveServer) {
+    return activePort;
+  }
+  // Already connected (reuse from previous call in same process)
+  if (activePort !== null) {
+    return activePort;
   }
 
-  // 1. Check lockfile — another genie process may have started pgserve
+  const port = getPort();
+
+  // 1. Check lockfile — another genie process may have started pgserve (fast path, no imports)
   const reusedPort = await tryReuseLockfile();
   if (reusedPort !== null) return reusedPort;
 
@@ -187,7 +192,7 @@ async function _ensurePgserve(): Promise<number> {
     return markPortActive(port, true);
   }
 
-  // 3. Start pgserve ourselves
+  // 3. Start pgserve ourselves (slow path — only when no existing instance)
   mkdirSync(DATA_DIR, { recursive: true });
   killOrphanedPostgres(DATA_DIR);
 
@@ -287,6 +292,30 @@ function registerExitHandler(): void {
 }
 
 /**
+ * Check if migrations have already been applied (marker file).
+ * The marker stores the version so we re-run on upgrades.
+ */
+function migrationsDone(): boolean {
+  try {
+    const marker = readFileSync(MIGRATION_MARKER, 'utf-8').trim();
+    // Re-run migrations if the genie version changed
+    const currentVersion = process.env.npm_package_version ?? '';
+    return marker === currentVersion || (currentVersion === '' && marker.length > 0);
+  } catch {
+    return false;
+  }
+}
+
+function markMigrationsDone(): void {
+  try {
+    const version = process.env.npm_package_version ?? Date.now().toString();
+    writeFileSync(MIGRATION_MARKER, version, 'utf-8');
+  } catch {
+    // Best effort
+  }
+}
+
+/**
  * Get a postgres.js connection. Lazy singleton — calls ensurePgserve() on first use.
  * Returns a postgres.js sql tagged template client.
  */
@@ -303,12 +332,15 @@ export async function getConnection() {
     username: 'postgres',
     password: 'postgres',
     max: 10,
-    idle_timeout: 30,
-    connect_timeout: 10,
+    idle_timeout: 1,
+    connect_timeout: 5,
   });
 
-  // Run pending migrations on first connect
-  await runMigrations(sqlClient);
+  // Only run migrations if not yet applied for this version
+  if (!migrationsDone()) {
+    await runMigrations(sqlClient);
+    markMigrationsDone();
+  }
 
   return sqlClient;
 }
