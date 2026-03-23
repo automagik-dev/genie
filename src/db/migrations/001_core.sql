@@ -1,5 +1,5 @@
--- 001_initial.sql — Core genie schema
--- Tables: schedules, triggers, runs, heartbeats, audit_events, agent_checkpoints
+-- 001_core.sql — Core genie schema (consolidated)
+-- Tables: schedules, triggers, runs, heartbeats, audit_events, agent_checkpoints, machine_snapshots
 
 -- ============================================================================
 -- Schedules — cron-like schedule definitions
@@ -10,6 +10,8 @@ CREATE TABLE schedules (
   cron_expression TEXT NOT NULL,
   timezone TEXT DEFAULT 'UTC',
   command TEXT,
+  interval_ms BIGINT,
+  run_spec JSONB DEFAULT '{}',
   metadata JSONB DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'paused', 'deleted')),
@@ -29,6 +31,9 @@ CREATE TABLE triggers (
   due_at TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'executing', 'completed', 'failed', 'skipped')),
+  idempotency_key TEXT,
+  leased_by TEXT,
+  leased_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ
@@ -38,6 +43,10 @@ CREATE INDEX idx_triggers_schedule_id ON triggers(schedule_id);
 CREATE INDEX idx_triggers_status ON triggers(status);
 CREATE INDEX idx_triggers_due_pending ON triggers(due_at)
   WHERE status = 'pending';
+CREATE UNIQUE INDEX idx_triggers_idempotency ON triggers(idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX idx_triggers_leased ON triggers(status, leased_until)
+  WHERE status = 'executing';
 
 -- ============================================================================
 -- Runs — execution attempts for a trigger
@@ -50,6 +59,9 @@ CREATE TABLE runs (
     CHECK (status IN ('pending', 'leased', 'running', 'completed', 'failed', 'timeout', 'cancelled')),
   output TEXT,
   error TEXT,
+  trace_id TEXT,
+  lease_timeout_ms INTEGER DEFAULT 300000,
+  exit_code INTEGER,
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -60,6 +72,8 @@ CREATE INDEX idx_runs_worker_id ON runs(worker_id);
 CREATE INDEX idx_runs_status ON runs(status);
 CREATE INDEX idx_runs_leased ON runs(status, started_at)
   WHERE status IN ('leased', 'running');
+CREATE INDEX idx_runs_trace_id ON runs(trace_id)
+  WHERE trace_id IS NOT NULL;
 
 -- ============================================================================
 -- Heartbeats — worker liveness tracking
@@ -114,6 +128,22 @@ CREATE INDEX idx_checkpoints_wish ON agent_checkpoints(wish_slug);
 CREATE INDEX idx_checkpoints_group ON agent_checkpoints(group_name);
 
 -- ============================================================================
+-- Machine snapshots — machine state snapshots for scheduler observability
+-- ============================================================================
+CREATE TABLE machine_snapshots (
+  id TEXT PRIMARY KEY,
+  active_workers INTEGER NOT NULL DEFAULT 0,
+  active_teams INTEGER NOT NULL DEFAULT 0,
+  tmux_sessions INTEGER NOT NULL DEFAULT 0,
+  cpu_percent REAL,
+  memory_mb REAL,
+  context JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_machine_snapshots_created ON machine_snapshots(created_at);
+
+-- ============================================================================
 -- LISTEN/NOTIFY — real-time trigger-due notifications
 -- ============================================================================
 CREATE OR REPLACE FUNCTION notify_trigger_due()
@@ -129,3 +159,18 @@ CREATE TRIGGER trg_notify_due
   FOR EACH ROW
   WHEN (NEW.status = 'pending')
   EXECUTE FUNCTION notify_trigger_due();
+
+-- ============================================================================
+-- NOTIFY on audit events — unified event stream
+-- ============================================================================
+CREATE OR REPLACE FUNCTION notify_audit_event()
+RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('genie_audit_event', NEW.entity_type || ':' || NEW.event_type || ':' || NEW.entity_id);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_notify_audit
+  AFTER INSERT ON audit_events
+  FOR EACH ROW EXECUTE FUNCTION notify_audit_event();

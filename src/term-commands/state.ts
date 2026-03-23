@@ -238,7 +238,7 @@ export async function statusCommand(slug: string): Promise<void> {
     const state = await wishState.getState(slug);
     if (!state) {
       console.error(`❌ No state found for wish "${slug}"`);
-      console.error('   State file expected at: .genie/state/<slug>.json');
+      console.error('   Initialize with: genie work <slug>');
       process.exit(1);
     }
 

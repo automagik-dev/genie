@@ -291,45 +291,29 @@ function writeInbox(meta, text, summary) {
   writeFileSync(INBOX, JSON.stringify(messages, null, 2));
 }
 
-// Reset in_progress groups assigned to a dead worker and notify team-lead
-function handleDeadWorkerLiveness(workerId, meta) {
+// Reset in_progress groups assigned to a dead worker and notify team-lead (PG-backed)
+async function handleDeadWorkerLiveness(workerId, meta) {
   if (!meta || !meta.repoPath) return;
   try {
-    const stateDir = join(meta.repoPath, '.genie', 'state');
-    let stateFiles;
-    try { stateFiles = readdirSync(stateDir).filter(f => f.endsWith('.json')); }
-    catch { return; }
-    for (const sf of stateFiles) {
-      const statePath = join(stateDir, sf);
-      try {
-        const state = JSON.parse(readFileSync(statePath, 'utf-8'));
-        let modified = false;
-        for (const [groupName, group] of Object.entries(state.groups || {})) {
-          if (group.status !== 'in_progress' || !group.assignee) continue;
-          // Match: exact, or workerId ends with assignee (team-prefixed IDs)
-          if (group.assignee === workerId || workerId.endsWith('-' + group.assignee) ||
-              group.assignee === meta.agent || (meta.agent && workerId.endsWith('-' + meta.agent))) {
-            group.status = 'ready';
-            delete group.assignee;
-            delete group.startedAt;
-            state.updatedAt = new Date().toISOString();
-            modified = true;
-            const agentLabel = meta.agent || workerId;
-            writeInbox(
-              { agent: 'genie-relay', color: 'red' },
-              'Agent ' + agentLabel + ' crashed while working on group ' + groupName + ' of wish ' + state.wish + '. Group has been reset to ready for retry.',
-              '[crash] ' + agentLabel + ' crashed on ' + state.wish + '#' + groupName + '. Reset to ready.'
-            );
-          }
-        }
-        if (modified) writeFileSync(statePath, JSON.stringify(state, null, 2));
-      } catch {}
-    }
+    const wishState = await import('../lib/wish-state.js');
+    // Try both workerId and agent name
+    const match =
+      (await wishState.findAnyGroupByAssignee(workerId, meta.repoPath)) ??
+      (meta.agent ? await wishState.findAnyGroupByAssignee(meta.agent, meta.repoPath) : null);
+    if (!match) return;
+
+    await wishState.resetGroup(match.slug, match.groupName, meta.repoPath);
+    const agentLabel = meta.agent || workerId;
+    writeInbox(
+      { agent: 'genie-relay', color: 'red' },
+      'Agent ' + agentLabel + ' crashed while working on group ' + match.groupName + ' of wish ' + match.slug + '. Group has been reset to ready for retry.',
+      '[crash] ' + agentLabel + ' crashed on ' + match.slug + '#' + match.groupName + '. Reset to ready.'
+    );
   } catch {}
 }
 
 // Clean up dead panes every 30s
-setInterval(() => {
+setInterval(async () => {
   let paneFiles;
   try { paneFiles = readdirSync(RELAY_DIR).filter(f => f.endsWith('-pane')); }
   catch { return; }
@@ -351,7 +335,7 @@ setInterval(() => {
       bootstrapDone.delete(workerId);
       stoppedWorkers.add(workerId);
       // Liveness check: reset in_progress groups assigned to this dead worker
-      handleDeadWorkerLiveness(workerId, meta);
+      await handleDeadWorkerLiveness(workerId, meta);
     }
   }
   try {
