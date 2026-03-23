@@ -39,7 +39,7 @@ import {
 } from './term-commands/agents.js';
 import { registerDaemonCommands } from './term-commands/daemon.js';
 import { registerDbCommands } from './term-commands/db.js';
-import { registerDirNamespace } from './term-commands/dir.js';
+import { registerAgentNamespace, registerDirNamespace } from './term-commands/dir.js';
 import { registerDispatchCommands } from './term-commands/dispatch.js';
 import * as historyCmd from './term-commands/history.js';
 import { type LogOptions, logCommand } from './term-commands/log.js';
@@ -133,6 +133,7 @@ shortcuts.command('uninstall').description('Remove shortcuts from config files')
 
 registerTeamNamespace(program);
 registerDirNamespace(program);
+registerAgentNamespace(program);
 registerSendInboxCommands(program);
 registerStateCommands(program);
 registerDispatchCommands(program);
