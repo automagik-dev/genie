@@ -7,7 +7,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +16,10 @@ import { runMigrations } from './db-migrations.js';
 
 const DEFAULT_PORT = 19642;
 const DEFAULT_HOST = '127.0.0.1';
-const MAX_PORT_RETRIES = 10;
-const DATA_DIR = join(process.env.GENIE_HOME ?? join(homedir(), '.genie'), 'data', 'pgserve');
+const MAX_PORT_RETRIES = 3;
+const GENIE_HOME = process.env.GENIE_HOME ?? join(homedir(), '.genie');
+const DATA_DIR = join(GENIE_HOME, 'data', 'pgserve');
+const LOCKFILE_PATH = join(GENIE_HOME, 'pgserve.port');
 const DB_NAME = 'genie';
 
 /** Sanitize connection URLs for logging — never expose credentials */
@@ -107,12 +109,48 @@ function isPortListening(port: number, host: string): Promise<boolean> {
   });
 }
 
+/** Read port from lockfile. Returns null if lockfile missing or invalid. */
+function readLockfile(): number | null {
+  try {
+    const content = readFileSync(LOCKFILE_PATH, 'utf-8').trim();
+    const port = Number.parseInt(content, 10);
+    if (!Number.isNaN(port) && port > 0 && port < 65536) return port;
+  } catch {
+    // File doesn't exist or can't be read
+  }
+  return null;
+}
+
+/** Atomically write port to lockfile (write .tmp then rename). */
+function writeLockfile(port: number): void {
+  try {
+    mkdirSync(GENIE_HOME, { recursive: true });
+    const tmpPath = `${LOCKFILE_PATH}.tmp.${process.pid}`;
+    writeFileSync(tmpPath, String(port), 'utf-8');
+    renameSync(tmpPath, LOCKFILE_PATH);
+  } catch {
+    // Best effort — lockfile is an optimization, not required
+  }
+}
+
+/** Remove lockfile if it exists. */
+function removeLockfile(): void {
+  try {
+    unlinkSync(LOCKFILE_PATH);
+  } catch {
+    // Already gone or never existed
+  }
+}
+
 // Module-level singleton state
 let pgserveServer: MultiTenantRouter | null = null;
 // biome-ignore lint/suspicious/noExplicitAny: postgres.js Sql type requires generics we don't need
 let sqlClient: any = null;
 let activePort: number | null = null;
 let ensurePromise: Promise<number> | null = null;
+/** Whether this process spawned pgserve (and thus owns the lockfile) */
+let ownsLockfile = false;
+let exitHandlerRegistered = false;
 
 /**
  * Ensure pgserve is running. Starts it if not already listening.
@@ -140,69 +178,112 @@ async function _ensurePgserve(): Promise<number> {
     return port;
   }
 
-  // Check if pgserve (or another genie process) is already listening
+  // 1. Check lockfile — another genie process may have started pgserve
+  const reusedPort = await tryReuseLockfile();
+  if (reusedPort !== null) return reusedPort;
+
+  // 2. Check default port (may be started externally without lockfile)
   if (await isPortListening(port, DEFAULT_HOST)) {
-    activePort = port;
-    process.env.GENIE_PG_AVAILABLE = 'true';
-    return port;
+    return markPortActive(port, true);
   }
 
-  // Ensure data directory exists
+  // 3. Start pgserve ourselves
   mkdirSync(DATA_DIR, { recursive: true });
-
-  // Clean up orphaned postgres from a previous crash
   killOrphanedPostgres(DATA_DIR);
 
-  // Start pgserve
   try {
-    const { startMultiTenantServer } = await import('pgserve');
-    const server = await startMultiTenantServer({
-      port,
-      host: DEFAULT_HOST,
-      baseDir: DATA_DIR,
-      logLevel: 'warn',
-      autoProvision: true,
-    });
-
-    pgserveServer = server;
-    activePort = port;
-    process.env.GENIE_PG_AVAILABLE = 'true';
-    return port;
+    const startedPort = await startPgserveOnPort(port);
+    registerExitHandler();
+    return startedPort;
   } catch (err) {
-    // Port may have been taken between check and start — try auto-increment
-    for (let offset = 1; offset <= MAX_PORT_RETRIES; offset++) {
-      const fallbackPort = port + offset;
-      if (await isPortListening(fallbackPort, DEFAULT_HOST)) {
-        activePort = fallbackPort;
-        process.env.GENIE_PG_AVAILABLE = 'true';
-        return fallbackPort;
-      }
-      try {
-        const { startMultiTenantServer } = await import('pgserve');
-        const server = await startMultiTenantServer({
-          port: fallbackPort,
-          host: DEFAULT_HOST,
-          baseDir: DATA_DIR,
-          logLevel: 'warn',
-          autoProvision: true,
-        });
-        pgserveServer = server;
-        activePort = fallbackPort;
-        process.env.GENIE_PG_AVAILABLE = 'true';
-        return fallbackPort;
-      } catch {
-        // Try next port
-      }
-    }
-
-    // All attempts failed
-    process.env.GENIE_PG_AVAILABLE = 'false';
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`Warning: pgserve failed to start: ${maskCredentials(message)}`);
-    throw new Error(
-      `pgserve failed to start on port ${port} (and fallbacks ${port + 1}-${port + MAX_PORT_RETRIES}): ${maskCredentials(message)}`,
-    );
+    return tryFallbackPorts(port, err);
   }
+}
+
+/** Try to reuse a port from an existing lockfile. Returns port or null. */
+async function tryReuseLockfile(): Promise<number | null> {
+  const lockfilePort = readLockfile();
+  if (lockfilePort === null) return null;
+
+  if (await isPortListening(lockfilePort, DEFAULT_HOST)) {
+    return markPortActive(lockfilePort, false);
+  }
+  // Stale lockfile — port not listening
+  removeLockfile();
+  return null;
+}
+
+/** Mark a port as active and optionally write lockfile. */
+function markPortActive(port: number, writeLock: boolean): number {
+  activePort = port;
+  process.env.GENIE_PG_AVAILABLE = 'true';
+  if (writeLock) writeLockfile(port);
+  return port;
+}
+
+/** Try fallback ports when primary fails. */
+async function tryFallbackPorts(basePort: number, originalErr: unknown): Promise<number> {
+  for (let offset = 1; offset <= MAX_PORT_RETRIES; offset++) {
+    const fallbackPort = basePort + offset;
+    if (await isPortListening(fallbackPort, DEFAULT_HOST)) {
+      return markPortActive(fallbackPort, true);
+    }
+    try {
+      const startedPort = await startPgserveOnPort(fallbackPort);
+      registerExitHandler();
+      return startedPort;
+    } catch {
+      // Try next port
+    }
+  }
+
+  process.env.GENIE_PG_AVAILABLE = 'false';
+  const message = originalErr instanceof Error ? originalErr.message : String(originalErr);
+  console.warn(`Warning: pgserve failed to start: ${maskCredentials(message)}`);
+  throw new Error(
+    `pgserve failed to start on port ${basePort} (and fallbacks ${basePort + 1}-${basePort + MAX_PORT_RETRIES}): ${maskCredentials(message)}`,
+  );
+}
+
+/** Start pgserve on a specific port, update singleton state and lockfile. */
+async function startPgserveOnPort(port: number): Promise<number> {
+  const { startMultiTenantServer } = await import('pgserve');
+  const server = await startMultiTenantServer({
+    port,
+    host: DEFAULT_HOST,
+    baseDir: DATA_DIR,
+    logLevel: 'warn',
+    autoProvision: true,
+  });
+  pgserveServer = server;
+  activePort = port;
+  ownsLockfile = true;
+  process.env.GENIE_PG_AVAILABLE = 'true';
+  writeLockfile(port);
+  return port;
+}
+
+/** Register process exit handler to clean up lockfile (once). */
+function registerExitHandler(): void {
+  if (exitHandlerRegistered) return;
+  exitHandlerRegistered = true;
+
+  const cleanup = () => {
+    if (ownsLockfile) {
+      removeLockfile();
+      ownsLockfile = false;
+    }
+  };
+
+  process.on('exit', cleanup);
+  process.on('SIGINT', () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(143);
+  });
 }
 
 /**
@@ -248,11 +329,16 @@ export async function isAvailable(): Promise<boolean> {
 /**
  * Graceful close of the connection pool. Does NOT stop pgserve —
  * it persists for other genie processes.
+ * Cleans up lockfile if this process owns it.
  */
 export async function shutdown(): Promise<void> {
   if (sqlClient) {
     await sqlClient.end({ timeout: 5 });
     sqlClient = null;
+  }
+  if (ownsLockfile) {
+    removeLockfile();
+    ownsLockfile = false;
   }
 }
 
@@ -268,4 +354,11 @@ export function getDataDir(): string {
  */
 export function getActivePort(): number {
   return activePort ?? getPort();
+}
+
+/**
+ * Get the lockfile path (for diagnostics / testing).
+ */
+export function getLockfilePath(): string {
+  return LOCKFILE_PATH;
 }
