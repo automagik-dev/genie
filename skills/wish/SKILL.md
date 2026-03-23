@@ -142,6 +142,35 @@ _Populated by `/review` after execution completes._
 ```
 ```
 
+## Task Lifecycle Integration (v4)
+
+After writing WISH.md, create corresponding PG tasks so the wish is visible in `genie task list`:
+
+### Step 1: Create parent task
+```bash
+genie task create "<wish title>" --type software
+```
+
+### Step 2: Create child tasks per execution group
+```bash
+genie task create "<group title>" --parent #<parent-seq>
+```
+
+### Step 3: Add dependencies between groups
+```bash
+genie task dep #<child-seq> --depends-on #<dep-seq>
+```
+
+### Summary
+
+| Event | Command |
+|-------|---------|
+| Wish crystallized | `genie task create "<wish title>" --type software` |
+| Per execution group | `genie task create "<group title>" --parent #<parent-seq>` |
+| Group has dependency | `genie task dep #<child-seq> --depends-on #<dep-seq>` |
+
+**Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the wish flow. The WISH.md file is the source of truth — PG tasks are an optional tracking enhancement. The wish must still be usable by `/work` even if no PG tasks were created.
+
 ## Rules
 - No implementation during `/wish` — planning only.
 - No vague tasks ("improve everything"). Every task must be testable.
