@@ -313,7 +313,7 @@ async function handleDeadWorkerLiveness(workerId, meta) {
 }
 
 // Clean up dead panes every 30s
-setInterval(() => {
+setInterval(async () => {
   let paneFiles;
   try { paneFiles = readdirSync(RELAY_DIR).filter(f => f.endsWith('-pane')); }
   catch { return; }
@@ -335,7 +335,7 @@ setInterval(() => {
       bootstrapDone.delete(workerId);
       stoppedWorkers.add(workerId);
       // Liveness check: reset in_progress groups assigned to this dead worker
-      handleDeadWorkerLiveness(workerId, meta);
+      await handleDeadWorkerLiveness(workerId, meta);
     }
   }
   try {
