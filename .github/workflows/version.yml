@@ -4,14 +4,13 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  # This workflow always writes to `dev`, regardless of the trigger ref.
   group: version-dev
   cancel-in-progress: false
 
@@ -24,10 +23,14 @@ jobs:
       (github.event_name == 'workflow_dispatch') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
-       contains(github.event.workflow_run.head_commit.message, '/dev') &&
-       !contains(github.event.workflow_run.head_commit.message, '[skip ci]'))
+       !contains(github.event.workflow_run.head_commit.message, '[skip ci]') &&
+       (
+         (github.event.workflow_run.head_branch == 'main' &&
+          startsWith(github.event.workflow_run.head_commit.message, 'Merge pull request') &&
+          contains(github.event.workflow_run.head_commit.message, '/dev'))
+         ||
+         (github.event.workflow_run.head_branch == 'dev')
+       ))
 
     steps:
       - uses: actions/checkout@v4
@@ -52,9 +55,9 @@ jobs:
         id: version
         run: |
           TODAY=$(date -u +%y%m%d)
-          EXISTING=$(git tag --list "v3.${TODAY}.*" | wc -l)
+          EXISTING=$(git tag --list "v4.${TODAY}.*" | wc -l)
           BUILD_NUMBER=$((EXISTING + 1))
-          VERSION="3.${TODAY}.${BUILD_NUMBER}"
+          VERSION="4.${TODAY}.${BUILD_NUMBER}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "build_number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "Derived version: ${VERSION}"
