@@ -22,7 +22,7 @@ import {
   registerNativeMember,
   sanitizeTeamName,
 } from '../lib/claude-native-teams.js';
-import { buildTeamLeadCommand, shellQuote } from '../lib/team-lead-command.js';
+import { buildTeamLeadCommand, sessionExists, shellQuote } from '../lib/team-lead-command.js';
 import * as tmux from '../lib/tmux.js';
 
 /**
@@ -194,11 +194,11 @@ async function createSession(
 }
 
 /**
- * Launch Claude Code in a tmux pane with --resume fallback.
+ * Launch Claude Code in a tmux pane, resuming only if a prior session exists.
  *
- * Tries --resume first (preserves conversation history). Waits ~3 seconds,
- * then checks #{pane_current_command} — if the pane shows a shell, --resume
- * failed (no prior session) so we retry fresh without --resume.
+ * Primary path: checks CC session storage via `sessionExists()` to decide
+ * whether to pass `--resume`. Falls back to a tmux pane-command check as a
+ * safety net if `--resume` fails despite the existence check.
  */
 async function launchWithContinueFallback(
   target: string,
@@ -206,21 +206,21 @@ async function launchWithContinueFallback(
   systemPromptFile: string | null,
 ): Promise<void> {
   const continueName = sanitizeTeamName(windowName);
-  const continueCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, continueName);
-  const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+  const hasPriorSession = sessionExists(continueName);
+  const cmd = buildClaudeCommand(windowName, systemPromptFile || undefined, hasPriorSession ? continueName : undefined);
 
-  // Try --resume first (preserves conversation history)
-  await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(continueCmd)} Enter`);
+  await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(cmd)} Enter`);
 
-  // Wait briefly then check if CC is running or fell back to shell
-  // CC fails fast on missing sessions (~1s), 3s is conservative
-  await new Promise((r) => setTimeout(r, 3000));
-  const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
+  // Safety net: if --resume was attempted, verify CC actually started
+  if (hasPriorSession) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const afterCmd = (await tmux.executeTmux(`display -t ${shellQuote(target)} -p '#{pane_current_command}'`)).trim();
 
-  if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
-    // --resume failed, start fresh
-    console.log('No prior session found, starting fresh session...');
-    await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
+    if (['bash', 'zsh', 'sh', 'fish'].includes(afterCmd)) {
+      console.log('Resume failed unexpectedly, starting fresh session...');
+      const freshCmd = buildClaudeCommand(windowName, systemPromptFile || undefined, undefined);
+      await tmux.executeTmux(`send-keys -t ${shellQuote(target)} ${shellQuote(freshCmd)} Enter`);
+    }
   }
 }
 

@@ -813,6 +813,414 @@ describe('Level 1.5: Window ID', () => {
 });
 
 // ============================================================================
+// customName resolution
+// ============================================================================
+
+describe('customName resolution', () => {
+  test('resolves by customName (team-scoped)', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'abc123-long-id': {
+          id: 'abc123-long-id',
+          paneId: '%30',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          customName: 'engineer-4',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%30');
+    expect(result.workerId).toBe('abc123-long-id');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('resolves by customName (global fallback when no team)', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'abc123-long-id': {
+          id: 'abc123-long-id',
+          paneId: '%30',
+          session: 'other-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          customName: 'engineer-4',
+          team: 'other-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%30');
+    expect(result.workerId).toBe('abc123-long-id');
+  });
+
+  test('throws on ambiguous customName within team', async () => {
+    await expect(
+      resolveTarget('engineer-4', {
+        checkLiveness: false,
+        getCurrentTeam: async () => 'my-team',
+        workers: {
+          worker1: {
+            id: 'worker1',
+            paneId: '%30',
+            session: 'my-team',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            customName: 'engineer-4',
+            team: 'my-team',
+          },
+          worker2: {
+            id: 'worker2',
+            paneId: '%31',
+            session: 'my-team',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            customName: 'engineer-4',
+            team: 'my-team',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+});
+
+// ============================================================================
+// Partial ID suffix resolution
+// ============================================================================
+
+describe('Partial ID suffix resolution', () => {
+  test('resolves by partial ID suffix', async () => {
+    const result = await resolveTarget('ec331228', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'team-engineer-ec331228': {
+          id: 'team-engineer-ec331228',
+          paneId: '%40',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'engineer',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%40');
+    expect(result.workerId).toBe('team-engineer-ec331228');
+    expect(result.resolvedVia).toBe('worker');
+  });
+
+  test('prefers same-team match on ambiguous partial ID', async () => {
+    const result = await resolveTarget('ec331228', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'teamA-engineer-ec331228': {
+          id: 'teamA-engineer-ec331228',
+          paneId: '%40',
+          session: 'other-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'other-team',
+        },
+        'teamB-engineer-ec331228': {
+          id: 'teamB-engineer-ec331228',
+          paneId: '%41',
+          session: 'my-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          team: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%41');
+    expect(result.workerId).toBe('teamB-engineer-ec331228');
+  });
+
+  test('throws on ambiguous partial ID without team disambiguation', async () => {
+    await expect(
+      resolveTarget('ec331228', {
+        checkLiveness: false,
+        getCurrentTeam: async () => null,
+        workers: {
+          'teamA-ec331228': {
+            id: 'teamA-ec331228',
+            paneId: '%40',
+            session: 's1',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            team: 'team-a',
+          },
+          'teamB-ec331228': {
+            id: 'teamB-ec331228',
+            paneId: '%41',
+            session: 's2',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            team: 'team-b',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+
+  test('does not match exact ID as partial suffix', async () => {
+    const result = await resolveTarget('worker-1', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'worker-1': {
+          id: 'worker-1',
+          paneId: '%50',
+          session: 'genie',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%50');
+    expect(result.workerId).toBe('worker-1');
+  });
+});
+
+// ============================================================================
+// Global role resolution (fallback)
+// ============================================================================
+
+describe('Global role resolution', () => {
+  test('resolves by role globally when no team context', async () => {
+    const result = await resolveTarget('reviewer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => null,
+      workers: {
+        'review-worker-1': {
+          id: 'review-worker-1',
+          paneId: '%60',
+          session: 'some-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'reviewer',
+          team: 'some-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%60');
+    expect(result.workerId).toBe('review-worker-1');
+  });
+
+  test('resolves by role globally when team-scoped match fails', async () => {
+    const result = await resolveTarget('reviewer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'review-worker-1': {
+          id: 'review-worker-1',
+          paneId: '%60',
+          session: 'other-team',
+          worktree: null,
+          startedAt: new Date().toISOString(),
+          state: 'working',
+          lastStateChange: new Date().toISOString(),
+          repoPath: '/tmp/test',
+          role: 'reviewer',
+          team: 'other-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%60');
+    expect(result.workerId).toBe('review-worker-1');
+  });
+
+  test('throws on ambiguous global role match', async () => {
+    await expect(
+      resolveTarget('engineer', {
+        checkLiveness: false,
+        getCurrentTeam: async () => null,
+        workers: {
+          'eng-1': {
+            id: 'eng-1',
+            paneId: '%70',
+            session: 's1',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            role: 'engineer',
+            team: 'team-a',
+          },
+          'eng-2': {
+            id: 'eng-2',
+            paneId: '%71',
+            session: 's2',
+            worktree: null,
+            startedAt: new Date().toISOString(),
+            state: 'working',
+            lastStateChange: new Date().toISOString(),
+            repoPath: '/tmp/test',
+            role: 'engineer',
+            team: 'team-b',
+          },
+        },
+      }),
+    ).rejects.toThrow(/ambiguous/i);
+  });
+});
+
+// ============================================================================
+// Resolution priority with new steps
+// ============================================================================
+
+describe('Resolution priority: exact ID > role (team) > customName > partial ID > role (global)', () => {
+  const baseWorker = {
+    worktree: null as string | null,
+    startedAt: new Date().toISOString(),
+    state: 'working' as const,
+    lastStateChange: new Date().toISOString(),
+    repoPath: '/tmp/test',
+    team: 'my-team',
+  };
+
+  test('exact ID wins over customName', async () => {
+    const result = await resolveTarget('engineer-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'engineer-4': {
+          ...baseWorker,
+          id: 'engineer-4',
+          paneId: '%10',
+          session: 'my-team',
+        },
+        'other-worker': {
+          ...baseWorker,
+          id: 'other-worker',
+          paneId: '%20',
+          session: 'my-team',
+          customName: 'engineer-4',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('engineer-4');
+  });
+
+  test('team-scoped role wins over customName', async () => {
+    const result = await resolveTarget('engineer', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'eng-worker': {
+          ...baseWorker,
+          id: 'eng-worker',
+          paneId: '%10',
+          session: 'my-team',
+          role: 'engineer',
+        },
+        'other-worker': {
+          ...baseWorker,
+          id: 'other-worker',
+          paneId: '%20',
+          session: 'my-team',
+          customName: 'engineer',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('eng-worker');
+  });
+
+  test('customName wins over partial ID suffix', async () => {
+    const result = await resolveTarget('eng-4', {
+      checkLiveness: false,
+      getCurrentTeam: async () => 'my-team',
+      workers: {
+        'custom-name-worker': {
+          ...baseWorker,
+          id: 'custom-name-worker',
+          paneId: '%10',
+          session: 'my-team',
+          customName: 'eng-4',
+        },
+        'some-prefix-eng-4': {
+          ...baseWorker,
+          id: 'some-prefix-eng-4',
+          paneId: '%20',
+          session: 'my-team',
+        },
+      },
+    });
+
+    expect(result.paneId).toBe('%10');
+    expect(result.workerId).toBe('custom-name-worker');
+  });
+});
+
+// ============================================================================
+// genie answer uses same resolver
+// ============================================================================
+
+describe('answerQuestion uses resolveTarget (verified by import)', () => {
+  test('orchestrate.ts imports resolveTarget', async () => {
+    const fs = await import('node:fs');
+    const orchestrateSource = fs.readFileSync(
+      new URL('../term-commands/orchestrate.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    expect(orchestrateSource).toContain('resolveTarget');
+    expect(orchestrateSource).toContain('answerQuestion');
+  });
+});
+
+// ============================================================================
 // Cleanup
 // ============================================================================
 
