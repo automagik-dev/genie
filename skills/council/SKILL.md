@@ -146,6 +146,21 @@ This adds specialist agents (e.g., `council-questioner`, `council-architect`) to
 The council advises [recommendation]. Proceed?
 ```
 
+## Task Lifecycle Integration (v4)
+
+When the council is invoked in the context of a task (e.g., during `/review` or `/work` on a tracked task), log the advisory as a task comment:
+
+```bash
+genie task comment #<seq> "Council advisory: [verdict] — [synthesized recommendation]"
+```
+
+| Context | Action |
+|---------|--------|
+| Task context exists (`#<seq>` known) | `genie task comment #<seq> "Council advisory: [verdict] — [recommendation]"` |
+| No task context (standalone invocation) | Skip — no task comment needed |
+
+**Graceful degradation:** If no PG task exists or `genie task` commands fail, skip the comment and continue. The council advisory is always presented to the user regardless of task logging. Task integration is optional — the council flow must never fail due to missing tasks.
+
 ## Rules
 
 - Advisory only — never block progress based on council vote

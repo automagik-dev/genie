@@ -112,6 +112,18 @@ When a failure is found but the root cause is unclear:
 genie spawn reviewer
 ```
 
+## Task Lifecycle Integration (v4)
+
+When a PG task exists for the reviewed work, log the verdict as a task comment:
+
+| Verdict | Task Action |
+|---------|-------------|
+| **SHIP** | `genie task comment #<seq> "SHIP — all criteria passed"` |
+| **FIX-FIRST** | `genie task comment #<seq> "FIX-FIRST: [gap list]"` then `genie task move #<seq> --to build` |
+| **BLOCKED** | `genie task block #<seq> --reason "<reason>"` |
+
+**Graceful degradation:** If no PG task exists for the reviewed work, skip all `genie task` commands. Verdict logging is an enhancement — the review flow must never fail due to missing tasks.
+
 ## Rules
 - Never mark PASS without evidence — verify, don't assume.
 - Never ship with CRITICAL or HIGH gaps.

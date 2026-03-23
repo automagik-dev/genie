@@ -148,6 +148,26 @@ Chosen approach with rationale. Reference alternatives considered.
 - [ ] Testable criterion 2
 ```
 
+## Task Lifecycle Integration (v4)
+
+On crystallize, create a draft task in PG so the brainstorm is tracked in `genie task list`:
+
+### On crystallize (WRS = 100)
+```bash
+# Create draft task (starts at draft stage by default)
+genie task create "<brainstorm title>" --type software
+
+# Link to the design draft
+genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"
+```
+
+| Event | Command |
+|-------|---------|
+| Crystallize | `genie task create "<brainstorm title>" --type software` |
+| Link draft | `genie task comment #<seq> "Draft: .genie/brainstorms/<slug>/DRAFT.md"` |
+
+**Graceful degradation:** If PG is unavailable or `genie task` commands fail, warn but do not block the crystallize flow. The DESIGN.md and brainstorm jar are the source of truth — PG tasks are an optional tracking enhancement.
+
 ## Rules
 - One question per message. Never batch questions.
 - YAGNI and simplicity first.
