@@ -9,7 +9,8 @@
  * (or --system-prompt-file). No copy to ~/.genie/prompts/.
  */
 
-import { basename } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { sanitizeTeamName } from './claude-native-teams.js';
 import { loadGenieConfigSync } from './genie-config.js';
 
@@ -73,4 +74,62 @@ export function buildTeamLeadCommand(teamName: string, options?: BuildTeamLeadCo
   }
 
   return parts.join(' ');
+}
+
+/**
+ * Convert a directory path to CC's project directory name.
+ *
+ * CC stores sessions in `~/.claude/projects/<encoded-path>/`.
+ * The encoded path replaces `/` with `-` (the leading slash becomes a leading `-`).
+ */
+export function ccProjectDirName(dir: string): string {
+  return dir.replace(/\//g, '-');
+}
+
+/** Check if a single JSONL file has a custom-title matching the needle (lowercase). */
+function fileHasSessionName(filePath: string, needle: string): boolean {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').slice(0, 10);
+    for (const line of lines) {
+      if (!line.includes('custom-title')) continue;
+      const entry = JSON.parse(line);
+      if (entry.type === 'custom-title' && entry.customTitle?.toLowerCase() === needle) {
+        return true;
+      }
+    }
+  } catch {
+    // Malformed JSON or unreadable file
+  }
+  return false;
+}
+
+/**
+ * Check if a Claude Code session with the given name already exists.
+ *
+ * Scans CC's JSONL session files for a `custom-title` entry whose
+ * `customTitle` matches the given name (case-insensitive). This is the
+ * same value set by `--name` when launching CC.
+ *
+ * Returns `true` if at least one prior session with that name exists,
+ * `false` otherwise. Never throws — returns `false` on any error.
+ */
+export function sessionExists(name: string, cwd?: string): boolean {
+  try {
+    const home = process.env.HOME ?? '/root';
+    const projectDir = ccProjectDirName(cwd ?? process.cwd());
+    const projectPath = join(home, '.claude', 'projects', projectDir);
+
+    let files: string[];
+    try {
+      files = readdirSync(projectPath).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      return false;
+    }
+
+    const needle = name.toLowerCase();
+    return files.some((file) => fileHasSessionName(join(projectPath, file), needle));
+  } catch {
+    return false;
+  }
 }
