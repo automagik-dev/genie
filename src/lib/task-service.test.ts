@@ -18,6 +18,7 @@ import {
   createTag,
   createTask,
   createType,
+  deletePreference,
   expireStaleCheckouts,
   findOrCreateConversation,
   forceUnlockTask,
@@ -38,7 +39,9 @@ import {
   listReleases,
   listTags,
   listTasks,
+  listTasksForActor,
   listTypes,
+  markDone,
   moveTask,
   releaseTask,
   removeActor,
@@ -856,5 +859,68 @@ describe('List filters', () => {
 
     // Cleanup
     await sql`DELETE FROM tasks WHERE repo_path = ${repo10}`;
+  });
+});
+
+// ============================================================================
+// Mark Done
+// ============================================================================
+
+describe('markDone', () => {
+  it('should mark task as done and release checkout', async () => {
+    const repo11 = `${REPO}-done`;
+    const task = await createTask({ title: 'Done test' }, repo11);
+    await checkoutTask(task.id, 'run-1', repo11);
+
+    const done = await markDone(task.id, actor, 'shipped', repo11);
+    expect(done.status).toBe('done');
+    expect(done.endedAt).not.toBeNull();
+    expect(done.checkoutRunId).toBeNull();
+
+    // Cleanup
+    await sql`DELETE FROM tasks WHERE repo_path = ${repo11}`;
+  });
+});
+
+// ============================================================================
+// Delete Preference
+// ============================================================================
+
+describe('deletePreference', () => {
+  it('should delete a notification preference', async () => {
+    const testActor: Actor = { actorType: 'local', actorId: `del-pref-${Date.now()}` };
+    await setPreference(testActor, 'slack', { priorityThreshold: 'normal' });
+
+    const removed = await deletePreference(testActor, 'slack');
+    expect(removed).toBe(true);
+
+    const prefs = await getPreferences(testActor);
+    expect(prefs.length).toBe(0);
+  });
+
+  it('should return false for non-existent preference', async () => {
+    const testActor: Actor = { actorType: 'local', actorId: `del-pref-ne-${Date.now()}` };
+    const removed = await deletePreference(testActor, 'whatsapp');
+    expect(removed).toBe(false);
+  });
+});
+
+// ============================================================================
+// List Tasks For Actor
+// ============================================================================
+
+describe('listTasksForActor', () => {
+  it('should list tasks assigned to an actor', async () => {
+    const repo12 = `${REPO}-actorlist`;
+    const t1 = await createTask({ title: 'Actor A' }, repo12);
+    await createTask({ title: 'Actor B' }, repo12);
+    await assignTask(t1.id, actor, 'assignee', {}, repo12);
+
+    const tasks = await listTasksForActor(actor, { repoPath: repo12 });
+    expect(tasks.length).toBe(1);
+    expect(tasks[0].id).toBe(t1.id);
+
+    // Cleanup
+    await sql`DELETE FROM tasks WHERE repo_path = ${repo12}`;
   });
 });

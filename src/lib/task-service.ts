@@ -1332,3 +1332,88 @@ export async function getStageLog(idOrSeq: string, repoPath?: string): Promise<S
   `;
   return rows.map(mapStageLog);
 }
+
+// ============================================================================
+// Mark Done
+// ============================================================================
+
+/** Mark a task as done — sets status='done', ended_at=now(), releases checkout. */
+export async function markDone(idOrSeq: string, actor?: Actor, comment?: string, repoPath?: string): Promise<TaskRow> {
+  const sql = await getConnection();
+  const repo = repoPath ?? getRepoPath();
+  const id = await resolveTaskId(idOrSeq, repo);
+  if (!id) throw new Error(`Task not found: ${idOrSeq}`);
+
+  const rows = await sql`
+    UPDATE tasks
+    SET status = 'done',
+        ended_at = COALESCE(ended_at, now()),
+        checkout_run_id = NULL,
+        execution_locked_at = NULL,
+        updated_at = now()
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  if (rows.length === 0) throw new Error(`Task not found: ${idOrSeq}`);
+
+  if (comment && actor) {
+    await commentOnTask(id, actor, comment, repo);
+  }
+
+  return mapTask(rows[0]);
+}
+
+// ============================================================================
+// Delete Notification Preference
+// ============================================================================
+
+export async function deletePreference(actor: Actor, channel: string): Promise<boolean> {
+  const sql = await getConnection();
+  const result = await sql`
+    DELETE FROM notification_preferences
+    WHERE actor_type = ${actor.actorType}
+      AND actor_id = ${actor.actorId}
+      AND channel = ${channel}
+  `;
+  return result.count > 0;
+}
+
+// ============================================================================
+// Task Listing for Actor (--mine filter)
+// ============================================================================
+
+/** List tasks assigned to a specific actor. */
+export async function listTasksForActor(actor: Actor, filters: TaskFilters = {}): Promise<TaskRow[]> {
+  const sql = await getConnection();
+  const repo = filters.repoPath ?? getRepoPath();
+
+  const conditions: string[] = ['t.repo_path = $1'];
+  const values: unknown[] = [repo];
+  let paramIdx = 2;
+
+  conditions.push(`ta.actor_type = $${paramIdx++}`);
+  values.push(actor.actorType);
+  conditions.push(`ta.actor_id = $${paramIdx++}`);
+  values.push(actor.actorId);
+
+  if (filters.stage) {
+    conditions.push(`t.stage = $${paramIdx++}`);
+    values.push(filters.stage);
+  }
+  if (filters.status) {
+    conditions.push(`t.status = $${paramIdx++}`);
+    values.push(filters.status);
+  }
+  if (filters.priority) {
+    conditions.push(`t.priority = $${paramIdx++}`);
+    values.push(filters.priority);
+  }
+
+  const limit = filters.limit ?? 100;
+  const offset = filters.offset ?? 0;
+  values.push(limit, offset);
+
+  const query = `SELECT DISTINCT t.* FROM tasks t JOIN task_actors ta ON ta.task_id = t.id WHERE ${conditions.join(' AND ')} ORDER BY t.created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
+  const rows = await sql.unsafe(query, values);
+  return rows.map(mapTask);
+}
