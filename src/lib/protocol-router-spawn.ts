@@ -227,7 +227,7 @@ async function getRecentGitLog(repoPath: string, count = 3): Promise<string> {
 /**
  * Build and deliver resume context to a respawned agent.
  *
- * Queries wish state for any in_progress group assigned to this worker's
+ * Queries PG for any in_progress group assigned to this worker's
  * role+team, then builds a context prompt with wish slug, group info,
  * group section from WISH.md, and recent git history.
  *
@@ -241,53 +241,41 @@ async function injectResumeContext(
   _team: string,
 ): Promise<void> {
   try {
-    // Scan .genie/state/ for any wish with an in_progress group assigned to this agent
-    const { readdirSync } = require('node:fs');
-    const stateDir = join(repoPath, '.genie', 'state');
-    let stateFiles: string[];
+    // Query PG for any in_progress group assigned to this agent
+    const match =
+      (await wishState.findAnyGroupByAssignee(workerId, repoPath)) ??
+      (await wishState.findAnyGroupByAssignee(agentName, repoPath));
+    if (!match) return;
+
+    const { slug, groupName, group } = match;
+
+    // Build resume context
+    const wishPath = join(repoPath, '.genie', 'wishes', slug, 'WISH.md');
+    let groupSection = '';
     try {
-      stateFiles = readdirSync(stateDir).filter((f: string) => f.endsWith('.json'));
+      const wishContent = await readFile(wishPath, 'utf-8');
+      groupSection = extractGroupSection(wishContent, groupName) ?? '';
     } catch {
-      return; // No state directory — nothing to resume
+      /* WISH.md may not exist */
     }
 
-    for (const file of stateFiles) {
-      const slug = file.replace('.json', '');
-      // Check using both the workerId and agentName as potential assignees
-      const match =
-        (await wishState.findGroupByAssignee(slug, workerId, repoPath)) ??
-        (await wishState.findGroupByAssignee(slug, agentName, repoPath));
-      if (!match) continue;
+    const gitLog = await getRecentGitLog(repoPath);
 
-      // Found an in_progress group — build resume context
-      const wishPath = join(repoPath, '.genie', 'wishes', slug, 'WISH.md');
-      let groupSection = '';
-      try {
-        const wishContent = await readFile(wishPath, 'utf-8');
-        groupSection = extractGroupSection(wishContent, match.groupName) ?? '';
-      } catch {
-        /* WISH.md may not exist */
-      }
+    const resumePrompt = [
+      `RESUME CONTEXT: You were working on wish "${slug}", group "${groupName}".`,
+      `Status: ${group.status}. Started at: ${group.startedAt ?? 'unknown'}.`,
+      `Wish file: .genie/wishes/${slug}/WISH.md`,
+      '',
+      groupSection ? `Group section:\n${groupSection}` : '',
+      '',
+      gitLog ? `Last git log:\n${gitLog}` : '',
+      '',
+      'Pick up where you left off. Read the wish file for full context.',
+    ]
+      .filter(Boolean)
+      .join('\n');
 
-      const gitLog = await getRecentGitLog(repoPath);
-
-      const resumePrompt = [
-        `RESUME CONTEXT: You were working on wish "${slug}", group "${match.groupName}".`,
-        `Status: ${match.group.status}. Started at: ${match.group.startedAt ?? 'unknown'}.`,
-        `Wish file: .genie/wishes/${slug}/WISH.md`,
-        '',
-        groupSection ? `Group section:\n${groupSection}` : '',
-        '',
-        gitLog ? `Last git log:\n${gitLog}` : '',
-        '',
-        'Pick up where you left off. Read the wish file for full context.',
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      await mailbox.send(repoPath, 'genie', workerId, resumePrompt);
-      return; // Only inject for the first matching wish
-    }
+    await mailbox.send(repoPath, 'genie', workerId, resumePrompt);
   } catch {
     /* Best-effort — resume context is not critical */
   }
