@@ -36,6 +36,8 @@ export interface DirectoryEntry {
   model?: string;
   /** Built-in roles this agent can orchestrate. */
   roles?: string[];
+  /** Omni agent UUID — set when agent is registered in Omni. */
+  omniAgentId?: string;
   /** ISO timestamp of registration. */
   registeredAt: string;
 }
@@ -323,7 +325,7 @@ export async function get(name: string, options?: ScopeOptions): Promise<Directo
  */
 export async function edit(
   name: string,
-  updates: Partial<Pick<DirectoryEntry, 'dir' | 'repo' | 'promptMode' | 'model' | 'roles'>>,
+  updates: Partial<Pick<DirectoryEntry, 'dir' | 'repo' | 'promptMode' | 'model' | 'roles' | 'omniAgentId'>>,
   options?: ScopeOptions,
 ): Promise<DirectoryEntry> {
   let updated: DirectoryEntry | null = null;
