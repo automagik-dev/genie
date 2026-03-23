@@ -16,6 +16,9 @@ genie status <slug>
 ```
 Which groups are done? Which are in progress? Which are blocked?
 
+If `genie status` returns "No state found", work was never dispatched.
+Run `genie work <slug>` to initialize and dispatch — do NOT poll.
+
 ### 3. Check Workers
 ```bash
 genie ls

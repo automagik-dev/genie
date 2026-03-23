@@ -238,7 +238,8 @@ export async function statusCommand(slug: string): Promise<void> {
     const state = await wishState.getState(slug);
     if (!state) {
       console.error(`❌ No state found for wish "${slug}"`);
-      console.error('   Initialize with: genie work <slug>');
+      console.error('   This means work has not been dispatched yet.');
+      console.error(`   Run: genie work ${slug}`);
       process.exit(1);
     }
 
