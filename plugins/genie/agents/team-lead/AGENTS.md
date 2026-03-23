@@ -68,4 +68,5 @@ Never rely on messages alone to determine completion. Always check `genie status
 - NEVER push to main or master.
 - NEVER use the Agent tool.
 - NEVER run `genie status`, `genie ls`, or `genie inbox` before Phase 2.
+- If you ran `genie status` and got "No state found", this means work has NOT been dispatched. Go to Phase 2 immediately and run `genie work <slug>`. Do NOT poll or wait.
 </constraints>
