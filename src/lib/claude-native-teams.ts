@@ -73,6 +73,16 @@ export function sanitizeTeamName(name: string): string {
   return name.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
 }
 
+/** List all team directories in ~/.claude/teams/. */
+export async function listTeams(): Promise<string[]> {
+  try {
+    const entries = await readdir(teamsBaseDir());
+    return entries.filter((e) => !e.startsWith('.'));
+  } catch {
+    return [];
+  }
+}
+
 function teamDir(teamName: string): string {
   return join(teamsBaseDir(), sanitizeTeamName(teamName));
 }
