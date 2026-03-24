@@ -288,6 +288,46 @@ export async function writeNativeInbox(
 }
 
 /**
+ * Resolve a genie worker ID to the native team member name.
+ *
+ * Matching strategy:
+ *   1. Exact match on member.name
+ *   2. Match on agentId prefix (workerId@team)
+ *   3. Strip team prefix from workerId and match (e.g., "bugfix-4-engineer" → "engineer")
+ *
+ * Returns the native member name if found, null otherwise.
+ */
+export async function resolveNativeMemberName(teamName: string, genieWorkerId: string): Promise<string | null> {
+  const config = await loadConfig(teamName);
+  if (!config || config.members.length === 0) return null;
+
+  const sanitizedId = sanitizeTeamName(genieWorkerId);
+  const sanitizedTeam = sanitizeTeamName(teamName);
+
+  // 1. Exact match on name
+  const exactMatch = config.members.find((m) => m.name === sanitizedId && m.isActive);
+  if (exactMatch) return exactMatch.name;
+
+  // 2. Match on agentId
+  const agentIdMatch = config.members.find((m) => m.agentId === `${sanitizedId}@${sanitizedTeam}` && m.isActive);
+  if (agentIdMatch) return agentIdMatch.name;
+
+  // 3. Strip team prefix and match (e.g., "bugfix-4-engineer" → "engineer")
+  const teamPrefix = `${sanitizedTeam}-`;
+  if (sanitizedId.startsWith(teamPrefix)) {
+    const stripped = sanitizedId.slice(teamPrefix.length);
+    const prefixMatch = config.members.find((m) => m.name === stripped && m.isActive);
+    if (prefixMatch) return prefixMatch.name;
+  }
+
+  // 4. Fallback: try inactive members (recently unregistered)
+  const inactiveMatch = config.members.find((m) => m.name === sanitizedId);
+  if (inactiveMatch) return inactiveMatch.name;
+
+  return null;
+}
+
+/**
  * Assign the next unused color from the palette for a team.
  */
 export async function assignColor(teamName: string): Promise<ClaudeTeamColor> {
