@@ -15,10 +15,12 @@ import {
   blockTask,
   checkoutTask,
   commentOnTask,
+  createProject,
   createTag,
   createTask,
   createType,
   deletePreference,
+  ensureProject,
   expireStaleCheckouts,
   findOrCreateConversation,
   forceUnlockTask,
@@ -30,12 +32,15 @@ import {
   getMessage,
   getMessages,
   getPreferences,
+  getProjectByName,
+  getProjectByRepoPath,
   getStageLog,
   getTask,
   getTaskActors,
   getTaskTags,
   getType,
   listConversations,
+  listProjects,
   listReleases,
   listTags,
   listTasks,
@@ -922,5 +927,97 @@ describe('listTasksForActor', () => {
 
     // Cleanup
     await sql`DELETE FROM tasks WHERE repo_path = ${repo12}`;
+  });
+});
+
+// ============================================================================
+// Projects
+// ============================================================================
+
+describe('Projects', () => {
+  const projRepo = `${REPO}-projects`;
+  const projRepo2 = `${REPO}-projects2`;
+
+  afterAll(async () => {
+    if (sql) {
+      await sql`DELETE FROM tasks WHERE repo_path LIKE ${`${REPO}-projects%`}`;
+      await sql`DELETE FROM projects WHERE repo_path LIKE ${`${REPO}-projects%`}`;
+      await sql`DELETE FROM projects WHERE name LIKE 'test-virtual-%'`;
+    }
+  });
+
+  it('should create a repo-backed project', async () => {
+    const proj = await createProject({ name: 'test-proj-repo', repoPath: projRepo });
+    expect(proj.name).toBe('test-proj-repo');
+    expect(proj.repoPath).toBe(projRepo);
+    expect(proj.id).toMatch(/^proj-/);
+  });
+
+  it('should create a virtual project (no repo)', async () => {
+    const proj = await createProject({ name: 'test-virtual-ops', description: 'Ops board' });
+    expect(proj.name).toBe('test-virtual-ops');
+    expect(proj.repoPath).toBeNull();
+    expect(proj.description).toBe('Ops board');
+  });
+
+  it('should list all projects', async () => {
+    const projects = await listProjects();
+    expect(projects.length).toBeGreaterThanOrEqual(2);
+    const names = projects.map((p) => p.name);
+    expect(names).toContain('test-proj-repo');
+    expect(names).toContain('test-virtual-ops');
+  });
+
+  it('should get project by name', async () => {
+    const proj = await getProjectByName('test-proj-repo');
+    expect(proj).not.toBeNull();
+    expect(proj!.repoPath).toBe(projRepo);
+  });
+
+  it('should return null for unknown project name', async () => {
+    const proj = await getProjectByName('nonexistent-project');
+    expect(proj).toBeNull();
+  });
+
+  it('should get project by repo path', async () => {
+    const proj = await getProjectByRepoPath(projRepo);
+    expect(proj).not.toBeNull();
+    expect(proj!.name).toBe('test-proj-repo');
+  });
+
+  it('should auto-create project via ensureProject', async () => {
+    const projId = await ensureProject(projRepo2);
+    expect(projId).toMatch(/^proj-/);
+
+    // Second call should return same ID
+    const projId2 = await ensureProject(projRepo2);
+    expect(projId2).toBe(projId);
+  });
+
+  it('should set project_id on created tasks', async () => {
+    const task = await createTask({ title: 'Project task' }, projRepo);
+    expect(task.projectId).not.toBeNull();
+
+    const proj = await getProjectByRepoPath(projRepo);
+    expect(task.projectId).toBe(proj!.id);
+  });
+
+  it('should list tasks across all projects', async () => {
+    await createTask({ title: 'All-proj test A' }, projRepo);
+    await createTask({ title: 'All-proj test B' }, projRepo2);
+
+    const allTasks = await listTasks({ allProjects: true });
+    expect(allTasks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('should list tasks scoped to a project by name', async () => {
+    const proj = await getProjectByRepoPath(projRepo);
+    const projName = proj!.name;
+
+    const tasks = await listTasks({ projectName: projName });
+    expect(tasks.length).toBeGreaterThanOrEqual(1);
+    for (const t of tasks) {
+      expect(t.projectId).toBe(proj!.id);
+    }
   });
 });
