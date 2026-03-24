@@ -5,7 +5,7 @@
  *   1. Raw pane ID (starts with %) -> passthrough
  *   2. Worker[:index] (left side is registered worker) -> registry lookup + subpane index
  *   3. Session:window (contains :, left side is tmux session) -> tmux lookup
- *   4. Bare name -> exact ID → role (team) → customName → partial ID → role (global)
+ *   4. Bare name -> exact ID → role (team) → customName → partial ID → substring → role (global)
  *
  * Returns { paneId, session, workerId?, paneIndex?, resolvedVia }
  */
@@ -295,6 +295,36 @@ function resolveByPartialId(
   );
 }
 
+/** Resolve a target by substring match on worker ID. Prefers same-team on ambiguity. */
+function resolveBySubstring(
+  target: string,
+  workers: Record<string, Agent>,
+  currentTeam: string | null,
+): ResolvedTarget | null {
+  // Only match IDs that contain the target but don't end with it (endsWith is handled by resolveByPartialId)
+  const candidates = Object.entries(workers).filter(
+    ([id]) => id !== target && !id.endsWith(target) && id.includes(target),
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) {
+    const [id, w] = candidates[0];
+    return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+  }
+
+  if (currentTeam) {
+    const teamCandidates = candidates.filter(([, w]) => w.team === currentTeam);
+    if (teamCandidates.length === 1) {
+      const [id, w] = teamCandidates[0];
+      return { paneId: w.paneId, session: w.session, workerId: id, resolvedVia: 'worker' };
+    }
+  }
+
+  const ids = candidates.map(([id]) => id).join(', ');
+  throw new Error(
+    `Ambiguous target "${target}" — matches ${candidates.length} workers: ${ids}\nUse the full ID instead.`,
+  );
+}
+
 /** Resolve a target by role name across all teams (global fallback). */
 function resolveByRoleGlobal(target: string, workers: Record<string, Agent>): ResolvedTarget | null {
   const candidates = Object.entries(workers).filter(([, w]) => w.role === target);
@@ -351,7 +381,7 @@ async function resolveColonTarget(
   return { paneId: sessionWindowResult.paneId, session: sessionWindowResult.session, resolvedVia: 'session:window' };
 }
 
-/** Resolve a bare name: exact ID → role (team) → customName → partial ID → role (global). */
+/** Resolve a bare name: exact ID → role (team) → customName → partial ID → substring → role (global). */
 async function resolveBareName(
   target: string,
   workers: Record<string, Agent>,
@@ -383,6 +413,7 @@ async function resolveBareName(
     resolveByRole(target, workers, currentTeam) ??
     resolveByCustomName(target, workers, currentTeam) ??
     resolveByPartialId(target, workers, currentTeam) ??
+    resolveBySubstring(target, workers, currentTeam) ??
     resolveByRoleGlobal(target, workers);
 
   if (fuzzyMatch) {
@@ -428,7 +459,7 @@ export async function resolveTarget(target: string, options: ResolveOptions = {}
     return resolveColonTarget(target, workers, { checkLiveness, isPaneLive, cleanupDeadPane, tmuxLookup });
   }
 
-  // Level 3: Bare name — exact ID → role (team) → customName → partial ID → role (global)
+  // Level 3: Bare name — exact ID → role (team) → customName → partial ID → substring → role (global)
   return resolveBareName(target, workers, {
     checkLiveness,
     isPaneLive,
