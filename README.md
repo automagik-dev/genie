@@ -13,6 +13,17 @@
 
 <h2 align="center">Wishes in, PRs out.</h2>
 
+<!-- METRICS:START -->
+
+| Metric | Value | Updated |
+|--------|-------|---------|
+| Releases/day | **0** | 2026-03-24 |
+| Avg bug-fix time | **2.0h** | 2026-03-24 |
+| SHIP rate | **100.0%** | 2026-03-24 |
+| Parallel agents | **3** | 2026-03-24 |
+
+<!-- METRICS:END -->
+
 ## What is Genie?
 
 Genie is an AI orchestration CLI that turns vague ideas into shipped PRs. You describe the problem — Genie interviews you, plans the work, dispatches parallel agents, and reviews the code. You approve and ship.

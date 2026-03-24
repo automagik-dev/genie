@@ -1,7 +1,13 @@
 {
-  "last_metrics": null,
+  "last_metrics": {
+    "releases_per_day": 0,
+    "avg_bugfix_time_hours": 2.0,
+    "ship_rate_pct": 100.0,
+    "parallel_agents": 3,
+    "updated": "2026-03-24"
+  },
   "last_refined_at": null,
-  "last_run_at": null,
-  "run_count": 0,
+  "last_run_at": "2026-03-24T22:44:08Z",
+  "run_count": 1,
   "agent_version": 1
 }
