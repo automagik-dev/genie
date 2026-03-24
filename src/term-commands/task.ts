@@ -239,16 +239,17 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
   const ts = await getTaskService();
   const actor = currentActor();
 
-  // Resolve project → repoPath override
+  // Resolve project → repoPath + projectId override
   let repoPath: string | undefined;
+  let projectId: string | undefined;
   if (options.project) {
-    const project = await ts.getProjectByName(options.project);
-    if (project) {
-      repoPath = project.repoPath ?? undefined;
-    } else {
+    let project = await ts.getProjectByName(options.project);
+    if (!project) {
       // Auto-create virtual project if --project used with unknown name
-      await ts.createProject({ name: options.project });
+      project = await ts.createProject({ name: options.project });
     }
+    projectId = project.id;
+    repoPath = project.repoPath ?? undefined;
   }
 
   // Resolve parent
@@ -273,6 +274,7 @@ async function handleTaskCreate(title: string, options: CreateOptions): Promise<
       estimatedEffort: options.effort,
     },
     repoPath,
+    projectId,
   );
 
   // Assign creator
