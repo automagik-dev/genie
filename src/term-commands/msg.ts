@@ -401,24 +401,48 @@ export function registerSendInboxCommands(program: Command): void {
         const msg = await ts.sendMessage(conv.id, senderActor, body);
 
         // Bridge to CC native inbox so Claude Code agents receive in real-time
+        // Search ALL teams for the recipient, not just the current team
         try {
           const nativeTeams = await import('../lib/claude-native-teams.js');
-          const teamName = await nativeTeams.discoverTeamName().catch(() => null);
-          if (teamName) {
-            const config = await nativeTeams.loadConfig(teamName).catch(() => null);
+          const nativeMsg = {
+            from,
+            text: body,
+            summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
+            timestamp: new Date().toISOString(),
+            color: 'blue' as const,
+            read: false,
+          };
+
+          // Try current team first (fast path)
+          const currentTeam = await nativeTeams.discoverTeamName().catch(() => null);
+          let delivered = false;
+
+          if (currentTeam) {
+            const config = await nativeTeams.loadConfig(currentTeam).catch(() => null);
             const memberExists = config?.members?.some(
               (m: { name?: string; agentId?: string }) =>
-                m.name === options.to || m.agentId === `${options.to}@${teamName}`,
+                m.name === options.to || m.agentId === `${options.to}@${currentTeam}`,
             );
             if (memberExists) {
-              await nativeTeams.writeNativeInbox(teamName, options.to, {
-                from,
-                text: body,
-                summary: body.length > 50 ? `${body.substring(0, 50)}...` : body,
-                timestamp: new Date().toISOString(),
-                color: 'blue',
-                read: false,
-              });
+              await nativeTeams.writeNativeInbox(currentTeam, options.to, nativeMsg);
+              delivered = true;
+            }
+          }
+
+          // If not in current team, search all teams
+          if (!delivered) {
+            const allTeams = await nativeTeams.listTeams().catch(() => [] as string[]);
+            for (const team of allTeams) {
+              if (team === currentTeam) continue; // already checked
+              const config = await nativeTeams.loadConfig(team).catch(() => null);
+              const memberExists = config?.members?.some(
+                (m: { name?: string; agentId?: string }) =>
+                  m.name === options.to || m.agentId === `${options.to}@${team}`,
+              );
+              if (memberExists) {
+                await nativeTeams.writeNativeInbox(team, options.to, nativeMsg);
+                break;
+              }
             }
           }
         } catch {
