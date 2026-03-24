@@ -743,17 +743,22 @@ function prependEnvVars(command: string, env?: Record<string, string>): string {
 
 /**
  * Reject spawn if a live worker with the same role already exists in the team.
- * Dead/suspended workers (pane gone) are ignored — only live panes block.
+ * Dead/suspended workers (pane gone) are auto-cleaned from registry — only live panes block.
  */
 async function rejectDuplicateRole(team: string, role: string): Promise<void> {
   const existing = await registry.list();
   for (const w of existing) {
-    if (w.role === role && w.team === team && (await isPaneAlive(w.paneId))) {
-      console.error(
-        `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
-          `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
-      );
-      process.exit(1);
+    if (w.role === role && w.team === team) {
+      const alive = await isPaneAlive(w.paneId);
+      if (alive) {
+        console.error(
+          `Error: Worker with role "${role}" already exists in team "${team}" (state: ${w.state}, pane: ${w.paneId})\n` +
+            `Use a different --role name for a second worker, e.g.: --role ${role}-2`,
+        );
+        process.exit(1);
+      }
+      // Dead worker with same role — clean up stale registry entry so spawn can proceed
+      await registry.unregister(w.id);
     }
   }
 }
