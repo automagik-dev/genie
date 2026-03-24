@@ -7,7 +7,7 @@ import { execSync } from 'node:child_process';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as wishState from '../lib/wish-state.js';
-import { detectWaveCompletion, ensureWorkPushed, parseRef } from './state.js';
+import { detectWaveCompletion, ensureWorkPushed, parseRef, resolveWishPath } from './state.js';
 
 // ============================================================================
 // Sample WISH.md with Execution Strategy for wave detection tests
@@ -271,5 +271,75 @@ describe('ensureWorkPushed()', () => {
 
     // Should not throw — push will fail but be handled gracefully
     await ensureWorkPushed('test-slug', '3');
+  });
+});
+
+// ============================================================================
+// resolveWishPath — repo root fallback via git-common-dir
+// ============================================================================
+
+const SIMPLE_WISH = '# Wish: Resolve Test\n\n## Summary\nTest.\n';
+
+describe('resolveWishPath()', () => {
+  let mainRepo: string;
+  let worktreeDir: string;
+
+  beforeEach(async () => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mainRepo = join('/tmp', `wish-resolve-main-${id}`);
+    worktreeDir = join('/tmp', `wish-resolve-wt-${id}`);
+    await mkdir(mainRepo, { recursive: true });
+
+    // Init git repo with a branch for worktree
+    execSync('git init', { cwd: mainRepo, encoding: 'utf-8' });
+    execSync('git config user.email "test@test.com"', { cwd: mainRepo, encoding: 'utf-8' });
+    execSync('git config user.name "Test"', { cwd: mainRepo, encoding: 'utf-8' });
+    await writeFile(join(mainRepo, 'README.md'), '# Test');
+    execSync('git add -A && git commit -m "init"', { cwd: mainRepo, encoding: 'utf-8' });
+
+    // Create wish in main repo
+    const wishDir = join(mainRepo, '.genie', 'wishes', 'test-slug');
+    await mkdir(wishDir, { recursive: true });
+    await writeFile(join(wishDir, 'WISH.md'), SIMPLE_WISH);
+
+    // Create a worktree (wish is NOT in worktree since .genie/ is gitignored)
+    execSync(`git worktree add ${worktreeDir} -b test-wt-branch`, { cwd: mainRepo, encoding: 'utf-8' });
+  });
+
+  afterEach(async () => {
+    try {
+      execSync(`git -C ${mainRepo} worktree remove ${worktreeDir} --force`, { encoding: 'utf-8' });
+    } catch {
+      // Ignore
+    }
+    await rm(mainRepo, { recursive: true, force: true });
+    await rm(worktreeDir, { recursive: true, force: true });
+  });
+
+  it('should find wish directly in cwd', () => {
+    const result = resolveWishPath('test-slug', mainRepo);
+    expect(result).toBe(join(mainRepo, '.genie', 'wishes', 'test-slug', 'WISH.md'));
+  });
+
+  it('should find wish via repo root when not in cwd (worktree fallback)', () => {
+    // Worktree doesn't have .genie/wishes/ — should fall back to main repo
+    const result = resolveWishPath('test-slug', worktreeDir);
+    expect(result).toBe(join(mainRepo, '.genie', 'wishes', 'test-slug', 'WISH.md'));
+  });
+
+  it('should return null when wish not found anywhere', () => {
+    const result = resolveWishPath('nonexistent', worktreeDir);
+    expect(result).toBeNull();
+  });
+
+  it('should return null for non-git directory', async () => {
+    const tmpDir = join('/tmp', `wish-resolve-nogit-${Date.now()}`);
+    await mkdir(tmpDir, { recursive: true });
+    try {
+      const result = resolveWishPath('test-slug', tmpDir);
+      expect(result).toBeNull();
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });
