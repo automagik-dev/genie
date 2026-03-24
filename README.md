@@ -19,17 +19,17 @@ Genie is an AI orchestration CLI that turns vague ideas into shipped PRs. You de
 
 ## Get Started
 
-Paste this into your AI coding agent (Claude Code, Codex, etc.):
+**Prerequisites:** curl, bash, git (pre-installed on macOS/Linux/WSL)
 
-```
-Install Genie, then run /wizard to set up this project:
+Run these commands in sequence to install Genie and initialize your workspace:
 
+```bash
 curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash
 genie
 /wizard
 ```
 
-That's it. The wizard handles everything: project scaffold, identity, first wish, execution, and review.
+That's it. The wizard handles everything: project scaffold, identity, first wish, execution, and review. In ~5 minutes, you'll have your workspace scaffolded and ready to execute your first wish.
 
 ## What Happens Next
 
