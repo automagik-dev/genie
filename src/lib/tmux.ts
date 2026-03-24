@@ -12,6 +12,7 @@ interface TmuxSession {
 interface TmuxWindow {
   id: string;
   name: string;
+  index: number;
   active: boolean;
   sessionId: string;
 }
@@ -150,16 +151,17 @@ export async function killSession(sessionId: string): Promise<void> {
  */
 export async function listWindows(sessionId: string): Promise<TmuxWindow[]> {
   try {
-    const format = '#{window_id}:#{window_name}:#{?window_active,1,0}';
+    const format = '#{window_id}:#{window_name}:#{window_index}:#{?window_active,1,0}';
     const output = await executeTmux(`list-windows -t '${sessionId}' -F '${format}'`);
 
     if (!output) return [];
 
     return output.split('\n').map((line) => {
-      const [id, name, active] = line.split(':');
+      const [id, name, indexStr, active] = line.split(':');
       return {
         id,
         name,
+        index: Number.parseInt(indexStr, 10),
         active: active === '1',
         sessionId,
       };
@@ -234,10 +236,12 @@ export async function createSession(name: string): Promise<TmuxSession | null> {
  */
 export async function createWindow(sessionId: string, name: string, workingDir?: string): Promise<TmuxWindow | null> {
   const cdFlag = workingDir ? ` -c '${workingDir.replace(/'/g, "'\\''")}'` : '';
-  // Use -d (don't switch focus) and -P -F to capture the window ID directly.
+  // Use -d (don't switch focus) and -P -F to capture the window ID and index directly.
   // Avoids relying on findWindowByName which can fail if automatic-rename fires.
-  const output = await executeTmux(`new-window -d -P -F '#{window_id}' -t '${sessionId}:' -n '${name}'${cdFlag}`);
-  const windowId = output.trim();
+  const output = await executeTmux(
+    `new-window -d -P -F '#{window_id}:#{window_index}' -t '${sessionId}:' -n '${name}'${cdFlag}`,
+  );
+  const [windowId, indexStr] = output.trim().split(':');
   if (!windowId) return null;
 
   // Lock the window name — prevent tmux automatic-rename from overriding it
@@ -247,7 +251,7 @@ export async function createWindow(sessionId: string, name: string, workingDir?:
     /* best-effort */
   }
 
-  return { id: windowId, name, active: false, sessionId };
+  return { id: windowId, name, index: Number.parseInt(indexStr, 10) || 0, active: false, sessionId };
 }
 
 /**
@@ -256,6 +260,37 @@ export async function createWindow(sessionId: string, name: string, workingDir?:
 export async function findWindowByName(sessionId: string, name: string): Promise<TmuxWindow | null> {
   const windows = await listWindows(sessionId);
   return windows.find((w) => w.name === name) || null;
+}
+
+/**
+ * Ensure the master (first) window of a session stays at index 0.
+ *
+ * When new windows are created, tmux may assign them index 0 if gaps exist
+ * (e.g., after renumber-windows or with base-index 0). This pushes the
+ * original master window to a higher index. This helper detects that case
+ * and uses swap-window to restore the master window to index 0.
+ *
+ * @param session - The tmux session name
+ * @param masterName - The expected name of the master/team-lead window
+ */
+export async function ensureMasterWindow(session: string, masterName: string): Promise<void> {
+  try {
+    const windows = await listWindows(session);
+    if (windows.length < 2) return; // Nothing to swap with a single window
+
+    const masterWindow = windows.find((w) => w.name === masterName);
+    if (!masterWindow) return; // Master window not found — nothing to fix
+
+    // Find the lowest index in the session (respects user's base-index setting)
+    const minIndex = Math.min(...windows.map((w) => w.index));
+
+    if (masterWindow.index === minIndex) return; // Already at the correct position
+
+    // Swap the master window with whatever is at the lowest index
+    await executeTmux(`swap-window -s '${session}:${masterWindow.index}' -t '${session}:${minIndex}'`);
+  } catch {
+    /* best-effort — don't break window creation if swap fails */
+  }
 }
 
 /**
@@ -289,9 +324,18 @@ export async function ensureTeamWindow(
     return { windowId: existing.id, windowName: teamName, paneId, created: false };
   }
 
+  // Remember the current master window (lowest-index window) before creating
+  const windowsBefore = await listWindows(session);
+  const masterBefore = windowsBefore.length > 0 ? windowsBefore.reduce((a, b) => (a.index <= b.index ? a : b)) : null;
+
   const newWindow = await createWindow(session, teamName, workingDir);
   if (!newWindow) {
     throw new Error(`Failed to create team window "${teamName}" in session "${session}"`);
+  }
+
+  // Ensure the master window stays at index 0 after the new window is created
+  if (masterBefore) {
+    await ensureMasterWindow(session, masterBefore.name);
   }
 
   // Install pane color hook on new window
