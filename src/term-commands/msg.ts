@@ -413,40 +413,50 @@ export function registerSendInboxCommands(program: Command): void {
             read: false,
           };
 
-          // Try current team first (fast path)
-          const currentTeam = await nativeTeams.discoverTeamName().catch(() => null);
+          // Team discovery chain: GENIE_TEAM env → discoverTeamName() → worker registry
+          let currentTeam = await nativeTeams.discoverTeamName().catch(() => null);
+
+          if (!currentTeam) {
+            // Fallback: check worker registry for sender's team
+            const registryMod = await getRegistry();
+            const workers = await registryMod.list();
+            const senderWorker = workers.find((w) => w.role === from || w.id === from || w.customName === from);
+            if (senderWorker?.team) {
+              currentTeam = senderWorker.team;
+            }
+          }
+
           let delivered = false;
 
+          // Try current team first (fast path) — resolve genie worker ID to native member name
           if (currentTeam) {
-            const config = await nativeTeams.loadConfig(currentTeam).catch(() => null);
-            const memberExists = config?.members?.some(
-              (m: { name?: string; agentId?: string }) =>
-                m.name === options.to || m.agentId === `${options.to}@${currentTeam}`,
-            );
-            if (memberExists) {
-              await nativeTeams.writeNativeInbox(currentTeam, options.to, nativeMsg);
+            const nativeName = await nativeTeams.resolveNativeMemberName(currentTeam, options.to);
+            if (nativeName) {
+              await nativeTeams.writeNativeInbox(currentTeam, nativeName, nativeMsg);
               delivered = true;
             }
           }
 
-          // If not in current team, search all teams
+          // If not in current team, search all native teams
           if (!delivered) {
             const allTeams = await nativeTeams.listTeams().catch(() => [] as string[]);
             for (const team of allTeams) {
               if (team === currentTeam) continue; // already checked
-              const config = await nativeTeams.loadConfig(team).catch(() => null);
-              const memberExists = config?.members?.some(
-                (m: { name?: string; agentId?: string }) =>
-                  m.name === options.to || m.agentId === `${options.to}@${team}`,
-              );
-              if (memberExists) {
-                await nativeTeams.writeNativeInbox(team, options.to, nativeMsg);
+              const nativeName = await nativeTeams.resolveNativeMemberName(team, options.to);
+              if (nativeName) {
+                await nativeTeams.writeNativeInbox(team, nativeName, nativeMsg);
+                delivered = true;
                 break;
               }
             }
           }
-        } catch {
-          // Native inbox delivery is best-effort — PG message already persisted
+
+          if (!delivered) {
+            console.warn(`[genie send] Native inbox bridge: could not find native team member for "${options.to}"`);
+          }
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          console.warn(`[genie send] Native inbox bridge failed: ${reason}`);
         }
 
         console.log(`Message sent to "${options.to}".`);
